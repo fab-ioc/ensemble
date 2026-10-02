@@ -490,6 +490,18 @@ editing engine code, builds and tests are task work; in a code project the
 PO's own hands are for merging, restarting and deploying only. Trust the
 live usage head over any figure in the handover.
 
+**An `[issue]` line is a CEO request.** The hub polls the feedback repo
+(the `feedbackRepo` setting) every 15 minutes and types each new or reopened
+issue into the PO of the project whose code repo it is (else Ensemble
+Dashboard): `[issue] #N title (labels): first ~300 chars — url`. A new comment
+by someone other than the hub's own GitHub login comes as `[issue comment]`.
+A PO that is not running finds the same line in its chat. Treat it like a
+request from the CEO: make a task for it (or add it to the task it belongs
+to), answer on the issue with `gh issue comment N --repo <repo>` saying what
+happens and which task carries it, and close the issue with `gh issue close`
+once the work is merged and live, not before. Each issue and comment comes
+once; a hub restart does not repeat it.
+
 The PO is one long-lived session per project (`poRoomId` in the project's
 `project.json`). The product owner talks mainly to it, tasks report to it, and
 it reports to the product owner. What keeps that cheap and reliable:
