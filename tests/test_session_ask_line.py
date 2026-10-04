@@ -48,8 +48,11 @@ Object.defineProperty(el, 'innerHTML', { get() { return this.html; }, set(v) { t
 const ctx = {
   esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
   $: sel => sel === '#ask-line' ? el : null,
+  document: { querySelectorAll: () => [] },
+  window: {},
   Date, JSON, console,
 };
+ctx.window.parent = ctx.window;
 vm.createContext(ctx);
 vm.runInContext(code + `
   const ROOM = 'room-x5';

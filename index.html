@@ -3632,6 +3632,30 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       top: calc(var(--top-h) + var(--vv-top, 0px)); height: calc(var(--vv-h, 100dvh) - var(--top-h));
     }
   }
+/* Phone focus (#167): breadcrumb owns the title; metadata owns one row. */
+@media (max-width: 767px) and (pointer: coarse), (max-width: 640px) {
+  body.row2 { --header-h:calc(2 * var(--touch-min) + 1px); }
+  body.row2 header { row-gap:0; }
+  body.dp-docked #detail-panel .dp-top { padding:0; gap:0; }
+  #po-panel .po-head { min-height:var(--touch-min); padding:0 var(--s-200); }
+  #po-panel .po-name, #po-panel .po-acts > [data-po="resume"] { display:none; }
+  body.dp-docked #detail-panel .dp-head, body.dp-docked #detail-panel .dp-actions { display:none; }
+  body.dp-docked #detail-panel .dp-meta { padding:0 var(--s-200); margin:0; min-height:var(--touch-min); gap:var(--s-100); overflow:visible; flex-wrap:nowrap; }
+  body.dp-docked .dp-meta .dp-when { display:none; }
+  body.dp-docked .dp-meta > .loz { align-self:center; }
+  body.dp-docked .dp-meta .wf-btn, body.dp-docked .dp-meta .pr-btn { min-height:var(--touch-min); padding:0 var(--s-100); font-size:var(--fs-100); }
+  body.dp-docked .dp-meta .wf-btn::after, body.dp-docked .dp-meta .pr-btn::after { content:none; }
+  body.dp-docked #detail-panel .dp-summary { margin:0; padding:0 var(--s-200); border-radius:0; }
+  body.dp-docked #detail-panel .dp-summary-h { display:none; }
+  .dp-summary-phone { display:none; }
+  body.dp-docked #detail-panel.has-open-ask .dp-summary { display:none; }
+  body.dp-docked #detail-panel .dp-summary > .dp-summary-t { display:none; }
+  body.dp-docked #detail-panel .dp-summary-phone { display:block; }
+  .dp-summary-phone summary { min-height:var(--touch-min); line-height:var(--touch-min); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; font-size:var(--fs-200); }
+  .dp-summary-phone .dp-summary-t { padding-bottom:var(--s-200); max-height:160px; overflow:auto; }
+  .dk-tab.on { background:var(--selected-bg); color:var(--selected-fg); box-shadow:inset 0 -4px var(--accent); }
+}
+.dp-summary-phone { display:none; }
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
@@ -4953,6 +4977,7 @@ function detailSummary(r, isRoom) {
   return `<div class="dp-summary">
     <div class="dp-summary-h">What happened</div>
     <div class="dp-summary-t">${esc(last.length > 400 ? last.slice(0, 400) + '\u2026' : last)}</div>
+    <details class="dp-summary-phone"><summary aria-label="What happened">${esc(last.split('\n')[0])}</summary><div class="dp-summary-t">${esc(last)}</div></details>
   </div>`;
 }
 
@@ -5221,6 +5246,7 @@ function renderDetail() {
     // Only the room identity may rebuild the terminal. A label, a pin or an
     // idle flip must not reconnect a running agent's session.
     if (act.dataset.room !== r.roomId) {
+      panel.classList.remove('has-open-ask');
       act.dataset.room = r.roomId;
       act._sig = '';
       // Opened from @codex@18: at that agent.
@@ -10971,6 +10997,8 @@ function poOpenCount(pj, rows) {
 // own ⋯ menu takes them once the library offers app items (Dock need 14).
 function poMenuItems(row) {
   const items = [];
+  if (typeof phoneNow === 'function' && phoneNow() && !row.isLive && !row.draft)
+    items.push({ key: 'resume', label: 'Resume', title: 'Relaunch the PO with its conversation' });
   if (!row.draft) items.push({ key: 'switch', label: 'Switch agent…', title: 'Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover' });
   items.push({ key: 'open', label: "Open the PO's task", title: "Open the PO's own task: spec, changes and files" });
   return items;
@@ -11831,11 +11859,27 @@ function pdRuntimeRestore() {
 // The bar under the task's name keeps the one primary action (detailActions).
 // With no task open the menu is Dock's alone (the PO's items stay in its
 // header's ⋯ for now).
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || e.data?.type !== 'chat-open-ask') return;
+  const panel = document.getElementById('detail-panel');
+  const frame = panel?.querySelector('iframe.dp-session');
+  if (!frame || frame.contentWindow !== e.source || frame.dataset.room !== e.data.roomId) return;
+  panel.classList.toggle('has-open-ask', !!e.data.open);
+  fitLiveChat();
+});
 function pdMenuItems(ctx) {
   if (!pdTask()) return [];
   const r = rowBySid(SELECTED_SID);
   if (!r) return [];
-  return pdActionItems(r, ctx, { el: PD.els['po-chat'] });
+  const items = pdActionItems(r, ctx, { el: PD.els['po-chat'] });
+  if (phoneNow() && r.lastAgent) items.push({id:'report',label:'What happened',run:() => {
+    const panel = document.getElementById('detail-panel');
+    panel.classList.remove('has-open-ask');
+    const report = panel.querySelector('.dp-summary-phone');
+    if (report) report.open = true;
+    fitLiveChat();
+  }});
+  return items;
 }
 // A row's action model as Dock menu items: the middle's (the open task) and
 // a chat panel's (#150, o.room: its own frame gets the terminal items, o.skip
@@ -11846,7 +11890,8 @@ function pdActionItems(r, ctx, o) {
   const items = [];
   const frame = o.room ? pdChatFrameOf(o.room) : null;
   let n = 0;
-  model.groups.forEach(g => {
+  const groups = phoneNow() && model.primary ? [[model.primary], ...model.groups] : model.groups;
+  groups.forEach(g => {
     const group = [];
     for (const it of g) {
       if (o.skip && o.skip.includes(it.id)) continue;

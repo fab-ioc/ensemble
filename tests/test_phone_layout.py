@@ -314,7 +314,7 @@ class ThePhone(unittest.TestCase):
             with self.subTest(w=w):
                 self.assertTrue(g["open"] and g["docked"])
                 self.assertIsNone(g["list"], "the list steps aside")
-                self.assertGreater(g["header"], 90, "the bar has its second row")
+                self.assertEqual(g["header"], 89, "two 44px rows and their border")
                 self.assertEqual(g["tabsB"], g["top"] + 45, "the tabs under the bar")
                 self.assertEqual(g["panel"]["y"], g["tabsB"], "the conversation under the tabs")
                 self.assertEqual((g["panel"]["x"], g["panel"]["w"]), (0, g["vw"]))
