@@ -162,7 +162,7 @@ class ThePoHeader(unittest.TestCase):
 class TheChatBox(unittest.TestCase):
     def test_the_row_under_the_words(self):
         row = SESSION[SESSION.index('<div class="ed-row">'):]
-        row = row[:row.index("</div>")]
+        row = row[:row.index('<div id="agentcol">')]
         self.assertEqual(re.findall(r'<button[^>]* id="(\w[\w-]*)"', row), ["add-point", "attach", "send"])
         self.assertIn('<input type="file" id="attach-input" accept="image/*" multiple hidden>', row)
         wire = SESSION[SESSION.index("$('#attach').addEventListener"):]
@@ -173,7 +173,7 @@ class TheChatBox(unittest.TestCase):
     def test_a_short_placeholder_per_chat(self):
         body = fn(SESSION, "function composePlaceholder(")
         self.assertIn("composePlaceholder(!!po, solo);", fn(SESSION, "function chatNamesFor("))
-        js = body + "\nconst out = [[true, false], [false, false], [false, true], [true, true]].map(a => { composePlaceholder(...a); return I.placeholder; });\nconsole.log(JSON.stringify(out));"
+        js = "const PHONE_CHAT = {matches:false};\n" + body + "\nconst out = [[true, false], [false, false], [false, true], [true, true]].map(a => { composePlaceholder(...a); return I.placeholder; });\nconsole.log(JSON.stringify(out));"
         if not NODE:
             self.skipTest("node is not installed")
         with tempfile.TemporaryDirectory() as tmp:

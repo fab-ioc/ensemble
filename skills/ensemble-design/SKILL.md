@@ -1485,7 +1485,7 @@ desktop is untouched by construction.
    back arrow `←` (`#bar-back`, to the list; phone only, the wordmark is the way back elsewhere),
    the project's name with its menu, truncated, where you are in it (an open task's breadcrumb) and
    Panels at the end. `--header-h` is redeclared on `body.row2` so everything hanging off the bar
-   follows. At 430×932 the PO screen's panel tabs start at 110px.
+   follows. Phone chat uses two 44px rows without the old inter-row padding (#167).
 5. **An open task never covers the bar.** The bar is the way to the PO and to the project. On a phone
    the task takes the whole width *under* the bar's two rows and the dock's tabs, and the PO's row
    in the list goes to the PO's screen (the task closes, as on a desktop).
@@ -1507,7 +1507,36 @@ desktop is untouched by construction.
    file's name with `›` (at the end of the Find row) goes back to it. Both panes share one grid
    cell; the one not showing is `visibility: hidden`, never `display: none`, so the file's viewer
    keeps its page and size. Neither switch shows off a phone.
-10. **Measure it.** In this environment `(pointer: coarse)` never matches, so to measure a phone's
-    landscape layout rewrite the query in a test copy of the page (the audit's proxy does it for
-    `?_coarse=1`), and give the frame's scrollbars zero width: a desktop frame's 9px scrollbar makes
+10. **Measure it.** Use CDP touch emulation and verify `(pointer: coarse)` matches. If the host
+    cannot emulate it, rewrite the query in a test copy of the page (the audit's proxy does it for
+    `?_coarse=1`). Give emulated frames phone scrollbars: a desktop frame's 9px scrollbar makes
     every layout 9px narrower than on the phone it stands for.
+11. **The conversation gets the screen** (#167). At 390×844 with the keyboard closed, the
+    message scroller should occupy at least 60% of the whole viewport. Measure the scroller,
+    excluding header, notices and composer, in task and PO chat at 360, 390 and 430px.
+    Use CDP touch emulation; check `matchMedia` before substituting a coarse query.
+    These compact chat rules additionally require width below 768px; desktop embedded frames
+    must retain the desktop layout.
+12. **One metadata row; one notice.** The breadcrumb owns the title. The task's metadata row
+    carries workflow, attention, priority and run state; actions including End are in the
+    existing tab strip's menu. The PO's header is one row too. What happened is a one-line
+    disclosure. An open waiting notice supersedes it and jumps to the complete message; the
+    report remains available through What happened in the task menu. Never wrap the notice
+    into paragraphs above the conversation. Selected tabs use selected background/text and
+    a 4px accent underline; the message awaiting an answer has a warning-colour leading edge
+    and a Reply needed label in the warning foreground/background pair. Clear that mark when the ask closes.
+    Use short phone labels (PO reply, Your reply, stopped) so every metadata state fits at
+    360px, including a working or stopped agent and every priority. Keep an expanded report
+    open and at the same reading position through status/report refreshes in the same room;
+    switching rooms starts a new disclosure.
+13. **A compact composer, always reachable.** One input row with Send, a 44px `+` menu for
+    Attach / Add an ask / Team activity, and a 44px Latest arrow when needed. Team activity's
+    menu item states whether it is folded or shown. Activity belongs inside the composer;
+    focus adds a fixed `--focus-ring` inset and expands the input. Keep the placeholder short,
+    fields at 16px, and every control 44px. Keep navigation visible; never hide it on scroll.
+    The composer menu closes on an outside click or focus change. Escape closes it and
+    returns focus to its trigger before other Escape handlers act.
+14. **No balloon under chrome.** Notices occupy their own flex rows; balloons cannot shrink
+    below their contents. Catch-up is in normal flow, never sticky over messages. Latest is
+    in the phone composer, never floating above a balloon. Test at both scroll ends, after
+    a notice jump and with the composer focused, including long notices and reports.
