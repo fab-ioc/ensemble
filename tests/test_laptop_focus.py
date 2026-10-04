@@ -21,7 +21,7 @@ class LaptopFocus(focus.PhoneFocus):
               .replace("d.querySelector('.copy-link').focus()", "d.getElementById('input').focus()")
               .replace("document.getElementById('chatbar').hidden=false;", "document.getElementById('hint').textContent=''; document.getElementById('activity').hidden=false; document.getElementById('activity').innerHTML='<span class=act>codex idle</span>'; document.getElementById('chatbar').hidden=false;")
               .replace("r.attention={state:'blocked'", "r.attention={state:'waiting_for_you'")
-              .replace('const top=document.querySelector', "r.lastAgent='**Report — completed** Reviewed C:/Users/fabio/cs/41_cyber_sec/codex/LOCKDOWN-PLAN.md and the next steps. Full evidence below.'; const top=document.querySelector")
+              .replace('const top=document.querySelector', "r.lastAgent='**Report — completed** Reviewed D:/work/projects/security_audit/evidence/plans/codex/LOCKDOWN-PLAN.md and the next steps. Full evidence below.'; const top=document.querySelector")
               .replace('renderBubbles(fixtureItems);', "POINTS=pointMaps({delivered:1,items:[{id:'P1',mid:'focus-1',text:'Confirm the next step',state:'delivered',answers:[{mid:'focus-ask',said:'Ready to check'}]}]}); showPointsLine(); LAST_ITEMS=fixtureItems; renderBubbles(fixtureItems);")
               .replace('if(!baseline) {\n          g.actions', r"""
         if(!baseline) g.desktop=await ev(`(() => {
@@ -49,7 +49,7 @@ class LaptopFocus(focus.PhoneFocus):
             header:elements.map(e=>({y:b(e).top,h:b(e).height,w:b(e).width})),
             rendered:!header || !!fresh.querySelector('strong'),
             shortPath:!header || fresh.querySelector('.file-link')?.textContent==='LOCKDOWN-PLAN.md',
-            fullPath:!header || fresh.querySelector('.file-link')?.getAttribute('href').includes('41_cyber_sec'),
+            fullPath:!header || fresh.querySelector('.file-link')?.getAttribute('href').includes('security_audit'),
             filterRow};
         })()`);
         if(!baseline) {
