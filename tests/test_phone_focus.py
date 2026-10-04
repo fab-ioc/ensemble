@@ -140,6 +140,7 @@ main().catch(e=>{console.error(e.stack);process.exit(1)});
 
 @unittest.skipUnless(phone.NODE and phone.CHROME, 'needs Node and Chrome')
 class PhoneFocus(unittest.TestCase):
+    SCRIPT = JS
     @classmethod
     def setUpClass(cls):
         # Serve baseline HTML from git through the same isolated hub. Assets and
@@ -158,7 +159,7 @@ class PhoneFocus(unittest.TestCase):
             patch = mock.patch.object(phone.dashboard.Handler, '_send_file', serve)
             patch.start()
             cls.addClassCleanup(patch.stop)
-        with mock.patch.object(phone, 'CDP_JS', JS):
+        with mock.patch.object(phone, 'CDP_JS', cls.SCRIPT):
             phone.ThePhone.setUpClass.__func__(cls)
 
     @classmethod
