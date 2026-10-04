@@ -245,6 +245,7 @@ vm.runInContext(code + `
   const THUMB_GONE = new Set();
   const ROOM_NOS = new Map(), HUB_PORT = '', ROOM = 'room-po', REF_GEN = 0;
   const $ = () => box, fileBase = () => '', mdToHtml = t => t, copyLinkHtml = () => '', refPlain = t => t;
+  const foldedPointHtml = t => esc(foldLine(t));
   const withTaskBubble = items => items, rotationText = () => '', readingPlace = () => null, keepPlace = () => {};
   const showChatBar = () => {}, applyComments = () => {}, showLatest = () => {}, markLanded = () => {}, landPending = () => {};
   const showAskLine = () => {};
