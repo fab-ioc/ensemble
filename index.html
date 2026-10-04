@@ -3632,7 +3632,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       top: calc(var(--top-h) + var(--vv-top, 0px)); height: calc(var(--vv-h, 100dvh) - var(--top-h));
     }
   }
-.dp-state-short { display:none; }
+.dp-state-short, .dp-state-narrow { display:none; }
 /* Phone focus (#167): breadcrumb owns the title; metadata owns one row. */
 @media (max-width: 767px) and (pointer: coarse), (max-width: 640px) {
   body.row2 { --header-h:calc(2 * var(--touch-min) + 1px); }
@@ -3659,6 +3659,60 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-tab.on { background:var(--selected-bg); color:var(--selected-fg); box-shadow:inset 0 -4px var(--accent); }
 }
 .dp-summary-phone { display:none; }
+/* Shared report and focus marks; the same disclosure serves every width. */
+.dp-summary-phone summary > :is(p, .ln, h3, h4, h5, h6, blockquote, ul, ol, pre) { display:inline; margin:0; font:inherit; }
+.dp-summary-phone .dp-summary-t { white-space:normal; overflow-wrap:anywhere; }
+#detail-panel.is-live .dp-summary-phone .dp-summary-t { display:block; -webkit-line-clamp:unset; overflow:auto; }
+.dp-summary-phone .dp-summary-t > :first-child { margin-top:0; }
+.dp-summary-phone .dp-summary-t > :last-child { margin-bottom:0; }
+.dk-tab.on { background:var(--selected-bg); color:var(--selected-fg); box-shadow:inset 0 -4px var(--accent); }
+@media (min-width: 768px) {
+  body.mid #detail-panel { gap:0; padding-top:0; }
+  #detail-panel .dp-top, #detail-panel.is-live .dp-top {
+    display:grid; grid-template-columns:minmax(64px,1fr) max-content auto auto; align-items:center;
+    gap:0 var(--s-200); padding:var(--s-100) var(--s-200); container-type:inline-size;
+  }
+  #detail-panel .dp-head { display:contents; }
+  #detail-panel .dp-head h2 { grid-column:1; grid-row:1; margin:0; min-width:0; font-size:var(--fs-400); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #detail-panel .dp-close { grid-column:4; grid-row:1; }
+  body.dp-docked #detail-panel .dp-close { display:none; }
+  #detail-panel .dp-meta { grid-column:2; grid-row:1; margin:0; padding:0; gap:var(--s-200); min-width:0; flex-wrap:nowrap; }
+  #detail-panel .dp-meta > * { flex-shrink:0; white-space:nowrap; align-self:center; }
+  #detail-panel .dp-meta .dp-when { margin-left:0; white-space:nowrap; }
+  #detail-panel .dp-actions { grid-column:3; grid-row:1; margin:0; padding:0; }
+  #detail-panel .dp-summary { grid-column:1 / -1; margin:0; padding:0; min-width:0; background:transparent; }
+  #detail-panel .dp-summary-h, #detail-panel .dp-summary:not(.draft) > .dp-summary-t { display:none; }
+  #detail-panel .dp-summary-phone { display:block; }
+  .dp-summary-phone summary { height:28px; line-height:28px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; font-size:var(--fs-200); }
+  .dp-summary-phone .dp-summary-t { max-height:160px; overflow:auto; padding-bottom:var(--s-200); }
+  #po-panel .po-head { min-height:32px; padding:0 var(--s-200); }
+  #po-panel .po-who { display:flex; align-items:center; gap:var(--s-200); }
+  #po-panel .po-name { flex:0 1 auto; min-width:0; }
+  #po-panel .po-sub { flex:1 1 auto; }
+  #po-panel .po-sub-proj { display:none; }
+}
+@media (min-width:768px) and (max-width:1024px) {
+  #detail-panel .dp-meta .dp-state-full { display:none; }
+  #detail-panel .dp-meta .dp-state-short { display:inline; }
+  #detail-panel .dp-meta { gap:var(--s-100); }
+}
+
+@container (max-width:640px) {
+  #detail-panel .dp-meta .dp-state-full, #detail-panel .pr-label, #detail-panel .dp-updated-label { display:none; }
+  #detail-panel .dp-meta .dp-state-short { display:inline; }
+  #detail-panel .dp-meta { gap:var(--s-100); }
+  #detail-panel .wf-btn, #detail-panel .pr-btn { padding-inline:var(--s-100); }
+  #detail-panel .dp-meta > .loz:has(.dp-state-narrow) .dp-state-short { display:none; }
+  #detail-panel .dp-state-narrow { display:inline; }
+  #detail-panel .dp-run .dp-state-full, #detail-panel .dp-run .dp-state-short { display:none; }
+  #detail-panel .dp-run .run { font-size:0; gap:0; }
+  #detail-panel .dp-meta { gap:var(--s-050); }
+  #detail-panel .dp-actions .am-primary { font-size:0; padding:0; width:32px; min-width:32px; }
+  #detail-panel .dp-actions .am-primary::after { content:'\25b6'; font-size:var(--fs-200); }
+  #detail-panel .dp-actions .am-primary[data-act="end"]::after { content:'\25a0'; }
+
+}
+
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
@@ -4908,7 +4962,7 @@ function agentBadges(r) {
 
 function detailHead(r, isRoom) {
   return `<div class="dp-head">
-      <h2>${taskNoHtml(r, false)}${esc(detailTitle(r))}</h2>
+      <h2 title="${esc(detailTitle(r))}">${taskNoHtml(r, false)}${esc(detailTitle(r))}</h2>
       <button class="dp-close" title="Close (Esc)">×</button>
     </div>`;
 }
@@ -4924,7 +4978,7 @@ function workflowPicker(r, isRoom) {
   const items = WORKFLOW_COLS.map(c =>
     `<button class="wf-item${c.k === cur ? ' on' : ''}" data-wf="${c.k}">${esc(c.name)}</button>`).join('');
   return `<span class="wf-wrap">
-    <button class="wf-btn loz ${col.tone}" data-room="${esc(r.roomId)}" aria-haspopup="true">${esc(col.name)}<span class="caret">▾</span></button>
+    <button class="wf-btn loz ${col.tone}" data-room="${esc(r.roomId)}" aria-haspopup="true"><span class="dp-state-full">${esc(col.name)}</span><span class="dp-state-short">${esc(cur === 'inprogress' ? 'Doing' : cur === 'inreview' ? 'Review' : col.name)}</span><span class="caret">▾</span></button>
     <span class="wf-menu" hidden>${items}</span>
   </span>`;
 }
@@ -4938,7 +4992,7 @@ function priorityPicker(r, isRoom) {
   const items = PRIORITY_LEVELS.map(l =>
     `<button class="pr-item${l.n === cur ? ' on' : ''}" data-prio="${l.n}" aria-pressed="${l.n === cur}">${prioIcon(l.n, '', true)}${esc(l.name)}</button>`).join('');
   return `<span class="pr-wrap">
-    <button class="pr-btn" data-room="${esc(r.roomId)}" aria-haspopup="true" aria-expanded="false" title="Priority: ${esc(prioName(cur))}. Click to change">${prioIcon(cur, '', true)}${esc(prioName(cur))}<span class="caret" aria-hidden="true">▾</span></button>
+    <button class="pr-btn" data-room="${esc(r.roomId)}" aria-haspopup="true" aria-expanded="false" title="Priority: ${esc(prioName(cur))}. Click to change">${prioIcon(cur, '', true)}<span class="pr-label">${esc(prioName(cur))}</span><span class="caret" aria-hidden="true">▾</span></button>
     <span class="pr-menu" hidden>${items}</span>
   </span>`;
 }
@@ -4961,14 +5015,26 @@ function detailMeta(r, isLive, isRoom, now) {
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
-    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
-  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}${runChip(r, true)}
-    <span class="dp-when">updated ${agoSpan(r.updatedAt)} ago</span></div>`;
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-narrow">${esc(attn.state === 'waiting_for_you' ? 'Reply' : attn.state === 'agent_gone' ? 'Gone' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}<span class="dp-run" title="${esc(r.isLive ? r.status || 'idle' : 'not running')}">${runChip(r, true)}</span>
+    <span class="dp-when"><span class="dp-updated-label">updated </span>${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 
 // The summary answers "what did this task do" in one line, before any tab is
 // opened. For a task that never ran there is no answer, and printing a dash is
 // worse than saying nothing — so it carries the truth and the way forward.
+function reportHtml(r, text) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = mdIn(r, text);
+  tpl.content.querySelectorAll('a.file-link').forEach(a => {
+    const label = a.textContent;
+    if (ABS_PATH_RE.test(label)) {
+      a.title = label;
+      a.textContent = fileName(label);
+    }
+  });
+  return tpl.innerHTML;
+}
 function detailSummary(r, isRoom) {
   if (r.draft) {
     return `<div class="dp-summary draft">
@@ -4980,7 +5046,7 @@ function detailSummary(r, isRoom) {
   return `<div class="dp-summary">
     <div class="dp-summary-h">What happened</div>
     <div class="dp-summary-t">${esc(last.length > 400 ? last.slice(0, 400) + '\u2026' : last)}</div>
-    <details class="dp-summary-phone"><summary aria-label="What happened">${esc(last.split('\n')[0])}</summary><div class="dp-summary-t">${esc(last)}</div></details>
+    <details class="dp-summary-phone"><summary aria-label="What happened">${reportHtml(r, last.split('\n')[0])}</summary><div class="dp-summary-t">${reportHtml(r, last)}</div></details>
   </div>`;
 }
 
@@ -5236,8 +5302,8 @@ function renderDetail() {
       const freshReport = top.querySelector('.dp-summary-phone');
       if (report && freshReport) {
         if (report.innerHTML !== freshReport.innerHTML) {
-          report.querySelector('summary').textContent = freshReport.querySelector('summary').textContent;
-          report.querySelector('.dp-summary-t').textContent = freshReport.querySelector('.dp-summary-t').textContent;
+          report.querySelector('summary').innerHTML = freshReport.querySelector('summary').innerHTML;
+          report.querySelector('.dp-summary-t').innerHTML = freshReport.querySelector('.dp-summary-t').innerHTML;
         }
         freshReport.replaceWith(report);
         report.querySelector('.dp-summary-t').scrollTop = reportScroll;

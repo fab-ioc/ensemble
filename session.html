@@ -1094,7 +1094,8 @@
   }
   /* Phone conversation chrome stays in flow; no overlay can cover a balloon. */
   .phone-compose-tools { display:none; }
-  @media (pointer: coarse) and (max-width: 767px) {
+  /* Shared conversation focus layout (#167, #169), including narrow dock frames. */
+  @media all {
     #msgs .msg.needs-answer { border-inline-start:4px solid var(--c-warning-bold); }
     #msgs .msg.needs-answer > .from::after { content:'Reply needed'; color:var(--c-warning-fg); background:var(--c-warning-bg); padding:0 var(--s-100); margin-left:var(--s-200); font-size:var(--fs-100); }
     #chatbar { display:none; }
@@ -1124,6 +1125,23 @@
     .phone-tools-menu button { display:block; width:100%; text-align:left; }
     #compose:has(.ed-pt) { grid-template-columns:minmax(0,1fr); }
     #compose:has(.ed-pt) .ed-row { justify-content:flex-end; }
+  }
+  @media not all and (pointer: coarse) {
+    #compose { margin:0 var(--s-300) var(--s-200); grid-template-columns:minmax(0,1fr) auto auto; }
+    #compose #input { field-sizing:fixed; grid-column:1; grid-row:1; }
+    #compose #activity { grid-column:2; grid-row:1; align-self:center; }
+    #compose .ed-row { grid-column:3; grid-row:1; }
+    #compose #hint { grid-row:2; }
+    #compose:has(.ed-pt) #activity, #compose:has(.ed-pt) .ed-row { grid-column:1; grid-row:auto; }
+    #points-line { margin:0; border-radius:0; }
+    #points-line .pt-sum { min-height:28px; padding:0 var(--s-200); }
+    #ask-line, #ask-line .ask-link, #ask-line .ask-detail summary { min-height:28px; line-height:28px; }
+    #chat-controls { display:flex; flex:0 0 auto; align-items:flex-start; min-width:0; max-height:160px; overflow:auto; border-bottom:1px solid var(--border); }
+    #chat-controls:has(#chatbar[hidden]):has(#points-line[hidden]) { display:none; }
+    #chatbar { display:flex; padding:0 var(--s-200); min-height:28px; margin-left:auto; }
+    #chatbar-note { display:none; }
+    #points-line { flex:1 1 auto; min-width:0; border:0; }
+    #points-line .pt-sum-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   }
   /* ---- Session actions: begin shared block ---------------------------------
      The action bar (static/actions.js): one primary action and a More menu,
@@ -1243,10 +1261,12 @@
 <main>
   <div id="chatcol">
     <div id="msgpane">
-      <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button></div>
       <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
       <div id="ask-line" role="status" hidden></div>
-      <div id="points-line" hidden></div>
+      <div id="chat-controls">
+        <div id="points-line" hidden></div>
+        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button></div>
+      </div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
@@ -1306,13 +1326,8 @@ const PHONE_CHAT = window.matchMedia('(pointer: coarse) and (max-width: 767px)')
 function fitPhoneComposer() {
   const activity = document.getElementById('activity'), compose = document.getElementById('compose');
   const latest = document.getElementById('to-latest');
-  if (PHONE_CHAT.matches) {
-    compose.prepend(activity);
-    compose.querySelector('.ed-row').prepend(latest);
-  } else {
-    compose.before(activity);
-    document.getElementById('msgpane').append(latest);
-  }
+  compose.prepend(activity);
+  compose.querySelector('.ed-row').prepend(latest);
 }
 fitPhoneComposer();
 PHONE_CHAT.addEventListener('change', fitPhoneComposer);
@@ -3132,7 +3147,7 @@ function askLineHtml(ask, mid, href) {
   const said = mid ? `<a class="ask-link" href="${esc(href(mid))}" data-ref-msg="${esc(mid)}">${esc(line)}</a>` : esc(line);
   // A task in a project with a PO asks its PO, not you (task → PO → CEO).
   const who = ask.to === 'po' ? 'Waiting for the PO' : 'Waiting for you';
-  if (typeof PHONE_CHAT !== 'undefined' && PHONE_CHAT.matches) {
+  if (typeof PHONE_CHAT !== 'undefined') {
     const first = `${who}: ${line.split('\n')[0]}`;
     return mid
       ? `<span class="ask-text"><a class="ask-link" href="${esc(href(mid))}" data-ref-msg="${esc(mid)}">${esc(first)}</a></span>`
@@ -4320,7 +4335,8 @@ function chatNamesFor(room, solo) {
 function composePlaceholder(isPo, solo) {
   const who = isPo ? 'the PO' : solo ? 'the agent' : 'the agents';
   const direct = solo ? '' : ' — @codex or @claude to direct it ·';
-  $('#input').placeholder = PHONE_CHAT.matches ? `Message ${who}…` : `Message ${who}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
+  $('#input').placeholder = `Message ${who}…`;
+  $('#input').title = `Message ${who}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
 }
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).

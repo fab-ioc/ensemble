@@ -1047,12 +1047,13 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
   the browser's default grey. The head's is short (`composePlaceholder`): who it goes to, how to
   direct it and the keys, "Message the PO — @codex or @claude to direct it · #18 links a task ·
   Ctrl+Enter sends" (no `@` part in a one-agent chat); numbered asks and images have buttons.
-- **With a mouse the box is one card** (layout A, #126; `@media not all and (pointer: coarse)`):
+- **With a mouse the box is one card** (layout A, #126; compacted in #169):
   `--surface`, a `--border-strong` edge (`--focus-ring` while you type), `--r-300`, 24px from the
-  column's sides and 16px from its foot. Inside: the hint line (`#hint`, `--fg-muted`, gone when
-  empty), the words with no box of their own, growing with them (`field-sizing: content`), then
-  one row: **+ Add an ask** and **Attach** (Subtle; Attach opens the file picker for images, the
-  same path as a paste or a drop), then **Send**, the surface's one Primary button.
+  column's sides in the original layout; the compact layout uses 12px sides and 8px at its foot. The input, shared
+  **+** menu and **Send** occupy one row until the input is focused, when it grows to 88px.
+  The menu contains Attach, Add an ask and Team activity. Send remains visible. Activity is
+  inside the composer; an empty hint takes no room. Latest lives beside Send, never over a
+  balloon. The placeholder only names the recipient; routing and shortcuts remain in its title.
 - **Sent as one message the hub reads:** `## Points (N)`, the head, then one `**N.**` item per point
   with its `[image] <name>` lines inside it (an empty point is dropped; no point at all sends the
   words alone). The hub gives each item its own `P` number, chip and reminder (`points.py`), puts each
@@ -1463,8 +1464,8 @@ you change transition behaviour, change both, or they drift.
 - [ ] Nothing added to the top bar that belongs to a view
 - [ ] Checked at a narrow laptop width **and** wide, in Light first and then every other theme
 - [ ] The list still does not reorder while the mouse is over it
-- [ ] Checked at 360 and 430px in an iframe, and at a landscape phone size: §8 holds, and 1280 and
-      1440 measure the same as before the change
+- [ ] Checked at 360 and 430px in an iframe and at a landscape phone size: §8 holds; at 1280,
+      1440 and 1728 the conversation shares and geometry meet §9
 
 ---
 
@@ -1532,8 +1533,8 @@ desktop is untouched by construction.
     message scroller should occupy at least 60% of the whole viewport. Measure the scroller,
     excluding header, notices and composer, in task and PO chat at 360, 390 and 430px.
     Use CDP touch emulation; check `matchMedia` before substituting a coarse query.
-    These compact chat rules additionally require width below 768px; desktop embedded frames
-    must retain the desktop layout.
+    Phone navigation rules require width below 768px; the report disclosure, composer controls,
+    focus marks and normal-flow notices are shared with desktop (§9), including narrow frames.
 12. **One metadata row; one notice.** The breadcrumb owns the title. The task's metadata row
     carries workflow, attention, priority and run state; actions including End are in the
     existing tab strip's menu. The PO's header is one row too. What happened is a one-line
@@ -1557,3 +1558,33 @@ desktop is untouched by construction.
     below their contents. Catch-up is in normal flow, never sticky over messages. Latest is
     in the phone composer, never floating above a balloon. Test at both scroll ends, after
     a notice jump and with the composer focused, including long notices and reports.
+
+
+## 9. Laptop and desktop conversation focus (#169)
+
+- At 1280 x 800, 1440 x 900 and 1728 x 1117, measure the message scroller against the
+  whole viewport in a project task, an Unassigned task and the PO chat. Target at least
+  75% at 1728 x 1117 with the composer unfocused and disclosures collapsed. Keep the
+  phone's 60% target at 360, 390 and 430 x 844. Verify Light, Dark and Fjord.
+- Use the same task header renderers at every width. On desktop the title, workflow,
+  attention, priority, run state, updated age and primary action share one line. Long
+  titles truncate with the full title available on hover. Reserve at least 64px for
+  the title and never shrink metadata into actions. In narrow dock headers, show the
+  run dot and a compact Stop/Resume button with their text alternatives and tooltips;
+  shorten waiting labels. Secondary actions stay in the existing dock menu. Never
+  give End a row of its own. Check working, stopped/agent-gone and waiting-for-PO
+  states with longer ages as well as waiting-for-you.
+- What happened is the same one-line disclosure used on phones. Render its first line
+  as Markdown using the task's file-link context; absolute path labels become filenames,
+  with the full path retained in the link and title. Expanded reports scroll internally
+  and retain their open state and reading position through updates.
+- Waiting for you keeps its semantic warning emphasis. A waiting-message link occupies
+  its own slim row and jumps to the complete balloon. The Your asks disclosure and Team
+  activity control share one row on desktop. Expanded asks stay in flow, never over chat.
+- Use the shared one-row composer and fixed focus-ring inset. Keep the selected dock tab's
+  selected background/text and 4px accent underline at every width. A message needing an
+  answer has a warning edge and Reply needed label; remove it when the ask closes.
+- Nothing sticky or floating may cover a balloon. Notices and asks are outside the message
+  scroller; catch-up is normal flow; Latest is in the composer. Assert geometry at both
+  scroll ends, after jumps, with the input focused and with long reports. No horizontal
+  page scroll, including dock frames narrower than the outer viewport.

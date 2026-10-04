@@ -181,10 +181,7 @@ class TheChatBox(unittest.TestCase):
             p.write_text("const I = {}; const $ = () => I;\n" + js, encoding="utf-8")
             out = json.loads(subprocess.run([NODE, str(p)], capture_output=True, text=True, encoding="utf-8", timeout=60).stdout)
         self.assertEqual(out, [
-            "Message the PO — @codex or @claude to direct it · #18 links a task · Ctrl+Enter sends",
-            "Message the agents — @codex or @claude to direct it · #18 links a task · Ctrl+Enter sends",
-            "Message the agent — #18 links a task · Ctrl+Enter sends",
-            "Message the PO — #18 links a task · Ctrl+Enter sends",
+            "Message the PO…", "Message the agents…", "Message the agent…", "Message the PO…",
         ])
 
     def test_the_card_and_the_balloons_are_a_mouse_only(self):
