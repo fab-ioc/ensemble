@@ -88,9 +88,43 @@ async function main() {
             w.eval('ROOM_OBJ.openAsk=null; showAskLine(LAST_ITEMS)');
             return {highlighted,jumped,overlaps,ring,expanded,focusedBottom,frameHeight:f.clientHeight,menuTargets,filter,cleared:!marked.classList.contains('needs-answer'),placeholder:input.placeholder,taskActions:${kind!=='po'}?pdMenuItems({}).map(i=>i.id):[]};
           })()`);
+          const menuSetup=`(() => { const d=document.querySelector('${sel}').contentDocument; const menu=d.querySelector('.phone-compose-tools'); menu.querySelector('summary').focus(); menu.open=true; })()`;
+          await ev(menuSetup);
+          await c.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27},s);
+          await c.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27},s);
+          g.menuDismiss=await ev(`(() => {const d=document.querySelector('${sel}').contentDocument,m=d.querySelector('.phone-compose-tools');return {escape:!m.open,focus:d.activeElement===m.querySelector('summary')};})()`);
+          await ev(menuSetup);
+          const point=await ev(`(() => {const f=document.querySelector('${sel}'),b=f.getBoundingClientRect(),i=f.contentDocument.getElementById('input').getBoundingClientRect();return {x:b.left+i.left+i.width/2,y:b.top+i.top+i.height/2};})()`);
+          await c.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1},s);
+          await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1},s);
+          Object.assign(g.menuDismiss, await ev(`(() => {const d=document.querySelector('${sel}').contentDocument,m=d.querySelector('.phone-compose-tools');const outside=!m.open;d.getElementById('input').blur();m.open=true;d.querySelector('.copy-link').focus();return {outside,focusOut:!m.open};})()`));
           if(kind!=='po') {
             await sleep(80);
-            g.report=await ev(`(() => { const report=document.querySelector('.dp-summary-phone'); const before=report.getBoundingClientRect().height;report.querySelector('summary').click();const after=report.getBoundingClientRect().height;report.open=false;return {before,after}; })()`);
+            g.report=await ev(`(() => {
+              const r=rowBySid(SELECTED_SID);r.lastAgent='Long report. '+('Evidence and next steps. '.repeat(120));renderDetail();
+              const report=document.querySelector('.dp-summary-phone'),body=report.querySelector('.dp-summary-t');
+              const initialOpen=report.open;
+              const before=report.getBoundingClientRect().height;report.querySelector('summary').click();
+              const after=report.getBoundingClientRect().height;body.scrollTop=64;const scroll=body.scrollTop;
+              r.status='busy';renderDetail();const same=document.querySelector('.dp-summary-phone')===report;
+              const held=report.open && body.scrollTop===scroll;
+              r.lastAgent+=' Updated report.';renderDetail();const updated=report.open && body.scrollTop===scroll && body.textContent.endsWith('Updated report.');
+              // Leave it open: the next task must start with a fresh disclosure.
+              return {before,after,same,held,updated,scroll,initialOpen};
+            })()`);
+            if(width===360) g.metaCases=await ev(`(() => {
+              const r=rowBySid(SELECTED_SID),saved={...r},attention=ATTENTION_BY_ROOM.get(r.roomId),out=[];
+              ATTENTION_BY_ROOM.delete(r.roomId);
+              for(const waiting of ['po','you','gone']) for(const run of ['idle','busy','stopped']) for(const priority of [1,2,3,4,5]) {
+                r.attention=waiting==='po'?null:{state:waiting==='you'?'waiting_for_you':'agent_gone'};
+                r.waitingOnPo=waiting==='po'?{kind:'question',since:1}:null;r.isLive=run!=='stopped';r.status=run;r.priority=priority;
+                document.querySelector('#detail-panel .dp-meta').outerHTML=detailMeta(r,r.isLive,true,Date.now()/1000);
+                const meta=document.querySelector('#detail-panel .dp-meta'),b=meta.getBoundingClientRect();
+                const children=[...meta.children].filter(e=>e.getBoundingClientRect().width);
+                out.push({waiting,run,priority,fits:meta.scrollWidth<=meta.clientWidth && children.every(e=>e.getBoundingClientRect().right<=innerWidth),oneLine:children.every(e=>Math.abs((e.getBoundingClientRect().top+e.getBoundingClientRect().bottom)/2-(b.top+b.bottom)/2)<1)});
+              }
+              Object.assign(r,saved);if(attention)ATTENTION_BY_ROOM.set(r.roomId,attention);renderDetail();return out;
+            })()`);
           }
         }
         out.push(g);
@@ -155,6 +189,12 @@ class PhoneFocus(unittest.TestCase):
                 self.assertTrue(all(w >= 44 and h >= 44 for w,h in a['menuTargets']))
                 self.assertTrue(a['filter'])
                 self.assertLess(len(a['placeholder']), 30)
+                self.assertTrue(all(g['menuDismiss'].values()), g['menuDismiss'])
                 if g['kind'] != 'po':
                     self.assertIn('end', a['taskActions'])
                     self.assertGreater(g['report']['after'], g['report']['before'])
+                    self.assertTrue(g['report']['same'] and g['report']['held'] and g['report']['updated'],g['report'])
+                    self.assertGreater(g['report']['scroll'], 0)
+                    self.assertFalse(g['report']['initialOpen'])
+                    for case in g.get('metaCases', []):
+                        self.assertTrue(case['fits'] and case['oneLine'],case)

@@ -1525,11 +1525,17 @@ desktop is untouched by construction.
     into paragraphs above the conversation. Selected tabs use selected background/text and
     a 4px accent underline; the message awaiting an answer has a warning-colour leading edge
     and a Reply needed label in the warning foreground/background pair. Clear that mark when the ask closes.
+    Use short phone labels (PO reply, Your reply, stopped) so every metadata state fits at
+    360px, including a working or stopped agent and every priority. Keep an expanded report
+    open and at the same reading position through status/report refreshes in the same room;
+    switching rooms starts a new disclosure.
 13. **A compact composer, always reachable.** One input row with Send, a 44px `+` menu for
     Attach / Add an ask / Team activity, and a 44px Latest arrow when needed. Team activity's
     menu item states whether it is folded or shown. Activity belongs inside the composer;
     focus adds a fixed `--focus-ring` inset and expands the input. Keep the placeholder short,
     fields at 16px, and every control 44px. Keep navigation visible; never hide it on scroll.
+    The composer menu closes on an outside click or focus change. Escape closes it and
+    returns focus to its trigger before other Escape handlers act.
 14. **No balloon under chrome.** Notices occupy their own flex rows; balloons cannot shrink
     below their contents. Catch-up is in normal flow, never sticky over messages. Latest is
     in the phone composer, never floating above a balloon. Test at both scroll ends, after

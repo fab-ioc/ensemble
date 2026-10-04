@@ -1315,7 +1315,24 @@ function fitPhoneComposer() {
 }
 fitPhoneComposer();
 PHONE_CHAT.addEventListener('change', fitPhoneComposer);
+function closePhoneTools(focus = false) {
+  const menu = document.querySelector('.phone-compose-tools[open]');
+  if (!menu) return false;
+  menu.open = false;
+  if (focus) menu.querySelector('summary').focus({ preventScroll:true });
+  return true;
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && closePhoneTools(true)) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+}, true);
+document.addEventListener('focusin', e => {
+  if (!e.target.closest('.phone-compose-tools')) closePhoneTools();
+});
 document.addEventListener('click', e => {
+  if (!e.target.closest('.phone-compose-tools')) closePhoneTools();
   const action = e.target.closest('[data-phone-action]');
   if (!action) return;
   action.closest('details').open = false;

@@ -3632,6 +3632,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       top: calc(var(--top-h) + var(--vv-top, 0px)); height: calc(var(--vv-h, 100dvh) - var(--top-h));
     }
   }
+.dp-state-short { display:none; }
 /* Phone focus (#167): breadcrumb owns the title; metadata owns one row. */
 @media (max-width: 767px) and (pointer: coarse), (max-width: 640px) {
   body.row2 { --header-h:calc(2 * var(--touch-min) + 1px); }
@@ -3643,6 +3644,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.dp-docked #detail-panel .dp-meta { padding:0 var(--s-200); margin:0; min-height:var(--touch-min); gap:var(--s-100); overflow:visible; flex-wrap:nowrap; }
   body.dp-docked .dp-meta .dp-when { display:none; }
   body.dp-docked .dp-meta > .loz { align-self:center; }
+  body.dp-docked .dp-meta .dp-state-full { display:none; }
+  body.dp-docked .dp-meta .dp-state-short { display:inline; }
   body.dp-docked .dp-meta .wf-btn, body.dp-docked .dp-meta .pr-btn { min-height:var(--touch-min); padding:0 var(--s-100); font-size:var(--fs-100); }
   body.dp-docked .dp-meta .wf-btn::after, body.dp-docked .dp-meta .pr-btn::after { content:none; }
   body.dp-docked #detail-panel .dp-summary { margin:0; padding:0 var(--s-200); border-radius:0; }
@@ -4945,12 +4948,12 @@ function priorityPicker(r, isRoom) {
 // they are reference rather than headline.
 // A task in a project with a PO asks its PO, not you (task → PO → CEO): the
 // row says so quietly, in the neutral tone — it is not on your list.
-function poWaitLoz(r) {
+function poWaitLoz(r, compact = false) {
   const w = r.waitingOnPo;
   if (!w) return '';
   const at = w.since ? new Date(w.since * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   const tip = `${w.kind === 'blocked' ? 'Blocked' : 'Asked its PO'}${at ? ' at ' + at : ''}${w.line ? ': ' + w.line : ''}`;
-  return `<span class="loz neutral" title="${esc(tip)}">waiting for the PO</span>`;
+  return `<span class="loz neutral" title="${esc(tip)}">${compact ? '<span class="dp-state-full">waiting for the PO</span><span class="dp-state-short">PO reply</span>' : 'waiting for the PO'}</span>`;
 }
 
 function detailMeta(r, isLive, isRoom, now) {
@@ -4958,8 +4961,8 @@ function detailMeta(r, isLive, isRoom, now) {
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
-    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : poWaitLoz(r);
-  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}${runChip(r)}
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}${runChip(r, true)}
     <span class="dp-when">updated ${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 
@@ -5223,8 +5226,23 @@ function renderDetail() {
       panel.dataset.topPending = '1';     // apply once the menu closes
     } else {
       const focus = focusKeyIn(top);
+      // A status tick must not close the report or move the passage being read.
+      // This top belongs to one room; a room switch creates a new top above.
+      const report = top.querySelector('.dp-summary-phone');
+      const reportScroll = report?.querySelector('.dp-summary-t')?.scrollTop || 0;
+      const reportFocused = report?.contains(top.ownerDocument.activeElement);
       top._html = topSig;
       top.innerHTML = topHtml;
+      const freshReport = top.querySelector('.dp-summary-phone');
+      if (report && freshReport) {
+        if (report.innerHTML !== freshReport.innerHTML) {
+          report.querySelector('summary').textContent = freshReport.querySelector('summary').textContent;
+          report.querySelector('.dp-summary-t').textContent = freshReport.querySelector('.dp-summary-t').textContent;
+        }
+        freshReport.replaceWith(report);
+        report.querySelector('.dp-summary-t').scrollTop = reportScroll;
+        if (reportFocused) report.querySelector('summary').focus({ preventScroll:true });
+      }
       restoreFocus(top, focus);
       delete panel.dataset.topPending;
     }
@@ -5864,13 +5882,13 @@ function renderHeadlessRow(r, parsed, now) {
 // board groups them, and never sorts them: ordering happens in exactly one
 // place (refresh's freeze) and a second sort here would defeat it.
 // ---------------------------------------------------------------------------
-function runChip(r) {
+function runChip(r, compact = false) {
   if (r.draft) return `<span class="run"><span class="dot off"></span>not started</span>`;
   if (r.isLive && r.status === 'busy') return `<span class="run"><span class="dot working"></span>working</span>`;
   if (r.isLive) return `<span class="run"><span class="dot idle"></span>idle</span>`;
   // Calm on purpose: this is the whole board for a minute after every hub
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
-  return `<span class="run off"><span class="dot off"></span>not running</span>`;
+  return `<span class="run off"><span class="dot off"></span>${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
 }
 
 // ---- Task numbers: begin ----------------------------------------------------
@@ -11861,7 +11879,7 @@ function pdRuntimeRestore() {
 // header's ⋯ for now).
 window.addEventListener('message', e => {
   if (e.origin !== location.origin || e.data?.type !== 'chat-open-ask') return;
-  const panel = document.getElementById('detail-panel');
+  const panel = pdById('detail-panel');
   const frame = panel?.querySelector('iframe.dp-session');
   if (!frame || frame.contentWindow !== e.source || frame.dataset.room !== e.data.roomId) return;
   panel.classList.toggle('has-open-ask', !!e.data.open);
@@ -11873,7 +11891,7 @@ function pdMenuItems(ctx) {
   if (!r) return [];
   const items = pdActionItems(r, ctx, { el: PD.els['po-chat'] });
   if (phoneNow() && r.lastAgent) items.push({id:'report',label:'What happened',run:() => {
-    const panel = document.getElementById('detail-panel');
+    const panel = pdById('detail-panel');
     panel.classList.remove('has-open-ask');
     const report = panel.querySelector('.dp-summary-phone');
     if (report) report.open = true;
