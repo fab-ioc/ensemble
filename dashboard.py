@@ -519,7 +519,7 @@ STATIC_DIR = Path(__file__).parent
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
-              "static/selbar.js", "static/noun.js", "static/taskcard.js",
+              "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
@@ -5358,6 +5358,44 @@ def ref_context(own: str = "", projects: list[dict] | None = None) -> dict:
     rows = [{"id": p["id"], "name": p.get("name") or "", "key": keys.get(p["id"], "")} for p in projects]
     nouns = sorted({project_noun("one"), project_noun("many")} - {""})
     return {"projects": task_numbers.project_names(rows, titles), "own": own or "", "nouns": nouns}
+
+
+def point_ref(point_id: str, project_id: str) -> dict | None:
+    """A unique point in a project, including closed points outside view's cap.
+
+    Ledgers number per room. Never choose one of two same-numbered points.
+    The room poll cannot look up an older closed point or disambiguate rooms.
+    """
+    if not re.fullmatch(r"P[1-9][0-9]{0,5}[a-z]?", point_id):
+        return None
+    projects = load_projects()
+    project = next((p for p in projects if p["id"] == project_id), None)
+    if not project:
+        return None
+    links = load_session_projects()
+    found = []
+    for room in _task_index():
+        rid = room["id"]
+        if rid != project.get("poRoomId") and _task_project(room, links, projects) != project_id:
+            continue
+        if not points.exists(rid):
+            continue
+        matches = [p for p in points.load(rid)["points"] if p["id"] == point_id]
+        for point in matches:
+            found.append((rid, point))
+        if len(found) > 1:
+            return None
+    if not found:
+        return None
+    rid, point = found[0]
+    # Read current replies only for the matching ledger, never all transcripts.
+    point = next((p for p in points.sync(rid)["points"] if p["id"] == point_id), point)
+    if not point.get("mid"):
+        return None
+    return {"id": point_id, "roomId": rid, "mid": point["mid"],
+            "text": points.strip_point_lines(point.get("text") or "")[:400],
+            "stage": point["state"], "createdAt": point.get("createdAt"),
+            "projectId": project_id, "project": project.get("name") or ""}
 
 
 def room_project(room_id: str) -> str:
@@ -11147,6 +11185,12 @@ class Handler(BaseHTTPRequestHandler):
             shown = ctx_pid or pid
             info["inProject"] = bool(shown) and info.get("projectId") == shown
             self._send_json(200, info)
+            return
+        if p == "/api/point/ref":
+            q = parse_qs(u.query)
+            pid = q.get("project", [""])[0] or room_project(q.get("room", [""])[0])
+            info = point_ref(q.get("ref", [""])[0], pid)
+            self._send_json(200 if info else 404, info or {"error": "no_unique_point"})
             return
         if p == "/api/task/projects":
             # What the pages need to read a text's bare numbers in the right

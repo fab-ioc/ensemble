@@ -159,7 +159,7 @@ class SessionChips(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = "\n".join([
-            TASKCARD, ATTACH,
+            TASKCARD, ATTACH, "const parkPointRefs = s => s;",
             block(SESSION, "// ---- Links in rendered text: begin shared block", "// ---- Links in rendered text: end shared block"),
             const(SESSION, "REF_URL_RE"), const(SESSION, "REF_A"), const(SESSION, "REF_MARK_RE"),
             const(SESSION, "REF_BLOCK_RE"), fn(SESSION, "stripRefBlocks"), fn(SESSION, "refOfUrl"),
@@ -244,7 +244,7 @@ class SessionChips(unittest.TestCase):
         self.assertIn("s = parkTaskRefs(s, chips);", fn(SESSION, "mdToHtml"))
         self.assertIn("agent: a.dataset.agent", SESSION)
         self.assertIn('<script src="/static/taskcard.js"></script>', SESSION)
-        self.assertIn("TaskCard.init({ open: openTaskFrom });", SESSION)
+        self.assertIn("TaskCard.init({ open: openTaskFrom, openPoint:", SESSION)
         self.assertIn("TASK_REF_PID = taskRefProject(m);", fn(SESSION, "renderBubbles"), "each balloon is drawn in its own project")
         self.assertIn("TaskCard.refsIn(text, taskRefCtx())", fn(SESSION, "edRefsHtml"), "the box preview reads the words the same way")
         self.assertIn("const h = taskChipHtml(r);", fn(SESSION, "edRefsHtml"), "the box preview shows the chips too")
