@@ -3669,7 +3669,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 @media (min-width: 768px) {
   body.mid #detail-panel { gap:0; padding-top:0; }
   #detail-panel .dp-top, #detail-panel.is-live .dp-top {
-    display:grid; grid-template-columns:minmax(0,1fr) auto auto auto; align-items:center;
+    display:grid; grid-template-columns:minmax(64px,1fr) max-content auto auto; align-items:center;
     gap:0 var(--s-200); padding:var(--s-100) var(--s-200); container-type:inline-size;
   }
   #detail-panel .dp-head { display:contents; }
@@ -3677,7 +3677,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #detail-panel .dp-close { grid-column:4; grid-row:1; }
   body.dp-docked #detail-panel .dp-close { display:none; }
   #detail-panel .dp-meta { grid-column:2; grid-row:1; margin:0; padding:0; gap:var(--s-200); min-width:0; flex-wrap:nowrap; }
-  #detail-panel .dp-meta > * { flex-shrink:0; white-space:nowrap; }
+  #detail-panel .dp-meta > * { flex-shrink:0; white-space:nowrap; align-self:center; }
   #detail-panel .dp-meta .dp-when { margin-left:0; white-space:nowrap; }
   #detail-panel .dp-actions { grid-column:3; grid-row:1; margin:0; padding:0; }
   #detail-panel .dp-summary { grid-column:1 / -1; margin:0; padding:0; min-width:0; background:transparent; }
@@ -3704,6 +3704,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #detail-panel .wf-btn, #detail-panel .pr-btn { padding-inline:var(--s-100); }
   #detail-panel .dp-meta > .loz:has(.dp-state-narrow) .dp-state-short { display:none; }
   #detail-panel .dp-state-narrow { display:inline; }
+  #detail-panel .dp-run .dp-state-full, #detail-panel .dp-run .dp-state-short { display:none; }
+  #detail-panel .dp-run .run { font-size:0; gap:0; }
+  #detail-panel .dp-meta { gap:var(--s-050); }
+  #detail-panel .dp-actions .am-primary { font-size:0; padding:0; width:32px; min-width:32px; }
+  #detail-panel .dp-actions .am-primary::after { content:'\25b6'; font-size:var(--fs-200); }
+  #detail-panel .dp-actions .am-primary[data-act="end"]::after { content:'\25a0'; }
+
 }
 
 </style>
@@ -5008,8 +5015,8 @@ function detailMeta(r, isLive, isRoom, now) {
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
-    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-narrow">${esc(attn.state === 'waiting_for_you' ? 'Reply' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
-  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}${runChip(r, true)}
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-narrow">${esc(attn.state === 'waiting_for_you' ? 'Reply' : attn.state === 'agent_gone' ? 'Gone' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}<span class="dp-run" title="${esc(r.isLive ? r.status || 'idle' : 'not running')}">${runChip(r, true)}</span>
     <span class="dp-when"><span class="dp-updated-label">updated </span>${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 

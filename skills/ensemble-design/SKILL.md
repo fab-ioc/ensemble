@@ -1568,8 +1568,12 @@ desktop is untouched by construction.
   phone's 60% target at 360, 390 and 430 x 844. Verify Light, Dark and Fjord.
 - Use the same task header renderers at every width. On desktop the title, workflow,
   attention, priority, run state, updated age and primary action share one line. Long
-  titles truncate with the full title available on hover. Secondary actions stay in
-  the existing dock menu. Never give End a row of its own.
+  titles truncate with the full title available on hover. Reserve at least 64px for
+  the title and never shrink metadata into actions. In narrow dock headers, show the
+  run dot and a compact Stop/Resume button with their text alternatives and tooltips;
+  shorten waiting labels. Secondary actions stay in the existing dock menu. Never
+  give End a row of its own. Check working, stopped/agent-gone and waiting-for-PO
+  states with longer ages as well as waiting-for-you.
 - What happened is the same one-line disclosure used on phones. Render its first line
   as Markdown using the task's file-link context; absolute path labels become filenames,
   with the full path retained in the link and title. Expanded reports scroll internally

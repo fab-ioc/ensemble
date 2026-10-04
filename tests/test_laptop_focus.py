@@ -9,6 +9,15 @@ class LaptopFocus(focus.PhoneFocus):
               .replace('const height = 844;', 'const height = ({768:800,1280:800,1440:900,1728:1117})[width];')
               .replace('if(!baseline && width<768)', 'if(!baseline)')
               .replace('length:6', 'length:20')
+              .replace("id:'focus-ask',from:", "id:'focus-ask',answers:['P1'],from:")
+              # Freeze polling after the initial room request finishes: dock visibility
+              # notifications can otherwise replace the synthetic messages mid-assertion.
+              .replace('await sleep(600);', r"""
+        await ev(`document.querySelector('${sel}').contentWindow.eval('tick=()=>{}; refresh=async()=>{}')`);
+        await until(`!document.querySelector('${sel}').contentWindow.eval('REFRESH_BUSY')`);
+        await sleep(600);
+""")
+              .replace("const highlighted=marked.classList", "if(!marked)throw Error('missing fixture '+location.href+' '+w.location.href+' '+w.eval('JSON.stringify(LAST_ITEMS)')); const highlighted=marked.classList")
               .replace("d.querySelector('.copy-link').focus()", "d.getElementById('input').focus()")
               .replace("document.getElementById('chatbar').hidden=false;", "document.getElementById('hint').textContent=''; document.getElementById('activity').hidden=false; document.getElementById('activity').innerHTML='<span class=act>codex idle</span>'; document.getElementById('chatbar').hidden=false;")
               .replace("r.attention={state:'blocked'", "r.attention={state:'waiting_for_you'")
@@ -45,6 +54,38 @@ class LaptopFocus(focus.PhoneFocus):
         })()`);
         if(!baseline) {
           g.actions
+""")
+              .replace('out.push(g);', r"""
+        if(!baseline && kind!=='po') g.headerStates=await ev(`(() => {
+          const r=rowBySid(SELECTED_SID), saved={...r}, attention=ATTENTION_BY_ROOM.get(r.roomId), out=[];
+          const top=document.querySelector('#detail-panel .dp-top');
+          const b=e=>e.getBoundingClientRect();
+          ATTENTION_BY_ROOM.delete(r.roomId);
+          for(const state of ['gone','working','po','you']) for(const age of [20,87*60,9*86400,400*86400]) for(const priority of [1,2,3,4,5]) {
+            r.isLive=state!=='gone';r.status=state==='working'?'busy':state==='gone'?'stopped':'idle';r.priority=priority;
+            r.attention=state==='gone'?{state:'agent_gone'}:state==='you'?{state:'waiting_for_you'}:null;
+            r.waitingOnPo=state==='po'?{kind:'question',since:1}:null;r.updatedAt=Date.now()/1000-age;
+            top.innerHTML=detailHead(r,true)+detailMeta(r,r.isLive,true,Date.now()/1000)+detailActions(r,r.isLive)+detailSummary(r,true);
+            const nodes=[top.querySelector('h2'),...top.querySelector('.dp-meta').children,top.querySelector('.dp-actions')];
+            const rects=nodes.map(b), frame=b(top);
+            out.push({state,age,priority,titleWidth:rects[0].width,
+              fits:rects.every(x=>x.left>=frame.left && x.right<=frame.right),
+              overlap:rects.some((x,i)=>rects.slice(i+1).some(y=>Math.max(x.left,y.left)<Math.min(x.right,y.right)-.5 && Math.max(x.top,y.top)<Math.min(x.bottom,y.bottom)-.5)),
+              oneLine:Math.max(...rects.map(x=>(x.top+x.bottom)/2))-Math.min(...rects.map(x=>(x.top+x.bottom)/2))<1});
+          }
+          Object.assign(r,saved);if(attention)ATTENTION_BY_ROOM.set(r.roomId,attention);
+          top.innerHTML=detailHead(r,true)+detailMeta(r,r.isLive,true,Date.now()/1000)+detailActions(r,r.isLive)+detailSummary(r,true);fitLiveChat();
+          return out;
+        })()`);
+        if(!baseline && A.shots && width===768 && kind!=='po') {
+          await ev(`(() => {
+            const r={...rowBySid(SELECTED_SID),isLive:false,status:'stopped',attention:{state:'agent_gone'},waitingOnPo:null,updatedAt:Date.now()/1000-87*60};
+            document.querySelector('#detail-panel .dp-top').innerHTML=detailHead(r,true)+detailMeta(r,false,true,Date.now()/1000)+detailActions(r,false)+detailSummary(r,true);
+          })()`);
+          const shot=await c.send('Page.captureScreenshot',{format:'png'},s);
+          fs.writeFileSync(path.join(A.shots,`${kind}-stopped-${width}-${theme}.png`),Buffer.from(shot.data,'base64'));
+        }
+        out.push(g);
 """))
 
     def test_conversation_geometry(self):
@@ -71,11 +112,14 @@ class LaptopFocus(focus.PhoneFocus):
                 self.assertEqual(desktop['overlaps'], [False, False, False])
                 self.assertTrue(desktop['scrolls'] and desktop['composerOneRow'] and desktop['filterRow'])
                 self.assertTrue(desktop['rendered'] and desktop['shortPath'] and desktop['fullPath'])
-                if g['width'] >= 1280:
+                if desktop['header']:
                     centers = [e['y'] + e['h']/2 for e in desktop['header']]
                     self.assertLess(max(centers) - min(centers), 1)
                     self.assertTrue(all(e['w'] > 0 for e in desktop['header']))
                 if g['kind'] != 'po':
+                    for case in g['headerStates']:
+                        self.assertGreaterEqual(case['titleWidth'], 64, case)
+                        self.assertTrue(case['fits'] and case['oneLine'] and not case['overlap'], case)
                     # Desktop keeps End beside the metadata; phone puts it in the menu.
                     self.assertGreater(g['report']['after'], g['report']['before'])
                     self.assertTrue(g['report']['same'] and g['report']['held'] and g['report']['updated'], g['report'])
