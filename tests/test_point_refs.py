@@ -32,9 +32,10 @@ class Matching(unittest.TestCase):
 
     def test_mentions_and_project_context(self):
         texts = ['Re P120:', 'P117', '(CEO point P119)', '- **P23**', 'Dock P23', 'DK P23',
-                 'Ensemble Dashboard P23', 'Dock **P23**', 'P23a', 'Answered Dock about P23', 'P23. Done', 'DK-P23']
+                 'Ensemble Dashboard P23', 'Dock **P23**', 'P23a', 'Answered Dock about P23', 'P23. Done', 'DK-P23',
+                 '- outer\n    - P23', '- outer\n\t- P23', '__P23__', '_P23_', '__Dock__ __P23__']
         rows = self.match(texts)
-        self.assertEqual([r[0]['project'] for r in rows], ['ed'] * 4 + ['dock', 'dock', 'ed', 'dock', 'ed', 'ed', 'ed', 'dock'])
+        self.assertEqual([r[0]['project'] for r in rows], ['ed'] * 4 + ['dock', 'dock', 'ed', 'dock', 'ed', 'ed', 'ed', 'dock'] + ['ed'] * 4 + ['dock'])
         self.assertEqual(rows[9][0]['others'], ['dock'])
 
     def test_no_code_paths_urls_or_word_fragments(self):
@@ -42,13 +43,22 @@ class Matching(unittest.TestCase):
                  'https://example.test/P23', 'https://example.test?q=P23', 'www.example.test/P23',
                  '[P23](https://example.test)', 'C:\\work\\P23.txt', '/tmp/P23', './P23',
                  'P23/file.txt', 'P23.txt', 'file.P23', 'MP3', 'P2P', 'éP23', 'P23é', 'P0', 'P1234567',
-                 '`code\nP23\ncode`', 'mailto:P23@example.test', 'P23@example.test', 'ZZ-P23']
+                 '`code\nP23\ncode`', 'mailto:P23@example.test', 'P23@example.test', 'ZZ-P23',
+                 'word__P23__', '__P23__word', '    code P23', '\tP23', '    - P23',
+                 '- prose\n\n        - P23']
         self.assertEqual(self.match(texts), [[] for _ in texts])
 
     def test_duplicate_project_alias_is_ambiguous(self):
         ctx = json.loads(json.dumps(self.CTX))
         ctx['projects'].append({'id': 'other', 'name': 'Dock', 'key': 'D2'})
-        self.assertEqual(self.match(['Dock P23'], ctx), [[]])
+        self.assertEqual(self.match(['Dock P23', 'Answered Dock about P23'], ctx), [[], []])
+
+    def test_long_unbroken_balloon_is_scanned_without_backtracking(self):
+        got = self.run_js("const t = performance.now(); const s = 'x'.repeat(300000) + ' P23'; "
+                          "const rows = P.refsIn(s, " + json.dumps(self.CTX) + "); "
+                          "console.log(JSON.stringify({ms:performance.now()-t, ids:rows.map(r=>r.id)}));")
+        self.assertEqual(got['ids'], ['P23'])
+        self.assertLess(got['ms'], 1000, 'a long prose token must not cause quadratic URL/path scanning')
 
     def test_async_resolution_unknown_ambiguous_and_cache(self):
         code = r'''
@@ -65,7 +75,9 @@ const p = P.create({room: 'room', changed() {}}), settle = () => new Promise(r =
   p.replace(text, ctx); await settle(); const html = p.replace(text, ctx);
   p.replace('Answered Dock about P23', ctx); await settle();
   const ambiguous = p.replace('Answered Dock about P23', ctx);
-  p.replace(text, ctx); console.log(JSON.stringify({html, ambiguous, calls}));
+  const duplicateCtx = {...ctx, projects: [...ctx.projects, {id:'other',name:'Dock',key:'D2'}]};
+  const duplicateAlias = p.replace('Answered Dock about P23', duplicateCtx);
+  p.replace(text, ctx); console.log(JSON.stringify({html, ambiguous, duplicateAlias, calls}));
 })();
 '''.replace('CTX', json.dumps(self.CTX))
         got = self.run_js(code)
@@ -73,6 +85,7 @@ const p = P.create({room: 'room', changed() {}}), settle = () => new Promise(r =
         self.assertIn('in progress', got['html'])
         self.assertNotIn('<first>', got['html'])
         self.assertEqual(got['ambiguous'], 'Answered Dock about P23')
+        self.assertEqual(got['duplicateAlias'], 'Answered Dock about P23')
         self.assertEqual(len(got['calls']), 4)
         self.assertEqual(len(set(got['calls'])), 4)
 

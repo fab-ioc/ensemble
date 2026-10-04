@@ -3,7 +3,7 @@ const PointRefs = (() => {
   const blank = s => s.replace(/[^\n]/g, ' ');
   function readable(text) {
     // Keep offsets while excluding Markdown code, links and path/URL tokens.
-    let fence = null;
+    let fence = null, listIndent = null;
     return String(text ?? '').split('\n').map(line => {
       const f = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
       if (fence) {
@@ -11,15 +11,22 @@ const PointRefs = (() => {
         return blank(line);
       }
       if (f) { fence = f[1]; return blank(line); }
-      if (/^(?: {4}|\t)/.test(line)) return blank(line);
+      const list = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s+/);
+      const indent = (line.match(/^\s*/)[0] || '').replace(/\t/g, '    ').length;
+      // Four spaces may introduce a nested list or an indented code block.
+      // Only a list already in progress makes its nested marker prose.
+      if (indent >= 4 && (!list || listIndent === null || indent > listIndent + 4)) return blank(line);
+      if (list) listIndent = indent;
+      else if (line.trim()) listIndent = null;
       return line;
     }).join('\n').replace(/(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g, blank)
       .replace(/\[[^\]]*\]\([^)]*\)/g, blank)
-      .replace(/\S*(?:[\/\\]|:\/\/|www\.|mailto:)\S*/g, blank);
+      .replace(/\S+/g, token => /[\/\\]|www\.|mailto:/.test(token) ? blank(token) : token);
   }
   function refsIn(text, ctx) {
     if (!ctx) return [];
-    const plain = readable(text), out = [];
+    const plain = readable(text).replace(/(?<![\p{L}\p{N}_])(_{1,2})(?=\S)([^_\n]+?)\1(?![\p{L}\p{N}_])/gu,
+      (_, marks, body) => ' '.repeat(marks.length) + body + ' '.repeat(marks.length)), out = [];
     // Include keys as aliases, preserving duplicate names as ambiguous.
     const owners = new Map();
     for (const p of ctx.projects || []) for (const a of [...(p.aliases || []), p.key, p.name].filter(Boolean)) {
@@ -39,7 +46,7 @@ const PointRefs = (() => {
         if (projects.length !== 1) continue;
         Object.assign(r, { project: projects[0].id, how: 'key', others: [] });
       }
-      if (r.project === '!ambiguous') continue;
+      if (r.project === '!ambiguous' || r.others.includes('!ambiguous')) continue;
       out.push({ id: m[2], start, end, ...r });
     }
     return out;

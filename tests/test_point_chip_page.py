@@ -42,6 +42,7 @@ async function main() {
       const shot = async name => {if(A.shots) { const r=await send('Page.captureScreenshot',{format:'png'}); fs.writeFileSync(path.join(A.shots,`point-${width}-${room===A.room?'po':'task'}-${name}.png`),Buffer.from(r.data,'base64')); }};
       await send('Page.navigate', {url:A.base+'/session?room='+room});
       await until(`typeof CHAT_DRAWN !== 'undefined' && CHAT_DRAWN && document.querySelectorAll('#msgs .point-chip').length >= 2`);
+      await until("document.querySelectorAll('#msgs li .point-chip').length >= 2 && document.querySelectorAll('#msgs strong .point-chip').length >= 2");
       const a = "#msgs .point-chip[data-ref-msg='"+A.mid+"']";
       await press(a);
       await until("!!document.querySelector('.task-card')");
@@ -56,6 +57,8 @@ async function main() {
       await until(`LANDED && LANDED.mid === '${A.mid}'`);
       await shot('jump');
       const jump = await ev('({mid:LANDED.mid,part:LANDED.part,marked:!!document.querySelector(".landed")})');
+      // Cross-room navigation loads a fresh resolver. Landing precedes its lookups.
+      await until(`document.querySelector("#msgs .point-chip[data-ref-msg='${A.mid}']")`);
       // Render the same balloon as a folded row through the real renderer.
       const folded = await ev(`(() => {const m=LAST_ITEMS.find(m => (m.text||'').includes('Mention **P291**')); const h=foldBalloonHtml(m,0,'row',{md:mdToHtml,lineHtml:foldedPointHtml}); const box=document.createElement('div');box.id='point-fold-test';box.innerHTML=h;box.style.cssText='position:fixed;top:100px;left:8px;right:8px;z-index:1100';document.body.appendChild(box); return !!box.querySelector('.point-chip');})()`);
       await press('#point-fold-test .point-chip');
@@ -96,7 +99,7 @@ class PointPage(Hub):
             point['state'] = 'acked'
             points._save(rid, led)
         for rid in [room, task]:
-            chatroom.post_message(rid, 'claude', 'Mention **P291** here.\n\n- DK P291 is elsewhere.\n\n`P291` and P2P stay text.', to='user')
+            chatroom.post_message(rid, 'claude', 'Mention **P291** here.\n\n- DK P291 is elsewhere.\n- outer\n    - P291 nested.\n\n__P291__ also bold.\n\n`P291` and P2P stay text.', to='user')
         # Keep ledger fixture exact; the test exercises HTTP and page behavior.
         p = mock.patch.object(points, 'sync', side_effect=lambda rid, **kw: points.load(rid)); p.start(); self.addCleanup(p.stop)
         self.addCleanup(points._CACHE.clear)

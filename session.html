@@ -1910,6 +1910,7 @@ function mdToHtml(src) {
     const keep = [];
     return unlinkify(linkify(t, keep)
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(?<![\w])__([^_\n]+)__(?![\w])/g, '<strong>$1</strong>')
       .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
       .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
       .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>'), keep);
