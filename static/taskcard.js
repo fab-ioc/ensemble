@@ -204,13 +204,16 @@ const TaskCard = (() => {
                    agents: (t.agents || []).map(a => a.identity || a.agent).filter(Boolean),
                    project: (t.inProject === false || o.assumed) ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
     if (o.assumed) card.assumed = true;
+    if (o.point) { card.point = o.point; card.state = o.state || ''; }
     const dot = dotOf(t);
-    const label = `Task ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.assumed ? 'assumed ' : ''}${card.project})` : '');
-    return `<a class="task-chip${dot ? ' tc-' + dot : ''}" href="${esc(href)}" data-task="${esc(t.roomId || '')}"${id ? ` data-agent="${esc(id)}"` : ''}`
+    const label = `${o.point ? 'Point' : 'Task'} ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.assumed ? 'assumed ' : ''}${card.project})` : '');
+    return `<a class="task-chip${o.point ? ' point-chip' : ''}${dot ? ' tc-' + dot : ''}" href="${esc(href)}" ${o.point ? pointAttrs(o.point) : `data-task="${esc(t.roomId || '')}"`}${id ? ` data-agent="${esc(id)}"` : ''}`
       + ` data-card="${esc(JSON.stringify(card))}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="false">`
       + (dot ? '<span class="tc-dot" aria-hidden="true"></span>' : '')
       + `<span class="ref-who">${esc((id ? '@' + id + ' ' : '') + word(t, o.key))}</span></a>`;
   }
+
+  const pointAttrs = p => `data-point="true" data-ref-room="${esc(p.room)}" data-ref-msg="${esc(p.msg)}" data-ref-part="${esc(p.part)}"`;
 
   // ---- The card ---------------------------------------------------------------
   const CSS = `
@@ -268,10 +271,10 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     const el = S.doc.createElement('div');
     el.className = 'task-card';
     el.setAttribute('role', 'dialog');
-    el.setAttribute('aria-label', 'Task ' + c.ref);
+    el.setAttribute('aria-label', (c.point ? 'Point ' : 'Task ') + c.ref);
     el.innerHTML = `<span class="tc-no">${esc(c.ref)}</span>`
       + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
-      + `<a class="tc-title" href="${esc(c.href)}" data-task="${esc(c.task)}"${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc('Open task ' + c.ref)}">${esc(c.title)}</a>`
+      + `<a class="tc-title" href="${esc(c.href)}" ${c.point ? pointAttrs(c.point) : `data-task="${esc(c.task)}"`}${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc((c.point ? 'Jump to point ' : 'Open task ') + c.ref)}">${esc(c.title)}</a>`
       + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
       + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '');
     S.doc.body.appendChild(el);
@@ -290,7 +293,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     st.textContent = CSS;
     doc.head.appendChild(st);
     const S = { doc, el: null, chip: null, at: 0, hover: false, timer: 0, leave: 0,
-                openTask: o.open || (a => { w.location.href = a.href; }) };
+                openTask: a => a.dataset.point && o.openPoint ? o.openPoint(a) : (o.open || (a => { w.location.href = a.href; }))(a) };
     STATES.set(doc, S);
     const chipOf = ev => (ev.target && ev.target.closest) ? ev.target.closest('a.task-chip') : null;
     const inCard = ev => !!(S.el && ev.target && ev.target.closest && ev.target.closest('.task-card'));
@@ -317,6 +320,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
       if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
+      if (a.dataset.point && w.matchMedia('(pointer: coarse)').matches) return;
       closeCard(S);
       S.openTask(a);
     }, true);

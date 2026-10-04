@@ -687,6 +687,23 @@ Where the file showing is: the bar under a Workspace's file tabs (`wsCrumbsHtml`
 - Rewritten only when the path changes; a poll never replaces a crumb under the pointer.
 - **Phone:** every crumb and button is `--touch-min`; the path swipes sideways within the bar.
 
+### Point chip and card
+
+In every chat balloon, including folded rows, `P23` uses the task chip and card
+(`TaskCard`, with `PointRefs` matching and resolving points). The chip shows `P23`
+alone, without a status dot. Its card shows the point's first line (up to 140
+characters), stage and raised date; the text is the jump link used by Your asks.
+The card names the project when it differs from the chat's. A tap opens the card;
+only a mouse double click jumps directly. Keyboard Enter and the card link work
+as for tasks. Use the same tokens, spacing and phone wrapping as task cards.
+
+Bare mentions use the chat's project. An immediately preceding project name or
+key (`Dock P23`, `DK P23`) selects that project without fallback. Unknown points,
+duplicate numbers across the project's room ledgers, ambiguous project names,
+and a weaker project mention with another matching point stay plain text. Code,
+URLs, paths and parts of words never become chips. Read old closed points through
+`/api/point/ref`; room polling's bounded point list is insufficient for lookup.
+
 ### Diff
 
 A changed file in a Changes tab (the task's and the project's) reads as in an IDE. The reference is

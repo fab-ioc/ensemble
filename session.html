@@ -14,6 +14,7 @@
 <script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
 <script src="/static/taskcard.js"></script>
+<script src="/static/pointrefs.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <script>
@@ -1751,6 +1752,17 @@ function parkTaskRefs(s, chips) {
   });
 }
 // ---- Task references: end --------------------------------------------------
+const POINT_REFS = PointRefs.create({ room: ROOM, changed: () => refChanged() });
+function parkPointRefs(s, chips) {
+  // Points belong to the chat's project even under a forwarded PO message.
+  return POINT_REFS.replace(String(s), TASK_REFS.ctx(''), x => x,
+    h => REF_A + (chips.push(h) - 1) + REF_Z);
+}
+function foldedPointHtml(text) {
+  const chips = [];
+  const parked = parkPointRefs(text, chips);
+  return esc(foldLine(parked)).replace(REF_MARK_RE, (_, i) => chips[+i] || '');
+}
 // Whether a text holds a link to a balloon (the pattern is REF_URL_RE's).
 function hasMessageRefs(text) {
   return [...String(text || '').matchAll(/https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi)].some(m => refOfUrl(m[0]));
@@ -1890,6 +1902,7 @@ function mdToHtml(src) {
     return h ? REF_A + (chips.push(h) - 1) + REF_Z + ref.tail : u;
   });
   s = parkPmRefs(s, chips);
+  s = parkPointRefs(s, chips);
   s = parkTaskRefs(s, chips);
   s = esc(s);
   // Inline spans (operate on escaped text; placeholders are safe).
@@ -1897,6 +1910,7 @@ function mdToHtml(src) {
     const keep = [];
     return unlinkify(linkify(t, keep)
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(?<![\w])__([^_\n]+)__(?![\w])/g, '<strong>$1</strong>')
       .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
       .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
       .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>'), keep);
@@ -2891,7 +2905,7 @@ function foldBalloonHtml(m, i, how, o) {
     const chips = foldChips(m, o.un, o.idle, o.superseded);
     // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
     const line = hub ? hubBody(m) : m.text;
-    return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${esc(foldLine(o.plain ? o.plain(line) : line))}</span></button>`;
+    return `<div role="button" tabindex="0" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${(o.lineHtml || (t => esc(foldLine(t))))(o.plain ? o.plain(line) : line)}</span></div>`;
   }
   const chips = foldChips(m, o.un, o.idle);
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
@@ -3525,7 +3539,7 @@ function renderBubbles(items, opt = {}) {
     TASK_REF_PID = taskRefProject(m);
     try {
       return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-        act: copyLinkHtml, plain: t => pmPlain(refPlain(t)), superseded: sup.has(i), pts: ptBar, body });
+        act: copyLinkHtml, plain: t => pmPlain(refPlain(t)), lineHtml: foldedPointHtml, superseded: sup.has(i), pts: ptBar, body });
     } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
@@ -5949,14 +5963,19 @@ document.addEventListener('click', ev => {
   ev.preventDefault();
   openTaskFrom(a);
 });
-TaskCard.init({ open: openTaskFrom });
+TaskCard.init({ open: openTaskFrom, openPoint: a => refClickHandler({ target: a, button: 0, preventDefault() {} }) });
+document.addEventListener('keydown', ev => {
+  if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.msg-fold[role="button"]')) {
+    ev.preventDefault(); ev.target.click();
+  }
+});
 // A balloon link's chip — a point's "your message ↑" / "answer ↓" (pt-link)
 // as much as a ref-chip, sup-link or ask-link: in this conversation it lands
 // on the balloon; inside the dashboard, the dashboard opens that task or PO
 // at it; on its own, this page goes there. With a modifier key it is a link,
 // opening a new tab.
 function refClickHandler(ev) {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a[data-point]');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg, part = a.dataset.refPart || '';

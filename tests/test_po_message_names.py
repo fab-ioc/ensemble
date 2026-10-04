@@ -63,7 +63,7 @@ class PoMessageNames(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = "\n".join([
-            TASKCARD, ATTACH,
+            TASKCARD, ATTACH, "const parkPointRefs = s => s;",
             block(SESSION, "// ---- Links in rendered text: begin shared block", "// ---- Links in rendered text: end shared block"),
             const(SESSION, "REF_URL_RE"), const(SESSION, "REF_A"), const(SESSION, "REF_MARK_RE"),
             const(SESSION, "REF_BLOCK_RE"), fn(SESSION, "stripRefBlocks"), fn(SESSION, "refOfUrl"),
@@ -139,7 +139,7 @@ class PoMessageNames(unittest.TestCase):
         render = fn(SESSION, "renderBubbles")
         self.assertIn("pmIndex(items, ROOM_OBJ);", render)
         self.assertIn("plain: t => pmPlain(refPlain(t))", render)
-        self.assertIn("a.pm-link')", SESSION, "a click lands on the balloon")
+        self.assertIn("a.pm-link, a[data-point]')", SESSION, "a click lands on the balloon")
 
 
 if __name__ == "__main__":
