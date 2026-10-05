@@ -2283,9 +2283,10 @@ class _Resume:
 
 _RESUMES: dict[str, _Resume] = {}      # room id -> the resume in flight (or failed)
 _RESUMES_LOCK = threading.Lock()
-# A physical terminal submission and its provenance append are one ordered
-# operation. Without this, another writer can submit and journal between the
-# first writer's PTY write and journal append, reversing equal-text authors.
+# Keep each quick PTY text write beside its provenance append. Slow Enter
+# pauses and visible-console injection stay outside: a page-terminal keystroke
+# must never wait seconds on unrelated delivery. Those paths therefore retain
+# the narrow ordering gaps documented in the provenance report.
 _INPUT_WRITE_LOCK = threading.RLock()
 
 
@@ -2452,6 +2453,19 @@ def _record_typed_input(sess, text: str, forced: dict | None = None,
         parts=parts)
 
 
+def _record_typed_input_safely(sess, text: str, forced: dict | None = None,
+                               parts: list[tuple[str, dict]] | None = None) -> dict | None:
+    """Persist provenance without turning a successful terminal operation
+    into a failed launch/delivery when the journal is temporarily unwritable."""
+    try:
+        if parts is None:
+            return _record_typed_input(sess, text, forced)
+        return _record_typed_input(sess, text, forced, parts)
+    except Exception as exc:  # noqa: BLE001 - provenance is auxiliary state
+        print(f"[input-provenance] not recorded: {exc!r}", flush=True)
+        return None
+
+
 def _type_input(sess, text: str, provenance: dict | None = None, *,
                 record: bool = True,
                 parts: list[tuple[str, dict]] | None = None) -> bool:
@@ -2460,25 +2474,45 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     does not submit it line by line; Enter is a separate write (send_line).
     False when the terminal did not take it: a write was refused, or the
     process was gone right after (on Windows a write to an ended process
-    is the only thing pywinpty reports; it returns 0 for what arrived)."""
+    is the only thing pywinpty reports; it returns 0 for what arrived).
+
+    The global ordering lock covers only the text write and journal append.
+    The TUI's ingestion pause and discrete Enter stay outside it so input in
+    another terminal never waits seconds for a long brief."""
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
     body = "\x1b[200~" + text + "\x1b[201~" if "\n" in text else text
-    with _INPUT_WRITE_LOCK:
+    writer = getattr(sess, "write", None)
+    if callable(writer):
+        with _INPUT_WRITE_LOCK:
+            try:
+                took = writer(body)
+            except (OSError, EOFError):
+                return False
+            ok = took is not False and sess.alive()
+            if ok and record:
+                _record_typed_input_safely(sess, text, provenance, parts)
+        if not ok:
+            return False
+        time.sleep(0.25 if len(body) <= 200 else min(2.0, 0.25 + len(body) / 600))
         try:
-            took = sess.send_line(body)
+            entered = writer("\r")
         except (OSError, EOFError):
             return False
-        ok = took is not False and sess.alive()
-        if ok and record:
-            try:
-                if parts is None:
-                    _record_typed_input(sess, text, provenance)
-                else:
-                    _record_typed_input(sess, text, provenance, parts)
-            except Exception as exc:   # the input arrived; provenance must not undo it
-                print(f"[input-provenance] not recorded: {exc!r}", flush=True)
-        return ok
+        return entered is not False and sess.alive()
+
+    # Compatibility for the small test/adapter sessions that expose only the
+    # original compound operation. It runs outside the global ordering lock;
+    # only its successful journal append takes that lock.
+    try:
+        took = sess.send_line(body)
+    except (OSError, EOFError):
+        return False
+    ok = took is not False and sess.alive()
+    if ok and record:
+        with _INPUT_WRITE_LOCK:
+            _record_typed_input_safely(sess, text, provenance, parts)
+    return ok
 
 
 def _typed_sends(room_id: str, items: list[dict]) -> None:
@@ -2808,19 +2842,39 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
 _TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns), turns)
 _TURNS_CACHE_LOCK = threading.Lock()
 _TURNS_CACHE_MAX = 6
+_SESSION_INPUT_CONTEXT_CACHE: dict[tuple[str, str], tuple[str, str]] = {}
+_SESSION_INPUT_CONTEXT_LOCK = threading.Lock()
+_SESSION_INPUT_CONTEXT_MAX = 4_096
 
 
 def _session_input_context(sid: str) -> tuple[str, str]:
     """The room and seat owning a current or historical agent conversation."""
     if not sid:
         return "", ""
+    cache_key = str(chatroom.ROOMS_DIR), sid
+    with _SESSION_INPUT_CONTEXT_LOCK:
+        hit = _SESSION_INPUT_CONTEXT_CACHE.get(cache_key)
+        if hit is not None:
+            return hit
     for room in chatroom.list_rooms():
+        found = None
         for part in chatroom.agent_participants(room):
             if sid in chatroom.agent_conversations(part):
-                return str(room.get("id") or ""), str(part.get("identity") or "")
-        for retired in room.get("retiredSessions") or []:
-            if isinstance(retired, dict) and retired.get("sessionId") == sid:
-                return str(room.get("id") or ""), str(retired.get("identity") or "")
+                found = str(room.get("id") or ""), str(part.get("identity") or "")
+                break
+        if found is None:
+            for retired in room.get("retiredSessions") or []:
+                if isinstance(retired, dict) and retired.get("sessionId") == sid:
+                    found = str(room.get("id") or ""), str(retired.get("identity") or "")
+                    break
+        if found is None:
+            continue
+        with _SESSION_INPUT_CONTEXT_LOCK:
+            _SESSION_INPUT_CONTEXT_CACHE.pop(cache_key, None)
+            _SESSION_INPUT_CONTEXT_CACHE[cache_key] = found
+            while len(_SESSION_INPUT_CONTEXT_CACHE) > _SESSION_INPUT_CONTEXT_MAX:
+                _SESSION_INPUT_CONTEXT_CACHE.pop(next(iter(_SESSION_INPUT_CONTEXT_CACHE)))
+        return found
     return "", ""
 
 
@@ -11941,11 +11995,13 @@ class Handler(BaseHTTPRequestHandler):
             return []
         rung = []
         for ident in idents:
-            # One step under the rotation's gate: a wake for an agent whose old
-            # session is being ended is held for its fresh one (it would start
-            # a turn that is then killed), and the terminal is read afresh, so
-            # it is never one a rotation has just replaced.
-            with rotation.GATE, _INPUT_WRITE_LOCK:
+            # Resolve under the rotation gate: a wake for an agent whose old
+            # session is being ended is held for its fresh one. Release the
+            # gate before the terminal's ingestion/Enter pause so a person's
+            # page-terminal keystroke never waits seconds behind a long brief.
+            sess = None
+            pty_id = None
+            with rotation.GATE:
                 if rotation.hold_wake(room_id, ident, wake):
                     rung.append(ident)
                     continue
@@ -11956,20 +12012,27 @@ class Handler(BaseHTTPRequestHandler):
                 pty_id = part.get("ptyId")
                 if pty_id:
                     sess = ptyrun.get(pty_id)
-                    if sess and sess.alive() and _type_input(sess, wake):
-                        rung.append(ident)     # typed + discrete Enter, and it took
-                    continue
+            if pty_id:
+                if sess and sess.alive() and _type_input(sess, wake):
+                    rung.append(ident)         # typed + discrete Enter, and it took
+                continue
             # Legacy visible-terminal session → keystroke injection.
             pid = self._resolve_live_pid(part)
             if pid:
                 try:
-                    with _INPUT_WRITE_LOCK:
-                        result = BACKEND.send_text(int(pid), wake, submit=True)
-                        if result == "ok":
-                            input_provenance.record(
-                                room_id, ident, wake, _input_sender_info(wake),
-                                session_id=str(part.get("sessionId") or ""))
-                            rung.append(ident)
+                    result = BACKEND.send_text(int(pid), wake, submit=True)
+                    if result == "ok":
+                        # Delivery succeeded even if auxiliary journal I/O
+                        # fails; never retry and duplicate the wake.
+                        rung.append(ident)
+                        try:
+                            with _INPUT_WRITE_LOCK:
+                                input_provenance.record(
+                                    room_id, ident, wake, _input_sender_info(wake),
+                                    session_id=str(part.get("sessionId") or ""))
+                        except Exception as exc:  # noqa: BLE001 - delivery succeeded
+                            print(f"[input-provenance] visible wake not recorded: {exc!r}",
+                                  flush=True)
                 except (OSError, ValueError):
                     pass
         return rung
@@ -12151,7 +12214,7 @@ class Handler(BaseHTTPRequestHandler):
                     + _codex_task_args(room_full) + _codex_model_args(model, effort))
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
-            _record_typed_input(
+            _record_typed_input_safely(
                 sess, briefing,
                 {"kind": _launch_input_kind(room_full, part, briefing, prompt)})
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": ""}
@@ -12163,7 +12226,7 @@ class Handler(BaseHTTPRequestHandler):
         cmd = BACKEND.headless_launch(cwd, argv, briefing)
         meta["sessionId"] = new_sid
         sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
-        _record_typed_input(
+        _record_typed_input_safely(
             sess, briefing,
             {"kind": _launch_input_kind(room_full, part, briefing, prompt)})
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
@@ -12211,7 +12274,7 @@ class Handler(BaseHTTPRequestHandler):
             cmd = BACKEND.headless_launch(cwd, argv, first)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
             if first:
-                _record_typed_input(sess, first, {"kind": "brief"})
+                _record_typed_input_safely(sess, first, {"kind": "brief"})
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", ""),
                     "prompted": bool(seed and not codex_sid)}
         # claude
@@ -12930,13 +12993,17 @@ class Handler(BaseHTTPRequestHandler):
                 f"blocks, tables). {closing}"
             )
             try:
-                with _INPUT_WRITE_LOCK:
-                    result = BACKEND.send_text(int(pid), brief, submit=True)
-                    if result == "ok":
-                        input_provenance.record(
-                            room["id"], part["identity"], brief,
-                            _input_sender_info(brief, {"kind": "brief"}),
-                            session_id=str(part.get("sessionId") or ""))
+                result = BACKEND.send_text(int(pid), brief, submit=True)
+                if result == "ok":
+                    try:
+                        with _INPUT_WRITE_LOCK:
+                            input_provenance.record(
+                                room["id"], part["identity"], brief,
+                                _input_sender_info(brief, {"kind": "brief"}),
+                                session_id=str(part.get("sessionId") or ""))
+                    except Exception as exc:  # noqa: BLE001 - delivery succeeded
+                        print(f"[input-provenance] visible brief not recorded: {exc!r}",
+                              flush=True)
             except (OSError, ValueError):
                 pass
 
@@ -13911,19 +13978,19 @@ class Handler(BaseHTTPRequestHandler):
             if not pid or (not text and not submit):
                 self._send_json(400, {"error": "missing_fields"})
                 return
-            with _INPUT_WRITE_LOCK:
-                res = BACKEND.send_text(int(pid), text, submit=bool(submit))
-                if res == "ok" and text and submit:
-                    room_id, identity, session_id = _linked_input_context(int(pid))
-                    if room_id:
-                        try:
+            res = BACKEND.send_text(int(pid), text, submit=bool(submit))
+            if res == "ok" and text and submit:
+                room_id, identity, session_id = _linked_input_context(int(pid))
+                if room_id:
+                    try:
+                        with _INPUT_WRITE_LOCK:
                             input_provenance.record(
                                 room_id, identity, text,
                                 _input_sender_info(text, {"kind": "human"}),
                                 session_id=session_id)
-                        except Exception as exc:
-                            print(f"[input-provenance] visible input not recorded: {exc!r}",
-                                  flush=True)
+                    except Exception as exc:
+                        print(f"[input-provenance] visible input not recorded: {exc!r}",
+                              flush=True)
             self._send_json(200, {"result": res})
             return
         if p == "/api/room/create":

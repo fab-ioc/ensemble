@@ -445,9 +445,19 @@ def delete_room(room_id: str) -> bool:
     with _LOCK:
         try:
             _room_path(room_id).unlink()
-            return True
         except (FileNotFoundError, OSError):
             return False
+        # Input provenance is room-owned auxiliary state. Keep its lifetime
+        # aligned with the room without importing input_provenance here (that
+        # module imports chatroom).
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", room_id or "")
+        journal = ROOMS_DIR.parent / "input-provenance" / f"{safe}.jsonl"
+        for path in (journal, journal.with_name(journal.name + ".tmp")):
+            try:
+                path.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+        return True
 
 
 # ---------------------------------------------------------------------------

@@ -156,6 +156,20 @@ class LaunchEnvironment(unittest.TestCase):
         for made in self.made:
             self.assertFalse([k for k in made["env"] if k.startswith("ENSEMBLE_HOOK")])
 
+    def test_launch_and_seeded_resume_survive_a_provenance_write_failure(self):
+        with mock.patch.object(dashboard, "_record_typed_input",
+                               side_effect=PermissionError("AV lock")):
+            for agent in ("codex", "claude"):
+                room, part = self.room(agent)
+                info = self.handler._launch_room_agent_pty(room, part, "do it", collab=False)
+                self.assertEqual(info["ptyId"], "pty-new")
+
+            room, part = self.room("codex")
+            part["sessionId"] = ""
+            info = self.handler._resume_room_agent_pty(
+                room, part, collab=False, seed="carry on")
+            self.assertEqual((info["ptyId"], info["prompted"]), ("pty-new", True))
+
     def test_the_terminal_names_itself(self):
         spawned = {}
         fake = types.SimpleNamespace(PtyProcess=types.SimpleNamespace(

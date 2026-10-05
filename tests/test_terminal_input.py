@@ -298,12 +298,13 @@ class PtyInputEndpointFilter(unittest.TestCase):
                 return True
 
             def write(self, _data):
-                self.physical.append("human")
-                return True
-
-            def send_line(self, _data):
-                self.physical.append("hub")
-                self.hub_written.set()
+                if _data == "same\r":
+                    self.physical.append("human")
+                elif _data == "same":
+                    self.physical.append("hub")
+                    self.hub_written.set()
+                else:
+                    self.physical.append("hub-enter")
                 return True
 
         with tempfile.TemporaryDirectory() as tmp, \
@@ -339,13 +340,60 @@ class PtyInputEndpointFilter(unittest.TestCase):
                                 "the Hub write passed the unjournaled human submission")
             self.assertFalse(human.is_alive())
             self.assertFalse(hub.is_alive())
-            self.assertEqual(sess.physical, ["human", "hub"])
+            self.assertEqual(sess.physical, ["human", "hub", "hub-enter"])
             self.assertEqual([row["kind"] for row in input_provenance.records(rid)],
                              ["human", "hub"])
             assigned = input_provenance.assign(
                 input_provenance.index(rid), [(0, "same", 0), (1, "same", 0)],
                 identity="claude", session_id="sid-one")
             self.assertEqual([assigned[i]["kind"] for i in (0, 1)], ["human", "hub"])
+
+    def test_page_keystroke_does_not_wait_for_another_terminal_enter_pause(self):
+        class Session:
+            hub_line_typed = False
+            hub_line_text = ""
+            person_line_text = ""
+
+            def __init__(self, name):
+                self.name = name
+                self.meta = {}
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        brief = Session("brief")
+        terminal = Session("terminal")
+        pausing = threading.Event()
+        release = threading.Event()
+
+        def pause(_seconds):
+            pausing.set()
+            self.assertTrue(release.wait(2))
+
+        with mock.patch.object(dashboard.time, "sleep", side_effect=pause), \
+                mock.patch.object(dashboard, "_record_typed_input"):
+            worker = threading.Thread(
+                target=lambda: dashboard._type_input(brief, "x" * 400, {"kind": "brief"}))
+            worker.start()
+            self.assertTrue(pausing.wait(1))
+            key_done = threading.Event()
+            key = threading.Thread(
+                target=lambda: (self.post(terminal, "k", terminalKey=True), key_done.set()))
+            key.start()
+            key_was_immediate = key_done.wait(0.2)
+            release.set()
+            worker.join(3)
+            key.join(3)
+        self.assertTrue(key_was_immediate, "the keystroke waited for the brief's Enter pause")
+        self.assertEqual(terminal.writes, ["k"])
+        self.assertEqual(brief.writes, ["x" * 400, "\r"])
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(key.is_alive())
 
     def test_visible_terminal_send_journals_human_only_after_success(self):
         with tempfile.TemporaryDirectory() as tmp, \

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
@@ -54,6 +55,51 @@ class Journal(unittest.TestCase):
         self.assertEqual(input_provenance.normalize(pasted), "first\nsecond")
         self.assertEqual(input_provenance.text_hash(pasted),
                          input_provenance.text_hash("first\nsecond"))
+
+    def test_journal_is_capped_and_stays_cached_after_recording(self):
+        with mock.patch.object(input_provenance, "MAX_RECORDS", 3):
+            for n in range(5):
+                input_provenance.record(
+                    "room-one", "codex", f"line {n}", {"kind": "human"},
+                    session_id="sid-1", at=100 + n)
+            rows = input_provenance.records("room-one")
+            self.assertEqual([row["hash"] for row in rows], [
+                input_provenance.text_hash(f"line {n}") for n in range(2, 5)])
+            self.assertEqual(len(input_provenance.path_for("room-one").read_text(
+                encoding="utf-8").splitlines()), 3)
+            with mock.patch.object(Path, "open", side_effect=AssertionError("reparsed")):
+                self.assertEqual(len(input_provenance.records("room-one")), 3)
+
+    def test_oversized_existing_journal_is_pruned_when_read(self):
+        path = input_provenance.path_for("room-one")
+        path.parent.mkdir(parents=True)
+        rows = [
+            {"hash": input_provenance.text_hash(f"line {n}"), "kind": "human", "at": n}
+            for n in range(5)
+        ]
+        path.write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+        with mock.patch.object(input_provenance, "MAX_RECORDS", 3):
+            got = input_provenance.records("room-one")
+
+        self.assertEqual([row["at"] for row in got], [2, 3, 4])
+        self.assertEqual(
+            [json.loads(line)["at"] for line in path.read_text(encoding="utf-8").splitlines()],
+            [2, 3, 4])
+
+    def test_deleting_a_room_deletes_its_default_journal(self):
+        base = Path(self.tmp.name) / "state"
+        with mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"), \
+                mock.patch.object(input_provenance, "RECORDS_DIR", None):
+            rid = chatroom.create_room(
+                "Delete me", [{"identity": "codex", "agent": "codex", "role": "engineer"}]
+            )["id"]
+            input_provenance.record(rid, "codex", "words", {"kind": "human"})
+            journal = input_provenance.path_for(rid)
+            self.assertTrue(journal.exists())
+            self.assertTrue(chatroom.delete_room(rid))
+            self.assertFalse(journal.exists())
 
     def test_one_record_never_claims_one_of_two_identical_turns(self):
         input_provenance.record(
@@ -327,6 +373,43 @@ class InventoryFixtures(unittest.TestCase):
             self.assertEqual(handler._ring(rid, ["claude"], "[digest] check"), [])
         self.assertEqual(input_provenance.records(rid), [])
 
+    def test_successful_legacy_wake_stays_delivered_when_recording_fails(self):
+        rid = chatroom.create_room(
+            "Visible", [{"identity": "claude", "agent": "claude", "role": "engineer"}]
+        )["id"]
+        chatroom.patch_participant(rid, "claude", {"pid": 42, "sessionId": "sid-visible"})
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        with mock.patch.object(handler, "_resolve_live_pid", return_value=42), \
+                mock.patch.object(dashboard.BACKEND, "send_text", return_value="ok"), \
+                mock.patch.object(input_provenance, "record", side_effect=RuntimeError("locked")):
+            self.assertEqual(handler._ring(rid, ["claude"], "[digest] check"), ["claude"])
+
+    def test_visible_console_injection_does_not_hold_the_input_ordering_lock(self):
+        rid = chatroom.create_room("Visible team", [
+            {"identity": "claude", "agent": "claude", "role": "engineer", "pid": 42},
+            {"identity": "codex", "agent": "codex", "role": "reviewer", "pid": 43},
+        ])["id"]
+        injecting = threading.Event()
+        release = threading.Event()
+
+        def slow_send(*_args, **_kwargs):
+            injecting.set()
+            self.assertTrue(release.wait(2))
+            return "ok"
+
+        with mock.patch.object(dashboard.BACKEND, "send_text", side_effect=slow_send):
+            worker = threading.Thread(
+                target=lambda: dashboard.Handler.__new__(dashboard.Handler)._brief_agents(rid))
+            worker.start()
+            self.assertTrue(injecting.wait(1))
+            acquired = dashboard._INPUT_WRITE_LOCK.acquire(timeout=0.2)
+            if acquired:
+                dashboard._INPUT_WRITE_LOCK.release()
+            release.set()
+            worker.join(3)
+        self.assertTrue(acquired, "a page keystroke would wait on console injection")
+        self.assertFalse(worker.is_alive())
+
     def test_failed_legacy_brief_does_not_leave_a_phantom_record(self):
         rid = chatroom.create_room("Visible team", [
             {"identity": "claude", "agent": "claude", "role": "engineer", "pid": 42},
@@ -339,12 +422,29 @@ class InventoryFixtures(unittest.TestCase):
 
 
 class LaunchKinds(unittest.TestCase):
+    def setUp(self):
+        dashboard._SESSION_INPUT_CONTEXT_CACHE.clear()
+        self.addCleanup(dashboard._SESSION_INPUT_CONTEXT_CACHE.clear)
+
     def test_retired_session_resolves_to_its_room_and_identity(self):
         room = {"id": "room-old", "participants": [], "retiredSessions": [
             {"sessionId": "sid-old", "identity": "codex", "agent": "codex"}]}
         with mock.patch.object(chatroom, "list_rooms", return_value=[room]):
             self.assertEqual(dashboard._session_input_context("sid-old"),
                              ("room-old", "codex"))
+
+    def test_session_context_cache_hit_does_not_list_rooms(self):
+        room = {"id": "room-one", "participants": [
+            {"kind": "agent", "identity": "codex", "sessionId": "sid-one"}
+        ]}
+        listed = mock.Mock(return_value=[room])
+        with mock.patch.object(chatroom, "list_rooms", listed):
+            self.assertEqual(dashboard._session_input_context("sid-one"),
+                             ("room-one", "codex"))
+        with mock.patch.object(chatroom, "list_rooms", side_effect=AssertionError("listed")):
+            self.assertEqual(dashboard._session_input_context("sid-one"),
+                             ("room-one", "codex"))
+        listed.assert_called_once_with()
 
     def test_type_input_records_only_after_a_successful_submit(self):
         class Session:

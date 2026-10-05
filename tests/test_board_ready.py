@@ -406,6 +406,9 @@ class UsageTests(unittest.TestCase):
 
     def test_digest_typed_line_has_usage_including_stall_helper(self):
         sess = mock.Mock()
+        sess.write = None
+        sess.alive.return_value = True
+        sess.send_line.return_value = True
         with mock.patch.object(po_usage, "head", return_value="usage: live"):
             d._type_input(sess, "[digest] project: news")
         sess.send_line.assert_called_once_with("[digest] usage: live | project: news")

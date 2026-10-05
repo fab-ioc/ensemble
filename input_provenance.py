@@ -29,6 +29,7 @@ import chatroom
 RECORDS_DIR: Path | None = None
 MATCH_SLACK_S = 10 * 60
 EDIT_MATCH_SLACK_S = 30
+MAX_RECORDS = 2_000
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, tuple[tuple[int, int], list[dict]]] = {}
@@ -65,8 +66,23 @@ def signature(room_id: str) -> tuple[int, int]:
         return 0, 0
 
 
+def _replace_records(path: Path, rows: list[dict]) -> None:
+    """Atomically replace one bounded journal while holding ``_LOCK``."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="\n") as fh:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+        tmp.replace(path)
+    finally:
+        try:
+            tmp.unlink()
+        except (FileNotFoundError, OSError):
+            pass
+
+
 def records(room_id: str) -> list[dict]:
-    """All valid records for a room, cached while its journal is unchanged."""
+    """The bounded valid records for a room, cached while unchanged."""
     if not room_id:
         return []
     p = path_for(room_id)
@@ -77,17 +93,28 @@ def records(room_id: str) -> list[dict]:
         if hit is not None and hit[0] == sig:
             return [dict(x) for x in hit[1]]
         out: list[dict] = []
+        lines = 0
+        read_ok = False
         try:
             with p.open(encoding="utf-8", errors="replace") as fh:
                 for line in fh:
+                    lines += 1
                     try:
                         row = json.loads(line)
                     except (TypeError, ValueError):
                         continue
                     if isinstance(row, dict) and row.get("hash") and row.get("kind"):
                         out.append(row)
+            read_ok = True
         except OSError:
             pass
+        if read_ok and (len(out) > MAX_RECORDS or lines > MAX_RECORDS):
+            out = out[-MAX_RECORDS:]
+            try:
+                _replace_records(p, out)
+                sig = signature(room_id)
+            except OSError:
+                pass
         _CACHE[key] = (sig, out)
         return [dict(x) for x in out]
 
@@ -140,17 +167,24 @@ def record(room_id: str, identity: str, text: str, info: dict,
     p = path_for(room_id)
     with _LOCK:
         p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
-        _CACHE.pop(str(p), None)
+        previous = records(room_id)
+        kept = [*previous, row][-MAX_RECORDS:]
+        if len(previous) >= MAX_RECORDS:
+            _replace_records(p, kept)
+        else:
+            with p.open("a", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+        _CACHE[str(p)] = (signature(room_id), kept)
     return dict(row)
 
 
 def index(room_id: str) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = defaultdict(list)
     for order, row in enumerate(records(room_id)):
-        # File order is physical submission order: dashboard serializes each
-        # successful terminal write with this append under one write lock.
+        # File order is the causal signal for ordinary headless PTY text
+        # writes, which the dashboard journals under the same short lock.
+        # Slow visible-console and discrete-Enter phases have documented
+        # narrow ordering gaps rather than blocking unrelated keystrokes.
         out[str(row.get("hash") or "")].append({**row, "_order": order})
     return dict(out)
 
@@ -183,8 +217,8 @@ def assign(indexed: dict[str, list[dict]], turns: list[tuple[int, str, float]], 
     """Match records to transcript turns one-to-one in submission order.
 
     New browser/person submissions are journaled too. Thus equal text has one
-    row per physical submission, and the dashboard serializes the physical
-    write with its journal append so file order is causal. If eligible
+    row per physical submission, and the dashboard serializes ordinary PTY
+    text writes with their journal append so file order is causal. If eligible
     row/turn counts differ, the hash is ambiguous and none is attributed: a
     lone Hub row can never be borrowed by a later identical unrecorded person
     turn. Explicit-human rows also have a conservative ordered fallback for
