@@ -1050,7 +1050,9 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
 - **With a mouse the box is one card** (layout A, #126; compacted in #169):
   `--surface`, a `--border-strong` edge (`--focus-ring` while you type), `--r-300`, 24px from the
   column's sides in the original layout; the compact layout uses 12px sides and 8px at its foot. The input, shared
-  **+** menu and **Send** occupy one row until the input is focused, when it grows to 88px.
+  **+** menu and **Send** occupy one row. The input grows with its text from a one-row minimum
+  to an 88px cap. Its height and Send's hit target must stay fixed between pointerdown and click;
+  focus or blur must never shrink the box under a pressed Send.
   The menu contains Attach, Add an ask and Team activity. Send remains visible. Activity is
   inside the composer; an empty hint takes no room. Latest lives beside Send, never over a
   balloon. The placeholder only names the recipient; routing and shortcuts remain in its title.
@@ -1567,8 +1569,11 @@ desktop is untouched by construction.
 13. **A compact composer, always reachable.** One input row with Send, a 44px `+` menu for
     Attach / Add an ask / Team activity, and a 44px Latest arrow when needed. Team activity's
     menu item states whether it is folded or shown. Activity belongs inside the composer;
-    focus adds a fixed `--focus-ring` inset and expands the input. Keep the placeholder short,
+    focus adds a fixed `--focus-ring` inset; text content expands the input. Keep the placeholder short,
     fields at 16px, and every control 44px. Keep navigation visible; never hide it on scroll.
+    A pointer press on Send, a quick answer's Send, or Retry starts that action before a Dock
+    strip or other host layout can move its frame. Suppress the matching click so it sends once;
+    keyboard activation still uses click. A blocked send states its reason beside the button.
     The composer menu closes on an outside click or focus change. Escape closes it and
     returns focus to its trigger before other Escape handlers act.
 14. **No balloon under chrome.** Notices occupy their own flex rows; balloons cannot shrink
