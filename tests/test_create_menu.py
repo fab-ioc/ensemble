@@ -114,7 +114,7 @@ async function main() {
         await sleep(600);
         const res = { themes: {}, opens: {} };
         // Every theme is measured; Light and Dark are photographed.
-        for (const theme of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord']) {
+        for (const theme of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord', 'intellij-dark']) {
           await p.evalIn(`setAppearance(${JSON.stringify(theme)}), 0`);
           await sleep(300);
           await openMenu(p);

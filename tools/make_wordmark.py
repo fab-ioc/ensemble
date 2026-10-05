@@ -131,7 +131,7 @@ def ship(variant: str) -> None:
 
 # ---- preview: every variant on every theme's bar, and the contrast of each colour
 
-THEMES = ("light", "paper", "contrast", "dark", "dim", "fjord")
+THEMES = ("light", "paper", "contrast", "dark", "dim", "fjord", "intellij-dark")
 
 
 def theme_tokens() -> dict[str, dict[str, str]]:
@@ -139,7 +139,7 @@ def theme_tokens() -> dict[str, dict[str, str]]:
     last declaration of a name wins, a theme on top of :root."""
     css = re.sub(r"/\*.*?\*/", "", PAGE.read_text(encoding="utf-8"), flags=re.S)
     blocks = {"light": re.search(r":root\s*\{(.*?)\}", css, re.S).group(1)}
-    for m in re.finditer(r':root\[data-theme="(\w+)"\]\s*\{(.*?)\}', css, re.S):
+    for m in re.finditer(r':root\[data-theme="([\w-]+)"\]\s*\{(.*?)\}', css, re.S):
         blocks.setdefault(m.group(1), m.group(2))
     decl = lambda b: dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", b))
     base = decl(blocks["light"])

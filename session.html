@@ -29,7 +29,7 @@
 // first-paint cache. index.html, session.html and fileview.html carry the same
 // script; change all three together.
 (function () {
-  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark' };
+  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark', 'intellij-dark': 'dark' };
   var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
   function stored() {
     try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
@@ -534,6 +534,57 @@
     --match-fg: #F6ECCF;
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
     --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
+  }
+  :root[data-theme="intellij-dark"] {
+    color-scheme: dark;
+    --bg: #1E1F22;
+    --surface: #2B2D30;
+    --surface-sunken: #2B2D30;
+    --surface-overlay: #1E1F22;
+    --fg: #DFE1E5;
+    --fg-subtle: #B4B8BF;
+    --fg-muted: #A2A4AC;
+    --fg-disabled: #6F737A;
+    --border: #393B40;
+    --border-strong: #5A5D63;
+    --hover: #393B40;
+    --pressed: rgba(255, 255, 255, .15);
+    --accent: #78A4FA;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-pressed: color-mix(in srgb, var(--accent) 72%, white);
+    --accent-fg: #1E1F22;
+    --focus-ring: #3574F0;
+    --c-neutral-bg: #393B40;
+    --c-neutral-fg: #B4B8BF;
+    --c-neutral-bold: #A2A4AC;
+    --c-progress-bg: #25324D;
+    --c-progress-fg: #B5CEFF;
+    --c-progress-bold: #78A4FA;
+    --c-success-bg: #253627;
+    --c-success-fg: #D4FAD7;
+    --c-success-bold: #6EB473;
+    --c-warning-bg: #3D3223;
+    --c-warning-fg: #F2C55C;
+    --c-warning-bold: #F2C55C;
+    --c-danger-bg: #402929;
+    --c-danger-fg: #F2B1AA;
+    --c-danger-bold: #E58C8C;
+    --c-discovery-bg: #2F2936;
+    --c-discovery-fg: #D4B8F9;
+    --c-discovery-bold: #B589EC;
+    --prio-1: #EB938D;
+    --prio-2: #E5986C;
+    --prio-3: #F2C55C;
+    --prio-4: #60C0B5;
+    --prio-5: #83ACFC;
+    --agent-claude-bg: #E5986C;
+    --agent-claude-fg: #1E1F22;
+    --agent-codex-bg: #60C0B5;
+    --agent-codex-fg: #1E1F22;
+    --match-bg: #5E4D33;
+    --match-fg: #FCEBA4;
+    --e-100: 0 1px 1px rgba(0,0,0,.125), 0 0 1px rgba(0,0,0,.20);
+    --e-200: 0 8px 12px rgba(0,0,0,.30), 0 0 1px rgba(0,0,0,.35);
   }
   * { box-sizing: border-box; }
   /* --vv-h is the visible viewport on a touch screen (set by script), so the

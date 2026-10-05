@@ -250,11 +250,11 @@ async function main() {
       await click(p, '#proj-go');
       await sleep(300);
       out.plainUp = await p.evalIn(MID);
-      // Six themes: the crumbs keep their contrast (colours read from the page).
+      // Every theme: the crumbs keep their contrast (colours read from the page).
       out.themes = {};
       await go(p, A.proj); await poReady(p);
       await p.evalIn("pdReveal('board'); 0"); await sleep(300);
-      for (const t of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord']) {
+      for (const t of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord', 'intellij-dark']) {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; 0`);
         await sleep(120);
         out.themes[t] = await p.evalIn(`(() => { const hd = getComputedStyle(document.querySelector('header')).backgroundColor;

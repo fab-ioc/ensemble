@@ -22,7 +22,7 @@
 // first-paint cache. index.html, session.html and fileview.html carry the same
 // script; change all three together.
 (function () {
-  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark' };
+  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark', 'intellij-dark': 'dark' };
   var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
   function stored() {
     try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
@@ -414,6 +414,39 @@
     --code-ty: #DFB562; --code-attr: #88C6C5; --code-meta: #E0B0A1; --code-tag: #8EC3D2;
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
     --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
+  }
+  :root[data-theme="intellij-dark"] {
+    color-scheme: dark;
+    --bg: #1E1F22;
+    --surface: #2B2D30;
+    --surface-sunken: #2B2D30;
+    --surface-overlay: #1E1F22;
+    --fg: #DFE1E5;
+    --fg-subtle: #B4B8BF;
+    --fg-muted: #A2A4AC;
+    --border: #393B40;
+    --border-strong: #5A5D63;
+    --hover: #393B40;
+    --pressed: rgba(255, 255, 255, .15);
+    --accent: #78A4FA;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-fg: #1E1F22;
+    --focus-ring: #3574F0;
+    --c-warning-bold: #F2C55C;
+    --c-danger-bg: #402929;
+    --c-danger-fg: #F2B1AA;
+    --c-discovery-bg: #2F2936;
+    --c-discovery-fg: #D4B8F9;
+    --match-bg: #5E4D33;
+    --match-fg: #FCEBA4;
+    --c-success-bg: #253627;
+    --c-warning-fg: #F2C55C;
+    --c-progress-bg: #25324D;
+    --c-progress-fg: #B5CEFF;
+    --code-kw: #C4A0F3; --code-str: #A0DBA5; --code-num: #83ACFC; --code-fn: #B5CEFF;
+    --code-ty: #F5D273; --code-attr: #7DCEC5; --code-meta: #F5BD98; --code-tag: #9BDDD6;
+    --e-100: 0 1px 1px rgba(0,0,0,.125), 0 0 1px rgba(0,0,0,.20);
+    --e-200: 0 8px 12px rgba(0,0,0,.30), 0 0 1px rgba(0,0,0,.35);
   }
   * { box-sizing: border-box; }
   [hidden] { display:none !important; }

@@ -3,7 +3,7 @@ list, each its own drawing and colour (toolIcon, --tool-*).
 
 In headless Chrome over CDP, against the strip test's hub in a thread:
 
-* at 1280, in six themes: every button of the right-hand strip and of the
+* at 1280, in every theme: every button of the right-hand strip and of the
   left list's strip (the list unpinned) holds its tool's icon, in its tool's
   colour, 3:1 or better on its button at rest and hovered and on the strip;
   the open tool's icon is the button's one colour (--selected-fg), as before;
@@ -41,7 +41,7 @@ from tools import make_tool_icons  # noqa: E402
 
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8")
 TOOLS = ["points", "changes", "workspace", "board", "spec"]
-THEMES = ["light", "dark", "dim", "paper", "contrast", "fjord"]
+THEMES = ["light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark"]
 SHOT_THEMES = ["light", "dark", "fjord"]
 
 CDP_JS = STRIP_JS[:STRIP_JS.index("async function main()")] + r"""

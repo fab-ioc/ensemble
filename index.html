@@ -16,7 +16,7 @@
 // first-paint cache. index.html, session.html and fileview.html carry the same
 // script; change all three together.
 (function () {
-  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark' };
+  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark', 'intellij-dark': 'dark' };
   var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
   function stored() {
     try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
@@ -535,6 +535,51 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
     --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
+  }
+  /* IntelliJ IDEA New UI Dark: JetBrains' expUI_dark palette. Text shades
+     and the three semantic bold shades marked in the design-system table are
+     nudged only where Ensemble's AA contract is stricter than the IDE's. */
+  :root[data-theme="intellij-dark"] {
+    color-scheme: dark;
+    --bg: #1E1F22;
+    --surface: #2B2D30;
+    --surface-sunken: #2B2D30;
+    --surface-overlay: #1E1F22;
+    --fg: #DFE1E5;
+    --fg-subtle: #B4B8BF;
+    --fg-muted: #A2A4AC;
+    --fg-disabled: #6F737A;
+    --border: #393B40;
+    --border-strong: #5A5D63;
+    --hover: #393B40;
+    --pressed: rgba(255, 255, 255, .15);
+    --accent: #78A4FA;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-pressed: color-mix(in srgb, var(--accent) 72%, white);
+    --accent-fg: #1E1F22;
+    --focus-ring: #3574F0;
+    --c-neutral-bg: #393B40;  --c-neutral-fg: #B4B8BF;  --c-neutral-bold: #A2A4AC;
+    --c-progress-bg: #25324D; --c-progress-fg: #B5CEFF; --c-progress-bold: #78A4FA;
+    --c-success-bg: #253627;  --c-success-fg: #D4FAD7;  --c-success-bold: #6EB473;
+    --c-warning-bg: #3D3223;  --c-warning-fg: #F2C55C;  --c-warning-bold: #F2C55C;
+    --c-danger-bg: #402929;   --c-danger-fg: #F2B1AA;   --c-danger-bold: #E58C8C;
+    --c-discovery-bg: #2F2936; --c-discovery-fg: #D4B8F9; --c-discovery-bold: #B589EC;
+    --prio-1: #EB938D; --prio-2: #E5986C; --prio-3: #F2C55C;
+    --prio-4: #60C0B5; --prio-5: #83ACFC;
+    --agent-claude-bg: #E5986C; --agent-claude-fg: #1E1F22;
+    --agent-codex-bg: #60C0B5;  --agent-codex-fg: #1E1F22;
+    --wm-lane-1: #EB938D; --wm-lane-2: #89CC8E; --wm-lane-3: #F2C55C;
+    --wm-from: #83ACFC; --wm-to: #C4A0F3;
+    --tool-points: #F2C55C; --tool-changes: #89CC8E; --tool-workspace: #83ACFC;
+    --tool-board: #C4A0F3; --tool-spec: #7DCEC5; --tool-list: #F0AC81; --tool-ink: #1E1F22;
+    --match-bg: #5E4D33; --match-fg: #FCEBA4;
+    --code-kw: #C4A0F3; --code-str: #A0DBA5; --code-num: #83ACFC; --code-fn: #B5CEFF;
+    --code-ty: #F5D273; --code-attr: #7DCEC5; --code-meta: #F5BD98; --code-tag: #9BDDD6;
+    --diff-wash: 100%;
+    --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
+    --e-100: 0 1px 1px rgba(0,0,0,.125), 0 0 1px rgba(0,0,0,.20);
+    --e-200: 0 8px 12px rgba(0,0,0,.30), 0 0 1px rgba(0,0,0,.35);
   }
   * { box-sizing: border-box; }
   body {
@@ -17299,6 +17344,7 @@ const THEME_INFO = {
   light: ['Light', '#F7F8F9', '#0C66E4'], dark: ['Dark', '#1D2125', '#579DFF'],
   dim: ['Dim', '#242320', '#8DB0DC'], paper: ['Paper', '#F6F3EC', '#2A5DA8'],
   contrast: ['High contrast', '#FFFFFF', '#003DA8'], fjord: ['Fjord', '#2E3440', '#93CBDB'],
+  'intellij-dark': ['IntelliJ Dark', '#1E1F22', '#78A4FA'],
 };
 function themeChoices() {
   const names = (window.cdTheme && cdTheme.themes) || Object.keys(THEME_INFO);

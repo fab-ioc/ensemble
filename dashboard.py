@@ -1436,7 +1436,7 @@ def project_noun(n: str = "one", case: str = "lower") -> str:
 
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
-    "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "system"},
+    "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark", "system"},
     "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
 }
 

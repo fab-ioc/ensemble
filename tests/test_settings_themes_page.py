@@ -100,9 +100,10 @@ async function main() {
         SELECTED_SID = null; window.closeTask = was; return r; })()`);
       await evalIn('document.getElementById("me-theme-btn").click(); 0');
       // Choose one: at once on the page, then on the hub.
-      await evalIn('document.querySelector("#me-themes .theme-opt[data-appearance=fjord]").click(); 0');
+      await evalIn('document.querySelector("#me-themes .theme-opt[data-appearance=intellij-dark]").click(); 0');
       o.applied = await evalIn('document.documentElement.dataset.theme');
-      await until(`fetch('/api/settings').then(r => r.json()).then(s => s.theme === 'fjord')`);
+      o.ground = await evalIn(`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim().toUpperCase()`);
+      await until(`fetch('/api/settings').then(r => r.json()).then(s => s.theme === 'intellij-dark')`);
       o.saved = await evalIn(`fetch('/api/settings').then(r => r.json()).then(s => s.theme)`);
       o.menuClosed = await evalIn('document.getElementById("me-menu").hidden');
       await evalIn('document.getElementById("me-btn").click(); document.getElementById("me-theme-btn").click(); 0');
@@ -271,11 +272,12 @@ class SettingsScrollsAndThemeSubmenu(unittest.TestCase):
     def test_choosing_a_theme_applies_and_saves_it(self):
         for name, g in self.got.items():
             with self.subTest(name):
-                self.assertEqual(g["applied"], "fjord")
-                self.assertEqual(g["saved"], "fjord")
+                self.assertEqual(g["applied"], "intellij-dark")
+                self.assertEqual(g["ground"], "#1E1F22")
+                self.assertEqual(g["saved"], "intellij-dark")
                 self.assertTrue(g["menuClosed"])
-                self.assertEqual(g["tickedAfter"], ["fjord"])
-                self.assertEqual(g["cur"], "Fjord")
+                self.assertEqual(g["tickedAfter"], ["intellij-dark"])
+                self.assertEqual(g["cur"], "IntelliJ Dark")
 
     def test_accent_submenu_choices_layout_and_keyboard(self):
         colors = ["", "#0055CC", "#1F845A", "#1D7AFC", "#6E5DC6", "#943D73", "#C25D3C", "#44546F"]

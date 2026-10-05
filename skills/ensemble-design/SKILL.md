@@ -72,7 +72,8 @@ his first look, and it looked nothing like the mockup.
 - **A theme is a complete token set.** Light lives on bare `:root`. Every other theme lives **once**,
   under `:root[data-theme="<name>"]`, and sets every colour token for its ground: neutrals,
   interaction, and the semantic tokens' shades. The themes are Light (default), Dark, Dim, Paper,
-  High contrast (`contrast`) and Fjord, plus System, which resolves to Light or Dark.
+  High contrast (`contrast`), Fjord and IntelliJ Dark (`intellij-dark`), plus System, which resolves
+  to Light or Dark.
 - **A theme changes a semantic colour's shade, never its meaning.** Amber is "needs you" in every
   theme and red is "wrong" in every theme. Each theme's pairs are measured on that theme's ground.
 - **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
@@ -115,6 +116,30 @@ his first look, and it looked nothing like the mockup.
   set and `:root` gives light — the safe default.
 - **Review in every theme, and the owner's first.** Four slices were built and reviewed only in dark
   because both agents' environments were dark-mode.
+
+#### IntelliJ Dark token table
+
+The seventh theme follows JetBrains' New UI Dark palette in
+`expUI_dark.theme.json` at commit `67cf4cce8f6dfcee490b0e802e041d6d413b86b7`. Its ground is
+IntelliJ Gray1 and its panels are Gray2. `--fg-muted`, `--accent`, `--c-success-bold` and
+`--c-danger-bold` are the smallest AA nudges from Gray9, Blue9, Green7 and Red7 respectively; all
+other values below are palette colours or functional alpha blends of them.
+
+| Role | Ensemble tokens | IntelliJ Dark values |
+|---|---|---|
+| Grounds | `--bg`; `--surface`; `--surface-sunken`; `--surface-overlay` | `#1E1F22`; `#2B2D30`; `#2B2D30`; `#1E1F22` |
+| Text | `--fg`; `--fg-subtle`; `--fg-muted`; `--fg-disabled` | `#DFE1E5`; `#B4B8BF`; `#A2A4AC`; `#6F737A` |
+| Edges and action grounds | `--border`; `--border-strong`; `--hover`; `--pressed` | `#393B40`; `#5A5D63`; `#393B40`; `rgba(255,255,255,.15)` |
+| Interaction | `--accent`; `--accent-fg`; `--focus-ring` | `#78A4FA`; `#1E1F22`; `#3574F0` |
+| Neutral | `--c-neutral-bg`; `--c-neutral-fg`; `--c-neutral-bold` | `#393B40`; `#B4B8BF`; `#A2A4AC` |
+| Progress | `--c-progress-bg`; `--c-progress-fg`; `--c-progress-bold` | `#25324D`; `#B5CEFF`; `#78A4FA` |
+| Success | `--c-success-bg`; `--c-success-fg`; `--c-success-bold` | `#253627`; `#D4FAD7`; `#6EB473` |
+| Warning | `--c-warning-bg`; `--c-warning-fg`; `--c-warning-bold` | `#3D3223`; `#F2C55C`; `#F2C55C` |
+| Danger | `--c-danger-bg`; `--c-danger-fg`; `--c-danger-bold` | `#402929`; `#F2B1AA`; `#E58C8C` |
+| Discovery | `--c-discovery-bg`; `--c-discovery-fg`; `--c-discovery-bold` | `#2F2936`; `#D4B8F9`; `#B589EC` |
+| Search match | `--match-bg`; `--match-fg` | `#5E4D33`; `#FCEBA4` |
+| Code | `--code-kw`; `--code-str`; `--code-num`; `--code-fn`; `--code-ty`; `--code-attr`; `--code-meta`; `--code-tag` | `#C4A0F3`; `#A0DBA5`; `#83ACFC`; `#B5CEFF`; `#F5D273`; `#7DCEC5`; `#F5BD98`; `#9BDDD6` |
+| Diff | `--diff-wash` | `100%` against Green1 / Red1 semantic grounds |
 
 ### Neutrals
 

@@ -277,7 +277,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.12\.0 2be9b7f[0-9a-f]{33}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.13\.0 23363eb[0-9a-f]{33}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -584,7 +584,7 @@ async function main() {
       const live = card.isConnected && card.ownerDocument === d && card.querySelector('.ctitle').textContent.includes('Renamed while out');
       r.label = was; renderRows();
       const count = (d.getElementById('viewcount') || {}).textContent || '';
-      const theme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'dark';
+      const theme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'intellij-dark';
       await new Promise(r => setTimeout(r, 200)); const followed = d.documentElement.dataset.theme; document.documentElement.dataset.theme = theme;
       await new Promise(r => setTimeout(r, 200));
       d.querySelector('.viewsw button[data-view="list"]').click(); await new Promise(r => setTimeout(r, 200));
@@ -770,9 +770,9 @@ async function main() {
     for (const [w, h, mob] of [[1400, 900, false], [1800, 1000, false], [390, 844, true]]) {
       const q = await page(w, h, mob);
       await go(q); await ready(q);
-      for (const theme of ['light', 'dark', 'contrast']) {
+      for (const theme of ['light', 'dark', 'contrast', 'intellij-dark']) {
         // As the avatar menu does: stored (the chat hears it by a storage event) and applied here.
-        await q.evalIn(`(() => { const s = ({ light: 'light', dark: 'dark', contrast: 'light' })['${theme}']; localStorage.setItem('cd-theme', '${theme}'); document.documentElement.dataset.theme = '${theme}'; document.documentElement.dataset.scheme = s; return 0; })()`);
+        await q.evalIn(`(() => { const s = ({ light: 'light', dark: 'dark', contrast: 'light', 'intellij-dark': 'dark' })['${theme}']; localStorage.setItem('cd-theme', '${theme}'); document.documentElement.dataset.theme = '${theme}'; document.documentElement.dataset.scheme = s; return 0; })()`);
         await q.until(`pdChatFrame().contentDocument.documentElement.dataset.theme === '${theme}'`, 5000);
         await sleep(500);
         out.sizes[w + '/' + theme] = await q.evalIn(`(() => { ${rect}
@@ -1107,7 +1107,7 @@ class InChrome(unittest.TestCase):
         b = self.got["popBoard"]
         self.assertTrue(b["live"], "a card patched in its own window")
         self.assertRegex(b["count"], r"\d+ tasks?|\d+ of \d+", "the task count redrawn there")
-        self.assertEqual((b["followed"], b["back"]), ("dark", True), "the theme follows")
+        self.assertEqual((b["followed"], b["back"]), ("intellij-dark", True), "the Dock pop-out receives IntelliJ Dark")
         self.assertGreater(b["list"], 0, "a click there switches the view")
         self.assertEqual(b["title"], "Board · Motors")
         self.assertEqual(len(b["icon"]), 1, b["icon"])
@@ -1161,7 +1161,8 @@ class InChrome(unittest.TestCase):
 
     def test_no_size_or_theme_overflows(self):
         s = self.got["sizes"]
-        self.assertEqual(set(s), {f"{w}/{t}" for w in (1400, 1800, 390) for t in ("light", "dark", "contrast")})
+        self.assertEqual(set(s), {f"{w}/{t}" for w in (1400, 1800, 390)
+                                  for t in ("light", "dark", "contrast", "intellij-dark")})
         for k, v in s.items():
             self.assertEqual((v["scrollX"], v["scrollY"], v["over"]), (0, 0, []), k)
             self.assertFalse(v["poOff"], k)

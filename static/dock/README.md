@@ -561,7 +561,7 @@ an app no longer needs to lay an element over a panel's place to keep an iframe 
 
 ## Theme
 
-`css/theme.css` defines the colour tokens as custom properties on `:root`: light by default, and twenty sets in all, each
+`css/theme.css` defines the colour tokens as custom properties on `:root`: light by default, and twenty-one sets in all, each
 under `:root[data-theme="<name>"]`; with no `data-theme` the OS preference picks light or dark. `css/dock.css` uses only
 these tokens, and an app's own styles can use them too, so the app and its panels look like one family.
 
@@ -571,7 +571,7 @@ these tokens, and an app's own styles can use them too, so the app and its panel
 |---|---|---|
 | base | `light`, `dark`, `dim`, `paper`, `contrast`, `fjord`, `tws` | opTen's seven themes (`stream-bridge/…/app/css/app.css`), colour for colour; `light` and `dark` were already the library's |
 | ensemble | `ensemble-light`, `ensemble-dark`, `ensemble-dim`, `ensemble-paper`, `ensemble-contrast`, `ensemble-fjord` | Ensemble's six (`claude-dashboard-main/index.html`). They share names with opTen's but differ in shade (grounds, accent, quiet text), so they carry the `ensemble-` prefix and both looks are kept |
-| extra | `solar-light`, `solar-dark`, `sepia`, `rose`, `dusk`, `forest`, `contrast-dark` | new: Solarized-like light and dark (text and accents deepened to pass), a warm sepia, a rose-and-plum light (Rosé Pine Dawn-like), a violet dusk (Dracula-like), a green forest dark, and a high-contrast dark |
+| extra | `solar-light`, `solar-dark`, `sepia`, `rose`, `dusk`, `forest`, `contrast-dark`, `intellij-dark` | new: Solarized-like light and dark (text and accents deepened to pass), a warm sepia, a rose-and-plum light (Rosé Pine Dawn-like), a violet dusk (Dracula-like), a green forest dark, a high-contrast dark, and IntelliJ IDEA's New UI Dark from JetBrains' Apache-2.0 `expUI_dark.theme.json` |
 
 Ensemble's tokens map onto the library's as: `--surface-overlay` → `--dk-bg` (menus, fields), `--surface-sunken` →
 `--dk-bg2` (chrome), `--surface` → `--dk-bg3` (panel ground), `--border` → `--dk-line`, `--fg` / `--fg-subtle` /

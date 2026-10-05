@@ -23,6 +23,7 @@ export const THEME_LIST = Object.freeze([
   ['solar-light', 'Solar light', 'light', 'extra'], ['solar-dark', 'Solar dark', 'dark', 'extra'],
   ['sepia', 'Sepia', 'light', 'extra'], ['rose', 'Rose', 'light', 'extra'], ['dusk', 'Dusk', 'dark', 'extra'],
   ['forest', 'Forest', 'dark', 'extra'], ['contrast-dark', 'High contrast dark', 'dark', 'extra'],
+  ['intellij-dark', 'IntelliJ Dark', 'dark', 'extra'],
 ].map(([name, label, scheme, origin]) => Object.freeze({ name, label, scheme, origin })));
 
 /** name -> scheme ('light' | 'dark') for every set in THEME_LIST: createTheme's default `themes`. */
