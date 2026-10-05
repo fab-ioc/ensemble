@@ -1455,6 +1455,11 @@ def load_settings() -> dict:
     # One Claude model, under both names: a defaultModel saved before
     # agentModels existed is Claude's model.
     saved = saved if isinstance(saved, dict) else {}
+    # This is an isolation boundary, not a cosmetic preference: a typo or a
+    # hand-edited non-string value must never widen a task agent's access.
+    out["taskAgentTools"] = (TASK_AGENT_TOOLS_OWN
+                             if saved.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                             else TASK_AGENT_TOOLS_ENSEMBLE)
     out["agentModels"] = agent_models.normalise(saved.get("agentModels"),
                                                 legacy_claude=saved.get("defaultModel"))
     out["defaultModel"] = out["agentModels"]["claude"]["model"]
@@ -1656,7 +1661,7 @@ def _save_settings_locked(settings: dict) -> dict:
         if k == "feedbackRelayUrl" and not feedback.valid_relay(v):
             continue
         allowed = _SETTINGS_ALLOWED_VALUES.get(k)
-        if allowed and v not in allowed:
+        if allowed and (not isinstance(v, str) or v not in allowed):
             continue
         if k == "poFallbackModels":
             if not isinstance(v, dict) or any(
@@ -3621,6 +3626,10 @@ def load_projects() -> list[dict]:
     named: set[tuple] = set()       # (code folder, name as a home) of those projects
 
     def _add(p: dict, from_root: bool = False) -> None:
+        p = dict(p)
+        project_tools = p.get("taskAgentTools")
+        if not isinstance(project_tools, str) or project_tools not in TASK_AGENT_TOOLS_VALUES:
+            p.pop("taskAgentTools", None)
         key = os.path.normcase(os.path.normpath(p["path"]))
         home = os.path.normcase(os.path.normpath(p["home"])) if p.get("home") else ""
         as_named = (key, _safe_dir_name(p.get("name") or "").casefold())
@@ -3676,7 +3685,8 @@ def load_projects() -> list[dict]:
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {}),
                       **({"taskAgentTools": meta["taskAgentTools"]}
-                         if meta.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {})},
+                         if isinstance(meta.get("taskAgentTools"), str)
+                         and meta["taskAgentTools"] in TASK_AGENT_TOOLS_VALUES else {})},
                      from_root=True)
     except OSError:
         pass
@@ -4633,7 +4643,7 @@ def set_project_task_agent_tools(project_id: str, value) -> tuple[bool, str]:
     """
     if value in (None, ""):
         value = None
-    elif value not in TASK_AGENT_TOOLS_VALUES:
+    elif not isinstance(value, str) or value not in TASK_AGENT_TOOLS_VALUES:
         return False, "task_agent_tools_must_be_ensemble_or_own"
     return _set_project_meta(project_id, "taskAgentTools", value)
 
@@ -11825,9 +11835,12 @@ class Handler(BaseHTTPRequestHandler):
             return TASK_AGENT_TOOLS_OWN
         pid = _room_project_id(rid, room_full)
         project = next((p for p in projects if p.get("id") == pid), None)
-        if project and project.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES:
+        if (project and isinstance(project.get("taskAgentTools"), str)
+                and project["taskAgentTools"] in TASK_AGENT_TOOLS_VALUES):
             return project["taskAgentTools"]
-        return load_settings().get("taskAgentTools", TASK_AGENT_TOOLS_ENSEMBLE)
+        global_tools = load_settings().get("taskAgentTools")
+        return (TASK_AGENT_TOOLS_OWN if global_tools == TASK_AGENT_TOOLS_OWN
+                else TASK_AGENT_TOOLS_ENSEMBLE)
 
     @staticmethod
     def _codex_ensemble_only_args(cwd: str) -> list[str]:
@@ -11849,7 +11862,8 @@ class Handler(BaseHTTPRequestHandler):
             rows = json.loads(found.stdout or "[]")
             if not isinstance(rows, list):
                 raise ValueError("Codex returned no MCP server list")
-        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError,
+                RuntimeError, ValueError) as exc:
             # Ensemble-only is an isolation promise. Refuse a launch whose
             # effective user servers cannot be enumerated instead of silently
             # giving it more tools than the setting says.

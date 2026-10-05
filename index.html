@@ -3954,7 +3954,7 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
     <p class="cfg-hint" id="pref-effort-codex-note" role="status" hidden></p>
     <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers and PO switches. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
-    <div class="pref-row" style="margin-top: 14px;">
+    <div class="pref-row" style="margin-top: 16px;">
       <label class="pref-label" for="pref-task-agent-tools">Task agents' tools</label>
       <select id="pref-task-agent-tools" class="pref-select">
         <option value="ensemble">Ensemble only</option>
@@ -13303,6 +13303,7 @@ document.addEventListener('click', async (ev) => {
 function taskToolsDialogHtml(pj) {
   const global = PREFS?.taskAgentTools === 'own' ? 'Ensemble + my own tools' : 'Ensemble only';
   const value = pj.taskAgentTools || '';
+  const poKeepsOwn = nounText("The {project}'s PO keeps your own tools.");
   const option = (v, label) => `<option value="${v}"${value === v ? ' selected' : ''}>${esc(label)}</option>`;
   return `<h3>Task agents' tools in ${esc(pj.name)}</h3>`
     + `<div class="pref-row"><label class="pref-label" for="project-task-tools">Tools</label>`
@@ -13310,7 +13311,7 @@ function taskToolsDialogHtml(pj) {
     + option('', `Use global default (currently ${global})`)
     + option('ensemble', 'Ensemble only')
     + option('own', 'Ensemble + my own tools') + `</select></div>`
-    + `<p class="cfg-hint">Applies to task owners, reviewers and owner handovers launched or resumed after this change. Running agents keep the tools they started with. The project's PO keeps your own tools.</p>`
+    + `<p class="cfg-hint">Applies to task owners, reviewers and owner handovers launched or resumed after this change. Running agents keep the tools they started with. ${esc(poKeepsOwn)}</p>`
     + `<div class="actions"><button id="project-task-tools-ok">Save</button><button id="project-task-tools-cancel" class="secondary">Cancel</button></div>`;
 }
 async function taskToolsChoose(pid) {

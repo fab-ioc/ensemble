@@ -45,6 +45,17 @@ class SettingsAndProjects(unittest.TestCase):
         self.assertEqual(dashboard.load_settings()["taskAgentTools"], "own")
         dashboard.save_settings({"taskAgentTools": "not-a-scope"})
         self.assertEqual(dashboard.load_settings()["taskAgentTools"], "own")
+        for bad in ([], {}, 1, None):
+            with self.subTest(bad=bad):
+                dashboard.save_settings({"taskAgentTools": bad})
+                self.assertEqual(dashboard.load_settings()["taskAgentTools"], "own")
+
+    def test_invalid_persisted_global_values_fail_closed(self):
+        for bad in ("ensembl", [], {}, 1, None):
+            with self.subTest(bad=bad):
+                dashboard.SETTINGS_FILE.write_text(
+                    json.dumps({"taskAgentTools": bad}), encoding="utf-8")
+                self.assertEqual(dashboard.load_settings()["taskAgentTools"], "ensemble")
 
     def test_project_override_round_trip_and_inherit(self):
         ok, project, _ = dashboard.register_project("Tools")
@@ -59,8 +70,19 @@ class SettingsAndProjects(unittest.TestCase):
         self.assertNotIn("taskAgentTools", dashboard.find_project(pid))
         self.assertNotIn("taskAgentTools", json.loads(
             (Path(got["home"]) / "project.json").read_text(encoding="utf-8")))
+        for bad in ("wide", [], {}, 1):
+            with self.subTest(persisted=bad):
+                path = Path(got["home"]) / "project.json"
+                meta = json.loads(path.read_text(encoding="utf-8"))
+                meta["taskAgentTools"] = bad
+                path.write_text(json.dumps(meta), encoding="utf-8")
+                self.assertNotIn("taskAgentTools", dashboard.find_project(pid))
         self.assertEqual(dashboard.set_project_task_agent_tools(pid, "wide"),
                          (False, "task_agent_tools_must_be_ensemble_or_own"))
+        for bad in ([], {}, 1):
+            with self.subTest(bad=bad):
+                self.assertEqual(dashboard.set_project_task_agent_tools(pid, bad),
+                                 (False, "task_agent_tools_must_be_ensemble_or_own"))
 
 
 class LaunchArguments(unittest.TestCase):
@@ -159,6 +181,11 @@ class LaunchArguments(unittest.TestCase):
             self.assertTrue(self.isolated(kind, self.launch(kind, "owner")))
             self.assertFalse(self.isolated(kind, self.launch(kind, "unassigned")))
 
+    def test_invalid_resolved_global_value_fails_closed(self):
+        self.settings["taskAgentTools"] = ["own"]
+        for kind in ("claude", "codex"):
+            self.assertTrue(self.isolated(kind, self.launch(kind, "unassigned")))
+
     def test_pos_switches_and_human_driven_history_keep_own_tools(self):
         self.settings["taskAgentTools"] = "ensemble"
         self.projects[0]["taskAgentTools"] = "ensemble"
@@ -183,6 +210,22 @@ class LaunchArguments(unittest.TestCase):
         self.assertIn("features.apps=false", args)
         self.assertIn("features.remote_plugin=false", args)
 
+    def test_codex_ensemble_only_fails_closed_when_discovery_is_unusable(self):
+        cases = (
+            OSError("missing"),
+            types.SimpleNamespace(returncode=1, stdout="", stderr="no"),
+            types.SimpleNamespace(returncode=0, stdout="not json", stderr=""),
+            types.SimpleNamespace(returncode=0, stdout="{}", stderr=""),
+            types.SimpleNamespace(returncode=0, stdout="[{}]", stderr=""),
+        )
+        for result in cases:
+            with self.subTest(result=result):
+                kwargs = ({"side_effect": result} if isinstance(result, BaseException)
+                          else {"return_value": result})
+                with mock.patch.object(dashboard.subprocess, "run", **kwargs):
+                    with self.assertRaises(dashboard.StartRoomError):
+                        CODEX_ENSEMBLE_ONLY_ARGS(str(self.root))
+
 
 class PageCopy(unittest.TestCase):
     def test_global_and_project_choices_are_visible_and_say_when_they_apply(self):
@@ -192,6 +235,9 @@ class PageCopy(unittest.TestCase):
         self.assertIn("Use global default (currently ${global})", page)
         self.assertIn("Running agents keep the tools they started with", page)
         self.assertIn("new agent launches use the choice", page)
+        self.assertIn('nounText("The {project}\'s PO keeps your own tools.")', page)
+        self.assertIn('<div class="pref-row" style="margin-top: 16px;">\n'
+                      '      <label class="pref-label" for="pref-task-agent-tools">', page)
 
 
 if __name__ == "__main__":
