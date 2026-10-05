@@ -1275,6 +1275,9 @@ def save_archived(arch: set[str]) -> None:
 CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
 # The weekly pace line's head start, in percentage points (ED-164).
 PACE_MARGIN_DEFAULT = 15
+TASK_AGENT_TOOLS_ENSEMBLE = "ensemble"
+TASK_AGENT_TOOLS_OWN = "own"
+TASK_AGENT_TOOLS_VALUES = {TASK_AGENT_TOOLS_ENSEMBLE, TASK_AGENT_TOOLS_OWN}
 
 _SETTINGS_DEFAULTS = {
     "feedbackRepo": feedback.DEFAULT_REPO,
@@ -1284,6 +1287,10 @@ _SETTINGS_DEFAULTS = {
     # agent kind, and Codex's reasoning effort (agent_models.py). "" = the
     # agent's own default: no flag is passed.
     "agentModels": agent_models.normalise(None),
+    # Which tools a task agent starts with. The per-project value in
+    # project.json can override this. POs and human-adopted sessions always
+    # keep the person's own tools.
+    "taskAgentTools": TASK_AGENT_TOOLS_ENSEMBLE,
     # The older name of agentModels.claude.model, kept in step with it: a
     # value saved before is read from here, and an older page still writes it.
     "defaultModel": "",
@@ -1430,6 +1437,7 @@ def project_noun(n: str = "one", case: str = "lower") -> str:
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "system"},
+    "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
 }
 
 
@@ -1455,6 +1463,11 @@ def load_settings() -> dict:
     # One Claude model, under both names: a defaultModel saved before
     # agentModels existed is Claude's model.
     saved = saved if isinstance(saved, dict) else {}
+    # This is an isolation boundary, not a cosmetic preference: a typo or a
+    # hand-edited non-string value must never widen a task agent's access.
+    out["taskAgentTools"] = (TASK_AGENT_TOOLS_OWN
+                             if saved.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                             else TASK_AGENT_TOOLS_ENSEMBLE)
     out["agentModels"] = agent_models.normalise(saved.get("agentModels"),
                                                 legacy_claude=saved.get("defaultModel"))
     out["defaultModel"] = out["agentModels"]["claude"]["model"]
@@ -1656,7 +1669,7 @@ def _save_settings_locked(settings: dict) -> dict:
         if k == "feedbackRelayUrl" and not feedback.valid_relay(v):
             continue
         allowed = _SETTINGS_ALLOWED_VALUES.get(k)
-        if allowed and v not in allowed:
+        if allowed and (not isinstance(v, str) or v not in allowed):
             continue
         if k == "poFallbackModels":
             if not isinstance(v, dict) or any(
@@ -3621,6 +3634,14 @@ def load_projects() -> list[dict]:
     named: set[tuple] = set()       # (code folder, name as a home) of those projects
 
     def _add(p: dict, from_root: bool = False) -> None:
+        p = dict(p)
+        if "taskAgentTools" in p:
+            # A missing key intentionally inherits the global choice. A
+            # present but corrupt/hand-edited one is an isolation failure and
+            # therefore narrows to Ensemble-only instead of inheriting `own`.
+            p["taskAgentTools"] = (TASK_AGENT_TOOLS_OWN
+                                   if p.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                                   else TASK_AGENT_TOOLS_ENSEMBLE)
         key = os.path.normcase(os.path.normpath(p["path"]))
         home = os.path.normcase(os.path.normpath(p["home"])) if p.get("home") else ""
         as_named = (key, _safe_dir_name(p.get("name") or "").casefold())
@@ -3674,7 +3695,12 @@ def load_projects() -> list[dict]:
                          if project_docs.valid_name(meta.get("documentsDir") or "") else {}),
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
-                         if "digestIntervalMin" in meta else {})}, from_root=True)
+                         if "digestIntervalMin" in meta else {}),
+                      **({"taskAgentTools": (TASK_AGENT_TOOLS_OWN
+                                             if meta.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                                             else TASK_AGENT_TOOLS_ENSEMBLE)}
+                         if "taskAgentTools" in meta else {})},
+                     from_root=True)
     except OSError:
         pass
     try:
@@ -4620,6 +4646,19 @@ def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
         if minutes is None:
             return False, "interval_must_be_minutes"
     return _set_project_meta(project_id, "digestIntervalMin", minutes)
+
+
+def set_project_task_agent_tools(project_id: str, value) -> tuple[bool, str]:
+    """Set a project's task-agent tool override, or inherit with ``None``.
+
+    Stored beside the project because it affects every owner, reviewer and
+    owner handover launched for that project. Existing sessions are untouched.
+    """
+    if value in (None, ""):
+        value = None
+    elif not isinstance(value, str) or value not in TASK_AGENT_TOOLS_VALUES:
+        return False, "task_agent_tools_must_be_ensemble_or_own"
+    return _set_project_meta(project_id, "taskAgentTools", value)
 
 
 PROJECT_KINDS = ("code", "documents")
@@ -5906,6 +5945,8 @@ def build_projects() -> dict:
                            # Where its tasks put reports and design notes.
                            "documentsDir": project_documents_dir(p),
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
+                           **({"taskAgentTools": p["taskAgentTools"]}
+                              if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
@@ -11908,6 +11949,67 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_address[1]
         return f"http://127.0.0.1:{port}/mcp"
 
+    @staticmethod
+    def _task_agent_tools(room_full: dict, human: bool = False) -> str:
+        """The tool scope for a session started in ``room_full``.
+
+        POs and a past session explicitly opened for a person are not task
+        agents. Every other hub-started seat inherits the global choice unless
+        its project has an override. A task without a project therefore uses
+        the global choice too.
+        """
+        projects = load_projects()
+        rid = room_full.get("id", "")
+        if human or any((p.get("poRoomId") or "") == rid for p in projects):
+            return TASK_AGENT_TOOLS_OWN
+        pid = _room_project_id(rid, room_full)
+        project = next((p for p in projects if p.get("id") == pid), None)
+        if project and "taskAgentTools" in project:
+            return (TASK_AGENT_TOOLS_OWN
+                    if project.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                    else TASK_AGENT_TOOLS_ENSEMBLE)
+        global_tools = load_settings().get("taskAgentTools")
+        return (TASK_AGENT_TOOLS_OWN if global_tools == TASK_AGENT_TOOLS_OWN
+                else TASK_AGENT_TOOLS_ENSEMBLE)
+
+    @staticmethod
+    def _codex_ensemble_only_args(cwd: str) -> list[str]:
+        """Launch overrides that leave Codex only the Ensemble MCP server.
+
+        Codex has no equivalent of Claude's ``--strict-mcp-config``. Ask the
+        installed CLI for the effective MCP names in this working directory,
+        then disable each by a command-line override. Apps/connectors are a
+        separate tool source, so disable that feature for this launch too.
+        Nothing in the user's config is written.
+        """
+        try:
+            found = _run(
+                ["codex", "-C", cwd, "mcp", "list", "--json"],
+                cwd=cwd, capture_output=True, text=True, timeout=20,
+                encoding="utf-8", errors="replace", check=False)
+            if found.returncode:
+                raise RuntimeError((found.stderr or found.stdout or "Codex returned an error").strip())
+            rows = json.loads(found.stdout or "[]")
+            if not isinstance(rows, list):
+                raise ValueError("Codex returned no MCP server list")
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError,
+                RuntimeError, ValueError) as exc:
+            # Ensemble-only is an isolation promise. Refuse a launch whose
+            # effective user servers cannot be enumerated instead of silently
+            # giving it more tools than the setting says.
+            raise StartRoomError(f"Codex's configured MCP servers could not be isolated: {exc}") from exc
+        args = ["-c", "features.apps=false", "-c", "features.remote_plugin=false"]
+        for row in rows:
+            name = row.get("name") if isinstance(row, dict) else ""
+            if not isinstance(name, str) or not name:
+                raise StartRoomError("Codex's configured MCP server list contained an invalid name")
+            if name == "ensemble":
+                continue
+            # JSON's double-quoted string syntax is valid TOML for a quoted
+            # dotted-key segment, including names that contain dots or spaces.
+            args += ["-c", f"mcp_servers.{json.dumps(name, ensure_ascii=False)}.enabled=false"]
+        return args
+
     def _launch_room_agent(self, room_full: dict, part: dict, task: str) -> dict:
         """Spawn one agent for a room, pre-wired to the chat MCP with its own
         bearer token, in its own working dir, seeded with the collaboration
@@ -11940,13 +12042,18 @@ class Handler(BaseHTTPRequestHandler):
         # starts talking instead of blocking on a prompt no one can answer.
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
+        tools = self._task_agent_tools(room_full)
         if agent_key == "codex":
             command = ["codex",
                        # never prompt for tool approval — the whole point is
                        # autonomous collaboration; the workspace is a scratch dir.
                        "-c", 'approval_policy="never"',
+                       *(self._codex_ensemble_only_args(cwd)
+                         if tools == TASK_AGENT_TOOLS_ENSEMBLE else []),
                        "-c", f'mcp_servers.ensemble.url="{url}"',
                        "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"',
+                       *(["-c", "mcp_servers.ensemble.enabled=true"]
+                         if tools == TASK_AGENT_TOOLS_ENSEMBLE else []),
                        *_codex_task_args(room_full), *_codex_model_args(model, effort)]
             res = BACKEND.open_new(cwd, briefing, label=label, command=command,
                                    agent="codex", identity=ident,
@@ -11960,7 +12067,10 @@ class Handler(BaseHTTPRequestHandler):
         cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
         cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
         new_sid = str(uuid.uuid4())
-        claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config", *rtk_args]
+        claude_extra = ["--mcp-config", str(cfg_path)]
+        if tools == TASK_AGENT_TOOLS_ENSEMBLE:
+            claude_extra.append("--strict-mcp-config")
+        claude_extra += rtk_args
         if model:
             claude_extra += ["--model", model]
         res = BACKEND.open_new(cwd, briefing, label=label, session_id=new_sid,
@@ -11968,8 +12078,8 @@ class Handler(BaseHTTPRequestHandler):
                                extra_args=claude_extra, env=rtk_env)
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
 
-    def _mcp_wiring(self, token: str, collab: bool,
-                    human: bool = False) -> tuple[list[str], list[str], dict]:
+    def _mcp_wiring(self, token: str, collab: bool, human: bool = False,
+                    tools: str | None = None, cwd: str = "") -> tuple[list[str], list[str], dict]:
         """The per-agent bits that connect it to the Ensemble MCP server
         (chat + ensemble_* task tools) with its own bearer token. EVERY headless
         agent gets the server — solo tasks included, so an agent can plan and
@@ -11982,10 +12092,16 @@ class Handler(BaseHTTPRequestHandler):
         ``human`` keeps Codex's prompts: only for a past session a person
         opened from the history to drive it themselves (/api/session/adopt).
 
-        collab: an autonomous collaboration sees only our MCP server."""
+        ``tools`` is the resolved task-agent scope. ``None`` preserves the old
+        call contract for tests and callers outside the launch paths:
+        collaborations are Ensemble-only and solo sessions keep own tools."""
         url = self._mcp_url()
-        codex_args = ["-c", f'mcp_servers.ensemble.url="{url}"',
-                      "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"']
+        ensemble_only = tools == TASK_AGENT_TOOLS_ENSEMBLE if tools is not None else collab
+        codex_args = ((self._codex_ensemble_only_args(cwd) if ensemble_only else [])
+                      + ["-c", f'mcp_servers.ensemble.url="{url}"',
+                         "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"'])
+        if ensemble_only:
+            codex_args += ["-c", "mcp_servers.ensemble.enabled=true"]
         if not human:
             # (approval_policy="never" would *block* MCP tools.)
             codex_args = ["--dangerously-bypass-approvals-and-sandbox"] + codex_args
@@ -11996,9 +12112,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
         cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
         claude_args = ["--mcp-config", str(cfg_path)]
-        if collab:
-            # Autonomous agents see ONLY our server; a human-driven solo agent
-            # keeps the user's own configured MCP servers (Jira etc.) as well.
+        if ensemble_only:
             claude_args.append("--strict-mcp-config")
         return codex_args, claude_args, {"CHAT_TOKEN": token}
 
@@ -12055,7 +12169,9 @@ class Handler(BaseHTTPRequestHandler):
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key,
                 "launchModel": model}
-        codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
+        tools = self._task_agent_tools(room_full)
+        codex_mcp, claude_mcp, env = self._mcp_wiring(
+            token, collab, tools=tools, cwd=cwd)
         env.update(rtk_env)
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
@@ -12100,7 +12216,9 @@ class Handler(BaseHTTPRequestHandler):
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key,
                 "launchModel": model}
-        codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab, human=human)
+        tools = self._task_agent_tools(room_full, human=human)
+        codex_mcp, claude_mcp, env = self._mcp_wiring(
+            token, collab, human=human, tools=tools, cwd=cwd)
         rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
         env.update(rtk_env)
         if agent_key != "codex":
@@ -13830,6 +13948,15 @@ class Handler(BaseHTTPRequestHandler):
                                                   data.get("intervalMin"))
             self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
                             {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/projects/task-agent-tools":
+            # {projectId, value: "ensemble" | "own" | null}. Missing/null
+            # means inherit the global Settings choice.
+            ok, msg = set_project_task_agent_tools(data.get("projectId", ""),
+                                                   data.get("value"))
+            self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
+                            {"ok": True, "value": data.get("value") or None}
+                            if ok else {"error": msg})
             return
         if p == "/api/projects/key":
             # {projectId, key}: the project's short key (ED), for ED-18.

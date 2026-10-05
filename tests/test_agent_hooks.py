@@ -124,6 +124,7 @@ class LaunchEnvironment(unittest.TestCase):
         for patch in (
                 mock.patch.object(dashboard, "DASHBOARD_DIR", self.tmp),
                 mock.patch.object(dashboard, "_rtk_task_wiring", return_value=([], {}, "")),
+                mock.patch.object(dashboard.Handler, "_codex_ensemble_only_args", return_value=[]),
                 mock.patch.object(dashboard.agents, "get_agent", return_value=object()),
                 mock.patch.object(dashboard.BACKEND, "headless_launch",
                                   side_effect=lambda cwd, argv, prompt: argv),

@@ -223,7 +223,7 @@ class AgentModelsInSettings(unittest.TestCase):
     def tearDownClass(cls):
         browser.SettingsScrollsAndThemeSubmenu.tearDownClass.__func__(cls)
 
-    def test_three_labelled_selects_with_what_each_agent_offers(self):
+    def test_labelled_model_and_task_tool_selects(self):
         for name, g in self.got.items():
             with self.subTest(name):
                 first = g["first"]
@@ -231,9 +231,15 @@ class AgentModelsInSettings(unittest.TestCase):
                 rows = {r["id"]: r for r in first["rows"]}
                 self.assertEqual([(r["id"], r["label"]) for r in first["rows"]], [
                     ("pref-model-claude", "Claude model"), ("pref-model-codex", "Codex model"),
-                    ("pref-effort-codex", "Codex reasoning effort")])
-                self.assertTrue(all(r["labelAbove"] and not r["disabled"] and r["value"] == ""
+                    ("pref-effort-codex", "Codex reasoning effort"),
+                    ("pref-task-agent-tools", "Task agents' tools")])
+                self.assertTrue(all(r["labelAbove"] and not r["disabled"]
                                     for r in first["rows"]), first["rows"])
+                self.assertTrue(all(rows[x]["value"] == "" for x in
+                                    ("pref-model-claude", "pref-model-codex", "pref-effort-codex")))
+                self.assertEqual(rows["pref-task-agent-tools"]["value"], "ensemble")
+                self.assertEqual(rows["pref-task-agent-tools"]["options"], [
+                    ["ensemble", "Ensemble only"], ["own", "Ensemble + my own tools"]])
                 self.assertEqual(rows["pref-model-claude"]["options"], [
                     ["", "Claude’s own default (currently claude-fable-5-1[1m])"],
                     ["fable", "fable"], ["opus", "opus"], ["sonnet", "sonnet"], ["haiku", "haiku"]])
