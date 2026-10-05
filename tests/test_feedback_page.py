@@ -28,7 +28,7 @@ async function main() {
       // Coarse-pointer landscape query is simulated only within the test frame.
       if (width === 844) await inside(`for(const sheet of document.styleSheets) { try { for(const rule of sheet.cssRules) if(rule.media && rule.conditionText.includes('pointer: coarse')) rule.media.mediaText=rule.conditionText.replaceAll('(pointer: coarse)', '(min-width: 0px)'); } catch {} }`);
       await inside(`document.getElementById('me-btn').click(); document.querySelector('[data-me="feedback"]').click();`);
-      for (const theme of ['light','dark','dim','paper','contrast','fjord']) {
+      for (const theme of ['light','dark','dim','paper','contrast','fjord','intellij-dark']) {
         await inside(`document.documentElement.dataset.theme='${theme}'`);
         out.geometry.push(await inside(`(()=>{const d=document.getElementById('feedback-dialog'), r=d.getBoundingClientRect(), f=document.getElementById('feedback-title'), s=getComputedStyle(d), b=getComputedStyle(document.getElementById('feedback-preview-button')); return {width:innerWidth,height:innerHeight,theme:document.documentElement.dataset.theme,left:r.left,right:r.right,top:r.top,bottom:r.bottom,scroll:d.scrollWidth,client:d.clientWidth,font:parseFloat(getComputedStyle(f).fontSize),button:document.getElementById('feedback-preview-button').getBoundingClientRect().height,fg:s.color,bg:s.backgroundColor,bfg:b.color,bbg:b.backgroundColor,open:d.open}})()`));
       }

@@ -72,7 +72,8 @@ his first look, and it looked nothing like the mockup.
 - **A theme is a complete token set.** Light lives on bare `:root`. Every other theme lives **once**,
   under `:root[data-theme="<name>"]`, and sets every colour token for its ground: neutrals,
   interaction, and the semantic tokens' shades. The themes are Light (default), Dark, Dim, Paper,
-  High contrast (`contrast`) and Fjord, plus System, which resolves to Light or Dark.
+  High contrast (`contrast`), Fjord and IntelliJ Dark (`intellij-dark`), plus System, which resolves
+  to Light or Dark.
 - **A theme changes a semantic colour's shade, never its meaning.** Amber is "needs you" in every
   theme and red is "wrong" in every theme. Each theme's pairs are measured on that theme's ground.
 - **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
@@ -116,6 +117,30 @@ his first look, and it looked nothing like the mockup.
 - **Review in every theme, and the owner's first.** Four slices were built and reviewed only in dark
   because both agents' environments were dark-mode.
 
+#### IntelliJ Dark token table
+
+The seventh theme follows JetBrains' New UI Dark palette in
+`expUI_dark.theme.json` at commit `67cf4cce8f6dfcee490b0e802e041d6d413b86b7`. Its ground is
+IntelliJ Gray1 and its panels are Gray2. `--fg-muted`, `--accent`, `--c-success-bold` and
+`--c-danger-bold` are the smallest AA nudges from Gray9, Blue9, Green7 and Red7 respectively; all
+other values below are palette colours or functional alpha blends of them.
+
+| Role | Ensemble tokens | IntelliJ Dark values |
+|---|---|---|
+| Grounds | `--bg`; `--surface`; `--surface-sunken`; `--surface-overlay` | `#1E1F22`; `#2B2D30`; `#2B2D30`; `#1E1F22` |
+| Text | `--fg`; `--fg-subtle`; `--fg-muted`; `--fg-disabled` | `#DFE1E5`; `#B4B8BF`; `#A2A4AC`; `#6F737A` |
+| Edges and action grounds | `--border`; `--border-strong`; `--hover`; `--pressed` | `#393B40`; `#5A5D63`; `#393B40`; `rgba(255,255,255,.15)` |
+| Interaction | `--accent`; `--accent-fg`; `--focus-ring` | `#78A4FA`; `#1E1F22`; `#3574F0` |
+| Neutral | `--c-neutral-bg`; `--c-neutral-fg`; `--c-neutral-bold` | `#393B40`; `#B4B8BF`; `#A2A4AC` |
+| Progress | `--c-progress-bg`; `--c-progress-fg`; `--c-progress-bold` | `#25324D`; `#B5CEFF`; `#78A4FA` |
+| Success | `--c-success-bg`; `--c-success-fg`; `--c-success-bold` | `#253627`; `#D4FAD7`; `#6EB473` |
+| Warning | `--c-warning-bg`; `--c-warning-fg`; `--c-warning-bold` | `#3D3223`; `#F2C55C`; `#F2C55C` |
+| Danger | `--c-danger-bg`; `--c-danger-fg`; `--c-danger-bold` | `#402929`; `#F2B1AA`; `#E58C8C` |
+| Discovery | `--c-discovery-bg`; `--c-discovery-fg`; `--c-discovery-bold` | `#2F2936`; `#D4B8F9`; `#B589EC` |
+| Search match | `--match-bg`; `--match-fg` | `#5E4D33`; `#FCEBA4` |
+| Code | `--code-kw`; `--code-str`; `--code-num`; `--code-fn`; `--code-ty`; `--code-attr`; `--code-meta`; `--code-tag` | `#C4A0F3`; `#A0DBA5`; `#83ACFC`; `#B5CEFF`; `#F5D273`; `#7DCEC5`; `#F5BD98`; `#9BDDD6` |
+| Diff | `--diff-wash` | `100%` against Green1 / Red1 semantic grounds |
+
 ### Neutrals
 
 ```
@@ -135,8 +160,8 @@ Every hue is `-bg` (lozenge wash) / `-fg` (text on that wash) / `-bold` (solid d
 | Token stem | Means | Used for |
 |---|---|---|
 | `--c-neutral` | nothing in particular | Backlog, To do, Paused, "not started", counts |
-| `--c-progress` | under way | In progress, "running" |
-| `--c-success` | good / finished | Done, an agent working, clean repo |
+| `--c-progress` | under way | In progress, "running", an agent working |
+| `--c-success` | good / finished | Done, clean repo |
 | `--c-warning` | needs a human eventually | Waiting for you, Stalled, uncommitted changes |
 | `--c-danger` | **wrong, or destroys data** | Blocked, Agent gone, delete/end controls |
 | `--c-discovery` | set aside for judgement | In review, new |
@@ -157,7 +182,7 @@ misstated a floor.
 
 ### Run state — what a process is doing
 
-`--run-working` (pulses) · `--run-idle` · `--run-off`. This is **separate from workflow status** and is
+`--run-working` (the progress-bold shade, pulses) · `--run-idle` · `--run-off`. This is **separate from workflow status** and is
 never a board column. Only `--run-working` pulses; nothing else in the product animates. Disable the
 pulse under `prefers-reduced-motion`.
 
@@ -886,8 +911,11 @@ again after a reload; the middle changing conversation by code (not a click in t
 it out. A tool's title bar
 (Dock v0.5.0, IntelliJ's; each View Mode item's tooltip says what it does) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
 beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
-is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
-hides it in Window mode (Dock v0.7.0); its former strip button or Panels reopens a window.
+is on; only this changes a side), Maximise and Hide; − slides it back in. **A tool keeps its strip
+button, shown active, in Window, Float and Dock Pinned as well as the two unpinned modes** (Dock
+v0.14.0); the button focuses or reopens its Window, raises its Float, and focuses (or hides an
+already-focused) Dock Pinned panel. Closing a tool's window hides it in Window mode; its retained
+strip button or Panels reopens a window.
 The window's own ⋯ offers View Mode to dock it back, Move To, Take Screenshot and Hide;
 its − hides it too. Take Screenshot uses the browser's share-this-tab prompt where supported.
 Split and maximise work as the library's. **The
@@ -1024,9 +1052,9 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
   panel comes back); the one here stays loaded.
 - **A popped-out window has no "Back to main window"** (the CEO's P50): `popBackButton: false`
-  leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode
-  (Dock v0.7.0). The window's ⋯ → View Mode docks it back; Panels or its former strip button
-  reopens a hidden window.
+  leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode.
+  The window's ⋯ → View Mode docks it back; Panels or its retained active strip button reopens a
+  hidden window.
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its

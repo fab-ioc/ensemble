@@ -39,7 +39,7 @@ from tests import test_settings_themes_page as browser  # noqa: E402
 from tests.test_agent_models import CACHE, _pool_source  # noqa: E402
 from tests.test_top_bar import CDP_JS as TOP_BAR_JS, CHROME, NODE  # noqa: E402
 
-THEMES = ["light", "dark", "dim", "paper", "contrast", "fjord"]
+THEMES = ["light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark"]
 
 CDP_JS = TOP_BAR_JS[:TOP_BAR_JS.index("// What the bar shows")] + r"""
 const THEMES = """ + str(THEMES) + r""";

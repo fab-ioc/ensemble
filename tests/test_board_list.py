@@ -105,7 +105,7 @@ async function main() {
       const p = await page(w, 800);
       await openList(p);
       const res = {};
-      for (const theme of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord']) {
+      for (const theme of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord', 'intellij-dark']) {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; 0`);
         await sleep(120);
         res[theme] = await p.evalIn(OVERFLOW);

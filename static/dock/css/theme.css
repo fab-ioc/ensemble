@@ -17,11 +17,11 @@
                                                        --dk-bg3 (panel ground), --border -> --dk-line, --fg / -subtle /
                                                        -muted -> --dk-fg / fg2 / fg3, the -fg of success / danger /
                                                        warning -> ok / danger / warn, --selected-bg (worked out) -> sel-bg
-     solar-light, solar-dark, sepia, rose, dusk, forest, contrast-dark
+     solar-light, solar-dark, sepia, rose, dusk, forest, contrast-dark, intellij-dark
                                                        new here: Solarized-like light and dark (the text and accents
                                                        deepened to pass), a warm sepia, a rose-tinted light (Rosé Pine
                                                        Dawn-like), a violet dusk (Dracula-like), a green forest dark, and
-                                                       a high-contrast dark (7:1)
+                                                       a high-contrast dark (7:1), and IntelliJ IDEA New UI Dark
 
    Overriding: redefine any token after this file, for every theme or for one:
      :root { --dk-accent: #7a3cff; }
@@ -253,4 +253,41 @@
   --dk-accent: #8CBDFF; --dk-ok: #6EE7A0; --dk-danger: #FFA39C; --dk-warn: #FFD75E; --dk-warn-bg: #3A2E00;
   --dk-sel-bg: #0F2A55; --dk-focus: #FFFFFF;
   --dk-shadow: rgba(0, 0, 0, .6); --dk-scrim: rgba(0, 0, 0, .7);
+}
+
+/* IntelliJ IDEA New UI, Dark. Source: JetBrains/intellij-community,
+   platform/platform-resources/src/themes/expUI/expUI_dark.theme.json at
+   67cf4cce8f6dfcee490b0e802e041d6d413b86b7 (Apache-2.0), read 2026-10-05.
+   The file contains the Int UI dark palette and the UI keys that refer to it.
+
+   Dock token -> IntelliJ key / palette name -> value used here:
+   --dk-bg -> EditorTabs.background / Gray1 -> #1E1F22 (the editor ground)
+   --dk-bg2 -> ToolWindow.Header.inactiveBackground and stripeBackground / Gray2 -> #2B2D30
+   --dk-bg3 -> *.background / Gray2 -> #2B2D30 (tool-window and panel ground)
+   --dk-line -> *.separatorColor / Gray3 -> #393B40
+   --dk-hover -> *.hoverBackground / Gray3 -> #393B40 (pressed actions use #FFFFFF26 in IntelliJ;
+                 Dock has no separate pressed-ground token)
+   --dk-fg -> *.foreground / Gray12 -> #DFE1E5
+   --dk-fg2 -> MainWindow.Tab.foreground / Gray10 -> #B4B8BF
+   --dk-fg3 -> ToolWindow.Button.foreground / Gray9 -> #9DA0A8, nudged to #A2A4AC for 4.51:1
+               on Gray3; IntelliJ's Gray6 disabled text is intentionally dimmer and cannot meet Dock's AA contract
+   --dk-accent -> Link.* / Blue9 -> #6B9BFA, nudged to #78A4FA for 4.53:1 on Gray3; it also carries
+                  the selected-tab underline role (IntelliJ *.underlineColor is Blue6)
+   --dk-ok -> IconBadge.successBackground / Green7 -> #5FAD65, nudged to #6EB473 for 4.50:1 on Gray3
+   --dk-danger -> IconBadge.errorBackground / Red7 -> #DB5C5C, nudged to #E58C8C for 4.52:1 on Gray3
+   --dk-warn -> IconBadge.warningBackground / Yellow7 -> #F2C55C
+   --dk-warn-bg -> Editor.ToolTip.warningBackground / Yellow1 -> #3D3223
+   --dk-sel-bg -> DragAndDrop.rowBackground / Blue6 at 15% -> #3573F026; this readable blue wash replaces
+                  ToolWindow.Button.selectedBackground Blue6's solid fill, because Dock puts arbitrary text on it
+   --dk-focus -> *.focusColor / Blue6 -> #3574F0
+   --dk-shadow -> Ide.Shadow.*1Color -> #00000020
+   --dk-scrim -> no IntelliJ theme key -> #0000008C functional modal scrim (55% black). */
+:root[data-theme="intellij-dark"], [data-dk-theme="intellij-dark"] {
+  color-scheme: dark;
+  --dk-bg: #1E1F22; --dk-bg2: #2B2D30; --dk-bg3: #2B2D30;
+  --dk-line: #393B40; --dk-hover: #393B40;
+  --dk-fg: #DFE1E5; --dk-fg2: #B4B8BF; --dk-fg3: #A2A4AC;
+  --dk-accent: #78A4FA; --dk-ok: #6EB473; --dk-danger: #E58C8C; --dk-warn: #F2C55C; --dk-warn-bg: #3D3223;
+  --dk-sel-bg: rgba(53, 115, 240, .15); --dk-focus: #3574F0;
+  --dk-shadow: rgba(0, 0, 0, .125); --dk-scrim: rgba(0, 0, 0, .55);
 }

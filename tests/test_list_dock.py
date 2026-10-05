@@ -8,9 +8,9 @@ a project that has a PO (Motors), a task in it, and a session in no project
   and pinned: today's column, 300px, the page beside it, the dock's ⋯ and −
   over its own head's free end, nothing covered;
 * in each View Mode (Dock Pinned, Dock Unpinned, Undock, Float, Window) a row
-  still opens its conversation in the middle, and the middle takes what the
-  list leaves: the strip only when unpinned (and the list beside it while it
-  is out, Dock Unpinned), everything when it floats or is in its window;
+  still opens its conversation in the middle; once the list has a strip place,
+  its active button stays there in Float, Window and Dock Pinned as well as the
+  two unpinned modes, and the middle takes the room left by that strip;
 * slid out, it goes back once a row is opened;
 * popped out into its own window, a row clicked there opens the task in the
   main window, and Unassigned still folds there; closing hides it, Panels
@@ -74,12 +74,15 @@ const GEOM = `(() => {
   const box = e => { if (!e) return null; const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
   const d = LD.dock, sw = SW_EL, mid = document.querySelector('main');
   const strip = document.querySelector('#list-dock .dk-strip');
+  const stripBtn = document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="list"]');
   const menu = document.querySelector('#list-dock [data-dk-act="menu"]'), by = sw.querySelector('#sw-by');
   const cs = getComputedStyle(document.body);
   return { visible: d ? d.isVisible('list') : null, notice: !!document.querySelector('#list-dock .dk-outnote'), dock: !!d, mode: d ? d.viewMode('list') : null, side: d ? d.side('list') : null, fly: d ? d.flyOpen() : null, out: d ? d.isOut('list') : null,
     here: sw.ownerDocument === document, home: sw.parentNode === document.body, rootHidden: document.getElementById('list-dock').hidden,
     list: sw.ownerDocument === document ? box(sw) : null, main: box(mid), dockHost: box(document.getElementById('po-dock-host')),
-    strip: box(strip), flyBox: box(document.querySelector('#list-dock .dk-flyout.open')), stripSide: strip ? [...strip.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
+    strip: box(strip), stripBtn: box(stripBtn), stripActive: !!stripBtn && stripBtn.classList.contains('on'),
+    stripExpanded: stripBtn && stripBtn.getAttribute('aria-expanded'), stripPressed: stripBtn && stripBtn.getAttribute('aria-pressed'),
+    flyBox: box(document.querySelector('#list-dock .dk-flyout.open')), stripSide: strip ? [...strip.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
     listW: cs.getPropertyValue('--list-w').trim(), listR: cs.getPropertyValue('--list-r').trim(),
     menuBtn: box(menu), bySel: sw.ownerDocument === document ? box(by) : null,
     sid: SELECTED_SID || null, open: document.body.classList.contains('detail-open'),
@@ -335,6 +338,11 @@ async function main() {
     await menuPick(p, HEAD, 'side', 'side:top');
     await menuPick(p, HEAD, 'side', 'side:left');
     out.widerKept = await p.evalIn(GEOM);
+    // v0.14 keeps the list's original 300px strip depth across that axis
+    // round-trip. Resize it again so the reload check remains about persisting
+    // a user-resized dock, independently of the retained strip place.
+    await p.evalIn(`document.querySelector('#list-dock .dk-bar').focus(); 0`);
+    await p.key('ArrowRight', 'ArrowRight'); await p.key('ArrowRight', 'ArrowRight'); await sleep(400);
     await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
     await go(p, A.proj, true); await ldReady(p); await sleep(600);
     out.reloadWide = await p.evalIn(GEOM);
@@ -510,6 +518,13 @@ class TheListDock(unittest.TestCase):
         self.assertTrue(g["open"] and g["sid"], f"{what}: the row opened its conversation {g.get('before')}")
         self.assertLessEqual(g["scrollW"], g["vw"], f"{what}: no sideways scroll")
 
+    def retained_active(self, g, side):
+        self.assertIsNotNone(g["strip"], f"{g['mode']}: the retained strip is visible")
+        self.assertIsNotNone(g["stripBtn"], f"{g['mode']}: the list keeps its strip button")
+        self.assertEqual(g["stripSide"], f"dk-strip-{side}")
+        self.assertTrue(g["stripActive"], f"{g['mode']}: the retained button looks active")
+        self.assertEqual((g["stripExpanded"], g["stripPressed"]), ("true", "true"))
+
     def test_full_names_expand_in_three_themes_and_both_widths(self):
         for sample in self.got["expand"]:
             with self.subTest(width=sample["width"], theme=sample["theme"]):
@@ -552,6 +567,7 @@ class TheListDock(unittest.TestCase):
         self.assertEqual(g["listW"], "305px", "the page starts after the list and its splitter")
         self.assertEqual(g["dockHost"]["x"], 305)
         self.assertIsNone(g["strip"], "no strip while it is pinned")
+        self.assertIsNone(g["stripBtn"], "a panel that never had a strip place gains no button")
         m, s = g["menuBtn"], g["bySel"]
         self.assertTrue(m and s)
         self.assertLessEqual(s["r"], m["x"], "the dock's ⋯ sits past the list's own controls")
@@ -583,17 +599,19 @@ class TheListDock(unittest.TestCase):
         self.opened(g, "undock")
         self.assertIsNone(g["fly"])
 
-    def test_floating_the_middle_has_the_whole_width(self):
+    def test_floating_keeps_the_active_strip_button(self):
         g = self.got["float"]
         self.assertEqual(g["mode"], "float")
-        self.assertEqual((g["listW"], g["dockHost"]["x"]), ("0px", 0))
-        self.assertIsNone(g["strip"])
+        self.assertEqual((g["listW"], g["dockHost"]["x"]), ("44px", 44))
+        self.assertEqual(g["strip"]["w"], 44)
+        self.retained_active(g, "left")
         self.opened(self.got["floatOpens"], "float")
 
     def test_in_its_own_window_it_drives_the_main_window(self):
         g = self.got["window"]
         self.assertEqual((g["mode"], g["out"], g["here"]), ("window", True, False))
-        self.assertEqual((g["listW"], g["dockHost"]["x"]), ("0px", 0), "the middle has the whole width")
+        self.assertEqual((g["listW"], g["dockHost"]["x"]), ("44px", 44), "the middle starts after the retained strip")
+        self.retained_active(g, "left")
         o = self.got["windowOpens"]
         self.opened(o, "a row clicked in the list's window")
         u = self.got["windowUnassigned"]
@@ -613,17 +631,20 @@ class TheListDock(unittest.TestCase):
         self.assertTrue(self.got["pinnedReopened"]["out"])
 
     def test_move_to_right_and_back(self):
-        self.assertEqual(self.got["pinnedAgain"]["mode"], "pinned")
-        self.assertEqual(self.got["pinnedAgain"]["listW"], "305px")
+        p = self.got["pinnedAgain"]
+        self.assertEqual((p["mode"], p["list"]["x"], p["listW"]), ("pinned", 44, "349px"))
+        self.retained_active(p, "left")
         r = self.got["right"]
         self.assertEqual((r["mode"], r["side"]), ("pinned", "right"))
-        self.assertEqual(r["list"]["r"], r["vw"])
+        self.assertEqual(r["list"]["r"], r["strip"]["x"])
         self.assertEqual(r["listW"], "0px")
-        self.assertEqual(r["listR"], "305px")
+        self.assertEqual(r["listR"], "349px")
+        self.retained_active(r, "right")
         self.assertLessEqual(r["dockHost"]["r"], r["list"]["x"], "the page ends where the list starts")
         self.opened(self.got["rightOpens"], "at the right")
         l = self.got["left"]
-        self.assertEqual((l["side"], l["listW"], l["listR"]), ("left", "305px", "0px"))
+        self.assertEqual((l["side"], l["listW"], l["listR"]), ("left", "349px", "0px"))
+        self.retained_active(l, "left")
 
     def test_maximise_and_restore(self):
         m = self.got["max"]
@@ -631,17 +652,20 @@ class TheListDock(unittest.TestCase):
         self.assertEqual((m["list"]["x"], m["list"]["w"]), (0, m["vw"]), "the list takes the dock's whole width")
         self.assertGreaterEqual(m["menuBtn"]["x"], 0)
         r = self.got["restored"]
-        self.assertEqual((r["list"]["x"], r["list"]["w"], r["listW"]), (0, 300, "305px"))
+        self.assertEqual((r["list"]["x"], r["list"]["w"], r["listW"]), (44, 300, "349px"))
+        self.retained_active(r, "left")
 
     def test_unpinned_at_the_top_and_bottom_spans_the_width(self):
+        depth = {"top": 240, "bottom": 300}
         for side in ("top", "bottom"):
             g = self.got["fly_" + side]
             a = self.got["at_" + side]
-            self.assertEqual((a["side"], a["mode"], a["list"]["h"], a["list"]["w"]), (side, "pinned", 240, a["vw"]), f"{side}: a 240px band")
+            self.assertEqual((a["side"], a["mode"], a["list"]["h"], a["list"]["w"]), (side, "pinned", depth[side], a["vw"]), f"{side}: its retained strip depth")
+            self.retained_active(a, side)
             self.assertEqual((g["side"], g["mode"], g["fly"]), (side, "unpinned", "list"), side)
             self.assertGreaterEqual(g["list"]["w"], g["vw"] - 4, f"{side}: the whole width, inside the flyout's borders")
         l = self.got["leftAgain"]
-        self.assertEqual((l["side"], l["mode"], l["listW"]), ("left", "pinned", "305px"), "back at the left: its column's width")
+        self.assertEqual((l["side"], l["mode"], l["listW"]), ("left", "pinned", "349px"), "back at the left: retained strip plus its column")
 
     def test_a_window_stays_the_lists_when_the_other_dock_is_made(self):
         g = self.got["popThenDock"]
@@ -657,11 +681,11 @@ class TheListDock(unittest.TestCase):
         self.assertTrue(b["here"] and not b["out"], b)
         self.assertGreater(b["list"]["w"], 0)
 
-    def test_a_resized_width_comes_back_from_the_top(self):
-        self.assertEqual(self.got["widerKept"]["list"]["w"], 332)
+    def test_the_retained_strip_depth_comes_back_from_the_top(self):
+        self.assertEqual(self.got["widerKept"]["list"]["w"], 300)
         self.assertEqual(self.got["widerKept"]["side"], "left")
         g = self.got["widerKeptReload"]
-        self.assertEqual((g["side"], g["list"]["w"], g["listW"]), ("left", 332, "337px"), "also over a reload")
+        self.assertEqual((g["side"], g["list"]["w"], g["listW"]), ("left", 300, "349px"), "also over a reload")
 
     def test_a_short_window_slid_out_at_the_top_or_bottom(self):
         for side in ("top", "bottom"):
@@ -675,7 +699,7 @@ class TheListDock(unittest.TestCase):
     def test_width_and_mode_survive_a_reload(self):
         self.assertEqual(self.got["wider"]["list"]["w"], 332, "two presses of → on its splitter")
         g = self.got["reloadWide"]
-        self.assertEqual((g["mode"], g["list"]["w"], g["listW"]), ("pinned", 332, "337px"))
+        self.assertEqual((g["mode"], g["list"]["w"], g["listW"]), ("pinned", 332, "381px"))
         u = self.got["reloadUnpinned"]
         self.assertEqual((u["mode"], u["listW"]), ("unpinned", "44px"))
 

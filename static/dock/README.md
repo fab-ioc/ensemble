@@ -160,6 +160,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
 | `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and the pointer leaving it slides it back; `false`: only a click (or the keys, or `reveal`) opens it, and the pointer leaving keeps it. Either way a click or focus elsewhere hides it (`stripAutoHide`) |
 | `stripAutoHide` | `true` | a strip panel slid out (Dock Unpinned, Undock) slides back when a click or focus goes elsewhere in the page, as in IntelliJ, however it was opened; not while its ⋯ menu or a dialog is open, during a drag, when the whole window loses focus, or with focus in an iframe inside it. `false` (v0.5.0): one opened by a click with `stripHover: false` or beside stays until its button, its slide-in control, `closeFly()`, Esc or another strip panel |
+| `stripKeepsButton` | `true` | a panel that has a strip place keeps its button there in Window, Float and Dock Pinned too; `false`: v0.12.0's button only while Dock Unpinned or Undock (and for a closed Window that can be reopened) |
 | `stripReorder` | `true` | a strip button can be dragged along its strip to reorder it, or onto another edge (see "The tool strip"), and moved by **Alt+Shift+arrow**; `false`: neither (the app's `moveStrip` still works). `can(id, 'move')` false also keeps a panel's button still |
 | `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip"). A panel's own View Mode (Dock Unpinned: beside, Undock: over) overrides it, and is saved as its strip entry's `open` |
 | `headButtons` | `'menu'` | a title bar's controls: `'menu'`, IntelliJ's ⋯ (Options) and − (Hide); `'classic'`, v0.4's buttons (menu, minimise, maximise, pop out, float or dock back, unpin; a flyout's pop out, float, slide in, pin) and its menu, exactly |
@@ -204,13 +205,13 @@ with `menuitem` and `menuitemradio` (`aria-checked`) items, and stay inside the 
 
 The View Mode items say what they do (their tooltip, `text.modeHints`), as in IntelliJ:
 
-| View Mode | Where | When you click elsewhere | Tooltip |
+| View Mode | Where | When you click elsewhere | Its strip button |
 |---|---|---|---|
-| Dock Pinned | docked, the other panels make room | stays | Docked; stays open |
-| Dock Unpinned | on its edge's strip, sliding out beside the middle (which narrows) | hides | Docked on its edge; hides when you click elsewhere |
-| Undock | on its edge's strip, sliding out over the middle | hides | Over the content; hides when you click elsewhere |
-| Float | a free window in the page | stays | A free window in the page; stays open |
-| Window | its own browser window | stays | Its own browser window |
+| Dock Pinned | docked, the other panels make room | stays | focused: hides it; otherwise: shows and focuses it |
+| Dock Unpinned | on its edge's strip, sliding out beside the middle (which narrows) | hides | opens or slides it back in |
+| Undock | on its edge's strip, sliding out over the middle | hides | opens or slides it back in |
+| Float | a free window in the page | stays | shows it, raises it above the other floats and focuses it |
+| Window | its own browser window | stays | reopens it, or asks the browser to bring its open window to the front and focus it |
 
 "Hides" is a click, or focus (Tab, the app's own `focus()`), going elsewhere in the page: the panel slides back onto its
 strip. Its ⋯ menu, a dialog it opened (`modalSelector`, or an open `<dialog>`), an iframe inside it, and the whole
@@ -229,7 +230,7 @@ quarter of the dock (at least its `minSize`). Left to right keeps its width. A s
 same with how far it slides out. The sizes are saved with the layout (`layout.depth`, `{ id: { w, h } }`); a layout
 stored before has none, and loads as it is.
 
-**Closing a panel's window** (OS close, Ctrl+W or `window.close()`) hides it and keeps Window mode. Its former strip
+**Closing a panel's window** (OS close, Ctrl+W or `window.close()`) hides it and keeps Window mode. Its retained strip
 button, the Panels menu, `showPanel(id)`, `setVisible(id, true)` or `reveal(id)` reopens it in a window. Hidden windows
 remain hidden after reload, without an out-notice. If reopening is blocked, the panel docks on its side with a notice. `windowClose: 'dock'` restores the previous close-to-dock behavior.
 
@@ -242,7 +243,11 @@ with a strip panel slid out. Float again, or Window again, opens where it was la
 
 ## The tool strip
 
-An unpinned panel has a button on its edge's strip. Five options, each off unless asked for, make the strip a tool strip
+An unpinned panel has a button on its edge's strip. By default that button stays in the same place when the panel changes
+to Dock Pinned, Float or Window, as in IntelliJ. It keeps its icon, badge, title and tooltip; its active look plus
+`aria-expanded` and `aria-pressed` say whether the panel is open. A hover only opens Dock Unpinned and Undock; raising,
+focusing or reopening the other modes always takes a click (or Enter/Space). A panel that has never had a strip place
+gets no button. Six options, each off unless asked for except `stripKeepsButton`, make the strip a tool strip
 (Ensemble's layout A: a list and a conversation fixed, the tools on the right edge):
 
 ```js
@@ -284,10 +289,11 @@ dock.setBadge('asks', '3', '3 asks waiting');
 - **`sizes.strip`**: the strip's buttons, icons and badges scale with it (CSS variables, each today's look at 22 px):
   the strip's padding and gap `strip / 11`, a title `max(--dk-fs-tab, strip × .3)`, an icon `strip × .55`, an icon's
   badge `max(7px, strip × .3)`, a title's badge `max(--dk-badge-fs, strip × .27)`. Each can be set (below).
-- **Off the strip and back**: a strip panel floated (its flyout's float control) keeps its place on the strip: the
-  float's Dock back control ("back to its strip"), a double click on its title bar, or Unpin puts it back on its strip,
-  closed, where it was among its neighbours. So does popping it out and back, hiding and showing it, and pinning then
-  unpinning it (with its original size and home). A minimised stack shows each panel's `icon` instead of its name.
+- **The button stays**: Float, Window and Dock Pinned keep a strip panel's button at the same edge and index. A click
+  raises and focuses a Float, focuses or hides Dock Pinned as described above, and focuses/reopens Window. Browser
+  focus policy can refuse a scripted `window.focus()`, but the call is made directly from the person's button click.
+  `stripKeepsButton: false` restores v0.12.0's disappearing button. Every way back to Dock Unpinned returns to the same
+  strip place, size and home. A minimised stack shows each panel's `icon` instead of its name.
 - **Reorder by drag and drop** (v0.8.0, IntelliJ's stripe; `stripReorder: false` turns it off): press a strip button
   (icon or text) and drag it along its strip. From 5 px on the press is a drag: the panel slid out goes back, no hover
   slides one out, the button is dimmed, and a line in the strip shows where it will land; let go and the order changes.
@@ -301,9 +307,9 @@ dock.setBadge('asks', '3', '3 asks waiting');
   it. By keys: with a strip button focused, **Alt+Shift+Up/Down** (left and right strips) or **Alt+Shift+Left/Right**
   (top and bottom) moves it one place; a screen reader hears where it is now ("Form: 2 of 4 on the right strip",
   `text.stripMoved`, given the side's name from `text.sides`) from a hidden `role="status"` region (`.dk-live`), and the
-  button has `aria-keyshortcuts`. In the model: `moveStrip(layout, id, index, side)`. A hidden Window's strip button
-  (v0.7.0) cannot be dragged, and a drop just before or just after it lands in the same place: its place on the strip
-  follows the panel's, which is not on the strip while it is hidden.
+  button has `aria-keyshortcuts`. Window, Float and Dock Pinned buttons drag and move by keys in the same way, including
+  while a Window is closed; the saved retained place moves, and Dock Unpinned later lands there. In the model:
+  `moveStrip(layout, id, index, side)`.
 - **`unpinSize`** (a panel's, px): how far it slides out of its strip, at least its `minSize`: when it is unpinned (by
   a person or `unpin()`, instead of its size where it was), and for a strip entry in `defaultLayout` without a
   `size`. A `size` on that entry, or one saved in the layout, wins. Once any panel gives one, a strip entry in
@@ -561,7 +567,7 @@ an app no longer needs to lay an element over a panel's place to keep an iframe 
 
 ## Theme
 
-`css/theme.css` defines the colour tokens as custom properties on `:root`: light by default, and twenty sets in all, each
+`css/theme.css` defines the colour tokens as custom properties on `:root`: light by default, and twenty-one sets in all, each
 under `:root[data-theme="<name>"]`; with no `data-theme` the OS preference picks light or dark. `css/dock.css` uses only
 these tokens, and an app's own styles can use them too, so the app and its panels look like one family.
 
@@ -571,7 +577,7 @@ these tokens, and an app's own styles can use them too, so the app and its panel
 |---|---|---|
 | base | `light`, `dark`, `dim`, `paper`, `contrast`, `fjord`, `tws` | opTen's seven themes (`stream-bridge/…/app/css/app.css`), colour for colour; `light` and `dark` were already the library's |
 | ensemble | `ensemble-light`, `ensemble-dark`, `ensemble-dim`, `ensemble-paper`, `ensemble-contrast`, `ensemble-fjord` | Ensemble's six (`claude-dashboard-main/index.html`). They share names with opTen's but differ in shade (grounds, accent, quiet text), so they carry the `ensemble-` prefix and both looks are kept |
-| extra | `solar-light`, `solar-dark`, `sepia`, `rose`, `dusk`, `forest`, `contrast-dark` | new: Solarized-like light and dark (text and accents deepened to pass), a warm sepia, a rose-and-plum light (Rosé Pine Dawn-like), a violet dusk (Dracula-like), a green forest dark, and a high-contrast dark |
+| extra | `solar-light`, `solar-dark`, `sepia`, `rose`, `dusk`, `forest`, `contrast-dark`, `intellij-dark` | new: Solarized-like light and dark (text and accents deepened to pass), a warm sepia, a rose-and-plum light (Rosé Pine Dawn-like), a violet dusk (Dracula-like), a green forest dark, a high-contrast dark, and IntelliJ IDEA's New UI Dark from JetBrains' Apache-2.0 `expUI_dark.theme.json` |
 
 Ensemble's tokens map onto the library's as: `--surface-overlay` → `--dk-bg` (menus, fields), `--surface-sunken` →
 `--dk-bg2` (chrome), `--surface` → `--dk-bg3` (panel ground), `--border` → `--dk-line`, `--fg` / `--fg-subtle` /
@@ -735,7 +741,8 @@ npm test              # all of it
 npm run test:node     # the model, the dock in jsdom with stand-in windows, the theme, the opTen fixture, test/needs.test.js
 npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (the pop-out window for real), run.js
                       # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
-                      # toolstrip.js (the tool strip), scenarios.js, viewmodes.js (View Mode and Move To), autohide.js
+                      # toolstrip.js (the tool strip), stripkeeps.js (its button in every view mode), scenarios.js,
+                      # viewmodes.js (View Mode and Move To), autohide.js
                       # (Dock Unpinned and Undock hide when focus leaves them), stripreorder.js, runtime.js (panels added,
                       # removed and closed at runtime, and 40 tabs in one stack), menuitems.js (the app's items in ⋯),
                       # titlebody.js, screenshot.js (Take Screenshot with Region Capture and app hooks),
@@ -775,7 +782,11 @@ layout, a phone-sized window); and that `dock-popin` and `onPopIn` come while th
 layout, as in v0.3.6; icons (tooltip, accessible name) and badges (icon and text) in the strip at 22 and 44 px, each
 inside its button; click-only (no hover, stays when the pointer leaves, hides on a click elsewhere, and with
 `stripAutoHide: false` stays through it and closes by its button, Esc, its control or another); beside (the middle narrows by exactly the panel's width, nothing covered, one at a time, nothing saved, a
-reload shows the strip); a width per panel; and `?toolstrip=1` with all of them. `autohide.js` proves that Dock Unpinned and Undock hide on a
+reload shows the strip); a width per panel; and `?toolstrip=1` with all of them. `stripkeeps.js` proves that all four
+layout A tools keep their exact button through Window, Float and Dock Pinned; its active state and mouse/keyboard
+activation; Window focus, close, geometry and reopen; Float raise/focus/show; Pinned focus/hide/show; hover exclusion;
+drag, `moveStrip`, reload and Dock Unpinned return; the compatibility option, never-strip panels, narrow and two docks.
+`autohide.js` proves that Dock Unpinned and Undock hide on a
 click or focus elsewhere, with hover on and off and in layout A, opened by a click, the keys, hover and `reveal`, their
 strip button and stored layout unchanged; typing, their ⋯ menu, their dialog, an iframe in them and the window's blur
 keep them; Esc closes them; Float and Dock Pinned stay; `stripAutoHide: false` is v0.5.0's; and the tooltips.

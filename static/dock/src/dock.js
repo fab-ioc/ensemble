@@ -20,7 +20,7 @@ import { addHostDoc, removeHostDoc, whenGone } from './host.js';
 import {
   EDGES, LAYOUT_VERSION, makeConfig, stackNode, locate, panelsUnder, contains, findStack, whereIs, isShownIn,
   moveTo, floatPanel, dockBack, unpinPanel, pinPanel, hidePanel, showPanel, activate, normalizeLayout, clampFloat,
-  popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, moveStrip, dockFromFloat, insertPanel, parkPanel, forgetPanel,
+  popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, moveStrip, stripPlaceOf, stripEntriesOf, dockFromFloat, insertPanel, parkPanel, forgetPanel,
   parkedOf,
 } from './layout.js';
 import { POP_HTML } from './popout-page.js';
@@ -237,6 +237,7 @@ export function panelsFrom(container) {
  *   stripAutoHide                           a panel slid out slides back when focus or a click goes elsewhere in the
  *                                           page (default true, IntelliJ's); false: v0.5.0's, one opened by a click
  *                                           stays (click-only, or beside) until closed
+ *   stripKeepsButton                        a strip panel keeps its button in every view mode (default true)
  *   stripReorder                            a strip button can be dragged along its strip, or to another edge's, and
  *                                           moved along it by Alt+Shift+arrow (default true, IntelliJ's stripe)
  *   headButtons                             'menu' (default): a title bar has ⋯ and −; 'classic': v0.4's buttons
@@ -257,7 +258,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
-  stripHover = true, stripOpen = 'over', stripAutoHide = true, stripReorder = true, headButtons = 'menu', outNoteDismiss = true,
+  stripHover = true, stripOpen = 'over', stripAutoHide = true, stripKeepsButton = true, stripReorder = true, headButtons = 'menu', outNoteDismiss = true,
   screenshot: screenshotHook = null, screenshotItem = true, screenshotMode = 'auto', menuItems: appMenuItems = null, onMenu = null, keepSlots,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
@@ -800,6 +801,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const badge = badges.get(a.id);
       if (badge) b.appendChild(stripBadge(badge));
       b.setAttribute('aria-expanded', 'false');
+      b.setAttribute('aria-pressed', 'false');
       if (reorderOk(a.id)) b.setAttribute('aria-keyshortcuts', edge === 'left' || edge === 'right' ? 'Alt+Shift+ArrowUp Alt+Shift+ArrowDown' : 'Alt+Shift+ArrowLeft Alt+Shift+ArrowRight');
       stripBtns.set(a.id, b);
       strip.appendChild(b);
@@ -931,17 +933,18 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const ext = extent();
     const floatBox = layout.floats.map((f, z) => { clampFloat(f, ext.w, ext.h, S.floatMin); return claimFloat(f, z, claimed); });
     const flyBox = layout.auto.map((a) => claimFlyout(a));
-    const stripEntries = layout.auto.slice();
-    // Restore button order in reverse removal order, without restoring a hidden panel's body.
-    // So does a strip panel out with no window (after a reload): its button brings it back to its strip, slid out.
-    const idleOut = ids.filter(outIdle).map((id) => ({ id, was: layout.out[id].was, window: true, out: true }));
-    for (const h of [...layout.hidden, ...idleOut].reverse()) {
-      if (!h.window) continue;
-      const a = (h.was && (h.was.kind === 'auto' ? h.was : h.was.strip)) || (!h.out && layout.pinned && layout.pinned[h.id]);
-      if (!a) continue;
-      const peers = a.peers || [];
-      const next = stripEntries.findIndex((x) => x.edge === a.edge && peers.indexOf(x.id) >= (a.index || 0));
-      stripEntries.splice(next < 0 ? stripEntries.length : next, 0, { ...a, id: h.id });
+    const stripEntries = stripKeepsButton !== false ? stripEntriesOf(layout, ids).slice() : layout.auto.slice();
+    if (stripKeepsButton === false) {
+      // v0.12.0 compatibility: only a closed Window restores its former strip button.
+      const idleOut = ids.filter(outIdle).map((id) => ({ id, was: layout.out[id].was, window: true, out: true }));
+      for (const h of [...layout.hidden, ...idleOut].reverse()) {
+        if (!h.window) continue;
+        const a = (h.was && (h.was.kind === 'auto' ? h.was : h.was.strip)) || (!h.out && layout.pinned && layout.pinned[h.id]);
+        if (!a) continue;
+        const peers = a.peers || [];
+        const next = stripEntries.findIndex((x) => x.edge === a.edge && peers.indexOf(x.id) >= (a.index || 0));
+        stripEntries.splice(next < 0 ? stripEntries.length : next, 0, { ...a, id: h.id });
+      }
     }
     const strips = EDGES.map((edge) => stripEntries.filter((a) => a.edge === edge)).filter((e) => e.length).map((e) => buildStrip(e[0].edge, e));
     const note = outNote();
@@ -1046,9 +1049,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     for (const [id, el] of flyEls) {
       const open = id === flyOpen;
       el.classList.toggle('open', open);
-      const b = stripBtns.get(id);
-      if (b) { b.setAttribute('aria-expanded', String(open)); b.classList.toggle('on', open); }
       if (open) shownEvent(id);
+    }
+    for (const [id, b] of stripBtns) {
+      const w = whereIs(layout, id);
+      const open = w && (w.kind === 'dock' || w.kind === 'float') ? w.stack.active === id && !w.stack.min
+        : w && w.kind === 'auto' ? flyOpen === id : w && w.kind === 'out' ? pops.has(id) : false;
+      b.setAttribute('aria-expanded', String(!!open));
+      b.setAttribute('aria-pressed', String(!!open));
+      b.classList.toggle('on', !!open);
     }
     besideSpace();
   }
@@ -1615,6 +1624,78 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return { x: Math.round((ext.w - w) / 2) + 24 * n, y: Math.round((ext.h - h) / 3) + 24 * n, w, h };
   }
 
+  // A retained strip place still has the panel's view mode while hidden; viewModeOf deliberately reports `hidden` for
+  // every other API purpose. This is only for the stripe button's click and hover behaviour.
+  function stripMode(id) {
+    const mode = modeOf(id);
+    if (mode !== 'hidden') return mode;
+    const w = whereIs(layout, id);
+    const was = w && w.kind === 'hidden' ? w.entry.was : null;
+    if (w && w.entry.window) return 'window';
+    if (was && was.kind === 'float') return 'float';
+    if (was && was.kind === 'auto') return (was.open || openStyle) === 'beside' ? 'unpinned' : 'undock';
+    return stripPlaceOf(layout, id) ? 'pinned' : 'hidden';
+  }
+
+  function panelHasFocus(id) {
+    const w = whereIs(layout, id);
+    if (!w || (w.kind !== 'dock' && w.kind !== 'float')) return false;
+    const box = w.kind === 'float' ? floatEls.get(w.float) : stackEls.get(w.stack);
+    return !!(box && box.contains(doc.activeElement));
+  }
+
+  // Bring a docked or floating panel to the front and put keyboard focus in it. A float's order is its z-order.
+  function focusMainPanel(id, raiseFloat) {
+    let w = whereIs(layout, id);
+    if (w && w.kind === 'hidden') { showHidden(id); w = whereIs(layout, id); }
+    if (!w || (w.kind !== 'dock' && w.kind !== 'float')) return;
+    let changed = false;
+    if (w.stack.min) { delete w.stack.min; changed = true; }
+    changed = activate(layout, id) || changed;
+    if (raiseFloat && w.kind === 'float') {
+      const at = layout.floats.indexOf(w.float);
+      if (at >= 0 && at !== layout.floats.length - 1) {
+        layout.floats.splice(at, 1);
+        layout.floats.push(w.float);
+        changed = true;
+      }
+    }
+    if (changed) commit();
+    w = whereIs(layout, id);
+    const p = byId.get(id);
+    const first = p && (p.el.matches('button, input, select, textarea, [tabindex]:not([tabindex="-1"])') ? p.el : null)
+      || (p && p.el.querySelector('button, input, select, textarea, [tabindex]:not([tabindex="-1"]):not([disabled])'))
+      || root.querySelector(`[data-dk-tab="${CSS_ESC(id)}"]`);
+    if (first) focusQuiet(first);
+  }
+
+  function useStripButton(id, wasFocused) {
+    const mode = stripMode(id);
+    if (mode === 'window') {
+      if (hiddenWindow(id)) showHidden(id);
+      else if (pops.has(id)) { try { pops.get(id).win.focus(); } catch { /* browser focus policy */ } }
+      else if (outOf(id)) popOut(id);
+      return;
+    }
+    if (mode === 'float') { focusMainPanel(id, true); return; }
+    if (mode === 'pinned') {
+      const w = whereIs(layout, id);
+      if (w && w.kind === 'dock' && w.stack.active === id && !w.stack.min && wasFocused) api.toggleMin(id);
+      else focusMainPanel(id, false);
+      return;
+    }
+    if (mode !== 'unpinned' && mode !== 'undock') return;
+    if (whereIs(layout, id).kind === 'hidden') showHidden(id);
+    if (flyOpen === id && !flyByHover) closeFly(false);
+    else {
+      openFly(id, false);
+      const fly = flyEls.get(id);
+      const first = fly && (fly.querySelector('.dk-body :is(button, input, select, textarea, [tabindex]):not([tabindex="-1"]):not([disabled])')
+        || fly.querySelector('.dk-head [data-dk-tab]'));
+      if (first) focusQuiet(first);
+    }
+  }
+
   // A panel's depth where it is docked, for a strip on `edge`.
   function unpinSize(id, edge) {
     const at = locate(layout.root, id);
@@ -1696,21 +1777,26 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return true;
   }
 
+  // With the compatibility option, v0.12 allowed moves only for a panel actually living on `layout.auto`; the restore
+  // button of a closed Window was visible but fixed. The default also moves retained places in the other view modes.
+  const movableStripPlace = (id) => stripKeepsButton === false
+    ? layout.auto.find((entry) => entry.id === id) || null : stripPlaceOf(layout, id);
+
   // A strip panel to place `index` of the strip on `side` (default: its own), as IntelliJ's stripe: by a drag, a key or
   // the API. `say`: a screen reader hears where it is now.
   function moveStripNow(id, index, side, say) {
-    if (narrowOn || !allowed(id, 'move') || (side != null && !EDGES.includes(side))) return false;
+    if (narrowOn || !allowed(id, 'move') || !movableStripPlace(id) || (side != null && !EDGES.includes(side))) return false;
     const changed = moveStrip(layout, id, index, side, opts());
     if (changed) commit();
-    const a = layout.auto.find((x) => x.id === id);
+    const a = movableStripPlace(id);
     if (say && a) {
-      const on = layout.auto.filter((x) => x.edge === a.edge);
-      liveEl.textContent = T.stripMoved(byId.get(id).title, on.indexOf(a) + 1, on.length, T.sides[a.edge] || a.edge);
+      const on = stripEntriesOf(layout, ids).filter((x) => x.edge === a.edge);
+      liveEl.textContent = T.stripMoved(byId.get(id).title, on.findIndex((x) => x.id === id) + 1, on.length, T.sides[a.edge] || a.edge);
     }
     return changed;
   }
   // Whether a person may drag strip button `id` (and move it by keys).
-  const reorderOk = (id) => stripReorder !== false && allowed(id, 'move') && layout.auto.some((a) => a.id === id);
+  const reorderOk = (id) => stripReorder !== false && allowed(id, 'move') && !!movableStripPlace(id);
 
   const hiddenWindow = (id) => layout.hidden.find((h) => h.id === id && h.window);
   function showHidden(id) {
@@ -2384,6 +2470,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   let gesture = null; // { kind, ... } while a pointer is down on a title bar, a float's edge or a splitter
   let suppressClick = false;
+  let stripClickFocused = null; // the panel had focus before a real mouse press moved focus to its stripe button
 
   function rectOf(el) { return el.getBoundingClientRect(); }
   const inside = (r, x, y) => r && r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
@@ -2469,7 +2556,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (!best) return null;
     const { v } = best;
     const btns = best.el ? [...best.el.querySelectorAll('[data-dk-auto]')]
-      .filter((b) => b.dataset.dkAuto !== id && layout.auto.some((a) => a.id === b.dataset.dkAuto)) : [];
+      .filter((b) => b.dataset.dkAuto !== id && stripPlaceOf(layout, b.dataset.dkAuto)) : [];
     const pos = v ? y : x;
     const r = (b) => rectOf(b);
     const index = btns.filter((b) => { const q = r(b); return (v ? q.top + q.height / 2 : q.left + q.width / 2) < pos; }).length;
@@ -2517,7 +2604,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const sb = t.closest && t.closest('[data-dk-auto]');
     if (sb) {
       // A press on a strip button: a click, unless it moves 5 px or more (then a drag).
-      if (reorderOk(sb.dataset.dkAuto)) gesture = { kind: 'strip', id: sb.dataset.dkAuto, x0: e.clientX, y0: e.clientY, on: false, drop: null };
+      stripClickFocused = panelHasFocus(sb.dataset.dkAuto) ? sb.dataset.dkAuto : null;
+      if (reorderOk(sb.dataset.dkAuto)) gesture = { kind: 'strip', id: sb.dataset.dkAuto, x0: e.clientX, y0: e.clientY,
+        on: false, drop: null, wasFocused: panelHasFocus(sb.dataset.dkAuto) };
       return;
     }
     const bar = t.closest && t.closest('.dk-bar');
@@ -2636,8 +2725,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (!g) return;
     if (g.kind === 'strip' || g.kind === 'strip-off') {
       endStripDrag();
-      if (g.kind === 'strip' && !g.on) return; // a click: it opens or closes the panel
+      if (g.kind === 'strip' && !g.on) { stripClickFocused = g.wasFocused ? g.id : null; return; } // a click
       // The click that ends a drag (or one Esc cancelled) opens nothing.
+      stripClickFocused = null;
       suppressClick = true;
       later(() => { suppressClick = false; }, 0);
       if (g.kind === 'strip-off') return;
@@ -2722,15 +2812,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const strip = t.closest('[data-dk-auto]');
     if (strip) {
       const id = strip.dataset.dkAuto;
-      if (flyOpen === id && !flyByHover) closeFly(false);
-      else {
-        openFly(id, false);
-        const fly = flyEls.get(id);
-        // Its first control (the panel is still sliding in from the side: focusQuiet scrolls nothing), else its tab.
-        const first = fly && (fly.querySelector('.dk-body :is(button, input, select, textarea, [tabindex]):not([tabindex="-1"]):not([disabled])')
-          || fly.querySelector('.dk-head [data-dk-tab]'));
-        if (first) focusQuiet(first);
-      }
+      useStripButton(id, stripClickFocused === id);
+      stripClickFocused = null;
     }
   });
 
@@ -2894,12 +2977,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const sb = e.target.closest && e.target.closest('[data-dk-auto]');
     if (sb && e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && reorderOk(sb.dataset.dkAuto)) {
       const id = sb.dataset.dkAuto;
-      const a = layout.auto.find((x) => x.id === id);
+      const a = movableStripPlace(id);
       const v = a.edge === 'left' || a.edge === 'right';
       const step = e.key === (v ? 'ArrowDown' : 'ArrowRight') ? 1 : e.key === (v ? 'ArrowUp' : 'ArrowLeft') ? -1 : 0;
       if (!step) return;
       e.preventDefault();
-      const at = layout.auto.filter((x) => x.edge === a.edge).indexOf(a);
+      const at = stripEntriesOf(layout, ids).filter((x) => x.edge === a.edge).findIndex((x) => x.id === id);
       moveStripNow(id, Math.max(0, at + step), a.edge, true);
       return;
     }
@@ -2942,6 +3025,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (strip && !gesture && stripHover) {
       clearTimeout(hoverTimer);
       const id = strip.dataset.dkAuto;
+      if (!['unpinned', 'undock'].includes(stripMode(id))) return;
       if (id === quietHover) return;
       // A press that follows (a click, or a drag starting) is not a hover: none slides it out meanwhile.
       hoverTimer = later(() => { if (flyOpen !== id && !gesture) openFly(id, true); }, 250);

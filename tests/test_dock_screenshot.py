@@ -49,12 +49,13 @@ DOCK = ROOT / "static" / "dock"
 
 
 class TheLibrary(unittest.TestCase):
-    def test_dock_v0_12_0_is_vendored_with_draw_js(self):
+    def test_current_dock_is_vendored_with_draw_js(self):
         self.assertRegex((DOCK / "VERSION").read_text(encoding="utf-8"),
-                         r"^fab-ioc/dock v0\.12\.0 2be9b7fa5c973f5b2b38b8db676c7c927916e4bc \(tag v0\.12\.0, 2026-10-02\)")
+                         r"^fab-ioc/dock v0\.14\.0 f96f1d23852cdbb9d695ef358e04c28ae3ca8d1a \(tag v0\.14\.0, 2026-10-05\)")
         dock_js = (DOCK / "src" / "dock.js").read_text(encoding="utf-8")
         self.assertIn("import { canDraw, drawPanel } from './draw.js';", dock_js)
         self.assertIn("screenshotMode = 'auto'", dock_js)
+        self.assertIn("stripKeepsButton = true", dock_js)
         self.assertIn("export async function drawPanel(", (DOCK / "src" / "draw.js").read_text(encoding="utf-8"))
 
     def test_draw_js_is_a_page_file_and_preloaded(self):
@@ -65,6 +66,9 @@ class TheLibrary(unittest.TestCase):
         # Neither dock passes screenshot, screenshotMode or screenshotItem: the library's 'auto' draws every panel.
         for opt in ("screenshot:", "screenshotMode", "screenshotItem"):
             self.assertNotIn(opt, INDEX)
+
+    def test_ensemble_keeps_strip_buttons_in_every_view_mode(self):
+        self.assertNotIn("stripKeepsButton", INDEX)
 
 
 # The probe, in a window: getDisplayMedia (the share prompt) counted and refused; what reaches the clipboard decoded

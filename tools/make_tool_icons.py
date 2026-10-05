@@ -125,7 +125,7 @@ def preview(dest: Path) -> None:
     page = dest / "compare.html"
     page.write_text(html, encoding="utf-8")
     shot(page, dest / "compare.png", 1180, 1560)
-    for half, ts in (("light", ("light", "paper", "contrast")), ("dark", ("dark", "dim", "fjord"))):
+    for half, ts in (("light", ("light", "paper", "contrast")), ("dark", ("dark", "dim", "fjord", "intellij-dark"))):
         one = dest / f"compare-{half}.html"
         one.write_text(html.replace(json.dumps(THEMES), json.dumps(ts)), encoding="utf-8")
         shot(one, dest / f"compare-{half}.png", 1180, 800)
