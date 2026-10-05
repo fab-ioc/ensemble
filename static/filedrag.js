@@ -7,6 +7,7 @@
 
   const TIP = 'Drag outside Ensemble — Chrome and Edge copy the file; Safari and Firefox receive its link or text.';
   const INTERNAL = 'application/x-ensemble-file';
+  const metaCache = new Map();
   let ghost = null;
 
   const fileName = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'file';
@@ -18,12 +19,19 @@
     if (token) url.searchParams.set('token', token);
     return url;
   };
+  const dragToken = () => {
+    const meta = global.document && global.document.querySelector('meta[name="ensemble-file-drag"]');
+    return meta && meta.getAttribute('content') || '';
+  };
   const contextUrl = (route, info) => {
     const url = new URL(route, global.location.href);
     url.searchParams.set('path', info.path);
     if (info.room) url.searchParams.set('room', info.room);
     if (info.cwd) url.searchParams.set('cwd', info.cwd);
-    return addToken(url);
+    const token = route === '/api/file/download' && dragToken();
+    if (token) url.searchParams.set('drag', token);
+    else addToken(url);
+    return url;
   };
   const joinPath = (root, rel) => {
     if (!root || /^(?:[A-Za-z]:[\\/]|\\\\|~\/|\/)/.test(rel || '')) return rel || '';
@@ -60,14 +68,24 @@
   }
 
   function metadata(download) {
+    const key = String(download);
+    const hit = metaCache.get(key);
+    if (hit) return hit.promise;
     const meta = new URL(download);
     meta.searchParams.set('meta', '1');
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', meta.href, false);
-      xhr.send();
-      return xhr.status === 200 ? JSON.parse(xhr.responseText) : null;
-    } catch (e) { return null; }
+    const entry = { value: null, promise: null };
+    entry.promise = (global.fetch
+      ? global.fetch(meta.href, { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null)
+      : Promise.resolve(null))
+      .then(value => { entry.value = value; return value; }, () => null);
+    metaCache.set(key, entry);
+    return entry.promise;
+  }
+
+  function prepare(el) {
+    const info = infoOf(el);
+    if (!info) return Promise.resolve(null);
+    return metadata(contextUrl('/api/file/download', info).href);
   }
 
   function dragImage(dt, name, doc) {
@@ -89,7 +107,7 @@
     const dt = ev.dataTransfer, info = infoOf(el);
     if (!dt || !info) return false;
     const download = contextUrl('/api/file/download', info).href;
-    const meta = metadata(download) || {};
+    const meta = (metaCache.get(download) || {}).value || {};
     const name = meta.name || fileName(info.path);
     const mime = meta.mime || 'application/octet-stream';
     const plain = typeof meta.text === 'string' ? meta.text : download;
@@ -134,6 +152,12 @@
     else if (!el.title.includes('Chrome and Edge')) el.title += ' · ' + TIP;
   }
 
+  function removeTip(el) {
+    const suffix = ' · ' + TIP;
+    if (el.title === TIP) el.removeAttribute('title');
+    else if (el.title && el.title.endsWith(suffix)) el.title = el.title.slice(0, -suffix.length);
+  }
+
   function decorateLinks(root) {
     if (!root) return;
     const links = [];
@@ -160,6 +184,13 @@
       const el = ev.target && ev.target.closest && ev.target.closest('[data-file-drag], a.file-link');
       if (el) start(ev, el);
     }, true);
+    const warm = ev => {
+      const el = ev.target && ev.target.closest && ev.target.closest('[data-file-drag], a.file-link');
+      if (el) prepare(el);
+    };
+    doc.addEventListener('pointerover', warm, true);
+    doc.addEventListener('focusin', warm, true);
+    doc.addEventListener('pointerdown', warm, true);
     doc.addEventListener('drop', insertLink, true);
   }
 
@@ -176,5 +207,13 @@
     return el;
   }
 
-  global.FileDrag = { TIP, INTERNAL, attach, mark, start, infoOf, chromiumDownload, decorateLinks };
+  function unmark(el) {
+    if (!el) return el;
+    el.draggable = false;
+    for (const key of ['fileDrag', 'filePath', 'fileRoom', 'fileCwd', 'fileView']) delete el.dataset[key];
+    removeTip(el);
+    return el;
+  }
+
+  global.FileDrag = { TIP, INTERNAL, attach, mark, unmark, prepare, start, infoOf, chromiumDownload, decorateLinks };
 })(window);

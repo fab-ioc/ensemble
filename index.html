@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="ensemble-pages" content="">
+<meta name="ensemble-file-drag" content="">
 <title>Ensemble</title>
 <script src="/static/noun.js"></script>
 <script>
@@ -3473,6 +3474,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-tab-wrap { border-right-color: var(--border); padding-right: var(--s-100); }
   .dk-tab-wrap.on { background: var(--surface); }
   .dk-tab { padding: 0 var(--s-200) 0 var(--s-300); color: var(--fg-subtle); }
+  .fd-tab-drag { display: inline-flex; width: 12px; height: 14px; margin-right: var(--s-100); vertical-align: -3px; cursor: grab; }
+  .fd-tab-drag svg { width: 12px; height: 12px; margin: auto; fill: none; stroke: currentColor; stroke-width: 1.4; }
   .dk-tab:hover { color: var(--fg); }
   .dk-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* A tab's count (the Points panel's) is quiet words, never a badge (the
@@ -10481,9 +10484,13 @@ function chFilesHtml(files, sha, cur, view) {
   return chTreeRowsHtml(chTree(files), sha, view.closed || (() => false), (f, d) => chFileHtml(f, sha, on(f), d, true), 0);
 }
 function chMarkFileDrags(box, root) {
-  if (!box || !root) return;
+  if (!box) return;
   box.querySelectorAll('.chf[data-file]').forEach(function (row) {
-    FileDrag.mark(row, drPath(root, row.dataset.file), { kind: 'changes' });
+    const status = (row.querySelector('.chst') || {}).textContent || '';
+    // A commit row names a historical blob, not necessarily the worktree's
+    // current bytes; a deleted row has no file to hand to another program.
+    if (!root || row.dataset.commit || status.includes('D')) FileDrag.unmark(row);
+    else FileDrag.mark(row, drPath(root, row.dataset.file), { kind: 'changes' });
   });
 }
 const chTreeBtnHtml = tree => '<button type="button" class="chp-refresh chp-tree" aria-pressed="' + (tree ? 'true' : 'false') + '" title="Group the files by folder">Folders</button>';
@@ -10958,7 +10965,7 @@ function tchPaintList(v, focusDir) {
   box.dataset.root = v.root || '';
   const html = v.files.length ? chFilesHtml(v.files, '', { file: v.file, sha: '' }, { tree: chTreeOn(), closed: p => v.closed.has(p) })
     : '<div class="chf none">No changes on this branch yet.</div>';
-  if (box._sig === html && !focusDir) return;
+  if (box._sig === html && !focusDir) { chMarkFileDrags(box, box.dataset.root); return; }
   // A redraw (Enter opening a file, a poll) replaces the rows: the keyboard
   // stays on the list, on its current row.
   const had = box.contains(box.ownerDocument.activeElement);
@@ -11849,7 +11856,20 @@ function pdTabTips() {
     if (!PD.rt.size) continue;
     d.querySelectorAll('.dk-tab[data-dk-tab^="file:"]').forEach(tab => {
       const e = PD.rt.get(tab.dataset.dkTab), t = e ? tildeify(e.path) : '';
-      if (t && e) wsDragMark(e.v, tab, e.path, 'dock-tab', t);
+      if (!t || !e) return;
+      // Dock owns the tab's pointer gesture. Native-draggable on that whole
+      // button turns its pointerup into pointercancel and loses panel moves, so
+      // the file icon is the external source and the rest remains Dock's drag.
+      let handle = tab.querySelector('.fd-tab-drag');
+      if (!handle) {
+        handle = d.createElement('span');
+        handle.className = 'fd-tab-drag';
+        handle.setAttribute('aria-hidden', 'true');
+        handle.innerHTML = '<svg viewBox="0 0 16 16"><path d="M3 1.5h6l4 4v9H3z"/><path d="M9 1.5v4h4"/></svg>';
+        tab.prepend(handle);
+      }
+      tab.title = t + ': drag the tab to move its panel';
+      wsDragMark(e.v, handle, e.path, 'dock-tab', t);
     });
   }
 }

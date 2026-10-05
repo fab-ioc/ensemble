@@ -127,6 +127,17 @@ class FileDownloadRoute(unittest.TestCase):
             self.assertEqual(status, 303)
             self.assertIn("ensemble_token=", headers.get("Set-Cookie", ""))
 
+    def test_drag_bearer_downloads_directly_without_a_browser_cookie(self):
+        target = self.url(self.text) + "&drag=" + quote(dashboard._FILE_DRAG_TOKEN, safe="")
+        with mock.patch.object(dashboard, "ACCESS_TOKEN", TOKEN):
+            status, headers, body = self.get(target, PROXIED)
+            wrong = self.get(self.url(self.text) + "&drag=wrong", PROXIED)[0]
+            elsewhere = self.get("/api/settings?drag=" + quote(dashboard._FILE_DRAG_TOKEN, safe=""), PROXIED)[0]
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"hello drag\n")
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual((wrong, elsewhere), (401, 401), "the bearer is exact and opens only this attachment route")
+
 
 CDP_JS = chrome_profile.JS + r"""
 const A = JSON.parse(process.argv[1]);
@@ -151,10 +162,12 @@ async function main() {
     if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
   try {
     await c.send('Page.enable', {}, sessionId);
-    await c.send('Page.navigate', {url:A.base + '/fileview?path=' + encodeURIComponent(A.file)}, sessionId);
+    await c.send('Network.enable', {}, sessionId);
+    await c.send('Network.setExtraHTTPHeaders', {headers:{'X-Forwarded-For':'100.64.0.7'}}, sessionId);
+    await c.send('Page.navigate', {url:A.base + '/fileview?path=' + encodeURIComponent(A.file) + '&token=' + encodeURIComponent(A.token)}, sessionId);
     const until = Date.now() + 20000;
     while (Date.now() < until && !(await ev('window.FileDrag && document.getElementById("name").draggable'))) await sleep(100);
-    const out = await ev(`(() => {
+    const out = await ev(`(async () => {
       const path = ${JSON.stringify(A.file)}, root = ${JSON.stringify(A.root)}, rel = ${JSON.stringify(A.rel)};
       const host = document.createElement('div'); document.body.appendChild(host);
       const marked = (tag, kind) => { const el = document.createElement(tag); host.appendChild(el); FileDrag.mark(el, path, {kind}); return el; };
@@ -171,12 +184,25 @@ async function main() {
       const drag = el => { const dt = new DataTransfer(); el.dispatchEvent(new DragEvent('dragstart', {bubbles:true, cancelable:true, dataTransfer:dt}));
         return {types:[...dt.types], download:dt.getData('DownloadURL'), uri:dt.getData('text/uri-list'), plain:dt.getData('text/plain'),
           internal:dt.getData(FileDrag.INTERNAL), effect:dt.effectAllowed, draggable:el.draggable}; };
+      await Promise.all(Object.values(sources).map(FileDrag.prepare));
       const got = Object.fromEntries(Object.entries(sources).map(([k, el]) => [k, drag(el)]));
+      const externalResponse = await fetch(got.workspace.uri, {credentials:'omit'});
+      const external = {status:externalResponse.status, redirected:externalResponse.redirected, body:await externalResponse.text()};
       Object.defineProperty(navigator, 'userAgent', {value:'Mozilla/5.0 Firefox/140.0', configurable:true});
       const fallback = drag(sources.workspace);
       const dt = new DataTransfer(); sources.workspace.dispatchEvent(new DragEvent('dragstart', {bubbles:true, cancelable:true, dataTransfer:dt}));
       const ta = document.createElement('textarea'); host.appendChild(ta); ta.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:dt}));
-      return {got, fallback, dropped:ta.value, bodyDraggable:document.getElementById('main').draggable};
+      const oldFetch = window.fetch; window.fetch = () => new Promise(() => {});
+      const slow = marked('div', 'workspace'); FileDrag.mark(slow, path + '.not-ready', {kind:'workspace'});
+      slow.dispatchEvent(new PointerEvent('pointerover', {bubbles:true}));
+      const then = performance.now(), slowDrag = drag(slow), elapsed = performance.now() - then;
+      window.fetch = oldFetch;
+      const safe = d => { const uri = new URL(d.uri), internal = JSON.parse(d.internal); delete internal.download;
+        return {types:d.types, downloadHead:d.download ? d.download.slice(0, d.download.indexOf('http')) : '', uriPath:uri.pathname,
+          uriKeys:[...uri.searchParams.keys()], plain:d.plain === d.uri ? '[uri]' : d.plain, internal, effect:d.effect, draggable:d.draggable}; };
+      return {dropped:ta.value, bodyDraggable:document.getElementById('main').draggable,
+        safeGot:Object.fromEntries(Object.entries(got).map(([k,d]) => [k,safe(d)])), safeFallback:safe(fallback),
+        slow:{...safe(slowDrag), elapsed}, external, href:location.href, dragMeta:!!document.querySelector('meta[name="ensemble-file-drag"]').content};
     })()`);
     console.log(JSON.stringify(out));
   } finally {
@@ -206,6 +232,7 @@ class DragSourcesInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "PROJECTS_ROOT", cls.root),
             mock.patch.object(dashboard, "DASHBOARD_DIR", state),
             mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
+            mock.patch.object(dashboard, "ACCESS_TOKEN", TOKEN),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
         ]
         for patcher in cls.patches:
@@ -221,6 +248,7 @@ class DragSourcesInChrome(unittest.TestCase):
             "file": str(cls.file),
             "root": str(project),
             "rel": cls.file.name,
+            "token": TOKEN,
         }
         proc = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, text=True,
                               encoding="utf-8", timeout=120)
@@ -235,7 +263,7 @@ class DragSourcesInChrome(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_every_source_writes_file_url_text_and_internal_data(self):
-        for name, drag in self.got["got"].items():
+        for name, drag in self.got["safeGot"].items():
             with self.subTest(source=name):
                 self.assertTrue(drag["draggable"], drag)
                 # Chromium normalises a custom DataTransfer type to lower case
@@ -244,10 +272,11 @@ class DragSourcesInChrome(unittest.TestCase):
                 self.assertIn("text/uri-list", drag["types"], drag)
                 self.assertIn("text/plain", drag["types"], drag)
                 self.assertIn("application/x-ensemble-file", drag["types"], drag)
-                self.assertTrue(drag["download"].startswith("text/plain:drag me.txt:http://"), drag)
-                self.assertIn("/api/file/download?", drag["uri"])
+                self.assertEqual(drag["downloadHead"], "text/plain:drag me.txt:")
+                self.assertEqual(drag["uriPath"], "/api/file/download")
+                self.assertIn("drag", drag["uriKeys"])
                 self.assertEqual(drag["plain"], "hello drag\n")
-                internal = json.loads(drag["internal"])
+                internal = drag["internal"]
                 self.assertEqual(internal["path"], str(self.file))
                 self.assertIn("/fileview?path=", internal["view"])
 
@@ -255,10 +284,20 @@ class DragSourcesInChrome(unittest.TestCase):
         self.assertIn("/fileview?path=", self.got["dropped"])
 
     def test_firefox_falls_back_to_url_and_text(self):
-        drag = self.got["fallback"]
+        drag = self.got["safeFallback"]
         self.assertNotIn("downloadurl", [x.lower() for x in drag["types"]])
         self.assertIn("text/uri-list", drag["types"])
         self.assertEqual(drag["plain"], "hello drag\n")
+
+    def test_tailnet_drag_url_is_a_direct_cookie_less_download(self):
+        self.assertNotIn("token=", self.got["href"])
+        self.assertTrue(self.got["dragMeta"])
+        self.assertEqual(self.got["external"], {"status": 200, "redirected": False, "body": "hello drag\n"})
+
+    def test_unready_metadata_never_blocks_dragstart(self):
+        drag = self.got["slow"]
+        self.assertLess(drag["elapsed"], 100)
+        self.assertEqual(drag["plain"], "[uri]")
 
     def test_the_viewer_body_stays_selectable(self):
         self.assertFalse(self.got["bodyDraggable"])
@@ -280,7 +319,7 @@ class DragWiring(unittest.TestCase):
         for needle in (
             "wsDragMark(v, row, row.dataset.path",
             "wsDragMark(v, tab, tab.dataset.path, 'file-tab'",
-            "wsDragMark(e.v, tab, e.path, 'dock-tab'",
+            "wsDragMark(e.v, handle, e.path, 'dock-tab'",
             "wsDragMark(v, list.querySelector('.wsc-file')",
             "FileDrag.mark(row, drPath(root, row.dataset.file), { kind: 'changes' })",
             "box.dataset.root = v.root || ''",

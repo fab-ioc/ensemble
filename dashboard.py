@@ -530,6 +530,11 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/dock/src/draw.js",
               "static/dock/css/dock.css")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
+FILE_DRAG_META = b'<meta name="ensemble-file-drag" content="">'
+# A page may hand a file URL to a program which has none of the browser's
+# cookies. This process-local bearer is deliberately narrow: it opens only
+# /api/file/download, whose resolved path is still checked against Workspace.
+_FILE_DRAG_TOKEN = secrets.token_urlsafe(32)
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 
 
@@ -574,10 +579,13 @@ def page_file_rel(path: Path) -> str:
 def stamp_page(data: bytes) -> bytes:
     """A served page with the stamps of every page file written into its
     <meta name="ensemble-pages">, space-separated "name=stamp" pairs."""
-    if PAGE_META not in data:
-        return data
-    pairs = " ".join(f"{k}={v}" for k, v in page_stamps().items() if v)
-    return data.replace(PAGE_META, PAGE_META[:-2] + pairs.encode("ascii") + b'">', 1)
+    if PAGE_META in data:
+        pairs = " ".join(f"{k}={v}" for k, v in page_stamps().items() if v)
+        data = data.replace(PAGE_META, PAGE_META[:-2] + pairs.encode("ascii") + b'">', 1)
+    if FILE_DRAG_META in data:
+        data = data.replace(FILE_DRAG_META,
+                            FILE_DRAG_META[:-2] + _FILE_DRAG_TOKEN.encode("ascii") + b'">', 1)
+    return data
 
 
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
@@ -5626,9 +5634,10 @@ def file_at_mime(path: Path) -> str:
 
 
 # A dragstart cannot await a read: browsers close its writable dataTransfer
-# store as soon as the event returns. The page therefore asks synchronously for
-# metadata and, only for a small text file, its words. The file itself is a
-# separate attachment response so Chromium can hand it to Finder/Explorer.
+# store as soon as the event returns. The page therefore prefetches metadata on
+# hover/focus and uses it only when ready; otherwise it immediately falls back
+# to the URL. The file itself is a separate attachment response so Chromium can
+# hand it to Finder/Explorer.
 FILE_DRAG_TEXT_MAX = 1024 * 1024
 _FILE_DRAG_TEXT_EXTS = {
     ".md", ".txt", ".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".css",
@@ -10811,9 +10820,17 @@ class Handler(BaseHTTPRequestHandler):
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
         non-loopback requests must present it; a matching ?token= on a GET is
         swapped for an HttpOnly cookie via redirect so the URL stays clean."""
+        u = urlparse(self.path)
+        # Unlike the page credential, this bearer survives being handed to a
+        # different program: no cookie-setting redirect is involved. It grants
+        # only the attachment route; that route separately enforces the path
+        # boundary before it returns anything.
+        if self.command in ("GET", "HEAD") and u.path == "/api/file/download":
+            drag = (parse_qs(u.query).get("drag", [""])[0] or "").strip()
+            if drag and hmac.compare_digest(drag, _FILE_DRAG_TOKEN):
+                return True
         if not ACCESS_TOKEN or self._is_local():
             return True
-        u = urlparse(self.path)
         if self.command in ("GET", "HEAD") and ".." not in u.path and "%" not in u.path and (
                 u.path in UNGATED_PATHS or u.path.startswith(UNGATED_PREFIXES)):
             return True
