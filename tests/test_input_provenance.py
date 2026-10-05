@@ -80,6 +80,42 @@ class Journal(unittest.TestCase):
             identity="codex", session_id="sid-1")
         self.assertEqual([got[i]["kind"] for i in (0, 1)], ["hub", "human"])
 
+    def test_ordered_human_record_protects_edited_text_when_the_hash_differs(self):
+        typed_keys = "[digest] genuie\x1b[Dn"
+        final_text = "[digest] genuine"
+        input_provenance.record(
+            "room-one", "codex", typed_keys, {"kind": "human"},
+            session_id="sid-1", at=100)
+        got = input_provenance.assign(
+            input_provenance.index("room-one"), [(0, final_text, 101)],
+            identity="codex", session_id="sid-1")
+        self.assertEqual(got[0]["kind"], "human")
+        self.assertNotEqual(got[0]["hash"], input_provenance.text_hash(final_text))
+
+    def test_an_edited_human_record_does_not_guess_among_two_turns(self):
+        input_provenance.record(
+            "room-one", "codex", "keys with cursor input", {"kind": "human"},
+            session_id="sid-1", at=100)
+        got = input_provenance.assign(
+            input_provenance.index("room-one"),
+            [(0, "[digest] first", 100), (1, "[digest] second", 101)],
+            identity="codex", session_id="sid-1")
+        self.assertEqual(got, {})
+
+    def test_edited_human_and_identical_hub_turn_follow_physical_order(self):
+        final_text = "[digest] genuine"
+        input_provenance.record(
+            "room-one", "codex", "[digest] genuie\x1b[Dn", {"kind": "human"},
+            session_id="sid-1", at=100)
+        input_provenance.record(
+            "room-one", "codex", final_text, {"kind": "hub"},
+            session_id="sid-1", at=101)
+        got = input_provenance.assign(
+            input_provenance.index("room-one"),
+            [(0, final_text, 100), (1, final_text, 101)],
+            identity="codex", session_id="sid-1")
+        self.assertEqual([got[i]["kind"] for i in (0, 1)], ["human", "hub"])
+
 
 class InventoryFixtures(unittest.TestCase):
     """Every inventory kind is a represented sender, never the CEO."""
@@ -219,6 +255,24 @@ class InventoryFixtures(unittest.TestCase):
                          [("po", "PO"), ("pomsg", "Dock PO")])
         self.assertEqual(turns[1]["fromProjectName"], "Dock")
 
+    def test_recorded_and_legacy_po_replies_retain_answer_metadata(self):
+        rid, sid, identity = "room-po-answer", "sid-po-answer", "claude"
+        text = "[from the PO] carry on"
+        input_provenance.record(
+            rid, identity, text, dashboard._input_sender_info(text, {"kind": "po"}),
+            session_id=sid, at=self.base)
+        recorded = dashboard.classify_turns([
+            {"role": "user", "text": text, "timestamp": stamp(self.base)},
+            {"role": "assistant", "text": "Continuing."},
+        ], room_id=rid, identity=identity, session_id=sid)
+        legacy = dashboard.classify_turns([
+            {"role": "user", "text": text},
+            {"role": "assistant", "text": "Continuing."},
+        ])
+        for turns in (recorded, legacy):
+            self.assertEqual((turns[1]["answers"]["kind"],
+                              turns[1]["answers"]["senderLabel"]), ("po", "PO"))
+
     def test_only_the_genuine_ceo_turn_becomes_a_point(self):
         rid = chatroom.create_room(
             "Solo", [{"identity": "claude", "agent": "claude", "role": "Product owner"}])["id"]
@@ -243,6 +297,26 @@ class InventoryFixtures(unittest.TestCase):
         with mock.patch.object(dashboard, "read_session_turns", return_value=turns2), \
                 mock.patch.object(points, "_session_stat", return_value=[len(turns2), self.base + 500]):
             self.assertEqual(points.sync(rid2, force=True)["points"], [])
+
+    def test_failed_legacy_wake_does_not_leave_a_phantom_record(self):
+        rid = chatroom.create_room(
+            "Visible", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
+        chatroom.patch_participant(rid, "claude", {"pid": 42, "sessionId": "sid-visible"})
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        with mock.patch.object(handler, "_resolve_live_pid", return_value=42), \
+                mock.patch.object(dashboard.BACKEND, "send_text", return_value="attach_failed:5"):
+            self.assertEqual(handler._ring(rid, ["claude"], "[digest] check"), [])
+        self.assertEqual(input_provenance.records(rid), [])
+
+    def test_failed_legacy_brief_does_not_leave_a_phantom_record(self):
+        rid = chatroom.create_room("Visible team", [
+            {"identity": "claude", "agent": "claude", "role": "engineer", "pid": 42},
+            {"identity": "codex", "agent": "codex", "role": "reviewer", "pid": 43},
+        ])["id"]
+        with mock.patch.object(dashboard.BACKEND, "send_text", return_value="not_alive") as sent:
+            dashboard.Handler.__new__(dashboard.Handler)._brief_agents(rid)
+        self.assertEqual(sent.call_count, 2)
+        self.assertEqual(input_provenance.records(rid), [])
 
 
 class LaunchKinds(unittest.TestCase):

@@ -2433,6 +2433,10 @@ function kindName(m, N = CHAT_NAMES) {
 // The chip on an agent's balloon: { text, tip }, or null when it is not known.
 function answerChip(a, N = CHAT_NAMES) {
   if (!a || !a.kind) return null;
+  if (a.kind === 'po') return {
+    text: 'on a PO message',
+    tip: 'A reply to a message the hub typed on behalf of your PO',
+  };
   const task = a.taskTitle ? `task “${a.taskTitle}”${a.taskId ? ' (' + a.taskId + ')' : ''}` : 'a task';
   const said = {
     human: ['to you', 'A reply to your message'],

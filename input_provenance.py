@@ -2,9 +2,10 @@
 
 Agent transcripts have only ``user`` and ``assistant`` roles, so a terminal
 write made by the hub is otherwise indistinguishable from text the operator
-typed. Keep a compact, append-only record of both origins per room and match transcript user
-turns by content hash and time.  Prefix recognition in :mod:`dashboard` stays
-as the compatibility path for transcripts written before these records.
+typed. Keep a compact, append-only record of both origins per room and match
+transcript user turns by content hash, submission order and time. Prefix
+recognition in :mod:`dashboard` stays as the compatibility path for transcripts
+written before these records.
 
 The record intentionally does not keep the input text: the transcript already
 does.  It stores the fields needed to prove who supplied it and to render it.
@@ -27,6 +28,7 @@ import chatroom
 # to exercise the journal directly may replace this with an explicit path.
 RECORDS_DIR: Path | None = None
 MATCH_SLACK_S = 10 * 60
+EDIT_MATCH_SLACK_S = 30
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, tuple[tuple[int, int], list[dict]]] = {}
@@ -146,8 +148,10 @@ def record(room_id: str, identity: str, text: str, info: dict,
 
 def index(room_id: str) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = defaultdict(list)
-    for row in records(room_id):
-        out[str(row.get("hash") or "")].append(row)
+    for order, row in enumerate(records(room_id)):
+        # File order is physical submission order: dashboard serializes each
+        # successful terminal write with this append under one write lock.
+        out[str(row.get("hash") or "")].append({**row, "_order": order})
     return dict(out)
 
 
@@ -179,11 +183,12 @@ def assign(indexed: dict[str, list[dict]], turns: list[tuple[int, str, float]], 
     """Match records to transcript turns one-to-one in submission order.
 
     New browser/person submissions are journaled too. Thus equal text has one
-    row per physical submission, and journal order is the causally reliable
-    signal even when the transcript timestamp races the post-write journal.
-    If eligible row/turn counts differ, the hash is ambiguous and none is
-    attributed: a lone Hub row can never be borrowed by a later identical
-    unrecorded person turn.
+    row per physical submission, and the dashboard serializes the physical
+    write with its journal append so file order is causal. If eligible
+    row/turn counts differ, the hash is ambiguous and none is attributed: a
+    lone Hub row can never be borrowed by a later identical unrecorded person
+    turn. Explicit-human rows also have a conservative ordered fallback for
+    terminal editing that changes the reconstructed hash.
     """
     by_hash: dict[str, list[tuple[int, float]]] = defaultdict(list)
     for turn_no, text, at in turns:
@@ -212,6 +217,46 @@ def assign(indexed: dict[str, list[dict]], turns: list[tuple[int, str, float]], 
         else:
             assigned.update({turn_no: dict(row)
                              for (turn_no, _at), row in zip(eligible_turns, eligible_rows)})
+
+    # Terminal editing can make a person's reconstructed key stream differ
+    # from the final text the TUI writes to its transcript (cursor movement is
+    # the common case). Exact hashes on either side are anchors. Between two
+    # anchors, an equal-length run is safe to pair in physical submission
+    # order when only explicit-human rows differ; represented rows must still
+    # hash exactly. A missing legacy record or count mismatch leaves the run
+    # unattributed.
+    ordered_rows = [row for bucket in indexed.values() for row in bucket]
+    if ordered_rows and all(isinstance(row.get("_order"), int) for row in ordered_rows):
+        ordered_rows.sort(key=lambda row: row["_order"])
+        if identity:
+            ordered_rows = [row for row in ordered_rows
+                            if not row.get("identity") or row.get("identity") == identity]
+        if session_id:
+            ordered_rows = [row for row in ordered_rows
+                            if not row.get("sessionId") or row.get("sessionId") == session_id]
+        ordered_turns = list(turns)
+        row_pos = {row["_order"]: i for i, row in enumerate(ordered_rows)}
+        turn_pos = {turn_no: i for i, (turn_no, _text, _at) in enumerate(ordered_turns)}
+        anchors = sorted(
+            (row_pos[row["_order"]], turn_pos[turn_no])
+            for turn_no, row in assigned.items()
+            if row.get("_order") in row_pos and turn_no in turn_pos)
+        if all(a[0] < b[0] and a[1] < b[1] for a, b in zip(anchors, anchors[1:])):
+            bounds = [(-1, -1), *anchors, (len(ordered_rows), len(ordered_turns))]
+            for (row_before, turn_before), (row_after, turn_after) in zip(bounds, bounds[1:]):
+                rows_between = ordered_rows[row_before + 1:row_after]
+                turns_between = ordered_turns[turn_before + 1:turn_after]
+                if not rows_between or len(rows_between) != len(turns_between):
+                    continue
+                if any(row.get("kind") != "human" and row.get("hash") != text_hash(text)
+                       for row, (_turn_no, text, _at) in zip(rows_between, turns_between)):
+                    continue
+                if any(at and abs(float(row.get("at") or 0) - at) > EDIT_MATCH_SLACK_S
+                       for row, (_turn_no, _text, at) in zip(rows_between, turns_between)):
+                    continue
+                assigned.update({turn_no: dict(row)
+                                 for row, (turn_no, _text, _at)
+                                 in zip(rows_between, turns_between)})
     return assigned
 
 

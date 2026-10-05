@@ -77,6 +77,13 @@ const recorded = T.soloItems([{ role: 'user', kind: 'po', text: 'Use the safe pa
   senderId: 'po', senderLabel: 'PO', provenance: 'record', inputId: 'input-1' }], 'P', 'claude', 10)[0];
 out.recorded = [T.senderName(recorded), T.whoHtml(recorded), recorded.senderType,
   recorded.provenance, T.foldBalloonHtml(recorded, 0, 'full', { md: t => t })];
+const poReplies = T.soloItems([
+  { role: 'user', kind: 'po', text: '[from the PO] recorded', provenance: 'record' },
+  { role: 'assistant', text: 'Recorded reply.', answers: { kind: 'po', provenance: 'record' } },
+  { role: 'user', kind: 'po', text: '[from the PO] legacy' },
+  { role: 'assistant', text: 'Legacy reply.', answers: { kind: 'po' } },
+], 'A', 'claude', 10).filter(x => x.answers);
+out.poAnswers = poReplies.map(x => T.answerChip(x.answers).text);
 const synthetic = T.withTaskBubble([], 'Task words', 'from')[0];
 out.synthetic = [synthetic.kind, synthetic.senderLabel, T.isHubInput(synthetic),
   T.quietItem(synthetic, false), T.foldBalloonHtml(synthetic, 0, 'full', { md: t => t })];
@@ -131,6 +138,9 @@ class APoMessageBalloon(unittest.TestCase):
         self.assertEqual(synthetic[:4], ["brief", "Hub", True, True])
         self.assertIn('class="msg user hub"', synthetic[4])
         self.assertIn('>Hub</span>', synthetic[4])
+
+    def test_recorded_and_legacy_po_replies_keep_their_answer_chip(self):
+        self.assertEqual(self.r["poAnswers"], ["on a PO message", "on a PO message"])
 
 
 if __name__ == "__main__":

@@ -2283,6 +2283,10 @@ class _Resume:
 
 _RESUMES: dict[str, _Resume] = {}      # room id -> the resume in flight (or failed)
 _RESUMES_LOCK = threading.Lock()
+# A physical terminal submission and its provenance append are one ordered
+# operation. Without this, another writer can submit and journal between the
+# first writer's PTY write and journal append, reversing equal-text authors.
+_INPUT_WRITE_LOCK = threading.RLock()
 
 
 def _drop_made_po_input(room_id: str, key: str, made_room: bool) -> None:
@@ -2460,20 +2464,21 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
     body = "\x1b[200~" + text + "\x1b[201~" if "\n" in text else text
-    try:
-        took = sess.send_line(body)
-    except (OSError, EOFError):
-        return False
-    ok = took is not False and sess.alive()
-    if ok and record:
+    with _INPUT_WRITE_LOCK:
         try:
-            if parts is None:
-                _record_typed_input(sess, text, provenance)
-            else:
-                _record_typed_input(sess, text, provenance, parts)
-        except Exception as exc:       # the input arrived; provenance must not undo it
-            print(f"[input-provenance] not recorded: {exc!r}", flush=True)
-    return ok
+            took = sess.send_line(body)
+        except (OSError, EOFError):
+            return False
+        ok = took is not False and sess.alive()
+        if ok and record:
+            try:
+                if parts is None:
+                    _record_typed_input(sess, text, provenance)
+                else:
+                    _record_typed_input(sess, text, provenance, parts)
+            except Exception as exc:   # the input arrived; provenance must not undo it
+                print(f"[input-provenance] not recorded: {exc!r}", flush=True)
+        return ok
 
 
 def _typed_sends(room_id: str, items: list[dict]) -> None:
@@ -2817,6 +2822,20 @@ def _session_input_context(sid: str) -> tuple[str, str]:
             if isinstance(retired, dict) and retired.get("sessionId") == sid:
                 return str(room.get("id") or ""), str(retired.get("identity") or "")
     return "", ""
+
+
+def _linked_input_context(pid: int) -> tuple[str, str, str]:
+    """Room, seat and session for a visible terminal adopted by a room."""
+    for room in chatroom.list_rooms():
+        for part in chatroom.agent_participants(room):
+            try:
+                matches = int(part.get("pid") or 0) == int(pid)
+            except (TypeError, ValueError):
+                matches = False
+            if matches:
+                return (str(room.get("id") or ""), str(part.get("identity") or ""),
+                        str(part.get("sessionId") or ""))
+    return "", "", ""
 
 
 def claude_turns_classified(tpath: Path) -> list[dict]:
@@ -11913,7 +11932,7 @@ class Handler(BaseHTTPRequestHandler):
             # session is being ended is held for its fresh one (it would start
             # a turn that is then killed), and the terminal is read afresh, so
             # it is never one a rotation has just replaced.
-            with rotation.GATE:
+            with rotation.GATE, _INPUT_WRITE_LOCK:
                 if rotation.hold_wake(room_id, ident, wake):
                     rung.append(ident)
                     continue
@@ -11931,10 +11950,13 @@ class Handler(BaseHTTPRequestHandler):
             pid = self._resolve_live_pid(part)
             if pid:
                 try:
-                    BACKEND.send_text(int(pid), wake, submit=True)
-                    input_provenance.record(room_id, ident, wake, _input_sender_info(wake),
-                                            session_id=str(part.get("sessionId") or ""))
-                    rung.append(ident)
+                    with _INPUT_WRITE_LOCK:
+                        result = BACKEND.send_text(int(pid), wake, submit=True)
+                        if result == "ok":
+                            input_provenance.record(
+                                room_id, ident, wake, _input_sender_info(wake),
+                                session_id=str(part.get("sessionId") or ""))
+                            rung.append(ident)
                 except (OSError, ValueError):
                     pass
         return rung
@@ -12895,10 +12917,13 @@ class Handler(BaseHTTPRequestHandler):
                 f"blocks, tables). {closing}"
             )
             try:
-                BACKEND.send_text(int(pid), brief, submit=True)
-                input_provenance.record(room["id"], part["identity"], brief,
-                                        _input_sender_info(brief, {"kind": "brief"}),
-                                        session_id=str(part.get("sessionId") or ""))
+                with _INPUT_WRITE_LOCK:
+                    result = BACKEND.send_text(int(pid), brief, submit=True)
+                    if result == "ok":
+                        input_provenance.record(
+                            room["id"], part["identity"], brief,
+                            _input_sender_info(brief, {"kind": "brief"}),
+                            session_id=str(part.get("sessionId") or ""))
             except (OSError, ValueError):
                 pass
 
@@ -13696,7 +13721,7 @@ class Handler(BaseHTTPRequestHandler):
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
-            with rotation.GATE:
+            with rotation.GATE, _INPUT_WRITE_LOCK:
                 if rotation.room_rotating((sess.meta or {}).get("room", "")):
                     self._send_json(409, {"error": "handing over to a fresh session, "
                                                    "try again shortly"})
@@ -13744,21 +13769,22 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     # The embedded terminal normally sends key chunks and a
                     # later Enter. Keep enough of the edited line to journal
-                    # its explicit person origin; unrecognised control input
-                    # merely makes the hash fail safe at transcript matching.
+                    # its explicit person origin. If cursor/control input makes
+                    # the hash differ, ordered human provenance still protects
+                    # the final transcript turn's authorship.
                     prior = getattr(sess, "person_line_text", "")
                     chunk = normalized_typed if paste else str(typed)
                     for ch in chunk:
                         prior = prior[:-1] if ch in ("\b", "\x7f") else prior + ch
                     sess.person_line_text = prior
+                if submit_text:
+                    try:
+                        _record_typed_input(sess, submit_text, submit_info)
+                    except Exception as exc:
+                        print(f"[input-provenance] PTY input not recorded: {exc!r}", flush=True)
             if answers:
                 meta = sess.meta or {}
                 note_answer(meta.get("room", ""), meta.get("identity", ""))
-            if submit_text:
-                try:
-                    _record_typed_input(sess, submit_text, submit_info)
-                except Exception as exc:
-                    print(f"[input-provenance] PTY input not recorded: {exc!r}", flush=True)
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":
@@ -13861,7 +13887,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"result": res})
             return
         if p == "/api/send":
-            # Inject text into a live session's terminal (the chat "doorbell").
+            # Inject person-supplied text into a visible live terminal. Unlike
+            # Hub doorbells, this endpoint is the dashboard's message box.
             # Empty text with submit=True is a bare Enter — used to confirm
             # prompts (e.g. codex's directory-trust gate) and as a lightweight
             # doorbell ring; only reject when there's nothing to do at all.
@@ -13871,7 +13898,19 @@ class Handler(BaseHTTPRequestHandler):
             if not pid or (not text and not submit):
                 self._send_json(400, {"error": "missing_fields"})
                 return
-            res = BACKEND.send_text(int(pid), text, submit=bool(submit))
+            with _INPUT_WRITE_LOCK:
+                res = BACKEND.send_text(int(pid), text, submit=bool(submit))
+                if res == "ok" and text and submit:
+                    room_id, identity, session_id = _linked_input_context(int(pid))
+                    if room_id:
+                        try:
+                            input_provenance.record(
+                                room_id, identity, text,
+                                _input_sender_info(text, {"kind": "human"}),
+                                session_id=session_id)
+                        except Exception as exc:
+                            print(f"[input-provenance] visible input not recorded: {exc!r}",
+                                  flush=True)
             self._send_json(200, {"result": res})
             return
         if p == "/api/room/create":
