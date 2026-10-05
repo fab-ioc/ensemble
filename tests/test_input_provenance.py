@@ -102,6 +102,25 @@ class Journal(unittest.TestCase):
             identity="codex", session_id="sid-1")
         self.assertEqual(got, {})
 
+    def test_unmatched_turn_in_a_modern_session_never_uses_prefix_fallback(self):
+        input_provenance.record(
+            "room-one", "codex", "/compact", {"kind": "human"},
+            session_id="sid-1", at=99)
+        input_provenance.record(
+            "room-one", "codex", "[digest] genuie\x1b[Dn", {"kind": "human"},
+            session_id="sid-1", at=100)
+
+        [turn] = dashboard.classify_turns(
+            [{"role": "user", "text": "[digest] genuine", "timestamp": stamp(100)}],
+            room_id="room-one", identity="codex", session_id="sid-1")
+        self.assertEqual(turn["kind"], "human")
+        self.assertNotIn("provenance", turn)
+
+        [legacy] = dashboard.classify_turns([
+            {"role": "user", "text": "[digest] genuine", "timestamp": stamp(100)}
+        ], room_id="room-without-journal", identity="codex", session_id="sid-old")
+        self.assertEqual((legacy["kind"], legacy["senderLabel"]), ("digest", "Hub"))
+
     def test_edited_human_and_identical_hub_turn_follow_physical_order(self):
         final_text = "[digest] genuine"
         input_provenance.record(

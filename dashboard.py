@@ -3164,6 +3164,11 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
     messages held for the resume (one input) is two turns: the note, then
     what the person sent."""
     recorded = input_provenance.index(room_id) if room_id else {}
+    modern_session = any(
+        (not identity or not row.get("identity") or row.get("identity") == identity)
+        and (not session_id or not row.get("sessionId") or row.get("sessionId") == session_id)
+        for rows in recorded.values() for row in rows
+    )
     attributed = input_provenance.assign(
         recorded,
         [(i, t.get("text") or "", _turn_epoch(t.get("timestamp")))
@@ -3180,7 +3185,8 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
                 out.append({**t, "text": part_text, **input_provenance.public(part_info)})
             continue
         note = next((n for n in (*RESUME_NOTES, RESTART_NOTE) if text.startswith(n)), "")
-        if t.get("role") == "user" and note and text[len(note):].strip():
+        if (t.get("role") == "user" and note and text[len(note):].strip()
+                and not modern_session):
             out.append({**t, "text": note, **_input_sender_info(note)})
             rest = text[len(note):].strip()
             # The person's open points follow the note on one line of their
@@ -3197,9 +3203,16 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
     for t in out:
         if t.get("role") == "user":
             if "kind" not in t:
-                legacy = hub_input_kind(t.get("text") or "")
-                t.update(_input_sender_info(t.get("text") or "", legacy)
-                         if legacy.get("kind") != "human" else legacy)
+                if modern_session:
+                    # A contemporary journal proves this session uses explicit
+                    # physical origins. If conservative matching cannot claim
+                    # a turn, keep it human: legacy prefixes are historical
+                    # compatibility, not authority over modern unmatched text.
+                    t["kind"] = "human"
+                else:
+                    legacy = hub_input_kind(t.get("text") or "")
+                    t.update(_input_sender_info(t.get("text") or "", legacy)
+                             if legacy.get("kind") != "human" else legacy)
             last = {k: v for k, v in t.items() if k not in ("timestamp", "role", "text")}
         elif last is not None:
             t["answers"] = dict(last)
