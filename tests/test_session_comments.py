@@ -346,8 +346,8 @@ class SendBeforeTheSessionLoads(unittest.TestCase):
 
     def test_send_starts_off_and_waits_for_the_session(self):
         self.assertRegex(SRC, r'<button id="send" disabled>')
-        handler = SRC[SRC.index("$('#send').onclick"):]
-        handler = handler[:handler.index("\n};\n")]
+        handler = SRC[SRC.index("async function sendNow() {"):]
+        handler = handler[:handler.index("\n}\n$('#send').onclick")]
         self.assertIn("if (!ROOM_OBJ)", handler, "Send does not wait for the session to load")
         guard = handler.index("if (!ROOM_OBJ)")
         self.assertLess(guard, handler.index("if (SOLO_MODE)"))

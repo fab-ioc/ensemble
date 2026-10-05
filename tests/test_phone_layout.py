@@ -273,7 +273,7 @@ class ThePhone(unittest.TestCase):
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**test_middle.chrome_profile.node_args(), "tmp": cls.tmp.name,
                 "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "proj": cls.proj, "plain": cls.plain, "task": cls.task, "plainTask": cls.plain_task,
+                "proj": cls.proj, "po": po["id"], "plain": cls.plain, "task": cls.task, "plainTask": cls.plain_task,
                 "loose": cls.loose, "shots": shots}
         script = base / "phone_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")

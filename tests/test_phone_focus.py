@@ -77,10 +77,10 @@ async function main() {
             ask.querySelector('a').click();
             const jumped=marked.getBoundingClientRect().top>=box.getBoundingClientRect().top-1 && marked.getBoundingClientRect().top<box.getBoundingClientRect().bottom;
             overlaps.push(hit());
-            const input=d.getElementById('input'); input.focus();
+            const input=d.getElementById('input'); input.value='Line one\\nLine two\\nLine three'; input.dispatchEvent(new Event('input',{bubbles:true})); input.focus();
             const ring=w.getComputedStyle(d.getElementById('compose')).boxShadow;
             const focusedBottom=d.getElementById('compose').getBoundingClientRect().bottom;
-            const expanded=input.getBoundingClientRect().height; input.blur();
+            const expanded=input.getBoundingClientRect().height; input.blur(); input.value=''; input.dispatchEvent(new Event('input',{bubbles:true}));
             const tools=d.querySelector('.phone-compose-tools'); tools.open=true;
             const menuTargets=[...tools.querySelectorAll('button')].map(b=>[b.getBoundingClientRect().width,b.getBoundingClientRect().height]);
             tools.querySelector('[data-phone-action="team-all"]').click();
@@ -185,7 +185,8 @@ class PhoneFocus(unittest.TestCase):
                 self.assertTrue(a['jumped'])
                 self.assertEqual(a['overlaps'], [False, False, False])
                 self.assertIn('inset', a['ring'])
-                self.assertGreaterEqual(a['expanded'], 88)
+                self.assertGreater(a['expanded'], 44)
+                self.assertLessEqual(a['expanded'], 88)
                 self.assertLessEqual(a['focusedBottom'], a['frameHeight'] + 1)
                 self.assertTrue(all(w >= 44 and h >= 44 for w,h in a['menuTargets']))
                 self.assertTrue(a['filter'])

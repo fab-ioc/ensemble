@@ -1111,8 +1111,8 @@
     #compose #hint { font-size:var(--fs-100); line-height:16px; }
     #compose { display:grid; grid-template-columns:minmax(0,1fr) auto; padding:var(--s-100); gap:var(--s-100); }
     #compose:focus-within { box-shadow:inset 0 0 0 2px var(--focus-ring); }
-    #compose #input { min-height:var(--touch-min); height:var(--touch-min); resize:none; }
-    #compose:has(textarea:focus) #input { height:88px; }
+    /* The draft determines the height. Focus must not move Send during a press. */
+    #compose #input { min-height:var(--touch-min); max-height:88px; height:auto; field-sizing:content; overflow-y:auto; resize:none; }
     #compose #hint:empty { display:none; }
     #compose #hint, #compose #activity { grid-column:1 / -1; }
     #compose #activity { border:0; padding:0 var(--s-100); font-size:var(--fs-100); }
@@ -1128,7 +1128,7 @@
   }
   @media not all and (pointer: coarse) {
     #compose { margin:0 var(--s-300) var(--s-200); grid-template-columns:minmax(0,1fr) auto auto; }
-    #compose #input { field-sizing:fixed; grid-column:1; grid-row:1; }
+    #compose #input { grid-column:1; grid-row:1; }
     #compose #activity { grid-column:2; grid-row:1; align-self:center; }
     #compose .ed-row { grid-column:3; grid-row:1; }
     #compose #hint { grid-row:2; }
@@ -1274,7 +1274,7 @@
     <div id="livetail" hidden></div>
     <div id="activity" hidden></div>
     <div id="compose">
-      <div class="dim" id="hint"></div>
+      <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
         <div class="ed-head">
           <div id="att-chips" class="att-chips" hidden></div>
@@ -4267,7 +4267,9 @@ function sendHtml(s, md) {
 function sendAction(bt) {
   const key = bt.dataset.send;
   const act = bt.classList.contains('send-retry') ? 'retry' : bt.classList.contains('send-discard') ? 'discard' : 'dismiss';
+  const label = bt.textContent;
   bt.disabled = true;
+  if (act === 'retry') bt.textContent = 'Retrying…';
   postOk('/api/room/resume', { roomId: ROOM, key, [act]: true })
     .then(d => { SEND_ERR = ''; setText($('#hint'), ''); if (act === 'retry' && d && d.send) noteSent(d.send); else SENT_LOCAL.delete(key); })
     .catch(e => {
@@ -4275,7 +4277,7 @@ function sendAction(bt) {
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. The message is still shown here.';
       setText($('#hint'), SEND_ERR);
     })
-    .then(() => { bt.disabled = false; refresh(); });
+    .then(() => { bt.disabled = false; bt.textContent = label; refresh(); });
 }
 // ---- What you sent, until the conversation shows it: end -------------------
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
@@ -4284,6 +4286,7 @@ let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '',
 let SOLO_MODE = false;   // one agent: what you send is typed into its terminal
 let SEND_ERR = '';       // why the last message did not arrive, shown in the hint
 let SEND_KEY = '';       // the hub's key for the message in the box: sent twice, taken once
+let SEND_IN_FLIGHT = false;
 // What the hub holds for this session while it is resumed (room.pending):
 // {state: 'resuming'|'failed', error, items:[{text,to,at}]}, or null.
 let ROOM_PENDING = null, ROOM_RESUMING = false, PENDING_SIG = 'null';
@@ -4494,8 +4497,8 @@ async function refreshRoom() {
   const ticket = ptTicket();
   const sendsGen = ++SENDS_GEN;
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
-  catch(e) { return; }
-  if (!room || room.error) { setText($('#title'), '(session not found)'); return; }
+  catch(e) { if (!ROOM_OBJ) setText($('#hint'), 'Cannot load the conversation yet; retrying.'); return; }
+  if (!room || room.error) { setText($('#title'), '(session not found)'); if (!ROOM_OBJ) setText($('#hint'), 'Cannot send: session not found.'); return; }
   // A task is named by its number: "#18 · title" in the tab, #18 before the title.
   const tno = room.no ? '#' + room.no : '';
   const tabTitle = tno ? `${tno} · ${room.title}` : room.title + ' — session';
@@ -4973,7 +4976,23 @@ $('#input').addEventListener('input', () => {
   SEND_KEY = '';             // edited, so it is a new message
   if (SEND_ERR) { SEND_ERR = ''; setText($('#hint'), ''); }
   edHeadInput();
+  fitSendInput();
 });
+// Safari before 26.2 does not size a textarea from its contents in CSS.
+// Keep the same stable, capped height there without tying it to focus.
+const SEND_SIZE_FALLBACK = !CSS.supports('field-sizing', 'content');
+function fitSendInput() {
+  if (!SEND_SIZE_FALLBACK) return;
+  const ta = $('#input');
+  ta.style.height = '44px';
+  ta.style.height = Math.min(88, Math.max(44, ta.scrollHeight)) + 'px';
+}
+if (SEND_SIZE_FALLBACK && window.ResizeObserver) {
+  let width = -1;
+  new ResizeObserver(([entry]) => {
+    if (entry.contentRect.width !== width) { width = entry.contentRect.width; fitSendInput(); }
+  }).observe($('#editor'));
+}
 // Images pasted or dropped into the box: uploaded at once, sent with the message.
 const ATT_WAIT = 'Wait for the images to finish uploading, then send.';
 const ATT = attBox(() => ROOM, box => {
@@ -5008,10 +5027,60 @@ function sendAttachments() {
   return boxes.flatMap(b => b.stored());
 }
 let ROOM_IDENTS = [];   // the room's agents, for the @<identity> prefix
-$('#send').onclick = async () => {
+// A Dock strip can slide back as soon as a press is relayed to the host. That
+// moves the frame before mouseup, so click may land on the composer instead.
+// Start the action while the pressed target is still known. The following
+// browser click (when one is generated) must not submit it a second time.
+let SEND_PRESS = 0, SEND_PRESS_SEQ = 0;
+let SEND_COMPOSING = false, SEND_AFTER_COMPOSE = false;
+$('#compose').addEventListener('compositionstart', e => {
+  if (e.target.matches('textarea')) SEND_COMPOSING = true;
+});
+$('#compose').addEventListener('compositionend', e => {
+  if (!e.target.matches('textarea')) return;
+  SEND_COMPOSING = false;
+  if (SEND_AFTER_COMPOSE) {
+    SEND_AFTER_COMPOSE = false;
+    setTimeout(sendNow, 0); // final input/model update follows compositionend
+  }
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.isPrimary || e.button !== 0) return;
+  const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
+  if (!b || b.disabled) return;
+  const press = ++SEND_PRESS_SEQ;
+  SEND_PRESS = press;
+  // A cancelled press may produce no click at all. Keep keyboard activation
+  // available after that gesture instead of leaving a stale suppression flag.
+  setTimeout(() => { if (SEND_PRESS === press) SEND_PRESS = 0; }, 700);
+  if (b.id === 'send') sendNow();
+  else if (b.classList.contains('qa-send')) askClick(e);
+  else sendAction(b);
+}, true);
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
+  const pressed = SEND_PRESS;
+  SEND_PRESS = 0;
+  if (b && pressed) e.sendPressHandled = true;
+}, true);
+async function sendNow() {
+  if (SEND_IN_FLIGHT) {
+    setText($('#hint'), 'Sending your message.');
+    return;
+  }
+  if (SEND_COMPOSING) {
+    SEND_AFTER_COMPOSE = true;
+    setText($('#hint'), 'Finishing your text before sending.');
+    return;
+  }
   const t = edText();
   const atts = sendAttachments();
-  if (!atts || (!t && !atts.length)) return;
+  if (!atts) return;
+  if (!t && !atts.length) {
+    SEND_ERR = 'Write a message or attach an image before sending.';
+    setText($('#hint'), SEND_ERR);
+    return;
+  }
   // Until the session has loaded, whether this is typed into a terminal or
   // said in the room is not known (Send starts off, and turns on in refresh).
   if (!ROOM_OBJ) {
@@ -5019,16 +5088,42 @@ $('#send').onclick = async () => {
     setText($('#hint'), SEND_ERR);
     return;
   }
-  // Solo routes straight into the agent's PTY, never the room relay ("use
-  // chat_read"): a solo agent has no chat tools, and a solo view never shows
-  // the room's messages. Codex mints its own session id only once it has
-  // written a rollout, so early on there is a terminal to type into but no id.
-  if (SOLO_MODE) {
-    const key = msgKey();
-    // Through the hub, running or not: it keeps the person's points and adds
-    // their lines (and the images'), and types it in (or resumes the session).
+  SEND_IN_FLIGHT = true;
+  try {
+    // Solo routes straight into the agent's PTY, never the room relay ("use
+    // chat_read"): a solo agent has no chat tools, and a solo view never shows
+    // the room's messages. Codex mints its own session id only once it has
+    // written a rollout, so early on there is a terminal to type into but no id.
+    if (SOLO_MODE) {
+      const key = msgKey();
+      // Through the hub, running or not: it keeps the person's points and adds
+      // their lines (and the images'), and types it in (or resumes the session).
+      let d;
+      try { d = await sendResuming(t, '', key, atts); }
+      catch (e) {
+        if (keptByHub(e)) return;
+        SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
+        setText($('#hint'), SEND_ERR);
+        return;
+      }
+      SEND_ERR = ''; SEND_KEY = '';
+      // Shown now as the hub keeps it (its words, points and images as they
+      // go in), until the transcript has it.
+      edClear();
+      noteSent(d && d.send);
+      setTimeout(checkSolo, 1200);
+      setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
+      return;
+    }
+    // A leading @<identity> directs the message: "@codex do X" → codex only.
+    let to = '';
+    const m = $('#input').value.trim().match(/^@([\w-]+)\b/);
+    if (m && (ROOM_IDENTS.includes(m[1]) || m[1] === 'user')) to = m[1];
+    // Always through the hub's resume-or-deliver: a team that stopped since the
+    // last poll is resumed for the message instead of the message being posted
+    // to a room nobody is reading.
     let d;
-    try { d = await sendResuming(t, '', key, atts); }
+    try { d = await sendResuming(t, to, msgKey(), atts); }
     catch (e) {
       if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -5036,32 +5131,12 @@ $('#send').onclick = async () => {
       return;
     }
     SEND_ERR = ''; SEND_KEY = '';
-    // Shown now as the hub keeps it (its words, points and images as they
-    // go in), until the transcript has it.
-    edClear();
-    noteSent(d && d.send);
-    setTimeout(checkSolo, 1200);
-    setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
-    return;
+    edClear(); noteSent(d && d.send); refresh();
+  } finally {
+    SEND_IN_FLIGHT = false;
   }
-  // A leading @<identity> directs the message: "@codex do X" → codex only.
-  let to = '';
-  const m = $('#input').value.trim().match(/^@([\w-]+)\b/);
-  if (m && (ROOM_IDENTS.includes(m[1]) || m[1] === 'user')) to = m[1];
-  // Always through the hub's resume-or-deliver: a team that stopped since the
-  // last poll is resumed for the message instead of the message being posted
-  // to a room nobody is reading.
-  let d;
-  try { d = await sendResuming(t, to, msgKey(), atts); }
-  catch (e) {
-    if (keptByHub(e)) return;
-    SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
-    setText($('#hint'), SEND_ERR);
-    return;
-  }
-  SEND_ERR = ''; SEND_KEY = '';
-  edClear(); noteSent(d && d.send); refresh();
-};
+}
+$('#send').onclick = e => { if (!e.sendPressHandled) sendNow(); };
 $('#input').addEventListener('keydown', e => {
   const act = edKeyAction(e, { part: 'head', empty: !$('#input').value.trim(), last: !ED.points.length });
   if (act === 'send') { e.preventDefault(); $('#send').click(); }
@@ -5205,7 +5280,12 @@ function edBox(p) {
   return box;
 }
 // The message in the box, as it will be sent.
-function edText() { ED.head = $('#input').value; ED.images = ATT.stored(); return edSerialize(ED); }
+function edText() {
+  ED.head = $('#input').value;
+  ED.points.forEach(p => { const ta = edTextOf(p.id); if (ta) p.text = ta.value; });
+  ED.images = ATT.stored();
+  return edSerialize(ED);
+}
 // Typing in the head: "1. " or "- " at its start turns its words into the
 // first point (while there is none).
 function edHeadInput() {
@@ -5330,6 +5410,7 @@ function edRefsDraw() {
 // Sent, or kept by the hub: the box is empty again.
 function edClear() {
   $('#input').value = '';
+  fitSendInput();
   ATT.clear();
   edBoxes().forEach(b => b.clear());
   ED_BOX.clear();
@@ -5340,6 +5421,7 @@ function edClear() {
 function edStart() {
   ED = edLoad();
   $('#input').value = ED.head;
+  fitSendInput();
   // The head's images, already stored: their chips back.
   if (ED.images.length && !ATT.list.length) {
     ATT.keep(ED.images);
@@ -5892,6 +5974,7 @@ $('#msgs').addEventListener('input', e => {
   if (ta) ASK_DRAFT.set(ta.dataset.ask, ta.value);
 });
 $('#msgs').addEventListener('click', e => {
+  if (e.sendPressHandled) return;
   if (askClick(e)) return;
   if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');

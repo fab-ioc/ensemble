@@ -686,8 +686,8 @@ class ThePage(unittest.TestCase):
         self.assertIn("async function sendResuming(text, to, key, attachments)", SESSION)
         self.assertIn("const body = { roomId: ROOM, text, to: to || '', key: key || '' };", SESSION)
         self.assertIn("return postOk('/api/room/resume', body);", SESSION)
-        send = SESSION[SESSION.index("$('#send').onclick = async () => {"):]
-        send = send[:send.index("\n};\n")]
+        send = SESSION[SESSION.index("async function sendNow() {"):]
+        send = send[:send.index("\n}\n$('#send').onclick")]
         # A one-agent chat's too: the hub keeps the person's points (points.py)
         # and types it in, or resumes the session for it.
         self.assertIn("try { d = await sendResuming(t, '', key, atts); }", send)
