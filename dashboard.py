@@ -12258,7 +12258,9 @@ class Handler(BaseHTTPRequestHandler):
         """
         try:
             found = _run(
-                ["codex", "-C", cwd, "mcp", "list", "--json"],
+                # Windows installs codex as codex.cmd, which a plain
+                # subprocess without a shell cannot find by its bare name.
+                [shutil.which("codex") or "codex", "-C", cwd, "mcp", "list", "--json"],
                 cwd=cwd, capture_output=True, text=True, timeout=20,
                 encoding="utf-8", errors="replace", check=False)
             if found.returncode:
