@@ -532,6 +532,7 @@ class El {
   constructor() { this.dataset = {}; this.isConnected = false; this._q = {}; this._h = ''; }
   set innerHTML(h) { this._h = h; this._q = {}; }
   get innerHTML() { return this._h; }
+  addEventListener() {}
   querySelectorAll() { return []; }
   querySelector(s) {
     return this._q[s] || (this._q[s] = { value: '', focus() {}, addEventListener() {},

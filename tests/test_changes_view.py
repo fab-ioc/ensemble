@@ -50,6 +50,8 @@ from tests.test_middle import CHROME, NODE  # noqa: E402
 from tests.test_no_project_files import GIT, git, loose_task, patches, put  # noqa: E402
 
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+LONG_DIR = "diagnostics/advanced_braking_system_for_intercity_carriages/reporting"
+LONG_FILE = LONG_DIR + "/complete_braking_diagnostics_for_every_carriage.py"
 
 
 def block(a: str, b: str) -> str:
@@ -63,10 +65,12 @@ def temp_repo(base: Path) -> Path:
     repo = base / "repo"
     (repo / "src" / "app").mkdir(parents=True)
     (repo / "static" / "dock" / "src").mkdir(parents=True)
+    (repo / LONG_DIR).mkdir(parents=True)
     put(repo / "README.md", "# Motors\n\nBrakes.\n")
     put(repo / "src" / "app" / "main.py", "import sys\n\n\ndef main(argv):\n    return 0\n\n\ndef helper(x):\n    return x + 1\n")
     put(repo / "src" / "app" / "util.py", "A = 1\nB = 2\n")
     put(repo / "static" / "dock" / "src" / "dock.js", "export const dock = 1;\nexport const bar = 2;\n")
+    put(repo / LONG_FILE, "RESULT = 'pending'\n")
     put(repo / "pic.png", "\x89PNG\x00\x00bin")
     git(repo, "init", "-q", "-b", "main")
     git(repo, "add", ".")
@@ -74,6 +78,7 @@ def temp_repo(base: Path) -> Path:
     git(repo, "checkout", "-q", "-b", "sess/ED-1-brakes")
     put(repo / "src" / "app" / "main.py", "import sys\n\n\ndef main(argv):\n    print('squeal')\n    return 0\n\n\ndef helper(x):\n    return x + 2\n")
     put(repo / "static" / "dock" / "src" / "dock.js", "export const dock = 1;\nexport const bar = 3;\nexport const baz = 4;\n")
+    put(repo / LONG_FILE, "RESULT = 'complete'\n")
     put(repo / "pic.png", "\x89PNG\x00\x01bin2")
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "work")
@@ -107,6 +112,7 @@ class TheHubCounts(unittest.TestCase):
         got = self.by_path(res["files"])
         self.assertEqual(got["src/app/main.py"], (2, 1))
         self.assertEqual(got["static/dock/src/dock.js"], (2, 1))
+        self.assertEqual(got[LONG_FILE], (1, 1))
         self.assertEqual(got["src/app/util.py"], (1, 0), "an uncommitted edit counts too")
         self.assertEqual(got["docs/notes.md"], (3, 0), "an untracked file: all of its lines added")
         self.assertEqual(got["pic.png"], (None, None), "a binary file has no count")
@@ -319,6 +325,20 @@ async function main() {
   const listed = p => p.until(`${PANE}.querySelectorAll('.tch-files .chf[data-file]').length > 0`, 20000);
   const rowSel = file => `${PANE}.querySelector('.tch-files .chf[data-file=${JSON.stringify(JSON.stringify(file)).slice(1, -1)}]')`;
   const diffShown = p => p.until(`!!${PANE}.querySelector('.tch-diff .drv .dr[data-i]')`, 15000);
+  const mouseToExpr = async (p, expr) => {
+    const [x, y] = await p.evalIn(`(() => { const e = ${expr}; if (!e) throw new Error('no hover row'); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + 2, y }, p.sessionId);
+  };
+  const expanded = (p, rowExpr) => p.evalIn(`(() => {
+    const e = document.querySelector('.ch-expanded'), row = ${rowExpr}, list = row.closest('.tch-files, .chp-files'), diff = list.closest('.tch, .chp').querySelector('.tch-right, .chp-diff');
+    const b = e && e.getBoundingClientRect(), r = row.getBoundingClientRect(), l = list.getBoundingClientRect(), d = diff && diff.getBoundingClientRect();
+    const bg = e && getComputedStyle(e).backgroundColor, alpha = !bg ? 0 : (bg.startsWith('rgba') ? Number((bg.match(/[\\d.]+(?=\\))/) || ['0'])[0]) : 1);
+    return { shown: !!e, full: !!e && e.querySelector('.nm').textContent === row.querySelector('.nm').textContent,
+      box: b && { left: b.left, right: b.right, width: b.width }, row: { left: r.left, right: r.right, width: r.width }, list: { left: l.left, right: l.right },
+      overDiff: !!(b && d && b.right > d.left), alpha, bg, selected: !!e && e.classList.contains('on'), z: e && getComputedStyle(e).zIndex,
+      pageWidth: document.documentElement.scrollWidth, viewport: innerWidth, timer: !!ROW_EXPAND_TIMER };
+  })()`);
   try {
     // ---- a desktop, 1280
     {
@@ -326,6 +346,14 @@ async function main() {
       await open(p, A.task);
       await p.click(tool('changes'));
       await listed(p); await sleep(300);
+      // In its normal tool-window place the Changes tree is at the right edge,
+      // so the raised folder grows left toward the conversation.
+      const longDir = `${PANE}.querySelector('.tch-files .chf.dir[data-dir=${JSON.stringify(JSON.stringify(A.longDir)).slice(1, -1)}]')`;
+      const longFile = rowSel(A.longFile);
+      await p.evalIn(`(() => { const n = ${longDir}.querySelector('.nm'); window.__longDirName = n.textContent; n.textContent += '/complete_operational_safety_records_for_every_carriage_and_route'.repeat(4); })(); 0`);
+      await mouseToExpr(p, longDir); await sleep(370);
+      out.expandRight = await expanded(p, longDir);
+      await p.evalIn(`rowExpandHide(); ${longDir}.querySelector('.nm').textContent = window.__longDirName; 0`);
       out.tree = await p.evalIn(LIST);
       await p.shot('changes-1280-tree');
       // A folder folded by a click, opened again by →; ↓ moves along the rows.
@@ -358,6 +386,42 @@ async function main() {
       await p.evalIn(`PD.dock.toggleMax('changes'); 0`); await sleep(500);
       await p.until(`${PANE}.querySelector('.tch').getBoundingClientRect().width > 1000`, 10000);
       out.maxed = await p.evalIn(LIST);
+      // At both desktop sizes and in three themes: the delay, solid ground,
+      // full content over the diff, instant row-to-row handoff, and short row.
+      out.expand = [];
+      for (const [width, height] of [[1280, 800], [1728, 1117]]) for (const theme of ['light', 'dark', 'fjord']) {
+        await c.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, p.sessionId);
+        await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; rowExpandHide(); ROW_EXPAND_LAST = 0; 0`);
+        await sleep(100);
+        await mouseToExpr(p, longFile); await sleep(150);
+        const early = await expanded(p, longFile);
+        await sleep(220);
+        const shown = await expanded(p, longFile);
+        await mouseToExpr(p, longDir); await sleep(60);
+        const next = await p.evalIn(`document.querySelector('.ch-expanded')?.dataset.dir || ''`);
+        await mouseToExpr(p, rowSel('pic.png')); await sleep(370);
+        const short = await p.evalIn(`!!document.querySelector('.ch-expanded')`);
+        out.expand.push({ width, height, theme, early, shown, next, short });
+      }
+      await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }, p.sessionId);
+      await p.evalIn(`document.documentElement.dataset.theme = 'light'; rowExpandHide(); 0`); await sleep(120);
+      // Tab/keyboard focus raises immediately. Clicking the raised file opens
+      // its diff, and the selected copy uses the selected row's solid ground.
+      await p.key('Tab', 'Tab', 9);
+      out.expandFocus = await p.evalIn(`(() => { const r = ${longFile}; r.focus(); const ok = !!document.querySelector('.ch-expanded.row-expand-focus'); rowExpandHide(); r.blur(); return ok; })()`);
+      await mouseToExpr(p, longFile); await sleep(370);
+      await p.click('.ch-expanded'); await diffShown(p); await sleep(200);
+      out.expandClick = await p.evalIn(`({ path: ${PANE}.querySelector('.drv-path').textContent, on: ${PANE}.querySelector('.tch-files .chf.on').dataset.file })`);
+      await mouseToExpr(p, longFile); await sleep(370);
+      out.expandSelected = await expanded(p, longFile);
+      await p.evalIn('rowExpandHide(); 0');
+      // It is remeasured after the files/diff splitter changes the list width.
+      await p.drag(`#po-dock .tch .ch-split`, -100); await sleep(200);
+      await mouseToExpr(p, longFile); await sleep(370);
+      out.expandResized = await expanded(p, longFile);
+      await p.evalIn('rowExpandHide(); 0');
+      await p.dblclick(`#po-dock .tch .ch-split`); await sleep(200);
+      await p.evalIn(`${rowSel('src/app/main.py')}.click(); 0`); await diffShown(p); await sleep(150);
       // The splitter: dragged 120px wider, → 16px more, a double click back.
       out.beforeDrag = await p.evalIn(LIST);
       await p.drag(`#po-dock .tch .ch-split`, 120); await sleep(200);
@@ -408,14 +472,37 @@ async function main() {
       await p.evalIn(`PD.dock.toggleMax('changes'); 0`);
       await p.until(`!!${PANE}.querySelector('.drv.split')`, 10000); await sleep(300);
       out.wideAgain = await p.evalIn(LIST);
-      // The project's Changes: the same tree per commit, the same width.
       await p.drag(`#po-dock .tch .ch-split`, 60); await sleep(200);
+      // The panel, its wired list and the overlay all move into Dock's own
+      // window. The overlay is portalled into that window, not the main page.
+      await p.evalIn(`PD.dock.toggleMax('changes'); PD.dock.popOut('changes'); 0`);
+      await p.until(`!!PD.dock.popWindow('changes') && ${PANE}.ownerDocument !== document`, 15000); await sleep(500);
+      out.expandWindow = await p.evalIn(`(async () => {
+        const row = ${longFile}, doc = row.ownerDocument, list = row.closest('.tch-files');
+        row.dispatchEvent(new doc.defaultView.PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+        await new Promise(r => setTimeout(r, 360));
+        const e = doc.querySelector('.ch-expanded'), b = e && e.getBoundingClientRect();
+        const result = { shown: !!e, sameWindow: !!e && e.ownerDocument === doc, wired: !!list._rowExpandWired,
+          within: !!b && b.left >= 0 && b.right <= doc.defaultView.innerWidth, full: !!e && e.querySelector('.nm').textContent === row.querySelector('.nm').textContent };
+        rowExpandHide(); return result;
+      })()`);
+      await p.evalIn(`PD.dock.popIn('changes'); 0`);
+      await p.until(`${PANE}.ownerDocument === document`, 15000); await sleep(400);
+      // The project's Changes: the same tree per commit, the same width.
       await p.evalIn(`closeDetail && closeDetail(); SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'changes'; renderRows(); 0`);
       await p.until(`(() => { const b = pdById('chp-files'); return !!b && b.querySelectorAll('.chf[data-file]').length > 0; })()`, 20000); await sleep(300);
       out.project = await p.evalIn(`(() => { const b = pdById('chp-files'), grid = b.closest('.chp'), w = e => Math.round(e.getBoundingClientRect().width);
         return { rows: [...b.querySelectorAll('.chf.dir, .chf[data-file]')].map(e => ({ dir: e.dataset.dir || '', file: e.dataset.file || '', sha: (e.dataset.commit || '').slice(0, 7), name: e.querySelector('.nm').textContent, cnt: (e.querySelector('.cnt') || {}).textContent || '', d: e.style.getPropertyValue('--d') || '0' })),
           secs: [...b.querySelectorAll('.chp-sec')].map(e => e.textContent.trim()), tree: b.querySelector('.chp-tree').getAttribute('aria-pressed'), chW: grid.style.getPropertyValue('--ch-w'), listW: w(b), split: !!grid.querySelector('.ch-split'),
           scrollW: document.documentElement.scrollWidth, vw: innerWidth }; })()`);
+      out.projectExpand = await p.evalIn(`(() => {
+        const b = pdById('chp-files'), row = b.querySelector('.chf[data-file][data-commit]'), name = row.querySelector('.nm');
+        name.textContent += '_a_complete_intercity_braking_diagnostics_report_that_does_not_fit.py';
+        rowExpandShow(row, b._rowExpandSpec);
+        const e = row.ownerDocument.querySelector('.ch-expanded');
+        const result = { shown: !!e, wired: !!b._rowExpandWired, full: !!e && e.querySelector('.nm').textContent === name.textContent };
+        rowExpandHide(); return result;
+      })()`);
       await p.evalIn(`pdById('chp-files').querySelector('.chf[data-file][data-commit]').click(); 0`);
       await p.until(`!!pdById('chp-diff').querySelector('.drv .dr[data-i]')`, 15000); await sleep(200);
       out.projectDiff = await p.evalIn(`(() => { const d = pdById('chp-diff'); return { split: !!d.querySelector('.drv.split'), path: d.querySelector('.drv-path').textContent, seg: !!d.querySelector('.drv-mode'), on: pdById('chp-files').querySelector('.chf.on').dataset.file }; })()`);
@@ -438,6 +525,30 @@ async function main() {
           const r = { lines: ${JSON.stringify(A.bigAll)}.split('\\n').length, unified: await run('unified'), split: await run('split') };
           box.remove(); rv.view = null; localStorage.removeItem('cd-diff-mode'); return r; })()`);
       }
+      // The task-list checkbox is the one switch for both shared users. With
+      // it off neither can be forced open, and the choice survives a reload.
+      out.expandOff = await p.evalIn(`(() => {
+        document.querySelector('#sw-hover-names').click();
+        const changes = pdById('chp-files'), cr = changes.querySelector('.chf[data-file][data-commit]');
+        rowExpandShow(cr, changes._rowExpandSpec); const ch = !!cr.ownerDocument.querySelector('.row-expanded'); rowExpandHide();
+        const sr = SW_EL.querySelector('.sw-row[data-room=${JSON.stringify(JSON.stringify(A.task)).slice(1, -1)}]'), st = sr.querySelector('.sw-title');
+        st.textContent += ' with a complete diagnostics title that cannot fit in the task list'.repeat(8);
+        swExpandShow(sr); const sw = !!sr.ownerDocument.querySelector('.row-expanded'); rowExpandHide();
+        return { changes: ch, switcher: sw, stored: localStorage.getItem('cd-switcher-full-names') };
+      })()`);
+      await p.evalIn(`location.reload(); 0`);
+      await p.until(`window.ensBooted === true && !!PROJECTS && ALL_ROWS.some(r => r.roomId === ${JSON.stringify(A.task)})`, 30000); await sleep(500);
+      const keptOff = await p.evalIn(`!document.querySelector('#sw-hover-names').checked && !ROW_EXPAND_NAMES`);
+      await open(p, A.task); await p.evalIn(`PD.dock.pin('changes'); 0`); await listed(p); await sleep(250);
+      out.expandPersist = await p.evalIn(`(() => {
+        const cr = ${rowSel(A.longFile)}, cb = cr.closest('.tch-files'); rowExpandShow(cr, cb._rowExpandSpec);
+        const ch = !!cr.ownerDocument.querySelector('.row-expanded'); rowExpandHide();
+        const sr = SW_EL.querySelector('.sw-row[data-room=${JSON.stringify(JSON.stringify(A.task)).slice(1, -1)}]'); sr.querySelector('.sw-title').textContent += ' long title'.repeat(30); swExpandShow(sr);
+        const sw = !!sr.ownerDocument.querySelector('.row-expanded'); rowExpandHide();
+        document.querySelector('#sw-hover-names').click();
+        return { changes: ch, switcher: sw };
+      })()`);
+      out.expandPersist.keptOff = keptOff;
       await p.close();
     }
     // ---- a phone, 390
@@ -448,6 +559,7 @@ async function main() {
       await p.evalIn(`${tab('Changes')}.click(); 0`);
       await listed(p); await sleep(400);
       out.phoneList = await p.evalIn(LIST);
+      out.phoneHover = await p.evalIn(`(() => { const r = ${rowSel(A.longFile)}, b = r.closest('.tch-files'); rowExpandShow(r, b._rowExpandSpec); return !ROW_EXPAND && !r.ownerDocument.querySelector('.ch-expanded'); })()`);
       await p.shot('changes-390-list');
       await p.evalIn(`${rowSel('src/app/main.py')}.click(); 0`);
       await diffShown(p); await sleep(300);
@@ -532,7 +644,8 @@ class ThePage(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "task": cls.task, "proj": cls.proj, "shots": shots, "big": big_diff("static/dock/src/dock.js"), "bigAll": big_diff()}
+                "task": cls.task, "proj": cls.proj, "shots": shots, "longDir": LONG_DIR, "longFile": LONG_FILE,
+                "big": big_diff("static/dock/src/dock.js"), "bigAll": big_diff()}
         script = base / "changes_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         (base / "args.json").write_text(json.dumps(args), encoding="utf-8")
@@ -556,6 +669,7 @@ class ThePage(unittest.TestCase):
         g = self.got["tree"]
         self.assertEqual(g["tree"], "true")
         self.assertEqual(self.rows(g), [
+            (LONG_DIR, LONG_DIR, "+1 \u22121", "0"), (LONG_FILE, "complete_braking_diagnostics_for_every_carriage.py", "+1 \u22121", "1"),
             ("docs", "docs", "+3 −0", "0"), ("docs/notes.md", "notes.md", "+3 −0", "1"),
             ("src/app", "src/app", "+3 −1", "0"), ("src/app/main.py", "main.py", "+2 −1", "1"), ("src/app/util.py", "util.py", "+1 −0", "1"),
             ("static/dock/src", "static/dock/src", "+2 −1", "0"), ("static/dock/src/dock.js", "dock.js", "+2 −1", "1"),
@@ -563,7 +677,7 @@ class ThePage(unittest.TestCase):
         ])
         self.assertEqual([r["pad"] for r in g["rows"]][:2], [6, 20], "a step of 14px per level")
         self.assertEqual([r["tab"] for r in g["rows"]].count(0), 1, "one row in the tab order")
-        self.assertIn("5 files", g["head"], "the head counts the files")
+        self.assertIn("6 files", g["head"], "the head counts the files")
         self.assertTrue(g["listVis"] and g["rightVis"], "both panes")
         self.assertTrue(g["stacked"] and not g["splitVis"], "a tool beside the conversation is too narrow for two panes: the files above the diff, no splitter")
         self.assertLess(g["gridW"], 680)
@@ -572,6 +686,35 @@ class ThePage(unittest.TestCase):
         m = self.got["maxed"]
         self.assertTrue(m["splitVis"] and not m["stacked"], "the panel the whole width: two panes and the splitter")
         self.assertEqual(m["listW"], 300, "the default width")
+
+    def test_truncated_file_and_folder_names_raise_through_every_changes_surface(self):
+        right = self.got["expandRight"]
+        self.assertTrue(right["shown"] and right["full"], right)
+        self.assertLess(right["box"]["left"], right["row"]["left"], "a tree at the right edge grows toward the middle")
+        self.assertAlmostEqual(right["box"]["right"], right["row"]["right"])
+        for sample in self.got["expand"]:
+            with self.subTest(width=sample["width"], height=sample["height"], theme=sample["theme"]):
+                self.assertFalse(sample["early"]["shown"], "the 320 ms delay has not elapsed")
+                shown = sample["shown"]
+                self.assertTrue(shown["shown"] and shown["full"] and shown["overDiff"], shown)
+                self.assertGreater(shown["box"]["width"], shown["row"]["width"])
+                self.assertEqual(shown["alpha"], 1, f"the raised row has an opaque ground: {shown['bg']}")
+                self.assertEqual(shown["z"], "50")
+                self.assertLessEqual(shown["pageWidth"], shown["viewport"])
+                self.assertEqual(sample["next"], LONG_DIR, "row-to-row is immediate")
+                self.assertFalse(sample["short"], "a row that fits stays put")
+        self.assertTrue(self.got["expandFocus"], "keyboard focus expands immediately")
+        self.assertEqual(self.got["expandClick"], {"path": LONG_FILE, "on": LONG_FILE}, "clicking the raised file opens its diff")
+        selected = self.got["expandSelected"]
+        self.assertTrue(selected["shown"] and selected["selected"])
+        self.assertEqual(selected["alpha"], 1)
+        resized = self.got["expandResized"]
+        self.assertTrue(resized["shown"] and resized["full"] and resized["overDiff"], resized)
+        self.assertLessEqual(resized["pageWidth"], resized["viewport"])
+        self.assertTrue(all(self.got["expandWindow"].values()), self.got["expandWindow"])
+        self.assertTrue(all(self.got["projectExpand"].values()), self.got["projectExpand"])
+        self.assertEqual(self.got["expandOff"], {"changes": False, "switcher": False, "stored": "false"})
+        self.assertEqual(self.got["expandPersist"], {"changes": False, "switcher": False, "keptOff": True})
 
     def test_a_folder_folds_and_the_keys_move(self):
         f = self.got["folded"]
@@ -596,8 +739,8 @@ class ThePage(unittest.TestCase):
     def test_folders_switches_to_the_flat_list_and_is_remembered(self):
         f = self.got["flat"]
         self.assertEqual(f["tree"], "false")
-        self.assertEqual([r["name"] for r in f["rows"]], ["docs/notes.md", "pic.png", "src/app/main.py", "src/app/util.py", "static/dock/src/dock.js"], "the whole paths, in the hub's order")
-        self.assertEqual([r["cnt"] for r in f["rows"]], ["+3 −0", "", "+2 −1", "+1 −0", "+2 −1"])
+        self.assertEqual([r["name"] for r in f["rows"]], [LONG_FILE, "docs/notes.md", "pic.png", "src/app/main.py", "src/app/util.py", "static/dock/src/dock.js"], "the whole paths, in the hub's order")
+        self.assertEqual([r["cnt"] for r in f["rows"]], ["+1 −1", "+3 −0", "", "+2 −1", "+1 −0", "+2 −1"])
         self.assertEqual(f["stored"]["tree"], "0")
         t = self.got["treeAgain"]
         self.assertEqual(t["tree"], "true")
@@ -704,12 +847,13 @@ class ThePage(unittest.TestCase):
         self.assertTrue(l["listVis"] and not l["rightVis"] and not l["splitVis"], "the files alone")
         self.assertGreater(l["listW"], 300, "the whole width, not a stacked row")
         self.assertFalse(l["showDiff"])
-        self.assertEqual([r["name"] for r in l["rows"]][:2], ["docs", "notes.md"], "the same tree")
+        self.assertEqual([r["name"] for r in l["rows"]][:2], [LONG_DIR, "complete_braking_diagnostics_for_every_carriage.py"], "the same tree")
         self.assertTrue(d["rightVis"] and not d["listVis"], "the diff alone")
         self.assertTrue(d["showDiff"] and d["drv"] and d["back"], "with its way back")
         self.assertFalse(d["split"], "unified on a phone, although side by side was chosen")
         self.assertTrue(d["seg"]["hidden"] and not d["seg"]["vis"], "no switch on a phone")
         self.assertEqual(d["stored"]["mode"], "split")
+        self.assertTrue(self.got["phoneHover"], "(hover: none) never raises a row")
         self.assertTrue(b["listVis"] and not b["rightVis"] and not b["showDiff"], "‹ Files goes back")
         for g in (l, d, b):
             self.assertLessEqual(g["scrollW"], g["vw"], "nothing scrolls sideways")
