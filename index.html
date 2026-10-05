@@ -242,7 +242,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --c-discovery-bg: #F3F0FF; --c-discovery-fg: #5E4DB2; --c-discovery-bold: #8270DB;
 
     /* Run state — what a process is doing. Never a board column. */
-    --run-working: var(--c-success-bold);
+    --run-working: var(--c-progress-bold);
     --run-idle: var(--fg-disabled);
     --run-off: var(--border-strong);
 
@@ -1025,7 +1025,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* "live" is a run state, and a working agent is the good case, not an
      alarm — it used to be terracotta, the same colour as the primary
      button and the needs-you chip. */
-  .badge-live { background: var(--c-success-bg); color: var(--c-success-fg); }
+  .badge-live { background: var(--c-progress-bg); color: var(--c-progress-fg); }
   /* A task created (e.g. by a planning agent) but never launched. */
   .gate-chip { color: var(--fg-muted); font-size: var(--fs-100); border: 1px solid var(--border); border-radius: var(--r-100); padding: 0 var(--s-100); overflow-wrap: anywhere; }
   .badge-draft { background: var(--c-neutral-bg); color: var(--c-neutral-fg); }

@@ -378,8 +378,9 @@ function restore(layout, id, was, opts) {
     layout.floats.push(f);
   } else if (was.kind === 'auto') {
     const edge = EDGES.includes(was.edge) ? was.edge : 'right';
-    const entry = putHome({ id, edge, size: finite(was.size) ? was.size : unpinFallback(cfgOf(opts), id, edge) }, orNone(was.home));
-    insertAuto(layout, withOpen(entry, was.open), was.peers, was.index);
+    const strip = withOpen({ id, edge, size: finite(was.size) ? was.size : unpinFallback(cfgOf(opts), id, edge),
+      peers: (was.peers || []).slice(), index: was.index }, was.open);
+    backToStrip(layout, id, strip, orNone(was.home), opts);
   } else placeDocked(layout, id, was.home, { ...opts, side: was.side });
 }
 
@@ -541,9 +542,89 @@ export function panelSide(layout, id, opts = {}) {
     const f = w.float;
     if (EDGES.includes(f.side)) return f.side;
     if (f.strip && f.strip.id === id) return f.strip.edge;
+    if (layout.pinned && layout.pinned[id]) return layout.pinned[id].edge;
     return sideOfWas(layout, id, { kind: 'dock', home: f.home || null }, cfg);
   }
+  if (layout.pinned && layout.pinned[id]) return layout.pinned[id].edge;
   return sideOfWas(layout, id, w.entry.was, cfg);
+}
+
+// A panel's stripe place while the panel itself is elsewhere. `layout.auto` is the live place; Float and Window carry
+// the place in what they detached, and Dock Pinned keeps it in `layout.pinned`. A panel that never belonged to a strip
+// has none. The returned object is the saved object itself, so moves can update it in place.
+function stripInWas(id, was) {
+  if (!was || typeof was !== 'object') return null;
+  if (was.kind === 'auto' && EDGES.includes(was.edge)) {
+    // `was` is keyed by the panel elsewhere in the layout, so old and current saved layouts need no duplicate `id`.
+    // Give the live object the identity strip rendering/moving needs without making render dirty the JSON after save.
+    if (was.id !== id) Object.defineProperty(was, 'id', { value: id, writable: true, configurable: true, enumerable: false });
+    return was;
+  }
+  if (was.strip && was.strip.id === id && EDGES.includes(was.strip.edge)) return was.strip;
+  return null;
+}
+
+export function stripPlaceOf(layout, id) {
+  const a = layout.auto.find((x) => x.id === id);
+  if (a) return a;
+  const w = whereIs(layout, id);
+  if (w && w.kind === 'float') {
+    const own = w.float.strip && w.float.strip.id === id ? w.float.strip : null;
+    if (own) return own;
+  }
+  if (w && (w.kind === 'out' || w.kind === 'hidden')) {
+    const own = stripInWas(id, w.entry.was);
+    if (own) return own;
+  }
+  return layout.pinned && layout.pinned[id] ? layout.pinned[id] : null;
+}
+
+// Orders `places` from every live-order and saved peers/index constraint. `orderedIds` is the deterministic tie-breaker
+// for old or incomplete saved layouts whose constraints do not relate every retained entry.
+function orderedStripEntries(layout, places, orderedIds) {
+  const rank = new Map(orderedIds.map((id, i) => [id, i]));
+  return EDGES.flatMap((edge) => {
+    const entries = places.filter((entry) => entry.edge === edge);
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const after = new Map(entries.map((entry) => [entry.id, new Set()]));
+    const indegree = new Map(entries.map((entry) => [entry.id, 0]));
+    const link = (before, next) => {
+      if (before === next || !byId.has(before) || !byId.has(next) || after.get(before).has(next)) return;
+      after.get(before).add(next);
+      indegree.set(next, indegree.get(next) + 1);
+    };
+
+    const live = layout.auto.filter((entry) => entry.edge === edge && byId.has(entry.id));
+    for (let i = 1; i < live.length; i++) link(live[i - 1].id, live[i].id);
+    for (const entry of entries) {
+      if (!Array.isArray(entry.peers)) continue;
+      const at = finite(entry.index) ? Math.max(0, Math.min(entry.peers.length, entry.index)) : entry.peers.length;
+      for (const id of entry.peers.slice(0, at)) link(id, entry.id);
+      for (const id of entry.peers.slice(at)) link(entry.id, id);
+    }
+
+    const pending = new Set(entries.map((entry) => entry.id));
+    const result = [];
+    const order = (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER);
+    while (pending.size) {
+      const ready = [...pending].filter((id) => indegree.get(id) === 0).sort(order);
+      // Conflicting legacy metadata can make a cycle. Break it deterministically, then preserve every remaining edge.
+      const id = ready[0] || [...pending].sort(order)[0];
+      pending.delete(id);
+      result.push(byId.get(id));
+      for (const next of after.get(id)) if (pending.has(next)) indegree.set(next, indegree.get(next) - 1);
+    }
+    return result;
+  });
+}
+
+// Stripe entries in their visible order, including places retained by Window, Float and Dock Pinned. Every retained
+// entry says which peers stood before and after it when it left. Combining all those constraints avoids reversing
+// adjacent buttons when they leave in the opposite order.
+export function stripEntriesOf(layout, ids = []) {
+  const orderedIds = [...new Set([...ids, ...layout.auto.map((a) => a.id)])];
+  const places = orderedIds.map((id) => stripPlaceOf(layout, id)).filter(Boolean);
+  return orderedStripEntries(layout, places, orderedIds);
 }
 
 /**
@@ -613,7 +694,7 @@ export function moveSide(layout, id, side, opts = {}) {
   if (!EDGES.includes(side)) return false;
   const w = whereIs(layout, id);
   if (!w || w.kind === 'hidden' || panelSide(layout, id, opts) === side) return false;
-  forgetPinned(layout, id);
+  const keptStrip = stripPlaceOf(layout, id);
   if (w.kind === 'dock') {
     // Its depth on the axis it leaves is kept (measured by opts.dims, else its stack's size along that split); on
     // the new side it is as deep as it was last on that axis, else as its default says.
@@ -627,6 +708,8 @@ export function moveSide(layout, id, side, opts = {}) {
     const size = finite(opts.size) ? opts.size : depthOn(layout, id, axisOf(side)) || depthDefault(id, side, { ...opts, cfg });
     detach(layout, id);
     dockAtEdge(layout, id, side, finite(size) ? Math.round(size) : undefined, opts.extent, cfg);
+    if (keptStrip) stripTo(layout, keptStrip, side, id, cfg);
+    else forgetPinned(layout, id);
     return true;
   }
   if (w.kind === 'auto') {
@@ -639,12 +722,12 @@ export function moveSide(layout, id, side, opts = {}) {
   }
   if (w.kind === 'float') {
     const f = w.float;
-    if (f.strip && f.strip.id === id) { stripTo(layout, f.strip, side, id, cfg); delete f.home; delete f.side; } else f.side = side;
+    if (keptStrip) { stripTo(layout, keptStrip, side, id, cfg); delete f.home; delete f.side; } else f.side = side;
     return true;
   }
   const was = w.entry.was || (w.entry.was = { kind: 'dock', home: null });
-  if (was.kind === 'auto') stripTo(layout, was, side, id, cfg);
-  else if (was.strip) { stripTo(layout, was.strip, side, id, cfg); delete was.home; } else was.side = side;
+  if (keptStrip) { stripTo(layout, keptStrip, side, id, cfg); delete was.home; }
+  else was.side = side;
   return true;
 }
 
@@ -656,24 +739,50 @@ export function moveSide(layout, id, side, opts = {}) {
  */
 export function moveStrip(layout, id, index, side, opts = {}) {
   const cfg = cfgOf(opts);
-  const a = layout.auto.find((x) => x.id === id);
+  const a = stripPlaceOf(layout, id);
   if (!a) return false;
   const edge = EDGES.includes(side) ? side : a.edge;
   if (typeof index === 'string' && index.trim() !== '') index = Number(index);
   if (index != null && !finite(index)) return false;
-  // Each strip's order, as drawn: layout.auto interleaves the edges, and its order across them draws nothing.
-  const strips = () => EDGES.map((e) => layout.auto.filter((x) => x.edge === e).map((x) => x.id).join()).join('|');
-  const was = strips();
-  const before = layout.auto.slice();
-  layout.auto.splice(layout.auto.indexOf(a), 1);
-  if (edge !== a.edge) { stripTo(layout, a, edge, id, cfg); delete a.peers; }
-  const peers = layout.auto.filter((x) => x.edge === edge);
-  const at = finite(index) ? Math.max(0, Math.min(peers.length, Math.round(index))) : peers.length;
-  const i = at < peers.length ? layout.auto.indexOf(peers[at]) : peers.length ? layout.auto.indexOf(peers[peers.length - 1]) + 1 : layout.auto.length;
-  layout.auto.splice(i, 0, a);
-  if (strips() !== was) return true;
-  layout.auto.splice(0, layout.auto.length, ...before);
-  return false;
+  const allIds = [...new Set([
+    ...cfg.ids,
+    ...layout.auto.map((x) => x.id),
+    ...Object.keys(layout.pinned || {}),
+    ...layout.floats.map((f) => f.strip && f.strip.id).filter(Boolean),
+    ...Object.keys(layout.out || {}),
+    ...layout.hidden.map((h) => h.id),
+  ])];
+  const entries = stripEntriesOf(layout, allIds);
+  const before = EDGES.map((e) => entries.filter((x) => x.edge === e).map((x) => x.id));
+  const wanted = Object.fromEntries(EDGES.map((e, n) => [e, before[n].filter((pid) => pid !== id)]));
+  const at = finite(index) ? Math.max(0, Math.min(wanted[edge].length, Math.round(index))) : wanted[edge].length;
+  wanted[edge].splice(at, 0, id);
+  const after = EDGES.map((e) => wanted[e]);
+  if (JSON.stringify(before) === JSON.stringify(after)) return false;
+
+  const oldEdge = a.edge;
+  if (edge !== oldEdge) {
+    const w = whereIs(layout, id);
+    if (!w || w.kind === 'hidden' || !moveSide(layout, id, edge, opts)) stripTo(layout, a, edge, id, cfg);
+  }
+
+  // The live entries keep their order in layout.auto. Every retained entry records the complete visible order, so a
+  // reload and any later return to Dock Unpinned put it in the same place even while several peers are also away.
+  const places = new Map(allIds.map((pid) => [pid, stripPlaceOf(layout, pid)]).filter(([, p]) => p));
+  const autos = new Set(layout.auto.map((x) => x.id));
+  const orderedAuto = EDGES.flatMap((e) => wanted[e].filter((pid) => autos.has(pid)).map((pid) => places.get(pid)));
+  layout.auto.splice(0, layout.auto.length, ...orderedAuto);
+  for (const e of EDGES) {
+    const order = wanted[e];
+    for (let i = 0; i < order.length; i++) {
+      const p = places.get(order[i]);
+      if (!p || autos.has(order[i])) continue;
+      p.edge = e;
+      p.peers = order.filter((pid) => pid !== order[i]);
+      p.index = i;
+    }
+  }
+  return true;
 }
 
 /**
@@ -725,7 +834,18 @@ export function floatPanel(layout, id, rect) {
 function backToStrip(layout, id, strip, home, opts) {
   const edge = EDGES.includes(strip.edge) ? strip.edge : 'right';
   const size = finite(strip.size) ? strip.size : unpinFallback(cfgOf(opts), id, edge);
-  return insertAuto(layout, withOpen(putHome({ id, edge, size }, orNone(home)), strip.open), strip.peers, strip.index);
+  const cfg = cfgOf(opts);
+  const entry = withOpen(putHome({ id, edge, size }, orNone(home)), strip.open);
+  // A returning panel may have peers that also left after it, so its own saved list alone can be incomplete. Rebuild
+  // the visible order with the same combined constraints rendering uses, including this not-yet-live entry, then put
+  // it into layout.auto relative to the complete order. This keeps repeated returns independent of return order.
+  const orderedIds = [...new Set([...cfg.ids, ...layout.auto.map((a) => a.id), id])];
+  const places = orderedIds.filter((pid) => pid !== id).map((pid) => stripPlaceOf(layout, pid)).filter(Boolean);
+  const retained = { ...strip, id, edge, size };
+  const order = orderedStripEntries(layout, [...places, retained], orderedIds).filter((place) => place.edge === edge).map((place) => place.id);
+  const index = order.indexOf(id);
+  const peers = order.filter((pid) => pid !== id);
+  return insertAuto(layout, entry, peers, index < 0 ? peers.length : index);
 }
 
 /** Docks a floating window's panels back where they came from, in one stack as they were. */
@@ -795,13 +915,11 @@ export function pinPanel(layout, id, opts = {}) {
   const place = stripOf(id, was);
   // On its strip's side, as deep as it slid out when its home kept no size.
   placeDocked(layout, id, was.home, { ...opts, side: place.edge, size: place.size });
-  // Its strip place is kept unless a plain unpin gives it back anyway: a panel unpinned from where it is docked again,
-  // last on its strip (so pin and unpin of a docked panel's strip twin leave nothing behind).
-  if (!(sameHome(was.home, homeOf(layout, id)) && place.index === place.peers.length)) {
-    if (!layout.pinned) layout.pinned = {};
-    delete place.open; // how it slid out is chosen again when it goes back to a strip (View Mode), or the dock's own
-    layout.pinned[id] = putHome(place, orNone(was.home));
-  }
+  // Dock Pinned retains the stripe place too, including a lone/last button whose dock home could otherwise recreate
+  // the same place: the button must stay visible while pinned, not merely return when it is unpinned again.
+  if (!layout.pinned) layout.pinned = {};
+  delete place.open; // how it slid out is chosen again when it goes back to a strip (View Mode), or the dock's own
+  layout.pinned[id] = putHome(place, orNone(was.home));
   return true;
 }
 

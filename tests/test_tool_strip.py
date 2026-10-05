@@ -321,7 +321,7 @@ async function main() {
     // ⋯ › Move To is what moves it to another side (P9)
     {
       const SIDE = id => `(() => { const b = document.querySelector('${tool(id)}'), s = b && b.closest('.dk-strip'), r = PD.els[${JSON.stringify(id)}].getBoundingClientRect();
-        return { visible: PD.dock.isVisible(${JSON.stringify(id)}), notice: !!document.querySelector('#po-dock .dk-outnote'), fly: PD.dock.flyOpen(), mode: PD.dock.viewMode(${JSON.stringify(id)}), side: PD.dock.side(${JSON.stringify(id)}), out: PD.dock.isOut(${JSON.stringify(id)}),
+        return { visible: PD.dock.isVisible(${JSON.stringify(id)}), notice: !!document.querySelector('#po-dock .dk-outnote'), fly: PD.dock.flyOpen(), mode: PD.dock.viewMode(${JSON.stringify(id)}), side: PD.dock.side(${JSON.stringify(id)}), out: PD.dock.isOut(${JSON.stringify(id)}), on: !!b && b.classList.contains('on'),
           strip: s ? [...s.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
           here: PD.els[${JSON.stringify(id)}].ownerDocument === document, shown: r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, saved: localStorage.getItem('cd-tool-open') }; })()`;
       const p = await page(1440, 900);
@@ -378,6 +378,9 @@ async function main() {
       await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(400);
       out.moveTo.pinned = await p.evalIn(SIDE('spec'));
       await p.shot('strip-1440-spec-left-pinned');
+      await menuPick(p, '#po-dock .dk-stack > .dk-head:has([data-dk-tab="spec"])', 'mode', 'mode:float'); await sleep(400);
+      out.moveTo.float = await p.evalIn(SIDE('spec'));
+      await menuPick(p, '#po-dock .dk-float .dk-head:has([data-dk-tab="spec"])', 'mode', 'mode:pinned'); await sleep(400);
       await menuPick(p, '#po-dock .dk-stack > .dk-head:has([data-dk-tab="spec"])', 'mode', 'mode:unpinned'); await sleep(400);
       out.moveTo.unpinned = await p.evalIn(SIDE('spec'));
       if (await p.evalIn('PD.dock.flyOpen()') !== 'spec') { await p.click(tool('spec')); await sleep(400); }
@@ -499,8 +502,9 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_13_0(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.13\.0 23363eb")
+    def test_the_vendored_library_is_v0_14_0(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.14\.0 f96f1d2")
+        self.assertNotIn("stripKeepsButton", INDEX, "keep v0.14.0's retained strip-button default")
 
     def test_the_title_bar_is_dock_s_default(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
@@ -789,6 +793,7 @@ class TheStrip(unittest.TestCase):
             with self.subTest(tool=k):
                 self.assertEqual((g["before"]["fly"], g["before"]["side"], g["before"]["strip"]), (id, "right", "dk-strip-right"), g["before"])
                 self.assertEqual((g["out"]["mode"], g["out"]["out"], g["out"]["here"]), ("window", True, False), g["out"])
+                self.assertEqual((g["out"]["strip"], g["out"]["on"]), ("dk-strip-right", True), "Window keeps its active strip button")
                 b = g["back"]
                 self.assertEqual((b["out"], b["here"], b["fly"], b["mode"]), (False, True, None, "window"))
                 self.assertFalse(b["visible"] or b["shown"] or b["notice"], b)
@@ -801,7 +806,10 @@ class TheStrip(unittest.TestCase):
     def test_move_to_is_what_changes_a_side(self):
         m = self.got["moveTo"]
         self.assertEqual((m["left"]["side"], m["left"]["strip"]), ("left", "dk-strip-left"), m["left"])
-        self.assertEqual((m["pinned"]["mode"], m["pinned"]["side"]), ("pinned", "left"), "pinning keeps the side")
+        self.assertEqual((m["pinned"]["mode"], m["pinned"]["side"], m["pinned"]["strip"], m["pinned"]["on"]),
+                         ("pinned", "left", "dk-strip-left", True), "Dock Pinned keeps its active strip button")
+        self.assertEqual((m["float"]["mode"], m["float"]["side"], m["float"]["strip"], m["float"]["on"]),
+                         ("float", "left", "dk-strip-left", True), "Float keeps its active strip button")
         self.assertEqual((m["unpinned"]["mode"], m["unpinned"]["side"], m["unpinned"]["strip"]), ("unpinned", "left", "dk-strip-left"), "so does unpinning")
         self.assertEqual((m["right"]["side"], m["right"]["strip"]), ("right", "dk-strip-right"), m["right"])
 

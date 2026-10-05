@@ -6,7 +6,8 @@ Run from the repository root:
 
 The script reads the shipped CSS token blocks rather than repeating their
 values. It exits non-zero if a text pair is below 4.5:1, a code token is below
-6:1 on a normal dark ground, or a state/tool graphic is below 3:1.
+6:1 on a normal dark ground, a state/tool graphic is below 3:1, or the added
+and removed diff grounds are less than 25 RGB units apart.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 THEME = "intellij-dark"
+DIFF_GROUND_MIN_RGB_DISTANCE = 25.0
 
 
 def _block(text: str, selector: str) -> dict[str, str]:
@@ -39,6 +41,18 @@ def tokens(path: Path) -> dict[str, str]:
 
 def theme_tokens(path: Path) -> dict[str, str]:
     return _block(path.read_text(encoding="utf-8"), f':root[data-theme="{THEME}"]')
+
+
+def _painted_token(text: str, selector: str) -> str:
+    """Return the custom property used by a selector's final background rule."""
+    text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", text)
+    if not match:
+        raise ValueError(f"missing painted-state selector: {selector}")
+    backgrounds = re.findall(r"background\s*:\s*var\((--[a-z0-9-]+)\)\s*;", match.group(1))
+    if not backgrounds:
+        raise ValueError(f"missing background token on painted-state selector: {selector}")
+    return backgrounds[-1]
 
 
 def _rgb(value: str) -> tuple[float, float, float, float]:
@@ -113,7 +127,9 @@ def _hex(value: tuple[float, float, float, float]) -> str:
 
 
 def measure() -> dict[str, object]:
-    page = tokens(ROOT / "index.html")
+    page_path = ROOT / "index.html"
+    page_text = page_path.read_text(encoding="utf-8")
+    page = tokens(page_path)
     session = tokens(ROOT / "session.html")
     fileview = tokens(ROOT / "fileview.html")
 
@@ -176,16 +192,20 @@ def measure() -> dict[str, object]:
         for ground in ("--diff-add-bg", "--diff-del-bg"):
             add("diff", foreground, ground, 4.5)
 
-    states = {
-        "running": "--c-progress-bold",
-        "waiting": "--c-warning-bold",
-        "blocked": "--c-danger-bold",
-        "done": "--c-success-bold",
+    # Read the task switcher's painted selectors, rather than assuming that a
+    # semantic token with the right name is the one the interface uses.
+    state_selectors = {
+        "running": ".sw-st.working",
+        "waiting": ".sw-st.warning",
+        "blocked": ".sw-st.danger",
+        "done": ".sw-st.success",
     }
+    states = {label: _painted_token(page_text, selector) for label, selector in state_selectors.items()}
     state_rows = {}
     for label, token in states.items():
         value = colour(token, page)
         state_rows[label] = {
+            "selector": state_selectors[label],
             "token": token,
             "colour": _hex(value),
             "on_surface": round(contrast(value, colour("--surface", page)), 2),
@@ -195,6 +215,17 @@ def measure() -> dict[str, object]:
         for i, a in enumerate(states.values())
         for b in list(states.values())[i + 1 :]
     )
+
+    diff_add = colour("--diff-add-bg", page)
+    diff_remove = colour("--diff-del-bg", page)
+    diff_distance = math.dist(diff_add[:3], diff_remove[:3])
+    diff_ground_separation = {
+        "added": _hex(diff_add),
+        "removed": _hex(diff_remove),
+        "rgb_distance": round(diff_distance, 1),
+        "minimum": DIFF_GROUND_MIN_RGB_DISTANCE,
+        "passed": diff_distance >= DIFF_GROUND_MIN_RGB_DISTANCE,
+    }
 
     for token in ("--tool-points", "--tool-changes", "--tool-workspace", "--tool-board", "--tool-spec", "--tool-list"):
         for ground in ("--surface", "--surface-sunken", "--hover"):
@@ -210,6 +241,7 @@ def measure() -> dict[str, object]:
         "checks": checks,
         "states": state_rows,
         "minimum_state_rgb_distance": round(state_distance, 1),
+        "diff_ground_separation": diff_ground_separation,
         "minimum_ratio": min(row["ratio"] for row in checks),
         "failed": failed,
     }
@@ -218,7 +250,7 @@ def measure() -> dict[str, object]:
 def main() -> int:
     result = measure()
     print(json.dumps(result, indent=2))
-    return 1 if result["drift"] or result["failed"] else 0
+    return 1 if result["drift"] or result["failed"] or not result["diff_ground_separation"]["passed"] else 0
 
 
 if __name__ == "__main__":

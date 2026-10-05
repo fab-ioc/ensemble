@@ -1,4 +1,4 @@
-"""Dock v0.13.0 and Ensemble's IntelliJ Dark theme contract."""
+"""Dock v0.14.0 and Ensemble's IntelliJ Dark theme contract."""
 from __future__ import annotations
 
 import sys
@@ -27,11 +27,11 @@ class IntelliJDarkTheme(unittest.TestCase):
     def test_the_hub_accepts_the_saved_value(self):
         self.assertIn("intellij-dark", dashboard._SETTINGS_ALLOWED_VALUES["theme"])
 
-    def test_the_vendored_theme_set_is_dock_v0_13_0(self):
+    def test_the_vendored_theme_set_is_dock_v0_14_0(self):
         version = (ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8")
         self.assertEqual(
             version.strip(),
-            "fab-ioc/dock v0.13.0 23363ebfa934c5c1d83346a018e9cdd9d6e65604 (tag v0.13.0, 2026-10-05)",
+            "fab-ioc/dock v0.14.0 f96f1d23852cdbb9d695ef358e04c28ae3ca8d1a (tag v0.14.0, 2026-10-05)",
         )
         theme_js = (ROOT / "static" / "dock" / "src" / "theme.js").read_text(encoding="utf-8")
         self.assertIn("['intellij-dark', 'IntelliJ Dark', 'dark', 'extra']", theme_js)
@@ -44,8 +44,20 @@ class IntelliJDarkTheme(unittest.TestCase):
         self.assertEqual(result["failed"], [])
         self.assertGreaterEqual(result["minimum_ratio"], 4.5)
         self.assertEqual(set(result["states"]), {"running", "waiting", "blocked", "done"})
+        self.assertEqual(result["states"]["running"]["selector"], ".sw-st.working")
+        self.assertEqual(result["states"]["running"]["token"], "--run-working")
         self.assertEqual(len({row["colour"] for row in result["states"].values()}), 4)
         self.assertGreaterEqual(min(row["on_surface"] for row in result["states"].values()), 3)
+        separation = result["diff_ground_separation"]
+        self.assertTrue(separation["passed"])
+        self.assertGreaterEqual(separation["rgb_distance"], separation["minimum"])
+
+    def test_the_working_state_uses_progress_not_done(self):
+        for name in ("index.html", "session.html"):
+            page = (ROOT / name).read_text(encoding="utf-8")
+            with self.subTest(page=name):
+                self.assertIn("--run-working: var(--c-progress-bold);", page)
+                self.assertNotIn("--run-working: var(--c-success-bold);", page)
 
 
 if __name__ == "__main__":

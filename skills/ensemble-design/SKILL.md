@@ -160,8 +160,8 @@ Every hue is `-bg` (lozenge wash) / `-fg` (text on that wash) / `-bold` (solid d
 | Token stem | Means | Used for |
 |---|---|---|
 | `--c-neutral` | nothing in particular | Backlog, To do, Paused, "not started", counts |
-| `--c-progress` | under way | In progress, "running" |
-| `--c-success` | good / finished | Done, an agent working, clean repo |
+| `--c-progress` | under way | In progress, "running", an agent working |
+| `--c-success` | good / finished | Done, clean repo |
 | `--c-warning` | needs a human eventually | Waiting for you, Stalled, uncommitted changes |
 | `--c-danger` | **wrong, or destroys data** | Blocked, Agent gone, delete/end controls |
 | `--c-discovery` | set aside for judgement | In review, new |
@@ -182,7 +182,7 @@ misstated a floor.
 
 ### Run state — what a process is doing
 
-`--run-working` (pulses) · `--run-idle` · `--run-off`. This is **separate from workflow status** and is
+`--run-working` (the progress-bold shade, pulses) · `--run-idle` · `--run-off`. This is **separate from workflow status** and is
 never a board column. Only `--run-working` pulses; nothing else in the product animates. Disable the
 pulse under `prefers-reduced-motion`.
 
@@ -911,8 +911,11 @@ again after a reload; the middle changing conversation by code (not a click in t
 it out. A tool's title bar
 (Dock v0.5.0, IntelliJ's; each View Mode item's tooltip says what it does) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
 beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
-is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
-hides it in Window mode (Dock v0.7.0); its former strip button or Panels reopens a window.
+is on; only this changes a side), Maximise and Hide; − slides it back in. **A tool keeps its strip
+button, shown active, in Window, Float and Dock Pinned as well as the two unpinned modes** (Dock
+v0.14.0); the button focuses or reopens its Window, raises its Float, and focuses (or hides an
+already-focused) Dock Pinned panel. Closing a tool's window hides it in Window mode; its retained
+strip button or Panels reopens a window.
 The window's own ⋯ offers View Mode to dock it back, Move To, Take Screenshot and Hide;
 its − hides it too. Take Screenshot uses the browser's share-this-tab prompt where supported.
 Split and maximise work as the library's. **The
@@ -1049,9 +1052,9 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
   panel comes back); the one here stays loaded.
 - **A popped-out window has no "Back to main window"** (the CEO's P50): `popBackButton: false`
-  leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode
-  (Dock v0.7.0). The window's ⋯ → View Mode docks it back; Panels or its former strip button
-  reopens a hidden window.
+  leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode.
+  The window's ⋯ → View Mode docks it back; Panels or its retained active strip button reopens a
+  hidden window.
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
