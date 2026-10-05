@@ -115,6 +115,23 @@ async function main() {
     SW_DONE_OPEN = true; SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
   const ldReady = p => p.until('!!LD.dock && !!PD.dock && document.body.classList.contains("po-dock") && !!SW_EL.querySelector(".sw-row")', 30000);
   const row = `.sw-row[data-room="${A.task}"]`;
+  const row2 = `.sw-row[data-room="${A.task2}"]`;
+  const mouseTo = async (p, sel) => {
+    const [x, y] = await p.evalIn(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + 2, y }, p.sessionId);
+  };
+  const expansion = p => p.evalIn(`(() => {
+    const e = document.querySelector('.sw-expanded'), r = document.querySelector(${JSON.stringify(row)});
+    const b = e && e.getBoundingClientRect(), a = r && r.getBoundingClientRect();
+    const t = r.querySelector('.sw-title'), mid = r.getBoundingClientRect();
+    return { shown: !!e, full: !!e && e.querySelector('.sw-title').textContent === t.textContent,
+      box: b && { left: b.left, right: b.right, width: b.width }, row: a && { left: a.left, right: a.right, width: a.width },
+      z: e && getComputedStyle(e).zIndex, pageWidth: document.documentElement.scrollWidth, viewport: innerWidth,
+      hit: b && document.elementFromPoint(b.right - 4, b.top + 8)?.closest('.sw-expanded') === e,
+      allowed: swExpandAllowed(r), timer: !!SW_EXPAND_TIMER, titleWidth: [t.scrollWidth, t.clientWidth],
+      mouseHit: document.elementFromPoint(mid.left + mid.width / 2, mid.top + mid.height / 2)?.closest('.sw-row')?.dataset.room || null };
+  })()`);
   // Dock v0.5's title bar: ⋯, then a submenu (View Mode: 'mode', Move To: 'side'), then an item, with real clicks.
   const menuPick = async (p, head, sub, item) => {
     await p.click(`${head} [data-dk-act="menu"]`);
@@ -128,16 +145,61 @@ async function main() {
   // A row opens its task in the middle: closed first, then clicked.
   const opens = async (p, sel) => {
     await p.evalIn('if (SELECTED_SID) closeDetail(); 0'); await sleep(300);
+    const before = await p.evalIn(`(() => { const r = document.querySelector(${JSON.stringify(sel || row)}).getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; const h = document.elementFromPoint(x, y); return { x, y, hit: h && h.outerHTML.slice(0, 250), overlay: !!document.querySelector('.sw-expanded') }; })()`);
     await p.click(sel || row);
     await p.until('!!SELECTED_SID && document.body.classList.contains("detail-open")', 10000).catch(() => null);
     await sleep(400);
-    return p.evalIn(GEOM);
+    return { ...(await p.evalIn(GEOM)), before };
   };
   try {
     const p = await page(1440, 900);
     await go(p, A.proj); await ldReady(p); await sleep(600);
     out.pinned = await p.evalIn(GEOM);
     await p.shot('list-1440-pinned');
+    out.expand = [];
+    for (const width of [1280, 1728]) for (const theme of ['light', 'dark', 'fjord']) {
+      await c.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId);
+      await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: width / 2, y: 80 }, p.sessionId);
+      await sleep(40);
+      await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; swExpandHide(); SW_EXPAND_LAST = 0; 0`);
+      await sleep(120);
+      await mouseTo(p, row);
+      await sleep(160);
+      const early = await expansion(p);
+      await sleep(220);
+      const long = await expansion(p);
+      await mouseTo(p, row2); await sleep(60);
+      const next = await p.evalIn(`(() => { const r = document.querySelector(${JSON.stringify(row2)}), t = r.querySelector('.sw-title'), b = r.getBoundingClientRect(), h = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return { shown: document.querySelector('.sw-expanded')?.dataset.room || null, truncated: t.scrollWidth > t.clientWidth + 1, hit: h?.closest('.sw-row')?.dataset.room || null, timer: !!SW_EXPAND_TIMER, allowed: swExpandAllowed(r) }; })()`);
+      await mouseTo(p, '#sw-list .sw-row[data-po]'); await sleep(50);
+      const short = await expansion(p);
+      out.expand.push({ width, theme, early, long, short, next });
+    }
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId);
+    await p.evalIn(`(() => { const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); window.__wrapTitle = t.innerHTML; t.textContent += ' detailed inspection across every carriage before the winter timetable'.repeat(40); swExpandHide(); SW_EXPAND_LAST = 0; return 0; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 80 }, p.sessionId);
+    await mouseTo(p, row); await sleep(380);
+    out.expandWrapped = await p.evalIn(`(() => { const e = document.querySelector('.sw-expanded'), n = document.querySelector(${JSON.stringify(row2)}); return { shown: !!e, height: e?.getBoundingClientRect().height || 0, rowHeight: document.querySelector(${JSON.stringify(row)}).getBoundingClientRect().height, coversNext: !!e && e.getBoundingClientRect().bottom > n.getBoundingClientRect().top + n.getBoundingClientRect().height / 2 }; })()`);
+    await mouseTo(p, row2); await sleep(60);
+    out.expandWrappedNext = await p.evalIn(`document.querySelector('.sw-expanded')?.dataset.room === ${JSON.stringify(A.task2)}`);
+    await p.click('.sw-expanded');
+    out.expandWrappedClick = await p.evalIn(`SELECTED_SID === document.querySelector(${JSON.stringify(row2)}).dataset.sid`);
+    await p.evalIn(`closeDetail(); const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); t.innerHTML = window.__wrapTitle; swExpandHide(); 0`);
+    await mouseTo(p, row); await sleep(370);
+    await p.click('.sw-expanded');
+    out.expandClick = await p.evalIn(`SELECTED_SID === document.querySelector(${JSON.stringify(row)}).dataset.sid`);
+    await p.evalIn('closeDetail(); document.querySelector("#sw-hover-names").click(); 0');
+    await mouseTo(p, row); await sleep(400);
+    out.expandOff = await expansion(p);
+    await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
+    await go(p, A.proj, true); await ldReady(p);
+    out.expandPersist = await p.evalIn('!document.querySelector("#sw-hover-names").checked');
+    await p.evalIn('document.querySelector("#sw-hover-names").click(); 0');
+    await p.key('ArrowDown', 'ArrowDown');
+    out.expandFocus = await p.evalIn(`(() => { const r = document.querySelector(${JSON.stringify(row)}); r.focus(); const shown = !!SW_EXPAND && SW_EXPAND.row === r && SW_EXPAND.copy.classList.contains('sw-expand-focus'); swExpandHide(); r.blur(); return shown; })()`);
+    await mouseTo(p, row); await sleep(370);
+    await p.click(`${HEAD} [data-dk-act="menu"]`);
+    out.expandMenu = await p.evalIn('!!document.querySelector(".dk-menu.dk-options") && !document.querySelector(".sw-expanded")');
+    await p.key('Escape', 'Escape');
     out.pinnedOpens = await opens(p);
     // Dock Unpinned: the strip; a click slides it out beside the middle; a row opens its task and it goes back.
     await menuPick(p, HEAD, 'mode', 'mode:unpinned');
@@ -174,6 +236,7 @@ async function main() {
     await p.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document && !!SW_EL.querySelector(".sw-row")', 15000);
     await sleep(600);
     out.window = await p.evalIn(GEOM);
+    out.expandWindow = await p.evalIn(`(() => { const r = SW_EL.querySelector(${JSON.stringify(row)}), t = r.querySelector('.sw-title'); t.textContent += ' additional safety review before the next winter timetable'.repeat(30); swExpandShow(r); const e = SW_EL.ownerDocument.querySelector('.sw-expanded'); const v = SW_EL.ownerDocument.defaultView; const result = { shown: !!e, sameWindow: e?.ownerDocument === SW_EL.ownerDocument, within: !!e && e.getBoundingClientRect().right <= v.innerWidth, full: !!e && e.querySelector('.sw-title').textContent === t.textContent, allowed: swExpandAllowed(r), titleWidth: [t.scrollWidth, t.clientWidth], hover: v.matchMedia('(hover: hover) and (pointer: fine)').matches, width: v.innerWidth }; swExpandHide(); return result; })()`);
     await p.evalIn('if (SELECTED_SID) closeDetail(); 0'); await sleep(300);
     await p.evalIn(`SW_EL.querySelector(${JSON.stringify(row)}).click(); 0`);
     await p.until('!!SELECTED_SID', 10000).catch(() => null); await sleep(400);
@@ -218,6 +281,25 @@ async function main() {
     out.pinnedAgain = await p.evalIn(GEOM);
     await menuPick(p, HEAD, 'side', 'side:right');
     out.right = await p.evalIn(GEOM);
+    await mouseTo(p, row); await sleep(370);
+    out.expandRight = await expansion(p);
+    await p.evalIn('swExpandHide(); 0');
+    const [barX, barY] = await p.evalIn(`(() => { const b = document.querySelector('#list-dock .dk-bar').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: barX, y: barY, button: 'left', clickCount: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 580, y: barY, button: 'left', buttons: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 580, y: barY, button: 'left', clickCount: 1 }, p.sessionId);
+    await sleep(400);
+    await p.evalIn(`(() => { const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); window.__rightTitle = t.innerHTML; t.textContent += ' detailed inspection across every carriage before the winter timetable'.repeat(30); swExpandHide(); SW_EXPAND_LAST = 0; return 0; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 400, y: 80 }, p.sessionId);
+    await mouseTo(p, row); await sleep(380);
+    out.expandWideRight = await expansion(p);
+    await p.evalIn(`(() => { const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); t.innerHTML = window.__rightTitle; swExpandHide(); return 0; })()`);
+    const [wideBarX, wideBarY] = await p.evalIn(`(() => { const b = document.querySelector('#list-dock .dk-bar').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: wideBarX, y: wideBarY, button: 'left', clickCount: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: barX, y: wideBarY, button: 'left', buttons: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: barX, y: wideBarY, button: 'left', clickCount: 1 }, p.sessionId);
+    await sleep(400);
+    out.rightRestored = await p.evalIn(GEOM);
     await p.shot('list-1440-right');
     out.rightOpens = await opens(p);
     await p.evalIn('if (SELECTED_SID) closeDetail(); 0'); await sleep(300);
@@ -246,6 +328,9 @@ async function main() {
     await p.evalIn(`document.querySelector('#list-dock .dk-bar').focus(); 0`);
     await p.key('ArrowRight', 'ArrowRight'); await p.key('ArrowRight', 'ArrowRight'); await sleep(400);
     out.wider = await p.evalIn(GEOM);
+    await p.evalIn(`(() => { const r = document.querySelector(${JSON.stringify(row)}), t = r.querySelector('.sw-title'); window.__resizedTitle = t.innerHTML; t.textContent += ' detailed inspection across every carriage before the winter timetable'.repeat(30); swExpandShow(r); return 0; })()`);
+    out.expandResized = await expansion(p);
+    await p.evalIn(`(() => { document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title').innerHTML = window.__resizedTitle; swExpandHide(); return 0; })()`);
     // Its resized width comes back after a spell at the top.
     await menuPick(p, HEAD, 'side', 'side:top');
     await menuPick(p, HEAD, 'side', 'side:left');
@@ -267,6 +352,7 @@ async function main() {
     // Made phone-sized: the list goes home; wide again, back in its dock.
     await c.send('Emulation.setDeviceMetricsOverride', { width: 400, height: 860, deviceScaleFactor: 1, mobile: true }, p.sessionId); await sleep(800);
     out.toPhone = await p.evalIn(GEOM);
+    out.expandTouch = await p.evalIn(`(() => { swExpandShow(SW_EL.querySelector(${JSON.stringify(row)})); return !SW_EXPAND; })()`);
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId); await sleep(800);
     out.toDesk = await p.evalIn(GEOM);
     await p.close();
@@ -388,7 +474,11 @@ class TheListDock(unittest.TestCase):
         ok, why = dashboard.set_project_po(cls.proj, po["id"])
         assert ok, why
         chatroom.post_message(po["id"], "user", "Hello PO", to="claude")
-        task = chatroom.create_room("Brakes that squeal", [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
+        task2 = chatroom.create_room("Inspect every wheel bearing and the braking system before the next winter timetable", [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
+        chatroom.post_message(task2["id"], "user", "Check the bearings")
+        dashboard.assign_session_project(task2["id"], cls.proj)
+        cls.task2 = task2["id"]
+        task = chatroom.create_room("Brakes that squeal whenever the train crosses the northern bridge at dawn", [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
         chatroom.post_message(task["id"], "user", "Why do the brakes squeal?")
         dashboard.assign_session_project(task["id"], cls.proj)
         cls.task = task["id"]
@@ -403,7 +493,7 @@ class TheListDock(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "proj": cls.proj, "task": cls.task, "loose": cls.loose, "shots": shots}
+                "proj": cls.proj, "task": cls.task, "task2": cls.task2, "loose": cls.loose, "shots": shots}
         script = base / "ld_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
@@ -417,8 +507,42 @@ class TheListDock(unittest.TestCase):
         cls.tmp.cleanup()
 
     def opened(self, g, what):
-        self.assertTrue(g["open"] and g["sid"], f"{what}: the row opened its conversation")
+        self.assertTrue(g["open"] and g["sid"], f"{what}: the row opened its conversation {g.get('before')}")
         self.assertLessEqual(g["scrollW"], g["vw"], f"{what}: no sideways scroll")
+
+    def test_full_names_expand_in_three_themes_and_both_widths(self):
+        for sample in self.got["expand"]:
+            with self.subTest(width=sample["width"], theme=sample["theme"]):
+                self.assertFalse(sample["early"]["shown"], "wait before showing")
+                long = sample["long"]
+                self.assertTrue(long["shown"] and long["full"] and long["hit"], long)
+                self.assertGreater(long["box"]["width"], long["row"]["width"])
+                self.assertEqual(long["box"]["left"], long["row"]["left"])
+                self.assertLessEqual(long["pageWidth"], long["viewport"])
+                self.assertFalse(sample["short"]["shown"], "a short name stays in its row")
+                self.assertEqual(sample["next"]["shown"], self.task2, sample["next"])
+        self.assertTrue(self.got["expandClick"], "the expanded row opens its task")
+        self.assertFalse(self.got["expandOff"]["shown"], "the checkbox disables expansion")
+        self.assertTrue(self.got["expandPersist"], "the checkbox survives a reload")
+        self.assertTrue(self.got["expandFocus"], "keyboard focus expands the row")
+        self.assertTrue(self.got["expandMenu"], "an open Dock menu stays above the expansion")
+        wrapped = self.got["expandWrapped"]
+        self.assertTrue(wrapped["shown"] and wrapped["coversNext"] and wrapped["height"] > wrapped["rowHeight"], wrapped)
+        self.assertTrue(self.got["expandWrappedNext"], "a covered following row expands immediately")
+        self.assertTrue(self.got["expandWrappedClick"], "a covered following row opens its own task")
+        right = self.got["expandRight"]
+        self.assertTrue(right["shown"] and right["full"] and right["hit"], right)
+        self.assertLess(right["box"]["left"], right["row"]["left"])
+        self.assertAlmostEqual(right["box"]["right"], right["row"]["right"])
+        self.assertLessEqual(right["pageWidth"], right["viewport"])
+        wide = self.got["expandWideRight"]
+        self.assertGreater(wide["row"]["width"], wide["viewport"] / 2)
+        self.assertTrue(wide["shown"] and wide["full"], wide)
+        self.assertLess(wide["box"]["left"], wide["row"]["left"])
+        self.assertAlmostEqual(wide["box"]["right"], wide["row"]["right"])
+        self.assertTrue(all(self.got["expandWindow"][k] for k in ("shown", "sameWindow", "within", "full")), self.got["expandWindow"])
+        self.assertTrue(self.got["expandResized"]["shown"], self.got["expandResized"])
+        self.assertTrue(self.got["expandTouch"], "touch emulation has no expansion")
 
     def test_pinned_at_the_left_by_default_as_before(self):
         g = self.got["pinned"]
