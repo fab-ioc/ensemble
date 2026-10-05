@@ -1086,6 +1086,16 @@ the column, `--hover`, no edge), and **an agent's is plain text** on the page's 
 under its header. This reverses the old left-aligned balloons with an edge: in the 880px column of
 the middle, the width they saved is not missed, and who said what reads at a glance.
 
+- **A balloon is authored by whoever supplied its input, not by the transcript role.** Agent
+  transcripts call every input `user`, including lines and first prompts typed by the hub. The
+  hub's persisted input provenance is authoritative: draw those as **Hub** in the hub's sunken,
+  folded row style, or as the represented sender it records (**PO**, `#18 codex`, another
+  project's PO). They are team activity, never the person's bubble, a point/Your ask, or part of
+  the person-only view, and they do not create unread news by themselves. Prefix recognition is
+  only the compatibility fallback for transcripts from before provenance was recorded. Only an
+  input the person actually submitted (the message box, their comment or their quick-answer
+  click) uses their name and right-hand balloon.
+
 - **The header** (`.from`) is `--fs-200` 400 `--fg-muted`, sentence case, the name `--fg-subtle`
   500; an agent's starts with its 20px avatar (`::before`, "C" or "X" on `--agent-*-bg/-fg`).
 - The hub's rows keep their sunken rows; a send on its way keeps its dashed edge.

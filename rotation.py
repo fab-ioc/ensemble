@@ -736,7 +736,7 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     # The handover as it was just before the ask, and the ask's time just
     # after it: a file written before or while it was typed is never fresh.
     before = _mtime(hp)
-    sess.send_line(ask)
+    _d._type_input(sess, ask)
     # The ask's own submit: a person typing into the terminal after it means
     # someone is working with the agent, and the rotation waits.
     st.update(phase="asked", askRoom=s["room"]["id"], askIdentity=part["identity"],
@@ -1403,7 +1403,7 @@ def _ask_before_switch(project: dict, room: dict, part: dict, agent: str, flags:
     sess = _pty(part)
     if sess is None:
         return out
-    sess.send_line(ask)
+    _d._type_input(sess, ask)
     out["asked"] = True
     while time.time() < end:
         time.sleep(SWITCH_POLL_S)
@@ -1962,7 +1962,7 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
                 if (quiet and not _d.attention.looks_like_prompt(tail)) or time.time() > end:
                     break
             with GATE:
-                sess.send_line(wake)
+                _d._type_input(sess, wake)
         _log(f"{rid}/{ident}: typed {len(wakes)} held wake(s) into the fresh session")
     threading.Thread(target=run, daemon=True, name=f"rotation-replay-{rid}-{ident}").start()
 

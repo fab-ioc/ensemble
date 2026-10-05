@@ -308,8 +308,8 @@ class AnsweredInTheTerminal(_Bell):
         self.report("blocked", BLOCKED)
         note = "[from the restart helper, not a person] The hub was restarted at 16:51."
         self.assertEqual(dashboard.hub_input_kind(note)["kind"], "helper")
-        # As the helper sends it, and as one from before `hub` would: the note, then the Enter.
-        for flag in ({"hub": True}, {}):
+        # As the helper sends it: explicit Hub origin on both the note and Enter.
+        for flag in ({"hub": True}, {"hub": True, "origin": "hub"}):
             self.type(note, **flag)
             self.type("\r", **flag)
             self.assertEqual(self.item()["state"], "blocked")
@@ -318,12 +318,14 @@ class AnsweredInTheTerminal(_Bell):
         self.assertNotIn("answeredAt", chatroom.participant(chatroom.get_room(self.rid, public=False), "claude"))
 
     def test_a_person_or_the_po_typing_into_it_answers_it_for_the_bell_the_chat_and_the_digest(self):
-        for body in ("Logged in, go on.", dashboard.PO_MESSAGE_PREFIX + " he logged in, carry on"):
+        for body, origin in (("Logged in, go on.", {}),
+                             (dashboard.PO_MESSAGE_PREFIX + " he logged in, carry on",
+                              {"hub": True, "origin": "po"})):
             self.report("blocked", BLOCKED)
             self.assertEqual(self.facts()["ask"], "blocked")
-            self.type(body)                 # the text, then its Enter, as the page and tell.py send them
+            self.type(body, **origin)       # the text, then its Enter, as the page and tell.py send them
             self.assertEqual(self.item()["state"], "blocked")
-            self.type("\r")
+            self.type("\r", **origin)
             self.assertIsNone(self.item())
             self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
             self.assertEqual(self.facts()["ask"], "")

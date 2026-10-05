@@ -88,7 +88,10 @@ class ClassifiedTurns(unittest.TestCase):
         merged = next(t for t in turns if t["text"] == "Merged and live.")
         self.assertEqual(merged["answers"], {"kind": "report", "reportKind": "completed",
                                              "taskTitle": "Docs: projects (v2)",
-                                             "taskId": "docs_projects", "reporter": "claude"})
+                                             "taskId": "docs_projects", "reporter": "claude",
+                                             "senderType": "task",
+                                             "senderId": "claude@docs_projects",
+                                             "senderLabel": "docs_projects claude"})
 
     def test_a_claude_transcript(self):
         with tempfile.TemporaryDirectory() as d:

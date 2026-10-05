@@ -145,6 +145,8 @@ def wake_kind(text: str, role: str, first_done: bool) -> tuple[str, dict]:
     if kind != "human":
         if kind in {"rotation", "madepo"} and not first_done:
             return "first", {"kind": kind}
+        if kind == "po":
+            return "frompo", {}
         return kind, {}
     if s.startswith(dashboard.PO_MESSAGE_PREFIX):
         return "frompo", {}

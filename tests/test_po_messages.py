@@ -50,13 +50,15 @@ class _FakeLauncher:
     def __init__(self):
         self.calls = []
         self.projects = []      # the project each resume's line reads its task numbers in
+        self.origins = []
         self.held = {}
         self.fail_with = ""
         self.on_start = None
 
-    def _resume_room(self, room, text="", to="", key="", quiet=False, project=""):
+    def _resume_room(self, room, text="", to="", key="", quiet=False, project="", origin="human"):
         self.calls.append((room["id"], text, key))
         self.projects.append(project)
+        self.origins.append(origin)
         state = "failed" if self.fail_with else "resuming"
         self.held[room["id"]] = {"state": state, "error": self.fail_with,
                                  "items": [{"text": text, "key": key}]}
@@ -234,7 +236,7 @@ class Delivery(_World):
         info = dashboard.hub_input_kind(line)
         self.assertEqual(info, {"kind": "pomsg", "fromProject": "opten", "poKind": "bug"})
         self.assertFalse(dashboard.typed_by_person(line))
-        self.assertEqual(dashboard.hub_input_kind("[from the PO] carry on")["kind"], "human")
+        self.assertEqual(dashboard.hub_input_kind("[from the PO] carry on")["kind"], "po")
 
     def test_the_line_and_the_message_name_tasks_in_the_senders_project(self):
         # #152: "drafted as #27" in opten's message is opten's #27, not Dock's:
@@ -570,6 +572,7 @@ class ResumedPo(_World):
                                f'in text call it "{NAME("opten", "bug")}")')
         self.assertEqual(key, f"pomsg:{res['id']}")
         self.assertEqual(self.launcher.projects, ["proj-opten"], "the line's #N are opten's tasks (dashboard.send_item, ref_project)")
+        self.assertEqual(self.launcher.origins, ["pomsg"])
         # Queued until the line is in; a look meanwhile starts nothing more.
         [item] = self.queue()
         self.assertTrue(item["resuming"])

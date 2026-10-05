@@ -5828,7 +5828,7 @@ function findRowHtml(x, i, on, parsed) {
     if (it.hits > 1) meta.push(`${it.hits} matches`);
   } else {
     title = (it.no && !it.po ? `<span class="tno">#${esc(String(it.no))}</span> ` : '') + esc(it.title || '');
-    meta.push([it.from, it.to].filter(Boolean).join(' → '));
+    meta.push([it.fromLabel || it.from, it.toLabel || it.to].filter(Boolean).join(' → '));
     if (it.project && !it.po) meta.push(it.project);
   }
   return `<div class="fd-row${on ? ' on' : ''}" role="option" id="fd-${i}" data-i="${i}" aria-selected="${on ? 'true' : 'false'}">`

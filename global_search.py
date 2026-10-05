@@ -130,7 +130,9 @@ def _room_entry(d: dict) -> dict:
         if not text:
             continue
         msgs.append({"id": str(m.get("id") or ""), "ts": float(m.get("ts") or 0), "from": str(m.get("from") or ""),
-                     "to": str(m.get("to") or ""), "text": text, "low": text.lower()})
+                     "to": str(m.get("to") or ""), "text": text, "low": text.lower(),
+                     **{k: m[k] for k in ("kind", "reporter", "taskId", "fromProjectName",
+                                          "toProjectName", "senderLabel") if m.get(k) not in (None, "")}})
     title = str(d.get("title") or "")
     spec = d.get("spec") if isinstance(d.get("spec"), str) else ""
     return {"id": str(d.get("id") or ""), "no": d.get("no"), "projectId": str(d.get("projectId") or ""),
@@ -198,7 +200,9 @@ def search_rooms(entries: list[dict], groups: list[list[str]], refs: dict[str, l
             if any(all(t in m["low"] for t in g) for g in groups):
                 own.append(m)
                 messages.append({"roomId": e["id"], "msgId": m["id"], "ts": m["ts"], "from": m["from"],
-                                 "to": m["to"], "snippet": snippet(m["text"], terms)})
+                                 "to": m["to"], "snippet": snippet(m["text"], terms),
+                                 **{k: m[k] for k in ("kind", "reporter", "taskId", "fromProjectName",
+                                                      "toProjectName", "senderLabel") if m.get(k) not in (None, "")}})
         # A task is also found by its chat, the words spread over its title,
         # spec and messages as the old dashboard's rows allowed.
         if e["id"] not in tasks and e["msgs"] and any(

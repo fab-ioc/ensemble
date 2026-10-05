@@ -3,10 +3,15 @@ import io
 import json
 import shutil
 import subprocess
+import tempfile
+import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
+import chatroom
 import dashboard
+import input_provenance
 from backends import ptyrun
 import rotation
 
@@ -93,11 +98,11 @@ class TerminalReplyFilter(unittest.TestCase):
 
 
 class PtyInputEndpointFilter(unittest.TestCase):
-    def post(self, sess, data, **extra):
-        body = json.dumps({"id": "pty-x", "data": data, **extra}).encode()
+    def request(self, path, payload, sess=None):
+        body = json.dumps(payload).encode()
         h = dashboard.Handler.__new__(dashboard.Handler)
-        h.path, h.command, h.request_version = "/api/pty/input", "POST", "HTTP/1.1"
-        h.requestline = "POST /api/pty/input HTTP/1.1"
+        h.path, h.command, h.request_version = path, "POST", "HTTP/1.1"
+        h.requestline = f"POST {path} HTTP/1.1"
         h.headers = {"Content-Length": str(len(body)), "Content-Type": "application/json",
                      "Host": "127.0.0.1"}
         h.rfile, h.wfile = io.BytesIO(body), io.BytesIO()
@@ -108,6 +113,9 @@ class PtyInputEndpointFilter(unittest.TestCase):
               mock.patch.object(rotation, "room_rotating", return_value=False)):
             h.do_POST()
         return h.wfile.getvalue().split(b" ", 2)[1]
+
+    def post(self, sess, data, **extra):
+        return self.request("/api/pty/input", {"id": "pty-x", "data": data, **extra}, sess)
 
     def test_browser_input_filters_only_the_recognized_frames(self):
         class Session:
@@ -172,6 +180,243 @@ class PtyInputEndpointFilter(unittest.TestCase):
         self.post(sess, FG + "copied text", terminalPaste=True)
         self.post(sess, "\x1b[1;5R")
         self.assertEqual(sess.writes, ["\x1b[1;5R", FG + "copied text"])
+
+    def test_multiline_hub_paste_is_recorded_once_when_enter_submits_it(self):
+        class Session:
+            meta = {"room": "room-one", "identity": "claude"}
+            hub_line_typed = False
+            hub_line_text = ""
+
+            def __init__(self):
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        sess = Session()
+        paste = "\x1b[200~first\nsecond\x1b[201~"
+        with mock.patch.object(dashboard, "_record_typed_input") as record, \
+                mock.patch.object(dashboard, "note_answer") as answered:
+            self.post(sess, paste, hub=True)
+            self.post(sess, "\r")
+        self.assertEqual(sess.writes, [paste, "\r"])
+        record.assert_called_once_with(sess, "first\nsecond", {
+            "kind": "hub", "senderType": "hub", "senderId": "ensemble", "senderLabel": "Hub"})
+        answered.assert_not_called()
+
+    def test_explicit_source_beats_prefix_and_bracketed_po_keeps_its_sender(self):
+        class Session:
+            meta = {"room": "room-one", "identity": "claude"}
+            hub_line_typed = False
+            hub_line_text = ""
+            person_line_text = ""
+
+            def __init__(self):
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        sess = Session()
+        with mock.patch.object(dashboard, "_record_typed_input") as record, \
+                mock.patch.object(dashboard, "note_answer") as answered:
+            self.post(sess, "[digest] these are the operator's words", origin="po")
+            self.post(sess, "\r")
+        info = record.call_args.args[2]
+        self.assertEqual((record.call_args.args[1], info["kind"], info["senderType"]),
+                         ("[digest] these are the operator's words", "human", "person"))
+        answered.assert_called_once_with("room-one", "claude")
+
+        sess = Session()
+        po = "\x1b[200~[from the PO] use branch B\x1b[201~"
+        with mock.patch.object(dashboard, "_record_typed_input") as record, \
+                mock.patch.object(dashboard, "note_answer") as answered:
+            self.post(sess, po, hub=True, origin="po")
+            self.post(sess, "\r", hub=True, origin="po")
+        info = record.call_args.args[2]
+        self.assertEqual((record.call_args.args[1], info["kind"], info["senderLabel"]),
+                         ("[from the PO] use branch B", "po", "PO"))
+        answered.assert_called_once_with("room-one", "claude")
+
+    def test_cursor_edited_browser_input_keeps_its_explicit_human_origin(self):
+        class Session:
+            hub_line_typed = False
+            hub_line_text = ""
+            person_line_text = ""
+
+            def __init__(self, rid):
+                self.meta = {"room": rid, "identity": "claude", "sessionId": "sid-one"}
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(chatroom, "ROOMS_DIR", Path(tmp) / "rooms"):
+            input_provenance._CACHE.clear()
+            rid = chatroom.create_room(
+                "Edited", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
+            sess = Session(rid)
+            with mock.patch.object(dashboard, "note_answer"):
+                self.post(sess, "[digest] genuie")
+                self.post(sess, "\x1b[D", terminalKey=True)
+                self.post(sess, "n")
+                self.post(sess, "\r")
+            [row] = input_provenance.records(rid)
+            final_text = "[digest] genuine"
+            self.assertNotEqual(row["hash"], input_provenance.text_hash(final_text))
+            [turn] = dashboard.classify_turns(
+                [{"role": "user", "text": final_text}], room_id=rid,
+                identity="claude", session_id="sid-one")
+            self.assertEqual(turn["kind"], "human")
+            self.assertEqual(turn["provenance"], "record")
+
+    def test_physical_write_and_journal_append_share_one_submission_order(self):
+        class Session:
+            hub_line_typed = False
+            hub_line_text = ""
+            person_line_text = ""
+
+            def __init__(self, rid):
+                self.meta = {"room": rid, "identity": "claude", "sessionId": "sid-one"}
+                self.physical = []
+                self.hub_written = threading.Event()
+
+            def alive(self):
+                return True
+
+            def write(self, _data):
+                if _data == "same\r":
+                    self.physical.append("human")
+                elif _data == "same":
+                    self.physical.append("hub")
+                    self.hub_written.set()
+                else:
+                    self.physical.append("hub-enter")
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(chatroom, "ROOMS_DIR", Path(tmp) / "rooms"):
+            input_provenance._CACHE.clear()
+            rid = chatroom.create_room(
+                "Ordered", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
+            sess = Session(rid)
+            recording_human = threading.Event()
+            release_human = threading.Event()
+            real_record = dashboard._record_typed_input
+
+            def delayed_record(*args, **kwargs):
+                info = args[2] if len(args) > 2 else {}
+                if info.get("kind") == "human":
+                    recording_human.set()
+                    self.assertTrue(release_human.wait(2))
+                return real_record(*args, **kwargs)
+
+            with mock.patch.object(dashboard, "_record_typed_input", side_effect=delayed_record), \
+                    mock.patch.object(dashboard, "note_answer"):
+                human = threading.Thread(target=lambda: self.post(sess, "same\r"))
+                human.start()
+                self.assertTrue(recording_human.wait(2))
+                hub = threading.Thread(
+                    target=lambda: dashboard._type_input(sess, "same", {"kind": "hub"}))
+                hub.start()
+                hub_was_blocked = not sess.hub_written.wait(0.1)
+                release_human.set()
+                human.join(2)
+                hub.join(2)
+                self.assertTrue(hub_was_blocked,
+                                "the Hub write passed the unjournaled human submission")
+            self.assertFalse(human.is_alive())
+            self.assertFalse(hub.is_alive())
+            self.assertEqual(sess.physical, ["human", "hub", "hub-enter"])
+            self.assertEqual([row["kind"] for row in input_provenance.records(rid)],
+                             ["human", "hub"])
+            assigned = input_provenance.assign(
+                input_provenance.index(rid), [(0, "same", 0), (1, "same", 0)],
+                identity="claude", session_id="sid-one")
+            self.assertEqual([assigned[i]["kind"] for i in (0, 1)], ["human", "hub"])
+
+    def test_page_keystroke_does_not_wait_for_another_terminal_enter_pause(self):
+        class Session:
+            hub_line_typed = False
+            hub_line_text = ""
+            person_line_text = ""
+
+            def __init__(self, name):
+                self.name = name
+                self.meta = {}
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        brief = Session("brief")
+        terminal = Session("terminal")
+        pausing = threading.Event()
+        release = threading.Event()
+
+        def pause(_seconds):
+            pausing.set()
+            self.assertTrue(release.wait(2))
+
+        with mock.patch.object(dashboard.time, "sleep", side_effect=pause), \
+                mock.patch.object(dashboard, "_record_typed_input"):
+            worker = threading.Thread(
+                target=lambda: dashboard._type_input(brief, "x" * 400, {"kind": "brief"}))
+            worker.start()
+            self.assertTrue(pausing.wait(1))
+            key_done = threading.Event()
+            key = threading.Thread(
+                target=lambda: (self.post(terminal, "k", terminalKey=True), key_done.set()))
+            key.start()
+            key_was_immediate = key_done.wait(0.2)
+            release.set()
+            worker.join(3)
+            key.join(3)
+        self.assertTrue(key_was_immediate, "the keystroke waited for the brief's Enter pause")
+        self.assertEqual(terminal.writes, ["k"])
+        self.assertEqual(brief.writes, ["x" * 400, "\r"])
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(key.is_alive())
+
+    def test_visible_terminal_send_journals_human_only_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(chatroom, "ROOMS_DIR", Path(tmp) / "rooms"):
+            input_provenance._CACHE.clear()
+            rid = chatroom.create_room(
+                "Visible", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
+            chatroom.patch_participant(
+                rid, "claude", {"pid": 42, "sessionId": "sid-visible"})
+            text = "[digest] these are the operator's words"
+            with mock.patch.object(dashboard.BACKEND, "send_text", return_value="ok"):
+                self.request("/api/send", {"pid": 42, "text": text})
+            [row] = input_provenance.records(rid)
+            self.assertEqual((row["kind"], row["identity"], row["sessionId"]),
+                             ("human", "claude", "sid-visible"))
+            [turn] = dashboard.classify_turns(
+                [{"role": "user", "text": text}], room_id=rid,
+                identity="claude", session_id="sid-visible")
+            self.assertEqual(turn["kind"], "human")
+
+            with mock.patch.object(dashboard.BACKEND, "send_text", return_value="not_alive"):
+                self.request("/api/send", {"pid": 42, "text": "another line"})
+            self.assertEqual(len(input_provenance.records(rid)), 1)
 
 
 if __name__ == "__main__":
