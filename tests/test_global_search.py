@@ -322,6 +322,39 @@ class GlobalFind(unittest.TestCase):
         _, r = dashboard.global_find("ED-6")
         self.assertEqual([t["roomId"] for t in r["tasks"]["items"]], ["room-b"])
 
+    def test_message_results_name_represented_senders_not_storage_identities(self):
+        a = json.loads((self.dir / "room-a.json").read_text(encoding="utf-8"))
+        a["messages"] = [
+            {"id": "h", "ts": 1, "from": "ensemble", "to": "user", "text": "labelhit hub"},
+            {"id": "u", "ts": 2, "from": "user", "to": "claude", "text": "labelhit ceo"},
+            {"id": "a", "ts": 3, "from": "claude", "to": "user", "text": "labelhit task"},
+        ]
+        (self.dir / "room-a.json").write_text(json.dumps(a), encoding="utf-8")
+        po = json.loads((self.dir / "room-po.json").read_text(encoding="utf-8"))
+        po["participants"] = [{"kind": "agent", "identity": "claude", "agent": "claude",
+                               "role": "Product owner"}]
+        po["messages"] = [
+            {"id": "p", "ts": 4, "from": "claude", "to": "user", "text": "labelhit po"},
+            {"id": "r", "ts": 5, "from": "codex@room-b", "to": "claude", "kind": "report",
+             "text": "labelhit report"},
+            {"id": "m", "ts": 6, "from": "claude@room-other", "to": "claude", "kind": "pomsg",
+             "fromProjectName": "Dock", "toProjectName": "Proj", "text": "labelhit other po"},
+        ]
+        (self.dir / "room-po.json").write_text(json.dumps(po), encoding="utf-8")
+        gs._ROOM_CACHE.clear()
+        with mock.patch.object(dashboard, "operator_name", return_value="sam"):
+            _, result = dashboard.global_find("labelhit")
+        labels = {m["msgId"]: (m["fromLabel"], m["toLabel"])
+                  for m in result["messages"]["items"]}
+        self.assertEqual(labels, {
+            "h": ("Hub", "sam"),
+            "u": ("sam", "#5 claude"),
+            "a": ("#5 claude", "sam"),
+            "p": ("PO", "sam"),
+            "r": ("#6 codex", "PO"),
+            "m": ("Dock PO", "Proj PO"),
+        })
+
     def test_short_or_empty(self):
         for q in ("", "a", '""'):
             _, r = dashboard.global_find(q, deep=True)

@@ -173,6 +173,32 @@ class PtyInputEndpointFilter(unittest.TestCase):
         self.post(sess, "\x1b[1;5R")
         self.assertEqual(sess.writes, ["\x1b[1;5R", FG + "copied text"])
 
+    def test_multiline_hub_paste_is_recorded_once_when_enter_submits_it(self):
+        class Session:
+            meta = {"room": "room-one", "identity": "claude"}
+            hub_line_typed = False
+            hub_line_text = ""
+
+            def __init__(self):
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        sess = Session()
+        paste = "\x1b[200~first\nsecond\x1b[201~"
+        with mock.patch.object(dashboard, "_record_typed_input") as record, \
+                mock.patch.object(dashboard, "note_answer") as answered:
+            self.post(sess, paste, hub=True)
+            self.post(sess, "\r")
+        self.assertEqual(sess.writes, [paste, "\r"])
+        record.assert_called_once_with(sess, paste, {"kind": "hub"})
+        answered.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

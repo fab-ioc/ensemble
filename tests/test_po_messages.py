@@ -234,7 +234,7 @@ class Delivery(_World):
         info = dashboard.hub_input_kind(line)
         self.assertEqual(info, {"kind": "pomsg", "fromProject": "opten", "poKind": "bug"})
         self.assertFalse(dashboard.typed_by_person(line))
-        self.assertEqual(dashboard.hub_input_kind("[from the PO] carry on")["kind"], "human")
+        self.assertEqual(dashboard.hub_input_kind("[from the PO] carry on")["kind"], "po")
 
     def test_the_line_and_the_message_name_tasks_in_the_senders_project(self):
         # #152: "drafted as #27" in opten's message is opten's #27, not Dock's:

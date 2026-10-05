@@ -65,7 +65,8 @@ const res = {
     { roomId: 'room-b', no: 8, title: 'Paint', project: 'Motors', where: 'spec', hits: 0, snippet: 'check the brakes first' },
   ] },
   sessions: { count: 1, items: [{ sessionId: 's-1', agent: 'codex', cwd: 'C:\\work\\garage', title: '', hits: 4, snippet: 'brakes <b>' }] },
-  messages: { count: 1, items: [{ roomId: 'room-po', msgId: 'm1', from: 'fab', to: 'claude', title: 'Motors · PO', po: true, snippet: 'the brakes' }] },
+  messages: { count: 1, items: [{ roomId: 'room-po', msgId: 'm1', from: 'user', to: 'claude',
+    fromLabel: 'sam', toLabel: 'PO', title: 'Motors · PO', po: true, snippet: 'the brakes' }] },
 };
 log.items = findItems(res).map(findKey);
 log.none = findItems(null);
@@ -144,7 +145,7 @@ class TheDropDownsInside(unittest.TestCase):
         self.assertIn('check the <mark class="match">brakes</mark> first', h)
         self.assertIn("Codex · garage · 4 matches", h)
         self.assertIn("&lt;b&gt;", h, "a snippet is text, never markup")
-        self.assertIn("fab → claude", h)
+        self.assertIn("sam → PO", h)
         self.assertIn("Searching conversations…", self.r["htmlDeep"])
 
     def test_the_list_filter_reads_what_a_row_shows(self):

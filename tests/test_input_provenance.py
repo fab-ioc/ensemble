@@ -1,0 +1,224 @@
+"""Persistent attribution for text supplied to an agent by the hub/tools."""
+from __future__ import annotations
+
+import json
+import tempfile
+import time
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest import mock
+
+import chatroom
+import dashboard
+import input_provenance
+import points
+
+
+REPORT = ("[report] completed from task 'Seven' (#7, codex): done — "
+          "read it with ensemble_get_task taskId=#7 messages=0.")
+
+
+def stamp(at: float) -> str:
+    return datetime.fromtimestamp(at, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class Journal(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.records = Path(self.tmp.name) / "input-provenance"
+        self.patch = mock.patch.object(input_provenance, "RECORDS_DIR", self.records)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        input_provenance._CACHE.clear()
+
+    def test_persists_hash_only_and_matches_the_right_seat_and_time(self):
+        row = input_provenance.record(
+            "room-one", "codex", "  hub words\r\n", {"kind": "hub", "senderLabel": "Hub"},
+            session_id="sid-1", at=1000)
+        self.assertIsNotNone(row)
+        saved = json.loads(input_provenance.path_for("room-one").read_text(encoding="utf-8"))
+        self.assertNotIn("text", saved)
+        self.assertEqual(saved["hash"], input_provenance.text_hash("hub words\n"))
+        indexed = input_provenance.index("room-one")
+        self.assertEqual(input_provenance.match(indexed, "hub words", at=1001,
+                                                identity="codex", session_id="sid-1")["kind"], "hub")
+        self.assertIsNone(input_provenance.match(indexed, "hub words", at=1001, identity="claude"))
+        self.assertIsNone(input_provenance.match(
+            indexed, "hub words", at=1000 + input_provenance.MATCH_SLACK_S + 1,
+            identity="codex", session_id="sid-1"))
+
+    def test_bracketed_paste_and_plain_text_have_one_hash(self):
+        pasted = "\x1b[200~first\nsecond\x1b[201~"
+        self.assertEqual(input_provenance.normalize(pasted), "first\nsecond")
+        self.assertEqual(input_provenance.text_hash(pasted),
+                         input_provenance.text_hash("first\nsecond"))
+
+    def test_one_record_attributes_only_the_closest_identical_turn(self):
+        input_provenance.record(
+            "room-one", "codex", "same words", {"kind": "hub"},
+            session_id="sid-1", at=100)
+        got = input_provenance.assign(
+            input_provenance.index("room-one"),
+            [(0, "same words", 90), (1, "same words", 101)],
+            identity="codex", session_id="sid-1")
+        self.assertEqual(list(got), [1])
+        self.assertEqual(got[1]["kind"], "hub")
+
+
+class InventoryFixtures(unittest.TestCase):
+    """Every inventory kind is a represented sender, never the CEO."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        patches = [
+            mock.patch.object(input_provenance, "RECORDS_DIR", base / "input-provenance"),
+            mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+            mock.patch.object(dashboard, "DASHBOARD_DIR", base),
+            mock.patch.object(dashboard, "operator_name", return_value="sam"),
+            mock.patch.object(points, "_log"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        input_provenance._CACHE.clear()
+        for cache in (points._CACHE, points._SYNCED, points._SCANNED, points._TEXTS):
+            cache.clear()
+        for seen in (points._ADOPT_SEEN, points._TOLD, points._GONE):
+            seen.clear()
+        self.base = time.time() - 120
+
+    def fixtures(self):
+        rows = [
+            ("brief", "A task brief without a prefix", {"kind": "brief"}, "Hub"),
+            ("reviewbrief", "Review commit abc123", {"kind": "reviewbrief"}, "Hub"),
+            ("hub", "An unprefixed helper wake", {"kind": "hub"}, "Hub"),
+            ("report", REPORT, None, "#7 codex"),
+            ("pomsg", "[from the Dock PO] bug: splitter jumps", None, "Dock PO"),
+        ]
+        seen = {kind for kind, *_ in rows}
+        for prefix, kind in dashboard.HUB_INPUT_KINDS:
+            if kind in seen:
+                continue
+            tail = "sam] helper" if kind == "helper" else "fixture"
+            text = prefix + tail
+            label = "PO" if kind == "po" else "Hub"
+            rows.append((kind, text, None, label))
+        return rows
+
+    def classified(self, room_id: str, sid: str, identity: str, include_human: bool):
+        raw = []
+        for i, (kind, text, forced, _label) in enumerate(self.fixtures()):
+            at = self.base + i
+            info = dashboard._input_sender_info(text, forced)
+            input_provenance.record(room_id, identity, text, info, session_id=sid, at=at)
+            raw.append({"role": "user", "text": text, "timestamp": stamp(at)})
+        if include_human:
+            raw.append({"role": "user", "text": "Please change the real setting.",
+                        "timestamp": stamp(self.base + 100)})
+        return raw, dashboard.classify_turns(raw, room_id=room_id, identity=identity,
+                                              session_id=sid)
+
+    def test_every_kind_uses_its_recorded_sender_and_a_real_ceo_turn_stays_human(self):
+        raw, turns = self.classified("room-fixture", "sid-fixture", "claude", True)
+        expected = self.fixtures()
+        self.assertEqual(len(turns), len(expected) + 1)
+        for turn, (kind, _text, _forced, label) in zip(turns, expected):
+            with self.subTest(kind=kind):
+                self.assertEqual(turn["kind"], kind)
+                self.assertEqual(turn["senderLabel"], label)
+                self.assertEqual(turn["provenance"], "record")
+                self.assertNotEqual(turn["kind"], "human")
+        self.assertEqual(turns[-1]["kind"], "human")
+        self.assertNotIn("senderLabel", turns[-1])
+
+    def test_identical_ceo_text_is_not_borrowed_from_the_hub_turn(self):
+        at = self.base
+        text = "The exact same sentence"
+        input_provenance.record(
+            "room-copy", "claude", text,
+            dashboard._input_sender_info(text, {"kind": "hub"}),
+            session_id="sid-copy", at=at)
+        turns = dashboard.classify_turns([
+            {"role": "user", "text": text, "timestamp": stamp(at)},
+            {"role": "assistant", "text": "ok", "timestamp": stamp(at + 1)},
+            {"role": "user", "text": text, "timestamp": stamp(at + 2)},
+        ], room_id="room-copy", identity="claude", session_id="sid-copy")
+        self.assertEqual(turns[0]["kind"], "hub")
+        self.assertEqual(turns[2]["kind"], "human")
+
+    def test_only_the_genuine_ceo_turn_becomes_a_point(self):
+        rid = chatroom.create_room(
+            "Solo", [{"identity": "claude", "agent": "claude", "role": "Product owner"}])["id"]
+        room = chatroom.get_room(rid, public=False)
+        room["mode"] = "solo"
+        room["participants"][0].update(sessionId="sid-points", ptyId="pty-1")
+        chatroom.update_room(room)
+        raw, turns = self.classified(rid, "sid-points", "claude", True)
+        with mock.patch.object(dashboard, "read_session_turns", return_value=turns), \
+                mock.patch.object(points, "_session_stat", return_value=[len(raw), self.base + 500]):
+            led = points.sync(rid, force=True)
+        self.assertEqual([(p["text"], p["state"]) for p in led["points"]],
+                         [("Please change the real setting.", "open")])
+
+        rid2 = chatroom.create_room(
+            "Only hub", [{"identity": "claude", "agent": "claude", "role": "Product owner"}])["id"]
+        room2 = chatroom.get_room(rid2, public=False)
+        room2["mode"] = "solo"
+        room2["participants"][0].update(sessionId="sid-hub-only", ptyId="pty-2")
+        chatroom.update_room(room2)
+        _raw2, turns2 = self.classified(rid2, "sid-hub-only", "claude", False)
+        with mock.patch.object(dashboard, "read_session_turns", return_value=turns2), \
+                mock.patch.object(points, "_session_stat", return_value=[len(turns2), self.base + 500]):
+            self.assertEqual(points.sync(rid2, force=True)["points"], [])
+
+
+class LaunchKinds(unittest.TestCase):
+    def test_type_input_records_only_after_a_successful_submit(self):
+        class Session:
+            meta = {"room": "room-one", "identity": "claude", "sessionId": "sid-one"}
+
+            def __init__(self, alive=True):
+                self._alive = alive
+                self.sent = []
+
+            def send_line(self, text):
+                self.sent.append(text)
+                return True
+
+            def alive(self):
+                return self._alive
+
+        sess = Session()
+        with mock.patch.object(dashboard, "_record_typed_input") as record:
+            self.assertTrue(dashboard._type_input(sess, "first\nsecond", {"kind": "digest"}))
+        record.assert_called_once_with(sess, "first\nsecond", {"kind": "digest"})
+        self.assertEqual(sess.sent, ["\x1b[200~first\nsecond\x1b[201~"])
+
+        dead = Session(alive=False)
+        with mock.patch.object(dashboard, "_record_typed_input") as record:
+            self.assertFalse(dashboard._type_input(dead, "not delivered"))
+        record.assert_not_called()
+
+        human = Session()
+        with mock.patch.object(dashboard, "_record_typed_input") as record:
+            self.assertTrue(dashboard._type_input(human, "A genuine CEO message", record=False))
+        record.assert_not_called()
+
+    def test_rotation_reviewer_and_ordinary_briefs_are_distinct(self):
+        reviewer = {"identity": "codex-2", "agent": "codex", "kind": "agent", "role": "reviewer",
+                    "runs": "on mention"}
+        owner = {"identity": "codex", "agent": "codex", "kind": "agent", "role": "engineer"}
+        room = {"participants": [owner, reviewer]}
+        self.assertEqual(dashboard._launch_input_kind(room, reviewer, "[rotation] quoted in spec", "review"),
+                         "reviewbrief")
+        self.assertEqual(dashboard._launch_input_kind(room, owner, "[board] now\n\n[rotation] take over", "fresh"),
+                         "rotation")
+        self.assertEqual(dashboard._launch_input_kind(room, owner, "ordinary first prompt", None), "brief")
+
+
+if __name__ == "__main__":
+    unittest.main()

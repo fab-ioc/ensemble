@@ -2332,7 +2332,9 @@ function foldHeld(items, comments) {
 // folds the replies to the hub too.
 const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Report', relay: 'Team message',
   resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper',
-  points: 'Your open asks', pomsg: 'From another PO', stalled: 'Stall check' };
+  points: 'Your open asks', pomsg: 'From another PO', stalled: 'Stall check', po: 'From the PO',
+  issue: 'GitHub issue', issuecomment: 'GitHub issue comment', board: 'Board update', spec: 'Spec changed',
+  brief: 'Task brief', reviewbrief: 'Review brief', hub: 'Hub message' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 // A message between two projects' POs (po_messages.py), kept in both POs'
 // rooms: a balloon of its own, never folded as hub traffic.
@@ -2393,6 +2395,7 @@ const isDigest = m => !!m && (isHubInput(m) ? m.kind === 'digest' : m.from === '
 // "opten PO", "Dock PO": a message between POs names both by their projects.
 const poSide = name => (name || nounText('Another {project}')) + ' PO';
 function senderName(m, N = CHAT_NAMES) {
+  if (m && m.senderLabel) return String(m.senderLabel);
   if (isPoMsg(m)) return poSide(m.fromProjectName);
   const t = taskReport(m);
   const s = t && m.from === 'user' ? taskName(t, N) + (m.reporter ? ' ' + m.reporter : '')
@@ -4141,7 +4144,8 @@ function withTaskBubble(items, spec, key) {
   const t = (spec || '').trim();
   if (!t) return items;
   if (items.some(m => m[key] === 'user' && (m.text || '').trim() === t)) return items;
-  return [{ id: 'task', from: 'user', who: 'user', to: '', text: spec }].concat(items);
+  return [{ id: 'task', from: 'user', who: 'ensemble', to: '', text: spec,
+    kind: 'brief', senderType: 'hub', senderId: 'ensemble', senderLabel: 'Hub' }].concat(items);
 }
 // ---- What you sent, until the conversation shows it: begin -----------------
 // The hub keeps every send by its key (sends.py) and each poll brings them
@@ -4371,7 +4375,12 @@ function soloItems(raw, sid, agentId, keep) {
   return all.slice(start).map(({ t, id }) => Object.assign({
     id,
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
-  }, t.timestamp ? { ts: Date.parse(t.timestamp) / 1000 } : {}, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
+  }, t.timestamp ? { ts: Date.parse(t.timestamp) / 1000 } : {}, t.role === 'user' ? {
+    kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle,
+    taskId: t.taskId, reporter: t.reporter, senderType: t.senderType,
+    senderId: t.senderId, senderLabel: t.senderLabel, fromProject: t.fromProject,
+    poKind: t.poKind, provenance: t.provenance, inputId: t.inputId,
+  }
     : t.answers ? { answers: t.answers } : {}));
 }
 async function prevSessionItems(sid, agentId) {

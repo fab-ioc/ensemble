@@ -113,6 +113,14 @@ class NewsAt(unittest.TestCase):
         self.assertEqual(dashboard.room_news_at(rm), 160.0)
         rm["messages"].append({"from": "user", "kind": "human", "text": "Thanks.", "ts": 170.0})
         self.assertEqual(dashboard.room_news_at(rm), 160.0)
+        # A hub-only room note never lights the unread dot; a represented
+        # sender's report and PO-to-PO message do.
+        rm["messages"].append({"from": "ensemble", "kind": "notice", "text": "Hub bookkeeping", "ts": 180.0})
+        self.assertEqual(dashboard.room_news_at(rm), 160.0)
+        rm["messages"].append({"from": "codex@room-task", "kind": "report", "text": "Done", "ts": 190.0})
+        self.assertEqual(dashboard.room_news_at(rm), 190.0)
+        rm["messages"].append({"from": "claude@room-po", "kind": "pomsg", "text": "From Dock", "ts": 200.0})
+        self.assertEqual(dashboard.room_news_at(rm), 200.0)
         self.assertEqual(dashboard.room_news_at(self.duo([])), 0.0)
 
     def test_a_one_agent_chat_is_its_transcript(self):

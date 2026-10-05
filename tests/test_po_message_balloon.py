@@ -38,7 +38,7 @@ const ctx = { esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, whoHtml, senderName, recipientName, kindName, foldChips, foldBalloonHtml,
-    quietItem, taskOfMsg, chatGroups, withHubRows, soloItems, isHubInput, hubLabel, answerChip };`, ctx);
+    quietItem, taskOfMsg, chatGroups, withHubRows, withTaskBubble, soloItems, isHubInput, hubLabel, answerChip };`, ctx);
 const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = {};
@@ -71,6 +71,15 @@ const items = T.withHubRows(T.soloItems(turns, 'S', 'claude', 120), { messages: 
 out.solo = items.map(m => m.id);
 out.typed = [T.isHubInput(items[4]), T.quietItem(items[4], false), T.hubLabel(items[4])];
 out.answer = T.answerChip(items[5].answers).text;
+// A persisted attribution survives soloItems and drives the sender/header,
+// while the synthetic task bubble is Hub/team activity, never the person.
+const recorded = T.soloItems([{ role: 'user', kind: 'po', text: 'Use the safe path.', senderType: 'po',
+  senderId: 'po', senderLabel: 'PO', provenance: 'record', inputId: 'input-1' }], 'P', 'claude', 10)[0];
+out.recorded = [T.senderName(recorded), T.whoHtml(recorded), recorded.senderType,
+  recorded.provenance, T.foldBalloonHtml(recorded, 0, 'full', { md: t => t })];
+const synthetic = T.withTaskBubble([], 'Task words', 'from')[0];
+out.synthetic = [synthetic.kind, synthetic.senderLabel, T.isHubInput(synthetic),
+  T.quietItem(synthetic, false), T.foldBalloonHtml(synthetic, 0, 'full', { md: t => t })];
 console.log(JSON.stringify(out));
 """
 
@@ -79,7 +88,8 @@ console.log(JSON.stringify(out));
 class APoMessageBalloon(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = NOUN + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "withHubRows")
+        code = (NOUN + fold_block(SRC) + js_function(SRC, "soloItems")
+                + js_function(SRC, "withHubRows") + js_function(SRC, "withTaskBubble"))
         res = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if res.returncode != 0:
@@ -110,6 +120,17 @@ class APoMessageBalloon(unittest.TestCase):
         # The line the hub typed is a quiet row; the balloon holds the words.
         self.assertEqual(self.r["typed"], [True, True, "From another PO"])
         self.assertEqual(self.r["answer"], "on a PO message")
+
+    def test_persisted_and_synthetic_hub_inputs_keep_their_sender_and_style(self):
+        recorded = self.r["recorded"]
+        self.assertEqual(recorded[:4], ["PO", '<span class="who hub-who">PO</span> <span class="to">→ PO</span>',
+                                        "po", "record"])
+        self.assertIn('class="msg user hub"', recorded[4])
+        self.assertIn('>PO</span>', recorded[4])
+        synthetic = self.r["synthetic"]
+        self.assertEqual(synthetic[:4], ["brief", "Hub", True, True])
+        self.assertIn('class="msg user hub"', synthetic[4])
+        self.assertIn('>Hub</span>', synthetic[4])
 
 
 if __name__ == "__main__":

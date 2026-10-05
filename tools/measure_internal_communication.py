@@ -314,6 +314,8 @@ def classify_user_text(text: str, first_done: bool, meta: bool = False) -> tuple
     if kind != "human":
         if kind in {"rotation", "madepo"} and not first_done:
             return "first", kind, {}
+        if kind == "po":
+            return "hub", FROM_PO_KIND, {}
         extra = {}
         if kind == "report":
             rk = str(info.get("reportKind") or "")
