@@ -1192,6 +1192,16 @@ self-contained component, so a later layout can host it elsewhere.
   heads are sentence case, `--fs-200` 600 in `--fg-subtle`, the count after the name in
   `--fg-muted`. **An empty group is its head alone**, quieter (500, `--fg-muted`) with its `0`: the
   list keeps its shape, so no group comes and goes under the pointer as tasks move.
+- **Full names on hover** (#170): only a `.sw-row` whose `.sw-title` is measured as truncated
+  expands after 320 ms of mouse hover; moving to the next row switches at once. Keyboard focus
+  expands at once. The expanded copy is aligned over the row, keeps the dot, number, age and reason,
+  uses `--hover` and `--e-200`, and grows toward the middle (leftward when docked on the right).
+  It wraps the name at the current window's edge and never widens the page. The copy lives in that
+  window's `body` at z-index 50: above the list Dock's z-index 15, Dock strips and docked panels,
+  below menus, the selection Comment/Copy bar at 60 and dialogs. Hide it while a menu is opened.
+  The checkbox beside the list's filter, labelled **Full names** with the full accessible name
+  **Show full names on hover**, is on by default and saves
+  `cd-switcher-full-names` per browser. On `(hover: none)` there is no expansion.
 - **Group: project** (`swByProject`): a head per project (its open task count), its PO first
   (once, with its lozenge if it needs you), then its tasks in the status groups' order; then
   Unassigned, which holds the tasks in no project, and Done today, both folded.

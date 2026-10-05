@@ -2373,9 +2373,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      readers get a real list; its box and arrow are drawn away. */
   /* The list's filter (#161), under its head; the line under it says the
      list is filtered, with Clear. */
-  .sw-find { flex: 0 0 auto; padding: var(--s-100) var(--s-300) 0; }
+  .sw-find { flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-200);
+    padding: var(--s-100) var(--s-300) 0; }
   #sw-filter {
-    width: 100%; height: 32px; padding: 0 var(--s-200); border: 1px solid var(--border); border-radius: var(--r-200);
+    flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 var(--s-200); border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-200);
   }
   #sw-filter::placeholder { color: var(--fg-muted); }
@@ -2398,6 +2399,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--s-200);
     padding: var(--s-300) var(--s-300) var(--s-100);
   }
+  .sw-hover-toggle { display: flex; align-items: center; gap: var(--s-100); flex: 0 0 auto;
+    color: var(--fg-subtle); font-size: var(--fs-100); white-space: nowrap; cursor: pointer; }
+  .sw-hover-toggle input { margin: 0; accent-color: var(--accent); }
+  .sw-hover-toggle:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--r-100); }
   .sw-pick { position: relative; display: inline-flex; align-items: center; min-width: 0; border-radius: var(--r-200); }
   .sw-pick select {
     appearance: none; -webkit-appearance: none; field-sizing: content; max-width: 100%; min-width: 0;
@@ -2440,7 +2445,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: transparent; color: var(--fg); font: inherit; cursor: pointer;
   }
   .sw-row:hover { background: var(--hover); }
+  /* Portalled to the current window's body: above Dock's clipped stack (15)
+     and the middle, below menus, the selection bar (60), and dialogs. */
+  .sw-expanded { position: fixed; z-index: 50; margin: 0; background: var(--hover);
+    box-shadow: var(--e-200); }
+  .sw-expanded .sw-title { white-space: normal; text-overflow: clip; overflow-wrap: anywhere; }
+  .sw-expanded.sw-expand-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .sw-row.on { background: var(--selected-bg); }
+  .sw-row.sw-expanded { background: var(--hover); }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
   .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg,
@@ -3212,6 +3224,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .sw-head { padding: var(--s-100) var(--s-200); }
     .sw-pick select, #sw-filter, .sw-clear { height: var(--touch-min); }
     .sw-find { padding: 0 var(--s-200); }
+    .sw-hover-toggle { display: none; }
     .sw-row { min-height: var(--touch-min); padding-block: var(--s-100); }
     .sw-row .sw-st { margin-top: var(--s-200); }
     summary.sw-ghead, .sw-more, .sw-diag-btn { min-height: var(--touch-min); display: flex; align-items: center; }
@@ -3847,6 +3860,7 @@ window.DOC_LISTENERS_PAUSED = false;
        the head, whose free end holds the list dock's ⋯ and −. -->
   <div class="sw-find">
     <input id="sw-filter" type="search" placeholder="Filter the list" aria-label="Filter the list" autocomplete="off" aria-describedby="sw-filtered">
+    <label class="sw-hover-toggle" title="Show full names on hover"><input id="sw-hover-names" type="checkbox" checked aria-label="Show full names on hover">Full names</label>
   </div>
   <div id="sw-filtered" class="sw-filtered" role="status" hidden></div>
   <div id="sw-list"></div>
@@ -15912,6 +15926,121 @@ function swSelection() {
   const pj = SELECTED_PROJECT && projectById(SELECTED_PROJECT);
   return pj && pj.poRoomId ? { po: pj.id } : {};
 }
+// The list scrollport and Dock clip its rows. Draw the same row in the current
+// document's body, so it can grow over the middle (also in a popped-out window).
+const SW_HOVER_KEY = 'cd-switcher-full-names';
+let SW_HOVER_NAMES = true;
+try { SW_HOVER_NAMES = localStorage.getItem(SW_HOVER_KEY) !== 'false'; } catch (e) {}
+$('#sw-hover-names').checked = SW_HOVER_NAMES;
+let SW_EXPAND = null, SW_EXPAND_TIMER = 0, SW_EXPAND_LAST = 0, SW_EXPAND_MENU_OBSERVER = null;
+function swExpandOpenMenu(doc) {
+  return [...doc.querySelectorAll('.dk-menu, .ov-menu:not([hidden]), .dcm:not([hidden]), #create-menu:not([hidden]), .me-menu:not([hidden]), .wf-menu:not([hidden]), .pr-menu:not([hidden])')]
+    .some(menu => menu.getClientRects().length > 0);
+}
+function swExpandHide() {
+  clearTimeout(SW_EXPAND_TIMER);
+  SW_EXPAND_TIMER = 0;
+  if (SW_EXPAND_MENU_OBSERVER) SW_EXPAND_MENU_OBSERVER.disconnect();
+  SW_EXPAND_MENU_OBSERVER = null;
+  if (SW_EXPAND) SW_EXPAND.copy.remove();
+  SW_EXPAND = null;
+}
+function swExpandAllowed(row) {
+  if (!SW_HOVER_NAMES || !row || !row.isConnected || row.closest('#switcher') !== SW_EL) return false;
+  const win = row.ownerDocument.defaultView;
+  const title = row.querySelector('.sw-title');
+  return !!(win && win.matchMedia('(hover: hover) and (pointer: fine)').matches
+    && !swExpandOpenMenu(row.ownerDocument)
+    && title && title.scrollWidth > title.clientWidth + 1);
+}
+function swExpandShow(row, focus = false) {
+  swExpandHide();
+  if (!swExpandAllowed(row)) return;
+  const doc = row.ownerDocument, win = doc.defaultView, title = row.querySelector('.sw-title');
+  const rect = row.getBoundingClientRect(), edge = 8;
+  // A right-docked list opens left. In its own window the same geometry uses
+  // that window's viewport, not the main page's.
+  const right = rect.left > win.innerWidth / 2;
+  const available = right ? rect.right - edge : win.innerWidth - rect.left - edge;
+  const wanted = rect.width + title.scrollWidth - title.clientWidth + 8;
+  const width = Math.min(Math.max(rect.width, wanted), available);
+  const copy = row.cloneNode(true);
+  copy.classList.add('sw-expanded');
+  if (focus) copy.classList.add('sw-expand-focus');
+  copy.removeAttribute('id');
+  copy.removeAttribute('title');
+  copy.removeAttribute('aria-current');
+  copy.tabIndex = -1;
+  copy.setAttribute('aria-hidden', 'true');
+  copy.style.left = `${right ? rect.right - width : rect.left}px`;
+  copy.style.top = `${rect.top}px`;
+  copy.style.width = `${width}px`;
+  copy.style.maxHeight = `${Math.max(32, win.innerHeight - rect.top - edge)}px`;
+  copy.style.overflowY = 'auto';
+  copy.addEventListener('click', ev => {
+    ev.preventDefault();
+    swExpandHide();
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey }));
+  });
+  copy.addEventListener('auxclick', ev => {
+    if (ev.button !== 1) return;
+    ev.preventDefault();
+    swExpandHide();
+    row.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
+  });
+  copy.addEventListener('pointerleave', ev => {
+    const next = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('#sw-list .sw-row');
+    if (next && next !== row) swExpandSchedule(next, true);
+    else if (!focus || doc.activeElement !== row) swExpandHide();
+  });
+  doc.body.appendChild(copy);
+  SW_EXPAND = { row, copy };
+  if (win.MutationObserver) {
+    SW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => { if (swExpandOpenMenu(doc)) swExpandHide(); });
+    SW_EXPAND_MENU_OBSERVER.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+  }
+  SW_EXPAND_LAST = Date.now();
+}
+function swExpandSchedule(row, immediate = false) {
+  if (SW_EXPAND && SW_EXPAND.row === row) return;
+  clearTimeout(SW_EXPAND_TIMER);
+  SW_EXPAND_TIMER = 0;
+  if (!swExpandAllowed(row)) { swExpandHide(); return; }
+  if (immediate || Date.now() - SW_EXPAND_LAST < 200) swExpandShow(row);
+  else SW_EXPAND_TIMER = setTimeout(() => swExpandShow(row), 320);
+}
+$('#sw-hover-names').addEventListener('change', ev => {
+  SW_HOVER_NAMES = ev.target.checked;
+  try { localStorage.setItem(SW_HOVER_KEY, String(SW_HOVER_NAMES)); } catch (e) {}
+  if (!SW_HOVER_NAMES) swExpandHide();
+});
+$('#sw-list').addEventListener('pointerover', ev => {
+  const row = ev.target.closest('.sw-row');
+  if (row && ev.pointerType === 'mouse') swExpandSchedule(row);
+});
+$('#sw-list').addEventListener('pointermove', ev => {
+  const row = ev.target.closest('.sw-row');
+  if (row && ev.pointerType === 'mouse' && !SW_EXPAND && !SW_EXPAND_TIMER) swExpandSchedule(row);
+});
+$('#sw-list').addEventListener('pointerout', ev => {
+  const row = ev.target.closest('.sw-row');
+  if (!row || (ev.relatedTarget && row.contains(ev.relatedTarget))) return;
+  const next = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('#sw-list .sw-row');
+  if (next && next !== row) swExpandSchedule(next, !!SW_EXPAND);
+  else if (!ev.relatedTarget || !ev.relatedTarget.closest || !ev.relatedTarget.closest('.sw-expanded')) {
+    clearTimeout(SW_EXPAND_TIMER);
+    if (!SW_EXPAND || SW_EXPAND.row.ownerDocument.activeElement !== SW_EXPAND.row) swExpandHide();
+  }
+});
+$('#sw-list').addEventListener('focusin', ev => {
+  const row = ev.target.closest('.sw-row');
+  if (row && row.matches(':focus-visible')) swExpandShow(row, true);
+});
+$('#sw-list').addEventListener('focusout', ev => {
+  if (SW_EXPAND && SW_EXPAND.row === ev.target) swExpandHide();
+});
+$('#sw-list').addEventListener('scroll', swExpandHide, { passive: true });
+window.addEventListener('resize', swExpandHide);
 function swRender() {
   const el = SW_EL;
   if (!el) return;
@@ -15926,7 +16055,7 @@ function swRender() {
   el.hidden = !on;
   document.body.classList.toggle('sw-on', on);
   document.body.classList.toggle('ph-list', on && phone);
-  if (!on) { SW_SHOWN = null; return; }
+  if (!on) { swExpandHide(); SW_SHOWN = null; return; }
   const box = $('#sw-list'), pick = $('#sw-proj');
   const projects = registeredProjects(), chosen = swProject(), by = swBy();
   writeSlot(pick, swFilterHtml(projects, chosen));
@@ -15958,6 +16087,7 @@ function swRender() {
   const wrote = writeSlot(box, filtering
     ? swListHtml(g, sel, SW_DONE_OPEN || !!(g.done || []).length, { open: !!(g.unassigned || []).length, all: true }, by)
     : swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by));
+  if (wrote) swExpandHide();
   swDiagFit(box);   // before the focus goes back: a Details it lands on must show
   if (wrote && key) {
     // A Details the list widened away (it fits now) hands the focus to its row.
@@ -15979,7 +16109,7 @@ function swDiagFit(box) {
     if (b.hidden === cut) b.hidden = !cut;
   }
 }
-if (window.ResizeObserver) new ResizeObserver(() => swDiagFit($('#sw-list'))).observe($('#sw-list'));
+if (window.ResizeObserver) new ResizeObserver(() => { swDiagFit($('#sw-list')); swExpandHide(); }).observe($('#sw-list'));
 $('#sw-cards').addEventListener('click', () => { PH_CARDS = true; renderRows(); });
 $('#sw-proj').addEventListener('change', (ev) => {
   try { localStorage.setItem(SW_KEY + '-project', ev.target.value); } catch (e) {}
