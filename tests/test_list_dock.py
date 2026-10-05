@@ -175,6 +175,15 @@ async function main() {
       out.expand.push({ width, theme, early, long, short, next });
     }
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId);
+    await p.evalIn(`(() => { const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); window.__wrapTitle = t.innerHTML; t.textContent += ' detailed inspection across every carriage before the winter timetable'.repeat(40); swExpandHide(); SW_EXPAND_LAST = 0; return 0; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 800, y: 80 }, p.sessionId);
+    await mouseTo(p, row); await sleep(380);
+    out.expandWrapped = await p.evalIn(`(() => { const e = document.querySelector('.sw-expanded'), n = document.querySelector(${JSON.stringify(row2)}); return { shown: !!e, height: e?.getBoundingClientRect().height || 0, rowHeight: document.querySelector(${JSON.stringify(row)}).getBoundingClientRect().height, coversNext: !!e && e.getBoundingClientRect().bottom > n.getBoundingClientRect().top + n.getBoundingClientRect().height / 2 }; })()`);
+    await mouseTo(p, row2); await sleep(60);
+    out.expandWrappedNext = await p.evalIn(`document.querySelector('.sw-expanded')?.dataset.room === ${JSON.stringify(A.task2)}`);
+    await p.click('.sw-expanded');
+    out.expandWrappedClick = await p.evalIn(`SELECTED_SID === document.querySelector(${JSON.stringify(row2)}).dataset.sid`);
+    await p.evalIn(`closeDetail(); const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); t.innerHTML = window.__wrapTitle; swExpandHide(); 0`);
     await mouseTo(p, row); await sleep(370);
     await p.click('.sw-expanded');
     out.expandClick = await p.evalIn(`SELECTED_SID === document.querySelector(${JSON.stringify(row)}).dataset.sid`);
@@ -275,6 +284,22 @@ async function main() {
     await mouseTo(p, row); await sleep(370);
     out.expandRight = await expansion(p);
     await p.evalIn('swExpandHide(); 0');
+    const [barX, barY] = await p.evalIn(`(() => { const b = document.querySelector('#list-dock .dk-bar').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: barX, y: barY, button: 'left', clickCount: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 580, y: barY, button: 'left', buttons: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 580, y: barY, button: 'left', clickCount: 1 }, p.sessionId);
+    await sleep(400);
+    await p.evalIn(`(() => { const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); window.__rightTitle = t.innerHTML; t.textContent += ' detailed inspection across every carriage before the winter timetable'.repeat(30); swExpandHide(); SW_EXPAND_LAST = 0; return 0; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 400, y: 80 }, p.sessionId);
+    await mouseTo(p, row); await sleep(380);
+    out.expandWideRight = await expansion(p);
+    await p.evalIn(`(() => { const t = document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title'); t.innerHTML = window.__rightTitle; swExpandHide(); return 0; })()`);
+    const [wideBarX, wideBarY] = await p.evalIn(`(() => { const b = document.querySelector('#list-dock .dk-bar').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: wideBarX, y: wideBarY, button: 'left', clickCount: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: barX, y: wideBarY, button: 'left', buttons: 1 }, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: barX, y: wideBarY, button: 'left', clickCount: 1 }, p.sessionId);
+    await sleep(400);
+    out.rightRestored = await p.evalIn(GEOM);
     await p.shot('list-1440-right');
     out.rightOpens = await opens(p);
     await p.evalIn('if (SELECTED_SID) closeDetail(); 0'); await sleep(300);
@@ -303,9 +328,9 @@ async function main() {
     await p.evalIn(`document.querySelector('#list-dock .dk-bar').focus(); 0`);
     await p.key('ArrowRight', 'ArrowRight'); await p.key('ArrowRight', 'ArrowRight'); await sleep(400);
     out.wider = await p.evalIn(GEOM);
-    await p.evalIn(`swExpandShow(document.querySelector(${JSON.stringify(row)})); 0`);
+    await p.evalIn(`(() => { const r = document.querySelector(${JSON.stringify(row)}), t = r.querySelector('.sw-title'); window.__resizedTitle = t.innerHTML; t.textContent += ' detailed inspection across every carriage before the winter timetable'.repeat(30); swExpandShow(r); return 0; })()`);
     out.expandResized = await expansion(p);
-    await p.evalIn('swExpandHide(); 0');
+    await p.evalIn(`(() => { document.querySelector(${JSON.stringify(row)}).querySelector('.sw-title').innerHTML = window.__resizedTitle; swExpandHide(); return 0; })()`);
     // Its resized width comes back after a spell at the top.
     await menuPick(p, HEAD, 'side', 'side:top');
     await menuPick(p, HEAD, 'side', 'side:left');
@@ -501,11 +526,20 @@ class TheListDock(unittest.TestCase):
         self.assertTrue(self.got["expandPersist"], "the checkbox survives a reload")
         self.assertTrue(self.got["expandFocus"], "keyboard focus expands the row")
         self.assertTrue(self.got["expandMenu"], "an open Dock menu stays above the expansion")
+        wrapped = self.got["expandWrapped"]
+        self.assertTrue(wrapped["shown"] and wrapped["coversNext"] and wrapped["height"] > wrapped["rowHeight"], wrapped)
+        self.assertTrue(self.got["expandWrappedNext"], "a covered following row expands immediately")
+        self.assertTrue(self.got["expandWrappedClick"], "a covered following row opens its own task")
         right = self.got["expandRight"]
         self.assertTrue(right["shown"] and right["full"] and right["hit"], right)
         self.assertLess(right["box"]["left"], right["row"]["left"])
         self.assertAlmostEqual(right["box"]["right"], right["row"]["right"])
         self.assertLessEqual(right["pageWidth"], right["viewport"])
+        wide = self.got["expandWideRight"]
+        self.assertGreater(wide["row"]["width"], wide["viewport"] / 2)
+        self.assertTrue(wide["shown"] and wide["full"], wide)
+        self.assertLess(wide["box"]["left"], wide["row"]["left"])
+        self.assertAlmostEqual(wide["box"]["right"], wide["row"]["right"])
         self.assertTrue(all(self.got["expandWindow"][k] for k in ("shown", "sameWindow", "within", "full")), self.got["expandWindow"])
         self.assertTrue(self.got["expandResized"]["shown"], self.got["expandResized"])
         self.assertTrue(self.got["expandTouch"], "touch emulation has no expansion")

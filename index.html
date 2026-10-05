@@ -15960,7 +15960,9 @@ function swExpandShow(row, focus = false) {
   const rect = row.getBoundingClientRect(), edge = 8;
   // A right-docked list opens left. In its own window the same geometry uses
   // that window's viewport, not the main page's.
-  const right = rect.left > win.innerWidth / 2;
+  const dockRight = doc === document && LD.dock && LD.dock.side('list') === 'right'
+    && ['pinned', 'unpinned', 'undock'].includes(LD.dock.viewMode('list'));
+  const right = dockRight || rect.left > win.innerWidth / 2;
   const available = right ? rect.right - edge : win.innerWidth - rect.left - edge;
   const wanted = rect.width + title.scrollWidth - title.clientWidth + 8;
   const width = Math.min(Math.max(rect.width, wanted), available);
@@ -15977,10 +15979,28 @@ function swExpandShow(row, focus = false) {
   copy.style.width = `${width}px`;
   copy.style.maxHeight = `${Math.max(32, win.innerHeight - rect.top - edge)}px`;
   copy.style.overflowY = 'auto';
+  // Wrapped lines may cover the next list row. Inside the original list width,
+  // hand pointer travel and clicks to the row/control beneath the copy.
+  const covered = ev => {
+    if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY <= rect.bottom) return null;
+    return doc.elementsFromPoint(ev.clientX, ev.clientY)
+      .filter(el => !copy.contains(el))
+      .map(el => el.closest('#sw-list .sw-row, #sw-list .sw-diag-btn'))
+      .find(el => el && el !== row) || null;
+  };
+  copy.addEventListener('pointermove', ev => {
+    if (ev.pointerType !== 'mouse') return;
+    const next = covered(ev);
+    if (!next) return;
+    if (next.matches('.sw-row')) swExpandSchedule(next, true);
+    else swExpandHide();
+  });
   copy.addEventListener('click', ev => {
     ev.preventDefault();
+    const next = covered(ev);
     swExpandHide();
-    row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey }));
+    const target = next || row;
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey }));
   });
   copy.addEventListener('auxclick', ev => {
     if (ev.button !== 1) return;
@@ -15989,6 +16009,7 @@ function swExpandShow(row, focus = false) {
     row.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }));
   });
   copy.addEventListener('pointerleave', ev => {
+    if (!SW_EXPAND || SW_EXPAND.copy !== copy) return;
     const next = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('#sw-list .sw-row');
     if (next && next !== row) swExpandSchedule(next, true);
     else if (!focus || doc.activeElement !== row) swExpandHide();
