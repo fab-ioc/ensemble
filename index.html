@@ -10385,6 +10385,11 @@ function rowExpandHide() {
 function rowExpandBeforeChange(root) {
   if (ROW_EXPAND && root && root.contains(ROW_EXPAND.row)) rowExpandHide();
 }
+function rowExpandRefresh(root) {
+  if (!ROW_EXPAND || (root && !root.contains(ROW_EXPAND.row))) return;
+  const { row, spec } = ROW_EXPAND;
+  rowExpandShow(row, spec, row.ownerDocument.activeElement === row);
+}
 function rowExpandAllowed(row, spec) {
   if (!ROW_EXPAND_NAMES || !row || !spec || !row.isConnected || !spec.root.contains(row)) return false;
   const win = row.ownerDocument.defaultView, name = row.querySelector(spec.name);
@@ -10773,6 +10778,7 @@ async function chOpenDiff(file, cid, sha) {
     x.classList.toggle('on', on);
     if (on) x.setAttribute('aria-current', 'true'); else x.removeAttribute('aria-current');
   });
+  rowExpandRefresh(files);
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
     const d = files.dataset.history

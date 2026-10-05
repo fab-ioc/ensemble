@@ -503,8 +503,22 @@ async function main() {
         const result = { shown: !!e, wired: !!b._rowExpandWired, full: !!e && e.querySelector('.nm').textContent === name.textContent };
         rowExpandHide(); return result;
       })()`);
-      await p.evalIn(`pdById('chp-files').querySelector('.chf[data-file][data-commit]').click(); 0`);
+      await p.evalIn(`(() => {
+        const b = pdById('chp-files'), row = b.querySelector('.chf[data-file][data-commit]');
+        b.querySelectorAll('.chf[data-file], .chf.dir').forEach(r => { r.tabIndex = r === row ? 0 : -1; });
+        [...b.querySelectorAll('button')].at(-1).focus();
+      })()`);
+      await p.key('Tab', 'Tab', 9);
+      await p.evalIn(`pdById('chp-files').querySelector('.chf[data-file][data-commit]').focus(); 0`); await sleep(100);
+      const projectFocusExpanded = await p.evalIn(`document.activeElement.matches('.chf[data-file][data-commit]') && !!document.querySelector('.ch-expanded.row-expand-focus')`);
+      await p.key('Enter', 'Enter', 13);
       await p.until(`!!pdById('chp-diff').querySelector('.drv .dr[data-i]')`, 15000); await sleep(200);
+      out.projectKeyboardExpand = await p.evalIn(`(() => {
+        const b = pdById('chp-files'), row = document.activeElement, e = row.ownerDocument.querySelector('.ch-expanded');
+        const result = { focusExpanded: ${projectFocusExpanded}, shown: !!e, selected: !!e && e.classList.contains('on'), sourceSelected: row.classList.contains('on'),
+          ariaCurrent: row.getAttribute('aria-current'), bg: e && getComputedStyle(e).backgroundColor, rowBg: getComputedStyle(row).backgroundColor };
+        rowExpandHide(); return result;
+      })()`);
       out.projectDiff = await p.evalIn(`(() => { const d = pdById('chp-diff'); return { split: !!d.querySelector('.drv.split'), path: d.querySelector('.drv-path').textContent, seg: !!d.querySelector('.drv-mode'), on: pdById('chp-files').querySelector('.chf.on').dataset.file }; })()`);
       await p.shot('changes-1280-project');
       // The largest diff on main in the last week, both ways.
@@ -713,6 +727,10 @@ class ThePage(unittest.TestCase):
         self.assertLessEqual(resized["pageWidth"], resized["viewport"])
         self.assertTrue(all(self.got["expandWindow"].values()), self.got["expandWindow"])
         self.assertTrue(all(self.got["projectExpand"].values()), self.got["projectExpand"])
+        keyboard = self.got["projectKeyboardExpand"]
+        self.assertTrue(keyboard["focusExpanded"] and keyboard["shown"] and keyboard["selected"] and keyboard["sourceSelected"], keyboard)
+        self.assertEqual(keyboard["ariaCurrent"], "true")
+        self.assertEqual(keyboard["bg"], keyboard["rowBg"], "the focused clone follows the selected row's solid ground")
         self.assertEqual(self.got["expandOff"], {"changes": False, "switcher": False, "stored": "false"})
         self.assertEqual(self.got["expandPersist"], {"changes": False, "switcher": False, "keptOff": True})
 
