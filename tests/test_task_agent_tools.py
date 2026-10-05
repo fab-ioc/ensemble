@@ -237,7 +237,8 @@ class LaunchArguments(unittest.TestCase):
             {"name": "with.dot", "enabled": True},
             {"name": "ensemble", "enabled": True},
         ]), stderr="")
-        with mock.patch.object(dashboard.subprocess, "run", return_value=proc) as run:
+        with mock.patch.object(dashboard.subprocess, "run", return_value=proc) as run, \
+                mock.patch.object(dashboard.shutil, "which", return_value=None):
             args = CODEX_ENSEMBLE_ONLY_ARGS(str(self.root))
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0][:2], ["codex", "-C"])
@@ -246,6 +247,16 @@ class LaunchArguments(unittest.TestCase):
         self.assertNotIn('mcp_servers."ensemble".enabled=false', args)
         self.assertIn("features.apps=false", args)
         self.assertIn("features.remote_plugin=false", args)
+
+    def test_codex_discovery_runs_the_resolved_cli_path(self):
+        # Windows installs codex.cmd; a bare "codex" without a shell is
+        # WinError 2, which refused every Codex launch on 10-06.
+        proc = types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        resolved = r"C:\Users\x\AppData\Roaming\npm\codex.CMD"
+        with mock.patch.object(dashboard.subprocess, "run", return_value=proc) as run, \
+                mock.patch.object(dashboard.shutil, "which", return_value=resolved):
+            CODEX_ENSEMBLE_ONLY_ARGS(str(self.root))
+        self.assertEqual(run.call_args.args[0][:2], [resolved, "-C"])
 
     def test_codex_ensemble_only_fails_closed_when_discovery_is_unusable(self):
         cases = (
