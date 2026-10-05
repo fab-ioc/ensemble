@@ -278,7 +278,8 @@ const LIST = `(() => {
   const w = e => (e ? Math.round(e.getBoundingClientRect().width) : 0);
   return {
     rows: [...list.querySelectorAll('.chf.dir, .chf[data-file]')].map(e => ({ dir: e.dataset.dir || '', file: e.dataset.file || '', name: e.querySelector('.nm').textContent,
-      cnt: (e.querySelector('.cnt') || {}).textContent || '', d: e.style.getPropertyValue('--d') || '0', open: e.getAttribute('aria-expanded'), on: e.classList.contains('on'), tab: e.tabIndex, pad: Math.round(parseFloat(getComputedStyle(e).paddingLeft)) })),
+      cnt: (e.querySelector('.cnt') || {}).textContent || '', d: e.style.getPropertyValue('--d') || '0', open: e.getAttribute('aria-expanded'), on: e.classList.contains('on'), tab: e.tabIndex,
+      draggable:e.draggable, dragPath:e.dataset.filePath || '', pad: Math.round(parseFloat(getComputedStyle(e).paddingLeft)) })),
     tree: x.querySelector('.chp-tree').getAttribute('aria-pressed'), head: x.querySelector('.tch-head').textContent.replace(/\\s+/g, ' ').trim(),
     listW: w(list), rightW: w(right), gridW: w(grid), splitVis: vis(grid.querySelector('.ch-split')), listVis: vis(list), rightVis: vis(right),
     showDiff: grid.classList.contains('ch-show-diff'), stacked: grid.classList.contains('ch-narrow'), chW: grid.style.getPropertyValue('--ch-w'), valuenow: grid.querySelector('.ch-split').getAttribute('aria-valuenow'),
@@ -355,6 +356,10 @@ async function main() {
       out.expandRight = await expanded(p, longDir);
       await p.evalIn(`rowExpandHide(); ${longDir}.querySelector('.nm').textContent = window.__longDirName; 0`);
       out.tree = await p.evalIn(LIST);
+      out.rebound = await p.evalIn(`(() => { const v = TCH_VIEWS.get(${JSON.stringify(A.task)}), row = v.el.querySelector('.tch-files .chf[data-file]'), root = v.root, before = row.dataset.filePath;
+        v.root = root + '-another'; tchPaintList(v); const after = row.dataset.filePath; v.root = root; tchPaintList(v); return {before, after, restored:row.dataset.filePath}; })()`);
+      out.unavailableDrags = await p.evalIn(`(() => { const b=document.createElement('div'); b.innerHTML=chFileHtml({path:'gone.txt',status:'D'},'',false,0,false)+chFileHtml({path:'old.txt',status:'M'},'abc',false,0,false);
+        chMarkFileDrags(b, 'C:\\repo'); return [...b.querySelectorAll('[data-file]')].map(x => ({file:x.dataset.file,draggable:x.draggable,path:x.dataset.filePath || ''})); })()`);
       await p.shot('changes-1280-tree');
       // A folder folded by a click, opened again by →; ↓ moves along the rows.
       await p.evalIn(`${PANE}.querySelector('.tch-files .chf.dir[data-dir="src/app"]').click(); 0`); await sleep(150);
@@ -492,7 +497,7 @@ async function main() {
       await p.evalIn(`closeDetail && closeDetail(); SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'changes'; renderRows(); 0`);
       await p.until(`(() => { const b = pdById('chp-files'); return !!b && b.querySelectorAll('.chf[data-file]').length > 0; })()`, 20000); await sleep(300);
       out.project = await p.evalIn(`(() => { const b = pdById('chp-files'), grid = b.closest('.chp'), w = e => Math.round(e.getBoundingClientRect().width);
-        return { rows: [...b.querySelectorAll('.chf.dir, .chf[data-file]')].map(e => ({ dir: e.dataset.dir || '', file: e.dataset.file || '', sha: (e.dataset.commit || '').slice(0, 7), name: e.querySelector('.nm').textContent, cnt: (e.querySelector('.cnt') || {}).textContent || '', d: e.style.getPropertyValue('--d') || '0' })),
+        return { rows: [...b.querySelectorAll('.chf.dir, .chf[data-file]')].map(e => ({ dir: e.dataset.dir || '', file: e.dataset.file || '', sha: (e.dataset.commit || '').slice(0, 7), name: e.querySelector('.nm').textContent, cnt: (e.querySelector('.cnt') || {}).textContent || '', d: e.style.getPropertyValue('--d') || '0', draggable:e.draggable, dragPath:e.dataset.filePath || '' })),
           secs: [...b.querySelectorAll('.chp-sec')].map(e => e.textContent.trim()), tree: b.querySelector('.chp-tree').getAttribute('aria-pressed'), chW: grid.style.getPropertyValue('--ch-w'), listW: w(b), split: !!grid.querySelector('.ch-split'),
           scrollW: document.documentElement.scrollWidth, vw: innerWidth }; })()`);
       out.projectExpand = await p.evalIn(`(() => {
@@ -747,6 +752,17 @@ class ThePage(unittest.TestCase):
         self.assertEqual(e["file"], "src/app/main.py", "the redrawn list keeps the keyboard on the row")
         self.assertEqual(self.got["enterDown"], "src/app/util.py", "↓ still moves on")
 
+    def test_real_change_rows_rebind_when_the_repository_changes(self):
+        rows = [r for r in self.got["tree"]["rows"] if r["file"]]
+        self.assertTrue(rows and all(r["draggable"] and r["dragPath"] for r in rows))
+        rebound = self.got["rebound"]
+        self.assertNotEqual(rebound["before"], rebound["after"])
+        self.assertEqual(rebound["before"], rebound["restored"])
+        self.assertEqual(self.got["unavailableDrags"], [
+            {"file": "gone.txt", "draggable": False, "path": ""},
+            {"file": "old.txt", "draggable": False, "path": ""},
+        ])
+
     def test_a_drag_down_one_column_selects_that_column_alone(self):
         s = self.got["colSel"]
         self.assertIn("sel-new", s["cls"].split())
@@ -856,6 +872,10 @@ class ThePage(unittest.TestCase):
         self.assertEqual((g["chW"], g["listW"]), ("360px", 360), "the width set in the task's Changes")
         self.assertTrue(g["split"])
         self.assertLessEqual(g["scrollW"], g["vw"])
+        current = [r for r in g["rows"] if r["file"] and not r["sha"]]
+        historical = [r for r in g["rows"] if r["file"] and r["sha"]]
+        self.assertTrue(current and all(r["draggable"] and r["dragPath"] for r in current))
+        self.assertTrue(historical and all(not r["draggable"] and not r["dragPath"] for r in historical))
         d = self.got["projectDiff"]
         self.assertTrue(d["split"] and d["seg"], "side by side here too")
         self.assertEqual(d["on"], d["path"])

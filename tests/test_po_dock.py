@@ -369,6 +369,10 @@ async function main() {
     // ---- 1440 x 900: the default, the arrows, the roadmap, reset, Ack
     const p = await page(1440, 900);
     await go(p); await ready(p); await sleep(600);
+    await p.until('!!pdChatFrame().contentDocument.querySelector("a.file-link")', 20000);
+    out.chatDrag = await p.evalIn(`(async () => { const f=pdChatFrame(), w=f.contentWindow, a=f.contentDocument.querySelector('a.file-link'); await w.FileDrag.prepare(a);
+      const dt=new w.DataTransfer(); a.dispatchEvent(new w.DragEvent('dragstart', {bubbles:true,cancelable:true,dataTransfer:dt}));
+      return {draggable:a.draggable, kind:a.dataset.fileDrag, types:[...dt.types], uri:dt.getData('text/uri-list')}; })()`);
     out.first = await p.evalIn(`(() => { ${rect}
       const f = pdChatFrame(), d = f.contentDocument;
       return { onScreen: PD_IDS.filter(id => { const w = PD.dock.frontOf(id); return w === id; }), strip: [...document.querySelectorAll('.dk-strip-btn')].map(b => b.dataset.dkAuto),
@@ -404,6 +408,10 @@ async function main() {
         rows: rows.map(r => r.querySelector('.nm').textContent), tags: rows.map(r => (r.querySelector('.wse-tag') || {}).textContent || ''),
         tip: rows[1] ? rows[1].title : '', roots: [...t.querySelectorAll(':scope > .wse.wsroot')].map(r => r.querySelector('.nm').textContent),
         flyScroll: PD_ROOT.scrollLeft + PD_HOST.scrollLeft }; })()`);
+    out.workspaceDrag = await p.evalIn(`(async () => { const row=[...PD.els.workspace.querySelectorAll('.wse.doc[data-path]')].find(x => !x.dataset.task); await FileDrag.prepare(row);
+      const dt=new DataTransfer(); row.dispatchEvent(new DragEvent('dragstart', {bubbles:true,cancelable:true,dataTransfer:dt}));
+      const out={draggable:row.draggable, effect:dt.effectAllowed, types:[...dt.types], plain:dt.getData('text/plain'), moving:!!DOCS_DRAG};
+      row.dispatchEvent(new DragEvent('dragend', {bubbles:true,cancelable:true,dataTransfer:dt})); return out; })()`);
     // The roadmap opens in a tab, in its own view and editor.
     await p.evalIn('PD.els.workspace.querySelector(".wse.doc[data-roadmap]").click(); 0');
     await p.until('(() => { const rm = document.getElementById("rm-panel"); return !rm.hidden && !!rm.closest("#ws-panel") && /Motors roadmap/.test(rm.innerText); })()', 15000);
@@ -416,6 +424,31 @@ async function main() {
     out.docOpen = await p.evalIn(`({ tab: [...document.querySelectorAll('#po-dock .dk-tab[data-dk-tab^="file:"]')].map(t => t.textContent).join(), rmHidden: document.getElementById('rm-panel').hidden,
       marked: [...PD.els.workspace.querySelectorAll('.wse.doc.on')].map(x => x.querySelector('.nm').textContent), tabs: PD.els.workspace.querySelectorAll('.wst-tab').length,
       panels: document.querySelectorAll('#po-dock .wfp').length, inFiles: PD.els.workspace.querySelectorAll('iframe.wsp-frame').length })`);
+    out.fallbackDrag = await p.evalIn(`(async () => { const v=[...WS_VIEWS.values()].find(x => x.tabs.some(t => /#1 Notes\.md$/.test(t.path)));
+      document.body.classList.remove('po-dock'); wsPaintTabs(v); const tab=[...v.el.querySelectorAll('.wst-tab')].find(x => /#1 Notes\.md$/.test(x.dataset.path)); await FileDrag.prepare(tab);
+      const dt=new DataTransfer(); tab.dispatchEvent(new DragEvent('dragstart', {bubbles:true,cancelable:true,dataTransfer:dt}));
+      const out={draggable:tab.draggable, kind:tab.dataset.fileDrag, types:[...dt.types]}; document.body.classList.add('po-dock'); wsPaintTabs(v); return out; })()`);
+    // The icon on a real file tab is the external source; the rest of the tab
+    // keeps Dock's real pointer gesture and can still move into another stack.
+    await p.until('!!document.querySelector(\'.dk-tab[data-dk-tab^="file:"] .fd-tab-drag\')');
+    out.docExternal = await p.evalIn(`(async () => {
+      const h = document.querySelector('.dk-tab[data-dk-tab^="file:"] .fd-tab-drag');
+      await FileDrag.prepare(h);
+      const dt = new DataTransfer(); h.dispatchEvent(new DragEvent('dragstart', {bubbles:true, cancelable:true, dataTransfer:dt}));
+      return { tabDraggable:h.closest('.dk-tab').draggable, handleDraggable:h.draggable, types:[...dt.types], uri:dt.getData('text/uri-list') };
+    })()`);
+    const [fx, fy, tx, ty] = await p.evalIn(`(() => {
+      const tab = document.querySelector('.dk-tab[data-dk-tab^="file:"]'), a = tab.getBoundingClientRect();
+      window.__fileTabEvents = [];
+      for (const type of ['pointerdown','pointermove','pointerup','pointercancel','dragstart']) document.addEventListener(type, () => __fileTabEvents.push(type), {capture:true, once:true});
+      return [a.right - 3, a.top + a.height / 2, a.left + 20, a.top + a.height / 2];
+    })()`);
+    await c.send('Input.dispatchMouseEvent', {type:'mouseMoved', x:fx, y:fy}, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', {type:'mousePressed', x:fx, y:fy, button:'left', buttons:1, clickCount:1}, p.sessionId);
+    for (let i = 1; i <= 8; i++) await c.send('Input.dispatchMouseEvent', {type:'mouseMoved', x:fx + (tx-fx)*i/8, y:fy + (ty-fy)*i/8, button:'left', buttons:1}, p.sessionId);
+    await c.send('Input.dispatchMouseEvent', {type:'mouseReleased', x:tx, y:ty, button:'left', clickCount:1}, p.sessionId);
+    await sleep(500);
+    out.docDockMove = await p.evalIn(`window.__fileTabEvents`);
     // The find box narrows the documents as it does any file: Go to file, then Text.
     out.filter = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms)), ws = PD.els.workspace, inp = ws.querySelector('.wsf-q'), r = {};
@@ -786,6 +819,10 @@ async function main() {
       await q.until('!!PD.els.workspace.querySelector(".wsp-tree > .wse[data-docs]") && PD.els.workspace.querySelectorAll(".wse.doc").length >= 2', 20000);
       out.docsProject = await q.evalIn(`(() => { const rows = [...PD.els.workspace.querySelectorAll('.wse.doc')]; return { first: rows[0].querySelector('.nm').textContent,
         rows: rows.slice(1).map(r => r.querySelector('.nm').textContent), files: !!PD.els.workspace.querySelector('.dcs-files .wsp-tree > .wse[data-docs]') }; })()`);
+      out.docsMove = await q.evalIn(`(async () => { const row=[...PD.els.workspace.querySelectorAll('.wse.doc[data-path]')].find(x => !x.dataset.task && !x.dataset.roadmap); await FileDrag.prepare(row);
+        const dt=new DataTransfer(); row.dispatchEvent(new DragEvent('dragstart', {bubbles:true,cancelable:true,dataTransfer:dt}));
+        const out={draggable:row.draggable,effect:dt.effectAllowed,moving:!!DOCS_DRAG,plain:dt.getData('text/plain'),types:[...dt.types]};
+        row.dispatchEvent(new DragEvent('dragend', {bubbles:true,cancelable:true,dataTransfer:dt})); return out; })()`);
       await q.close();
     }
   } finally {
@@ -835,7 +872,8 @@ class InChrome(unittest.TestCase):
         home = Path(proj.get("home") or proj["path"])
         (home / "ROADMAP.md").write_text("# Motors roadmap\n\nFirst the panels.\n", encoding="utf-8")
         (home / "Documents").mkdir(exist_ok=True)
-        (home / "Documents" / "#1 Notes.md").write_text("# Notes\n\nA document.\n", encoding="utf-8")
+        cls.doc_path = home / "Documents" / "#1 Notes.md"
+        cls.doc_path.write_text("# Notes\n\nA document.\n", encoding="utf-8")
         # A repository with an uncommitted change, for the Changes panel's diff.
         code = Path(proj["path"])
 
@@ -888,6 +926,7 @@ class InChrome(unittest.TestCase):
         chatroom.post_message(cls.po, "user", text, to="claude")
         for i in range(30):
             chatroom.post_message(cls.po, "codex", f"note {i}\n\n" + "words " * 60, to="claude")
+        chatroom.post_message(cls.po, "codex", f"See [Notes]({cls.doc_path.as_uri()}).", to="claude")
         points.sync(cls.po, force=True)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
@@ -926,12 +965,38 @@ class InChrome(unittest.TestCase):
         self.assertFalse(f["tabs"], "no tab row: the panels are the tabs")
         self.assertTrue(f["panels"], "Panels recovers hidden windows on a desktop")
 
+    def test_real_workspace_and_chat_sources_carry_external_data(self):
+        chat = self.got["chatDrag"]
+        self.assertTrue(chat["draggable"])
+        self.assertEqual(chat["kind"], "link")
+        self.assertIn("downloadurl", [x.lower() for x in chat["types"]])
+        self.assertIn("/api/file/download?", chat["uri"])
+        workspace = self.got["workspaceDrag"]
+        self.assertTrue(workspace["draggable"])
+        self.assertIn("application/x-ensemble-file", workspace["types"])
+        self.assertTrue(workspace["plain"])
+
     def test_layout_changes_reload_no_iframe(self):
         k = self.got["kept"]
         self.assertTrue(k.pop("moveBefore"), "this Chrome has moveBefore")
         self.assertTrue(k.pop("chatIn"), "a floated chat is still in its panel")
         for step, alive in k.items():
             self.assertEqual(alive, [True, True], f"{step}: [open file, PO chat] kept their pages")
+
+    def test_file_tab_external_icon_preserves_dock_panel_drag(self):
+        fallback = self.got["fallbackDrag"]
+        self.assertTrue(fallback["draggable"])
+        self.assertEqual(fallback["kind"], "file-tab")
+        self.assertIn("downloadurl", [x.lower() for x in fallback["types"]])
+        external = self.got["docExternal"]
+        self.assertFalse(external["tabDraggable"])
+        self.assertTrue(external["handleDraggable"])
+        self.assertIn("downloadurl", [x.lower() for x in external["types"]])
+        self.assertIn("/api/file/download?", external["uri"])
+        events = self.got["docDockMove"]
+        self.assertIn("pointerup", events)
+        self.assertNotIn("pointercancel", events)
+        self.assertNotIn("dragstart", events)
 
     def test_f6_and_the_arrows_move_along_the_panels(self):
         k = self.got["keys"]
@@ -1010,6 +1075,10 @@ class InChrome(unittest.TestCase):
 
     def test_a_documents_project_leads_with_its_documents_too(self):
         self.assertEqual(self.got["docsProject"], {"first": "Roadmap", "rows": ["Plan"], "files": True})
+        move = self.got["docsMove"]
+        self.assertTrue(move["draggable"] and move["moving"])
+        self.assertIn("application/x-ensemble-file", move["types"])
+        self.assertTrue(move["plain"].startswith("# Plan"))
 
     def test_a_dragged_minimised_panel_stays_minimised(self):
         self.assertEqual(self.got["minDrag"], {"wasMin": True, "moved": True, "min": True},
