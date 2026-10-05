@@ -294,6 +294,14 @@ Every agent the hub starts for a task runs without approval prompts, one-agent
 tasks included: nobody watches a task's terminal. Only a past session someone
 opens from the history to drive by hand keeps Codex's prompts.
 
+**Which tools task agents get is a setting.** *Task agents' tools* in Settings
+defaults to **Ensemble only** and can be overridden in each project's menu.
+**Ensemble + my own tools** also exposes the MCP servers and connectors the
+person configured in Claude Code or Codex. It applies to owners, reviewers and
+fresh owner handovers launched after the change; tasks in no project inherit
+the global choice. POs and sessions opened from history keep the person's own
+tools. The hub changes launch flags only and never edits either agent's config.
+
 Task sessions may also have RTK enabled by the hub. In a shell that is not transparently hooked, prefix noisy git, test, search, listing and log commands with `rtk` (for example `rtk git status`, `rtk pytest`, `rtk grep` or `rtk ls`); if a recovery hint names hidden output you need, run `rtk recall <hash> --full`. Do not install it globally or edit global agent configuration: the hub's `rtkForTasks` setting controls future task launches.
 
 ## Waiting on something: no background command, no subagent

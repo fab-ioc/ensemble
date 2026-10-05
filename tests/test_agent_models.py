@@ -346,6 +346,7 @@ class LaunchArguments(_Home):
         for p in (mock.patch.object(dashboard, "load_projects",
                                     return_value=[{"id": "p1", "poRoomId": "room-po"}]),
                   mock.patch.object(dashboard, "_rtk_task_wiring", return_value=([], {}, "")),
+                  mock.patch.object(dashboard.Handler, "_codex_ensemble_only_args", return_value=[]),
                   mock.patch.object(dashboard.agents, "get_agent", side_effect=_Agent),
                   mock.patch.object(dashboard.BACKEND, "headless_launch",
                                     side_effect=lambda cwd, argv, prompt: argv),

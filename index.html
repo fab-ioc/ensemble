@@ -3954,6 +3954,14 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
     <p class="cfg-hint" id="pref-effort-codex-note" role="status" hidden></p>
     <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers and PO switches. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-task-agent-tools">Task agents' tools</label>
+      <select id="pref-task-agent-tools" class="pref-select">
+        <option value="ensemble">Ensemble only</option>
+        <option value="own">Ensemble + my own tools</option>
+      </select>
+    </div>
+    <p class="cfg-hint" data-noun="The default for task owners, reviewers and owner handovers, including tasks in no {project}. Each {project} can override it from its menu. A change applies only when an agent is launched or resumed after the change; POs and sessions you open from history keep your own tools.">The default for task owners, reviewers and owner handovers, including tasks in no project. Each project can override it from its menu. A change applies only when an agent is launched or resumed after the change; POs and sessions you open from history keep your own tools.</p>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label" id="pref-pace-label">Pace each agent's week</span>
@@ -6905,6 +6913,10 @@ async function saveAgentModel(sel, value) {
 }
 function renderPrefs() {
   if (!PREFS) return;
+  const taskTools = document.getElementById('pref-task-agent-tools');
+  if (taskTools && document.activeElement !== taskTools) {
+    taskTools.value = PREFS.taskAgentTools === 'own' ? 'own' : 'ensemble';
+  }
   const nickInput = document.getElementById('pref-nickname');
   if (nickInput && document.activeElement !== nickInput) {
     nickInput.value = PREFS.operatorNickname || '';
@@ -13270,6 +13282,8 @@ function openProjectPage(pid) {
 document.addEventListener('click', async (ev) => {
   const choose = ev.target.closest('.po-choose');
   if (choose) { projectSetupFlow({ projectId: choose.dataset.proj }); return; }
+  const ttb = ev.target.closest('.task-tools-btn');
+  if (ttb) { taskToolsChoose(ttb.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
   if (kb) { kindChoose(kb.dataset.proj); return; }
   const kyb = ev.target.closest('.key-btn');
@@ -13285,6 +13299,44 @@ document.addEventListener('click', async (ev) => {
   // (where the dock failed to load; the list may have redrawn it by now).
   if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #detail-panel-resize, .sw-row[data-po]')) poClosePeek();
 });
+
+function taskToolsDialogHtml(pj) {
+  const global = PREFS?.taskAgentTools === 'own' ? 'Ensemble + my own tools' : 'Ensemble only';
+  const value = pj.taskAgentTools || '';
+  const option = (v, label) => `<option value="${v}"${value === v ? ' selected' : ''}>${esc(label)}</option>`;
+  return `<h3>Task agents' tools in ${esc(pj.name)}</h3>`
+    + `<div class="pref-row"><label class="pref-label" for="project-task-tools">Tools</label>`
+    + `<select id="project-task-tools" class="pref-select">`
+    + option('', `Use global default (currently ${global})`)
+    + option('ensemble', 'Ensemble only')
+    + option('own', 'Ensemble + my own tools') + `</select></div>`
+    + `<p class="cfg-hint">Applies to task owners, reviewers and owner handovers launched or resumed after this change. Running agents keep the tools they started with. The project's PO keeps your own tools.</p>`
+    + `<div class="actions"><button id="project-task-tools-ok">Save</button><button id="project-task-tools-cancel" class="secondary">Cancel</button></div>`;
+}
+async function taskToolsChoose(pid) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  const dlg = pdModal();
+  dlg.innerHTML = taskToolsDialogHtml(pj);
+  dlg.showModal();
+  const sel = dlg.querySelector('#project-task-tools');
+  sel.focus();
+  const value = await new Promise(resolve => {
+    dlg.querySelector('#project-task-tools-cancel').onclick = () => resolve(null);
+    dlg.addEventListener('cancel', () => resolve(null), { once: true });
+    dlg.querySelector('#project-task-tools-ok').onclick = () => resolve(sel.value);
+  });
+  dlg.close();
+  if (value === null || value === (pj.taskAgentTools || '')) return;
+  try {
+    await api('/api/projects/task-agent-tools', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: pid, value: value || null }),
+    });
+    toast('Task-agent tools saved; new agent launches use the choice', 3500, 'ok');
+    await refreshProjects(); renderRows();
+  } catch (e) { toast('Not saved: ' + histErr(e), 6000, 'err'); }
+}
 
 // ---- A PO's past conversations ------------------------------------------------
 // Each rotation, switch or handover starts a PO afresh, and the conversation it
@@ -17092,6 +17144,8 @@ document.getElementById('bar-crumbs').addEventListener('click', (e) => {
 function projMenuSettingsHtml(pj) {
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
   const items = [
+    `<button class="pm-item pm-set task-tools-btn" data-proj="${esc(pj.id)}" title="Which MCP servers and connectors its task owners, reviewers and handovers start with">`
+      + `<span class="pm-name">Task agents' tools: ${esc(pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit')}â€¦</span></button>`,
     pj.path ? `<button class="pm-item pm-set kind-btn" data-proj="${esc(pj.id)}" title="Code or documents: what its Overview and Workspace are">`
       + `<span class="pm-name">Kind: ${esc(nounText(isDocsProject(pj) ? 'Documents {project}' : 'Code {project}'))}…</span></button>` : '',
     pj.key ? `<button class="pm-item pm-set key-btn" data-proj="${esc(pj.id)}" title="${esc(`Its tasks are ${pj.key}-18 where tasks of several ${noun('many')} are listed`)}">`
@@ -19037,7 +19091,12 @@ window.ensUpdPlace = () => ({
   // written again (it is not while the focus is in it).
   document.getElementById('settings-models')?.addEventListener('change', (ev) => {
     const sel = ev.target.closest('select.pref-select');
-    if (sel) setAgentModel(sel);
+    if (!sel) return;
+    if (sel.id === 'pref-task-agent-tools') {
+      setPref('taskAgentTools', sel.value);
+    } else if (sel.dataset.kind) {
+      setAgentModel(sel);
+    }
   });
   document.getElementById('settings-models')?.addEventListener('focusout', () => {
     setTimeout(renderAgentModels, 0);

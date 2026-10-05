@@ -183,6 +183,8 @@ The hub is also an MCP server (`POST /mcp`). Every agent it launches is connecte
 | A reviewer started for one review | `review_done` |
 | The PO of a room named in `ENSEMBLE_RESTART_ROOMS` | `ensemble_restart_hub` |
 
+Task agents start with **Ensemble only** by default. In **Settings â€º Agent models â€º Task agents' tools**, choose **Ensemble + my own tools** to let newly launched task owners, reviewers and owner handovers also use the MCP servers and connectors configured in Claude Code or Codex. Each project can override the global choice from its project menu; tasks in **Unassigned** inherit the global choice. Running agents keep the tools they started with, and POs and sessions opened from history always keep your own tools. Ensemble passes launch flags onlyâ€”it never edits `~/.claude.json` or `~/.codex/config.toml`.
+
 Two skills teach the agents the board. At every start the hub copies both into `~/.claude/skills/`, and into `~/.codex/skills/` when `codex` is on `PATH`. The copies overwrite any skill folder of the same name.
 
 - `skills/ensemble/SKILL.md`: the operating model. It covers reporting, reviews on mention, handovers, the PO's job, documents projects, and writing specs.
@@ -193,7 +195,7 @@ Two skills teach the agents the board. At every start the hub copies both into `
 **Settings** is in the menu at the top right. It covers:
 
 - Theme (Light, Dark, Dim, Paper, High contrast, Fjord, Match system) and accent colour.
-- **Agent models**: the Claude model and the Codex model (and Codex's reasoning effort) an agent the hub starts runs on when its seat names none: task owners, reviewers, POs, handovers and PO switches. The choices are what each agent offers (Codex's come from its own model list), or the agent's own default. A seat that names a model keeps it. The choice is passed when the agent is launched; `~/.codex/config.toml` and Claude's settings are never changed. The plan allowance chip judges Codex by the pool the chosen model draws on.
+- **Agent models**: the Claude model and the Codex model (and Codex's reasoning effort) an agent the hub starts runs on when its seat names none: task owners, reviewers, POs, handovers and PO switches. The choices are what each agent offers (Codex's come from its own model list), or the agent's own default. A seat that names a model keeps it. The choice is passed when the agent is launched; `~/.codex/config.toml` and Claude's settings are never changed. The plan allowance chip judges Codex by the pool the chosen model draws on. This section also holds **Task agents' tools**, the global default described above.
 - What the agents call you (your git `user.name` by default).
 - When an agent counts as stalled (seconds).
 - The PO and task-owner handover limits (tokens; 0 = never).
