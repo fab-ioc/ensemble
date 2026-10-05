@@ -2447,12 +2447,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sw-row:hover { background: var(--hover); }
   /* Portalled to the current window's body: above Dock's clipped stack (15)
      and the middle, below menus, the selection bar (60), and dialogs. */
-  .sw-expanded { position: fixed; z-index: 50; margin: 0; background: var(--hover);
+  /* Solid: --hover is translucent and the conversation's text would show through. */
+  .sw-expanded { position: fixed; z-index: 50; margin: 0;
+    background: linear-gradient(var(--hover), var(--hover)), var(--surface);
     box-shadow: var(--e-200); }
   .sw-expanded .sw-title { white-space: normal; text-overflow: clip; overflow-wrap: anywhere; }
   .sw-expanded.sw-expand-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .sw-row.on { background: var(--selected-bg); }
-  .sw-row.sw-expanded { background: var(--hover); }
+  .sw-row.sw-expanded { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
+  .sw-row.on.sw-expanded { background: var(--selected-bg); }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
   .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg,

@@ -1195,7 +1195,8 @@ self-contained component, so a later layout can host it elsewhere.
 - **Full names on hover** (#170): only a `.sw-row` whose `.sw-title` is measured as truncated
   expands after 320 ms of mouse hover; moving to the next row switches at once. Keyboard focus
   expands at once. The expanded copy is aligned over the row, keeps the dot, number, age and reason,
-  uses `--hover` and `--e-200`, and grows toward the middle (leftward when docked on the right).
+  is solid (`--hover` laid over `--surface`, `--selected-bg` for the open row; never a translucent
+  token alone, or the conversation's text shows through) with `--e-200`, and grows toward the middle (leftward when docked on the right).
   For a right-docked list use the Dock side, including after resizing it wider than half the window.
   It wraps the name at the current window's edge and never widens the page. The copy lives in that
   window's `body` at z-index 50: above the list Dock's z-index 15, Dock strips and docked panels,
