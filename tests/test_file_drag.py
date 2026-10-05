@@ -138,6 +138,26 @@ class FileDownloadRoute(unittest.TestCase):
         self.assertNotIn("Set-Cookie", headers)
         self.assertEqual((wrong, elsewhere), (401, 401), "the bearer is exact and opens only this attachment route")
 
+    def test_request_log_redacts_drag_and_page_bearers(self):
+        drag_secret = "drag-log-sentinel"
+        page_secret = "page-log-sentinel"
+        target = self.url(self.text, True) + "&drag=" + drag_secret + "&token=" + page_secret
+        logged = io.StringIO()
+        h = dashboard.Handler.__new__(dashboard.Handler)
+        h.path, h.command, h.request_version = target, "GET", "HTTP/1.1"
+        h.requestline = f"GET {target} HTTP/1.1"
+        h.headers = {"Host": f"127.0.0.1:{PORT}"}
+        h.rfile, h.wfile = io.BytesIO(b""), io.BytesIO()
+        h.client_address = ("127.0.0.1", 50000)
+        h.server = SimpleNamespace(server_address=("127.0.0.1", PORT))
+        with mock.patch.object(sys, "stderr", logged):
+            h.do_GET()
+        line = logged.getvalue()
+        self.assertNotIn(drag_secret, line)
+        self.assertNotIn(page_secret, line)
+        self.assertIn("drag=[redacted]", line)
+        self.assertIn("token=[redacted]", line)
+
 
 CDP_JS = chrome_profile.JS + r"""
 const A = JSON.parse(process.argv[1]);
@@ -192,7 +212,21 @@ async function main() {
       const fallback = drag(sources.workspace);
       const dt = new DataTransfer(); sources.workspace.dispatchEvent(new DragEvent('dragstart', {bubbles:true, cancelable:true, dataTransfer:dt}));
       const ta = document.createElement('textarea'); host.appendChild(ta); ta.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:dt}));
-      const oldFetch = window.fetch; window.fetch = () => new Promise(() => {});
+      const oldFetch = window.fetch, oldNow = Date.now;
+      let now = oldNow(), content = 'old', calls = 0, failOnce = false;
+      Date.now = () => now;
+      window.fetch = () => { calls++; if (failOnce) { failOnce = false; return Promise.reject(new Error('transient')); }
+        return Promise.resolve({ok:true, json:() => Promise.resolve({name:'cache.txt', mime:'text/plain', text:content})}); };
+      const changing = marked('div', 'workspace'); FileDrag.mark(changing, path + '.changing', {kind:'workspace'});
+      await FileDrag.prepare(changing); const cacheOld = drag(changing).plain;
+      content = 'new'; now += 10000;
+      await FileDrag.prepare(changing); const cacheNew = drag(changing).plain;
+      const retry = marked('div', 'workspace'); FileDrag.mark(retry, path + '.retry', {kind:'workspace'});
+      failOnce = true; await FileDrag.prepare(retry);
+      const failedDrag = drag(retry), failedFallback = failedDrag.plain === failedDrag.uri;
+      await FileDrag.prepare(retry); const retried = drag(retry).plain;
+      Date.now = oldNow;
+      window.fetch = () => new Promise(() => {});
       const slow = marked('div', 'workspace'); FileDrag.mark(slow, path + '.not-ready', {kind:'workspace'});
       slow.dispatchEvent(new PointerEvent('pointerover', {bubbles:true}));
       const then = performance.now(), slowDrag = drag(slow), elapsed = performance.now() - then;
@@ -202,7 +236,8 @@ async function main() {
           uriKeys:[...uri.searchParams.keys()], plain:d.plain === d.uri ? '[uri]' : d.plain, internal, effect:d.effect, draggable:d.draggable}; };
       return {dropped:ta.value, bodyDraggable:document.getElementById('main').draggable,
         safeGot:Object.fromEntries(Object.entries(got).map(([k,d]) => [k,safe(d)])), safeFallback:safe(fallback),
-        slow:{...safe(slowDrag), elapsed}, external, href:location.href, dragMeta:!!document.querySelector('meta[name="ensemble-file-drag"]').content};
+        cache:{old:cacheOld, newer:cacheNew, failedFallback, retried, calls}, slow:{...safe(slowDrag), elapsed},
+        external, href:location.href, dragMeta:!!document.querySelector('meta[name="ensemble-file-drag"]').content};
     })()`);
     console.log(JSON.stringify(out));
   } finally {
@@ -298,6 +333,11 @@ class DragSourcesInChrome(unittest.TestCase):
         drag = self.got["slow"]
         self.assertLess(drag["elapsed"], 100)
         self.assertEqual(drag["plain"], "[uri]")
+
+    def test_metadata_expires_and_transient_failures_retry(self):
+        self.assertEqual(self.got["cache"], {
+            "old": "old", "newer": "new", "failedFallback": True, "retried": "new", "calls": 4,
+        })
 
     def test_the_viewer_body_stays_selectable(self):
         self.assertFalse(self.got["bodyDraggable"])

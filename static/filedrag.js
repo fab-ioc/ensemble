@@ -1,12 +1,14 @@
 // A file shown by Ensemble can leave the browser as a real file (Chromium),
 // or as its URL/text (every browser). DragEvent's data store is writable only
-// during dragstart, so the small-file text lookup is deliberately synchronous
-// and capped by the hub at 1 MiB.
+// during dragstart, so small-file text is prefetched briefly and the handler
+// immediately falls back to the URL whenever fresh metadata is unavailable.
 (function (global) {
   'use strict';
 
   const TIP = 'Drag outside Ensemble — Chrome and Edge copy the file; Safari and Firefox receive its link or text.';
   const INTERNAL = 'application/x-ensemble-file';
+  const META_TTL_MS = 2000;
+  const META_PENDING_MS = 5000;
   const metaCache = new Map();
   let ghost = null;
 
@@ -69,17 +71,40 @@
 
   function metadata(download) {
     const key = String(download);
+    const now = Date.now();
     const hit = metaCache.get(key);
-    if (hit) return hit.promise;
+    if (hit && hit.value && now - hit.readyAt < META_TTL_MS) return hit.promise;
+    if (hit && !hit.value && now - hit.startedAt < META_PENDING_MS) return hit.promise;
+    if (hit) metaCache.delete(key);
     const meta = new URL(download);
     meta.searchParams.set('meta', '1');
-    const entry = { value: null, promise: null };
+    const entry = { value: null, promise: null, startedAt: now, readyAt: 0 };
     entry.promise = (global.fetch
       ? global.fetch(meta.href, { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null)
       : Promise.resolve(null))
-      .then(value => { entry.value = value; return value; }, () => null);
+      .then(value => {
+        if (!value || typeof value !== 'object') {
+          if (metaCache.get(key) === entry) metaCache.delete(key);
+          return null;
+        }
+        entry.value = value;
+        entry.readyAt = Date.now();
+        return value;
+      }, () => {
+        if (metaCache.get(key) === entry) metaCache.delete(key);
+        return null;
+      });
     metaCache.set(key, entry);
     return entry.promise;
+  }
+
+  function cachedMetadata(download) {
+    const entry = metaCache.get(String(download));
+    if (entry && entry.value && Date.now() - entry.readyAt < META_TTL_MS) return entry.value;
+    // Start or retry the refresh for the next drag, but never await it here or
+    // use stale text in this drag's synchronous dataTransfer write window.
+    metadata(download);
+    return {};
   }
 
   function prepare(el) {
@@ -107,7 +132,7 @@
     const dt = ev.dataTransfer, info = infoOf(el);
     if (!dt || !info) return false;
     const download = contextUrl('/api/file/download', info).href;
-    const meta = (metaCache.get(download) || {}).value || {};
+    const meta = cachedMetadata(download);
     const name = meta.name || fileName(info.path);
     const mime = meta.mime || 'application/octet-stream';
     const plain = typeof meta.text === 'string' ? meta.text : download;

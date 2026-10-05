@@ -10633,7 +10633,13 @@ class Handler(BaseHTTPRequestHandler):
         if str(getattr(self, "path", "")).split("?", 1)[0] == "/api/agent/hook":
             return
         try:
-            sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {fmt % args}\n")
+            message = fmt % args
+            # Request lines can contain credentials which must not survive in
+            # the hub's retained log. Keep the parameter names so a request is
+            # still diagnosable, but never write either bearer value.
+            message = re.sub(r"([?&](?:drag|token)=)[^&\s\"]*", r"\1[redacted]", message,
+                             flags=re.IGNORECASE)
+            sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {message}\n")
         except (OSError, ValueError):
             pass
 
