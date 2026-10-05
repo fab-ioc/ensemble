@@ -2395,15 +2395,19 @@ def _input_sender_info(text: str, forced: dict | None = None) -> dict:
     """
     info = {**hub_input_kind(text), **(forced or {})}
     kind = info.get("kind") or "hub"
-    if kind == "human":
+    if kind == "human" and forced is None:
         kind = info["kind"] = "hub"
-    if kind == "report" and info.get("taskId"):
+    if kind == "human":
+        info.update(senderType="person", senderId=chatroom.HUMAN_IDENTITY,
+                    senderLabel=operator_name())
+    elif kind == "report" and info.get("taskId"):
         sender = " ".join(str(x) for x in (info.get("taskId"), info.get("reporter")) if x)
         info.update(senderType="task", senderId=(str(info.get("reporter") or "agent") + "@" +
                                                   str(info.get("taskId") or "")), senderLabel=sender)
     elif kind == "pomsg":
         label = f"{info.get('fromProject') or 'Another project'} PO"
-        info.update(senderType="po", senderId="project-po", senderLabel=label)
+        info.update(senderType="po", senderId="project-po", senderLabel=label,
+                    fromProjectName=info.get("fromProject") or "")
     elif kind == "po":
         info.update(senderType="po", senderId="po", senderLabel="PO")
     else:
@@ -2429,7 +2433,8 @@ def _launch_input_kind(room: dict, part: dict, text: str,
     return "brief"
 
 
-def _record_typed_input(sess, text: str, forced: dict | None = None) -> dict | None:
+def _record_typed_input(sess, text: str, forced: dict | None = None,
+                        parts: list[tuple[str, dict]] | None = None) -> dict | None:
     meta = getattr(sess, "meta", None) or {}
     room_id = str(meta.get("room") or "")
     # A dashboard-owned input always belongs to a persisted room. Besides
@@ -2439,11 +2444,13 @@ def _record_typed_input(sess, text: str, forced: dict | None = None) -> dict | N
         return None
     return input_provenance.record(
         room_id, str(meta.get("identity") or ""), text,
-        _input_sender_info(text, forced), session_id=str(meta.get("sessionId") or ""))
+        _input_sender_info(text, forced), session_id=str(meta.get("sessionId") or ""),
+        parts=parts)
 
 
 def _type_input(sess, text: str, provenance: dict | None = None, *,
-                record: bool = True) -> bool:
+                record: bool = True,
+                parts: list[tuple[str, dict]] | None = None) -> bool:
     """Type ``text`` into an agent's terminal and submit it as one input. A
     multi-line text goes as a bracketed paste (what the page does), so a TUI
     does not submit it line by line; Enter is a separate write (send_line).
@@ -2460,7 +2467,10 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     ok = took is not False and sess.alive()
     if ok and record:
         try:
-            _record_typed_input(sess, text, provenance)
+            if parts is None:
+                _record_typed_input(sess, text, provenance)
+            else:
+                _record_typed_input(sess, text, provenance, parts)
         except Exception as exc:       # the input arrived; provenance must not undo it
             print(f"[input-provenance] not recorded: {exc!r}", flush=True)
     return ok
@@ -2803,6 +2813,9 @@ def _session_input_context(sid: str) -> tuple[str, str]:
         for part in chatroom.agent_participants(room):
             if sid in chatroom.agent_conversations(part):
                 return str(room.get("id") or ""), str(part.get("identity") or "")
+        for retired in room.get("retiredSessions") or []:
+            if isinstance(retired, dict) and retired.get("sessionId") == sid:
+                return str(room.get("id") or ""), str(retired.get("identity") or "")
     return "", ""
 
 
@@ -2880,15 +2893,27 @@ def with_message_refs(text: str, room_id: str = "", project_id: str = "") -> str
     return message_refs.expand_message_refs(text, resolve_message_ref, task_lookup_for(room_id, project_id))
 
 
-def send_item(text: str, to: str, at: float, key: str = "", project: str = "") -> dict:
+def send_item(text: str, to: str, at: float, key: str = "", project: str = "",
+              origin: str = "human") -> dict:
     """What a send to a room holds until it is typed or posted (_resume_room,
-    _deliver_now): the text, its recipient, when, the send's key — and, for
-    another project's PO's message, that project (kind ``pomsg``, read by
-    ref_project when the line is typed)."""
-    it = {"text": text, "to": to, "at": at, "key": key}
+    _deliver_now): the text, its recipient, when, the send's key, and its
+    physical ``origin`` (human unless a dashboard-owned caller says otherwise).
+    For another project's PO's message it also holds that project (kind
+    ``pomsg``, read by ref_project when the line is typed)."""
+    it = {"text": text, "to": to, "at": at, "key": key, "origin": origin or "human"}
     if project:
         it.update(kind="pomsg", fromProjectId=project)
     return it
+
+
+def _origin_sender_info(text: str, origin: str) -> dict:
+    """Provenance supplied by a physical write boundary, never by its words."""
+    origin = (origin or "human").strip().lower()
+    if origin == "human":
+        return _input_sender_info(text, {"kind": "human"})
+    if origin == "hub":
+        return _input_sender_info(text)
+    return _input_sender_info(text, {"kind": origin})
 
 
 def ref_project(item: dict | None) -> str:
@@ -3119,34 +3144,43 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
     assistant turn that follows one. A resume note typed together with the
     messages held for the resume (one input) is two turns: the note, then
     what the person sent."""
-    out: list[dict] = []
     recorded = input_provenance.index(room_id) if room_id else {}
-    for t in turns:
+    attributed = input_provenance.assign(
+        recorded,
+        [(i, t.get("text") or "", _turn_epoch(t.get("timestamp")))
+         for i, t in enumerate(turns) if t.get("role") == "user"],
+        identity=identity, session_id=session_id) if recorded else {}
+    out: list[dict] = []
+    for i, t in enumerate(turns):
         text = t.get("text") or ""
+        rec = attributed.get(i) if t.get("role") == "user" else None
+        composed = input_provenance.split_parts(rec, text) if rec else None
+        if composed:
+            for part_no, (part_text, part_info) in enumerate(composed):
+                part_info["id"] = f"{rec.get('id', '')}:{part_no}"
+                out.append({**t, "text": part_text, **input_provenance.public(part_info)})
+            continue
         note = next((n for n in (*RESUME_NOTES, RESTART_NOTE) if text.startswith(n)), "")
         if t.get("role") == "user" and note and text[len(note):].strip():
-            out.append({**t, "text": note})
+            out.append({**t, "text": note, **_input_sender_info(note)})
             rest = text[len(note):].strip()
             # The person's open points follow the note on one line of their
             # own (points.note_line): the hub's too, before what they sent.
             if rest.startswith(points.PREFIX):
                 line, _, rest = rest.partition("\n\n")
-                out.append({**t, "text": line.strip()})
+                out.append({**t, "text": line.strip(), **_input_sender_info(line.strip())})
                 rest = rest.strip()
             if rest:
                 out.append({**t, "text": rest})
         else:
-            out.append(dict(t))
-    attributed = input_provenance.assign(
-        recorded,
-        [(i, t.get("text") or "", _turn_epoch(t.get("timestamp")))
-         for i, t in enumerate(out) if t.get("role") == "user"],
-        identity=identity, session_id=session_id) if recorded else {}
+            out.append({**t, **(input_provenance.public(rec) if rec else {})})
     last = None
-    for i, t in enumerate(out):
+    for t in out:
         if t.get("role") == "user":
-            rec = attributed.get(i)
-            t.update(input_provenance.public(rec) if rec else hub_input_kind(t.get("text") or ""))
+            if "kind" not in t:
+                legacy = hub_input_kind(t.get("text") or "")
+                t.update(_input_sender_info(t.get("text") or "", legacy)
+                         if legacy.get("kind") != "human" else legacy)
             last = {k: v for k, v in t.items() if k not in ("timestamp", "role", "text")}
         elif last is not None:
             t["answers"] = dict(last)
@@ -12356,7 +12390,8 @@ class Handler(BaseHTTPRequestHandler):
     # as ONE input: an agent is woken once, never twice.
 
     def _resume_room(self, room_full: dict, text: str = "", to: str = "",
-                     key: str = "", quiet: bool = False, project: str = "") -> dict:
+                     key: str = "", quiet: bool = False, project: str = "",
+                     origin: str = "human") -> dict:
         """Resume a room, delivering ``text`` (if any) once it is up — or, when
         it is already running, deliver right away. What a failed resume still
         holds comes along with ANY new attempt (a fresh text, a plain Resume,
@@ -12371,7 +12406,7 @@ class Handler(BaseHTTPRequestHandler):
         in that project when the line is typed (ref_project)."""
         rid = room_full["id"]
         now = time.time()
-        items = [send_item(text, to, now, key, project)] if text else []
+        items = [send_item(text, to, now, key, project, origin)] if text else []
         start = direct = carried = False
         with _RESUMES_LOCK:
             res = _RESUMES.get(rid)
@@ -12585,16 +12620,16 @@ class Handler(BaseHTTPRequestHandler):
         with rotation.GATE:
             if rotation.room_rotating(rid):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
-            if any(typed_by_person(it["text"]) for it in items):
+            if any((it.get("origin") or "human") == "human" for it in items):
                 sess.last_input = time.time()
-            person_supplied = any(typed_by_person(it["text"]) for it in items)
-            if not _type_input(
-                    sess,
-                    "\n\n".join(with_message_refs(it["text"], rid, ref_project(it)) for it in items),
-                    record=not person_supplied):
+            delivered = [(with_message_refs(it["text"], rid, ref_project(it)),
+                          _origin_sender_info(it["text"], it.get("origin") or "human"))
+                         for it in items]
+            text = "\n\n".join(part for part, _info in delivered)
+            if not _type_input(sess, text, delivered[0][1], parts=delivered):
                 return items     # it looked alive, but the write found it gone
         _typed_sends(rid, items)
-        if any(answers_open_ask(it["text"]) for it in items):
+        if any((it.get("origin") or "human") in {"human", "po"} for it in items):
             note_answer(rid, agents_in[0].get("identity", ""))     # a person's or the PO's
         return []
 
@@ -12750,7 +12785,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Read the board at delivery, after restored task terminals
                 # are recorded, rather than while the PO is being launched.
                 note = po_hub_prompt(chatroom.get_room(room_id) or {}, note)
-            parts = [note] if ident in notes else []
+            typed_parts: list[tuple[str, dict]] = []
+            if ident in notes:
+                typed_parts.append((note, _input_sender_info(note)))
             if ident in notes:
                 # A note that brings the agent back names the person's points
                 # still open, on a line of its own; those in the messages it
@@ -12762,19 +12799,24 @@ class Handler(BaseHTTPRequestHandler):
                     print(f"[points] {room_id}/{ident}: open points not listed: {e!r}", flush=True)
                     line = ""
                 if line:
-                    parts.append(line)
+                    typed_parts.append((line, _input_sender_info(line)))
             if solo:
-                parts += [with_message_refs(it["text"], room_id, ref_project(it)) for it in items]
+                typed_parts += [
+                    (with_message_refs(it["text"], room_id, ref_project(it)),
+                     _origin_sender_info(it["text"], it.get("origin") or "human"))
+                    for it in items
+                ]
             elif ident in wake_for:
-                parts.append(_relay_wake(wake_for.pop(ident)[-1]))
-            if not parts:
+                relay = _relay_wake(wake_for.pop(ident)[-1])
+                typed_parts.append((relay, _input_sender_info(relay)))
+            if not typed_parts:
                 continue
             # The note and a team's relay are the hub's; a solo agent's
             # messages are a person's unless they say otherwise.
-            if solo and any(typed_by_person(it["text"]) for it in items):
+            if solo and any((it.get("origin") or "human") == "human" for it in items):
                 sess.last_input = time.time()
-            person_supplied = solo and any(typed_by_person(it["text"]) for it in items)
-            if not _type_input(sess, "\n\n".join(parts), record=not person_supplied):
+            typed_text = "\n\n".join(part for part, _info in typed_parts)
+            if not _type_input(sess, typed_text, typed_parts[0][1], parts=typed_parts):
                 # Gone between looking ready and the write: the messages stay
                 # owed to it (a partner that got its wake is not woken again).
                 print(f"[resume] {room_id}/{ident}: stopped before the input was typed "
@@ -12786,7 +12828,7 @@ class Handler(BaseHTTPRequestHandler):
                     it["wake"] = [w for w in it["wake"] if w != ident]
             if solo:
                 _typed_sends(room_id, items)
-            if solo and any(answers_open_ask(it["text"]) for it in items):
+            if solo and any((it.get("origin") or "human") in {"human", "po"} for it in items):
                 note_answer(room_id, ident)
             if ident in notes:
                 chatroom.patch_participant(room_id, ident, {"resumedAt": time.time()})
@@ -12795,7 +12837,7 @@ class Handler(BaseHTTPRequestHandler):
                 _restart_log(f"restore {room_id}/{ident}: typed the one restart line (pty {sess.id})")
             what = [] if ident not in notes else ["the restart line" if after_restart
                                                   else "the resume note"]
-            if len(parts) > len(what):
+            if len(typed_parts) > len(what):
                 what.append(f"{len(items)} message(s)" if solo
                             else f"the relay for {len(items)} message(s)")
             print(f"[resume] {room_id}/{ident}: typed {' and '.join(what)} as one input "
@@ -13060,7 +13102,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Resumed (or, if it runs, left running) and told, as one hub input.
                 self._resume_room(chatroom.get_room(rid, public=False) or room_full,
                                   text=(made_po_fresh_input(project) if fresh else made_po_first_input(project, brought)),
-                                  key=f"made-po:{pid}:{rid}")
+                                  key=f"made-po:{pid}:{rid}", origin="madepo")
             except Exception as exc:    # noqa: BLE001 — a refusal or a failed spawn alike
                 raise MakePoError(f"The session could not be started: {str(exc) or exc.__class__.__name__}.") from exc
         except Exception:
@@ -13622,11 +13664,10 @@ class Handler(BaseHTTPRequestHandler):
             # The restart helper comes this way too, with its note and then the
             # Enter as two writes: it says so (``hub``), and its note is known
             # by its first words. Neither write is anyone's answer.
-            typed_info = (hub_input_kind(typed) if isinstance(typed, str)
-                          else {"kind": "human"})
-            if data.get("hub") and typed_info["kind"] == "human":
-                typed_info = {"kind": "hub"}
-            hub_line = typed_info["kind"] != "human"
+            hub_line = data.get("hub") is True
+            normalized_typed = input_provenance.normalize(typed) if isinstance(typed, str) else ""
+            origin = str((data.get("origin") or "hub") if hub_line else "human")
+            typed_info = _origin_sender_info(normalized_typed, origin if hub_line else "human")
             if typed_info["kind"] == "helper":
                 # Build after the restart, from the restored board; bracketed
                 # paste keeps the multiline brief in the helper's single input.
@@ -13650,8 +13691,8 @@ class Handler(BaseHTTPRequestHandler):
                      and typed.endswith("\x1b[201~"))
             submits = isinstance(typed, str) and ("\r" in typed or ("\n" in typed and not paste))
             answers = False
-            hub_submit_text = ""
-            hub_submit_info = None
+            submit_text = ""
+            submit_info = None
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -13663,7 +13704,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not typed:
                     self._send_json(200, {"ok": True})
                     return
-                if by_person:
+                if by_person and not hub_line:
                     sess.last_input = time.time()
                 if not sess.write(typed):
                     # It ended after the check above: the input went nowhere.
@@ -13675,28 +13716,47 @@ class Handler(BaseHTTPRequestHandler):
                     # unless the line it submits is the hub's.
                     pending_hub = getattr(sess, "hub_line_typed", False)
                     pending_info = getattr(sess, "hub_line_info", None) or {}
+                    person_pending = getattr(sess, "person_line_text", "")
                     answers = ((not hub_line and not pending_hub)
                                or (hub_line and typed_info.get("kind") == "po")
                                or (pending_hub and pending_info.get("kind") == "po"))
-                    if hub_line:
-                        hub_submit_text = typed
-                        hub_submit_info = typed_info
+                    if pending_hub and not normalized_typed:
+                        submit_text = getattr(sess, "hub_line_text", "")
+                        submit_info = pending_info
+                    elif hub_line:
+                        submit_text = normalized_typed
+                        submit_info = typed_info
                     elif pending_hub:
-                        hub_submit_text = getattr(sess, "hub_line_text", "")
-                        hub_submit_info = pending_info
+                        submit_text = getattr(sess, "hub_line_text", "")
+                        submit_info = pending_info
+                    else:
+                        current = re.split(r"[\r\n]", str(typed), maxsplit=1)[0]
+                        submit_text = person_pending + current
+                        submit_info = _origin_sender_info(submit_text, "human")
                     sess.hub_line_typed = False
                     sess.hub_line_text = ""
                     sess.hub_line_info = None
+                    sess.person_line_text = ""
                 elif hub_line:
                     sess.hub_line_typed = True      # its Enter follows by itself
-                    sess.hub_line_text = typed
+                    sess.hub_line_text = normalized_typed
                     sess.hub_line_info = typed_info
+                else:
+                    # The embedded terminal normally sends key chunks and a
+                    # later Enter. Keep enough of the edited line to journal
+                    # its explicit person origin; unrecognised control input
+                    # merely makes the hash fail safe at transcript matching.
+                    prior = getattr(sess, "person_line_text", "")
+                    chunk = normalized_typed if paste else str(typed)
+                    for ch in chunk:
+                        prior = prior[:-1] if ch in ("\b", "\x7f") else prior + ch
+                    sess.person_line_text = prior
             if answers:
                 meta = sess.meta or {}
                 note_answer(meta.get("room", ""), meta.get("identity", ""))
-            if hub_submit_text:
+            if submit_text:
                 try:
-                    _record_typed_input(sess, hub_submit_text, hub_submit_info)
+                    _record_typed_input(sess, submit_text, submit_info)
                 except Exception as exc:
                     print(f"[input-provenance] PTY input not recorded: {exc!r}", flush=True)
             self._send_json(200, {"ok": True})

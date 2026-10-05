@@ -4379,6 +4379,7 @@ function soloItems(raw, sid, agentId, keep) {
     kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle,
     taskId: t.taskId, reporter: t.reporter, senderType: t.senderType,
     senderId: t.senderId, senderLabel: t.senderLabel, fromProject: t.fromProject,
+    fromProjectName: t.fromProjectName,
     poKind: t.poKind, provenance: t.provenance, inputId: t.inputId,
   }
     : t.answers ? { answers: t.answers } : {}));

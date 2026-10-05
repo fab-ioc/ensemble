@@ -55,7 +55,7 @@ class Journal(unittest.TestCase):
         self.assertEqual(input_provenance.text_hash(pasted),
                          input_provenance.text_hash("first\nsecond"))
 
-    def test_one_record_attributes_only_the_closest_identical_turn(self):
+    def test_one_record_never_claims_one_of_two_identical_turns(self):
         input_provenance.record(
             "room-one", "codex", "same words", {"kind": "hub"},
             session_id="sid-1", at=100)
@@ -63,8 +63,22 @@ class Journal(unittest.TestCase):
             input_provenance.index("room-one"),
             [(0, "same words", 90), (1, "same words", 101)],
             identity="codex", session_id="sid-1")
-        self.assertEqual(list(got), [1])
-        self.assertEqual(got[1]["kind"], "hub")
+        self.assertEqual(got, {})
+
+    def test_repeated_records_follow_submission_order_not_racing_timestamps(self):
+        input_provenance.record(
+            "room-one", "codex", "same words", {"kind": "hub"},
+            session_id="sid-1", at=100)
+        input_provenance.record(
+            "room-one", "codex", "same words", {"kind": "human"},
+            session_id="sid-1", at=101)
+        got = input_provenance.assign(
+            input_provenance.index("room-one"),
+            # The human timestamp is closer to the first (Hub) record: nearest
+            # timestamp matching would invert the authors.
+            [(0, "same words", 99), (1, "same words", 100)],
+            identity="codex", session_id="sid-1")
+        self.assertEqual([got[i]["kind"] for i in (0, 1)], ["hub", "human"])
 
 
 class InventoryFixtures(unittest.TestCase):
@@ -117,8 +131,13 @@ class InventoryFixtures(unittest.TestCase):
             input_provenance.record(room_id, identity, text, info, session_id=sid, at=at)
             raw.append({"role": "user", "text": text, "timestamp": stamp(at)})
         if include_human:
-            raw.append({"role": "user", "text": "Please change the real setting.",
-                        "timestamp": stamp(self.base + 100)})
+            at = self.base + 100
+            text = "Please change the real setting."
+            input_provenance.record(
+                room_id, identity, text,
+                dashboard._input_sender_info(text, {"kind": "human"}),
+                session_id=sid, at=at)
+            raw.append({"role": "user", "text": text, "timestamp": stamp(at)})
         return raw, dashboard.classify_turns(raw, room_id=room_id, identity=identity,
                                               session_id=sid)
 
@@ -142,6 +161,10 @@ class InventoryFixtures(unittest.TestCase):
             "room-copy", "claude", text,
             dashboard._input_sender_info(text, {"kind": "hub"}),
             session_id="sid-copy", at=at)
+        input_provenance.record(
+            "room-copy", "claude", text,
+            dashboard._input_sender_info(text, {"kind": "human"}),
+            session_id="sid-copy", at=at + 1)
         turns = dashboard.classify_turns([
             {"role": "user", "text": text, "timestamp": stamp(at)},
             {"role": "assistant", "text": "ok", "timestamp": stamp(at + 1)},
@@ -149,6 +172,52 @@ class InventoryFixtures(unittest.TestCase):
         ], room_id="room-copy", identity="claude", session_id="sid-copy")
         self.assertEqual(turns[0]["kind"], "hub")
         self.assertEqual(turns[2]["kind"], "human")
+
+    def test_composed_resume_keeps_po_and_human_fragments_distinct(self):
+        rid, sid, identity = "room-compose", "sid-compose", "claude"
+        at = self.base
+        note = dashboard.RESUME_NOTE
+        po = "[from the PO] Use the safe migration."
+        human = "I also want the title shortened."
+        parts = [
+            (note, dashboard._input_sender_info(note)),
+            (po, dashboard._input_sender_info(po, {"kind": "po"})),
+            (human, dashboard._input_sender_info(human, {"kind": "human"})),
+        ]
+        whole = "\n\n".join(text for text, _info in parts)
+        input_provenance.record(
+            rid, identity, whole, parts[0][1], session_id=sid, at=at, parts=parts)
+        turns = dashboard.classify_turns(
+            [{"role": "user", "text": whole, "timestamp": stamp(at)}],
+            room_id=rid, identity=identity, session_id=sid)
+        self.assertEqual([t["kind"] for t in turns], ["resumed", "po", "human"])
+        self.assertEqual([t.get("senderLabel") for t in turns], ["Hub", "PO", None])
+        self.assertTrue(all(t.get("provenance") == "record" for t in turns))
+
+    def test_composed_resume_keeps_cross_project_po_sender(self):
+        rid, sid, identity = "room-pomsg", "sid-pomsg", "claude"
+        at = self.base
+        note = dashboard.RESUME_NOTE
+        pomsg = "[from the Dock PO] question: Which branch?"
+        parts = [(note, dashboard._input_sender_info(note)),
+                 (pomsg, dashboard._input_sender_info(pomsg, {"kind": "pomsg"}))]
+        whole = "\n\n".join(text for text, _info in parts)
+        input_provenance.record(
+            rid, identity, whole, parts[0][1], session_id=sid, at=at, parts=parts)
+        turns = dashboard.classify_turns(
+            [{"role": "user", "text": whole, "timestamp": stamp(at)}],
+            room_id=rid, identity=identity, session_id=sid)
+        self.assertEqual([(t["kind"], t.get("senderLabel")) for t in turns],
+                         [("resumed", "Hub"), ("pomsg", "Dock PO")])
+
+    def test_legacy_po_fallback_has_represented_sender(self):
+        turns = dashboard.classify_turns([
+            {"role": "user", "text": "[from the PO] carry on"},
+            {"role": "user", "text": "[from the Dock PO] info: shipped"},
+        ])
+        self.assertEqual([(t["kind"], t.get("senderLabel")) for t in turns],
+                         [("po", "PO"), ("pomsg", "Dock PO")])
+        self.assertEqual(turns[1]["fromProjectName"], "Dock")
 
     def test_only_the_genuine_ceo_turn_becomes_a_point(self):
         rid = chatroom.create_room(
@@ -177,6 +246,13 @@ class InventoryFixtures(unittest.TestCase):
 
 
 class LaunchKinds(unittest.TestCase):
+    def test_retired_session_resolves_to_its_room_and_identity(self):
+        room = {"id": "room-old", "participants": [], "retiredSessions": [
+            {"sessionId": "sid-old", "identity": "codex", "agent": "codex"}]}
+        with mock.patch.object(chatroom, "list_rooms", return_value=[room]):
+            self.assertEqual(dashboard._session_input_context("sid-old"),
+                             ("room-old", "codex"))
+
     def test_type_input_records_only_after_a_successful_submit(self):
         class Session:
             meta = {"room": "room-one", "identity": "claude", "sessionId": "sid-one"}

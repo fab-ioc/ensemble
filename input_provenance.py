@@ -1,8 +1,8 @@
-"""Persistent provenance for text the hub types into agent terminals.
+"""Persistent provenance for text submitted to dashboard-owned agent terminals.
 
 Agent transcripts have only ``user`` and ``assistant`` roles, so a terminal
 write made by the hub is otherwise indistinguishable from text the operator
-typed.  Keep a compact, append-only record per room and match transcript user
+typed. Keep a compact, append-only record of both origins per room and match transcript user
 turns by content hash and time.  Prefix recognition in :mod:`dashboard` stays
 as the compatibility path for transcripts written before these records.
 
@@ -90,12 +90,27 @@ def records(room_id: str) -> list[dict]:
         return [dict(x) for x in out]
 
 
+_PUBLIC_FIELDS = ("kind", "senderType", "senderId", "senderLabel", "reportKind",
+                  "taskTitle", "taskId", "reporter", "fromProject", "fromProjectName",
+                  "poKind")
+
+
+def _metadata(info: dict) -> dict:
+    return {key: info[key] for key in _PUBLIC_FIELDS if info.get(key) not in (None, "")}
+
+
 def record(room_id: str, identity: str, text: str, info: dict,
-           *, session_id: str = "", at: float | None = None) -> dict | None:
-    """Append one successful hub/tool terminal input and return its record."""
+           *, session_id: str = "", at: float | None = None,
+           parts: list[tuple[str, dict]] | None = None) -> dict | None:
+    """Append one successful terminal submission and return its record.
+
+    ``parts`` describes logical inputs that the hub deliberately submitted as
+    one PTY turn (for example a resume note plus queued messages). Only each
+    normalized part's hash and character count are stored, never its text.
+    """
     body = normalize(text)
     kind = str((info or {}).get("kind") or "")
-    if not room_id or not body or not kind or kind == "human":
+    if not room_id or not body or not kind:
         return None
     row = {
         "id": "input-" + uuid.uuid4().hex[:12],
@@ -105,13 +120,21 @@ def record(room_id: str, identity: str, text: str, info: dict,
         "sessionId": session_id or "",
         "hash": text_hash(body),
         "kind": kind,
-        "senderType": str(info.get("senderType") or "hub"),
-        "senderId": str(info.get("senderId") or "ensemble"),
-        "senderLabel": str(info.get("senderLabel") or "Hub"),
+        "senderType": str(info.get("senderType") or ("person" if kind == "human" else "hub")),
+        "senderId": str(info.get("senderId") or ("user" if kind == "human" else "ensemble")),
+        "senderLabel": str(info.get("senderLabel") or ("you" if kind == "human" else "Hub")),
     }
-    for key in ("reportKind", "taskTitle", "taskId", "reporter", "fromProject", "poKind"):
-        if info.get(key) not in (None, ""):
-            row[key] = info[key]
+    row.update(_metadata(info))
+    if parts:
+        encoded = []
+        for part_text, part_info in parts:
+            part_body = normalize(part_text)
+            if not part_body or not part_info.get("kind"):
+                continue
+            encoded.append({"hash": text_hash(part_body), "chars": len(part_body),
+                            **_metadata(part_info)})
+        if encoded:
+            row["parts"] = encoded
     p = path_for(room_id)
     with _LOCK:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -153,11 +176,14 @@ def match(indexed: dict[str, list[dict]], text: str, *, at: float = 0,
 
 def assign(indexed: dict[str, list[dict]], turns: list[tuple[int, str, float]], *,
            identity: str = "", session_id: str = "") -> dict[int, dict]:
-    """Match records to transcript turns one-to-one, choosing closest times.
+    """Match records to transcript turns one-to-one in submission order.
 
-    One journal row represents one terminal submission.  This matters when a
-    person repeats a Hub input verbatim soon afterwards: the single row must
-    attribute only the actual Hub turn, not every equal transcript turn.
+    New browser/person submissions are journaled too. Thus equal text has one
+    row per physical submission, and journal order is the causally reliable
+    signal even when the transcript timestamp races the post-write journal.
+    If eligible row/turn counts differ, the hash is ambiguous and none is
+    attributed: a lone Hub row can never be borrowed by a later identical
+    unrecorded person turn.
     """
     by_hash: dict[str, list[tuple[int, float]]] = defaultdict(list)
     for turn_no, text, at in turns:
@@ -169,35 +195,57 @@ def assign(indexed: dict[str, list[dict]], turns: list[tuple[int, str, float]], 
             rows = [r for r in rows if not r.get("identity") or r.get("identity") == identity]
         if session_id:
             rows = [r for r in rows if not r.get("sessionId") or r.get("sessionId") == session_id]
-        edges: list[tuple[float, int, int]] = []
-        for turn_no, at in candidates:
-            if not at:
-                continue
-            for row_no, row in enumerate(rows):
-                distance = abs(float(row.get("at") or 0) - at)
-                if distance <= MATCH_SLACK_S:
-                    edges.append((distance, turn_no, row_no))
-        used_turns: set[int] = set()
-        used_rows: set[int] = set()
-        for _distance, turn_no, row_no in sorted(edges):
-            if turn_no in used_turns or row_no in used_rows:
-                continue
-            assigned[turn_no] = dict(rows[row_no])
-            used_turns.add(turn_no)
-            used_rows.add(row_no)
-        # A timestamp-less transcript can be attributed only when the filtered
-        # hash has exactly one unclaimed turn and one unclaimed journal row.
-        undated = [turn_no for turn_no, at in candidates if not at and turn_no not in used_turns]
-        spare = [row_no for row_no in range(len(rows)) if row_no not in used_rows]
-        if len(undated) == len(spare) == 1:
-            assigned[undated[0]] = dict(rows[spare[0]])
+        eligible_turns = [
+            (turn_no, at) for turn_no, at in candidates
+            if not at or any(abs(float(row.get("at") or 0) - at) <= MATCH_SLACK_S for row in rows)
+        ]
+        eligible_rows = [
+            row for row in rows
+            if not candidates or any(not at or abs(float(row.get("at") or 0) - at) <= MATCH_SLACK_S
+                                     for _turn_no, at in candidates)
+        ]
+        if len(eligible_turns) != len(eligible_rows):
+            continue
+        for (turn_no, at), row in zip(eligible_turns, eligible_rows):
+            if at and abs(float(row.get("at") or 0) - at) > MATCH_SLACK_S:
+                break
+        else:
+            assigned.update({turn_no: dict(row)
+                             for (turn_no, _at), row in zip(eligible_turns, eligible_rows)})
     return assigned
+
+
+def split_parts(record_: dict, text: str) -> list[tuple[str, dict]] | None:
+    """Recover and verify a composed record's logical parts from transcript text."""
+    parts = record_.get("parts")
+    if not isinstance(parts, list) or not parts:
+        return None
+    body = normalize(text)
+    at = 0
+    out: list[tuple[str, dict]] = []
+    for i, part in enumerate(parts):
+        try:
+            chars = int(part.get("chars") or 0)
+        except (TypeError, ValueError):
+            return None
+        piece = body[at:at + chars]
+        if chars <= 0 or len(piece) != chars or text_hash(piece) != part.get("hash"):
+            return None
+        out.append((piece, dict(part)))
+        at += chars
+        if i + 1 < len(parts):
+            if body[at:at + 2] != "\n\n":
+                return None
+            at += 2
+    return out if at == len(body) else None
 
 
 def public(record_: dict) -> dict:
     """Fields safe and useful on a transcript turn returned to the page."""
-    keep = ("kind", "senderType", "senderId", "senderLabel", "reportKind", "taskTitle",
-            "taskId", "reporter", "fromProject", "poKind")
-    return {k: record_[k] for k in keep if record_.get(k) not in (None, "")} | {
+    meta = _metadata(record_)
+    if meta.get("kind") == "human":
+        for key in ("senderType", "senderId", "senderLabel"):
+            meta.pop(key, None)
+    return meta | {
         "inputId": record_.get("id", ""), "provenance": "record"
     }

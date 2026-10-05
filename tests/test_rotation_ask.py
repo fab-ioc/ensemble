@@ -636,12 +636,14 @@ class WhatCountsAsAPersonTests(unittest.TestCase):
         room = {"id": "room-solo", "mode": "solo",
                 "participants": [{"kind": "agent", "identity": "claude", "ptyId": "p1"}]}
         with mock.patch.object(dashboard.ptyrun, "get", return_value=sess), \
-                mock.patch.object(dashboard, "with_message_refs", side_effect=lambda t, rid, *a: t):
-            H()._deliver_now(room, [{"text": "[from the PO] Review 2: fix it", "to": ""}])
+                mock.patch.object(dashboard, "with_message_refs", side_effect=lambda t, rid, *a: t), \
+                mock.patch.object(dashboard, "_record_typed_input") as recorded:
+            H()._deliver_now(room, [{"text": "[from the PO] Review 2: fix it", "to": "", "origin": "po"}])
             self.assertEqual(sess.last_input, 0.0)
             self.assertEqual(len(sess.typed), 1)
-            H()._deliver_now(room, [{"text": "hold on, I am testing", "to": ""}])
+            H()._deliver_now(room, [{"text": "[digest] hold on, I am testing", "to": ""}])
             self.assertGreater(sess.last_input, 0.0)
+        self.assertEqual([call.args[2]["kind"] for call in recorded.call_args_list], ["po", "human"])
 
 
 if __name__ == "__main__":

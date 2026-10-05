@@ -612,7 +612,8 @@ def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: flo
             _log(f"the stopped PO of {room_id} was resumed for "
                  f"{', '.join(p['id'] for p in told)}: typed once it is settled")
             return "resuming"
-        result = _d.hub_launcher()._resume_room(room, text=wake, key=key, project=told[0]["fromProjectId"])
+        result = _d.hub_launcher()._resume_room(
+            room, text=wake, key=key, project=told[0]["fromProjectId"], origin="pomsg")
     except Exception as e:      # noqa: BLE001 — a refusal or a failed spawn alike
         # The failed resume would keep the line for the room's Retry; this
         # queue keeps it instead, so it is never typed twice.

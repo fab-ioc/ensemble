@@ -196,8 +196,47 @@ class PtyInputEndpointFilter(unittest.TestCase):
             self.post(sess, paste, hub=True)
             self.post(sess, "\r")
         self.assertEqual(sess.writes, [paste, "\r"])
-        record.assert_called_once_with(sess, paste, {"kind": "hub"})
+        record.assert_called_once_with(sess, "first\nsecond", {
+            "kind": "hub", "senderType": "hub", "senderId": "ensemble", "senderLabel": "Hub"})
         answered.assert_not_called()
+
+    def test_explicit_source_beats_prefix_and_bracketed_po_keeps_its_sender(self):
+        class Session:
+            meta = {"room": "room-one", "identity": "claude"}
+            hub_line_typed = False
+            hub_line_text = ""
+            person_line_text = ""
+
+            def __init__(self):
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        sess = Session()
+        with mock.patch.object(dashboard, "_record_typed_input") as record, \
+                mock.patch.object(dashboard, "note_answer") as answered:
+            self.post(sess, "[digest] these are the operator's words", origin="po")
+            self.post(sess, "\r")
+        info = record.call_args.args[2]
+        self.assertEqual((record.call_args.args[1], info["kind"], info["senderType"]),
+                         ("[digest] these are the operator's words", "human", "person"))
+        answered.assert_called_once_with("room-one", "claude")
+
+        sess = Session()
+        po = "\x1b[200~[from the PO] use branch B\x1b[201~"
+        with mock.patch.object(dashboard, "_record_typed_input") as record, \
+                mock.patch.object(dashboard, "note_answer") as answered:
+            self.post(sess, po, hub=True, origin="po")
+            self.post(sess, "\r", hub=True, origin="po")
+        info = record.call_args.args[2]
+        self.assertEqual((record.call_args.args[1], info["kind"], info["senderLabel"]),
+                         ("[from the PO] use branch B", "po", "PO"))
+        answered.assert_called_once_with("room-one", "claude")
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ from unittest import mock
 import chatroom
 import dashboard
 import ensemble_tools
+import input_provenance
 from test_quiet_restart import _Hub, FakePty
 
 
@@ -178,6 +179,39 @@ class TheResumeNote(_Stops):
             turns = dashboard.classify_turns([{"role": "user", "text": note + "\n\nand step 2 please"}])
             self.assertEqual([t["text"] for t in turns], [note, "and step 2 please"])
             self.assertEqual(dashboard.first_words(note), "Resumed task")
+
+    def test_resume_delivery_records_each_composed_origin_without_raw_text(self):
+        rid = self.room()
+        sess = FakePty("pty-compose")
+        sess.meta = {"room": rid, "identity": "claude", "sessionId": "sid-claude"}
+        po = "[from the PO] Use the safe migration."
+        pomsg = "[from the Dock PO] question: Which branch?"
+        human = "I also want the title shortened."
+        items = [
+            dashboard.send_item(po, "", time.time(), origin="po"),
+            dashboard.send_item(pomsg, "", time.time(), project="dock", origin="pomsg"),
+            dashboard.send_item(human, "", time.time(), origin="human"),
+        ]
+
+        self.handler()._type_after_resume(
+            rid, {"claude": sess}, {"claude": dashboard.RESUME_NOTE}, items, solo=True)
+
+        whole = "\n\n".join((dashboard.RESUME_NOTE, po, pomsg, human))
+        [row] = input_provenance.records(rid)
+        self.assertEqual(row["hash"], input_provenance.text_hash(whole))
+        self.assertEqual([part["kind"] for part in row["parts"]],
+                         ["resumed", "po", "pomsg", "human"])
+        saved = input_provenance.path_for(rid).read_text(encoding="utf-8")
+        for raw_text in (dashboard.RESUME_NOTE, po, pomsg, human):
+            self.assertNotIn(raw_text, saved)
+
+        turns = dashboard.classify_turns(
+            [{"role": "user", "text": whole}], room_id=rid,
+            identity="claude", session_id="sid-claude")
+        self.assertEqual([(turn["kind"], turn.get("senderLabel")) for turn in turns], [
+            ("resumed", "Hub"), ("po", "PO"), ("pomsg", "Dock PO"),
+            ("human", None),
+        ])
 
 
 class _Ring:
