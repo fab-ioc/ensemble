@@ -81,9 +81,26 @@ async function main() {
           await ev("edAddLast(); const ta=document.querySelector('.ed-text'); ta.value='Question one\\nQuestion two'; ta.dispatchEvent(new Event('input',{bubbles:true})); ta.focus(); 0");
           await pressClick('#send');
           out.push({kind:'points',sent:await ev('window.__sent')});
-          await ev("renderBubbles([{id:'qa1',from:'codex',text:'Ask: What should happen?'}]); ASK_DRAFT.set('qa1:0','Please proceed.'); document.querySelector('.qa-send').scrollIntoView(); 0");
+          await ev("(()=>{renderBubbles([{id:'qa1',from:'codex',text:'Ask: What should happen?'}]); const ta=document.querySelector('.qa-cm textarea'); ta.value='Please proceed.'; ta.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.qa-send').scrollIntoView();})()");
           await pressClick('.qa-send');
           out.push({kind:'quick-answer',asked:await ev('window.__asked')});
+          await ev(`(() => {
+            window.__asked=[];
+            renderBubbles([{id:'qa-ime',from:'codex',text:'Ask: Your composed answer?'}]);
+            const ta=document.querySelector('.qa-cm textarea');
+            ta.value='Composed'; ta.dispatchEvent(new Event('input',{bubbles:true}));
+            ta.focus(); ta.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
+          })()`);
+          await pressClick('.qa-send');
+          const qaImeBefore=await ev('window.__asked.length');
+          await ev(`(() => {
+            const ta=document.querySelector('.qa-cm textarea');
+            ta.value='Composed final answer';
+            ta.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
+            ta.dispatchEvent(new Event('input',{bubbles:true}));
+          })()`);
+          await sleep(80);
+          out.push({kind:'quick-answer-ime',before:qaImeBefore,asked:await ev('window.__asked')});
           await ev("ROOM_SENDS=[{key:'retry-test',text:'Please retry',state:'failed',error:'offline'}]; renderBubbles(LAST_ITEMS || []); document.querySelector('.send-retry').scrollIntoView(); 0");
           await pressClick('.send-retry');
           out.push({kind:'retry',sent:await ev('window.__sent')});
@@ -141,7 +158,12 @@ async function main() {
           await c.send('Input.insertText',{text:'Only one request\nEven after two presses'},s);
           await pressClick('#send');
           await pressClick('#send');
-          const blocked=await ev(`({count:window.__blocked.length,hint:document.getElementById('hint').textContent})`);
+          await ev("document.getElementById('input').focus(); 0");
+          await c.send('Input.insertText',{text:'This edit must be blocked'},s);
+          await pressClick('#send');
+          const blocked=await ev(`({count:window.__blocked.length,hint:document.getElementById('hint').textContent,
+            draft:document.getElementById('input').value,readOnly:document.getElementById('input').readOnly,
+            disabled:document.getElementById('send').disabled,inert:document.getElementById('compose').inert})`);
           await ev("window.__resolveSend(new Response(JSON.stringify({send:null}),{status:200,headers:{'Content-Type':'application/json'}})); 0");
           await sleep(80);
           out.push({kind:'in-flight',...blocked});
@@ -152,6 +174,31 @@ async function main() {
           await ev("document.getElementById('input').dispatchEvent(new CompositionEvent('compositionend',{bubbles:true})); 0");
           await sleep(80);
           out.push({kind:'ime',before:composingBefore,sent:await ev('window.__sent')});
+          await ev("edClear(); document.getElementById('input').focus(); 0");
+          await c.send('Input.insertText',{text:'Drag source'},s);
+          const drag=await ev(`(() => {const b=document.getElementById('send').getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
+          await c.send('Input.dispatchMouseEvent',{type:'mousePressed',...drag,button:'left',clickCount:1},s);
+          await sleep(80);
+          await c.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:2,y:2,button:'left',buttons:1},s);
+          await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:2,y:2,button:'left',clickCount:1},s);
+          await ev("document.getElementById('input').focus(); 0");
+          await c.send('Input.insertText',{text:'Keyboard after drag cancel'},s);
+          await ev("document.getElementById('send').click(); 0");
+          await sleep(80);
+          out.push({kind:'drag-cancel-keyboard',sent:(await ev('window.__sent')).slice(-2),press:await ev('SEND_PRESS')});
+        }
+        if(width===390 && kind==='task') {
+          await ev("edClear(); document.getElementById('input').focus(); 0");
+          await c.send('Input.insertText',{text:'Cancelled touch source'},s);
+          const cancel=await ev(`(() => {const b=document.getElementById('send').getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
+          await c.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...cancel,id:7}]},s);
+          await sleep(80);
+          await c.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]},s);
+          await ev("document.getElementById('input').focus(); 0");
+          await c.send('Input.insertText',{text:'Keyboard after touch cancel'},s);
+          await ev("document.getElementById('send').click(); 0");
+          await sleep(80);
+          out.push({kind:'touch-cancel-keyboard',sent:(await ev('window.__sent')).slice(-2),press:await ev('SEND_PRESS')});
         }
         await c.send('Target.closeTarget',{targetId});
       }
@@ -243,6 +290,31 @@ async function main() {
       await frameSend('docked-po','#po-panel iframe.po-session:not([hidden])');
       if(touch) await frameSend('tap-po','#po-panel iframe.po-session:not([hidden])',null,true);
       if(width===1280) await popSend('po-chat','iframe.po-session.pd-own','pop-out-po');
+      if(width===1280) {
+        const indexPoint=await ev(`(() => {
+          const host=document.createElement('div'); host.id='index-send-probe';
+          host.innerHTML=SessionActions.actionBarHtml(SessionActions.sessionActions(
+            {kind:'raw',sessionId:'raw-probe',pid:4242,agent:'codex',live:true},
+            {hub:true,features:{send:true,focus:true,themes:true,geometry:true},terminalName:'terminal',fileManagerName:'files'}));
+          document.body.appendChild(host);
+          window.__indexSendCalls=[]; window.__indexPrompted=0;
+          window.__indexOldApi=api; window.__indexOldPrompt=prompt;
+          window.api=async(path,opt)=>{window.__indexSendCalls.push({path,body:JSON.parse(opt.body)});return {result:'ok'};};
+          window.prompt=()=>{window.__indexPrompted++;return 'First click from the dashboard';};
+          host.querySelector('.am-more').click();
+          const b=document.querySelector('.am-menu:not([hidden]) .send-btn'), r=b.getBoundingClientRect();
+          window.__indexTrace=[];
+          for(const t of ['pointerdown','mousedown','mouseup','click']) document.addEventListener(t,e=>{
+            if(e.target.closest?.('.send-btn')===b) window.__indexTrace.push({type:t,x:e.clientX,y:e.clientY});
+          },true);
+          return {x:r.x+r.width/2,y:r.y+r.height/2};
+        })()`);
+        await c.send('Input.dispatchMouseEvent',{type:'mousePressed',...indexPoint,button:'left',clickCount:1},s);
+        await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',...indexPoint,button:'left',clickCount:1},s);
+        await sleep(80);
+        out.push({kind:'index-send',width,prompted:await ev('window.__indexPrompted'),calls:await ev('window.__indexSendCalls'),trace:await ev('window.__indexTrace')});
+        await ev(`(() => {SessionActions.closeMenu(); window.api=window.__indexOldApi; window.prompt=window.__indexOldPrompt; document.getElementById('index-send-probe').remove();})()`);
+      }
       await c.send('Target.closeTarget',{targetId});
       await c.send('Target.disposeBrowserContext',{browserContextId});
     }
@@ -266,7 +338,7 @@ class SendFirstClick(unittest.TestCase):
 
     def test_one_click_sends_once(self):
         for case in self.got:
-            if case['kind'] in ('poll', 'points', 'quick-answer', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'ime'):
+            if case['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send'):
                 continue
             with self.subTest(width=case['width'], kind=case['kind']):
                 self.assertGreater(case.get('before', {}).get('inputH', case.get('inputH', 0)), 44, case)
@@ -281,11 +353,14 @@ class SendFirstClick(unittest.TestCase):
                     self.assertEqual(case['flyAfter'], '', case)
 
     def test_other_send_controls(self):
-        cases = {c['kind']: c for c in self.got if c['kind'] in ('poll', 'points', 'quick-answer', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'ime')}
+        cases = {c['kind']: c for c in self.got if c['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send')}
         self.assertEqual(len(cases['poll']['sent']), 2, cases['poll'])
         self.assertEqual(len(cases['points']['sent']), 3, cases['points'])
         self.assertIn('## Points', cases['points']['sent'][-1]['text'])
         self.assertEqual(len(cases['quick-answer']['asked']), 1, cases['quick-answer'])
+        self.assertEqual(cases['quick-answer-ime']['before'], 0, cases['quick-answer-ime'])
+        self.assertEqual(len(cases['quick-answer-ime']['asked']), 1, cases['quick-answer-ime'])
+        self.assertEqual(cases['quick-answer-ime']['asked'][0]['comment'], 'Composed final answer', cases['quick-answer-ime'])
         self.assertEqual(cases['retry']['sent'][-1]['key'], 'retry-test')
         self.assertIn('Write a message', cases['empty']['hint'])
         self.assertTrue(cases['selection-bar']['open'], cases['selection-bar'])
@@ -299,5 +374,14 @@ class SendFirstClick(unittest.TestCase):
         self.assertEqual(len(cases['cmd-enter']['sent']), 8, cases['cmd-enter'])
         self.assertEqual(cases['in-flight']['count'], 1, cases['in-flight'])
         self.assertIn('Sending', cases['in-flight']['hint'])
+        self.assertTrue(cases['in-flight']['readOnly'] and cases['in-flight']['disabled'] and cases['in-flight']['inert'], cases['in-flight'])
+        self.assertNotIn('This edit must be blocked', cases['in-flight']['draft'])
         self.assertEqual(cases['ime']['before'], 8, cases['ime'])
         self.assertEqual(len(cases['ime']['sent']), 9, cases['ime'])
+        for kind in ('drag-cancel-keyboard', 'touch-cancel-keyboard'):
+            self.assertEqual(len(cases[kind]['sent']), 2, cases[kind])
+            self.assertIn('cancel', cases[kind]['sent'][-1]['text'].lower(), cases[kind])
+            self.assertIsNone(cases[kind]['press'], cases[kind])
+        self.assertEqual(cases['index-send']['prompted'], 1, cases['index-send'])
+        self.assertEqual(cases['index-send']['calls'], [{'path': '/api/send', 'body': {'pid': 4242, 'text': 'First click from the dashboard'}}], cases['index-send'])
+        self.assertEqual([e['type'] for e in cases['index-send']['trace']], ['pointerdown', 'mousedown', 'mouseup', 'click'], cases['index-send'])

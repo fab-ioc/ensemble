@@ -2631,11 +2631,16 @@ function askBodyHtml(m, P, md, bar) {
 }
 // The draft comments, kept across a redraw that replaces a balloon.
 const ASK_DRAFT = new Map();
+const ASK_COMPOSING = new Set(), ASK_AFTER_COMPOSE = new Map();
 function askRestoreDrafts(box) {
   box.querySelectorAll('.qa-cm textarea[data-ask]').forEach(ta => {
     const d = ASK_DRAFT.get(ta.dataset.ask);
     if (d && !ta.value) ta.value = d;
   });
+}
+function askSyncDraft(key) {
+  const ta = [...document.querySelectorAll('.qa-cm textarea[data-ask]')].find(x => x.dataset.ask === key);
+  if (ta) ASK_DRAFT.set(key, ta.value);
 }
 // A click on an option (or Send): sent once from this page, and the hub takes
 // it once from any device. The reply's points settle the card.
@@ -2645,6 +2650,7 @@ async function askSend(key, option, post) {
   const m = (LAST_ITEMS || []).find(x => x && x.id === mid);
   const a = m && asksOf(m)[n];
   if (!a || askAnswer(m, a, POINTS)) return null;
+  askSyncDraft(key);
   const comment = (ASK_DRAFT.get(key) || '').trim();
   if (!option && !comment) { pointsNote(a.kind === 'open' ? 'Write your answer first.' : 'Pick an answer, or write a comment first.'); return null; }
   ASK_LOCAL.set(key, { option, comment, pending: true });
@@ -2673,7 +2679,14 @@ async function askSend(key, option, post) {
 function askClick(e) {
   const b = e.target.closest && e.target.closest('.qa-opt, .qa-send');
   if (!b || b.disabled) return false;
-  askSend(b.dataset.ask, b.classList.contains('qa-opt') ? b.dataset.opt : '', postOk);
+  const key = b.dataset.ask, option = b.classList.contains('qa-opt') ? b.dataset.opt : '';
+  askSyncDraft(key);
+  if (ASK_COMPOSING.has(key)) {
+    ASK_AFTER_COMPOSE.set(key, option);
+    pointsNote('Finishing your text before sending.');
+    return true;
+  }
+  askSend(key, option, postOk);
   return true;
 }
 // ---- Asks: end
@@ -5031,7 +5044,7 @@ let ROOM_IDENTS = [];   // the room's agents, for the @<identity> prefix
 // moves the frame before mouseup, so click may land on the composer instead.
 // Start the action while the pressed target is still known. The following
 // browser click (when one is generated) must not submit it a second time.
-let SEND_PRESS = 0, SEND_PRESS_SEQ = 0;
+let SEND_PRESS = null, SEND_PRESS_SEQ = 0;
 let SEND_COMPOSING = false, SEND_AFTER_COMPOSE = false;
 $('#compose').addEventListener('compositionstart', e => {
   if (e.target.matches('textarea')) SEND_COMPOSING = true;
@@ -5048,21 +5061,46 @@ document.addEventListener('pointerdown', e => {
   if (!e.isPrimary || e.button !== 0) return;
   const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
   if (!b || b.disabled) return;
-  const press = ++SEND_PRESS_SEQ;
+  const press = { seq: ++SEND_PRESS_SEQ, pointerId: e.pointerId, target: b };
   SEND_PRESS = press;
-  // A cancelled press may produce no click at all. Keep keyboard activation
-  // available after that gesture instead of leaving a stale suppression flag.
-  setTimeout(() => { if (SEND_PRESS === press) SEND_PRESS = 0; }, 700);
+  // A cancelled or dragged press may produce no click. Pointerup's timer runs
+  // after the compatibility click; this longer fallback covers a lost up.
+  setTimeout(() => { if (SEND_PRESS === press) SEND_PRESS = null; }, 700);
   if (b.id === 'send') sendNow();
   else if (b.classList.contains('qa-send')) askClick(e);
   else sendAction(b);
 }, true);
+document.addEventListener('pointercancel', e => {
+  if (SEND_PRESS && SEND_PRESS.pointerId === e.pointerId) SEND_PRESS = null;
+}, true);
+document.addEventListener('dragstart', e => {
+  const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
+  if (SEND_PRESS && SEND_PRESS.target === b) SEND_PRESS = null;
+}, true);
+document.addEventListener('pointerup', e => {
+  const press = SEND_PRESS;
+  if (!press || press.pointerId !== e.pointerId) return;
+  setTimeout(() => { if (SEND_PRESS === press) SEND_PRESS = null; }, 0);
+}, true);
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
   const pressed = SEND_PRESS;
-  SEND_PRESS = 0;
-  if (b && pressed) e.sendPressHandled = true;
+  // Keyboard/programmatic activation has detail 0 and is never the click
+  // paired with a pointer press. Suppress only that press's own target/id.
+  if (!b || !pressed || e.detail === 0 || b !== pressed.target) return;
+  if ('pointerId' in e && e.pointerId !== pressed.pointerId) return;
+  SEND_PRESS = null;
+  e.sendPressHandled = true;
 }, true);
+function setSendBusy(busy) {
+  SEND_IN_FLIGHT = busy;
+  const box = $('#compose'), send = $('#send');
+  box.inert = busy;
+  box.toggleAttribute('aria-busy', busy);
+  box.querySelectorAll('textarea').forEach(ta => { ta.readOnly = busy; });
+  send.disabled = busy || !ROOM_OBJ;
+  send.textContent = busy ? 'Sending…' : 'Send';
+}
 async function sendNow() {
   if (SEND_IN_FLIGHT) {
     setText($('#hint'), 'Sending your message.');
@@ -5088,7 +5126,8 @@ async function sendNow() {
     setText($('#hint'), SEND_ERR);
     return;
   }
-  SEND_IN_FLIGHT = true;
+  setSendBusy(true);
+  setText($('#hint'), 'Sending your message.');
   try {
     // Solo routes straight into the agent's PTY, never the room relay ("use
     // chat_read"): a solo agent has no chat tools, and a solo view never shows
@@ -5133,7 +5172,7 @@ async function sendNow() {
     SEND_ERR = ''; SEND_KEY = '';
     edClear(); noteSent(d && d.send); refresh();
   } finally {
-    SEND_IN_FLIGHT = false;
+    setSendBusy(false);
   }
 }
 $('#send').onclick = e => { if (!e.sendPressHandled) sendNow(); };
@@ -5972,6 +6011,21 @@ $('#points-line').addEventListener('click', e => {
 $('#msgs').addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
   if (ta) ASK_DRAFT.set(ta.dataset.ask, ta.value);
+});
+$('#msgs').addEventListener('compositionstart', e => {
+  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
+  if (ta) ASK_COMPOSING.add(ta.dataset.ask);
+});
+$('#msgs').addEventListener('compositionend', e => {
+  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
+  if (!ta) return;
+  const key = ta.dataset.ask;
+  ASK_DRAFT.set(key, ta.value);
+  ASK_COMPOSING.delete(key);
+  if (!ASK_AFTER_COMPOSE.has(key)) return;
+  const option = ASK_AFTER_COMPOSE.get(key);
+  ASK_AFTER_COMPOSE.delete(key);
+  setTimeout(() => { askSyncDraft(key); askSend(key, option, postOk); }, 0);
 });
 $('#msgs').addEventListener('click', e => {
   if (e.sendPressHandled) return;
