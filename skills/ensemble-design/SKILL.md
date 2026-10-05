@@ -1192,9 +1192,11 @@ self-contained component, so a later layout can host it elsewhere.
   heads are sentence case, `--fs-200` 600 in `--fg-subtle`, the count after the name in
   `--fg-muted`. **An empty group is its head alone**, quieter (500, `--fg-muted`) with its `0`: the
   list keeps its shape, so no group comes and goes under the pointer as tasks move.
-- **Full names on hover** (#170): only a `.sw-row` whose `.sw-title` is measured as truncated
-  expands after 320 ms of mouse hover; moving to the next row switches at once. Keyboard focus
-  expands at once. The expanded copy is aligned over the row, keeps the dot, number, age and reason,
+- **Full names on hover** (#170, extended to Changes by #172): a task-list `.sw-row` whose
+  `.sw-title`, or a Changes file/folder `.chf` whose `.nm`, is measured as truncated expands after
+  320 ms of mouse hover; moving to the next row switches at once. Keyboard focus
+  expands at once. The expanded copy is aligned over the row and keeps all of that row's content:
+  the task row's dot, number, age and reason, or the Changes row's caret/status, name/path and `+N −M` count. It
   is solid (`--hover` laid over `--surface`, `--selected-bg` for the open row; never a translucent
   token alone, or the conversation's text shows through) with `--e-200`, and grows toward the middle (leftward when docked on the right).
   For a right-docked list use the Dock side, including after resizing it wider than half the window.
@@ -1203,7 +1205,8 @@ self-contained component, so a later layout can host it elsewhere.
   below menus, the selection Comment/Copy bar at 60 and dialogs. Hide it while a menu is opened.
   If a wrapped copy covers the next row or its Details control, pointer travel within the original
   list column must reach that underlying control; clicking it must act on the underlying row.
-  The checkbox beside the list's filter, labelled **Full names** with the full accessible name
+  The same shared helper and raised-row treatment serve both lists; the Workspace Files tree is
+  deliberately not included. The checkbox beside the task list's filter, labelled **Full names** with the full accessible name
   **Show full names on hover**, is on by default and saves
   `cd-switcher-full-names` per browser. On `(hover: none)` there is no expansion.
 - **Group: project** (`swByProject`): a head per project (its open task count), its PO first
