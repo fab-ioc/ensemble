@@ -15961,7 +15961,7 @@ function swExpandShow(row, focus = false) {
   // A right-docked list opens left. In its own window the same geometry uses
   // that window's viewport, not the main page's.
   const dockRight = doc === document && LD.dock && LD.dock.side('list') === 'right'
-    && ['pinned', 'unpinned', 'undock'].includes(LD.dock.viewMode('list'));
+    && !['float', 'window', 'hidden'].includes(LD.dock.viewMode('list'));
   const right = dockRight || rect.left > win.innerWidth / 2;
   const available = right ? rect.right - edge : win.innerWidth - rect.left - edge;
   const wanted = rect.width + title.scrollWidth - title.clientWidth + 8;
