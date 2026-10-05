@@ -497,6 +497,14 @@ of truth, so Recent, Go to file and Text search open through it unchanged.
 before: each open file a tab above the viewer, as in an editor; these come and go as files are
 opened and closed, so the fixed-set rule does not apply to them. Their rules:
 
+- **A file can leave Ensemble by dragging its row, tab or title.** The same applies to a Changes
+  file row and a rendered chat path link. Chromium/Edge expose the real file through `DownloadURL`;
+  every browser also exposes its hub URL and, for a small text file, its text. The tooltip must say
+  the Safari/Firefox limitation honestly. Use the shared `static/filedrag.js` helper and its compact
+  icon/name drag image; do not make the viewer body draggable, because selecting its text must keep
+  working. A documents project's file row remains an internal move source as well (`copyMove`),
+  while folders remain internal-only.
+
 - Opened from the tree, added at the end; a file already open is switched to, never opened twice.
   The row is never re-sorted.
 - The one showing is `--surface` with the `--accent` underline; the rest sit on `--surface-sunken`

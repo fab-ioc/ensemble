@@ -516,7 +516,7 @@ STATIC_DIR = Path(__file__).parent
 # every page and script response carries in X-Ensemble-Stamp, and that a served
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
-PAGE_FILES = ("index.html", "session.html", "fileview.html",
+PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js",
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
@@ -5623,6 +5623,67 @@ def file_at_mime(path: Path) -> str:
     if not guess:
         return "application/octet-stream"
     return guess + "; charset=utf-8" if guess.startswith("text/") else guess
+
+
+# A dragstart cannot await a read: browsers close its writable dataTransfer
+# store as soon as the event returns. The page therefore asks synchronously for
+# metadata and, only for a small text file, its words. The file itself is a
+# separate attachment response so Chromium can hand it to Finder/Explorer.
+FILE_DRAG_TEXT_MAX = 1024 * 1024
+_FILE_DRAG_TEXT_EXTS = {
+    ".md", ".txt", ".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".css",
+    ".json", ".yaml", ".yml", ".toml", ".csv", ".sh", ".ps1", ".sql", ".xml",
+    ".log", ".ini", ".cfg",
+}
+
+
+def file_download_target(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, Path | None]:
+    """Resolve one download using the file viewer's roots and boundary.
+
+    ``resolve_file_ref`` supplies the viewer's relative-path behaviour; the
+    explicit ``workspace_access_ok`` check is the boundary, including after
+    ``..`` and symlink resolution.
+    """
+    if not (raw or "").strip():
+        return 400, None
+    fp = resolve_file_ref(raw, room_id=room_id, cwd=cwd)
+    if fp is None:
+        return 404, None
+    if not workspace_access_ok(str(fp)):
+        return 403, None
+    return 200, fp
+
+
+def file_download_mime(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(path.name)
+    return mime or "application/octet-stream"
+
+
+def file_drag_metadata(path: Path) -> dict:
+    """Name/type plus plain text when ``path`` is a small text file."""
+    mime = file_download_mime(path)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        raise FileNotFoundError(path)
+    text = None
+    textual = (mime.startswith("text/") or path.suffix.lower() in _FILE_DRAG_TEXT_EXTS
+               or mime in ("application/json", "application/xml", "application/javascript"))
+    if textual and size <= FILE_DRAG_TEXT_MAX:
+        # Read one byte past the cap as well: the file can grow after stat(),
+        # but a drag must never synchronously pull an unexpectedly large file.
+        with path.open("rb") as fh:
+            raw = fh.read(FILE_DRAG_TEXT_MAX + 1)
+        if len(raw) <= FILE_DRAG_TEXT_MAX and b"\x00" not in raw:
+            text = raw.decode("utf-8", errors="replace")
+    return {"name": path.name, "mime": mime, "size": size, "text": text}
+
+
+def file_content_disposition(path: Path) -> str:
+    """An attachment name safe in an HTTP header, plus its exact UTF-8 name."""
+    name = path.name.replace("\r", "").replace("\n", "") or "file"
+    fallback = name.encode("ascii", errors="replace").decode("ascii").replace("\\", "_").replace('"', "_")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
 _FILE_SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
@@ -10826,6 +10887,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_download(self, path: Path) -> None:
+        """Stream a workspace file as an attachment with its real name."""
+        try:
+            fh = path.open("rb")
+            size = os.fstat(fh.fileno()).st_size
+        except (FileNotFoundError, OSError):
+            self._send_json(404, {"error": "not_found"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", file_download_mime(path))
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", file_content_disposition(path))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        try:
+            with fh:
+                shutil.copyfileobj(fh, self.wfile, length=1024 * 1024)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
     def do_GET(self):
         if not self._gate():
             return
@@ -10983,6 +11065,25 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/fileview":
             self._send_file(STATIC_DIR / "fileview.html",
                             "text/html; charset=utf-8")
+            return
+        if p == "/api/file/download":
+            q = parse_qs(u.query)
+            code, fp = file_download_target(
+                (q.get("path", [""])[0] or ""),
+                room_id=(q.get("room", [""])[0] or "").strip(),
+                cwd=(q.get("cwd", [""])[0] or "").strip(),
+            )
+            if fp is None:
+                errors = {400: "missing_path", 403: "path_not_allowed", 404: "not_found"}
+                self._send_json(code, {"error": errors.get(code, "not_found")})
+                return
+            if (q.get("meta", [""])[0] or "") == "1":
+                try:
+                    self._send_json(200, file_drag_metadata(fp))
+                except (FileNotFoundError, OSError):
+                    self._send_json(404, {"error": "not_found"})
+                return
+            self._send_download(fp)
             return
         if p == "/api/file":
             # Stream a local file the agents referenced, so it can be viewed in

@@ -3737,6 +3737,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
 <script src="/static/taskcard.js"></script>
+<script src="/static/filedrag.js"></script>
+<script>FileDrag.attach(document);</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
@@ -8201,6 +8203,8 @@ function wsPaintTree(v) {
   const keep = tree.scrollTop;
   tree._wsSig = html;
   tree.innerHTML = html;
+  tree.querySelectorAll('.wse.file[data-path]:not([data-file-unavailable])').forEach(row =>
+    wsDragMark(v, row, row.dataset.path, row.classList.contains('doc') ? 'document' : 'workspace'));
   // A repaint must not scroll you back to the root. A fresh element should land
   // where this view was left — but the first paint into one is usually just the
   // roots and "loading…", too short to scroll, so the restore is retried on
@@ -8242,6 +8246,17 @@ function wsFileUrl(v, path) {
   return '/fileview?path=' + encodeURIComponent(path)
     + (room ? '&room=' + encodeURIComponent(room.id) + '&roomName=' + encodeURIComponent(room.name) : '');
 }
+function wsDragMark(v, el, path, kind, title) {
+  if (!el || !path) return el;
+  const room = wsRoomForPath(v, path);
+  FileDrag.mark(el, path, {
+    kind: kind || 'file',
+    room: room ? room.id : '',
+    view: wsFileUrl(v, path),
+  });
+  if (title) el.title = title + ' · ' + FileDrag.TIP;
+  return el;
+}
 const wsTabName = p => (p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
 const wsTabEl = (strip, path) => [...strip.querySelectorAll('.wst-tab')].find(e => wsSame(e.dataset.path, path));
 // The tab row, rewritten only when a tab opens, closes, switches or goes
@@ -8269,6 +8284,8 @@ function wsPaintTabs(v) {
   const focused = f && strip.contains(f) ? (f.dataset.path || '') : null;
   strip._sig = html;
   strip.innerHTML = html;
+  strip.querySelectorAll('.wst-tab:not(.gone)').forEach(tab =>
+    wsDragMark(v, tab, tab.dataset.path, 'file-tab', tildeify(tab.dataset.path)));
   if (focused != null) {
     const t = wsTabEl(strip, focused) || strip.querySelector('.wst-tab.on');
     if (t) t.focus({ preventScroll: true });
@@ -8411,6 +8428,7 @@ function wsPaintCrumbs(v) {
   if (list._sig === html) return;
   list._sig = html;
   list.innerHTML = html;
+  wsDragMark(v, list.querySelector('.wsc-file'), t.path, 'file-title', tildeify(t.path));
   wsCrumbsEnd(bar);
 }
 // Scroll the tree, and only the tree, so a row is in view. False when the row
@@ -8672,7 +8690,12 @@ function wsPanelPaint(v, t) {
   own.href = wsFileUrl(v, t.path);
   own.hidden = gone;
   const list = bar.querySelector('.wsc-list'), html = wsCrumbsHtml(v, t.path);
-  if (list._sig !== html) { list._sig = html; list.innerHTML = html; wsCrumbsEnd(bar); }
+  if (list._sig !== html) {
+    list._sig = html;
+    list.innerHTML = html;
+    wsDragMark(v, list.querySelector('.wsc-file'), t.path, 'file-title', tildeify(t.path));
+    wsCrumbsEnd(bar);
+  }
 }
 // Every tab of the view has its panel (a reload: each in its kept place; a
 // view whose tabs were in the pane before the dock came: as new tabs), and no
@@ -8896,7 +8919,8 @@ function wsDocsNodeHtml(v, st, rm) {
     + `<span class="tw"></span><span class="nm">${esc(name)}</span>${tag ? `<span class="wse-tag">${esc(tag)}</span>` : ''}<span class="sz">${esc(when)}</span></div>`;
   const rmWhen = rm && rm.exists && rm.mtime ? wsDocsDate(rm.mtime) : rm && !rm.exists ? 'not written yet' : '';
   let body = row(wsRoadmapPath(v), 'Roadmap', '', nounText('ROADMAP.md, always first: the {project}’s roadmap, which you and the PO both edit')
-    + (rm && rm.exists && rm.mtime ? ' · saved ' + wsDocsWhen(rm.mtime) : ''), rmWhen, ' data-roadmap="1"');
+    + (rm && rm.exists && rm.mtime ? ' · saved ' + wsDocsWhen(rm.mtime) : ''), rmWhen,
+    ' data-roadmap="1"' + (rm && rm.exists ? '' : ' data-file-unavailable="1"'));
   const s = st || {};
   if (!s.data) return head + `<div class="wsk" data-docs="1">${body}<div class="wse none">${s.err ? 'The documents could not be read: ' + esc(s.err) : 'Loading the documents…'}</div></div>`;
   const d = s.data, items = d.items || [];
@@ -10429,7 +10453,8 @@ function chTree(files) {
 function chFileHtml(f, sha, on, depth, tree) {
   const code = (f.status || '?').replace(/\s/g, '') || '?';
   return '<div class="chf' + (on ? ' on' : '') + '" data-file="' + esc(f.path) + '"' + (sha ? ' data-commit="' + esc(sha) + '"' : '')
-    + (depth ? ' style="--d:' + depth + '"' : '') + ' tabindex="-1"' + (on ? ' aria-current="true"' : '') + ' title="' + esc(f.path) + '">'
+    + (depth ? ' style="--d:' + depth + '"' : '') + ' tabindex="-1"' + (on ? ' aria-current="true"' : '') + ' title="' + esc(f.path) + '"'
+    + '>'
     + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(tree ? chBase(f.path) + (/\/$/.test(f.path) ? '/' : '') : f.path) + '</span>' + chCountHtml(f.add, f.del) + '</div>';
 }
 // The rows of a tree: a folder's row (its caret, name and totals; folded, it
@@ -10454,6 +10479,12 @@ function chFilesHtml(files, sha, cur, view) {
   if (!view) view = { tree: chTreeOn(), closed: () => false };
   if (!view.tree) return files.map(f => chFileHtml(f, sha, on(f), 0, false)).join('');
   return chTreeRowsHtml(chTree(files), sha, view.closed || (() => false), (f, d) => chFileHtml(f, sha, on(f), d, true), 0);
+}
+function chMarkFileDrags(box, root) {
+  if (!box || !root) return;
+  box.querySelectorAll('.chf[data-file]').forEach(function (row) {
+    FileDrag.mark(row, drPath(root, row.dataset.file), { kind: 'changes' });
+  });
 }
 const chTreeBtnHtml = tree => '<button type="button" class="chp-refresh chp-tree" aria-pressed="' + (tree ? 'true' : 'false') + '" title="Group the files by folder">Folders</button>';
 // log: the hub's answer; key: the project's key, for the task links; open: the
@@ -10578,6 +10609,7 @@ function chPaintList(box, focusDir) {
   box.innerHTML = '<div class="chp-head">' + l.repoSel + chTreeBtnHtml(view.tree) + '<button class="chp-refresh" title="Refresh">↻</button></div>'
     + unc + (log.error ? '<div class="chf none">what landed is unavailable: ' + esc(log.error) + '</div>'
                        : chLogHtml(log, (projectById(l.pid) || {}).key || '', CH_OPEN, cur, view));
+  chMarkFileDrags(box, box.dataset.root);
   const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
   const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
   const tb = box.querySelector('.chp-tree'); if (tb) tb.onclick = function () { chSetPref('cd-ch-tree', view.tree ? '0' : '1'); chPaintList(box); };
@@ -10599,6 +10631,7 @@ async function chLoadHistory(box, pj, stale) {
         + (files.length ? chFilesHtml(files, '', { file: CH_FILE, sha: '' }, view)
                         : '<div class="chf none">Nothing changed since the last snapshot. The file history takes one within a few minutes of a change.</div>')
         + (big ? '<div class="chf none">' + big + (big > 1 ? ' files are' : ' file is') + ' over 50 MB, so the history does not keep ' + (big > 1 ? 'them' : 'it') + '.</div>' : '');
+      chMarkFileDrags(box, box.dataset.root);
       const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
       const tb = box.querySelector('.chp-tree'); if (tb) tb.onclick = function () { chSetPref('cd-ch-tree', view.tree ? '0' : '1'); paint(); };
       box._paint = paint;
@@ -10922,6 +10955,7 @@ function tchShowDiff(v, on) {
 }
 function tchPaintList(v, focusDir) {
   const box = v.el && v.el.querySelector('.tch-files'); if (!box) return;
+  box.dataset.root = v.root || '';
   const html = v.files.length ? chFilesHtml(v.files, '', { file: v.file, sha: '' }, { tree: chTreeOn(), closed: p => v.closed.has(p) })
     : '<div class="chf none">No changes on this branch yet.</div>';
   if (box._sig === html && !focusDir) return;
@@ -10929,6 +10963,7 @@ function tchPaintList(v, focusDir) {
   // stays on the list, on its current row.
   const had = box.contains(box.ownerDocument.activeElement);
   tchWrite(box, html);
+  chMarkFileDrags(box, box.dataset.root);
   chListFocus(box, focusDir);
   if (had && !focusDir) {
     const cur = box.querySelector('.chf[tabindex="0"]');
@@ -11809,11 +11844,12 @@ function pdPanelName(k) {
   return r ? pdRowTitle(r) : 'Chat';
 }
 function pdTabTips() {
-  if (!PD.rt.size) return;
   for (const d of pdHostDocs()) {
+    FileDrag.attach(d);
+    if (!PD.rt.size) continue;
     d.querySelectorAll('.dk-tab[data-dk-tab^="file:"]').forEach(tab => {
       const e = PD.rt.get(tab.dataset.dkTab), t = e ? tildeify(e.path) : '';
-      if (t && tab.title !== t) tab.title = t;
+      if (t && e) wsDragMark(e.v, tab, e.path, 'dock-tab', t);
     });
   }
 }
@@ -14147,9 +14183,15 @@ function docsFilesWire(el, pid) {
     const row = e.target.closest && e.target.closest('.wse[draggable="true"]:not(.wse-wait)');
     const root = wsfRoot(v), rel = row && root ? histRel(root.path, row.dataset.path) : '';
     if (!rel) return;
-    DOCS_DRAG = { pid, rel, dir: row.classList.contains('dir'), name: upBase(rel) };
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', rel); } catch (x) {}
+    const dir = row.classList.contains('dir');
+    // A task-owned file may leave Ensemble, but this project must not move it.
+    // A project file carries both the shared external-copy payload (installed
+    // by the capture listener) and this panel's internal move identity.
+    DOCS_DRAG = row.dataset.task ? null : { pid, rel, dir, name: upBase(rel) };
+    e.dataTransfer.effectAllowed = dir ? 'move' : DOCS_DRAG ? 'copyMove' : 'copy';
+    // Keep a text file's shared text/plain contents for editors. Folders have
+    // no external payload, so their relative path remains useful internally.
+    if (dir) try { e.dataTransfer.setData('text/plain', rel); } catch (x) {}
     row.classList.add('dragging');
     docsMenuClose(menu, false);
   });

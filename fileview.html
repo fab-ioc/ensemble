@@ -647,6 +647,8 @@
 <script src="/static/hl.js"></script>
 <script src="/static/selbar.js"></script>
 <script src="/static/taskcard.js"></script>
+<script src="/static/filedrag.js"></script>
+<script>FileDrag.attach(document);</script>
 <script>
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
@@ -1733,6 +1735,7 @@ function wireFrameLinks(ifr) {
       return;
     }
   }
+  FileDrag.mark(nameEl, path, { kind: 'file-title', room: ROOM, cwd: CWD });
 
   // Not on the hub: said here, and to the Workspace tab this viewer is in.
   const notFound = () => {
