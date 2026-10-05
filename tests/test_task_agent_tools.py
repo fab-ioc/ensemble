@@ -38,6 +38,22 @@ class SettingsAndProjects(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    def assert_project_launch_isolated(self, project_id):
+        dashboard.save_settings({"taskAgentTools": "own"})
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        handler.server = types.SimpleNamespace(server_address=("127.0.0.1", 8791))
+        room = {"id": "room-task", "projectId": project_id}
+        tools = handler._task_agent_tools(room)
+        with mock.patch.object(
+                dashboard.Handler, "_codex_ensemble_only_args",
+                return_value=["-c", 'mcp_servers."fake-user".enabled=false',
+                              "-c", "features.apps=false"]):
+            codex, claude, _ = handler._mcp_wiring(
+                "token", True, tools=tools, cwd=str(self.state))
+        self.assertIn("--strict-mcp-config", claude)
+        self.assertIn('mcp_servers."fake-user".enabled=false', codex)
+        self.assertIn("features.apps=false", codex)
+
     def test_global_default_and_persistence(self):
         self.assertEqual(dashboard.load_settings()["taskAgentTools"], "ensemble")
         saved = dashboard.save_settings({"taskAgentTools": "own"})
@@ -76,13 +92,28 @@ class SettingsAndProjects(unittest.TestCase):
                 meta = json.loads(path.read_text(encoding="utf-8"))
                 meta["taskAgentTools"] = bad
                 path.write_text(json.dumps(meta), encoding="utf-8")
-                self.assertNotIn("taskAgentTools", dashboard.find_project(pid))
+                self.assertEqual(dashboard.find_project(pid)["taskAgentTools"], "ensemble")
+                self.assert_project_launch_isolated(pid)
         self.assertEqual(dashboard.set_project_task_agent_tools(pid, "wide"),
                          (False, "task_agent_tools_must_be_ensemble_or_own"))
         for bad in ([], {}, 1):
             with self.subTest(bad=bad):
                 self.assertEqual(dashboard.set_project_task_agent_tools(pid, bad),
                                  (False, "task_agent_tools_must_be_ensemble_or_own"))
+
+    def test_external_project_invalid_override_fails_closed_but_absent_inherits(self):
+        code = self.state / "external-code"
+        code.mkdir()
+        base = {"id": "external", "name": "External", "path": str(code)}
+        dashboard.PROJECTS_FILE.write_text(json.dumps([base]), encoding="utf-8")
+        self.assertNotIn("taskAgentTools", dashboard.find_project("external"))
+        for bad in ("wide", ["own"], {}):
+            with self.subTest(persisted=bad):
+                dashboard.PROJECTS_FILE.write_text(
+                    json.dumps([{**base, "taskAgentTools": bad}]), encoding="utf-8")
+                self.assertEqual(
+                    dashboard.find_project("external")["taskAgentTools"], "ensemble")
+                self.assert_project_launch_isolated("external")
 
 
 class LaunchArguments(unittest.TestCase):
@@ -185,6 +216,12 @@ class LaunchArguments(unittest.TestCase):
         self.settings["taskAgentTools"] = ["own"]
         for kind in ("claude", "codex"):
             self.assertTrue(self.isolated(kind, self.launch(kind, "unassigned")))
+
+    def test_malformed_project_object_fails_closed_with_global_own(self):
+        self.settings["taskAgentTools"] = "own"
+        self.projects[0]["taskAgentTools"] = ["own"]
+        for kind in ("claude", "codex"):
+            self.assertTrue(self.isolated(kind, self.launch(kind, "owner")))
 
     def test_pos_switches_and_human_driven_history_keep_own_tools(self):
         self.settings["taskAgentTools"] = "ensemble"

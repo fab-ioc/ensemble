@@ -3627,9 +3627,13 @@ def load_projects() -> list[dict]:
 
     def _add(p: dict, from_root: bool = False) -> None:
         p = dict(p)
-        project_tools = p.get("taskAgentTools")
-        if not isinstance(project_tools, str) or project_tools not in TASK_AGENT_TOOLS_VALUES:
-            p.pop("taskAgentTools", None)
+        if "taskAgentTools" in p:
+            # A missing key intentionally inherits the global choice. A
+            # present but corrupt/hand-edited one is an isolation failure and
+            # therefore narrows to Ensemble-only instead of inheriting `own`.
+            p["taskAgentTools"] = (TASK_AGENT_TOOLS_OWN
+                                   if p.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                                   else TASK_AGENT_TOOLS_ENSEMBLE)
         key = os.path.normcase(os.path.normpath(p["path"]))
         home = os.path.normcase(os.path.normpath(p["home"])) if p.get("home") else ""
         as_named = (key, _safe_dir_name(p.get("name") or "").casefold())
@@ -3684,9 +3688,10 @@ def load_projects() -> list[dict]:
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {}),
-                      **({"taskAgentTools": meta["taskAgentTools"]}
-                         if isinstance(meta.get("taskAgentTools"), str)
-                         and meta["taskAgentTools"] in TASK_AGENT_TOOLS_VALUES else {})},
+                      **({"taskAgentTools": (TASK_AGENT_TOOLS_OWN
+                                             if meta.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                                             else TASK_AGENT_TOOLS_ENSEMBLE)}
+                         if "taskAgentTools" in meta else {})},
                      from_root=True)
     except OSError:
         pass
@@ -11835,9 +11840,10 @@ class Handler(BaseHTTPRequestHandler):
             return TASK_AGENT_TOOLS_OWN
         pid = _room_project_id(rid, room_full)
         project = next((p for p in projects if p.get("id") == pid), None)
-        if (project and isinstance(project.get("taskAgentTools"), str)
-                and project["taskAgentTools"] in TASK_AGENT_TOOLS_VALUES):
-            return project["taskAgentTools"]
+        if project and "taskAgentTools" in project:
+            return (TASK_AGENT_TOOLS_OWN
+                    if project.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
+                    else TASK_AGENT_TOOLS_ENSEMBLE)
         global_tools = load_settings().get("taskAgentTools")
         return (TASK_AGENT_TOOLS_OWN if global_tools == TASK_AGENT_TOOLS_OWN
                 else TASK_AGENT_TOOLS_ENSEMBLE)
