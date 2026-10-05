@@ -161,12 +161,29 @@ async function main() {
           await ev("document.getElementById('input').focus(); 0");
           await c.send('Input.insertText',{text:'This edit must be blocked'},s);
           await pressClick('#send');
+          await ev('window.__refresh()');
           const blocked=await ev(`({count:window.__blocked.length,hint:document.getElementById('hint').textContent,
             draft:document.getElementById('input').value,readOnly:document.getElementById('input').readOnly,
-            disabled:document.getElementById('send').disabled,inert:document.getElementById('compose').inert})`);
+            disabled:document.getElementById('send').disabled,inert:document.getElementById('compose').inert,
+            label:document.getElementById('send').textContent,busy:document.getElementById('compose').hasAttribute('aria-busy')})`);
           await ev("window.__resolveSend(new Response(JSON.stringify({send:null}),{status:200,headers:{'Content-Type':'application/json'}})); 0");
           await sleep(80);
-          out.push({kind:'in-flight',...blocked});
+          const settled=await ev(`({hint:document.getElementById('hint').textContent,draft:document.getElementById('input').value,
+            readOnly:document.getElementById('input').readOnly,disabled:document.getElementById('send').disabled,
+            inert:document.getElementById('compose').inert,label:document.getElementById('send').textContent,
+            busy:document.getElementById('compose').hasAttribute('aria-busy')})`);
+          out.push({kind:'in-flight',...blocked,settled});
+          await ev(`(() => {window.__failed=[]; window.fetch=(url,opt)=>{
+            if(String(url)==='/api/room/resume' && opt?.method==='POST') {window.__failed.push(JSON.parse(opt.body));return Promise.reject(new Error('offline'));}
+            return window.__oldFetch(url,opt);}; document.getElementById('input').focus();})()`);
+          await c.send('Input.insertText',{text:'Failure draft stays'},s);
+          await pressClick('#send');
+          await sleep(80);
+          out.push({kind:'in-flight-failure',count:await ev('window.__failed.length'),state:await ev(`({
+            hint:document.getElementById('hint').textContent,draft:document.getElementById('input').value,
+            readOnly:document.getElementById('input').readOnly,disabled:document.getElementById('send').disabled,
+            inert:document.getElementById('compose').inert,label:document.getElementById('send').textContent,
+            busy:document.getElementById('compose').hasAttribute('aria-busy')})`)});
           await ev("window.fetch=window.__oldFetch; document.getElementById('input').focus(); document.getElementById('input').dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true})); 0");
           await c.send('Input.insertText',{text:'Composed line one\nComposed line two'},s);
           await pressClick('#send');
@@ -338,7 +355,7 @@ class SendFirstClick(unittest.TestCase):
 
     def test_one_click_sends_once(self):
         for case in self.got:
-            if case['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send'):
+            if case['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'in-flight-failure', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send'):
                 continue
             with self.subTest(width=case['width'], kind=case['kind']):
                 self.assertGreater(case.get('before', {}).get('inputH', case.get('inputH', 0)), 44, case)
@@ -353,7 +370,7 @@ class SendFirstClick(unittest.TestCase):
                     self.assertEqual(case['flyAfter'], '', case)
 
     def test_other_send_controls(self):
-        cases = {c['kind']: c for c in self.got if c['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send')}
+        cases = {c['kind']: c for c in self.got if c['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'in-flight-failure', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send')}
         self.assertEqual(len(cases['poll']['sent']), 2, cases['poll'])
         self.assertEqual(len(cases['points']['sent']), 3, cases['points'])
         self.assertIn('## Points', cases['points']['sent'][-1]['text'])
@@ -373,9 +390,16 @@ class SendFirstClick(unittest.TestCase):
         self.assertEqual(len(cases['ctrl-enter']['sent']), 7, cases['ctrl-enter'])
         self.assertEqual(len(cases['cmd-enter']['sent']), 8, cases['cmd-enter'])
         self.assertEqual(cases['in-flight']['count'], 1, cases['in-flight'])
-        self.assertIn('Sending', cases['in-flight']['hint'])
+        self.assertEqual(cases['in-flight']['hint'], 'Sending your message.', cases['in-flight'])
         self.assertTrue(cases['in-flight']['readOnly'] and cases['in-flight']['disabled'] and cases['in-flight']['inert'], cases['in-flight'])
+        self.assertEqual((cases['in-flight']['label'], cases['in-flight']['busy']), ('Sending\u2026', True), cases['in-flight'])
         self.assertNotIn('This edit must be blocked', cases['in-flight']['draft'])
+        settled = cases['in-flight']['settled']
+        self.assertEqual((settled['draft'], settled['readOnly'], settled['disabled'], settled['inert'], settled['label'], settled['busy']), ('', False, False, False, 'Send', False), settled)
+        failed = cases['in-flight-failure']
+        self.assertEqual(failed['count'], 1, failed)
+        self.assertIn('not answer', failed['state']['hint'])
+        self.assertEqual((failed['state']['draft'], failed['state']['readOnly'], failed['state']['disabled'], failed['state']['inert'], failed['state']['label'], failed['state']['busy']), ('Failure draft stays', False, False, False, 'Send', False), failed)
         self.assertEqual(cases['ime']['before'], 8, cases['ime'])
         self.assertEqual(len(cases['ime']['sent']), 9, cases['ime'])
         for kind in ('drag-cancel-keyboard', 'touch-cancel-keyboard'):

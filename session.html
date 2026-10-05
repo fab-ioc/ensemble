@@ -4530,12 +4530,12 @@ async function refreshRoom() {
   if (sb.className !== 'status ' + stCls) sb.className = 'status ' + stCls;
   setText(sb, resuming ? 'resuming…' : notRunning ? 'not running' : st.replace('_', ' '));
   setText($('#hop'), notRunning ? '' : `hop ${room.hopCount || 0}/${room.maxHops || 0}`);
-  setText($('#hint'), SEND_ERR || (resuming
+  setText($('#hint'), SEND_IN_FLIGHT ? 'Sending your message.' : SEND_ERR || (resuming
     ? 'Resuming: your message goes in once it is up.'
     : notRunning ? 'Not running: sending will resume it.'
     : (st === 'waiting_human' || st === 'paused')
       ? 'The agents are waiting for you — reply to resume.' : ''));
-  $('#send').disabled = false;
+  $('#send').disabled = SEND_IN_FLIGHT;
   $('#input').disabled = false;
   const pendSig = JSON.stringify(pend);
   const pendChanged = pendSig !== PENDING_SIG;
@@ -5099,7 +5099,8 @@ function setSendBusy(busy) {
   box.toggleAttribute('aria-busy', busy);
   box.querySelectorAll('textarea').forEach(ta => { ta.readOnly = busy; });
   send.disabled = busy || !ROOM_OBJ;
-  send.textContent = busy ? 'Sending…' : 'Send';
+  send.textContent = busy ? 'Sending\u2026' : 'Send';
+  if (!busy && !SEND_ERR && $('#hint').textContent === 'Sending your message.') setText($('#hint'), '');
 }
 async function sendNow() {
   if (SEND_IN_FLIGHT) {

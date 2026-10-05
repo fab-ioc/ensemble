@@ -672,7 +672,8 @@ class ThePage(unittest.TestCase):
 
     def test_the_box_stays_usable_when_not_running(self):
         body = self.refresh()
-        self.assertIn("$('#send').disabled = false;", body)
+        self.assertIn("$('#send').disabled = SEND_IN_FLIGHT;", body)
+        self.assertNotIn("$('#send').disabled = notRunning", body)
         self.assertIn("$('#input').disabled = false;", body)
         self.assertNotIn("$('#input').disabled = notRunning", body)
         self.assertIn("'Not running: sending will resume it.'", body)
