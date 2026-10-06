@@ -248,6 +248,18 @@ class LaunchArguments(unittest.TestCase):
         self.assertIn("features.apps=false", args)
         self.assertIn("features.remote_plugin=false", args)
 
+    def test_claude_launch_never_needs_the_codex_cli(self):
+        # GitHub issue 10: on a machine without codex every Ensemble-only
+        # task launch, Claude ones included, was refused.
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        handler.server = types.SimpleNamespace(server_address=("127.0.0.1", 8791))
+        with mock.patch.object(dashboard.subprocess, "run",
+                               side_effect=FileNotFoundError("codex")) as run,                 mock.patch.object(dashboard, "DASHBOARD_DIR", self.root):
+            codex, claude, _ = handler._mcp_wiring(
+                "token", True, tools="ensemble", cwd=str(self.root), codex=False)
+            run.assert_not_called()
+            self.assertIn("--strict-mcp-config", claude)
+
     def test_codex_discovery_runs_the_resolved_cli_path(self):
         # Windows installs codex.cmd; a bare "codex" without a shell is
         # WinError 2, which refused every Codex launch on 10-06.

@@ -12355,7 +12355,8 @@ class Handler(BaseHTTPRequestHandler):
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
 
     def _mcp_wiring(self, token: str, collab: bool, human: bool = False,
-                    tools: str | None = None, cwd: str = "") -> tuple[list[str], list[str], dict]:
+                    tools: str | None = None, cwd: str = "",
+                    codex: bool = True) -> tuple[list[str], list[str], dict]:
         """The per-agent bits that connect it to the Ensemble MCP server
         (chat + ensemble_* task tools) with its own bearer token. EVERY headless
         agent gets the server — solo tasks included, so an agent can plan and
@@ -12370,10 +12371,12 @@ class Handler(BaseHTTPRequestHandler):
 
         ``tools`` is the resolved task-agent scope. ``None`` preserves the old
         call contract for tests and callers outside the launch paths:
-        collaborations are Ensemble-only and solo sessions keep own tools."""
+        collaborations are Ensemble-only and solo sessions keep own tools.
+        ``codex`` False skips listing Codex's own servers: a Claude launch
+        must not need the Codex CLI (a machine without it refused every task)."""
         url = self._mcp_url()
         ensemble_only = tools == TASK_AGENT_TOOLS_ENSEMBLE if tools is not None else collab
-        codex_args = ((self._codex_ensemble_only_args(cwd) if ensemble_only else [])
+        codex_args = ((self._codex_ensemble_only_args(cwd) if ensemble_only and codex else [])
                       + ["-c", f'mcp_servers.ensemble.url="{url}"',
                          "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"'])
         if ensemble_only:
@@ -12447,7 +12450,7 @@ class Handler(BaseHTTPRequestHandler):
                 "launchModel": model}
         tools = self._task_agent_tools(room_full)
         codex_mcp, claude_mcp, env = self._mcp_wiring(
-            token, collab, tools=tools, cwd=cwd)
+            token, collab, tools=tools, cwd=cwd, codex=agent_key == "codex")
         env.update(rtk_env)
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
@@ -12501,7 +12504,8 @@ class Handler(BaseHTTPRequestHandler):
                 "launchModel": model}
         tools = self._task_agent_tools(room_full, human=human)
         codex_mcp, claude_mcp, env = self._mcp_wiring(
-            token, collab, human=human, tools=tools, cwd=cwd)
+            token, collab, human=human, tools=tools, cwd=cwd,
+            codex=agent_key == "codex")
         rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
         env.update(rtk_env)
         if agent_key != "codex":
