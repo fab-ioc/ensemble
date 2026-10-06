@@ -9,26 +9,18 @@ as caused by that task.
 Two sources, deliberately not symmetrical:
 
 ``read_claude()``
-    Two readings, the newer wins:
+    One reading: :func:`read_claude_statusline`. Claude Code hands its
+    status-line command ``rate_limits`` (5-hour and 7-day ``used_percentage`` /
+    ``resets_at``) after each turn; hub-launched agents run
+    ``usage_statusline.py`` as that command, which keeps the newest in a file.
+    No network, no credentials. A last-write snapshot like Codex's, so the same
+    age and rollover guards apply: until a hub-launched Claude agent has
+    finished a turn the reading is unknown, and an old one carries its age.
 
-    * **Local, preferred** — :func:`read_claude_statusline`. Claude Code hands
-      its status-line command ``rate_limits`` (5-hour and 7-day
-      ``used_percentage`` / ``resets_at``) after each turn; hub-launched agents
-      run ``usage_statusline.py`` as that command, which keeps the newest in a
-      file. No network, no credentials. A last-write snapshot like Codex's, so
-      the same age and rollover guards apply. While it is current the endpoint
-      is not called at all.
-    * **Fallback** — :func:`read_claude_endpoint`,
-      ``GET https://api.anthropic.com/api/oauth/usage`` with the OAuth access
-      token Claude Code keeps in ``~/.claude/.credentials.json``.
-      **Undocumented** — an internal endpoint that can change or vanish without
-      notice. The stored token expires in ~3 hours and Claude Code refreshes it
-      in place, so we re-read the file on every call rather than implementing
-      an OAuth refresh. It **rate-limits** — on 2026-09-11 it refused every call
-      for four hours — so it is asked at most every
-      :data:`ENDPOINT_MIN_INTERVAL_S`, a 429 stops the calls for as long as
-      ``Retry-After`` says (doubling on repeats), and a refusal serves its last
-      good reading with that reading's age instead of going "unavailable".
+    Ensemble never reads, holds or sends Claude Code's sign-in token
+    (``~/.claude/.credentials.json``): Claude's terms reserve plan OAuth tokens
+    for Claude Code itself. There is deliberately no fallback that asks
+    Anthropic for the numbers (ED-179).
 
 ``read_codex()``
     A Codex plan has several **pools**, each an allowance of its own: the main
@@ -60,10 +52,10 @@ Thresholds are driven off ``percent`` only, never off the payload's ``severity``
 string: the investigation only ever observed ``"normal"``, so branching on the
 escalated values would be guessing.
 
-**Credential hygiene.** The access token is read into a local, placed in one
-request header, and never returned, cached, logged or interpolated into an error
-message. :func:`_scrub` is a second line of defence over every error string that
-reaches the cache.
+**Credential hygiene.** No reader here opens either agent's sign-in file
+(Claude's ``.credentials.json``, Codex's ``auth.json``); Codex's numbers come
+from the ``codex`` program itself and its session logs. :func:`_scrub` still
+guards every error string that reaches the cache.
 
 Decoupled from ``dashboard.py`` the same way ``backup.py`` is: this module holds
 the readers, the cache and the scheduler; the server just serves
@@ -73,7 +65,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 import os
 import queue
 import re
@@ -82,29 +73,13 @@ import signal
 import subprocess
 import threading
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
-USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 # Written by usage_statusline.py, the status-line command of hub-launched
 # Claude agents; read by read_claude_statusline.
 CLAUDE_STATUSLINE_FILE = Path.home() / ".ensemble" / "usage" / "claude-rate-limits.json"
 
-# The bearer token is the only thing the endpoint requires; the investigation
-# measured that the beta header and a spoofed User-Agent change nothing. The
-# beta header is kept only because it is what Claude Code itself sends. No
-# User-Agent spoof: it bought nothing and hardcoded a version string that rots.
-_HEADERS = {
-    "anthropic-beta": "oauth-2025-04-20",
-    "Accept": "application/json",
-}
-
-HTTP_TIMEOUT = 10          # well inside the poll interval: a hung request must
-                           # not eat a whole cycle
 REFRESH_INTERVAL_S = 90    # windows move in whole percents; faster buys nothing
 
 # How old a reading may be before that window stops counting as current.
@@ -179,42 +154,9 @@ _codex_app_why = ""                        # why it last failed, in the user's t
 WARN_PERCENT = 80          # banner
 ALARM_PERCENT = 95         # banner, louder
 
-# The usage endpoint rate-limits — observed live, an HTTP 429 after a burst of
-# calls. It is an undocumented internal endpoint and we are a guest on it, so a
-# 429 stops us calling rather than being absorbed and retried on the next tick.
-# Honour `Retry-After` when the response carries one; otherwise wait this long.
-DEFAULT_BACKOFF_S = 600
-# Cap on our own doubling, never on a longer wait the server asked for.
-MAX_BACKOFF_S = 3600
-# Consecutive refusals double the wait. One 429 answered with `Retry-After` is
-# the server saying what it wants, and inventing a ladder on top of that would
-# be second-guessing it — but a *second* refusal after we honoured the first
-# says the hint was not enough, which is new information. The asymmetry settles
-# it: waiting too long costs a chip for an hour, waiting too little risks an
-# undocumented endpoint being closed to this machine with no warning and no
-# appeal. Any success resets the ladder.
-_claude_backoff_until = 0.0
-_claude_consecutive_429 = 0
-# The endpoint is only the fallback now (see read_claude), and even as that
-# it is asked at most this often: a plan window moves slowly, a remembered
-# reading carries its age, and on 2026-09-11 it refused every call for four
-# hours at the old 90-second pace.
-ENDPOINT_MIN_INTERVAL_S = 600
-# A remembered endpoint reading is served, aged, while the endpoint refuses —
-# for at most a week, the longest window it describes.
+# A remembered Codex app-server reading is served, aged, while the app server
+# fails — for at most a week, the longest window it describes.
 CACHED_MAX_AGE_S = 7 * 86400
-_claude_last_call = float("-inf")  # when the endpoint was last asked
-_claude_last_good: dict | None = None  # {at, entries} of its last good answer
-_claude_last_why = ""                # its last refusal, in the user's terms
-_claude_endpoint_calls = 0           # requests sent since the hub started
-
-# Claude's `limits[]` kinds -> our shared vocabulary. Anything else is ignored,
-# which is what keeps an endpoint change from breaking the surface.
-_CLAUDE_KINDS = {
-    "session": ("five_hour", "5h"),
-    "weekly_all": ("seven_day", "7d"),
-    "weekly_scoped": ("seven_day_model", "7d"),
-}
 
 # The statusline's `rate_limits` keys -> (kind, label, window minutes).
 _STATUSLINE_KINDS = {
@@ -253,31 +195,6 @@ def _scrub(text: str, *secrets: str) -> str:
         if s and len(s) >= 8:
             out = out.replace(s, "<redacted>")
     return out[:300]
-
-
-def _access_token() -> str:
-    """The OAuth access token Claude Code stores on disk.
-
-    Claude Code refreshes it in place, so re-reading the file each poll keeps it
-    fresh for as long as some session runs. Raises with a human-readable reason
-    (never containing the token) when it cannot be used.
-    """
-    try:
-        with open(CREDENTIALS, encoding="utf-8") as fh:
-            creds = (json.load(fh) or {}).get("claudeAiOauth") or {}
-    except FileNotFoundError:
-        raise LookupError("Claude Code is not logged in on this machine")
-    except (OSError, ValueError) as e:
-        raise LookupError(f"cannot read Claude Code's stored login ({type(e).__name__})")
-    token = creds.get("accessToken")
-    if not token:
-        raise LookupError("Claude Code's stored login has no access token")
-    expires_at = creds.get("expiresAt")
-    if expires_at and expires_at / 1000 < time.time():
-        raise LookupError(
-            "Claude Code's login token has expired — it refreshes itself when a "
-            "Claude session runs")
-    return token
 
 
 # ---------------------------------------------------------------------------
@@ -355,42 +272,13 @@ def _unavailable(source: str, reason: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Claude — live account-wide plan windows
+# Claude — account-wide plan windows, from the status line
 # ---------------------------------------------------------------------------
-
-def _retry_after_seconds(exc, now: float | None = None) -> float:
-    """The `Retry-After` header as seconds, at least a minute. Falls back to the
-    default.
-
-    Both forms HTTP allows: delta-seconds and an HTTP-date. Anything unreadable
-    falls back, which is the safe direction (we wait, we do not hammer). There
-    is no upper cap: a server that asks for two hours gets two hours, and the
-    statusline file covers the gap.
-    """
-    try:
-        raw = str((exc.headers or {}).get("Retry-After")).strip()
-    except (AttributeError, TypeError):
-        return DEFAULT_BACKOFF_S
-    try:
-        wait = float(raw)
-    except ValueError:
-        try:
-            when = parsedate_to_datetime(raw)
-            if when.tzinfo is None:
-                when = when.replace(tzinfo=timezone.utc)
-            wait = when.timestamp() - (time.time() if now is None else now)
-        except (TypeError, ValueError, IndexError):
-            return DEFAULT_BACKOFF_S
-    # `float` also reads "inf", "nan" and "1e309": an endless wait would stop
-    # the endpoint for good and break the minutes arithmetic downstream.
-    if not math.isfinite(wait):
-        return DEFAULT_BACKOFF_S
-    return max(60.0, wait)
-
 
 def _reset_epoch(value):
     """A reset time as epoch seconds: ``(epoch, "ok")``, ``(None, "missing")`` or
-    ``(None, "bad")``. The statusline gives an epoch, the endpoint an ISO string."""
+    ``(None, "bad")``. The statusline gives an epoch, a window's ``resetsAt`` an
+    ISO string."""
     if value is None:
         return None, "missing"
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -425,36 +313,32 @@ def pace_mark(resets_at, now: float, margin: float, cap: float) -> dict | None:
 def _minute_iso(epoch: float) -> str:
     """A reset time as ISO-8601, to the nearest minute.
 
-    The two Claude sources state the same reset differently — the statusline
-    ``1789293000``, the endpoint ``...T09:59:59.880051+00:00`` — and the board
-    treats a changed ``resetsAt`` as a new window (it re-shows a dismissed
-    banner). Rounding makes the same window read the same from either source.
+    The board treats a changed ``resetsAt`` as a new window (it re-shows a
+    dismissed banner), so a reset stated to the second, or a little off between
+    turns, is rounded to read the same each time.
     """
     return datetime.fromtimestamp(round(epoch / 60) * 60, timezone.utc).isoformat()
 
 
-def _claude_source(entries, *, at: float, now: float, via: str,
-                   live: bool) -> dict:
+def _claude_source(entries, *, at: float, now: float, via: str) -> dict:
     """Claude windows in the shared shape, from ``(kind, label, minutes, percent,
     reset, model)`` entries read at ``at``.
 
-    A ``live`` reading (the endpoint, this very poll) is taken as it comes. Any
-    other — the statusline file, or an endpoint reading kept from an earlier
-    poll — goes through the same two guards Codex readings do: its age decides
-    ``trusted`` per window, and a window whose reset has passed, or whose reset
-    time is missing, keeps no current ``percent``.
+    The same two guards Codex readings go through: its age decides ``trusted``
+    per window, and a window whose reset has passed, or whose reset time is
+    missing, keeps no current ``percent``.
     """
     age = max(0, int(now - at))
     windows = []
     for kind, label, minutes, percent, reset, model in entries:
         epoch, how = _reset_epoch(reset)
-        if how == "bad" or (epoch is not None and not live
+        if how == "bad" or (epoch is not None
                             and not _reset_plausible(epoch, at, minutes)):
             return _unavailable(
                 "claude", f"Claude's {via} reading carries a reset time that is "
                           f"not a plausible date — its format has probably changed")
-        rolled = bool(not live and epoch is not None and epoch < now)
-        reset_unknown = not live and how == "missing"
+        rolled = bool(epoch is not None and epoch < now)
+        reset_unknown = how == "missing"
         withheld = rolled or reset_unknown
         windows.append(_window(
             kind, label,
@@ -473,10 +357,8 @@ def _claude_source(entries, *, at: float, now: float, via: str,
         "source": "claude",
         "state": "ok",
         "error": None,
-        # Where the numbers came from: "statusline" (hub-launched Claude agents
-        # write what Claude Code shows its status line), "endpoint" (fetched
-        # this poll) or "endpoint-cached" (an earlier endpoint reading, kept
-        # while the endpoint refuses).
+        # Where the numbers came from: always "statusline" (hub-launched Claude
+        # agents write what Claude Code shows its status line).
         "via": via,
         "note": None,
         "planType": None,
@@ -486,8 +368,6 @@ def _claude_source(entries, *, at: float, now: float, via: str,
         "windows": windows,
     }
 
-
-# --- Local: the statusline file -------------------------------------------
 
 def read_claude_statusline(now: float | None = None, path=None) -> dict:
     """The newest plan windows a hub-launched Claude agent saw.
@@ -523,155 +403,18 @@ def read_claude_statusline(now: float | None = None, path=None) -> dict:
             continue
         entries.append((kind, label, minutes, _as_percent(win.get("used_percentage")),
                         win.get("resets_at"), None))
-    return _claude_source(entries, at=float(at), now=now, via="statusline", live=False)
-
-
-# --- Fallback: the usage endpoint ------------------------------------------
-
-def _endpoint_entries(payload: dict) -> list[tuple]:
-    entries = []
-    for limit in (payload.get("limits") or []):
-        mapped = _CLAUDE_KINDS.get(limit.get("kind"))
-        if not mapped:
-            continue                                   # unknown bucket: ignore
-        kind, label = mapped
-        model = ((limit.get("scope") or {}).get("model") or {}).get("display_name")
-        entries.append((kind, label, 300 if kind == "five_hour" else 10080,
-                        _as_percent(limit.get("percent")), limit.get("resets_at"), model))
-    return entries
-
-
-def _fetch_endpoint(now: float) -> tuple[dict | None, str]:
-    """One HTTPS GET: ``(payload, "")`` or ``(None, reason)``. Keeps the backoff
-    ladder. Never raises."""
-    global _claude_backoff_until, _claude_consecutive_429, _claude_endpoint_calls
-    _claude_endpoint_calls += 1
-    token = ""
-    try:
-        token = _access_token()
-        req = urllib.request.Request(
-            USAGE_URL, headers=dict(_HEADERS, Authorization="Bearer " + token))
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except LookupError as e:
-        return None, _scrub(e, token)
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            # The expected shape of a token that went stale between the
-            # expiresAt check and the call. Name it in the user's terms.
-            why = ("Claude Code's login token was rejected — it refreshes "
-                   "itself when a Claude session runs")
-        elif e.code == 429:
-            _claude_consecutive_429 += 1
-            # Double per consecutive refusal, from whatever the server asked
-            # for; the doubling is capped, the server's own ask never is. The
-            # first 429 behaves exactly as `Retry-After` says.
-            asked = _retry_after_seconds(e, now)
-            wait = max(asked, min(MAX_BACKOFF_S,
-                                  asked * 2 ** (_claude_consecutive_429 - 1)))
-            _claude_backoff_until = now + wait
-            again = " again" if _claude_consecutive_429 > 1 else ""
-            why = (f"the usage endpoint is rate-limiting us{again} — pausing for "
-                   f"{max(1, int(wait // 60))} min")
-        else:
-            why = f"the usage endpoint returned HTTP {e.code}"
-        return None, _scrub(why, token)
-    except urllib.error.URLError as e:
-        return None, _scrub(f"cannot reach the usage endpoint ({e.reason})", token)
-    except Exception as e:                                   # noqa: BLE001
-        # The endpoint is undocumented: a shape change must degrade to
-        # "unavailable", never throw into a request path.
-        return None, _scrub(f"usage reading failed ({type(e).__name__})", token)
-    finally:
-        token = ""
-    # A successful call clears any standing backoff and resets the ladder.
-    _claude_backoff_until = 0.0
-    _claude_consecutive_429 = 0
-    if not isinstance(payload, dict):
-        return None, "the usage endpoint returned an unfamiliar answer"
-    return payload, ""
-
-
-def _endpoint_due(now: float) -> bool:
-    return now >= _claude_backoff_until and now - _claude_last_call >= ENDPOINT_MIN_INTERVAL_S
-
-
-def _cached_endpoint(now: float, why: str) -> dict:
-    """The last good endpoint reading, aged; or "unavailable" with ``why``."""
-    good = _claude_last_good
-    if good and now - good["at"] <= CACHED_MAX_AGE_S:
-        src = _claude_source(good["entries"], at=good["at"], now=now,
-                             via="endpoint-cached", live=False)
-        if src["state"] == "ok":
-            src["note"] = why or None
-            return src
-    return _unavailable("claude", why or "the usage endpoint has not been asked yet")
-
-
-def read_claude_endpoint(now: float | None = None) -> dict:
-    """The endpoint, called at most once per :data:`ENDPOINT_MIN_INTERVAL_S` and
-    never during a backoff. A refusal serves the last good reading with its age
-    instead of going "unavailable". Never raises."""
-    global _claude_last_call, _claude_last_good, _claude_last_why
-    now = time.time() if now is None else now
-    if now < _claude_backoff_until:
-        # Rate-limited recently. Make no call at all — the point of a backoff
-        # is not to send the request.
-        wait = int(_claude_backoff_until - now)
-        return _cached_endpoint(
-            now, f"the usage endpoint asked us to slow down — not retrying "
-                 f"for another {max(1, wait // 60)} min")
-    if now - _claude_last_call < ENDPOINT_MIN_INTERVAL_S:
-        return _cached_endpoint(now, _claude_last_why)
-    _claude_last_call = now
-    payload, why = _fetch_endpoint(now)
-    _claude_last_why = why
-    if payload is None:
-        return _cached_endpoint(now, why)
-    entries = _endpoint_entries(payload)
-    src = _claude_source(entries, at=now, now=now, via="endpoint", live=True)
-    if src["state"] == "ok":
-        _claude_last_good = {"at": now, "entries": entries}
-        return src
-    return _cached_endpoint(now, src["error"])
+    return _claude_source(entries, at=float(at), now=now, via="statusline")
 
 
 def read_claude(now: float | None = None, statusline_path=None) -> dict:
-    """Claude's plan windows: the local statusline file first, the endpoint
-    only when that is missing or no longer current. Never raises.
+    """Claude's plan windows, from the statusline file only. Never raises.
 
-    While hub agents are working the file stays current and the endpoint is
-    never called. When they idle — or when Claude is being used only outside
-    the hub, which the file cannot see — the endpoint is asked at most every
-    :data:`ENDPOINT_MIN_INTERVAL_S`, and whichever reading is newer wins.
+    No second source: Ensemble does not touch Claude Code's sign-in token, so
+    when no hub-launched Claude agent has finished a turn yet the reading is
+    "unavailable" (shown and judged as unknown), and an old one carries its
+    age and goes untrusted per window, the same as a Codex rollout.
     """
-    now = time.time() if now is None else now
-    local = read_claude_statusline(now, statusline_path)
-    # Current means every window is recent AND still has a number: a window
-    # that has rolled over withholds its percent, and only the endpoint can say
-    # what the new window holds until an agent takes another turn.
-    if local["state"] == "ok" and all(
-            w["trusted"] and w["percent"] is not None for w in local["windows"]):
-        return local
-    remote = read_claude_endpoint(now)
-    usable = [s for s in (local, remote) if s["state"] == "ok"]
-    if usable:
-        best = min(usable, key=lambda s: s["ageSeconds"])
-        if best is local and remote["state"] != "ok":
-            best["note"] = remote["error"]
-        return best
-    return _unavailable("claude", f"{local['error']}; {remote['error']}")
-
-
-def _reset_claude_state() -> None:
-    """Forget the endpoint's backoff, schedule and last good reading (tests)."""
-    global _claude_backoff_until, _claude_consecutive_429, _claude_last_call, _claude_last_good
-    global _claude_last_why
-    _claude_backoff_until = 0.0
-    _claude_consecutive_429 = 0
-    _claude_last_call = float("-inf")
-    _claude_last_good = None
-    _claude_last_why = ""
+    return read_claude_statusline(now, statusline_path)
 
 
 def _as_percent(value):
@@ -1544,14 +1287,6 @@ def _snapshot_locked() -> dict:
         "staleFraction": STALE_FRACTION,
         "warnPercent": WARN_PERCENT,
         "alarmPercent": ALARM_PERCENT,
-        # How hard the fallback endpoint is being used: it rate-limits, and
-        # this is the number to look at when it starts refusing again.
-        "claudeEndpoint": {
-            "calls": _claude_endpoint_calls,
-            "lastCalledAt": _claude_last_call if _claude_last_call > 0 else None,
-            "backoffUntil": _claude_backoff_until or None,
-            "minIntervalS": ENDPOINT_MIN_INTERVAL_S,
-        },
         # Deep-copied: callers (the endpoint, the MCP tool) must not be able to
         # mutate the cache the poller owns.
         "sources": [copy.deepcopy(sources[k]) for k in ("claude", "codex")

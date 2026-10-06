@@ -1970,9 +1970,9 @@ def _claude_status_line() -> dict:
     """The status-line command every hub-launched Claude agent runs.
 
     Claude Code hands it the plan windows (``rate_limits``) after each turn, and
-    it keeps the newest in the file ``usage.read_claude_statusline`` reads — so
-    Claude's allowance comes from Claude Code itself rather than from polling
-    the rate-limited usage endpoint. It prints nothing.
+    it keeps the newest in the file ``usage.read_claude_statusline`` reads — the
+    only source of Claude's allowance: the hub never touches Claude Code's
+    sign-in token. It prints nothing.
     """
     command = (f'"{Path(sys.executable).as_posix()}" "{USAGE_STATUSLINE_SCRIPT.as_posix()}" '
                f'"{usage.CLAUDE_STATUSLINE_FILE.as_posix()}"')

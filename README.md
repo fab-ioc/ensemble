@@ -44,7 +44,7 @@ Four things keep this running without you watching:
 - **The progress check.** Every 5 minutes by default, the hub looks at each project's tasks. It wakes the PO only for news that needs it: a task blocked, stalled or dead, or waiting for you anew. Quiet news (a column changed, new commits, work merged, a new task) is kept and told in the next digest that goes out.
 - **The handover.** A long conversation costs more with every turn. Past 200k tokens by default, the hub asks the task owner to write `TASK-HANDOVER.md` (or the PO to update `PO-HANDOVER.md`). It then starts a fresh session that reads the handover and carries on.
 - **Needs you.** The first group of the task list on the left lists every task waiting on a person, blocked, stalled, or whose agent died, across all projects.
-- **Plan allowance.** The header shows how much of your Claude and Codex plans is used.
+- **Plan allowance.** The header shows how much of your Claude and Codex plans is used. Claude's numbers are the ones Claude Code shows its own status line after each turn of an agent the hub started, so they read "n/a" until such an agent has finished a turn, and carry their age after that. Ensemble never reads Claude Code's or Codex's sign-in token.
 
 What the tabs show:
 

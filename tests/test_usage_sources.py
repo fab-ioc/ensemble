@@ -1,18 +1,19 @@
-"""Claude's plan-window reading: the local statusline file first, the usage
-endpoint as a paced fallback that remembers its last good answer."""
+"""Claude's plan-window reading: the local statusline file only. Ensemble never
+reads Claude Code's sign-in token (ED-179), so with no current file the reading
+is unknown — never 0%, never "free" to allocation."""
 from __future__ import annotations
 
-import email.message
+import builtins
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -36,61 +37,31 @@ def _statusline_file(folder: Path, *, age: float, five=40, seven=35,
     return path
 
 
-def _endpoint_payload(five=12.0, seven=50.0) -> bytes:
-    return json.dumps({"limits": [
-        {"kind": "session", "percent": five,
-         "resets_at": "2026-09-13T09:59:59.880051+00:00"},
-        {"kind": "weekly_all", "percent": seven,
-         "resets_at": "2026-09-16T11:59:59.880080+00:00"},
-    ]}).encode("utf-8")
-
-
-class _Response(io.BytesIO):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def _refusal(retry_after: str | None = None):
-    headers = email.message.Message()
-    if retry_after is not None:
-        headers["Retry-After"] = retry_after
-    return urllib.error.HTTPError(usage.USAGE_URL, 429, "Too Many Requests", headers, None)
-
-
-def _snapshot(claude: dict) -> dict:
+def _snapshot(claude: dict, codex: dict | None = None) -> dict:
     return {"state": "ready", "warnPercent": 80, "alarmPercent": 95,
-            "sources": [claude, usage._unavailable("codex", "none")]}
+            "sources": [claude, codex or usage._unavailable("codex", "none")]}
+
+
+def _codex_at(percent: float) -> dict:
+    """A current Codex reading of the main pool at ``percent``."""
+    return {"source": "codex", "state": "ok", "error": None, "via": "app-server",
+            "ageSeconds": 0, "trusted": True, "pools": [], "windows": [
+                usage._window("seven_day", "7d", percent=percent, window_minutes=10080,
+                              resets_at=usage._minute_iso(NOW + 3 * 86400),
+                              age_seconds=0, pool=usage.CODEX_MAIN_POOL)]}
 
 
 class ClaudeReadingTests(unittest.TestCase):
     def setUp(self):
-        usage._reset_claude_state()
-        self.addCleanup(usage._reset_claude_state)
         self.tmp = Path(tempfile.mkdtemp())
         self.missing = self.tmp / "absent.json"
-        token = mock.patch.object(usage, "_access_token", return_value="token-for-tests")
-        token.start()
-        self.addCleanup(token.stop)
-        self.calls = []
-        self.answers = []
-
-        def urlopen(req, timeout=None):
-            self.calls.append(req.full_url)
-            answer = self.answers.pop(0)
-            if isinstance(answer, Exception):
-                raise answer
-            return _Response(answer)
-
-        net = mock.patch.object(usage.urllib.request, "urlopen", side_effect=urlopen)
+        # No Claude reading may touch the network.
+        net = mock.patch.object(socket, "create_connection",
+                                side_effect=AssertionError("network used"))
         net.start()
         self.addCleanup(net.stop)
 
-    # --- local source -----------------------------------------------------
-
-    def test_fresh_local_reading_is_used_and_the_endpoint_is_not_called(self):
+    def test_fresh_local_reading_is_used(self):
         path = _statusline_file(self.tmp, age=120)
         src = usage.read_claude(NOW, path)
         self.assertEqual(src["state"], "ok")
@@ -99,43 +70,42 @@ class ClaudeReadingTests(unittest.TestCase):
         self.assertEqual(src["ageSeconds"], 120)
         self.assertEqual({w["kind"]: w["percent"] for w in src["windows"]},
                          {"five_hour": 40.0, "seven_day": 35.0})
-        self.assertEqual(self.calls, [])
         self.assertEqual(dashboard._kind_usage(_snapshot(src), "claude"),
                          {"state": "known", "percent": 40.0, "window": "five_hour",
                           "label": "5-hour", "trusted": True, "atLeast": False})
 
-    def test_stale_local_reading_stays_known_as_a_floor_when_the_endpoint_refuses(self):
+    def test_stale_local_reading_stays_known_as_a_floor(self):
         path = _statusline_file(self.tmp, age=2 * 3600, five=85)
-        self.answers = [_refusal("900")]
         src = usage.read_claude(NOW, path)
-        self.assertEqual(len(self.calls), 1)
         self.assertEqual(src["via"], "statusline")
+        self.assertEqual(src["ageSeconds"], 2 * 3600)
         five = next(w for w in src["windows"] if w["kind"] == "five_hour")
         seven = next(w for w in src["windows"] if w["kind"] == "seven_day")
         self.assertFalse(five["trusted"])          # 2 h against a 5 h window
         self.assertEqual(five["percent"], 85.0)    # kept, as a floor
         self.assertTrue(seven["trusted"])          # 2 h against a week
-        self.assertIn("rate-limiting", src["note"])
         figure = dashboard._kind_usage(_snapshot(src), "claude")
         self.assertEqual((figure["state"], figure["percent"], figure["atLeast"]),
                          ("known", 85.0, True))
 
     def test_local_window_past_its_reset_has_no_current_percent(self):
         path = _statusline_file(self.tmp, age=60, five_reset=NOW - 10)
-        src = usage.read_claude_statusline(NOW, path)
+        src = usage.read_claude(NOW, path)
         five = next(w for w in src["windows"] if w["kind"] == "five_hour")
         self.assertTrue(five["rolledOver"])
         self.assertIsNone(five["percent"])
         self.assertEqual(five["stalePercent"], 40.0)
 
-    def test_rolled_over_local_window_asks_the_endpoint_for_the_new_one(self):
-        path = _statusline_file(self.tmp, age=60, five_reset=NOW - 10)
-        self.answers = [_endpoint_payload(five=3.0)]
+    def test_a_reading_whose_windows_have_all_reset_is_unknown_not_zero(self):
+        # Too old: both windows have rolled over since the last agent turn.
+        path = _statusline_file(self.tmp, age=8 * 86400, five_reset=NOW - 7 * 86400,
+                                seven_reset=NOW - 86400)
         src = usage.read_claude(NOW, path)
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(src["via"], "endpoint")
-        five = next(w for w in src["windows"] if w["kind"] == "five_hour")
-        self.assertEqual(five["percent"], 3.0)
+        self.assertTrue(all(w["percent"] is None for w in src["windows"]))
+        snap = _snapshot(src, _codex_at(10))
+        self.assertEqual(dashboard._kind_usage(snap, "claude")["state"], "unknown")
+        self.assertEqual(dashboard._kind_pace(snap, "claude", now=NOW)["state"], "unknown")
+        self.assertEqual(usage.alerts(snap["sources"]), [])
 
     def test_local_reading_with_an_implausible_reset_fails_loudly(self):
         path = _statusline_file(self.tmp, age=60, five_reset=18000)   # a duration
@@ -143,119 +113,71 @@ class ClaudeReadingTests(unittest.TestCase):
         self.assertEqual(src["state"], "unavailable")
         self.assertIn("format", src["error"])
 
-    def test_missing_local_reading_falls_back_to_the_endpoint(self):
-        self.answers = [_endpoint_payload()]
-        src = usage.read_claude(NOW, self.missing)
-        self.assertEqual(src["via"], "endpoint")
-        self.assertTrue(src["trusted"])
-        self.assertEqual(src["ageSeconds"], 0)
-        self.assertEqual({w["kind"]: w["percent"] for w in src["windows"]},
-                         {"five_hour": 12.0, "seven_day": 50.0})
-
-    # --- endpoint fallback ------------------------------------------------
-
-    def test_refused_endpoint_serves_its_recent_good_reading_flagged_by_age(self):
-        self.answers = [_endpoint_payload(five=12.0), _refusal()]
-        usage.read_claude(NOW, self.missing)
-        later = NOW + 40 * 60
-        src = usage.read_claude(later, self.missing)
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(src["state"], "ok")
-        self.assertEqual(src["via"], "endpoint-cached")
-        self.assertEqual(src["ageSeconds"], 40 * 60)
-        self.assertIn("rate-limiting", src["note"])
-        five = next(w for w in src["windows"] if w["kind"] == "five_hour")
-        self.assertFalse(five["trusted"])          # 40 min > a tenth of 5 h
-        self.assertEqual(five["percent"], 12.0)
-        # Still known: the worst window is the weekly one, exact at 40 minutes.
-        figure = dashboard._kind_usage(_snapshot(src), "claude")
-        self.assertEqual((figure["state"], figure["percent"], figure["atLeast"]),
-                         ("known", 50.0, False))
-
-    def test_endpoint_is_asked_at_most_every_interval(self):
-        self.answers = [_endpoint_payload(), _endpoint_payload(five=20.0)]
-        usage.read_claude(NOW, self.missing)
-        src = usage.read_claude(NOW + 90, self.missing)
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(src["via"], "endpoint-cached")
-        self.assertEqual(src["ageSeconds"], 90)
-        src = usage.read_claude(NOW + usage.ENDPOINT_MIN_INTERVAL_S, self.missing)
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(src["via"], "endpoint")
-
-    def test_retry_after_is_respected_before_asking_again(self):
-        self.answers = [_refusal("1800"), _endpoint_payload()]
-        usage.read_claude(NOW, self.missing)
-        usage.read_claude(NOW + 1799, self.missing)
-        self.assertEqual(len(self.calls), 1)
-        src = usage.read_claude(NOW + 1800, self.missing)
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(src["via"], "endpoint")
-
-    def test_retry_after_as_an_http_date(self):
-        err = _refusal("Sun, 13 Sep 2026 07:13:20 GMT")          # NOW + 1 h
-        self.assertEqual(usage._retry_after_seconds(err, NOW), 3600)
-
-    def test_a_retry_after_longer_than_an_hour_is_not_shortened(self):
-        err = _refusal("Sun, 13 Sep 2026 08:13:20 GMT")          # NOW + 2 h
-        self.assertEqual(usage._retry_after_seconds(err, NOW), 7200)
-        self.answers = [_refusal("7200"), _endpoint_payload()]
-        usage.read_claude(NOW, self.missing)
-        usage.read_claude(NOW + 3601, self.missing)
-        usage.read_claude(NOW + 7199, self.missing)
-        self.assertEqual(len(self.calls), 1)
-        src = usage.read_claude(NOW + 7200, self.missing)
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(src["via"], "endpoint")
-
-    def test_a_non_finite_retry_after_falls_back_to_the_default_wait(self):
-        for raw in ("inf", "1e309", "nan", "-inf"):
-            with self.subTest(raw=raw):
-                usage._reset_claude_state()
-                self.calls.clear()
-                self.answers = [_refusal(raw), _endpoint_payload()]
-                first = usage.read_claude(NOW, self.missing)
-                self.assertEqual(first["state"], "unavailable")
-                self.assertIn("rate-limiting", first["error"])
-                usage.read_claude(NOW + usage.DEFAULT_BACKOFF_S - 1, self.missing)
-                self.assertEqual(len(self.calls), 1)
-                src = usage.read_claude(NOW + usage.DEFAULT_BACKOFF_S, self.missing)
-                self.assertEqual(len(self.calls), 2)
-                self.assertEqual(src["via"], "endpoint")
-
-    def test_a_second_refusal_waits_at_least_what_the_server_asked(self):
-        self.answers = [_refusal("5000"), _refusal("5000"), _endpoint_payload()]
-        usage.read_claude(NOW, self.missing)
-        usage.read_claude(NOW + 5000, self.missing)
-        self.assertEqual(len(self.calls), 2)
-        usage.read_claude(NOW + 5000 + 4999, self.missing)
-        self.assertEqual(len(self.calls), 2)
-        usage.read_claude(NOW + 10000, self.missing)
-        self.assertEqual(len(self.calls), 3)
-
-    def test_newer_endpoint_reading_beats_a_stale_local_one(self):
-        path = _statusline_file(self.tmp, age=3 * 3600)
-        self.answers = [_endpoint_payload(five=12.0)]
-        src = usage.read_claude(NOW, path)
-        self.assertEqual(src["via"], "endpoint")
-
-    def test_both_sources_missing_is_unknown(self):
-        self.answers = [_refusal()]
+    def test_no_local_reading_is_unknown_to_the_chip_pacing_and_allocation(self):
         src = usage.read_claude(NOW, self.missing)
         self.assertEqual(src["state"], "unavailable")
+        self.assertEqual(src["windows"], [])
         self.assertIn("no hub-launched Claude agent", src["error"])
-        self.assertIn("rate-limiting", src["error"])
-        self.assertEqual(dashboard._kind_usage(_snapshot(src), "claude")["state"], "unknown")
+        snap = _snapshot(src, _codex_at(90))       # Codex past the warning
+        self.assertEqual(dashboard._kind_usage(snap, "claude")["state"], "unknown")
+        self.assertEqual(dashboard._kind_pace(snap, "claude", now=NOW)["state"], "unknown")
+        # Unknown is not "free": a seat on Codex at 90% is not moved to Claude.
         decision = dashboard.choose_agent_kind_for_seat(
-            "claude", _snapshot(src), installed=lambda kind: True)
-        self.assertEqual(decision["decision"], "unknown")
+            "codex", snap, installed=lambda kind: True)
+        self.assertEqual((decision["decision"], decision["chosenKind"]), ("unknown", "codex"))
+        decision = dashboard.choose_agent_kind_for_seat(
+            "claude", snap, installed=lambda kind: True)
+        self.assertEqual((decision["decision"], decision["chosenKind"]), ("unknown", "claude"))
 
-    def test_both_sources_name_the_same_reset_minute(self):
-        path = _statusline_file(self.tmp, age=60, five_reset=1789293600)  # 10:00Z
-        local = usage.read_claude_statusline(NOW, path)
-        self.answers = [_endpoint_payload()]
-        remote = usage.read_claude_endpoint(NOW)
-        self.assertEqual(local["windows"][0]["resetsAt"], remote["windows"][0]["resetsAt"])
+    def test_no_code_path_opens_claude_codes_sign_in_file(self):
+        home = self.tmp / "home"
+        creds = home / ".claude" / ".credentials.json"
+        creds.parent.mkdir(parents=True)
+        creds.write_text('{"claudeAiOauth": {"accessToken": "sk-ant-oat-test"}}',
+                         encoding="utf-8")
+        opened = []
+        real_open, real_io_open, real_read = builtins.open, io.open, Path.read_text
+
+        def note(path):
+            opened.append(os.path.basename(os.fspath(path)) if isinstance(
+                path, (str, bytes, os.PathLike)) else "")
+
+        def spy_open(file, *a, **k):
+            note(file)
+            return real_open(file, *a, **k)
+
+        def spy_io_open(file, *a, **k):
+            note(file)
+            return real_io_open(file, *a, **k)
+
+        def spy_read(self_, *a, **k):
+            note(self_)
+            return real_read(self_, *a, **k)
+
+        with mock.patch.dict(os.environ, {"USERPROFILE": str(home), "HOME": str(home)}), \
+                mock.patch.object(builtins, "open", spy_open), \
+                mock.patch.object(io, "open", spy_io_open), \
+                mock.patch.object(Path, "read_text", spy_read), \
+                mock.patch.object(usage, "CLAUDE_STATUSLINE_FILE", self.tmp / "claude-rate-limits.json"),                 mock.patch.dict(usage._STATE, {}),                 mock.patch.object(usage, "read_codex",
+                                  return_value=usage._unavailable("codex", "test")):
+            for path in (self.missing, _statusline_file(self.tmp, age=60),
+                         _statusline_file(self.tmp, age=9 * 86400)):
+                usage.read_claude(NOW, path)
+                usage.read_claude(None, path)
+            usage.refresh()
+            usage.snapshot()
+        self.assertIn("claude-rate-limits.json", opened)   # the spy saw the reads
+        self.assertNotIn(".credentials.json", opened)
+        self.assertNotIn("auth.json", opened)
+
+    def test_the_sign_in_file_and_the_endpoint_are_gone_from_the_module(self):
+        for name in ("CREDENTIALS", "USAGE_URL", "read_claude_endpoint", "_access_token",
+                     "_fetch_endpoint", "ENDPOINT_MIN_INTERVAL_S"):
+            self.assertFalse(hasattr(usage, name), name)
+        source = (REPO / "usage.py").read_text(encoding="utf-8")
+        self.assertNotIn("api/oauth", source)
+        self.assertNotIn("accessToken", source)
+        self.assertNotIn("claudeEndpoint", usage.snapshot())
 
 
 class StatuslineWriterTests(unittest.TestCase):

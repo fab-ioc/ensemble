@@ -5,8 +5,8 @@ Claude Code runs its status-line command after each turn and hands it a JSON on
 stdin that carries ``rate_limits.five_hour`` / ``seven_day`` —
 ``used_percentage`` and ``resets_at`` — from its own latest API response. That
 is the same account-wide figure ``/usage`` shows, with no network call and no
-credentials, so the hub asks the rate-limited usage endpoint only when this
-file has gone quiet.
+credentials. It is the hub's only source for Claude's allowance: until a
+hub-launched Claude agent has finished a turn, the reading is unknown.
 
 Usage (set by the hub in the agent's per-launch ``--settings``)::
 
