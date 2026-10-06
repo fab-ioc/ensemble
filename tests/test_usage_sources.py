@@ -7,6 +7,7 @@ import builtins
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -158,8 +159,13 @@ class ClaudeReadingTests(unittest.TestCase):
                 mock.patch.object(builtins, "open", spy_open), \
                 mock.patch.object(io, "open", spy_io_open), \
                 mock.patch.object(Path, "read_text", spy_read), \
-                mock.patch.object(usage, "CLAUDE_STATUSLINE_FILE", self.tmp / "claude-rate-limits.json"),                 mock.patch.dict(usage._STATE, {}),                 mock.patch.object(usage, "read_codex",
+                mock.patch.object(usage, "CLAUDE_STATUSLINE_FILE",
+                                  self.tmp / "claude-rate-limits.json"), \
+                mock.patch.dict(usage._STATE, {}), \
+                mock.patch.object(usage, "read_codex",
                                   return_value=usage._unavailable("codex", "test")):
+            # Codex's reader is stubbed (it starts `codex`); that it never opens
+            # auth.json rests on the source check in the next test.
             for path in (self.missing, _statusline_file(self.tmp, age=60),
                          _statusline_file(self.tmp, age=9 * 86400)):
                 usage.read_claude(NOW, path)
@@ -177,6 +183,11 @@ class ClaudeReadingTests(unittest.TestCase):
         source = (REPO / "usage.py").read_text(encoding="utf-8")
         self.assertNotIn("api/oauth", source)
         self.assertNotIn("accessToken", source)
+        for name in ("usage.py", "agent_models.py", "agents/codex.py", "agents/claude.py"):
+            text = (REPO / name).read_text(encoding="utf-8")
+            # As a path in code (a quoted name), not as words in a docstring.
+            for file in (".credentials.json", "auth.json"):
+                self.assertNotRegex(text, rf"[\"']{re.escape(file)}[\"']", name)
         self.assertNotIn("claudeEndpoint", usage.snapshot())
 
 
