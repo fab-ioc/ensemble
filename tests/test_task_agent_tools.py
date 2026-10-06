@@ -264,7 +264,7 @@ class LaunchArguments(unittest.TestCase):
         # Windows installs codex.cmd; a bare "codex" without a shell is
         # WinError 2, which refused every Codex launch on 10-06.
         proc = types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
-        resolved = r"C:\Users\x\AppData\Roaming\npm\codex.CMD"
+        resolved = r"D:\tools\npm\codex.CMD"
         with mock.patch.object(dashboard.subprocess, "run", return_value=proc) as run, \
                 mock.patch.object(dashboard.shutil, "which", return_value=resolved):
             CODEX_ENSEMBLE_ONLY_ARGS(str(self.root))
