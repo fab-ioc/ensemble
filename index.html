@@ -16599,7 +16599,7 @@ async function refreshUsage() {
   if (_usageInFlight) return;
   _usageInFlight = true;
   try {
-    // A cache read on the server: it never waits on the usage endpoint.
+    // A cache read on the server: it never waits on a reading.
     USAGE = await api('/api/usage') || USAGE;
     renderUsage();
   } catch (e) {
@@ -16759,8 +16759,8 @@ function usageSourceHtml(src) {
       <div class="usage-why bad">${esc(src.error || 'no reading')}</div>
     </div>`;
   }
-  // Age matters only for Codex, whose file freezes when its agents stop; the
-  // Claude reading is a live HTTPS call, so it is always "just now".
+  // Both readings are files written when an agent takes a turn, so both
+  // freeze when their agents stop and carry their age.
   const wins = src.windows || [];
   const ageHtml = (seconds, trusted) => seconds != null && seconds > 60
     ? `<span class="usage-src-age${trusted ? '' : ' untrusted'}"
