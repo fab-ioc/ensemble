@@ -62,7 +62,23 @@ Claude Code and Codex sessions you started yourself, outside Ensemble, are liste
 The app needs no Python: download it from the [latest release](https://github.com/fab-ioc/ensemble/releases/latest).
 
 - **Windows 10 or 11:** `Ensemble-<version>-windows-x64-setup.exe`. It installs for you only, in `%LOCALAPPDATA%\Programs\Ensemble`, without administrator rights, and adds Ensemble to the Start menu. Tick **Start Ensemble when I sign in** to start it at sign-in.
-- **macOS 11 or newer (Apple silicon and Intel):** `Ensemble-<version>-macos-universal.dmg`. Open it and drag **Ensemble** to **Applications**. The app is not signed with an Apple developer certificate: the first time, right-click it › **Open** (on macOS 15, System Settings › Privacy & Security › **Open Anyway**).
+- **macOS 11 or newer (Apple silicon and Intel):** paste this in Terminal:
+
+  ```sh
+  curl -fsSL https://github.com/fab-ioc/ensemble/releases/latest/download/install-mac.sh | sh
+  ```
+
+  It downloads the release's `Ensemble-<version>-macos-universal.zip` over https, checks it against the release's `SHA256SUMS.txt` and the app's own signature, puts **Ensemble** in `/Applications` (in `~/Applications` if your account cannot write to `/Applications`), and opens it. macOS does not stop an app installed this way, so there is nothing to approve. Run the same line again to update in place: a running Ensemble is stopped and started again. It changes nothing else on your Mac.
+
+  **With the disk image instead** (`Ensemble-<version>-macos-universal.dmg`): open it and drag **Ensemble** to **Applications**. The app is not signed with an Apple developer certificate, so macOS blocks the first open. Right-click › **Open** is not enough on macOS 15 or later. What works:
+
+  | macOS | Steps |
+  |---|---|
+  | 14 Sonoma | Open **Ensemble** once and close the message "Ensemble can't be opened because Apple cannot check it for malicious software". Then System Settings › **Privacy & Security**, scroll to **Security**: next to "Ensemble was blocked from use because it is not from an identified developer", click **Open Anyway**, enter your password, and click **Open** in the next window. |
+  | 15 Sequoia, 26 Tahoe | Open **Ensemble** once and click **Done** on "Apple could not verify Ensemble is free of malware". Then System Settings › **Privacy & Security**, scroll to **Security**: next to "Ensemble was blocked to protect your Mac", click **Open Anyway**, enter your password, and click **Open Anyway** in the next window. The button is there for about an hour after the blocked try. |
+  | Any, from Terminal | `xattr -dr com.apple.quarantine /Applications/Ensemble.app`, then open it as usual. This removes the "downloaded from the internet" mark from that app only. |
+
+  You do this once: after that it opens like any other app, and **Update now** keeps it current.
 
 Opening Ensemble starts the hub and opens `http://127.0.0.1:8765` in your browser; opening it again while it runs opens the page again (on a Mac, open the page from a bookmark: the app has no window or Dock icon). Settings shows the version, whether `claude` and `codex` are installed and signed in, and **Start Ensemble when I sign in**. When a newer release is out, the dashboard offers **Update now**: the app downloads it, checks its SHA-256, tries it on a spare port, swaps it in and restarts on the same port, and goes back to the version it had if the new one does not start. You still need `claude` or `codex` (and `git`) installed and signed in: Ensemble starts them, it does not install them.
 

@@ -208,6 +208,24 @@ def unpack(zip_path: Path, dest: Path, platform: str = sys.platform) -> Path:
     return find_app(dest, platform)
 
 
+def ready_mac_app(app: Path, run=subprocess.run) -> None:
+    """Make a Mac update's bundle one Gatekeeper never stops: no quarantine
+    attribute on any of it (a download through this updater gets none, but a
+    zip that came another way may), and its ad-hoc signature intact. Raises
+    ValueError when the signature does not verify: a broken one gives
+    "Ensemble is damaged", with no way to open it."""
+    run(["xattr", "-dr", "com.apple.quarantine", str(app)], capture_output=True, timeout=120)
+    left = run(["xattr", "-r", str(app)], capture_output=True, timeout=120)
+    # An xattr that cannot list the attributes proves nothing: refused too.
+    if left.returncode != 0 or b"com.apple.quarantine" in (left.stdout or b""):
+        raise ValueError(f"could not make sure {app.name} carries no quarantine attribute; not installed")
+    sig = run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, timeout=300)
+    if sig.returncode != 0:
+        why = (sig.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        raise ValueError(f"the signature of {app.name} does not verify"
+                         + (f": {why[-1]}" if why else "") + "; not installed")
+
+
 def find_app(folder: Path, platform: str = sys.platform) -> Path:
     if platform == "darwin":
         for p in [folder / "Ensemble.app", *folder.glob("*.app")]:
@@ -251,10 +269,11 @@ def exe_in(app: Path, platform: str = sys.platform) -> Path:
 
 
 def stage(rel: dict, update_dir: Path, platform: str = sys.platform, get=_get,
-          fetch=download) -> Path:
+          fetch=download, ready=ready_mac_app) -> Path:
     """Download, check and unpack ``rel`` (from ``pick_release``) under
     ``update_dir``; returns the new app. Raises ValueError on a checksum that
-    does not match, and the download is deleted."""
+    does not match, or a Mac bundle whose signature does not verify, and the
+    download is deleted."""
     work = update_dir / rel["version"]
     zip_path = update_dir / rel["assetName"]
     sums = parse_sums(get(rel["sumsUrl"]).decode("utf-8", "replace"))
@@ -262,7 +281,10 @@ def stage(rel: dict, update_dir: Path, platform: str = sys.platform, get=_get,
     try:
         if not verify_sha256(zip_path, sums.get(rel["assetName"])):
             raise ValueError(f"checksum of {rel['assetName']} does not match {SUMS_NAME}; not installed")
-        return unpack(zip_path, work, platform)
+        app = unpack(zip_path, work, platform)
+        if platform == "darwin":
+            ready(app)
+        return app
     finally:
         zip_path.unlink(missing_ok=True)
 
@@ -513,6 +535,7 @@ class Helper:
         self.log_path = Path(plan["log"])
         self.platform = plan.get("platform", sys.platform)
         self.started: subprocess.Popen | None = None    # the hub this helper last started
+        self.ready_mac_app = ready_mac_app
 
     def log(self, msg: str) -> None:
         line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [update] {msg}\n"
@@ -641,7 +664,12 @@ class Helper:
                                reason="the new version did not start; nothing was changed")
         try:
             new_from = bring_near(new_from, new_names, folder)
-        except OSError as e:
+            if self.platform == "darwin":
+                # What is swapped in, the staged bundle or its copy next to
+                # the app: unquarantined, its signature intact.
+                for n in new_names:
+                    self.ready_mac_app(new_from / n)
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
             self.drop_lease()
             return self.record(ok=False, stage="copy", reason="could not copy the new version "
                                f"next to the app; nothing was changed: {e}")

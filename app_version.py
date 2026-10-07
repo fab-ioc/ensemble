@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 # The release workflow refuses a tag that is not "v" + this.
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 
 # Where releases are published: the app's updates come from here.
 REPO = "fab-ioc/ensemble"
