@@ -114,6 +114,16 @@ jobs:
           archs=$(lipo -archs dist/Ensemble.app/Contents/MacOS/Ensemble)
           echo "architectures: $archs"
           case "$archs" in *x86_64*arm64*|*arm64*x86_64*) ;; *) echo "::error::not universal2: $archs"; exit 1;; esac
+          # Every Mach-O inside, not only the program: one single-architecture
+          # library breaks the app on the other kind of Mac.
+          n=0; bad=0
+          while IFS= read -r f; do
+            file -b "$f" | grep -q Mach-O || continue
+            n=$((n + 1)); lipo -info "$f"
+            case "$(lipo -archs "$f")" in *x86_64*arm64*|*arm64*x86_64*) ;; *) echo "::error::not universal2: $f"; bad=$((bad + 1));; esac
+          done < <(find dist/Ensemble.app -type f)
+          echo "$n Mach-O files, $bad not universal2"
+          [ "$n" -gt 0 ] && [ "$bad" -eq 0 ]
       - name: Smoke test (the hub starts and serves its pages)
         run: |
           export HOME="$RUNNER_TEMP/home"; mkdir -p "$HOME"
@@ -203,12 +213,39 @@ jobs:
           [ -n "$after" ] && [ "$before" != "$after" ] || fail "the running app was not started again from the new copy"
           if ls -a /Applications | grep -q '^\.Ensemble\.app\.'; then fail "the swap left a folder behind"; fi
           echo "updated in place and serving again"
+          # A swap that fails (the old bundle cannot be moved) puts nothing in its
+          # place and starts the old app again.
+          chflags uchg "$app"
+          if curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh; then chflags nouchg "$app"; fail "an install whose swap failed reported success"; fi
+          chflags nouchg "$app"
+          answers || fail "the old app was not started again after a failed swap"
+          [ -x "$app/Contents/MacOS/Ensemble" ] || fail "a failed swap lost the app"
+          if ls -a /Applications | grep -q '^\.Ensemble\.app\.'; then fail "a failed swap left a folder behind"; fi
+          echo "a failed swap left the old app running"
+          # Started at sign-in (its LaunchAgent): stopped through launchd, started again through it.
+          plist="$HOME/Library/LaunchAgents/com.ensemble.dashboard.plist"
+          "$app/Contents/MacOS/Ensemble" --autostart on
+          grep -q "$app/Contents/MacOS/Ensemble" "$plist" || fail "the LaunchAgent does not run $app"
+          pkill -f "$app/Contents/MacOS/Ensemble" || true
+          for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8765/api/version || break; sleep 1; done
+          launchctl bootstrap "gui/$(id -u)" "$plist" || fail "could not load the LaunchAgent"
+          answers || fail "the LaunchAgent's hub did not answer"
+          lpid() { launchctl print "gui/$(id -u)/com.ensemble.dashboard" | awk '$1 == "pid" {print $3}'; }
+          before=$(lpid)
+          curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh || fail "the install over a LaunchAgent failed"
+          answers || fail "the LaunchAgent's hub did not answer after the install"
+          after=$(lpid)
+          [ -n "$after" ] && [ "$before" != "$after" ] || fail "launchd did not start the new copy ($before -> $after)"
+          echo "updated under launchd: pid $before -> $after"
+          after=$(hub)
           # A zip that does not match SHA256SUMS.txt is not installed, and the running app stays.
           bad="$RUNNER_TEMP/bad"; mkdir -p "$bad"
           cp "$served/Ensemble-$VERSION-macos-universal.zip" "$bad/"
           echo "0000000000000000000000000000000000000000000000000000000000000000  Ensemble-$VERSION-macos-universal.zip" > "$bad/SHA256SUMS.txt"
           if ENSEMBLE_RELEASE_URL="file://$bad" sh release/install-mac.sh; then fail "a zip with a bad checksum was installed"; fi
           [ "$(hub)" = "$after" ] || fail "a refused install stopped the running app"
+          launchctl bootout "gui/$(id -u)/com.ensemble.dashboard" || true
+          rm -f "$plist"
           pkill -f "$app/Contents/MacOS/Ensemble" || true
           rm -rf "$app"
       - uses: actions/upload-artifact@v4
