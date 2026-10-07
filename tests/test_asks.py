@@ -122,9 +122,8 @@ out.doneBody = T.askBodyHtml(m, none, t => t, null);
 delete ctx.ROOM_OBJ;
 ctx.ROOM_OBJ = { workflow: 'inprogress', participants: [{ identity: 'claude', kind: 'agent', role: 'engineer', answeredAt: now }] };
 const direct = { ...m, asks: T.parseAsks(fixtures.claude), askAudience: 'user' };
-ctx.OWN_PROJECT_PO = 'room-po';
 out.poAnsweredOpen = T.openAsks(direct, none).length;
-ctx.OWN_PROJECT_PO = 'room-other';
+ctx.ROOM_OBJ.reportsToRoom = 'room-other'; // `/api/room` resolves linked rooms even before `/api/projects` loads.
 out.taskPoAnsweredOpen = T.openAsks(direct, none).length;
 ctx.ROOM_OBJ = { workflow: 'inprogress', participants: [{ identity: 'claude', kind: 'agent', role: 'reviewer' }] };
 out.reviewerOpen = T.openAsks(direct, none).length;

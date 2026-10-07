@@ -11592,6 +11592,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "specRev": _spec_rev(spec)})
                 return
             out = _annotate_room_liveness(room, with_points=True)
+            out["reportsToRoom"] = room_po_id(room)
             try:
                 # The pop-out's "Make PO of a new project…", as the list row has it.
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))

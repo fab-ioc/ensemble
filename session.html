@@ -2627,7 +2627,7 @@ function asksOf(m) {
   if (m.to && !['user', 'all'].includes(String(m.to).toLowerCase())) return [];
   if (Array.isArray(m.asks)) return m.asks;
   if (m.rang && m.rang.length) return [];
-  if (typeof OWN_PROJECT_PO !== 'undefined' && OWN_PROJECT_PO && OWN_PROJECT_PO !== ROOM) return [];
+  if (typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.reportsToRoom) return [];
   if (m.kind === 'report') return [];
   const t = String(m.text || '');
   let a = ASK_CACHE.get(t);
@@ -2689,7 +2689,7 @@ const ASK_OPEN_S = 7 * 86400;
 // A Done task waits for nobody (asks.open_by_room): its column as stored.
 const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
 const askSettledAt = P => Math.max((P && P.asksSettledAt) || 0,
-  ...((typeof OWN_PROJECT_PO !== 'undefined' && OWN_PROJECT_PO && OWN_PROJECT_PO !== ROOM ? []
+  ...((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.reportsToRoom ? []
     : ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.participants) || [])
       .filter(p => p.kind === 'agent').map(p => +p.answeredAt || 0))));
 const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < askSettledAt(P)));
@@ -4444,11 +4444,9 @@ CHAT_NAMES.taskNo = rid => {
 // Whether this chat is a project's PO, and which of its agents is the PO: in a
 // solo chat its agent; in a room the one tasks report to, else its first agent.
 let PO_ROOMS = null;
-let OWN_PROJECT_PO = '';
 fetch('/api/projects').then(r => r.json()).then(d => {
   const projects = ((d && d.projects) || []);
   PO_ROOMS = new Set(projects.map(p => p.poRoomId).filter(Boolean));
-  OWN_PROJECT_PO = (projects.find(p => p.id === (ROOM_OBJ && ROOM_OBJ.projectId)) || {}).poRoomId || '';
   ASK_CACHE.clear();
   if (ROOM_OBJ) chatNamesFor(ROOM_OBJ, SOLO_MODE);
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);

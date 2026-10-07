@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import types
+import io
+import json
 import re
 import unittest
 from unittest import mock
@@ -164,6 +166,25 @@ class StructuredRoundTrip(_World):
         mid = posted["message"]["id"]
         self.assertEqual(asks.message_asks(chatroom.get_room(rid)), [])
         self.assertEqual(asks.balloon_asks(rid, mid), [])
+
+    def test_room_response_resolves_linked_task_po(self):
+        rid = self.team_room()
+        po_room = chatroom.create_room("PO", [{"identity": "po", "agent": "claude", "role": "ProductOwner"}])["id"]
+        self.assertFalse(chatroom.get_room(rid).get("projectId"))
+        handler = dashboard.Handler.__new__(dashboard.Handler)
+        handler.path, handler.command, handler.request_version = f"/api/room?id={rid}", "GET", "HTTP/1.1"
+        handler.requestline = f"GET {handler.path} HTTP/1.1"
+        handler.headers = {"Host": "127.0.0.1"}
+        handler.rfile, handler.wfile = io.BytesIO(), io.BytesIO()
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.server = types.SimpleNamespace(server_address=("127.0.0.1", 8765))
+        handler.log_message = lambda *a: None
+        with mock.patch.object(dashboard, "load_projects", return_value=[{"id": "project-test", "poRoomId": po_room}]), \
+             mock.patch.object(dashboard, "load_session_projects", return_value={rid: "project-test"}):
+            handler.do_GET()
+        head, _, payload = handler.wfile.getvalue().partition(b"\r\n\r\n")
+        self.assertEqual(int(head.split(b" ", 2)[1]), 200)
+        self.assertEqual(json.loads(payload)["reportsToRoom"], po_room)
 
 
 class SafetySample(unittest.TestCase):
