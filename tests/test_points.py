@@ -1179,6 +1179,32 @@ class FollowUps(_World):
         self.assertEqual(self.state(rid), {"P1": "acked", "P2": "open"})
         self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P2")["replyTo"]), ("P2", "P1"))
 
+    def test_discarding_a_follow_up_undoes_its_link(self):
+        # #182 (the #146 known limit): a refused or discarded send that made a
+        # follow-up took the point back but left its parent closed, naming it.
+        rid = self.solo_room()
+        self.answered(rid)
+        comment = "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?"
+        self.send(rid, comment, key="k1", at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "open"})
+        points.discard(rid, ["P2"], "k1")
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        p1 = self.point(rid, "P1")
+        self.assertNotIn("followedBy", p1)
+        self.assertNotIn("followedAt", p1)
+        # Two follow-ups: dropping the first leaves the point followed by the other.
+        self.send(rid, comment, key="k2", at=self.t0 + 20)
+        self.send(rid, comment.replace("Which test exactly?", "And since when?"), key="k3", at=self.t0 + 21)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P3": "open", "P4": "open"})
+        points.discard(rid, ["P3"], "k2")
+        self.assertEqual(self.state(rid), {"P1": "followed", "P4": "open"})
+        self.assertEqual(self.point(rid, "P1")["followedBy"], "P4")
+        # A point acknowledged since its follow-up keeps that; only the link goes.
+        points.act(rid, "P1", "ack")
+        points.discard(rid, ["P4"], "k3")
+        self.assertEqual(self.state(rid), {"P1": "acked"})
+        self.assertNotIn("followedBy", self.point(rid, "P1"))
+
     def test_a_short_or_unknown_quote_closes_nothing(self):
         rid = self.solo_room()
         self.answered(rid)

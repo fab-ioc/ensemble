@@ -1585,11 +1585,16 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
     if inlined:
         for ident in rung:
             part = _d.chatroom.participant(room, ident)
-            if part and ident in idle:
-                try:
-                    _d.chatroom.patch_participant(room["id"], ident, _d.spec_seen(part, new_spec))
-                except Exception:   # noqa: BLE001
-                    pass
+            if not part:
+                continue
+            # A busy owner's line is only queued: ``specRung`` lets a hub
+            # restart that finds it idle count it as taken (dashboard.spec_unseen).
+            mark = (_d.spec_seen(part, new_spec) if ident in idle
+                    else {"specRung": _d.spec_seen(part, new_spec)["specSeen"]})
+            try:
+                _d.chatroom.patch_participant(room["id"], ident, mark)
+            except Exception:   # noqa: BLE001
+                pass
     return ("the owner has been told what changed (" + ", ".join(rung) + ")"
             + ("" if inlined else "; the change was too long to inline, it will read the spec again"))
 
