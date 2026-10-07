@@ -148,7 +148,9 @@ def _get(url: str, timeout: float = 20) -> bytes:
 
 
 def fetch_releases(repo: str = app_version.REPO, timeout: float = 15) -> list:
-    return json.loads(_get(RELEASES_URL.format(repo=repo), timeout).decode("utf-8"))
+    # ENSEMBLE_RELEASES_URL: another list in the same shape (a rehearsal, a fork).
+    url = os.environ.get("ENSEMBLE_RELEASES_URL") or RELEASES_URL.format(repo=repo)
+    return json.loads(_get(url, timeout).decode("utf-8"))
 
 
 def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetch_releases) -> dict:

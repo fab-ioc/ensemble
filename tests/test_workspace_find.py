@@ -768,7 +768,12 @@ class PageWiring(unittest.TestCase):
     def test_the_hub_serves_both_endpoints(self):
         self.assertIn('if p == "/api/ws/files":', DASHBOARD)
         self.assertIn('if p == "/api/ws/search":', DASHBOARD)
-        self.assertIn('[sys.executable, "-X", "utf8", str(Path(workspace_search.__file__).resolve())]', DASHBOARD)
+        self.assertIn('_search_argv("workspace_search", workspace_search)', DASHBOARD)
+        # From a checkout: this Python in UTF-8 mode, running the script.
+        import dashboard
+        import workspace_search
+        argv = dashboard._search_argv("workspace_search", workspace_search)
+        self.assertEqual(argv, [sys.executable, "-X", "utf8", str(Path(workspace_search.__file__).resolve())])
 
 
 if __name__ == "__main__":

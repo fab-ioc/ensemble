@@ -535,7 +535,10 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/dock/src/theme.js", "static/dock/src/theme-picker.js", "static/dock/src/install.js",
               "static/dock/src/popout-page.js", "static/dock/src/screenshot.js", "static/dock/src/menu-items.js",
               "static/dock/src/draw.js",
-              "static/dock/css/dock.css")
+              "static/dock/css/dock.css",
+              # xterm.js, vendored so the built app's terminals work offline.
+              "static/vendor/xterm/xterm.min.js", "static/vendor/xterm/xterm-addon-fit.min.js",
+              "static/vendor/xterm/xterm.min.css")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 FILE_DRAG_META = b'<meta name="ensemble-file-drag" content="">'
 # A page may hand a file URL to a program which has none of the browser's

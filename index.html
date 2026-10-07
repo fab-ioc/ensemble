@@ -7185,15 +7185,16 @@ async function checkAgents(refresh) {
   if (rows) rows.innerHTML = info.agents.map(a => `<p class="agent-row">${line(a)}</p>`).join('');
   const banner = document.getElementById('agents-banner');
   if (!banner) return;
+  // Only when no agent is ready: one is enough, and Settings lists the rest.
   const missing = info.agents.filter(a => !a.ready);
   const sig = missing.map(a => a.key + (a.installed ? '-out' : '-none')).join(',');
   let hidden = '';
   try { hidden = localStorage.getItem('ens-agents-hidden') || ''; } catch {}
-  if (!missing.length || (info.usable && hidden === sig)) { banner.hidden = true; return; }
+  if (info.usable || !missing.length || hidden === sig) { banner.hidden = true; return; }
   banner.dataset.sig = sig;
-  banner.classList.toggle('none-ready', !info.usable);
-  const lead = info.usable ? 'Ensemble works with the agent you have. ' : 'Ensemble needs Claude Code or Codex. ';
-  document.getElementById('agents-banner-text').innerHTML = lead + missing.map(line).join(' ');
+  banner.classList.add('none-ready');
+  document.getElementById('agents-banner-text').innerHTML =
+    'Ensemble needs Claude Code or Codex. ' + missing.map(line).join(' ');
   banner.hidden = false;
 }
 // Start at sign-in: the app only (a checkout has install-task.ps1 / install-launchd.sh).
