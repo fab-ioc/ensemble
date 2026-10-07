@@ -357,8 +357,9 @@ class _Agent:
         return [self.display_name.lower()]
 
 
-class LaunchArguments(_Home):
-    """What the hub hands ``codex`` and ``claude`` when it starts each seat."""
+class _LaunchSeats(_Home):
+    """A hub handler that starts seats without a terminal: each ``ptyrun.create``
+    command is kept in ``made``."""
 
     def setUp(self):
         super().setUp()
@@ -421,6 +422,10 @@ class LaunchArguments(_Home):
         names = ("owner", "reviewer", "po", "resume", "handover", "po switch")
         self.assertEqual(len(self.made), len(names))
         return dict(zip(names, self.made))
+
+
+class LaunchArguments(_LaunchSeats):
+    """What the hub hands ``codex`` and ``claude`` when it starts each seat."""
 
     def test_nothing_chosen_no_flag_and_no_file_read(self):
         with mock.patch.object(agent_models, "codex_models", side_effect=AssertionError("read")):
