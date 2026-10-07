@@ -2988,6 +2988,29 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     cursor: pointer; border-radius: 3px;
   }
   #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
+  /* First run: a coding agent missing or signed out (/api/app/agents). A
+     warning when none is ready, else news. */
+  #agents-banner {
+    display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+    background: var(--c-progress-bg); border-bottom: 1px solid var(--border);
+    color: var(--fg); font-size: 13px; position: sticky; top: 0; z-index: 100;
+  }
+  #agents-banner.none-ready { background: var(--c-warning-bg); }
+  #agents-banner[hidden] { display: none; }
+  #agents-banner-text { flex: 1; }
+  #agents-banner-text a { color: var(--link); }
+  #agents-banner-text code {
+    background: var(--c-neutral-bg); padding: 1px 6px; border-radius: 3px;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  #agents-banner-dismiss {
+    background: transparent; border: 0; color: var(--fg-muted);
+    font-size: 16px; line-height: 1; padding: 4px 6px; cursor: pointer; border-radius: 3px;
+  }
+  #agents-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
+  #settings-agents .agent-row { margin: 4px 0; font-size: 13px; }
+  #settings-agents .agent-row a { color: var(--link); }
+  #settings-app .autostart-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 8px; }
   /* The panels (the Dock) not loading (pdBanner): a warning, with Reload. */
   #dock-banner {
     display: flex; align-items: center; gap: 12px; padding: 8px 16px;
@@ -3838,6 +3861,10 @@ window.DOC_LISTENERS_PAUSED = false;
   <button id="update-banner-go">Update now</button>
   <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
 </div>
+<div id="agents-banner" role="status" hidden>
+  <span id="agents-banner-text"></span>
+  <button id="agents-banner-dismiss" type="button" title="Hide until something changes" aria-label="Hide">×</button>
+</div>
 <div id="dock-banner" role="status" hidden>
   <span id="dock-banner-text"></span>
   <button id="dock-banner-go" type="button">Reload</button>
@@ -3976,6 +4003,13 @@ window.DOC_LISTENERS_PAUSED = false;
     <button type="button" id="install-app-btn" class="po-btn def" hidden
             title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
     <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
+    <label class="autostart-row" hidden><input type="checkbox" id="autostart-toggle"> Start Ensemble when I sign in</label>
+  </div>
+  <!-- First run: which coding agents this machine has (/api/app/agents). -->
+  <div class="settings-section" id="settings-agents">
+    <h4>Coding agents</h4>
+    <div class="agent-rows"></div>
+    <button type="button" class="po-btn def" id="agents-recheck">Check again</button>
   </div>
   <div class="settings-section" id="settings-feedback">
     <h4>Feedback</h4>
@@ -7114,11 +7148,73 @@ function renderUpdateBanner(info) {
     return;
   }
   const text = document.getElementById('update-banner-text');
+  if (info.kind === 'release') {
+    // The app: a newer release on GitHub.
+    text.textContent = `Ensemble ${info.latestVersion} is available. You have ${info.currentVersion}.`;
+    banner.hidden = false;
+    return;
+  }
   const plural = info.behind === 1 ? '' : 's';
   text.innerHTML =
     `Update available — ${info.behind} commit${plural} behind. Latest: ` +
     `<code>${esc(info.latestMessage || info.latestSha || '')}</code>`;
   banner.hidden = false;
+}
+// After a restart: how the app's last update ended, said once.
+async function noteLastUpdate() {
+  if (!(RUNTIME_CFG && RUNTIME_CFG.packaged)) return;
+  let st = null;
+  try { st = await api('/api/update-status'); } catch { return; }
+  const last = st && st.last;
+  if (!last || !last.at || Date.now() / 1000 - last.at > 900) return;
+  const key = 'ens-update-seen-' + last.at;
+  try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch {}
+  if (last.ok) toast(`Updated to Ensemble ${last.to}`, 5000, 'ok');
+  else if (last.rolledBack) toast(`Ensemble ${last.to} did not start, so ${last.from} was put back`, 10000, 'err');
+}
+// First run: claude and codex installed and signed in? One is enough.
+async function checkAgents(refresh) {
+  let info = null;
+  try { info = await api('/api/app/agents' + (refresh ? '?refresh=1' : '')); } catch { return; }
+  if (!info || !Array.isArray(info.agents)) return;
+  const line = a => !a.installed
+    ? `${esc(a.name)} is not installed. <a href="${esc(a.installUrl)}" target="_blank" rel="noopener">Install ${esc(a.name)}</a>`
+    : a.signedIn === false ? `${esc(a.name)} is not signed in. ${esc(a.signIn)}`
+    : `${esc(a.name)} is ready.`;
+  const rows = document.querySelector('#settings-agents .agent-rows');
+  if (rows) rows.innerHTML = info.agents.map(a => `<p class="agent-row">${line(a)}</p>`).join('');
+  const banner = document.getElementById('agents-banner');
+  if (!banner) return;
+  const missing = info.agents.filter(a => !a.ready);
+  const sig = missing.map(a => a.key + (a.installed ? '-out' : '-none')).join(',');
+  let hidden = '';
+  try { hidden = localStorage.getItem('ens-agents-hidden') || ''; } catch {}
+  if (!missing.length || (info.usable && hidden === sig)) { banner.hidden = true; return; }
+  banner.dataset.sig = sig;
+  banner.classList.toggle('none-ready', !info.usable);
+  const lead = info.usable ? 'Ensemble works with the agent you have. ' : 'Ensemble needs Claude Code or Codex. ';
+  document.getElementById('agents-banner-text').innerHTML = lead + missing.map(line).join(' ');
+  banner.hidden = false;
+}
+// Start at sign-in: the app only (a checkout has install-task.ps1 / install-launchd.sh).
+async function initAutostart() {
+  const row = document.querySelector('#settings-app .autostart-row');
+  const box = document.getElementById('autostart-toggle');
+  if (!row || !box) return;
+  let st = null;
+  try { st = await api('/api/app/autostart'); } catch { return; }
+  if (!st || !st.supported) return;
+  row.hidden = false;
+  box.checked = !!st.enabled;
+  box.addEventListener('change', async () => {
+    try {
+      const r = await fetch('/api/app/autostart', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ enabled: box.checked }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.message || body.error || `HTTP ${r.status}`);
+      box.checked = !!body.enabled;
+    } catch (e) { box.checked = !box.checked; toast('Not changed: ' + e.message, 5000, 'err'); }
+  });
 }
 function setUpdateStage(text) {
   const el = document.getElementById('update-stage');
@@ -7133,9 +7229,11 @@ async function triggerUpdate() {
   if (banner) banner.hidden = true;
   if (overlay) overlay.hidden = false;
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
-  setUpdateStage('Fetching from origin…');
+  const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
+  setUpdateStage(app ? 'Downloading…' : 'Fetching from origin…');
 
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
+  const startedAt = Date.now() / 1000;
   // The hub only restarts for this page (it holds the key the hub handed it
   // when the page opened) or the Ensemble Dashboard PO. A 403 is a real no —
   // e.g. the key is from before a restart and the page needs a reload — so
@@ -7164,13 +7262,34 @@ async function triggerUpdate() {
     return;
   }
 
-  setUpdateStage('Restarting server…');
+  setUpdateStage(app ? 'Downloading…' : 'Restarting server…');
   // Wait for the new pid to appear. launchctl kickstart is ~5-10s typically
-  // (git fetch dominates). Cap at 60s.
-  const deadline = performance.now() + 60_000;
+  // (git fetch dominates). Cap at 60s. The app downloads the release and
+  // starts it once on a spare port first: up to 4 minutes.
+  const deadline = performance.now() + (app ? 240_000 : 60_000);
   let lastStage = 'restart';
   while (performance.now() < deadline) {
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, app ? 1000 : 500));
+    if (app) {
+      // Its stages, and a stop the hub survived (a checksum that does not
+      // match, a new version that did not start): say so now.
+      let st = null;
+      try { const resp = await fetch('/api/update-status'); st = resp.ok ? await resp.json() : null; } catch {}
+      const last = st && st.last;
+      const why = st && st.stage === 'failed' ? st.error
+        : (last && !last.ok && last.at >= startedAt && last.stage === 'preflight' ? last.reason : '');
+      if (why) {
+        showUpdateFailed(logPath, why);
+        UPDATE_IN_PROGRESS = false;
+        ensUpd.hold = false;
+        return;
+      }
+      if (st && st.stage) {
+        const stages = { downloading: 'Downloading…', starting: 'Starting the new version…',
+                         restarting: 'Restarting…' };
+        if (stages[st.stage]) setUpdateStage(stages[st.stage]);
+      }
+    }
     try {
       const resp = await fetch('/api/config');
       if (!resp.ok) continue;
@@ -7209,15 +7328,23 @@ function resetUpdateModal() {
     'The server will restart and the page will reload automatically.';
   document.getElementById('update-close').hidden = true;
 }
-function showUpdateFailed(logPath) {
+function showUpdateFailed(logPath, reason) {
   const overlay = document.getElementById('update-overlay');
   const modal = overlay && overlay.querySelector('.update-modal');
   if (!modal) return;
   modal.classList.add('is-failed');
-  modal.querySelector('h3').textContent = 'The hub did not come back';
-  setUpdateStage(`See ${tildeify(logPath) || 'the hub log'}`);
-  document.getElementById('update-hint').textContent =
-    'The last lines there say why. This page reloads if the hub starts again.';
+  if (reason) {
+    // The update stopped and this version keeps running.
+    modal.querySelector('h3').textContent = 'Not updated';
+    setUpdateStage(reason);
+    document.getElementById('update-hint').textContent =
+      `This version keeps running. More in ${tildeify(logPath) || 'the hub log'}.`;
+  } else {
+    modal.querySelector('h3').textContent = 'The hub did not come back';
+    setUpdateStage(`See ${tildeify(logPath) || 'the hub log'}`);
+    document.getElementById('update-hint').textContent =
+      'The last lines there say why. This page reloads if the hub starts again.';
+  }
   const close = document.getElementById('update-close');
   close.hidden = false;
   close.onclick = () => { overlay.hidden = true; };
@@ -7230,6 +7357,7 @@ function renderRuntimeConfig() {
   // log are, which process it is. A named instance shows only when there is one.
   const rows = [
     ...(c.instance ? [['instance', c.instance]] : []),
+    ['version', c.version ? (c.packaged ? c.version : `${c.version} (from source)`) : ''],
     ['port', c.port != null ? String(c.port) : ''],
     ['state dir', tildeify(c.stateDir)],
     ['log', tildeify(c.logFile)],
@@ -19325,6 +19453,15 @@ window.ensUpdPlace = () => ({
   });
   checkForUpdate();
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
+  noteLastUpdate();
+  checkAgents(false);
+  initAutostart();
+  document.getElementById('agents-recheck')?.addEventListener('click', () => checkAgents(true));
+  document.getElementById('agents-banner-dismiss')?.addEventListener('click', () => {
+    const b = document.getElementById('agents-banner');
+    try { localStorage.setItem('ens-agents-hidden', b.dataset.sig || ''); } catch {}
+    b.hidden = true;
+  });
   await refresh();
   const firstAttn = updateRoomsBadge();     // paint Needs you on the first screen
   // /?task=room-... — a task link opened in a tab of its own; also ?task=ED-18,
