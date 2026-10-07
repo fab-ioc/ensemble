@@ -16879,7 +16879,7 @@ function usagePaceText(name, pace) {
 }
 function usagePaceLine(name, pace, useIt) {
   if (useIt) {
-    return `<div class="usage-pace" title="Its week resets within hours and what is left is lost then, so it is not paced and new seats go to ${esc(name)} until the ${esc(String(USAGE.alarmPercent ?? 95))}% alarm.">${
+    return `<div class="usage-pace" title="Its week resets within hours and what is left is lost then, so ${esc(name)} is no longer paced or held to the warning, only to the ${esc(String(USAGE.alarmPercent ?? 95))}% alarm.">${
       esc(`${name} 7-day ${useIt.atLeast ? '≥' : ''}${Math.round(useIt.percent)}% · `)}<span class="use">${esc(usageUseItText(useIt))}</span></div>`;
   }
   if (!pace) return '';
