@@ -2294,7 +2294,9 @@ def spec_change_line(room: dict, old_spec: str, new_spec: str, by: str = "") -> 
     it is marked as having seen this revision); a longer change sends it to
     read the spec again."""
     who = (by or "").strip() or "An administrator"
-    when = time.strftime("%H:%M")
+    # The revision makes each line's first line its own (spec_unseen matches
+    # it in the transcript: two amendments in one minute must not read alike).
+    when = f"{time.strftime('%H:%M')} (revision {_spec_rev(new_spec)[:8]})"
     a = (old_spec or "").splitlines()
     b = (new_spec or "").splitlines()
     # The first two lines are the file headers (only when something differs);

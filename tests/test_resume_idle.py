@@ -462,6 +462,26 @@ class ASpecAmendmentReachesARunningOwner(_Stops):
                 self.join()
             self.assertEqual(len(self.typed(rid)["claude"]), typed_n, took)
 
+    def test_two_amendments_in_one_minute_are_told_apart(self):
+        # Review 2: the first line taken, the second still queued when the
+        # hub died; a match on "amended your spec at HH:MM" alone found the
+        # first and the second amendment reached no one.
+        rid = self.room(spec="Sell the X5.")
+        chatroom.patch_participant(rid, "claude", dashboard.spec_seen(self.part(rid), "Sell the X5."))
+        self.running(rid, "claude", "working")
+        h = _Ring()
+        with mock.patch.object(dashboard.time, "strftime", lambda fmt, *a: "10:15"):
+            self.amend(rid, "Sell the X3.", h)
+            self.amend(rid, "Sell the X4.", h)
+        first, second = h.rung[0][2], h.rung[1][2]
+        self.assertNotEqual(first.splitlines()[0], second.splitlines()[0])
+        self.stop(rid)
+        with mock.patch.object(dashboard, "read_session_turns",
+                               lambda sid: [{"role": "user", "text": first}]):
+            self.handler()._resume_room(chatroom.get_room(rid, public=False), quiet=True)
+            self.join()
+        self.assertEqual(len(self.typed(rid)["claude"]), 1)
+
     def test_a_seeded_resume_has_seen_the_spec_it_was_given(self):
         rid = self.room(spec="Sell the X5.")
         full = chatroom.get_room(rid, public=False)
