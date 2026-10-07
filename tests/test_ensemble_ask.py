@@ -18,11 +18,14 @@ from test_points import _World, http
 class Validation(unittest.TestCase):
     def test_shipped_ask_instructions_do_not_name_the_operator(self):
         root = Path(__file__).resolve().parent.parent
+        operator = Path.home().name
+        if operator.lower() in {"root", "runner", "user"}:
+            self.skipTest("generic machine account is not a person's display name")
         paths = ("asks.py", "chatroom.py", "dashboard.py", "ensemble_tools.py", "points.py",
                  "rotation.py", "session.html", "skills/ensemble/SKILL.md")
         for path in paths:
             with self.subTest(path=path):
-                self.assertIsNone(re.search(r"\b(?:fabio|fab)\b", (root / path).read_text(encoding="utf8"), re.I))
+                self.assertIsNone(re.search(rf"\b{re.escape(operator)}\b", (root / path).read_text(encoding="utf8"), re.I))
 
     def test_normalization_and_rejection(self):
         got = asks.validated([{"question": "Deploy tonight?", "yesno": True},
@@ -110,6 +113,12 @@ class StructuredRoundTrip(_World):
             self.assertEqual(ceo["deliveredTo"], "user")
             self.assertEqual([a["question"] for a in asks.open_in(chatroom.get_room(rid))],
                              ["Release publicly?"])
+            # A reply to the task's PO may update answeredAt after this direct
+            # user question; only the user's answer should settle the card.
+            summary = chatroom.get_room(rid)
+            summary["participants"][0]["answeredAt"] = summary["messages"][-1]["ts"] + 1
+            self.assertEqual([a["question"] for a in asks.open_in(summary)],
+                             ["Release publicly?"])
             def delivered(_handler, data):
                 points.take(chatroom.get_room(rid, public=False), data["text"], key=data["key"])
                 return 200, {"ok": True}
@@ -149,6 +158,13 @@ class StructuredRoundTrip(_World):
         chatroom.post_message(rid, "user", "Should I merge this?", to="claude")
         self.assertNotIn("asks", chatroom.get_room(rid)["messages"][-1])
 
+    def test_reviewer_question_has_no_answer_card(self):
+        rid = self.team_room()
+        posted = chatroom.post_message(rid, "codex", "Should I merge this?", to="user")
+        mid = posted["message"]["id"]
+        self.assertEqual(asks.message_asks(chatroom.get_room(rid)), [])
+        self.assertEqual(asks.balloon_asks(rid, mid), [])
+
 
 class SafetySample(unittest.TestCase):
     def test_questions_and_false_positives(self):
@@ -162,6 +178,7 @@ class SafetySample(unittest.TestCase):
             "> Do you want the wider panel?\n\nThat is the question the user asked us.",
             "```\nDecision needed: Deploy?\n```\n\nNo action is needed.",
             "Question for task #23: should I merge? I will ask its PO.",
+            "The user asked us this: Should we deploy?",
         ]
         self.assertTrue(all(asks.safety(s) for s in positives))
         self.assertEqual(sum(bool(asks.safety(s)) for s in negatives), 0)

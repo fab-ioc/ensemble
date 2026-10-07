@@ -70,6 +70,8 @@ FIXTURES = {
     "rec_lead": "Ask: Which one?\n1. Recommended: Keep it — less churn\n2. [x] Drop it",
     "plain": "What do you think? Should we ship on Friday?",
     "safety_options": "Options:\nA. Keep it\nB. Drop it\n\nWhich should I use?",
+    "reported_question": "The user asked us this: Should we deploy?",
+    "emoji_question": chr(0x1f600) * 100 + "?",
     # Where Python and JS regexes differ (review 1): lone CRs and Unicode line
     # breaks, other spaces, non-ASCII digits, a long label with emoji.
     "breaks": "Ask: Q one?" + chr(13) + chr(13) + chr(10) + "- A" + chr(10) + "- B" + chr(0x2028) + "Ask: Q" + chr(0xa0) + "two?" + chr(0x2029) + "- C",
@@ -92,7 +94,7 @@ Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null 
 const out = { parsed: {} };
 for (const [k, v] of Object.entries(fixtures)) out.parsed[k] = JSON.parse(JSON.stringify(T.parseAsks(v)));
 out.safety = {};
-for (const k of ['plain', 'fenced', 'safety_options']) out.safety[k] = JSON.parse(JSON.stringify(T.safetyAsk(fixtures[k])));
+for (const k of ['plain', 'fenced', 'safety_options', 'reported_question', 'emoji_question']) out.safety[k] = JSON.parse(JSON.stringify(T.safetyAsk(fixtures[k])));
 const now = Date.now() / 1000;
 const m = { id: 's:1', from: 'claude', kind: 'human', text: fixtures.claude, ts: now - 60 };
 const plain = { id: 's:2', from: 'claude', kind: 'digest', text: fixtures.plain, ts: 11 };
@@ -118,6 +120,14 @@ ctx.ROOM_OBJ = { workflow: 'done' };
 out.doneOpen = T.openAsks(m, none).length;
 out.doneBody = T.askBodyHtml(m, none, t => t, null);
 delete ctx.ROOM_OBJ;
+ctx.ROOM_OBJ = { workflow: 'inprogress', participants: [{ identity: 'claude', kind: 'agent', role: 'engineer', answeredAt: now }] };
+const direct = { ...m, asks: T.parseAsks(fixtures.claude), askAudience: 'user' };
+ctx.OWN_PROJECT_PO = 'room-po';
+out.poAnsweredOpen = T.openAsks(direct, none).length;
+ctx.OWN_PROJECT_PO = 'room-other';
+out.taskPoAnsweredOpen = T.openAsks(direct, none).length;
+ctx.ROOM_OBJ = { workflow: 'inprogress', participants: [{ identity: 'claude', kind: 'agent', role: 'reviewer' }] };
+out.reviewerOpen = T.openAsks(direct, none).length;
 console.log(JSON.stringify(out));
 """
 
@@ -138,9 +148,11 @@ class TheMarker(unittest.TestCase):
                 self.assertEqual(self.o["parsed"][k], asks.parse(text))
 
     def test_the_fallback_matches_the_page(self):
-        for k in ("plain", "fenced", "safety_options"):
+        for k in ("plain", "fenced", "safety_options", "reported_question", "emoji_question"):
             with self.subTest(fixture=k):
                 self.assertEqual(self.o["safety"][k], asks.safety(FIXTURES[k]))
+        self.assertEqual(self.o["safety"]["reported_question"], [])
+        self.assertEqual(len(self.o["safety"]["emoji_question"]), 1)
 
     def test_what_each_shape_reads_as(self):
         c = asks.parse(FIXTURES["claude"])
@@ -215,6 +227,11 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(self.o["ages"], [3, 0, 3], "6 days: open; 8 days: not; unknown time: until answered")
         self.assertEqual(self.o["doneOpen"], 0, "a Done task waits for nobody")
         self.assertIn("This task is done", self.o["doneBody"])
+
+    def test_a_po_reply_does_not_settle_a_task_direct_user_ask(self):
+        self.assertEqual(self.o["poAnsweredOpen"], 0)
+        self.assertEqual(self.o["taskPoAnsweredOpen"], 3)
+        self.assertEqual(self.o["reviewerOpen"], 0)
 
 
 class TheEndpoint(_World):

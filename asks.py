@@ -261,6 +261,7 @@ def validated(questions) -> list[dict]:
 
 
 _DECISION = re.compile(r"^[ \t]*(?:\*\*)?Decision needed:(?:\*\*)?[ \t]*(.+)$", re.I | re.M)
+_REPORTED_QUESTION = re.compile(r"^(?:(?:the )?(?:user|ceo)|you)\s+(?:asked|said|wrote|wondered)\b", re.I)
 _TRAIL_OPTION = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])"
     r"(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$", re.I)
@@ -290,6 +291,8 @@ def safety(text: str) -> list[dict]:
     elif tail.endswith("?"):
         tail_lines = tail.splitlines()
         q = tail_lines[-1].strip()
+        if _REPORTED_QUESTION.match(q):
+            return []
         preceding = tail_lines[:-1]
         following = [line for line in preceding if _TRAIL_OPTION.match(line)]
         if len(following) < 2 or len(preceding) - len(following) > 1:
@@ -435,8 +438,9 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     settled = float(led.get("asksSettledAt") or 0)
-    settled = max(settled, *(float(p.get("answeredAt") or 0)
-                              for p in summary.get("participants", []) if p.get("kind") == "agent"))
+    if not _d.room_po_id(summary):
+        settled = max(settled, *(float(p.get("answeredAt") or 0)
+                                  for p in summary.get("participants", []) if p.get("kind") == "agent"))
     out = []
     for mid, ts, qs, who in marked:
         if ts and ts < settled:
@@ -464,7 +468,8 @@ def balloon_asks(room_id: str, mid: str) -> list[dict]:
     has_po = bool(_d.room_po_id(room))
     for message in room.get("messages") or []:
         if message.get("id") == mid:
-            agents = {p.get("identity") for p in room.get("participants", []) if p.get("kind") == "agent"}
+            agents = {p.get("identity") for p in room.get("participants", [])
+                      if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")}
             if message.get("from") not in agents or message.get("kind") in ("notice",) \
                     or message.get("rang") or (message.get("to") or "").lower() not in ("", "all", "user") \
                     or message.get("askAudience") == "po" or (has_po and message.get("askAudience") != "user"):

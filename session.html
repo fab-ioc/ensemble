@@ -2620,6 +2620,10 @@ function parseAsks(text) {
 const ASK_CACHE = new Map();
 function asksOf(m) {
   if (!m || !m.id || m.from === 'user' || m.from === 'ensemble' || m.divider || m.kind === 'pomsg' || m.kind === 'notice' || m.askAudience === 'po') return [];
+  if (typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && Array.isArray(ROOM_OBJ.participants)) {
+    const sender = ROOM_OBJ.participants.find(p => p.identity === m.from);
+    if (!sender || sender.kind !== 'agent' || /^reviewer/i.test(sender.role || '')) return [];
+  }
   if (m.to && !['user', 'all'].includes(String(m.to).toLowerCase())) return [];
   if (Array.isArray(m.asks)) return m.asks;
   if (m.rang && m.rang.length) return [];
@@ -2645,6 +2649,7 @@ function safetyAsk(text) {
   else if (tail.endsWith('?')) {
     const parts = body.split(/\n[ \t]*\n/), tailLines = tail.split('\n');
     q = tailLines.at(-1).trim();
+    if (/^(?:(?:the )?(?:user|ceo)|you)\s+(?:asked|said|wrote|wondered)\b/i.test(q)) return [];
     const optionLine = line => /^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+/i.test(line);
     for (const prior of [tailLines.slice(0, -1), (parts.at(-2) || '').trim().split('\n')]) {
       const opts = prior.filter(optionLine);
@@ -2652,7 +2657,7 @@ function safetyAsk(text) {
     }
   }
   q = q.replace(/^(?:[-*]|[1-6][.)])[ \t]+/, '').replace(/^\*+|\*+$/g, '').trim();
-  if (!q || q.length > ASK_Q_MAX) return [];
+  if (!q || [...q].length > ASK_Q_MAX) return [];
   let opts = [];
   for (const line of following) {
     const m = line.match(/^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$/i);
@@ -2684,8 +2689,9 @@ const ASK_OPEN_S = 7 * 86400;
 // A Done task waits for nobody (asks.open_by_room): its column as stored.
 const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
 const askSettledAt = P => Math.max((P && P.asksSettledAt) || 0,
-  ...(((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.participants) || [])
-    .filter(p => p.kind === 'agent').map(p => +p.answeredAt || 0)));
+  ...((typeof OWN_PROJECT_PO !== 'undefined' && OWN_PROJECT_PO && OWN_PROJECT_PO !== ROOM ? []
+    : ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.participants) || [])
+      .filter(p => p.kind === 'agent').map(p => +p.answeredAt || 0))));
 const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < askSettledAt(P)));
 const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
 // One ask drawn: its question, then its quick answers or, answered, what was
