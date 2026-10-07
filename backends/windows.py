@@ -502,7 +502,7 @@ class WindowsBackend(Backend):
             f"Remove-Item -LiteralPath {_ps_quote(str(script_path))} "
             f"-ErrorAction SilentlyContinue\n"
         )
-        script_path.write_text(body, encoding="utf-8")
+        _write_ps1(script_path, body)
         # Return an argv LIST — pywinpty resolves argv[0] via PATH and quotes the
         # rest itself, so use a bare shell name (not a quoted full path).
         shell = "pwsh" if shutil.which("pwsh") else "powershell"
@@ -571,7 +571,7 @@ class WindowsBackend(Backend):
             f"Remove-Item -LiteralPath {_ps_quote(str(script_path))} "
             f"-ErrorAction SilentlyContinue\n"
         )
-        script_path.write_text(body, encoding="utf-8")
+        _write_ps1(script_path, body)
         return str(script_path)
 
     # ---------- self-update ----------
@@ -617,7 +617,7 @@ class WindowsBackend(Backend):
             f"Remove-Item -LiteralPath {_ps_quote(str(script_path))} -ErrorAction SilentlyContinue\n"
         )
         try:
-            script_path.write_text(body, encoding="utf-8")
+            _write_ps1(script_path, body)
             log.parent.mkdir(parents=True, exist_ok=True)
             out = open_append_fd(log)
             try:
@@ -767,6 +767,15 @@ class WindowsBackend(Backend):
 
 
 # ---------- module helpers ----------
+
+def _write_ps1(path: Path, body: str) -> None:
+    """Write a .ps1 PowerShell reads as UTF-8. Windows PowerShell 5.1 reads a
+    script WITHOUT a byte-order mark in the ANSI code page (cp1252 here), so
+    every non-ASCII character of a prompt, path or value in it reached the
+    agent as mojibake ("…" became "â€¦"). The BOM makes 5.1
+    read UTF-8; pwsh 7 reads UTF-8 either way."""
+    path.write_text(body, encoding="utf-8-sig")
+
 
 def _native_text(text: str) -> str:
     """Prompt text for a here-string that PowerShell hands to a NATIVE program
