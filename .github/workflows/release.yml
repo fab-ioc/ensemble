@@ -71,7 +71,7 @@ jobs:
             } catch {}
             Start-Sleep 1
           }
-          foreach ($page in "/", "/session", "/fileview", "/static/vendor/xterm/xterm.js") {
+          foreach ($page in "/", "/session", "/fileview", "/static/vendor/xterm/xterm.min.js") {
             if ($ok) { Invoke-WebRequest "http://127.0.0.1:8790$page" -UseBasicParsing | Out-Null }
           }
           '{"root":".","q":"VERSION"}' | dist\Ensemble\Ensemble.exe --run workspace_search | Out-Null
@@ -123,7 +123,7 @@ jobs:
             sleep 1
           done
           if [ -n "$ok" ]; then
-            for page in / /session /fileview /static/vendor/xterm/xterm.js; do
+            for page in / /session /fileview /static/vendor/xterm/xterm.min.js; do
               curl -fs -o /dev/null "http://127.0.0.1:8790$page"
             done
           fi
