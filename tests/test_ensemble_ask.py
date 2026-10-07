@@ -109,6 +109,9 @@ class StructuredRoundTrip(_World):
              mock.patch.object(dashboard, "room_po_id", side_effect=lambda r, *a, **k: po_room if r and r.get("id") == rid else ""):
             result = ensemble_tools._ask(ctx, {"questions": [{"question": "Proceed?", "yesno": True}]}, self._handler())
             self.assertEqual(result["deliveredTo"]["roomId"], po_room)
+            routed = chatroom.get_room(rid)["messages"][-1]
+            self.assertEqual(routed["askAudience"], "po")
+            self.assertEqual(routed["asks"][0]["question"], "Proceed?")
             self.assertEqual(asks.open_in(chatroom.get_room(rid)), [])
             ceo = ensemble_tools._ask(ctx, {"questions": [{"question": "Release publicly?", "yesno": True}],
                                             "forCeo": True}, self._handler())
@@ -142,6 +145,17 @@ class StructuredRoundTrip(_World):
             ensemble_tools._ask(ctx, {"questions": [{"question": "Which?", "options": [
                 {"label": "A", "recommended": True}, {"label": "B", "recommended": True}]}]}, self._handler())
         self.assertEqual(len(chatroom.get_room(rid)["messages"]), before)
+
+    def test_report_cannot_store_agent_supplied_structured_asks(self):
+        rid = self.team_room()
+        room = chatroom.get_room(rid, public=False)
+        ctx = {"room": room, "identity": "claude", "part": room["participants"][0], "projectId": ""}
+        with mock.patch.object(ensemble_tools, "_project_po", return_value=None):
+            ensemble_tools._report(ctx, {"kind": "question", "text": "Please decide.",
+                                         "_structuredAsks": [{"n": 0}]}, self._handler())
+        reported = chatroom.get_room(rid)["messages"][-1]
+        self.assertNotIn("asks", reported)
+        self.assertEqual(asks.balloon_asks(rid, reported["id"]), [])
 
     def test_chat_safety_net_only_for_an_agent_addressing_the_user(self):
         rid = self.team_room()

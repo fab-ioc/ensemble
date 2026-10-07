@@ -1095,7 +1095,7 @@ def _whoami(ctx, args, handler):
     }
 
 
-def _report(ctx, args, handler):
+def _report(ctx, args, handler, *, structured_asks=None):
     """Record a report on the caller's task and deliver it to the project's PO.
 
     The task record comes first: even if the PO room is gone or asleep, the
@@ -1122,7 +1122,7 @@ def _report(ctx, args, handler):
     # itself, a new blocked or question takes its place.
     clears = kind == "update" and args.get("clears") is True
     _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading,
-                              clears=clears, structured_asks=args.get("_structuredAsks"))
+                              clears=clears, structured_asks=structured_asks)
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
@@ -1171,8 +1171,8 @@ def _ask(ctx, args, handler):
     if po and (po.get("missing") or po["roomId"] == room["id"] or not po.get("identity")):
         po = None
     if po and args.get("forCeo") is not True:
-        routed = _report(ctx, {"kind": "question", "text": body,
-                               "_structuredAsks": questions}, handler)
+        routed = _report(ctx, {"kind": "question", "text": body}, handler,
+                         structured_asks=questions)
         return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay."}
     result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
                                       structured_asks=questions, ask_audience="user")
