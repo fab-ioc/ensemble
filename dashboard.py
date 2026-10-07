@@ -9564,31 +9564,77 @@ def _run_app_update(rel: dict, lease: str) -> None:
     def stage(name: str, **more) -> None:
         with _APP_UPDATE_LOCK:
             _APP_UPDATE.update(stage=name, **more)
+    # The download, unpack and helper copy can outlast the lease on a slow
+    # line: renew it until the helper has it, so no restart or second update
+    # takes it meanwhile.
+    done = threading.Event()
+
+    def renew() -> None:
+        while not done.wait(20):
+            app_update.renew_lease(str(_restart_lease_path()), lease)
+    threading.Thread(target=renew, daemon=True).start()
+    plan_path = UPDATE_DIR / f"plan-{uuid.uuid4().hex}.json"
     try:
         stage("downloading", to=rel["version"], error="", at=time.time())
         _update_log(f"downloading {rel['assetName']} ({rel['version']})")
+        _prune_update_dir(keep=rel["version"])
         new_app = app_update.stage(rel, UPDATE_DIR)
         _update_log(f"checksum matches; unpacked to {new_app}")
         stage("starting")
         helper = app_update.copy_helper(app_version.app_root(), UPDATE_DIR)
-        plan_path = UPDATE_DIR / f"plan-{uuid.uuid4().hex}.json"
-        plan_path.write_text(json.dumps(update_plan(rel, new_app, lease)), encoding="utf-8")
+        # It holds the hub's environment (the hub that comes back needs it):
+        # readable by this user only, and gone once the helper has read it.
+        fd = os.open(plan_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(update_plan(rel, new_app, lease), f)
         res = BACKEND.start_detached([str(helper), "--run", "app_update", "apply", str(plan_path)],
                                      DASHBOARD_DIR / "logs" / "update.log")
         if not res.get("started"):
-            plan_path.unlink(missing_ok=True)
             raise OSError(res.get("error") or "the update helper did not start")
         _update_log(f"helper started (pid {res.get('helperPid')})")
         stage("restarting")
+        done.set()
+        # A helper that started but never read its plan leaves no copy behind.
+        for _ in range(PLAN_PICKUP_S):
+            if not plan_path.exists():
+                return
+            time.sleep(1)
+        plan_path.unlink(missing_ok=True)
+        _update_log("the helper did not pick up its plan; deleted")
     except Exception as e:      # noqa: BLE001 — the hub keeps running; the page says why
+        done.set()
+        plan_path.unlink(missing_ok=True)
         _drop_restart_lease(lease)
         _update_log(f"update failed: {e}")
         stage("failed", error=str(e))
+    finally:
+        done.set()
+
+
+PLAN_PICKUP_S = 120
+
+
+def _prune_update_dir(keep: str) -> None:
+    """Earlier updates' unpacked versions and leftover plans: only the one
+    being installed is kept (the helper's copy is replaced each time)."""
+    try:
+        for p in UPDATE_DIR.iterdir():
+            if (p.is_dir() and p.name not in (keep, "helper", "previous", "failed")
+                    and re.fullmatch(r"\d+(\.\d+)*", p.name)):
+                shutil.rmtree(p, ignore_errors=True)
+            elif p.name.startswith("plan-") and p.suffix == ".json":
+                p.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def start_app_update() -> dict:
     """Update now in the built app; returns at once (``started``), the rest
     runs on a thread and then in the helper."""
+    if "/AppTranslocation/" in str(app_version.app_root()):
+        return {"started": False,
+                "error": "macOS runs Ensemble from a temporary read-only copy: move "
+                         "Ensemble.app to Applications, open it from there, then update"}
     info = check_for_update(force=True)
     rel = info.get("release")
     if not info.get("available") or not rel:

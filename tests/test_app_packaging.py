@@ -250,11 +250,124 @@ class SwapTest(unittest.TestCase):
         self.assertEqual((self.new / "Ensemble.exe").read_text(), "new")
         self.assertEqual(sorted(p.name for p in self.prev.iterdir()), [])
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows locks open files")
+    def test_a_locked_file_leaves_the_old_app_whole(self):
+        # Review 1: a copy-then-delete fallback deleted half of _internal.
+        new_names, old = self._names()
+        held = open(self.install / "_internal" / "lib.txt", "rb")
+        try:
+            with self.assertRaises(OSError):
+                app_update.swap_in(self.install, old, self.new, new_names, self.prev, tries=2, wait=0)
+        finally:
+            held.close()
+        self.assertEqual((self.install / "Ensemble.exe").read_text(), "old")
+        self.assertEqual((self.install / "_internal" / "lib.txt").read_text(), "old")
+        self.assertEqual(list(self.prev.iterdir()), [])
+        self.assertEqual((self.new / "_internal" / "lib.txt").read_text(), "new")
+
+    def test_move_never_merges_into_what_is_there(self):
+        (self.prev).mkdir()
+        (self.prev / "_internal").mkdir()
+        with self.assertRaises(FileExistsError):
+            app_update._move(self.install / "_internal", self.prev / "_internal", tries=3, wait=0)
+        self.assertTrue((self.install / "_internal" / "lib.txt").is_file())
+        self.assertEqual(list((self.prev / "_internal").iterdir()), [])
+
+    def test_new_version_on_another_volume_is_copied_next_to_the_app_first(self):
+        new_names, _ = self._names()
+        self.assertEqual(app_update.bring_near(self.new, new_names, self.install), self.new)
+        with mock.patch.object(app_update, "same_volume", return_value=False):
+            near = app_update.bring_near(self.new, new_names, self.install)
+        self.assertEqual(near, self.install / app_update.INCOMING_DIR)
+        self.assertEqual((near / "_internal" / "lib.txt").read_text(), "new")
+        # Never taken for part of the app, nor copied into the helper.
+        self.assertNotIn(app_update.INCOMING_DIR, app_update.app_entries(self.install, "win32")[1])
+
     def test_decide(self):
         self.assertEqual(app_update.decide({"version": "2.0.0"}, "2.0.0"), "keep")
         self.assertEqual(app_update.decide({"version": "1.0.0"}, "2.0.0"), "rollback")
         self.assertEqual(app_update.decide(None, "2.0.0"), "rollback")
         self.assertEqual(app_update.decide({}, "2.0.0"), "rollback")
+
+
+class HelperFailureTest(unittest.TestCase):
+    """Review 1: whatever goes wrong after the preflight, last.json says so and
+    something is started on the hub's port."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self._tmp.name)
+        self.install = _make_app(self.d / "install", "old")
+        self.new = _make_app(self.d / "new" / "Ensemble", "new")
+        self.lease = self.d / "restart.lease"
+        self.lease.write_text(json.dumps({"id": "L", "at": 0}))
+        self.plan = {"platform": "win32", "fromVersion": "1.0.0", "toVersion": "2.0.0",
+                     "app": str(self.install), "newApp": str(self.new),
+                     "previousDir": str(self.install / app_update.PREVIOUS_DIR),
+                     "failedDir": str(self.install / app_update.FAILED_DIR),
+                     "port": 1, "hubPid": 0, "args": [], "launchd": None,
+                     "leaseId": "L", "leasePath": str(self.lease),
+                     "log": str(self.d / "update.log"), "preflightLog": str(self.d / "p.log"),
+                     "resultPath": str(self.d / "last.json")}
+        self.h = app_update.Helper(self.plan)
+        self.started = []
+        self.h.start_hub = lambda exe, via: self.started.append(Path(exe))
+        self.h.preflight = lambda exe: True
+        self.h.restore_rooms = lambda: None
+        self.h.stop_hub_after_failed_start = lambda: None
+        for name, value in (("_post", lambda *a, **k: {}), ("_served", lambda *a, **k: None),
+                            ("wait_served", lambda *a, **k: None)):
+            p = mock.patch.object(app_update, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _last(self):
+        return json.loads((self.d / "last.json").read_text())
+
+    def test_a_hub_that_does_not_stop_is_left_alone(self):
+        self.h.stop_hub = lambda: (False, False)
+        got = self.h.run()
+        self.assertEqual(got["stage"], "stop")
+        self.assertEqual((self.install / "Ensemble.exe").read_text(), "old")
+        self.assertEqual(self._last()["stage"], "stop")
+        self.assertEqual(self.started[0], self.install / "Ensemble.exe")
+
+    def test_a_rollback_that_fails_is_recorded_and_the_old_app_started(self):
+        self.h.stop_hub = lambda: (False, True)
+        with mock.patch.object(app_update, "swap_back", side_effect=PermissionError("in use")):
+            got = self.h.run()
+        self.assertEqual(got["stage"], "rollback-failed")
+        last = self._last()
+        self.assertFalse(last["ok"])
+        self.assertIn(app_update.PREVIOUS_DIR, last["previous"])
+        # The new one (in place, not serving) is tried, then the old one where it was moved.
+        self.assertEqual(self.started[-2:], [self.install / "Ensemble.exe",
+                                             self.install / app_update.PREVIOUS_DIR / "Ensemble.exe"])
+
+    def test_anything_unexpected_still_records(self):
+        self.h.stop_hub = mock.Mock(side_effect=RuntimeError("boom"))
+        got = self.h.run()
+        self.assertEqual(got["stage"], "error")
+        self.assertEqual(self._last()["reason"], "boom")
+
+    def test_a_started_hub_that_never_serves_is_killed_by_its_pid(self):
+        h = app_update.Helper(self.plan)
+        h.started = mock.Mock(pid=4242)
+        h.started.poll.return_value = 0
+        with mock.patch.object(app_update, "_kill") as kill, \
+                mock.patch.object(app_update, "_port_free", return_value=True):
+            h.stop_hub_after_failed_start()
+        kill.assert_called_with(4242)
+
+    def test_the_lease_is_renewed_only_when_it_is_ours(self):
+        app_update.renew_lease(str(self.lease), "L")
+        self.assertGreater(json.loads(self.lease.read_text())["at"], 0)
+        self.lease.write_text(json.dumps({"id": "other", "at": 0}))
+        app_update.renew_lease(str(self.lease), "L")
+        self.assertEqual(json.loads(self.lease.read_text())["at"], 0)
 
 
 class AgentCheckTest(unittest.TestCase):

@@ -58,3 +58,6 @@ Filename: "{app}\Ensemble.exe"; Parameters: "--autostart off"; Flags: runhidden;
 ; a new one that did not start).
 Type: filesandordirs; Name: "{app}\.previous"
 Type: filesandordirs; Name: "{app}\.failed"
+Type: filesandordirs; Name: "{app}\.incoming"
+Type: filesandordirs; Name: "{app}\.ensemble-previous"
+Type: filesandordirs; Name: "{app}\.ensemble-failed"
