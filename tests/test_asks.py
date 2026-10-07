@@ -6,7 +6,7 @@ question (#163, GitHub issue 7).
   Codex's (plain ``Ask:`` and a list), ``(yes/no)``, Yes/No with a
   recommendation, an open ask, ``**Ask:**`` with the question on the next
   line, a sibling bullet, a quoted ask; nothing in a fenced block and nothing
-  in an unmarked "?" message;
+  in a marked message; a final plain question gets the safety card;
 * the card: a button per option with the recommended one marked, a comment
   box, settled once answered; a balloon with an open ask is the person's (it
   never folds into Team activity);
@@ -69,6 +69,7 @@ FIXTURES = {
     "quoted": "> Ask (yes/no): Restart tonight?",
     "rec_lead": "Ask: Which one?\n1. Recommended: Keep it — less churn\n2. [x] Drop it",
     "plain": "What do you think? Should we ship on Friday?",
+    "safety_options": "Options:\nA. Keep it\nB. Drop it\n\nWhich should I use?",
     # Where Python and JS regexes differ (review 1): lone CRs and Unicode line
     # breaks, other spaces, non-ASCII digits, a long label with emoji.
     "breaks": "Ask: Q one?" + chr(13) + chr(13) + chr(10) + "- A" + chr(10) + "- B" + chr(0x2028) + "Ask: Q" + chr(0xa0) + "two?" + chr(0x2029) + "- C",
@@ -85,11 +86,13 @@ const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t =
   ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { parseAsks, askCardHtml, askBodyHtml, openAsks, forCeo, pointMaps, CHAT_NAMES };`, ctx);
+  globalThis.t = { parseAsks, safetyAsk, askCardHtml, askBodyHtml, openAsks, forCeo, pointMaps, CHAT_NAMES };`, ctx);
 const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = { parsed: {} };
 for (const [k, v] of Object.entries(fixtures)) out.parsed[k] = JSON.parse(JSON.stringify(T.parseAsks(v)));
+out.safety = {};
+for (const k of ['plain', 'fenced', 'safety_options']) out.safety[k] = JSON.parse(JSON.stringify(T.safetyAsk(fixtures[k])));
 const now = Date.now() / 1000;
 const m = { id: 's:1', from: 'claude', kind: 'human', text: fixtures.claude, ts: now - 60 };
 const plain = { id: 's:2', from: 'claude', kind: 'digest', text: fixtures.plain, ts: 11 };
@@ -133,6 +136,11 @@ class TheMarker(unittest.TestCase):
         for k, text in FIXTURES.items():
             with self.subTest(fixture=k):
                 self.assertEqual(self.o["parsed"][k], asks.parse(text))
+
+    def test_the_fallback_matches_the_page(self):
+        for k in ("plain", "fenced", "safety_options"):
+            with self.subTest(fixture=k):
+                self.assertEqual(self.o["safety"][k], asks.safety(FIXTURES[k]))
 
     def test_what_each_shape_reads_as(self):
         c = asks.parse(FIXTURES["claude"])
@@ -186,8 +194,8 @@ class TheMarker(unittest.TestCase):
         self.assertIn("Three things need you", b)
         self.assertIn("I carry on with the tests", b)
         self.assertNotIn("**Ask", b, "the ask's own lines are its card")
-        self.assertIsNone(self.o["plainBody"], "an unmarked question gets no card")
-        self.assertEqual(self.o["forCeo"], [True, False], "a balloon with asks is the person's; a plain one in a digest is not")
+        self.assertIn('class="qa"', self.o["plainBody"], "a final plain question gets a safety card")
+        self.assertEqual(self.o["forCeo"], [True, True], "a balloon with a safety card is also for the person")
 
     def test_an_answer_settles_its_card_only(self):
         self.assertEqual(self.o["open"], [0, 1, 2])
@@ -202,7 +210,7 @@ class TheMarker(unittest.TestCase):
 
     def test_words_in_the_chat_or_a_week_end_the_wait(self):
         self.assertEqual(self.o["settledOpen"], 0)
-        self.assertIn("You wrote in the chat after this", self.o["settledBody"])
+        self.assertIn("You answered after this", self.o["settledBody"])
         self.assertEqual(self.o["settledBody"].count("<textarea"), 3, "the cards still answer")
         self.assertEqual(self.o["ages"], [3, 0, 3], "6 days: open; 8 days: not; unknown time: until answered")
         self.assertEqual(self.o["doneOpen"], 0, "a Done task waits for nobody")

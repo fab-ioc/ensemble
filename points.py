@@ -928,6 +928,11 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         split = _comment_items(body)
         texts = _point_texts(split) if split else [body]
         made = [_new_point(led, t, owner, now, key, sid) for t in texts]
+        ask_mid, sep, ask_n = key[4:].rpartition(":") if key.startswith("ask:") else ("", "", "")
+        if sep and ask_n in (led.get("asks", {}).get(ask_mid) or {}):
+            for p in made:
+                _set_state(p, "acked", now)
+                p["ackedBy"] = "ask"
         if split and _REVIEW_HEAD.match(body):
             for p in made:
                 p["comment"] = True
