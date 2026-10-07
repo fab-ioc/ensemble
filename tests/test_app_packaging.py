@@ -419,7 +419,8 @@ class MacUpdateReadyTest(unittest.TestCase):
     and keeps a signature that verifies, or it is not installed (a quarantined
     copy is blocked by Gatekeeper; a broken signature reads as "damaged")."""
 
-    def _run(self, codesign_rc=0, xattrs=b"", stderr=b"a sealed resource is missing or invalid\n"):
+    def _run(self, codesign_rc=0, xattrs=b"", stderr=b"a sealed resource is missing or invalid\n",
+             list_rc=0):
         calls = []
 
         def run(cmd, **kw):
@@ -427,7 +428,7 @@ class MacUpdateReadyTest(unittest.TestCase):
             if cmd[0] == "codesign":
                 return subprocess.CompletedProcess(cmd, codesign_rc, b"", stderr if codesign_rc else b"")
             if cmd[:2] == ["xattr", "-r"]:
-                return subprocess.CompletedProcess(cmd, 0, xattrs, b"")
+                return subprocess.CompletedProcess(cmd, list_rc, xattrs, b"")
             return subprocess.CompletedProcess(cmd, 0, b"", b"")
         return run, calls
 
@@ -447,6 +448,12 @@ class MacUpdateReadyTest(unittest.TestCase):
         run, _ = self._run(xattrs=b"/x/Ensemble.app: com.apple.quarantine\n")
         with self.assertRaisesRegex(ValueError, "quarantine"):
             app_update.ready_mac_app(Path("/x/Ensemble.app"), run=run)
+
+    def test_attributes_that_cannot_be_listed_are_refused_before_the_signature(self):
+        run, calls = self._run(list_rc=1)
+        with self.assertRaisesRegex(ValueError, "quarantine"):
+            app_update.ready_mac_app(Path("/x/Ensemble.app"), run=run)
+        self.assertNotIn("codesign", [c[0] for c in calls])
 
     def test_stage_readies_the_mac_bundle_and_drops_the_download_when_refused(self):
         with tempfile.TemporaryDirectory() as d:

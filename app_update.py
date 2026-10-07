@@ -216,8 +216,9 @@ def ready_mac_app(app: Path, run=subprocess.run) -> None:
     "Ensemble is damaged", with no way to open it."""
     run(["xattr", "-dr", "com.apple.quarantine", str(app)], capture_output=True, timeout=120)
     left = run(["xattr", "-r", str(app)], capture_output=True, timeout=120)
-    if b"com.apple.quarantine" in (left.stdout or b""):
-        raise ValueError(f"{app.name} still carries the quarantine attribute; not installed")
+    # An xattr that cannot list the attributes proves nothing: refused too.
+    if left.returncode != 0 or b"com.apple.quarantine" in (left.stdout or b""):
+        raise ValueError(f"could not make sure {app.name} carries no quarantine attribute; not installed")
     sig = run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, timeout=300)
     if sig.returncode != 0:
         why = (sig.stderr or b"").decode("utf-8", "replace").strip().splitlines()
