@@ -6,6 +6,7 @@
 #   Ensemble-<version>-macos-universal.zip  (update; Ensemble.app)
 #   Ensemble-<version>-macos-universal.dmg  (for people)
 #   SHA256SUMS.txt                          (updates refuse an asset without it)
+#   install-mac.sh                          (the one-line Mac install, of this version)
 #
 # Release: set app_version.VERSION, merge, then push the tag "v" + VERSION.
 # Run by hand (workflow_dispatch), it only builds: the files are the run's
@@ -131,6 +132,17 @@ jobs:
           pkill -f Ensemble.app/Contents/MacOS/Ensemble || true
           tail -40 "$HOME/Library/Logs/ensemble.log" || true
           [ -n "$ok" ] || { echo "::error::the built hub did not answer /api/version with $VERSION"; exit 1; }
+      - name: The bundle's (ad-hoc) signature verifies
+        # A signature that does not verify reads as "Ensemble is damaged and
+        # can't be opened", with no way past it. PyInstaller signs the bundle;
+        # if anything changed it since, it is signed again, as a whole.
+        run: |
+          if ! codesign --verify --deep --strict --verbose=2 dist/Ensemble.app; then
+            echo "::warning::the bundle's signature did not verify; signing it again"
+            codesign --force --deep --sign - dist/Ensemble.app
+            codesign --verify --deep --strict --verbose=2 dist/Ensemble.app
+          fi
+          codesign -dv dist/Ensemble.app 2>&1 | grep -E "^(Identifier|Format|Signature)="
       - name: Zip (the update) and disk image
         run: |
           mkdir -p release dmg
@@ -138,6 +150,67 @@ jobs:
           ditto dist/Ensemble.app dmg/Ensemble.app
           ln -s /Applications dmg/Applications
           hdiutil create -volname Ensemble -srcfolder dmg -ov -format UDZO "release/Ensemble-$VERSION-macos-universal.dmg"
+          sed "s/@VERSION@/$VERSION/g" packaging/install-mac.sh > release/install-mac.sh
+          chmod +x release/install-mac.sh
+      - name: The app in the zip and in the disk image verifies, downloaded as a browser does
+        run: |
+          q="0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)"
+          t="$RUNNER_TEMP/check"; mkdir -p "$t/zip"
+          cp "release/Ensemble-$VERSION-macos-universal.zip" "release/Ensemble-$VERSION-macos-universal.dmg" "$t/"
+          xattr -w com.apple.quarantine "$q" "$t/Ensemble-$VERSION-macos-universal.zip"
+          xattr -w com.apple.quarantine "$q" "$t/Ensemble-$VERSION-macos-universal.dmg"
+          ditto -x -k "$t/Ensemble-$VERSION-macos-universal.zip" "$t/zip"
+          hdiutil attach -nobrowse -readonly -mountpoint "$t/dmg" "$t/Ensemble-$VERSION-macos-universal.dmg"
+          ok=1
+          for app in "$t/zip/Ensemble.app" "$t/dmg/Ensemble.app"; do
+            codesign --verify --deep --strict --verbose=2 "$app" || { echo "::error::$app: the signature does not verify"; ok=; }
+            # No Apple developer signature, so Gatekeeper rejects it: "Apple could
+            # not verify", which Open Anyway gets past; never "damaged".
+            spctl --assess -vv --type execute "$app" 2>&1 || true
+          done
+          hdiutil detach "$t/dmg" || true
+          [ -n "$ok" ]
+      - name: The one-line install, from these files served locally
+        run: |
+          served="$RUNNER_TEMP/served"; mkdir -p "$served"
+          cp "release/Ensemble-$VERSION-macos-universal.zip" release/install-mac.sh "$served/"
+          (cd "$served" && shasum -a 256 Ensemble-* > SHA256SUMS.txt)
+          python3 -m http.server 8777 --bind 127.0.0.1 --directory "$served" > /dev/null 2>&1 &
+          for i in $(seq 20); do curl -fs -o /dev/null http://127.0.0.1:8777/SHA256SUMS.txt && break; sleep 1; done
+          export ENSEMBLE_RELEASE_URL=http://127.0.0.1:8777
+          app=/Applications/Ensemble.app
+          hub() { pgrep -f "$app/Contents/MacOS/Ensemble" | head -1; }
+          answers() {
+            for i in $(seq 90); do
+              if curl -fs http://127.0.0.1:8765/api/version | grep -q "\"$VERSION\""; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+          fail() { echo "::error::$*"; tail -40 "$HOME/Library/Logs/ensemble.log" || true; pkill -f "$app/Contents/MacOS/Ensemble" || true; exit 1; }
+          rm -rf "$app"
+          curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh || fail "the install failed"
+          [ -x "$app/Contents/MacOS/Ensemble" ] || fail "no $app"
+          if xattr -r "$app" | grep -q com.apple.quarantine; then fail "$app carries the quarantine attribute"; fi
+          codesign --verify --deep --strict "$app" || fail "the installed app's signature does not verify"
+          answers || fail "the installed app did not answer /api/version with $VERSION"
+          echo "installed and serving"
+          # Again, with the app running: updated in place and started again.
+          before=$(hub)
+          curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh || fail "the second install failed"
+          answers || fail "the reinstalled app did not answer /api/version with $VERSION"
+          after=$(hub)
+          [ -n "$after" ] && [ "$before" != "$after" ] || fail "the running app was not started again from the new copy"
+          if ls -a /Applications | grep -q '^\.Ensemble\.app\.'; then fail "the swap left a folder behind"; fi
+          echo "updated in place and serving again"
+          # A zip that does not match SHA256SUMS.txt is not installed, and the running app stays.
+          bad="$RUNNER_TEMP/bad"; mkdir -p "$bad"
+          cp "$served/Ensemble-$VERSION-macos-universal.zip" "$bad/"
+          echo "0000000000000000000000000000000000000000000000000000000000000000  Ensemble-$VERSION-macos-universal.zip" > "$bad/SHA256SUMS.txt"
+          if ENSEMBLE_RELEASE_URL="file://$bad" sh release/install-mac.sh; then fail "a zip with a bad checksum was installed"; fi
+          [ "$(hub)" = "$after" ] || fail "a refused install stopped the running app"
+          pkill -f "$app/Contents/MacOS/Ensemble" || true
+          rm -rf "$app"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -163,5 +236,7 @@ jobs:
           cd release
           sha256sum Ensemble-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          sed "s/@VERSION@/${{ needs.version.outputs.version }}/g" ../packaging/release-notes.md > ../notes.md
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "Ensemble ${{ needs.version.outputs.version }}" --generate-notes ./*
+            --title "Ensemble ${{ needs.version.outputs.version }}" \
+            --notes-file ../notes.md --generate-notes ./*

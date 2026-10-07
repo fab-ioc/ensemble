@@ -414,6 +414,116 @@ class HelperFailureTest(unittest.TestCase):
         self.assertEqual(json.loads(self.lease.read_text())["at"], 0)
 
 
+class MacUpdateReadyTest(unittest.TestCase):
+    """#185: what Update now swaps in on a Mac carries no quarantine attribute
+    and keeps a signature that verifies, or it is not installed (a quarantined
+    copy is blocked by Gatekeeper; a broken signature reads as "damaged")."""
+
+    def _run(self, codesign_rc=0, xattrs=b"", stderr=b"a sealed resource is missing or invalid\n"):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[0] == "codesign":
+                return subprocess.CompletedProcess(cmd, codesign_rc, b"", stderr if codesign_rc else b"")
+            if cmd[:2] == ["xattr", "-r"]:
+                return subprocess.CompletedProcess(cmd, 0, xattrs, b"")
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+        return run, calls
+
+    def test_quarantine_removed_then_signature_verified(self):
+        run, calls = self._run()
+        app = Path("/x/Ensemble.app")
+        app_update.ready_mac_app(app, run=run)
+        self.assertEqual(calls[0], ["xattr", "-dr", "com.apple.quarantine", str(app)])
+        self.assertEqual(calls[-1], ["codesign", "--verify", "--deep", "--strict", str(app)])
+
+    def test_a_signature_that_does_not_verify_is_refused(self):
+        run, _ = self._run(codesign_rc=1)
+        with self.assertRaisesRegex(ValueError, "does not verify: a sealed resource"):
+            app_update.ready_mac_app(Path("/x/Ensemble.app"), run=run)
+
+    def test_quarantine_that_stays_is_refused(self):
+        run, _ = self._run(xattrs=b"/x/Ensemble.app: com.apple.quarantine\n")
+        with self.assertRaisesRegex(ValueError, "quarantine"):
+            app_update.ready_mac_app(Path("/x/Ensemble.app"), run=run)
+
+    def test_stage_readies_the_mac_bundle_and_drops_the_download_when_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            data = b"zip"
+            rel = {"version": "2.0.0", "assetName": "Ensemble-2.0.0-macos-universal.zip",
+                   "assetUrl": "u", "sumsUrl": "s"}
+            sums = f"{hashlib.sha256(data).hexdigest()}  {rel['assetName']}\n".encode()
+
+            def fetch(url, dest):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                return dest
+            bundle = d / "update" / "2.0.0" / "Ensemble.app"
+            readied = []
+            with mock.patch.object(app_update, "unpack", return_value=bundle):
+                got = app_update.stage(rel, d / "update", "darwin", get=lambda u: sums,
+                                       fetch=fetch, ready=readied.append)
+                self.assertEqual((got, readied), (bundle, [bundle]))
+
+                def refuse(app):
+                    raise ValueError("the signature of Ensemble.app does not verify")
+                with self.assertRaises(ValueError):
+                    app_update.stage(rel, d / "update", "darwin", get=lambda u: sums,
+                                     fetch=fetch, ready=refuse)
+            self.assertFalse((d / "update" / rel["assetName"]).exists())
+            # Windows has nothing of this.
+            with mock.patch.object(app_update, "unpack", return_value=d / "Ensemble"):
+                app_update.stage(rel, d / "update", "win32", get=lambda u: sums,
+                                 fetch=fetch, ready=refuse)
+
+    def _helper(self, d: Path):
+        def bundle(folder: Path, marker: str) -> Path:
+            app = folder / "Ensemble.app"
+            (app / "Contents" / "MacOS").mkdir(parents=True)
+            (app / "Contents" / "MacOS" / "Ensemble").write_text(marker)
+            return app
+        cur, new = bundle(d / "Applications", "old"), bundle(d / "new", "new")
+        plan = {"platform": "darwin", "fromVersion": "1.0.0", "toVersion": "2.0.0",
+                "app": str(cur), "newApp": str(new),
+                "previousDir": str(d / "prev"), "failedDir": str(d / "failed"),
+                "port": 1, "hubPid": 0, "args": [], "launchd": None,
+                "log": str(d / "update.log"), "preflightLog": str(d / "p.log"),
+                "resultPath": str(d / "last.json")}
+        h = app_update.Helper(plan)
+        h.preflight = lambda exe: True
+        h.stop_hub = mock.Mock(return_value=(False, False))
+        h.start_hub = lambda exe, via: None
+        h.restore_rooms = lambda: None
+        h.stop_hub_after_failed_start = lambda: None
+        for name, value in (("_post", lambda *a, **k: {}), ("_served", lambda *a, **k: None),
+                            ("wait_served", lambda *a, **k: None)):
+            p = mock.patch.object(app_update, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        return h, cur, new
+
+    def test_the_helper_readies_what_it_swaps_in_before_stopping_the_hub(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(app_update, "_post", lambda *a, **k: {}):
+            h, cur, new = self._helper(Path(d))
+            h.ready_mac_app = mock.Mock()
+            self.assertEqual(h.run()["stage"], "stop")
+            h.ready_mac_app.assert_called_once_with(new)
+            h.stop_hub.assert_called_once()
+
+    def test_the_helper_refuses_a_bundle_that_is_not_ready_and_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            h, cur, new = self._helper(Path(d))
+            h.ready_mac_app = mock.Mock(side_effect=ValueError("the signature does not verify"))
+            got = h.run()
+            self.assertEqual(got["stage"], "copy")
+            self.assertIn("does not verify", got["reason"])
+            h.stop_hub.assert_not_called()
+            self.assertEqual((cur / "Contents" / "MacOS" / "Ensemble").read_text(), "old")
+
+
 class AgentCheckTest(unittest.TestCase):
     @staticmethod
     def _run(table):
