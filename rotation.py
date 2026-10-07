@@ -1685,6 +1685,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"from it too. Task reports and progress digests will wake you; the ensemble_* "
         f"tools show the tasks.",
         _d.OWNER_OUTPUT_NOTE,
+        _d.ASK_NOTE,
         f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
         f"They give context for the hub's Board now: priorities, decisions and "
         f"why, what is in flight, what has been promised to {_d.operator_name()}, and "

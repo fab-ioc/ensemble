@@ -204,6 +204,140 @@ def check(ask: dict, option: str) -> str | None:
     return next((o["label"] for o in ask["options"] if o["label"].lower() == option.lower()), None)
 
 
+def validated(questions) -> list[dict]:
+    """Normalize tool input, refusing any question that cannot make a card."""
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("questions must be a non-empty list")
+    if len(questions) > 10:
+        raise ValueError("questions may contain at most 10 questions")
+    out = []
+    for n, item in enumerate(questions):
+        where = f"questions[{n}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{where} must be an object")
+        q = item.get("question")
+        if not isinstance(q, str) or not q.strip() or len(q.strip()) > QUESTION_MAX:
+            raise ValueError(f"{where}.question must be 1-{QUESTION_MAX} characters")
+        yesno = item.get("yesno", False)
+        if not isinstance(yesno, bool):
+            raise ValueError(f"{where}.yesno must be true or false")
+        raw = item.get("options", [])
+        if raw is None:
+            raw = []
+        if not isinstance(raw, list):
+            raise ValueError(f"{where}.options must be a list")
+        if yesno and raw:
+            raise ValueError(f"{where}: choose yesno or options, not both")
+        if raw and not 1 <= len(raw) <= 6:
+            raise ValueError(f"{where}.options must have 1-6 options")
+        opts = []
+        if yesno:
+            opts = [{"label": label, "detail": "", "recommended": False} for label in ("Yes", "No")]
+        else:
+            for k, opt in enumerate(raw):
+                loc = f"{where}.options[{k}]"
+                if not isinstance(opt, dict):
+                    raise ValueError(f"{loc} must be an object")
+                label = opt.get("label")
+                if not isinstance(label, str) or not label.strip() or len(label.strip()) > LABEL_MAX:
+                    raise ValueError(f"{loc}.label must be 1-{LABEL_MAX} characters")
+                detail = opt.get("detail", "")
+                if not isinstance(detail, str):
+                    raise ValueError(f"{loc}.detail must be text")
+                rec = opt.get("recommended", False)
+                if not isinstance(rec, bool):
+                    raise ValueError(f"{loc}.recommended must be true or false")
+                opts.append({"label": label.strip(), "detail": detail.strip(), "recommended": rec})
+        if len({o["label"].casefold() for o in opts}) != len(opts):
+            raise ValueError(f"{where}.options have duplicate labels")
+        recommended = [k for k, o in enumerate(opts) if o["recommended"]]
+        if len(recommended) > 1:
+            raise ValueError(f"{where}.options may have at most one recommended option")
+        labels = sorted(o["label"].lower() for o in opts)
+        kind = "yesno" if yesno or labels == ["no", "yes"] else "decision" if opts else "open"
+        out.append({"n": n, "question": " ".join(q.split()), "kind": kind,
+                    "options": opts, "recommended": recommended[0] if recommended else -1})
+    return out
+
+
+_DECISION = re.compile(r"^[ \t]*(?:\*\*)?Decision needed:(?:\*\*)?[ \t]*(.+)$", re.I | re.M)
+_REPORTED_QUESTION = re.compile(r"^(?:(?:the )?(?:user|ceo)|you)\s+(?:asked|said|wrote|wondered)\b", re.I)
+_TRAIL_OPTION = re.compile(
+    r"^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])"
+    r"(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$", re.I)
+
+
+def safety(text: str) -> list[dict]:
+    """Conservative fallback for a final, direct question in plain agent prose."""
+    if parse(text):
+        return []
+    clean = []
+    fenced = False
+    for line in _LINE_BREAKS.sub("\n", text or "").split("\n"):
+        if _FENCE.match(line):
+            fenced = not fenced
+            continue
+        if not fenced and not line.lstrip().startswith(">"):
+            clean.append(line)
+    body = "\n".join(clean).strip()
+    if not body:
+        return []
+    parts = re.split(r"\n[ \t]*\n", body)
+    tail = parts[-1].strip()
+    decision = list(_DECISION.finditer(body))
+    if decision and len(body) - decision[-1].start() <= 1000:
+        q = decision[-1].group(1).strip()
+        following = body[decision[-1].end():].strip().splitlines()
+    elif tail.endswith("?"):
+        tail_lines = tail.splitlines()
+        q = tail_lines[-1].strip()
+        if _REPORTED_QUESTION.match(q):
+            return []
+        preceding = tail_lines[:-1]
+        following = [line for line in preceding if _TRAIL_OPTION.match(line)]
+        if len(following) < 2 or len(preceding) - len(following) > 1:
+            following = []
+        if not following and len(parts) > 1:
+            preceding = parts[-2].strip().splitlines()
+            following = [line for line in preceding if _TRAIL_OPTION.match(line)]
+            if len(following) < 2 or len(preceding) - len(following) > 1:
+                following = []
+    else:
+        return []
+    q = re.sub(r"^(?:[-*]|[1-6][.)])[ \t]+", "", q).strip("* ")
+    if not q or len(q) > QUESTION_MAX:
+        return []
+    options = []
+    for line in following:
+        match = _TRAIL_OPTION.match(line)
+        if match:
+            opt = _option(match.group(1))
+            if opt:
+                options.append(opt)
+        elif line.strip() and options:
+            break
+    if not 1 <= len(options) <= 6:
+        options = []
+    if options:
+        for opt in options:
+            opt["recommended"] = False
+    else:
+        options = [{"label": "Yes", "detail": "", "recommended": False},
+                   {"label": "No", "detail": "", "recommended": False}]
+    return [{"n": 0, "question": _plain(q), "kind": "decision" if len(options) > 2 else "yesno",
+             "options": options, "recommended": -1}]
+
+
+def of_message(message: dict, eligible: bool = True) -> list[dict]:
+    if not eligible:
+        return []
+    stored = message.get("asks")
+    if isinstance(stored, list):
+        return stored
+    parsed = parse(message.get("text") or "")
+    return parsed if parsed else safety(message.get("text") or "")
+
+
 # ---------------------------------------------------------------------------
 # Which asks are still open (the Needs you list)
 # ---------------------------------------------------------------------------
@@ -214,12 +348,14 @@ _ROOM_CACHE: dict[str, tuple] = {}      # room id → (updatedAt, [(mid, ts, [qu
 _RESULT: tuple[float, dict] = (0.0, {})
 
 
-def _marked(mid: str, ts: float, text: str, who: str) -> tuple | None:
-    found = parse(text)
+def _marked(mid: str, ts: float, text: str, who: str, message: dict | None = None) -> tuple | None:
+    found = of_message(message or {"text": text})
     return (mid, ts, [a["question"] for a in found], who) if found else None
 
 
 def _session_asks(room: dict, sid: str, who: str) -> list[tuple]:
+    if _d.room_po_id(room):
+        return []
     st = _d.points._session_stat(sid)
     hit = _SID_CACHE.get(sid)
     if hit is not None and st is not None and hit[0] == st:
@@ -240,11 +376,17 @@ def _session_asks(room: dict, sid: str, who: str) -> list[tuple]:
 def message_asks(room: dict) -> list[tuple]:
     """A room's agents' messages that mark asks: ``[(mid, ts, [questions],
     who)]``, from what the room holds (a team's messages)."""
-    agents = {p.get("identity") for p in room.get("participants", []) if p.get("kind") == "agent"}
+    has_po = bool(_d.room_po_id(room))
+    agents = {p.get("identity") for p in room.get("participants", [])
+              if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")}
     out = []
     for m in room.get("messages") or []:
-        if m.get("from") in agents and m.get("kind") not in ("report", "notice"):
-            x = _marked(m.get("id", ""), float(m.get("ts") or 0), m.get("text") or "", m.get("from") or "")
+        if m.get("from") in agents and (not has_po or m.get("askAudience") == "user") \
+                and m.get("kind") not in ("report", "notice") \
+                and m.get("askAudience") != "po" and not m.get("rang") \
+                and (m.get("to") or "").lower() in ("", "all", "user"):
+            x = _marked(m.get("id", ""), float(m.get("ts") or 0), m.get("text") or "",
+                        m.get("from") or "", m)
             if x and x[0]:
                 out.append(x)
     return out
@@ -254,16 +396,14 @@ def _room_asks(summary: dict) -> list[tuple]:
     rid = summary.get("id", "")
     agents = [p for p in summary.get("participants", []) if p.get("kind") == "agent"]
     if (summary.get("mode") or "") == "solo":
-        room = None
-        out = []
+        room = _d.chatroom.get_room(rid)
+        if room is None:
+            return []
+        out = message_asks(room)
         for p in agents:
             sid = (p.get("sessionId") or "").strip()
             if not sid:
                 continue
-            if room is None:
-                room = _d.chatroom.get_room(rid)
-                if room is None:
-                    return []
             out += _session_asks(room, sid, p.get("identity") or "")
         return out
     hit = _ROOM_CACHE.get(rid)
@@ -298,6 +438,9 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     settled = float(led.get("asksSettledAt") or 0)
+    if not _d.room_po_id(summary):
+        settled = max(settled, *(float(p.get("answeredAt") or 0)
+                                  for p in summary.get("participants", []) if p.get("kind") == "agent"))
     out = []
     for mid, ts, qs, who in marked:
         if ts and ts < settled:
@@ -314,12 +457,31 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
 
 
 def _approved_settles(room_id: str, mid: str, n: int) -> bool:
+    found = balloon_asks(room_id, mid)
+    return n < len(found) and found[n]["recommended"] >= 0
+
+
+def balloon_asks(room_id: str, mid: str) -> list[dict]:
+    room = _d.chatroom.get_room(room_id)
+    if room is None:
+        return []
+    has_po = bool(_d.room_po_id(room))
+    for message in room.get("messages") or []:
+        if message.get("id") == mid:
+            agents = {p.get("identity") for p in room.get("participants", [])
+                      if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")}
+            if message.get("from") not in agents or message.get("kind") in ("notice",) \
+                    or message.get("rang") or (message.get("to") or "").lower() not in ("", "all", "user") \
+                    or message.get("askAudience") == "po" or (has_po and message.get("askAudience") != "user"):
+                return []
+            return of_message(message)
+    if has_po:
+        return []
     try:
         text = _d.points._balloon_text(room_id, mid, {})
     except Exception:       # noqa: BLE001
-        return False
-    found = parse(text or "")
-    return n < len(found) and found[n]["recommended"] >= 0
+        return []
+    return of_message({"text": text or ""})
 
 
 def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, list[dict]]:

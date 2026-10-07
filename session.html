@@ -2619,12 +2619,54 @@ function parseAsks(text) {
 // Parsed once per text: every poll draws the same balloons.
 const ASK_CACHE = new Map();
 function asksOf(m) {
-  if (!m || !m.id || m.from === 'user' || m.divider || m.kind === 'pomsg' || m.kind === 'report' || m.kind === 'notice') return [];
+  if (!m || !m.id || m.from === 'user' || m.from === 'ensemble' || m.divider || m.kind === 'pomsg' || m.kind === 'notice' || m.askAudience === 'po') return [];
+  if (typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && Array.isArray(ROOM_OBJ.participants)) {
+    const sender = ROOM_OBJ.participants.find(p => p.identity === m.from);
+    if (!sender || sender.kind !== 'agent' || /^reviewer/i.test(sender.role || '')) return [];
+  }
+  if (m.to && !['user', 'all'].includes(String(m.to).toLowerCase())) return [];
+  if (Array.isArray(m.asks)) return m.asks;
+  if (m.rang && m.rang.length) return [];
+  if (typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.reportsToRoom) return [];
+  if (m.kind === 'report') return [];
   const t = String(m.text || '');
-  if (!/ask/i.test(t)) return [];
   let a = ASK_CACHE.get(t);
-  if (!a) { a = parseAsks(t); ASK_CACHE.set(t, a); if (ASK_CACHE.size > 500) ASK_CACHE.delete(ASK_CACHE.keys().next().value); }
+  if (!a) { a = parseAsks(t); if (!a.length) a = safetyAsk(t); ASK_CACHE.set(t, a); if (ASK_CACHE.size > 500) ASK_CACHE.delete(ASK_CACHE.keys().next().value); }
   return a;
+}
+function safetyAsk(text) {
+  const clean = [], lines = askLines(text); let fenced = false;
+  for (const line of lines) {
+    if (/^[ \t]*(?:```|~~~)/.test(line)) { fenced = !fenced; continue; }
+    if (!fenced && !line.trimStart().startsWith('>')) clean.push(line);
+  }
+  const body = clean.join('\n').trim();
+  if (!body) return [];
+  const decisions = [...body.matchAll(/^[ \t]*(?:\*\*)?Decision needed:(?:\*\*)?[ \t]*(.+)$/gim)];
+  const last = decisions.at(-1), tail = body.split(/\n[ \t]*\n/).at(-1).trim();
+  let q = '', following = [];
+  if (last && body.length - last.index <= 1000) { q = last[1].trim(); following = body.slice(last.index + last[0].length).trim().split('\n'); }
+  else if (tail.endsWith('?')) {
+    const parts = body.split(/\n[ \t]*\n/), tailLines = tail.split('\n');
+    q = tailLines.at(-1).trim();
+    if (/^(?:(?:the )?(?:user|ceo)|you)\s+(?:asked|said|wrote|wondered)\b/i.test(q)) return [];
+    const optionLine = line => /^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+/i.test(line);
+    for (const prior of [tailLines.slice(0, -1), (parts.at(-2) || '').trim().split('\n')]) {
+      const opts = prior.filter(optionLine);
+      if (opts.length >= 2 && prior.length - opts.length <= 1) { following = opts; break; }
+    }
+  }
+  q = q.replace(/^(?:[-*]|[1-6][.)])[ \t]+/, '').replace(/^\*+|\*+$/g, '').trim();
+  if (!q || [...q].length > ASK_Q_MAX) return [];
+  let opts = [];
+  for (const line of following) {
+    const m = line.match(/^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$/i);
+    if (m) { const o = askOption(m[1]); if (o) opts.push(o); }
+    else if (line.trim() && opts.length) break;
+  }
+  if (opts.length < 1 || opts.length > 6) opts = [{ label:'Yes', detail:'', recommended:false }, { label:'No', detail:'', recommended:false }];
+  opts.forEach(o => { o.recommended = false; });
+  return [{ n:0, question:q.replace(/\s+/g, ' '), kind:opts.length > 2 ? 'decision' : 'yesno', options:opts, recommended:-1 }];
 }
 const hasAsks = m => asksOf(m).length > 0;
 // How an ask stands: { option, comment, at } once answered (the hub's, or this
@@ -2646,7 +2688,11 @@ function askAnswer(m, a, P) {
 const ASK_OPEN_S = 7 * 86400;
 // A Done task waits for nobody (asks.open_by_room): its column as stored.
 const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
-const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < ((P && P.asksSettledAt) || 0)));
+const askSettledAt = P => Math.max((P && P.asksSettledAt) || 0,
+  ...((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.reportsToRoom ? []
+    : ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.participants) || [])
+      .filter(p => p.kind === 'agent').map(p => +p.answeredAt || 0))));
+const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < askSettledAt(P)));
 const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
 // One ask drawn: its question, then its quick answers or, answered, what was
 // answered with the buttons settled (pressed, disabled).
@@ -2671,7 +2717,7 @@ function askCardHtml(m, a, total, P) {
   }
   const open = a.kind === 'open';
   const aside = !askSettled(m, P) ? ''
-    : `<div class="qa-note">${roomDone() ? 'This task is done' : m.ts < ((P && P.asksSettledAt) || 0) ? 'You wrote in the chat after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
+    : `<div class="qa-note">${roomDone() ? 'This task is done' : m.ts < askSettledAt(P) ? 'You answered after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
   return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
     + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? '' : 'Goes with the answer you press, or alone with Send comment'}"></textarea>`
     + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'}">${open ? 'Send' : 'Send comment'}</button></div></div>`;
@@ -2681,6 +2727,8 @@ function askCardHtml(m, a, total, P) {
 function askBodyHtml(m, P, md, bar) {
   const found = asksOf(m);
   if (!found.length) return null;
+  if (Array.isArray(m.asks) || found[0].line === undefined)
+    return withPathAbbrevs(m.text, () => `<div class="text md">${md(m.text || '')}${found.map(a => askCardHtml(m, a, found.length, P)).join('')}</div>${bar ? bar(m) : ''}`);
   const lines = askLines(m.text);
   return withPathAbbrevs(m.text, () => {
     let h = '', at = 0;
@@ -2785,7 +2833,7 @@ const namesCeo = (t, N = CHAT_NAMES) => /\b(?:CEO|product owner|Decision needed)
 // The PO's words after a hub line (a report, a progress check, a restart, a
 // PO-to-PO message) were team activity unless they carried "Re Pn:" or "To
 // <name>:". The PO chats of 10-01/10-02 folded 14 messages meant for the
-// person that way ("Fab, everything we built today is now live", "Re P77,
+// person that way ("To you: everything we built today is now live", "Re P77,
 // here's what I found", "Decisions that are yours: P232 …"; the task's report
 // in Documents lists them). So a message is team activity only when it is
 // plainly for the team: anything that answers or names one of the person's
@@ -2819,7 +2867,7 @@ const saysPlainly = (re, t) => {
 // Spoken to with something for them: waiting on them, for them to do,
 // what they asked, their call, a promise to tell them.
 const YOU_RE = /\b(?:wait(?:s|ing)?[ \t]+(?:on|for)[ \t]+you|for[ \t]+you\b(?!r)|you[ \t]+(?:can|could|may|might|asked|wanted|said|chose|picked|approved|need|want|will|['’]ll)\b|your[ \t]+(?:call|pick|choice|decision|go-ahead|approval|yes|ok|option|point|ask|request|Dock|P\d)|(?:needs?|asks?)[ \t]+you\b|up[ \t]+to[ \t]+you|(?:tell|show|let)[ \t]+you\b)/i;
-// The person's name as a word ("Fab, the five tasks…"; "Fable" is not "fab").
+// The configured operator's name as a whole word, excluding partial matches.
 const namesOperator = (t, N = CHAT_NAMES) => !!N.operator && N.operator !== 'you'
   && new RegExp('\\b' + escRe(N.operator) + '\\b', 'i').test(t || '');
 // Something live: "is live", "now live", "went live", "live now"; a blocker;
@@ -3400,11 +3448,13 @@ function pointsLineHtml(P, open, href, now) {
 // recommendation in it: a thumbs up there means "yes, go with it".
 const RECOMMEND_RE = /\brecommend(?:ation|ed|s|ing)?\b/i;
 function canApprove(m) {
-  if (!m || m.from === 'user' || !m.id || isHubInput(m)) return false;
+  if (!m || m.from === 'user' || !m.id || isHubInput(m) || m.askAudience === 'po') return false;
   const q = m.kind === 'report' && !taskReport(m) && String(m.reportKind || '').toLowerCase() === 'question';
-  return (isDecision(m) || q) && RECOMMEND_RE.test(m.text || '');
+  return (isDecision(m) || q) && (RECOMMEND_RE.test(m.text || '') || asksOf(m).some(a => a.recommended >= 0));
 }
 function decisionQuestion(m) {
+  const found = m && asksOf(m);
+  if (found && found.length) return found[0].question;
   const t = String((m && m.text) || '');
   const d = t.match(/Decision needed:\s*(.+)/);
   return foldLine(d ? d[1] : t).replace(/\*\*|__/g, '').trim().slice(0, 200);
@@ -4395,8 +4445,11 @@ CHAT_NAMES.taskNo = rid => {
 // solo chat its agent; in a room the one tasks report to, else its first agent.
 let PO_ROOMS = null;
 fetch('/api/projects').then(r => r.json()).then(d => {
-  PO_ROOMS = new Set(((d && d.projects) || []).map(p => p.poRoomId).filter(Boolean));
+  const projects = ((d && d.projects) || []);
+  PO_ROOMS = new Set(projects.map(p => p.poRoomId).filter(Boolean));
+  ASK_CACHE.clear();
   if (ROOM_OBJ) chatNamesFor(ROOM_OBJ, SOLO_MODE);
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }).catch(() => {});
 function chatNamesFor(room, solo) {
   let po = '';
@@ -4419,8 +4472,9 @@ function composePlaceholder(isPo, solo) {
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
 function withHubRows(items, room) {
-  const rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m));
-  if (!rows.length || !items.length) return items;
+  const rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks));
+  if (!rows.length) return items;
+  if (!items.length) return rows;
   const out = items.slice();
   for (const r of rows) {
     const first = out.find(m => m.ts);

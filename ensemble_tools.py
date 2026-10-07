@@ -171,6 +171,30 @@ _ALL_TOOLS = [
         },
     },
     {
+        "name": "ensemble_ask",
+        "description": (
+            "Ask the product owner through clickable cards. Use this for every real "
+            "question to the CEO; never ask in prose. A task with a project PO "
+            "routes the question to that PO unless forCeo is true, which sends "
+            "a card to the user. One call posts one message in your own chat."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "questions": {"type": "array", "minItems": 1, "maxItems": 10,
+                          "items": {"type": "object", "properties": {
+                              "question": {"type": "string"},
+                              "yesno": {"type": "boolean"},
+                              "options": {"type": "array", "minItems": 1, "maxItems": 6,
+                                          "items": {"type": "object", "properties": {
+                                              "label": {"type": "string", "maxLength": 80},
+                                              "detail": {"type": "string"},
+                                              "recommended": {"type": "boolean"}},
+                                              "required": ["label"]}}},
+                              "required": ["question"]}},
+            "context": {"type": "string", "description": "Optional Markdown shown above the cards."},
+            "forCeo": {"type": "boolean", "description": "A task with a PO: send the card to the user instead."}},
+                        "required": ["questions"]},
+    },
+    {
         "name": "ensemble_list_projects",
         "description": (
             "List the projects registered in Ensemble (id, name, code path, home "
@@ -521,7 +545,7 @@ _ALL_TOOLS = [
 # Project POs and explicitly delegated planners additionally administer it.
 # Keep the combined alias for code that needs to inspect every schema.
 COMMON_TOOL_NAMES = frozenset({
-    "ensemble_whoami", "ensemble_report", "ensemble_list_tasks",
+    "ensemble_whoami", "ensemble_report", "ensemble_ask", "ensemble_list_tasks",
     "ensemble_list_attention", "ensemble_plan_usage", "ensemble_get_task",
     "ensemble_update_task", "ensemble_get_roadmap", "ensemble_points",
 })
@@ -676,6 +700,8 @@ def tool_schemas(room: dict, identity: str) -> list[dict]:
     part = _d.chatroom.participant(room or {}, identity) or {}
     if _d.chatroom.is_on_mention(room or {}, part):
         tools += list(REVIEW_TOOLS)
+    if _role_head(part) == "reviewer":
+        tools = [t for t in tools if t["name"] != "ensemble_ask"]
     if _d.may_restart_hub((room or {}).get("id", ""), identity):
         tools += list(RESTART_TOOLS)
     if _is_project_po(room or {}, identity):
@@ -1069,7 +1095,7 @@ def _whoami(ctx, args, handler):
     }
 
 
-def _report(ctx, args, handler):
+def _report(ctx, args, handler, *, structured_asks=None):
     """Record a report on the caller's task and deliver it to the project's PO.
 
     The task record comes first: even if the PO room is gone or asleep, the
@@ -1095,7 +1121,8 @@ def _report(ctx, args, handler):
     # Only an update can say an earlier ask is over: a completed ends it by
     # itself, a new blocked or question takes its place.
     clears = kind == "update" and args.get("clears") is True
-    _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading, clears=clears)
+    _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading,
+                              clears=clears, structured_asks=structured_asks)
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
@@ -1117,6 +1144,44 @@ def _report(ctx, args, handler):
             "note": ("delivered, and the PO was woken" if rung else
                      "delivered to the PO's room, but the PO is not running, so it "
                      "was not woken — it will see the report when it next reads")}
+
+
+def _ask(ctx, args, handler):
+    try:
+        questions = _d.asks.validated(args.get("questions"))
+    except ValueError as e:
+        raise ToolError(str(e)) from None
+    context = args.get("context", "")
+    if not isinstance(context, str):
+        raise ToolError("context must be Markdown text")
+    if len(context) > 8000:
+        raise ToolError("context must be at most 8000 characters")
+    if not isinstance(args.get("forCeo", False), bool):
+        raise ToolError("forCeo must be true or false")
+    lines = [context.strip()] if context.strip() else []
+    for ask in questions:
+        lines.append(f"{ask['n'] + 1}. {ask['question']}")
+        for option in ask["options"]:
+            detail = f" — {option['detail']}" if option["detail"] else ""
+            rec = " (recommended)" if option["recommended"] else ""
+            lines.append(f"   - {option['label']}{detail}{rec}")
+    body = "\n\n".join([lines[0], "\n".join(lines[1:])]) if context.strip() else "\n".join(lines)
+    room, identity = ctx["room"], ctx["identity"]
+    po = _project_po(_projects().get(ctx["projectId"]))
+    if po and (po.get("missing") or po["roomId"] == room["id"] or not po.get("identity")):
+        po = None
+    if po and args.get("forCeo") is not True:
+        routed = _report(ctx, {"kind": "question", "text": body}, handler,
+                         structured_asks=questions)
+        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay."}
+    result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
+                                      structured_asks=questions, ask_audience="user")
+    if result is None:
+        raise ToolError("your room no longer exists")
+    handler._ring_recipients(room["id"], result)
+    _d.asks.forget()
+    return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
+            "questions": len(questions), "note": "The card is waiting for the user's answer."}
 
 
 def _review_done(ctx, args, handler):
@@ -1829,6 +1894,7 @@ def _restart_hub(ctx, args, handler):
 _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_report": _report,
+    "ensemble_ask": _ask,
     "ensemble_list_projects": _list_projects,
     "ensemble_list_tasks": _list_tasks,
     "ensemble_list_attention": _list_attention,

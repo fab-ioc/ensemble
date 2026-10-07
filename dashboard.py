@@ -1864,6 +1864,12 @@ OWNER_OUTPUT_NOTE = (
     "No progress narration; tool calls need no preamble. Reports: outcome, evidence "
     "and tests, files or commit, blocker or next decision. Do not repeat the spec.")
 
+ASK_NOTE = (
+    "A question for the user goes through ensemble_ask (or, in a plain reply, "
+    "a standalone Ask: marker); never put a question to them in prose. "
+    "A task with a PO routes its question to that PO unless forCeo is true; "
+    "reviewers ask the owner.")
+
 # The person's messages are points the hub keeps (points.py): how to answer one.
 POINTS_NOTE = (
     "A message from the product owner reaches you with a [point Pn] line under it (one "
@@ -1881,7 +1887,7 @@ DOCUMENTS_NOTE = (
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {POINTS_NOTE} {DOCUMENTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {ASK_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -3225,7 +3231,10 @@ def note_answer(room_id: str, identity: str) -> bool:
         ask = attention.open_ask(room)
         if not ask or ask.get("from") != identity:
             return False
-        return chatroom.record_answer(room_id, identity, time.time()) is not None
+        recorded = chatroom.record_answer(room_id, identity, time.time()) is not None
+        if recorded:
+            asks.forget()
+        return recorded
     except Exception as exc:    # noqa: BLE001 — the input itself went in
         print(f"[attention] {room_id}/{identity}: the answer was not recorded: {exc!r}", flush=True)
         return False
@@ -3317,6 +3326,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "your role. Owners and reviewers get read/report tools and may move their "
          "own task to In review; project POs and planners also get board "
          "administration. The 'ensemble' skill explains the opt-ins and limits."),
+        ASK_NOTE,
         ("A message to everyone wakes only the task's owner (the engineer); to "
          "wake another specialist, address it or @mention it. Mention a reviewer "
          "only for a commit to review or a specific question, never for a plan, an "
@@ -3590,6 +3600,8 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
 You are a fresh session started for this ONE review. You remember nothing of earlier reviews: the review log below is what they found. When you have given your verdict with review_done, this session ends.
 
 Do NOT design or implement — the engineer builds, you review. Check the work against the spec and the question, hunt for bugs, edge cases, risks and gaps, and verify claims by reading the actual code or running tests.
+
+{ASK_NOTE}
 
 ## What you were asked
 From {who}:
@@ -4233,7 +4245,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
-        f"and you have the ensemble_* tools of a PO. {files}"
+        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {files}"
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) From what you already know, write {hp} (your handover: what the project is, "
@@ -4256,7 +4268,7 @@ def made_po_fresh_input(project: dict) -> str:
         f"{MADE_PO_PREFIX}{po_usage.head()} | You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
-        f"report to you and you have the ensemble_* tools of a PO. "
+        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} "
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) Learn the project from its folder {where}: read what is there (a README, notes, "
@@ -11633,6 +11645,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "specRev": _spec_rev(spec)})
                 return
             out = _annotate_room_liveness(room, with_points=True)
+            out["reportsToRoom"] = room_po_id(room)
             try:
                 # The pop-out's "Make PO of a new project…", as the list row has it.
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
@@ -13864,10 +13877,20 @@ class Handler(BaseHTTPRequestHandler):
                 return err(-32602, "message is required")
             room = chatroom.get_room(room_id, public=False)
             po = room_po_id(room) if room else ""
+            direct_human = to == "user" or (to.lower() in chatroom.BROADCAST
+                                             and room is not None
+                                             and not chatroom.wake_targets(room, identity, to, text))
+            part = chatroom.participant(room or {}, identity) or {}
+            fallback = (asks.safety(text) if direct_human and not po
+                        and not str(part.get("role") or "").lower().startswith("reviewer") else [])
             result = chatroom.post_message(room_id, identity, text, to=to,
-                                           wait_for_human=not po)
+                                           wait_for_human=not po,
+                                           structured_asks=fallback or None,
+                                           ask_audience="po" if po else "")
             if result is None:
                 return err(-32000, "room no longer exists")
+            if fallback or asks.parse(text):
+                asks.forget()
             self._ring_recipients(room_id, result)
             _history_nudge(room_id, "turn")
             status = result["status"]
@@ -14613,7 +14636,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "missing_fields"})
                 return
             try:
-                found = asks.parse(points._balloon_text(rid, mid, {}) or "")
+                found = asks.balloon_asks(rid, mid)
             except Exception as e:  # noqa: BLE001
                 print(f"[asks] {rid}: {mid} not read: {e!r}", flush=True)
                 found = []

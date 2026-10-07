@@ -427,7 +427,7 @@ class HubTrafficAndAnswers(unittest.TestCase):
     def test_a_decision_stands_out(self):
         is_decision, chips = self.r["decision"]
         self.assertTrue(is_decision)
-        self.assertIn("needs your decision", chips)
+        self.assertIn("needs your answer", chips)
         self.assertIn("after a resume", chips)
         self.assertEqual(self.r["decisionLines"], [True, True, True, False, False])
         self.assertEqual(self.r["labels"], ["1 decision waiting · Latest ↓", "2 decisions waiting · Latest ↓",

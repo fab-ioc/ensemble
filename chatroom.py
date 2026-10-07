@@ -643,7 +643,8 @@ def wake_targets(room: dict, sender: str, to: str, text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def post_message(room_id: str, sender: str, text: str, to: str = "",
-                 wait_for_human: bool = True) -> dict | None:
+                 wait_for_human: bool = True, structured_asks: list[dict] | None = None,
+                 ask_audience: str = "") -> dict | None:
     """Append a message from ``sender`` to the room. ``to`` may be a specific
     participant identity or '' / 'all' to address every other participant.
 
@@ -667,6 +668,10 @@ def post_message(room_id: str, sender: str, text: str, to: str = "",
             "text": text,
             "ts": _now(),
         }
+        if structured_asks is not None:
+            msg["asks"] = structured_asks
+        if ask_audience:
+            msg["askAudience"] = ask_audience
         room["messages"].append(msg)
         room["updatedAt"] = _now()
 
@@ -725,7 +730,7 @@ def post_message(room_id: str, sender: str, text: str, to: str = "",
 
 def record_report(room_id: str, identity: str, kind: str, text: str,
                   routed_to: dict | None = None, heading: str = "",
-                  clears: bool = False) -> dict | None:
+                  clears: bool = False, structured_asks: list[dict] | None = None) -> dict | None:
     """Put a task agent's report on its own task: a chat message to the human
     (so the task's chat shows it) and ``lastReport`` (so the attention detector
     and the task tools can read it without walking the log).
@@ -751,6 +756,9 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
                "kind": "report", "reportKind": kind, "rang": []}
         if routed_to:
             msg["reportTo"] = routed_to
+        if structured_asks is not None:
+            msg["asks"] = structured_asks
+            msg["askAudience"] = "po" if routed_to else "user"
         if clears:
             msg["clears"] = True
         if clears or kind == "completed":
