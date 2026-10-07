@@ -38,14 +38,20 @@ function Post($path, $obj) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress))
   Invoke-WebRequest -Uri "$base$path" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 60
 }
-# The python processes serving dashboard.py on a port: its listener, and any
-# whose command line names that port. Never anything else.
+# The processes serving the hub on a port: its listener, and any whose command
+# line names that port. Never anything else. A checkout's hub is python running
+# dashboard.py; the built app's is Ensemble.exe itself ($cfg.script empty).
+$hubMatch = if ($cfg.script) { 'dashboard.py' } else { [IO.Path]::GetFileName([string]$cfg.python) }
+function IsHub($p) {
+  if ($cfg.script) { return ($p.Name -like 'python*') -and ($p.CommandLine -like '*dashboard.py*') }
+  return ($p.Name -eq $hubMatch) -and ($p.CommandLine -notlike '*--run *')
+}
 function HubProcs([int]$onPort) {
   $ids = @()
   try { $ids += @(Get-NetTCPConnection -LocalPort $onPort -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique) } catch {}
-  $procs = @(Get-CimInstance Win32_Process -Filter "Name like 'python%'" -ErrorAction SilentlyContinue)
-  $ids += @($procs | Where-Object { $_.CommandLine -match "dashboard\.py.*--port\s+$onPort(\s|$)" } | Select-Object -ExpandProperty ProcessId)
-  $procs | Where-Object { ($ids -contains $_.ProcessId) -and ($_.CommandLine -like '*dashboard.py*') }
+  $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { IsHub $_ })
+  $ids += @($procs | Where-Object { $_.CommandLine -match "--port\s+$onPort(\s|$)" } | Select-Object -ExpandProperty ProcessId)
+  $procs | Where-Object { $ids -contains $_.ProcessId }
 }
 function Head { try { return (& git -C $cfg.repo rev-parse HEAD 2>$null) } catch { return '?' } }
 # The hub's restart lease refuses a second restart while this one runs. When the
@@ -79,7 +85,9 @@ L "=== plain restart of the hub on port $port (pid $($cfg.hubPid)); code at $($c
 
 # --- 1. Preflight: the code on disk must start and serve on a spare port. ---
 $pf = [int]$cfg.preflightPort
-$pfArgs = @((Q $cfg.script), '--port', "$pf", '--log', (Q $cfg.preflightLog))
+$pfArgs = @()
+if ($cfg.script) { $pfArgs += (Q $cfg.script) }
+$pfArgs += @('--port', "$pf", '--log', (Q $cfg.preflightLog))
 try {
   $pfp = Start-Process -FilePath $cfg.python -ArgumentList $pfArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -PassThru -ErrorAction Stop
 } catch {
@@ -128,7 +136,8 @@ if (-not $cfg.noTask) {
   $task = Get-ScheduledTask -TaskName $cfg.taskName -ErrorAction SilentlyContinue
   if ($task) {
     $taskArgs = [string](@($task.Actions)[0].Arguments)
-    $useTask = ($taskArgs -like '*dashboard.py*') -and ($taskArgs -match "--port\s+$port(\s|$)")
+    $taskRuns = $taskArgs + ' ' + [string](@($task.Actions)[0].Execute)
+    $useTask = ($taskRuns -like "*$hubMatch*") -and ($taskArgs -match "--port\s+$port(\s|$)")
   }
 }
 if ($useTask) { L "through the scheduled task '$($cfg.taskName)'" } else { L "the hub process directly (not the scheduled task)" }
@@ -137,7 +146,7 @@ if ($useTask) {
   Start-Sleep -Seconds 3
 }
 $victims = @(HubProcs $port) + @(Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$cfg.hubPid)" -ErrorAction SilentlyContinue |
-                                 Where-Object { $_.CommandLine -like '*dashboard.py*' })
+                                 Where-Object { IsHub $_ })
 foreach ($v in ($victims | Where-Object { $_ } | Sort-Object ProcessId -Unique)) {
   try { Stop-Process -Id $v.ProcessId -Force -ErrorAction Stop; L "stopped pid $($v.ProcessId)" } catch { L "stop pid $($v.ProcessId): $_" }
 }
@@ -146,7 +155,9 @@ for ($i = 0; $i -lt 15 -and -not $free; $i++) {
   Nap 1
   $free = -not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
 }
-$hubArgs = @(Q $cfg.script) + @($cfg.args | ForEach-Object { Q $_ })
+$hubArgs = @()
+if ($cfg.script) { $hubArgs += (Q $cfg.script) }
+$hubArgs += @($cfg.args | ForEach-Object { Q $_ })
 function StartDirect {
   try {
     Start-Process -FilePath $cfg.python -ArgumentList $hubArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -ErrorAction Stop | Out-Null

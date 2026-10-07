@@ -347,7 +347,7 @@ class Page(unittest.TestCase):
     def test_update_page_names_the_log_when_the_hub_stays_down(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("The hub did not come back", html)
-        self.assertIn("function showUpdateFailed(logPath)", html)
+        self.assertIn("function showUpdateFailed(logPath, reason)", html)
         self.assertIn('id="update-close"', html)
         self.assertNotIn("update timed out", html)
 

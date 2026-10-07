@@ -60,6 +60,11 @@ from backends.shared import (
 )
 # Images pasted into a chat box, kept for the agent.
 import attachments
+# Which Ensemble this is (its version; built app or a checkout), and Update now
+# for the built app (from GitHub Releases).
+import app_version
+import app_update
+import app_setup
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
 import agents
@@ -530,7 +535,10 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/dock/src/theme.js", "static/dock/src/theme-picker.js", "static/dock/src/install.js",
               "static/dock/src/popout-page.js", "static/dock/src/screenshot.js", "static/dock/src/menu-items.js",
               "static/dock/src/draw.js",
-              "static/dock/css/dock.css")
+              "static/dock/css/dock.css",
+              # xterm.js, vendored so the built app's terminals work offline.
+              "static/vendor/xterm/xterm.min.js", "static/vendor/xterm/xterm-addon-fit.min.js",
+              "static/vendor/xterm/xterm.min.css")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 FILE_DRAG_META = b'<meta name="ensemble-file-drag" content="">'
 # A page may hand a file URL to a program which has none of the browser's
@@ -1903,6 +1911,13 @@ USAGE_CLAUDE_SETTINGS = DASHBOARD_DIR / "usage" / "claude-agent-settings.json"
 USAGE_STATUSLINE_SCRIPT = Path(__file__).resolve().parent / "usage_statusline.py"
 AGENT_HOOK_SCRIPT = Path(__file__).resolve().parent / "agent_hook.py"
 TASK_TOOL_HOOK_SCRIPT = Path(__file__).resolve().parent / "task_tool_hook.py"
+
+
+def _script_command(name: str, path: Path) -> str:
+    """The command an agent's settings file runs for one of the hub's scripts:
+    this Python and the script, or in the built app the app itself
+    (``Ensemble --run <name>``, which has no Python next to it)."""
+    return app_version.command_line(app_version.script_argv(name, path))
 RTK_TELEMETRY_ENV = "RTK_TELEMETRY_DISABLED"
 RTK_RECALL_DB = RTK_DIR / "recall.db"
 _RTK_SETTINGS_LOCK = threading.Lock()
@@ -1980,7 +1995,7 @@ def _claude_status_line() -> dict:
     only source of Claude's allowance: the hub never touches Claude Code's
     sign-in token. It prints nothing.
     """
-    command = (f'"{Path(sys.executable).as_posix()}" "{USAGE_STATUSLINE_SCRIPT.as_posix()}" '
+    command = (f'{_script_command("usage_statusline", USAGE_STATUSLINE_SCRIPT)} '
                f'"{usage.CLAUDE_STATUSLINE_FILE.as_posix()}"')
     return {"type": "command", "command": command, "padding": 0}
 
@@ -2041,7 +2056,7 @@ def _agent_hooks() -> dict:
     one settings file they share. It is an *additional* settings source:
     Claude Code merges hooks across sources, so the user's own
     ``~/.claude/settings.json`` hooks keep running."""
-    command = f'"{Path(sys.executable).as_posix()}" "{AGENT_HOOK_SCRIPT.as_posix()}"'
+    command = _script_command("agent_hook", AGENT_HOOK_SCRIPT)
     hooks: dict[str, list] = {}
     for event, matcher, background in _AGENT_HOOK_EVENTS:
         handler = {"type": "command", "command": command, "timeout": _AGENT_HOOK_TIMEOUT}
@@ -2075,7 +2090,7 @@ def _task_tool_hook_command(cap: bool = True) -> str:
         cap_bytes, cap_lines = task_tool_hook.CAP_BYTES_DEFAULT, task_tool_hook.CAP_LINES_DEFAULT
     if not cap or cap_bytes <= 0 or cap_lines <= 0:
         cap_bytes = cap_lines = 0
-    return (f'"{Path(sys.executable).as_posix()}" "{TASK_TOOL_HOOK_SCRIPT.as_posix()}" '
+    return (f'{_script_command("task_tool_hook", TASK_TOOL_HOOK_SCRIPT)} '
             f'--bytes {cap_bytes} --lines {cap_lines}')
 
 
@@ -6956,6 +6971,13 @@ _WS_SEARCHES_LOCK = threading.Lock()
 _WS_SEARCHES_KEEP = 500    # finished tags remembered; past this the finished ones are forgotten
 
 
+def _search_argv(name: str, module) -> list[str]:
+    """How a search runs as its own process: this Python in UTF-8 mode, or the
+    built app itself (whose streams the searches set to UTF-8 by hand)."""
+    argv = app_version.script_argv(name, Path(module.__file__).resolve())
+    return argv if app_version.packaged() else [argv[0], "-X", "utf8", *argv[1:]]
+
+
 def _ws_search_start(tag: str, seq: int, argv: list[str]) -> subprocess.Popen | None:
     """Start a search child, or None when a newer one is already under way.
 
@@ -7054,7 +7076,7 @@ def ws_search(root: str, q: str, case: bool = False, regex: bool = False, tag: s
         return 400, {"error": "bad_regex", "detail": str(e)}
     req = json.dumps({"root": root, "q": q, "case": case, "regex": regex, "limit": limit, "deadline": deadline,
                       "enclosingIgnores": _ws_enclosing_ignores(root)}).encode("utf-8")
-    argv = [sys.executable, "-X", "utf8", str(Path(workspace_search.__file__).resolve())]
+    argv = _search_argv("workspace_search", workspace_search)
     try:
         proc = _ws_search_start(tag[:200], seq, argv)
     except OSError as e:
@@ -7947,7 +7969,7 @@ def _find_deep(q: str, tag: str, seq: int) -> tuple[int, dict]:
     if hit and time.time() - hit[0] < _FIND_DEEP_TTL:
         return 200, hit[1]
     req = json.dumps({"q": q, "files": _find_files(), "deadline": global_search.DEADLINE_S}).encode("utf-8")
-    argv = [sys.executable, "-X", "utf8", str(Path(global_search.__file__).resolve())]
+    argv = _search_argv("global_search", global_search)
     key = ("find:" + tag)[:200] if tag else ""
     try:
         proc = _ws_search_start(key, seq, argv)
@@ -9394,7 +9416,10 @@ def check_for_update(force: bool = False) -> dict:
     _UPDATE_CHECK_LOCK = True
     try:
         install_dir = STATIC_DIR
-        if not (install_dir / ".git").exists():
+        if app_version.packaged():
+            # The built app updates from GitHub Releases, not git.
+            result = app_update.check()
+        elif not (install_dir / ".git").exists():
             result = {"available": False, "reason": "not_a_git_checkout"}
         else:
             try:
@@ -9454,12 +9479,173 @@ def trigger_update() -> dict:
     bounce the machine's Ensemble scheduled task — the REAL hub."""
     if os.environ.get("ENSEMBLE_UPDATE_DRY_RUN"):
         return {"started": True, "dryRun": True, "pid": os.getpid()}
+    if app_version.packaged():
+        return start_app_update()
     result = BACKEND.self_update(STATIC_DIR, port=HUB_PORT,
                                  log_file=_LOG_FILE or DEFAULT_LOG_FILE)
     if result.get("started"):
         global _UPDATE_CHECK_CACHE
         _UPDATE_CHECK_CACHE = None
     return result
+
+
+# --- Update now in the built app ---------------------------------------------
+# From GitHub Releases (app_update.py): download, check, unpack here, then a
+# helper outside the hub preflights the new version, swaps it in, restarts the
+# hub on its port and rolls back if it does not serve. Shares the restart
+# lease, so an update and a restart never run at once.
+UPDATE_DIR = DASHBOARD_DIR / "update"
+_APP_UPDATE: dict = {"stage": "idle"}
+_APP_UPDATE_LOCK = threading.Lock()
+
+
+def _update_log(msg: str) -> None:
+    path = DASHBOARD_DIR / "logs" / "update.log"
+    print(f"[update] {msg}", flush=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [update] {msg}\n")
+    except OSError:
+        pass
+
+
+def update_status() -> dict:
+    """Where an Update now stands (this hub's part), and how the last one the
+    helper finished ended (``update/last.json``)."""
+    with _APP_UPDATE_LOCK:
+        out = dict(_APP_UPDATE)
+    try:
+        out["last"] = json.loads((UPDATE_DIR / "last.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        out["last"] = None
+    out["version"] = app_version.VERSION
+    return out
+
+
+def _launchd_service() -> dict | None:
+    """The LaunchAgent running this hub, if launchd started it (it names the
+    job in XPC_SERVICE_NAME)."""
+    if sys.platform != "darwin" or os.environ.get("XPC_SERVICE_NAME") != app_setup.LAUNCHD_LABEL:
+        return None
+    uid = os.getuid()
+    return {"target": f"gui/{uid}/{app_setup.LAUNCHD_LABEL}", "domain": f"gui/{uid}",
+            "plist": str(app_setup.launch_agent_plist())}
+
+
+def update_plan(rel: dict, new_app: Path, lease: str) -> dict:
+    """What the update helper needs (app_update.Helper)."""
+    app = app_version.app_root()
+    args = [a for a in sys.argv[1:] if a != "--background"]
+    if "--port" not in args:
+        args += ["--port", str(HUB_PORT)]
+    if sys.platform == "darwin":
+        previous, failed = UPDATE_DIR / "previous", UPDATE_DIR / "failed"
+    else:
+        previous, failed = app / app_update.PREVIOUS_DIR, app / app_update.FAILED_DIR
+    logs = DASHBOARD_DIR / "logs"
+    return {
+        "platform": sys.platform,
+        "fromVersion": app_version.VERSION, "toVersion": rel["version"],
+        "app": str(app), "newApp": str(new_app),
+        "previousDir": str(previous), "failedDir": str(failed),
+        "port": HUB_PORT, "hubPid": os.getpid(),
+        # The hub that comes back opens no browser: the page reloads itself.
+        "args": [*args, "--background"],
+        "launchd": _launchd_service(),
+        "leaseId": lease, "leasePath": str(_restart_lease_path()),
+        "log": str(logs / "update.log"), "preflightLog": str(logs / "preflight.log"),
+        "resultPath": str(UPDATE_DIR / "last.json"),
+        "env": dict(os.environ),
+    }
+
+
+def _run_app_update(rel: dict, lease: str) -> None:
+    def stage(name: str, **more) -> None:
+        with _APP_UPDATE_LOCK:
+            _APP_UPDATE.update(stage=name, **more)
+    # The download, unpack and helper copy can outlast the lease on a slow
+    # line: renew it until the helper has it, so no restart or second update
+    # takes it meanwhile.
+    done = threading.Event()
+
+    def renew() -> None:
+        while not done.wait(20):
+            app_update.renew_lease(str(_restart_lease_path()), lease)
+    threading.Thread(target=renew, daemon=True).start()
+    plan_path = UPDATE_DIR / f"plan-{uuid.uuid4().hex}.json"
+    try:
+        stage("downloading", to=rel["version"], error="", at=time.time())
+        _update_log(f"downloading {rel['assetName']} ({rel['version']})")
+        _prune_update_dir(keep=rel["version"])
+        new_app = app_update.stage(rel, UPDATE_DIR)
+        _update_log(f"checksum matches; unpacked to {new_app}")
+        stage("starting")
+        helper = app_update.copy_helper(app_version.app_root(), UPDATE_DIR)
+        # It holds the hub's environment (the hub that comes back needs it):
+        # readable by this user only, and gone once the helper has read it.
+        fd = os.open(plan_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(update_plan(rel, new_app, lease), f)
+        res = BACKEND.start_detached([str(helper), "--run", "app_update", "apply", str(plan_path)],
+                                     DASHBOARD_DIR / "logs" / "update.log")
+        if not res.get("started"):
+            raise OSError(res.get("error") or "the update helper did not start")
+        _update_log(f"helper started (pid {res.get('helperPid')})")
+        stage("restarting")
+        done.set()
+        # A helper that started but never read its plan leaves no copy behind.
+        for _ in range(PLAN_PICKUP_S):
+            if not plan_path.exists():
+                return
+            time.sleep(1)
+        plan_path.unlink(missing_ok=True)
+        _update_log("the helper did not pick up its plan; deleted")
+    except Exception as e:      # noqa: BLE001 — the hub keeps running; the page says why
+        done.set()
+        plan_path.unlink(missing_ok=True)
+        _drop_restart_lease(lease)
+        _update_log(f"update failed: {e}")
+        stage("failed", error=str(e))
+    finally:
+        done.set()
+
+
+PLAN_PICKUP_S = 120
+
+
+def _prune_update_dir(keep: str) -> None:
+    """Earlier updates' unpacked versions and leftover plans: only the one
+    being installed is kept (the helper's copy is replaced each time)."""
+    try:
+        for p in UPDATE_DIR.iterdir():
+            if (p.is_dir() and p.name not in (keep, "helper", "previous", "failed")
+                    and re.fullmatch(r"\d+(\.\d+)*", p.name)):
+                shutil.rmtree(p, ignore_errors=True)
+            elif p.name.startswith("plan-") and p.suffix == ".json":
+                p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def start_app_update() -> dict:
+    """Update now in the built app; returns at once (``started``), the rest
+    runs on a thread and then in the helper."""
+    if "/AppTranslocation/" in str(app_version.app_root()):
+        return {"started": False,
+                "error": "macOS runs Ensemble from a temporary read-only copy: move "
+                         "Ensemble.app to Applications, open it from there, then update"}
+    info = check_for_update(force=True)
+    rel = info.get("release")
+    if not info.get("available") or not rel:
+        return {"started": False, "error": "no newer release for this platform"}
+    lease, since = _take_restart_lease()
+    if not lease:
+        return {"started": False,
+                "error": f"a restart or an update began {int(since)}s ago and is still under way"}
+    threading.Thread(target=_run_app_update, args=(rel, lease), daemon=True).start()
+    return {"started": True, "version": rel["version"], "pid": os.getpid(),
+            "log": str(DASHBOARD_DIR / "logs" / "update.log")}
 
 
 # --- A plain restart ---------------------------------------------------------
@@ -9671,8 +9857,10 @@ def restart_plan(room_id: str = "") -> dict:
     return {
         "repo": str(STATIC_DIR),
         "python": sys.executable,
-        "script": str(Path(__file__).resolve()),
-        "args": sys.argv[1:],
+        # The built app is its own program: no script to name.
+        "script": "" if app_version.packaged() else str(Path(__file__).resolve()),
+        "args": ([a for a in sys.argv[1:] if a != "--background"] + ["--background"]
+                 if app_version.packaged() else sys.argv[1:]),
         "port": HUB_PORT,
         "hubPid": os.getpid(),
         "preflightPort": _spare_port(),
@@ -11808,6 +11996,23 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/update-check":
             self._send_json(200, check_for_update())
             return
+        if p == "/api/version":
+            self._send_json(200, app_version.describe())
+            return
+        if p == "/api/update-status":
+            self._send_json(200, update_status())
+            return
+        if p == "/api/app/agents":
+            # First run: is claude / codex installed and signed in, as their
+            # own CLIs say (never their sign-in files).
+            refresh = parse_qs(u.query).get("refresh", [""])[0] == "1"
+            self._send_json(200, app_setup.agents_check(refresh=refresh))
+            return
+        if p == "/api/app/autostart":
+            self._send_json(200, app_setup.autostart_status(app_version.app_executable())
+                            if app_version.packaged() else {"enabled": False, "supported": False,
+                                                            "reason": "source"})
+            return
         if p == "/api/backup/status":
             bs = load_settings()
             self._send_json(200, {**backup.status(), "root": str(PROJECTS_ROOT),
@@ -11878,6 +12083,8 @@ class Handler(BaseHTTPRequestHandler):
                 "logFile": str(_LOG_FILE if _LOG_FILE else DEFAULT_LOG_FILE),
                 "pid": os.getpid(),
                 "python": sys.executable,
+                "version": app_version.VERSION,
+                "packaged": app_version.packaged(),
                 # What is on disk now; an open tab compares it with what it loaded.
                 "pages": page_stamps(),
             })
@@ -14285,6 +14492,25 @@ class Handler(BaseHTTPRequestHandler):
             # before that SIGKILL arrives.
             result = trigger_update()
             self._send_json(202 if result.get("started") else 500, result)
+            return
+        if p == "/api/app/autostart":
+            # Start at sign-in, for the built app only (a checkout has
+            # install-task.ps1 / install-launchd.sh). The page or the hub PO.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            if not app_version.packaged():
+                self._send_json(400, {"error": "source", "message": "a checkout starts at sign-in "
+                                      "through install-task.ps1 or install-launchd.sh"})
+                return
+            try:
+                res = app_setup.set_autostart(bool(data.get("enabled")), app_version.app_executable(),
+                                              HUB_PORT, _LOG_FILE or DEFAULT_LOG_FILE)
+            except OSError as e:
+                self._send_json(500, {"error": str(e)})
+                return
+            self._send_json(200, res)
             return
         if p == "/api/restart":
             # The same lock; stops and starts the hub on the code on disk.

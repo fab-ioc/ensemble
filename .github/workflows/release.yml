@@ -1,0 +1,167 @@
+# Builds the Ensemble app for Windows and macOS and, for a version tag,
+# publishes a GitHub Release with it. The installed app updates itself from
+# these releases (app_update.py), so the asset names below are its contract:
+#   Ensemble-<version>-windows-x64.zip      (update; the Ensemble folder)
+#   Ensemble-<version>-windows-x64-setup.exe (installer, for people)
+#   Ensemble-<version>-macos-universal.zip  (update; Ensemble.app)
+#   Ensemble-<version>-macos-universal.dmg  (for people)
+#   SHA256SUMS.txt                          (updates refuse an asset without it)
+#
+# Release: set app_version.VERSION, merge, then push the tag "v" + VERSION.
+# Run by hand (workflow_dispatch), it only builds: the files are the run's
+# artifacts, and nothing is published.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Read the version; a tag must match it
+        run: |
+          version=$(python3 -c "import app_version; print(app_version.VERSION)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match app_version.VERSION ($version): expected v$version"
+            exit 1
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+      - name: Install the build tools
+        run: python -m pip install pyinstaller==6.22.3 -r requirements.txt
+      - name: Build Ensemble.exe
+        run: pyinstaller --noconfirm packaging/ensemble.spec
+      - name: Smoke test (the hub starts and serves its pages)
+        shell: pwsh
+        run: |
+          # Agents' terminals start through these; without them every agent stays blank.
+          foreach ($f in "OpenConsole.exe", "winpty-agent.exe") {
+            if (-not (Test-Path "dist\Ensemble\_internal\winpty\$f")) { throw "missing from the build: winpty\$f" }
+          }
+          $home_ = Join-Path $env:RUNNER_TEMP "home"
+          New-Item -ItemType Directory -Force $home_ | Out-Null
+          $env:USERPROFILE = $home_; $env:HOME = $home_
+          $p = Start-Process -PassThru dist\Ensemble\Ensemble.exe -ArgumentList "--background","--port","8790"
+          $ok = $false
+          foreach ($i in 1..60) {
+            try {
+              $v = Invoke-RestMethod http://127.0.0.1:8790/api/version -TimeoutSec 2
+              if ($v.version -eq $env:VERSION -and $v.packaged) { $ok = $true; break }
+            } catch {}
+            Start-Sleep 1
+          }
+          foreach ($page in "/", "/session", "/fileview", "/static/vendor/xterm/xterm.js") {
+            if ($ok) { Invoke-WebRequest "http://127.0.0.1:8790$page" -UseBasicParsing | Out-Null }
+          }
+          '{"root":".","q":"VERSION"}' | dist\Ensemble\Ensemble.exe --run workspace_search | Out-Null
+          Get-Process Ensemble -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-Content (Join-Path $home_ ".ensemble\logs\ensemble.log") -ErrorAction SilentlyContinue | Select-Object -Last 40
+          if (-not $ok) { throw "the built hub did not answer /api/version with $env:VERSION" }
+      - name: Zip (the update) and installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Compress-Archive -Path dist\Ensemble -DestinationPath "release\Ensemble-$env:VERSION-windows-x64.zip"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" "/DSourceDir=$PWD\dist\Ensemble" "/DOutputDir=$PWD\release" packaging\ensemble.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: release/*
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # A universal2 build needs a universal2 Python: the python.org installer.
+      PYTHON_PKG: https://www.python.org/ftp/python/3.13.7/python-3.13.7-macos11.pkg
+      PY: /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python.org Python (universal2)
+        run: |
+          curl -fsSL -o python.pkg "$PYTHON_PKG"
+          sudo installer -pkg python.pkg -target /
+          "$PY" -m venv venv
+          venv/bin/python -m pip install pyinstaller==6.22.3 pillow -r requirements.txt
+      - name: Build Ensemble.app
+        run: |
+          venv/bin/pyinstaller --noconfirm packaging/ensemble.spec
+          archs=$(lipo -archs dist/Ensemble.app/Contents/MacOS/Ensemble)
+          echo "architectures: $archs"
+          case "$archs" in *x86_64*arm64*|*arm64*x86_64*) ;; *) echo "::error::not universal2: $archs"; exit 1;; esac
+      - name: Smoke test (the hub starts and serves its pages)
+        run: |
+          export HOME="$RUNNER_TEMP/home"; mkdir -p "$HOME"
+          dist/Ensemble.app/Contents/MacOS/Ensemble --background --port 8790 &
+          ok=
+          for i in $(seq 60); do
+            if curl -fs http://127.0.0.1:8790/api/version | grep -q "\"$VERSION\""; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -n "$ok" ]; then
+            for page in / /session /fileview /static/vendor/xterm/xterm.js; do
+              curl -fs -o /dev/null "http://127.0.0.1:8790$page"
+            done
+          fi
+          echo '{"root":".","q":"VERSION"}' | dist/Ensemble.app/Contents/MacOS/Ensemble --run workspace_search > /dev/null
+          pkill -f Ensemble.app/Contents/MacOS/Ensemble || true
+          tail -40 "$HOME/Library/Logs/ensemble.log" || true
+          [ -n "$ok" ] || { echo "::error::the built hub did not answer /api/version with $VERSION"; exit 1; }
+      - name: Zip (the update) and disk image
+        run: |
+          mkdir -p release dmg
+          ditto -c -k --keepParent dist/Ensemble.app "release/Ensemble-$VERSION-macos-universal.zip"
+          ditto dist/Ensemble.app dmg/Ensemble.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname Ensemble -srcfolder dmg -ov -format UDZO "release/Ensemble-$VERSION-macos-universal.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Checksums and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd release
+          sha256sum Ensemble-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Ensemble ${{ needs.version.outputs.version }}" --generate-notes ./*

@@ -210,6 +210,21 @@ class Backend:
         wired up."""
         return {"started": False, "error": "a plain restart is not supported on this platform"}
 
+    def start_detached(self, argv: list[str], log_file: Path) -> dict:
+        """Start ``argv`` so that it outlives the hub (the built app's update
+        helper): its own session, so stopping the hub's service does not end
+        it; its output appended to ``log_file``."""
+        import subprocess
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(log_file, "ab") as out:
+                proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out,
+                                        stderr=subprocess.STDOUT, close_fds=True,
+                                        start_new_session=True)
+        except OSError as e:
+            return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
+        return {"started": True, "helperPid": proc.pid}
+
     # ---------- themes ----------
 
     def list_themes(self) -> list[dict]:

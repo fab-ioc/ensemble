@@ -57,7 +57,18 @@ What the tabs show:
 
 Claude Code and Codex sessions you started yourself, outside Ensemble, are listed under **Unassigned** on the Projects page. You can move one into a project. One in no project still shows its files: its Workspace is the folder it ran in (not a home folder or a whole drive, which is too wide to show).
 
-## Requirements
+## Download
+
+The app needs no Python: download it from the [latest release](https://github.com/fab-ioc/ensemble/releases/latest).
+
+- **Windows 10 or 11:** `Ensemble-<version>-windows-x64-setup.exe`. It installs for you only, in `%LOCALAPPDATA%\Programs\Ensemble`, without administrator rights, and adds Ensemble to the Start menu. Tick **Start Ensemble when I sign in** to start it at sign-in.
+- **macOS 11 or newer (Apple silicon and Intel):** `Ensemble-<version>-macos-universal.dmg`. Open it and drag **Ensemble** to **Applications**. The app is not signed with an Apple developer certificate: the first time, right-click it › **Open** (on macOS 15, System Settings › Privacy & Security › **Open Anyway**).
+
+Opening Ensemble starts the hub and opens `http://127.0.0.1:8765` in your browser; opening it again while it runs opens the page again (on a Mac, open the page from a bookmark: the app has no window or Dock icon). Settings shows the version, whether `claude` and `codex` are installed and signed in, and **Start Ensemble when I sign in**. When a newer release is out, the dashboard offers **Update now**: the app downloads it, checks its SHA-256, tries it on a spare port, swaps it in and restarts on the same port, and goes back to the version it had if the new one does not start. You still need `claude` or `codex` (and `git`) installed and signed in: Ensemble starts them, it does not install them.
+
+To run Ensemble from a clone instead, read on.
+
+## Requirements (from source)
 
 - **Python 3.10 or newer.** The code uses `X | None` type unions, which older versions cannot parse. Developed and tested with 3.13.
 - **Claude Code** (`claude`), **Codex** (`codex`), or both, on `PATH` and logged in. Ensemble starts them; it does not install them or log them in.
@@ -70,7 +81,7 @@ Optional:
 - **Windows Terminal** (Windows) or **iTerm2** (macOS). They are only needed to open a session in a real terminal window. Agents never need them.
 - **Node.js**. It is only used by the tests that exercise the pages' JavaScript; those tests are skipped without it.
 
-## Install and run
+## Install and run from source
 
 The hub serves `http://127.0.0.1:8765`. It keeps its own state in `~/.ensemble` (settings, the project list, task records, logs) and creates projects under `~/EnsembleProjects`.
 
@@ -251,6 +262,8 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `ensemble.ps1`, `install-task.ps1`, `restart-hub.ps1` | Windows: start and stop, autostart task, restart helper |
 | `ensemble`, `install-launchd.sh`, `com.ensemble.dashboard.plist.template` | macOS: start and stop, LaunchAgent |
 | `requirements.txt` | `pywinpty` / `ptyprocess` |
+| `ensemble_app.py`, `app_launch.py`, `app_version.py`, `app_update.py`, `app_setup.py` | The built app: its entry, start, version, Update now from GitHub Releases, agent check and start at sign-in |
+| `packaging/`, `.github/workflows/release.yml` | The PyInstaller build, the Windows installer (Inno Setup) and the release workflow |
 | `LICENSE` | MIT |
 
 ## Tests
@@ -260,6 +273,14 @@ py -m unittest discover -s tests       # macOS: python3 -m unittest discover -s 
 ```
 
 The suite uses only the standard library. Tests of the pages' JavaScript need `node` on `PATH` (no npm packages) and are skipped without it. Some tests need `git`.
+
+## Releasing
+
+1. Set `VERSION` in `app_version.py` (for example `1.0.0`) and merge it to `main`.
+2. Push the tag `v` + that version: `git tag v1.0.0 && git push origin v1.0.0`.
+3. The `release` workflow builds the Windows app and installer and the universal macOS app and disk image, starts each once to check that it serves, and publishes the release with `SHA256SUMS.txt`. It refuses a tag that does not match `VERSION`. Installed apps offer the update the next time they check (about every half hour).
+
+Run the workflow by hand (Actions › release › Run workflow) to build the files without publishing them. To build locally: `pip install pyinstaller -r requirements.txt`, then `pyinstaller --noconfirm packaging/ensemble.spec` (the app is in `dist/`).
 
 ## Status
 

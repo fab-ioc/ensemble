@@ -214,7 +214,8 @@ class SharedBlock(unittest.TestCase):
         self.assertIn("ensUpd.hold = true", fn)
         self.assertNotIn("location.reload()", fn, "the update block's reload, which keeps the place")
         self.assertIn("ensUpd.reload()", fn)
-        self.assertEqual(fn.count("ensUpd.hold = false"), 3, "refused, timed out, reloading")
+        self.assertEqual(fn.count("ensUpd.hold = false"), 4,
+                         "refused, the app's update stopped, timed out, reloading")
         self.assertIn("if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;", fn)
 
 

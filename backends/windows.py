@@ -674,6 +674,32 @@ class WindowsBackend(Backend):
                     "error": f"could not start the helper: {(out.stdout or out.stderr or '').strip()[:300]}"}
         return {"started": True, "helperPid": int(parts[1])}
 
+    def start_detached(self, argv: list[str], log_file: Path) -> dict:
+        """Start ``argv`` through WMI, like the restart helper: outside the
+        hub's process tree and job, so stopping the hub (or its scheduled task)
+        does not end it. WMI gives it the user's default environment; the
+        caller passes the hub's own in its plan. Its output is not captured:
+        the update helper writes its own log (``log_file``)."""
+        shell = shutil.which("powershell") or shutil.which("pwsh")
+        if not shell:
+            return {"started": False, "error": "PowerShell not found"}
+        cmdline = subprocess.list2cmdline(argv)
+        ps = ("$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
+              f"-Arguments @{{ CommandLine = {_ps_quote(cmdline)} }}; "
+              "[Console]::Out.Write([string]$r.ReturnValue + ' ' + [string]$r.ProcessId)")
+        encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+        try:
+            out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=60, creationflags=_NO_WINDOW)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
+        parts = (out.stdout or "").split()
+        if len(parts) != 2 or parts[0] != "0":
+            return {"started": False,
+                    "error": f"could not start the helper: {(out.stdout or out.stderr or '').strip()[:300]}"}
+        return {"started": True, "helperPid": int(parts[1])}
+
     # ---------- themes ----------
 
     def list_themes(self) -> list[dict]:
