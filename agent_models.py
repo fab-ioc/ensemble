@@ -82,8 +82,7 @@ def codex_models(path=None) -> list[dict] | None:
             # own: choosing it is how that allowance is spent.
             if m.get("visibility") != "list" and pool["id"] == usage.CODEX_MAIN_POOL:
                 continue
-            efforts = [e.get("effort") for e in m.get("supported_reasoning_levels") or []
-                       if isinstance(e, dict) and isinstance(e.get("effort"), str)]
+            efforts = _levels(m.get("supported_reasoning_levels"))
             models.append({
                 "id": slug,
                 "name": m.get("display_name") if isinstance(m.get("display_name"), str) else slug,
@@ -99,6 +98,24 @@ def codex_models(path=None) -> list[dict] | None:
     with _CACHE_LOCK:
         _CACHE.update(key=key, models=models)
     return copy.deepcopy(models)
+
+
+def _levels(raw) -> list[str]:
+    """The efforts a model's ``supported_reasoning_levels`` names, whatever its
+    shape: a list of ``{effort}`` (Codex's own) or of names, one name, one
+    ``{effort}``, or a map keyed by effort. Anything else names none."""
+    if isinstance(raw, str):
+        raw = [raw]
+    elif isinstance(raw, dict):
+        raw = [raw] if "effort" in raw else list(raw)
+    elif not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for e in raw:
+        name = e.get("effort") if isinstance(e, dict) else e
+        if isinstance(name, str) and name.strip() and name.strip() not in out:
+            out.append(name.strip())
+    return out
 
 
 def codex_own() -> dict:

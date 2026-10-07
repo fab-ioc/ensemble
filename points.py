@@ -784,9 +784,36 @@ def _link_follow(parent: dict, child: dict, now: float) -> bool:
     parent.setdefault("followedBy", child["id"])     # the first follow-up; later ones only point back
     child["replyTo"] = parent["id"]
     if parent["state"] == "delivered":
+        # What closing it changed, for discard() of the child's send.
+        child["followUndo"] = {"state": parent["state"], "stateAt": parent.get("stateAt")}
         _set_state(parent, "followed", now)
         parent["followedAt"] = now
+        child["followUndo"]["stateAt2"] = parent["stateAt"]
     return True
+
+
+def _unlink_follow(led: dict, child: dict) -> None:
+    """A follow-up point is taken back (discard): its parent no longer names
+    it, and is as it was before the child closed it, unless it moved since or
+    another follow-up still closes it."""
+    parent = next((p for p in led["points"] if p["id"] == child.get("replyTo")), None)
+    if parent is None:
+        return
+    others = sorted((p for p in led["points"] if p is not child and p.get("replyTo") == parent["id"]),
+                    key=lambda p: (p["createdAt"], p["id"]))
+    if parent.get("followedBy") == child["id"]:
+        if others:
+            parent["followedBy"] = others[0]["id"]
+        else:
+            parent.pop("followedBy", None)
+    u = child.get("followUndo") or {}
+    if u and not others and parent.get("stateAt") == u.get("stateAt2"):
+        parent["state"] = u["state"]
+        if u.get("stateAt") is None:
+            parent.pop("stateAt", None)
+        else:
+            parent["stateAt"] = u["stateAt"]
+        parent.pop("followedAt", None)
 
 
 def _follow_new(led: dict, made: list[dict], room_id: str, now: float) -> None:
@@ -963,7 +990,7 @@ def discard(room_id: str, ids: list[str], key: str = "") -> None:
     with _LOCK:
         led = load(room_id)
         changed = False
-        keep = []
+        keep, gone = [], []
         for p in led["points"]:
             if p["id"] not in ids:
                 keep.append(p)
@@ -989,10 +1016,15 @@ def discard(room_id: str, ids: list[str], key: str = "") -> None:
             elif ((not key or p.get("key") == key) and p["state"] == "open"
                   and not p["answers"] and not p.get("follows")):
                 changed = True
+                gone.append(p)
             else:
                 keep.append(p)
         if changed:
             led["points"] = keep
+            # A follow-up it made no longer closes the point it followed up.
+            for p in gone:
+                if p.get("replyTo"):
+                    _unlink_follow(led, p)
             _save(room_id, led)
 
 

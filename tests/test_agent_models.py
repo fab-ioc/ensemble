@@ -99,6 +99,30 @@ class WhatCanBeChosen(_Home):
         info = agent_models.describe(None)["codex"]
         self.assertEqual((info["readable"], info["models"]), (False, []))
 
+    def test_any_shape_of_reasoning_levels_is_read_safely(self):
+        # #182 (the #145 known limit): a model whose supported_reasoning_levels
+        # is not a list of {effort} broke the whole list (a number) or lost its
+        # efforts (plain names).
+        shapes = {
+            "m-missing": None, "m-null": None, "m-string": "high", "m-dict": {"low": {}, "high": {}},
+            "m-one": {"effort": "medium", "description": "one level"}, "m-names": ["low", "high"],
+            "m-number": 7, "m-bool": True, "m-mixed": [{"effort": "low"}, "high", None, 3, {"effort": 5}, "low"],
+        }
+        listed = []
+        for i, (slug, levels) in enumerate(shapes.items()):
+            m = _model(slug, slug, i)
+            if slug == "m-missing":
+                del m["supported_reasoning_levels"]
+            else:
+                m["supported_reasoning_levels"] = levels
+            listed.append(m)
+        (self.codex / "models_cache.json").write_text(json.dumps({"models": listed}), encoding="utf-8")
+        by = {m["id"]: m["efforts"] for m in agent_models.codex_models()}
+        self.assertEqual(by, {"m-missing": [], "m-null": [], "m-string": ["high"],
+                              "m-dict": ["low", "high"], "m-one": ["medium"], "m-names": ["low", "high"],
+                              "m-number": [], "m-bool": [], "m-mixed": ["low", "high"]})
+        self.assertEqual(agent_models._efforts_of(agent_models.codex_models(), "m-names"), ["low", "high"])
+
     def test_the_list_is_read_again_only_when_the_file_changes(self):
         agent_models.codex_models()
         with mock.patch.object(Path, "read_text", side_effect=AssertionError("read again")):

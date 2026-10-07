@@ -2212,6 +2212,19 @@ RESTART_NOTE = (
     "your session was brought back. Carry on from where you were: do not start over, "
     "do not read your spec again, and do not report the restart.")
 RESUME_NOTE_WAIT_S = 180    # a terminal that never settles gets the line anyway
+# A room brought back quietly (a hub restart, the page's quiet resume) whose
+# owner's session never saw the spec as it stands: amended while it was
+# stopped, or the [spec] line was still queued in its TUI when it died (#182).
+RESTART_NOTE_SPEC = (
+    "[hub restarted] The hub restarted while you were in the middle of a turn, and "
+    "your session was brought back. Your spec was amended since you last read it: "
+    "read it again with ensemble_get_task taskId={label} spec=true, then carry on from "
+    "where you were: do not start over, act only on what changed, and do not report "
+    "the restart.")
+SPEC_UNSEEN_NOTE = (
+    "[spec] Your spec was amended while your session was not running, and you have "
+    "not seen it. Read it again with ensemble_get_task taskId={label} spec=true and "
+    "act only on what changed: do not start over, do not redo what you have done.")
 
 
 def spec_seen(part: dict, spec: str) -> dict:
@@ -2219,6 +2232,39 @@ def spec_seen(part: dict, spec: str) -> dict:
     spec: the revision, tied to the session that read it (a fresh or rotated
     session has read nothing)."""
     return {"specSeen": {"rev": _spec_rev(spec), "sessionId": part.get("sessionId") or ""}}
+
+
+def spec_unseen(room: dict, part: dict, state: str = "") -> bool:
+    """Whether this very session read an older revision of the spec than the
+    one now (``specSeen``); no record says nothing (it is not guessed). A
+    ``[spec]`` line typed while it was busy (``specRung``) counts as seen when
+    it is ``idle`` now (the queued line became a turn, and that turn ended)
+    or when its transcript holds the line (a quiet resume knows no state)."""
+    seen = part.get("specSeen")
+    sid = part.get("sessionId") or ""
+    if not (isinstance(seen, dict) and sid and seen.get("sessionId") == sid):
+        return False
+    rev = _spec_rev(room.get("spec", "") or "")
+    if seen.get("rev") == rev:
+        return False
+    rung = part.get("specRung")
+    if not (isinstance(rung, dict) and rung.get("sessionId") == sid and rung.get("rev") == rev):
+        return True
+    return not (state == "idle" or _spec_line_taken(sid, rung))
+
+
+def _spec_line_taken(sid: str, rung: dict) -> bool:
+    """Whether the session's transcript holds the ``[spec]`` line typed into
+    it (``specRung["head"]``, its first line): it was read, however the
+    session ended after. Unknown reads as not taken."""
+    head = rung.get("head") or ""
+    if not head:
+        return False
+    try:
+        turns = read_session_turns(sid) or []
+    except Exception:       # noqa: BLE001 — unknown: the owner is told
+        return False
+    return any(t.get("role") != "assistant" and head in (t.get("text") or "") for t in turns)
 
 
 def resume_note_for(room: dict, part: dict) -> str:
@@ -2254,7 +2300,9 @@ def spec_change_line(room: dict, old_spec: str, new_spec: str, by: str = "") -> 
     it is marked as having seen this revision); a longer change sends it to
     read the spec again."""
     who = (by or "").strip() or "An administrator"
-    when = time.strftime("%H:%M")
+    # The revision makes each line's first line its own (spec_unseen matches
+    # it in the transcript: two amendments in one minute must not read alike).
+    when = f"{time.strftime('%H:%M')} (revision {_spec_rev(new_spec)[:8]})"
     a = (old_spec or "").splitlines()
     b = (new_spec or "").splitlines()
     # The first two lines are the file headers (only when something differs);
@@ -10701,6 +10749,10 @@ def update_task(rid: str, title=None, spec=None,
             # When it was last amended: an amendment after a task's open ask
             # answers it (attention._open_to_human).
             room["specAt"] = time.time()
+        else:
+            # Only the whitespace around it: the spec, and its revision, stay
+            # as they are (no owner is told, so none may read it as new).
+            s = room.get("spec") or s
         room["spec"] = s
         patch["spec"] = s
     if priority is not None:
@@ -12716,6 +12768,8 @@ class Handler(BaseHTTPRequestHandler):
         is_po = any((p.get("poRoomId") or "") == room_full["id"] for p in load_projects())
         own = set(chatroom.owners(room_full))
         notify: dict[str, str] = {}     # identity -> the line it is typed once up
+        # Who a quiet return still told of an amended spec (the restore's log).
+        spec_told = self._spec_told = []
         resumed = []
         # An agent still running (a partner died, a retry after a failed
         # delivery) is never launched a second time: it stays as it is, and
@@ -12749,10 +12803,25 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
                 if info.get("prompted"):
-                    pass                # its first prompt is its wake
+                    # Its first prompt is its wake, and the spec as it stands.
+                    if seed:
+                        part.update(spec_seen(part, seed))
                 elif restart is not None:
-                    if restart.get(part["identity"]) in MID_TURN_STATES:
+                    st = restart.get(part["identity"])
+                    label = task_label(room_full) or room_full["id"]
+                    owner = part["identity"] in own and not is_po
+                    if owner and spec_unseen(room_full, part, st or ""):
+                        # Back quietly, but its spec changed under it: told so,
+                        # or the amendment reaches no one (#182).
+                        notify[part["identity"]] = (
+                            RESTART_NOTE_SPEC if st in MID_TURN_STATES
+                            else SPEC_UNSEEN_NOTE).format(label=label)
+                        spec_told.append(part["identity"])
+                    elif st in MID_TURN_STATES:
                         notify[part["identity"]] = RESTART_NOTE
+                    elif owner and st == "idle" and spec_unseen(room_full, part):
+                        # Its queued [spec] line was taken: this revision is seen.
+                        part.update(spec_seen(part, room_full.get("spec", "") or ""))
                 elif part["identity"] in own and not is_po:
                     notify[part["identity"]] = resume_note_for(room_full, part)
             # The state it was stopped in has been read (resume_note_for);
@@ -12932,8 +13001,10 @@ class Handler(BaseHTTPRequestHandler):
                     outcome = "a resume is already under way: left to it"
                 else:
                     try:
+                        self._spec_told = []
                         resumed = self._start_or_resume_room(room_full, restart=states,
                                                              keep_state=True)
+                        lined = sorted(set(lined) | set(self._spec_told))
                         with _RESUMES_LOCK:
                             res.resumed = resumed
                         outcome = ("brought back; " + (
