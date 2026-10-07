@@ -43,27 +43,44 @@ fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ensemble-install.XXXXXX")
 TARGET= NEW= OLD= plist= domain=
-via_launchd= was_running= finished=
+via_launchd= was_running= placed= finished=
 
-# Starts the app at TARGET again the way it ran: through its LaunchAgent, or opened.
+# Whether a whole bundle carries no quarantine attribute. An xattr that fails
+# proves nothing, so it counts as quarantined.
+unquarantined() {
+  attrs=$(xattr -r "$1" 2>/dev/null) || return 1
+  case "$attrs" in *com.apple.quarantine*) return 1 ;; esac
+}
+
+# Starts the app at TARGET the way it ran: through its LaunchAgent (and only
+# that, so it keeps starting at sign-in), or opened.
 start_app() {
-  if [ -n "$via_launchd" ] && launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
-    return 0
+  if [ -n "$via_launchd" ]; then
+    launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1 &&
+      launchctl print "$domain/$LABEL" >/dev/null 2>&1
+  else
+    open "$TARGET"
   fi
-  open "$TARGET"
 }
 
 # On any failure before the install is finished, whatever it had changed is put
-# back: the previous app returns to TARGET and, if it was running, is started again.
+# back: the new app leaves TARGET, the previous one (if any) returns there and,
+# if it was running, is started again the way it ran (or at least opened).
 on_exit() {
   rc=$?
   if [ "$rc" -ne 0 ] && [ -z "$finished" ]; then
+    if [ -n "$placed" ] && [ -e "$TARGET" ]; then
+      mv "$TARGET" "$NEW" 2>/dev/null || rm -rf "$TARGET"
+    fi
     if [ -n "$OLD" ] && [ -e "$OLD" ]; then
-      [ -e "$TARGET" ] && { mv "$TARGET" "$NEW" 2>/dev/null || rm -rf "$TARGET"; }
       mv "$OLD" "$TARGET" || echo "Ensemble install: the previous app is in $OLD" >&2
     fi
     if [ -n "$was_running" ] && [ -e "$TARGET" ]; then
-      start_app && echo "Ensemble install: the previous Ensemble was started again" >&2
+      if start_app || open "$TARGET"; then
+        echo "Ensemble install: the previous Ensemble was started again" >&2
+      else
+        echo "Ensemble install: could not start the previous Ensemble; open it from $TARGET" >&2
+      fi
     fi
   fi
   if [ -n "$NEW" ]; then rm -rf "$NEW"; fi
@@ -112,10 +129,8 @@ NEW="$DEST/.$APP.new.$$"
 OLD="$DEST/.$APP.old.$$"
 ditto "$TMP/unpacked/$APP" "$NEW" || die "could not copy the app into $DEST"
 xattr -dr com.apple.quarantine "$NEW" 2>/dev/null || true
-if xattr -r "$NEW" 2>/dev/null | grep -q com.apple.quarantine; then
-  die "could not remove the quarantine attribute from the new app; not installed"
-fi
-codesign --verify --deep --strict "$NEW" 2>/dev/null   || die "the copied app's signature does not verify; not installed"
+unquarantined "$NEW" || die "could not make sure the new app carries no quarantine attribute; not installed"
+codesign --verify --deep --strict "$NEW" 2>/dev/null || die "the copied app's signature does not verify; not installed"
 
 # A running Ensemble from this copy is stopped for the swap and started after.
 hub_pids() {
@@ -125,12 +140,14 @@ hub_pids() {
 }
 plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 domain="gui/$(id -u)"
-if [ -f "$plist" ] && grep -q "$TARGET/Contents/MacOS/Ensemble" "$plist"    && launchctl print "$domain/$LABEL" >/dev/null 2>&1; then
+if [ -f "$plist" ] && grep -q "$TARGET/Contents/MacOS/Ensemble" "$plist" \
+   && launchctl print "$domain/$LABEL" >/dev/null 2>&1; then
   say "Stopping the running Ensemble ..."
   launchctl bootout "$domain/$LABEL" >/dev/null 2>&1 || true
   i=0
   while launchctl print "$domain/$LABEL" >/dev/null 2>&1 && [ $i -lt 30 ]; do sleep 1; i=$((i + 1)); done
-  launchctl print "$domain/$LABEL" >/dev/null 2>&1     && die "could not stop Ensemble's sign-in service ($LABEL); nothing was changed"
+  launchctl print "$domain/$LABEL" >/dev/null 2>&1 \
+    && die "could not stop Ensemble's sign-in service ($LABEL); nothing was changed"
   via_launchd=1 was_running=1
 fi
 pids=$(hub_pids)
@@ -152,18 +169,22 @@ if [ -e "$TARGET" ]; then
   mv "$TARGET" "$OLD" || die "could not move the old $TARGET aside; nothing was changed"
 fi
 mv "$NEW" "$TARGET" || die "could not put the new app in $TARGET; nothing was changed"
-if xattr -r "$TARGET" 2>/dev/null | grep -q com.apple.quarantine; then
-  die "the installed app carries the quarantine attribute; the previous one was put back"
-fi
-codesign --verify --deep --strict "$TARGET" 2>/dev/null   || die "the installed app's signature does not verify; the previous one was put back"
-finished=1
-rm -rf "$OLD" 2>/dev/null || say "Note: could not remove the previous app at $OLD"
-say "Installed Ensemble $VERSION in $TARGET"
+placed=1
+unquarantined "$TARGET" || die "could not make sure the installed app carries no quarantine attribute; nothing was changed"
+codesign --verify --deep --strict "$TARGET" 2>/dev/null ||
+  die "the installed app's signature does not verify; nothing was changed"
 
 if [ -n "$was_running" ]; then
-  start_app
-  say "Started Ensemble again."
-elif [ "${ENSEMBLE_NO_OPEN:-}" != 1 ]; then
-  open "$TARGET"
-  say "Opening Ensemble: the dashboard opens in your browser in a few seconds."
+  # Until it runs again, a failure still puts the previous app back.
+  start_app || die "could not start the new Ensemble the way it ran; nothing was changed"
+  finished=1
+  say "Installed Ensemble $VERSION in $TARGET and started it again."
+else
+  finished=1
+  say "Installed Ensemble $VERSION in $TARGET"
+  if [ "${ENSEMBLE_NO_OPEN:-}" != 1 ]; then
+    open "$TARGET" || die "installed, but could not open it: open Ensemble from $TARGET"
+    say "Opening Ensemble: the dashboard opens in your browser in a few seconds."
+  fi
 fi
+rm -rf "$OLD" 2>/dev/null || say "Note: could not remove the previous app at $OLD"

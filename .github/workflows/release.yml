@@ -244,6 +244,31 @@ jobs:
           echo "0000000000000000000000000000000000000000000000000000000000000000  Ensemble-$VERSION-macos-universal.zip" > "$bad/SHA256SUMS.txt"
           if ENSEMBLE_RELEASE_URL="file://$bad" sh release/install-mac.sh; then fail "a zip with a bad checksum was installed"; fi
           [ "$(hub)" = "$after" ] || fail "a refused install stopped the running app"
+          # Failures, each with a stand-in for one system tool (first on PATH).
+          fake() { d="$RUNNER_TEMP/fake-$1-$2"; mkdir -p "$d"; printf '#!/bin/sh\n%s\n' "$3" > "$d/$1"; chmod +x "$d/$1"; echo "$d"; }
+          leftovers() { ls -a "$1" | grep -q '^\.Ensemble\.app\.'; }
+          # xattr cannot list the attributes: the copy counts as quarantined, nothing is installed.
+          d=$(fake xattr all 'case "$1" in -r) exit 1;; esac; exec /usr/bin/xattr "$@"')
+          dest="$RUNNER_TEMP/apps-a"; mkdir -p "$dest"
+          if PATH="$d:$PATH" ENSEMBLE_INSTALL_DIR="$dest" ENSEMBLE_NO_OPEN=1 sh release/install-mac.sh; then fail "installed although xattr failed"; fi
+          [ ! -e "$dest/Ensemble.app" ] && ! leftovers "$dest" || fail "xattr failing left something in $dest"
+          # A first install whose installed copy fails its check: nothing stays.
+          d=$(fake xattr target 'case "$1 $2" in "-r "*/Ensemble.app) exit 1;; esac; exec /usr/bin/xattr "$@"')
+          dest="$RUNNER_TEMP/apps-b"; mkdir -p "$dest"
+          if PATH="$d:$PATH" ENSEMBLE_INSTALL_DIR="$dest" ENSEMBLE_NO_OPEN=1 sh release/install-mac.sh; then fail "a first install that failed its check reported success"; fi
+          [ ! -e "$dest/Ensemble.app" ] && ! leftovers "$dest" || fail "a first install that failed its check left the app in $dest"
+          echo "xattr failures: nothing installed"
+          # launchd will not take the new copy: the old app is put back and started.
+          d=$(fake launchctl nobootstrap '[ "$1" = bootstrap ] && exit 1; exec /bin/launchctl "$@"')
+          if curl -fsSL http://127.0.0.1:8777/install-mac.sh | PATH="$d:$PATH" sh; then fail "an install launchd did not start reported success"; fi
+          [ -x "$app/Contents/MacOS/Ensemble" ] && ! leftovers /Applications || fail "a failed launchd start lost the app or left a folder"
+          answers || fail "the old app was not started again when launchd refused the new one"
+          echo "launchd refusing: the old app is back and serving"
+          # The app cannot be opened again at all: the old app is still put back.
+          d=$(fake open never 'exit 1')
+          if curl -fsSL http://127.0.0.1:8777/install-mac.sh | PATH="$d:$PATH" sh; then fail "an install that could not start the app reported success"; fi
+          [ -x "$app/Contents/MacOS/Ensemble" ] && ! leftovers /Applications || fail "a failed open lost the app or left a folder"
+          echo "open failing: the old app is back in place"
           launchctl bootout "gui/$(id -u)/com.ensemble.dashboard" || true
           rm -f "$plist"
           pkill -f "$app/Contents/MacOS/Ensemble" || true
