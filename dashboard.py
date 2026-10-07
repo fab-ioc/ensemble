@@ -9934,15 +9934,15 @@ def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
                    and not w.get("rolledOver") and not w.get("resetUnknown")), None)
     if window is None:
         return {"state": "unknown", **named}
-    mark = usage.pace_mark(window.get("resetsAt"), time.time() if now is None else now,
-                           margin, warn)
+    now = time.time() if now is None else now
+    mark = usage.pace_mark(window.get("resetsAt"), now, margin, warn)
     if mark is None:
         return {"state": "unknown", **named}
     percent = float(window["percent"])
     return {"state": "known", **named, "percent": window["percent"],
             "label": "7-day", "atLeast": not bool(window.get("trusted")),
             "pace": mark["pace"], "elapsed": mark["elapsed"],
-            "resetsAt": window.get("resetsAt"),
+            "resetsAt": window.get("resetsAt"), "nearReset": mark["nearReset"], "at": now,
             "ahead": percent > mark["pace"],
             "by": round(percent - mark["pace"], 1)}
 
@@ -9957,7 +9957,11 @@ def pace_view(snapshot: dict, now: float | None = None) -> dict:
 
 
 def _pace_reason_phrase(kind: str, reading: dict) -> str:
-    """"Codex 7-day window at 52%, ahead of pace (43% by today)"."""
+    """"Codex 7-day window at 52%, ahead of pace (43% by today)", or in a
+    week's last hours (ED-181) "Claude 7-day window at 90%, its week resets 14:00"."""
+    if reading.get("nearReset"):
+        return (f"{_usage_reason_phrase(kind, reading)}, its week resets "
+                f"{_reset_clock(reading.get('resetsAt'), reading.get('at'))}")
     state = "ahead of pace" if reading.get("ahead") else "within pace"
     return (f"{_usage_reason_phrase(kind, reading)}, {state} "
             f"({float(reading.get('pace') or 0):g}% by today)")
@@ -9984,6 +9988,40 @@ def _usage_reason_phrase(kind: str, reading: dict) -> str:
     pool = f"{reading['poolLabel']} pool " if reading.get("poolLabel") else ""
     return (f"{_agent_kind_name(kind)} {pool}{reading.get('label', 'usage')} window "
             f"at {floor}{value}%")
+
+
+def _reset_clock(resets_at, now: float | None = None) -> str:
+    """A reset time in the hub's local time, seen from ``now``: "14:00" the
+    same day, "tomorrow 02:00" the next, else "Wed 14:00"."""
+    from datetime import datetime
+    end, how = usage._reset_epoch(resets_at)
+    if how != "ok" or end is None:
+        return "soon"
+    at = datetime.fromtimestamp(end)
+    days = (at.date() - datetime.fromtimestamp(time.time() if now is None else now).date()).days
+    return at.strftime("%H:%M" if days == 0 else "tomorrow %H:%M" if days == 1 else "%a %H:%M")
+
+
+def _week_reset_clock(decision: dict, kind: str) -> str:
+    paced = ((decision.get("pace") or {}).get("kinds") or {}).get(kind, {})
+    return _reset_clock(paced.get("resetsAt"), paced.get("at"))
+
+
+def _limit_phrase(decision: dict, kind: str) -> str:
+    """The level ``kind`` is held to: "the 80% warning", or for a week about to
+    reset (ED-181) "the 95% alarm (its week resets 14:00)"."""
+    if (decision.get("nearReset") or {}).get(kind):
+        return (f"the {float(decision['alarmPercent']):g}% alarm (its week resets "
+                f"{_week_reset_clock(decision, kind)})")
+    return f"the {float(decision['warnPercent']):g}% warning"
+
+
+def _use_before_reset_why(decision: dict, kind: str) -> str:
+    """"Claude 7-day window at 90%, and its week resets 14:00: what is left is
+    used up to the 95% alarm" (ED-181)."""
+    return (f"{_usage_reason_phrase(kind, decision['figures'].get(kind, {}))}, and its week "
+            f"resets {_week_reset_clock(decision, kind)}: what is left is used up to the "
+            f"{float(decision['alarmPercent']):g}% alarm")
 
 
 def _seat_for_kind(preference: dict, kind: str) -> dict:
@@ -10018,6 +10056,11 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     (``switch_pace``); with both ahead, the one less far ahead is chosen
     (``both_ahead_of_pace``). A ``keep_agents`` seat (a task told to keep its
     agents) ignores pacing and the warning and leaves only for a spent kind.
+
+    A kind whose week resets within hours (ED-181, ``nearReset`` of its pace
+    mark) is held to the alarm, not the warning: what is left of it is lost at
+    the reset. Kept on it past the warning is ``use_before_reset``. Its worst
+    window still decides, so a spent 5-hour window refuses it all the same.
     """
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
     pace = pace_settings() if pace is None else pace
@@ -10027,6 +10070,9 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     paced = {kind: _kind_pace(snapshot, kind, codex_model,
                               pace.get("margin", PACE_MARGIN_DEFAULT), now)
              for kind in ("claude", "codex")}
+    near = {kind: paced[kind].get("state") == "known" and bool(paced[kind].get("nearReset"))
+            for kind in ("claude", "codex")}
+    limit = {kind: alarm if near[kind] else warn for kind in ("claude", "codex")}
     preferred_usage = figures.get(preferred_kind, {"state": "unknown"})
     other_usage = figures.get(other_kind, {"state": "unknown"})
     installed = installed or (lambda kind: bool(
@@ -10043,6 +10089,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
             "warnPercent": warn,
             "alarmPercent": alarm,
             "figures": figures,
+            "nearReset": near,
             "pace": {"enabled": bool(pace.get("enabled")), "keepAgents": bool(keep_agents),
                      "marginPoints": pace.get("margin", PACE_MARGIN_DEFAULT),
                      "kinds": paced},
@@ -10073,20 +10120,21 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                 and float(other_usage["percent"]) < alarm):
             return result(other_kind, "switch_alarm")
         return result(preferred_kind, "keep_agents")
-    if (float(preferred_usage["percent"]) >= warn
-            and float(other_usage["percent"]) < warn):
+    mine_pct, theirs_pct = float(preferred_usage["percent"]), float(other_usage["percent"])
+    if mine_pct >= limit[preferred_kind] and theirs_pct < limit[other_kind]:
         return result(other_kind, "switch_warning")
-    if (float(preferred_usage["percent"]) >= alarm
-            and float(other_usage["percent"]) < alarm):
+    if mine_pct >= alarm and theirs_pct < alarm:
         # Both past the warning, but only one spent: never seat the spent one.
         return result(other_kind, "switch_alarm")
-    if float(preferred_usage["percent"]) < warn:
+    if mine_pct < limit[preferred_kind]:
+        if mine_pct >= warn:
+            return result(preferred_kind, "use_before_reset")
         mine, theirs = paced.get(preferred_kind, {}), paced.get(other_kind, {})
-        # Pacing only ever moves a seat to a kind below the warning, and only
+        # Pacing only ever moves a seat to a kind below its limit, and only
         # when both weeks can be dated: an unknown reset time is not paced.
         if (pace.get("enabled") and mine.get("state") == "known"
                 and theirs.get("state") == "known" and mine["ahead"]
-                and float(other_usage["percent"]) < warn):
+                and theirs_pct < limit[other_kind]):
             if not theirs["ahead"]:
                 return result(other_kind, "switch_pace")
             return result(other_kind if theirs["by"] < mine["by"] else preferred_kind,
@@ -10193,6 +10241,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     elif decision["decision"] == "keep_agents":
         reason = ("Preferred line-up kept: this task keeps its agents, "
                   f"{_keep_agents_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
+    elif decision["decision"] == "use_before_reset":
+        reason = f"Preferred line-up kept: {_use_before_reset_why(decision, owner_kind)}."
     elif decision["decision"] == "both_ahead_of_pace":
         reason = (f"Preferred line-up kept: both kinds are ahead of pace and "
                   f"{_agent_kind_name(owner_kind)} no further: "
@@ -10336,8 +10386,8 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
         owner_usage = figures.get(owner_kind, {})
         return (f"Reviewer {action} {chosen_name}, the owner's kind: "
                 f"{_usage_reason_phrase(preferred_kind, preferred_usage)} while "
-                f"{_usage_reason_phrase(owner_kind, owner_usage)} is below the "
-                f"{float(warn):g}% warning.")
+                f"{_usage_reason_phrase(owner_kind, owner_usage)} is below "
+                f"{_limit_phrase(decision, owner_kind)}.")
     if code == "switch_alarm":
         return (f"Reviewer {action} {chosen_name}, the owner's kind: "
                 f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
@@ -10359,6 +10409,9 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
                 f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}; "
                 f"{_pace_reason_phrase(other_kind, paced.get(other_kind, {}))}.")
     relation = f"different from owner {owner_name}"
+    if code == "use_before_reset":
+        return (f"Reviewer {action} {chosen_name}, {relation}: "
+                f"{_use_before_reset_why(decision, chosen_kind)}.")
     if code == "preferred_below_warning":
         detail = (f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
                   f"is below the {float(warn):g}% warning")

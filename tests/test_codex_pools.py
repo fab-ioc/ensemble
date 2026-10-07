@@ -540,6 +540,7 @@ const USAGE_SRC_NAME = { codex: 'Codex', claude: 'Claude' };
 const USAGE = { notices: [] };
 const usagePaceOf = () => null;
 const usagePaceLine = () => '';
+const usageUseItOf = () => null;
 %s
 const win = (pool, kind, age, trusted) => ({ pool, kind, ageSeconds: age, trusted, rolledOver: false });
 const pools = { source: 'codex', state: 'ok', ageSeconds: 30, trusted: false, via: 'app-server',

@@ -290,13 +290,21 @@ def _reset_epoch(value):
 
 
 PACE_WEEK_S = 7 * 24 * 3600
+# The last hours of a week (ED-181): what is left of it is lost at the reset,
+# so the week is no longer paced nor held to the warning, only to the alarm.
+PACE_NEAR_RESET_S = 12 * 3600
 
 
-def pace_mark(resets_at, now: float, margin: float, cap: float) -> dict | None:
+def pace_mark(resets_at, now: float, margin: float, cap: float,
+              near_reset_s: float = PACE_NEAR_RESET_S) -> dict | None:
     """The weekly pace line of a 7-day window that resets at ``resets_at``
     (ED-164): the share of the window gone by at ``now``, as a percent, plus
     ``margin`` points, never above ``cap`` (the warning). None when the reset
     time is unknown or unreadable: such a window is not paced.
+
+    Within ``near_reset_s`` of the reset (ED-181) the line is not capped
+    (``nearReset``): at 97% of the week gone it is 112%, so no use is ahead
+    of it — allowance left then is lost unused at the reset.
 
     The window starts 7 days before its reset. A reset already passed reads as
     the whole week gone (the cap); one more than a week off as none gone."""
@@ -305,9 +313,12 @@ def pace_mark(resets_at, now: float, margin: float, cap: float) -> dict | None:
         return None
     start = end - PACE_WEEK_S
     elapsed = min(1.0, max(0.0, (float(now) - start) / PACE_WEEK_S))
-    line = min(float(cap), elapsed * 100 + float(margin))
+    near = 0 < end - float(now) <= float(near_reset_s)
+    line = elapsed * 100 + float(margin)
+    if not near:
+        line = min(float(cap), line)
     return {"pace": round(line, 1), "elapsed": round(elapsed, 4),
-            "startsAt": start, "resetsAt": resets_at}
+            "startsAt": start, "resetsAt": resets_at, "nearReset": near}
 
 
 def _minute_iso(epoch: float) -> str:

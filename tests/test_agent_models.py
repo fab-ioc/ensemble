@@ -749,6 +749,7 @@ const usageWindowRow = (w) => `<row ${w.pool} ${w.kind}>`;
 const usageCodexPoolName = (p) => p.label ? p.label + ' pool' : 'main pool';
 const usagePaceOf = () => null;
 const usagePaceLine = () => '';
+const usageUseItOf = () => null;
 const USAGE_SRC_NAME = { codex: 'Codex', claude: 'Claude' };
 const USAGE = { notices: [] };
 %s
