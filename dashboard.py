@@ -1864,6 +1864,12 @@ OWNER_OUTPUT_NOTE = (
     "No progress narration; tool calls need no preamble. Reports: outcome, evidence "
     "and tests, files or commit, blocker or next decision. Do not repeat the spec.")
 
+ASK_NOTE = (
+    "A question for the user goes through ensemble_ask (or, in a plain reply, "
+    "a standalone Ask: marker); never put a question to them in prose. "
+    "A task with a PO routes its question to that PO unless forCeo is true; "
+    "reviewers ask the owner.")
+
 # The person's messages are points the hub keeps (points.py): how to answer one.
 POINTS_NOTE = (
     "A message from the product owner reaches you with a [point Pn] line under it (one "
@@ -1881,7 +1887,7 @@ DOCUMENTS_NOTE = (
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {POINTS_NOTE} {DOCUMENTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {ASK_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -3273,7 +3279,10 @@ def note_answer(room_id: str, identity: str) -> bool:
         ask = attention.open_ask(room)
         if not ask or ask.get("from") != identity:
             return False
-        return chatroom.record_answer(room_id, identity, time.time()) is not None
+        recorded = chatroom.record_answer(room_id, identity, time.time()) is not None
+        if recorded:
+            asks.forget()
+        return recorded
     except Exception as exc:    # noqa: BLE001 — the input itself went in
         print(f"[attention] {room_id}/{identity}: the answer was not recorded: {exc!r}", flush=True)
         return False
@@ -3365,6 +3374,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "your role. Owners and reviewers get read/report tools and may move their "
          "own task to In review; project POs and planners also get board "
          "administration. The 'ensemble' skill explains the opt-ins and limits."),
+        ASK_NOTE,
         ("A message to everyone wakes only the task's owner (the engineer); to "
          "wake another specialist, address it or @mention it. Mention a reviewer "
          "only for a commit to review or a specific question, never for a plan, an "
@@ -3638,6 +3648,8 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
 You are a fresh session started for this ONE review. You remember nothing of earlier reviews: the review log below is what they found. When you have given your verdict with review_done, this session ends.
 
 Do NOT design or implement — the engineer builds, you review. Check the work against the spec and the question, hunt for bugs, edge cases, risks and gaps, and verify claims by reading the actual code or running tests.
+
+{ASK_NOTE}
 
 ## What you were asked
 From {who}:
@@ -4281,7 +4293,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
-        f"and you have the ensemble_* tools of a PO. {files}"
+        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {files}"
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) From what you already know, write {hp} (your handover: what the project is, "
@@ -4304,7 +4316,7 @@ def made_po_fresh_input(project: dict) -> str:
         f"{MADE_PO_PREFIX}{po_usage.head()} | You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
-        f"report to you and you have the ensemble_* tools of a PO. "
+        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} "
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) Learn the project from its folder {where}: read what is there (a README, notes, "
@@ -9982,15 +9994,15 @@ def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
                    and not w.get("rolledOver") and not w.get("resetUnknown")), None)
     if window is None:
         return {"state": "unknown", **named}
-    mark = usage.pace_mark(window.get("resetsAt"), time.time() if now is None else now,
-                           margin, warn)
+    now = time.time() if now is None else now
+    mark = usage.pace_mark(window.get("resetsAt"), now, margin, warn)
     if mark is None:
         return {"state": "unknown", **named}
     percent = float(window["percent"])
     return {"state": "known", **named, "percent": window["percent"],
             "label": "7-day", "atLeast": not bool(window.get("trusted")),
             "pace": mark["pace"], "elapsed": mark["elapsed"],
-            "resetsAt": window.get("resetsAt"),
+            "resetsAt": window.get("resetsAt"), "nearReset": mark["nearReset"], "at": now,
             "ahead": percent > mark["pace"],
             "by": round(percent - mark["pace"], 1)}
 
@@ -10005,7 +10017,11 @@ def pace_view(snapshot: dict, now: float | None = None) -> dict:
 
 
 def _pace_reason_phrase(kind: str, reading: dict) -> str:
-    """"Codex 7-day window at 52%, ahead of pace (43% by today)"."""
+    """"Codex 7-day window at 52%, ahead of pace (43% by today)", or in a
+    week's last hours (ED-181) "Claude 7-day window at 90%, its week resets 14:00"."""
+    if reading.get("nearReset"):
+        return (f"{_usage_reason_phrase(kind, reading)}, its week resets "
+                f"{_reset_clock(reading.get('resetsAt'), reading.get('at'))}")
     state = "ahead of pace" if reading.get("ahead") else "within pace"
     return (f"{_usage_reason_phrase(kind, reading)}, {state} "
             f"({float(reading.get('pace') or 0):g}% by today)")
@@ -10032,6 +10048,40 @@ def _usage_reason_phrase(kind: str, reading: dict) -> str:
     pool = f"{reading['poolLabel']} pool " if reading.get("poolLabel") else ""
     return (f"{_agent_kind_name(kind)} {pool}{reading.get('label', 'usage')} window "
             f"at {floor}{value}%")
+
+
+def _reset_clock(resets_at, now: float | None = None) -> str:
+    """A reset time in the hub's local time, seen from ``now``: "14:00" the
+    same day, "tomorrow 02:00" the next, else "Wed 14:00"."""
+    from datetime import datetime
+    end, how = usage._reset_epoch(resets_at)
+    if how != "ok" or end is None:
+        return "soon"
+    at = datetime.fromtimestamp(end)
+    days = (at.date() - datetime.fromtimestamp(time.time() if now is None else now).date()).days
+    return at.strftime("%H:%M" if days == 0 else "tomorrow %H:%M" if days == 1 else "%a %H:%M")
+
+
+def _week_reset_clock(decision: dict, kind: str) -> str:
+    paced = ((decision.get("pace") or {}).get("kinds") or {}).get(kind, {})
+    return _reset_clock(paced.get("resetsAt"), paced.get("at"))
+
+
+def _limit_phrase(decision: dict, kind: str) -> str:
+    """The level ``kind`` is held to: "the 80% warning", or for a week about to
+    reset (ED-181) "the 95% alarm (its week resets 14:00)"."""
+    if (decision.get("nearReset") or {}).get(kind):
+        return (f"the {float(decision['alarmPercent']):g}% alarm (its week resets "
+                f"{_week_reset_clock(decision, kind)})")
+    return f"the {float(decision['warnPercent']):g}% warning"
+
+
+def _use_before_reset_why(decision: dict, kind: str) -> str:
+    """"Claude 7-day window at 90%, and its week resets 14:00: what is left is
+    used up to the 95% alarm" (ED-181)."""
+    return (f"{_usage_reason_phrase(kind, decision['figures'].get(kind, {}))}, and its week "
+            f"resets {_week_reset_clock(decision, kind)}: what is left is used up to the "
+            f"{float(decision['alarmPercent']):g}% alarm")
 
 
 def _seat_for_kind(preference: dict, kind: str) -> dict:
@@ -10066,6 +10116,11 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     (``switch_pace``); with both ahead, the one less far ahead is chosen
     (``both_ahead_of_pace``). A ``keep_agents`` seat (a task told to keep its
     agents) ignores pacing and the warning and leaves only for a spent kind.
+
+    A kind whose week resets within hours (ED-181, ``nearReset`` of its pace
+    mark) is held to the alarm, not the warning: what is left of it is lost at
+    the reset. Kept on it past the warning is ``use_before_reset``. Its worst
+    window still decides, so a spent 5-hour window refuses it all the same.
     """
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
     pace = pace_settings() if pace is None else pace
@@ -10075,6 +10130,9 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     paced = {kind: _kind_pace(snapshot, kind, codex_model,
                               pace.get("margin", PACE_MARGIN_DEFAULT), now)
              for kind in ("claude", "codex")}
+    near = {kind: paced[kind].get("state") == "known" and bool(paced[kind].get("nearReset"))
+            for kind in ("claude", "codex")}
+    limit = {kind: alarm if near[kind] else warn for kind in ("claude", "codex")}
     preferred_usage = figures.get(preferred_kind, {"state": "unknown"})
     other_usage = figures.get(other_kind, {"state": "unknown"})
     installed = installed or (lambda kind: bool(
@@ -10091,6 +10149,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
             "warnPercent": warn,
             "alarmPercent": alarm,
             "figures": figures,
+            "nearReset": near,
             "pace": {"enabled": bool(pace.get("enabled")), "keepAgents": bool(keep_agents),
                      "marginPoints": pace.get("margin", PACE_MARGIN_DEFAULT),
                      "kinds": paced},
@@ -10121,20 +10180,21 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                 and float(other_usage["percent"]) < alarm):
             return result(other_kind, "switch_alarm")
         return result(preferred_kind, "keep_agents")
-    if (float(preferred_usage["percent"]) >= warn
-            and float(other_usage["percent"]) < warn):
+    mine_pct, theirs_pct = float(preferred_usage["percent"]), float(other_usage["percent"])
+    if mine_pct >= limit[preferred_kind] and theirs_pct < limit[other_kind]:
         return result(other_kind, "switch_warning")
-    if (float(preferred_usage["percent"]) >= alarm
-            and float(other_usage["percent"]) < alarm):
+    if mine_pct >= alarm and theirs_pct < alarm:
         # Both past the warning, but only one spent: never seat the spent one.
         return result(other_kind, "switch_alarm")
-    if float(preferred_usage["percent"]) < warn:
+    if mine_pct < limit[preferred_kind]:
+        if mine_pct >= warn:
+            return result(preferred_kind, "use_before_reset")
         mine, theirs = paced.get(preferred_kind, {}), paced.get(other_kind, {})
-        # Pacing only ever moves a seat to a kind below the warning, and only
+        # Pacing only ever moves a seat to a kind below its limit, and only
         # when both weeks can be dated: an unknown reset time is not paced.
         if (pace.get("enabled") and mine.get("state") == "known"
                 and theirs.get("state") == "known" and mine["ahead"]
-                and float(other_usage["percent"]) < warn):
+                and theirs_pct < limit[other_kind]):
             if not theirs["ahead"]:
                 return result(other_kind, "switch_pace")
             return result(other_kind if theirs["by"] < mine["by"] else preferred_kind,
@@ -10241,6 +10301,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     elif decision["decision"] == "keep_agents":
         reason = ("Preferred line-up kept: this task keeps its agents, "
                   f"{_keep_agents_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
+    elif decision["decision"] == "use_before_reset":
+        reason = f"Preferred line-up kept: {_use_before_reset_why(decision, owner_kind)}."
     elif decision["decision"] == "both_ahead_of_pace":
         reason = (f"Preferred line-up kept: both kinds are ahead of pace and "
                   f"{_agent_kind_name(owner_kind)} no further: "
@@ -10384,8 +10446,8 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
         owner_usage = figures.get(owner_kind, {})
         return (f"Reviewer {action} {chosen_name}, the owner's kind: "
                 f"{_usage_reason_phrase(preferred_kind, preferred_usage)} while "
-                f"{_usage_reason_phrase(owner_kind, owner_usage)} is below the "
-                f"{float(warn):g}% warning.")
+                f"{_usage_reason_phrase(owner_kind, owner_usage)} is below "
+                f"{_limit_phrase(decision, owner_kind)}.")
     if code == "switch_alarm":
         return (f"Reviewer {action} {chosen_name}, the owner's kind: "
                 f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
@@ -10407,6 +10469,9 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
                 f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}; "
                 f"{_pace_reason_phrase(other_kind, paced.get(other_kind, {}))}.")
     relation = f"different from owner {owner_name}"
+    if code == "use_before_reset":
+        return (f"Reviewer {action} {chosen_name}, {relation}: "
+                f"{_use_before_reset_why(decision, chosen_kind)}.")
     if code == "preferred_below_warning":
         detail = (f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
                   f"is below the {float(warn):g}% warning")
@@ -11632,6 +11697,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "specRev": _spec_rev(spec)})
                 return
             out = _annotate_room_liveness(room, with_points=True)
+            out["reportsToRoom"] = room_po_id(room)
             try:
                 # The pop-out's "Make PO of a new project…", as the list row has it.
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
@@ -13882,10 +13948,20 @@ class Handler(BaseHTTPRequestHandler):
                 return err(-32602, "message is required")
             room = chatroom.get_room(room_id, public=False)
             po = room_po_id(room) if room else ""
+            direct_human = to == "user" or (to.lower() in chatroom.BROADCAST
+                                             and room is not None
+                                             and not chatroom.wake_targets(room, identity, to, text))
+            part = chatroom.participant(room or {}, identity) or {}
+            fallback = (asks.safety(text) if direct_human and not po
+                        and not str(part.get("role") or "").lower().startswith("reviewer") else [])
             result = chatroom.post_message(room_id, identity, text, to=to,
-                                           wait_for_human=not po)
+                                           wait_for_human=not po,
+                                           structured_asks=fallback or None,
+                                           ask_audience="po" if po else "")
             if result is None:
                 return err(-32000, "room no longer exists")
+            if fallback or asks.parse(text):
+                asks.forget()
             self._ring_recipients(room_id, result)
             _history_nudge(room_id, "turn")
             status = result["status"]
@@ -14631,7 +14707,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "missing_fields"})
                 return
             try:
-                found = asks.parse(points._balloon_text(rid, mid, {}) or "")
+                found = asks.balloon_asks(rid, mid)
             except Exception as e:  # noqa: BLE001
                 print(f"[asks] {rid}: {mid} not read: {e!r}", flush=True)
                 found = []

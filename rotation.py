@@ -844,6 +844,9 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         elif code == "keep_agents":
             out["reason"] = (f"Owner kept on {name(cur)}: this task keeps its agents, "
                              f"{_d._keep_agents_why(cur, mine, warn)}.")
+        elif code == "use_before_reset":
+            out["reason"] = (f"Owner kept on {name(cur)}: "
+                             f"{_d._use_before_reset_why(decision, cur)}.")
         elif code == "both_ahead_of_pace":
             out["reason"] = (f"Owner kept on {name(cur)}: both kinds are ahead of pace and "
                              f"{name(cur)} no further: " + pace_why.replace(", while ", "; ")
@@ -1682,6 +1685,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"from it too. Task reports and progress digests will wake you; the ensemble_* "
         f"tools show the tasks.",
         _d.OWNER_OUTPUT_NOTE,
+        _d.ASK_NOTE,
         f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
         f"They give context for the hub's Board now: priorities, decisions and "
         f"why, what is in flight, what has been promised to {_d.operator_name()}, and "

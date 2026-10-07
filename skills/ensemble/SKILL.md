@@ -18,6 +18,11 @@ running under Ensemble — say so instead of guessing.
 
 ## Orientation: always start with `ensemble_whoami`
 
+Every real question for the user goes through `ensemble_ask`; in a plain reply,
+write a standalone `Ask:` line with options underneath. Never ask the user a
+question in prose. A task with a project PO sends its question to that PO;
+set `forCeo: true` to send a card directly to the user.
+
 It returns your identity, role, task id, project, working directory, task folder
 and teammates, the **write scope** your tool calls are limited to, and your
 project's PO (`projectPO`, with `reportsTo` saying in words where your reports
@@ -776,7 +781,7 @@ their name), asks a decision of them, or says something is live, blocked or
 failed; when unsure it shows. Your narration ("Checking the log", "Now the
 handover") folds, and so does a note that opens "Nothing new", "No action
 needed" or "Nothing needs you": open a plain acknowledgement that way. A reply that *is* for them still says so best: start the
-paragraph with `Re P12:` (it answers their ask), `Decision needed:` (see
+paragraph with `Re P12:` (it answers their ask), `Ask:` (see
 below), or address them, `To <their name>:` or `For you:`.
 
 **Answer your tasks in the task.** A task's `question` or `blocked` waits for
@@ -790,15 +795,10 @@ below, then answer the task. A `[digest]` line "#N stalled since HH:MM" means
 the hub nudged an idle owner and it did not carry on: look at it, steer it or
 stop it.
 
-**Asking the product owner to decide.** Put the whole decision in one reply:
-
-1. a line of its own: `Decision needed: <the question, in one sentence>`;
-2. the options as a short list, each with what it means for them;
-3. your recommendation, and why.
-
-The chat marks that reply "needs your decision" and the "Latest" control counts
-it while it is unread. Never say something needs their decision without the
-question, and never spread one decision across several turns.
+**Asking the product owner to decide.** Call `ensemble_ask` with the question,
+1–6 options (or `yesno: true`), and optional Markdown context. It posts a
+quick-answer card; their click sends the answer and closes the ask. In a plain
+reply, use the `Ask:` format below. Never put a question to them in prose.
 
 **Several questions in one message: one `Ask:` each.** When a reply holds
 more than one thing only the product owner can answer, give each its own

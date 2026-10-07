@@ -81,12 +81,14 @@ async function main() {
           await ev("edAddLast(); const ta=document.querySelector('.ed-text'); ta.value='Question one\\nQuestion two'; ta.dispatchEvent(new Event('input',{bubbles:true})); ta.focus(); 0");
           await pressClick('#send');
           out.push({kind:'points',sent:await ev('window.__sent')});
-          await ev("(()=>{renderBubbles([{id:'qa1',from:'codex',text:'Ask: What should happen?'}]); const ta=document.querySelector('.qa-cm textarea'); ta.value='Please proceed.'; ta.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.qa-send').scrollIntoView();})()");
+          await ev("(()=>{const who=ROOM_OBJ.participants.find(p=>p.kind==='agent'&&!/^reviewer/i.test(p.role||'')).identity; const text='Ask: What should happen?'; renderBubbles([{id:'qa1',from:who,text,asks:parseAsks(text),askAudience:'user'}]); const ta=document.querySelector('.qa-cm textarea'); ta.value='Please proceed.'; ta.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.qa-send').scrollIntoView();})()");
           await pressClick('.qa-send');
           out.push({kind:'quick-answer',asked:await ev('window.__asked')});
           await ev(`(() => {
             window.__asked=[];
-            renderBubbles([{id:'qa-ime',from:'codex',text:'Ask: Your composed answer?'}]);
+            const who=ROOM_OBJ.participants.find(p=>p.kind==='agent'&&!/^reviewer/i.test(p.role||'')).identity;
+            const text='Ask: Your composed answer?';
+            renderBubbles([{id:'qa-ime',from:who,text,asks:parseAsks(text),askAudience:'user'}]);
             const ta=document.querySelector('.qa-cm textarea');
             ta.value='Composed'; ta.dispatchEvent(new Event('input',{bubbles:true}));
             ta.focus(); ta.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
