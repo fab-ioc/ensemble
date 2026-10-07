@@ -347,6 +347,50 @@ class HelperFailureTest(unittest.TestCase):
         self.assertEqual(self.started[-2:], [self.install / "Ensemble.exe",
                                              self.install / app_update.PREVIOUS_DIR / "Ensemble.exe"])
 
+    def test_a_new_program_that_cannot_start_rolls_back_to_the_old_one(self):
+        # Review 2: an OSError starting the new exe skipped the old copy and last.json.
+        self.h.stop_hub = lambda: (False, True)
+        in_place = self.install / "Ensemble.exe"
+
+        def start(exe, via):
+            self.started.append(Path(exe))
+            if Path(exe) == in_place and (self.install / "Ensemble.exe").read_text() == "new":
+                raise OSError(193, "not a valid Win32 application")
+        self.h.start_hub = start
+        served = iter([{"version": "1.0.0"}])   # only the old one is waited on
+        with mock.patch.object(app_update, "wait_served", lambda *a, **k: next(served, None)):
+            got = self.h.run()
+        self.assertEqual(got["stage"], "rollback")
+        self.assertEqual(self._last()["stage"], "rollback")
+        self.assertTrue(got["oldServes"])
+        self.assertEqual((self.install / "Ensemble.exe").read_text(), "old")
+        self.assertEqual(self.started[-1], in_place)
+
+    def test_start_failures_everywhere_still_record(self):
+        self.h.stop_hub = lambda: (False, True)
+        self.h.start_hub = mock.Mock(side_effect=OSError("bad exe"))
+        with mock.patch.object(app_update, "swap_back", side_effect=PermissionError("in use")):
+            got = self.h.run()
+        self.assertEqual(got["stage"], "rollback-failed")
+        self.assertFalse(got["oldServes"])
+        tried = [Path(c.args[0]) for c in self.h.start_hub.call_args_list]
+        self.assertIn(self.install / app_update.PREVIOUS_DIR / "Ensemble.exe", tried)
+
+    def test_the_lease_is_renewed_through_a_long_copy(self):
+        # Review 2: nothing renewed it between the preflight and the swap.
+        self.h.stop_hub = lambda: (False, False)
+        beats = []
+        self.h.renew = lambda: beats.append(1)
+
+        def slow_copy(new_from, names, folder):
+            import time as _t
+            _t.sleep(0.5)
+            return new_from
+        with mock.patch.object(app_update, "LEASE_BEAT_S", 0.05), \
+                mock.patch.object(app_update, "bring_near", slow_copy):
+            self.h.run()
+        self.assertGreaterEqual(len(beats), 3)
+
     def test_anything_unexpected_still_records(self):
         self.h.stop_hub = mock.Mock(side_effect=RuntimeError("boom"))
         got = self.h.run()

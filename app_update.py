@@ -37,6 +37,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -56,6 +57,8 @@ UPDATE_DIRS = (PREVIOUS_DIR, FAILED_DIR, INCOMING_DIR, ".ensemble-previous", ".e
 # How long a new version has to answer, on the preflight port and then on the
 # hub's own, before it counts as not starting.
 SERVE_TIMEOUT_S = 120
+# How often the helper renews the restart lease while it runs.
+LEASE_BEAT_S = 20
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -605,6 +608,20 @@ class Helper:
             self.log(f"rooms not brought back: {e}")
 
     def run(self) -> dict:
+        """The update, with the lease renewed every 20 s throughout (a long
+        copy or swap holds it as the hub's download did)."""
+        done = threading.Event()
+
+        def beat() -> None:
+            while not done.wait(LEASE_BEAT_S):
+                self.renew()
+        threading.Thread(target=beat, daemon=True).start()
+        try:
+            return self._run()
+        finally:
+            done.set()
+
+    def _run(self) -> dict:
         new_app = Path(self.plan["newApp"])
         cur_app = Path(self.plan["app"])
         new_from, new_names = app_entries(new_app, self.platform)
@@ -632,7 +649,10 @@ class Helper:
             return self._swap_and_start(cur_app, folder, names, new_from, new_names, prev, failed)
         except Exception as e:      # noqa: BLE001 — whatever happens, leave an app serving
             self.log(f"unexpected: {e!r}")
-            self.ensure_serving(cur_app, prev, False)
+            try:
+                self.ensure_serving(cur_app, prev, False)
+            except Exception as e2:     # noqa: BLE001 — the result is still recorded
+                self.log(f"could not start any app: {e2!r}")
             return self.record(ok=False, stage="error", reason=str(e), previous=str(prev))
 
     def _swap_and_start(self, cur_app: Path, folder: Path, names: list[str], new_from: Path,
@@ -659,8 +679,9 @@ class Helper:
         self.log(f"swapped in the new version; the old one is in {prev}")
         if new_from.name == INCOMING_DIR:
             shutil.rmtree(new_from, ignore_errors=True)
-        self.start_hub(exe_in(cur_app, self.platform), via_service)
-        served = wait_served(self.port, self.plan["toVersion"], SERVE_TIMEOUT_S, self.renew)
+        served = None
+        if self._try_start(exe_in(cur_app, self.platform), via_service):
+            served = wait_served(self.port, self.plan["toVersion"], SERVE_TIMEOUT_S, self.renew)
         if decide(served, self.plan["toVersion"]) == "keep":
             self.restore_rooms()
             return self.record(ok=True, stage="done")
@@ -676,8 +697,7 @@ class Helper:
                                oldServes=bool(back), previous=str(prev),
                                reason="the new version did not serve and putting the old one "
                                       f"back failed ({e}); the old version is in {prev}")
-        self.start_hub(exe_in(cur_app, self.platform), via_service)
-        back = wait_served(self.port, None, SERVE_TIMEOUT_S, self.renew)
+        back = self.ensure_serving(cur_app, prev, via_service)
         self.restore_rooms()
         return self.record(ok=False, stage="rollback", rolledBack=True, oldServes=bool(back),
                            reason="the new version did not serve on the hub's port")
@@ -691,14 +711,23 @@ class Helper:
         old_in_prev = prev / cur_app.name if self.platform == "darwin" else prev
         in_place = exe_in(cur_app, self.platform)
         for exe in (in_place, exe_in(old_in_prev, self.platform)):
-            if not exe.is_file():
+            if not exe.is_file() or not self._try_start(exe, via_service and exe == in_place):
                 continue
-            self.start_hub(exe, via_service and exe == in_place)
             got = wait_served(self.port, None, SERVE_TIMEOUT_S, self.renew)
             if got:
                 return got
             self.stop_hub_after_failed_start()
         return None
+
+    def _try_start(self, exe: Path, via_service: bool) -> bool:
+        """start_hub, False when the program cannot even be started (a broken
+        or half-written executable raises)."""
+        try:
+            self.start_hub(exe, via_service)
+            return True
+        except (OSError, subprocess.SubprocessError, ValueError) as e:
+            self.log(f"could not start {exe}: {e!r}")
+            return False
 
     def stop_hub_after_failed_start(self) -> None:
         """Stop a hub this helper started that did not serve: by its own pid
