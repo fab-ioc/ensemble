@@ -72,7 +72,8 @@ class ThePaceLine(unittest.TestCase):
     def test_it_is_capped_at_the_warning(self):
         # 15 + 65 = 80 at about day 4.55; never above it after.
         self.assertEqual(usage.pace_mark(CODEX_RESET.isoformat(), WEEK_START + 4.6 * DAY, 15, 80)["pace"], 80)
-        self.assertEqual(usage.pace_mark(CODEX_RESET.isoformat(), WEEK_START + 6.9 * DAY, 15, 80)["pace"], 80)
+        # ... until the week's last 12 hours (ED-181, test_pace_near_reset).
+        self.assertEqual(usage.pace_mark(CODEX_RESET.isoformat(), WEEK_START + 6.4 * DAY, 15, 80)["pace"], 80)
         # A reset already passed reads as the whole week gone.
         self.assertEqual(usage.pace_mark(CODEX_RESET.isoformat(), WEEK_START + 9 * DAY, 15, 80)["pace"], 80)
 

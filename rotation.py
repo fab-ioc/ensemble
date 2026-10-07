@@ -844,6 +844,9 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         elif code == "keep_agents":
             out["reason"] = (f"Owner kept on {name(cur)}: this task keeps its agents, "
                              f"{_d._keep_agents_why(cur, mine, warn)}.")
+        elif code == "use_before_reset":
+            out["reason"] = (f"Owner kept on {name(cur)}: "
+                             f"{_d._use_before_reset_why(decision, cur)}.")
         elif code == "both_ahead_of_pace":
             out["reason"] = (f"Owner kept on {name(cur)}: both kinds are ahead of pace and "
                              f"{name(cur)} no further: " + pace_why.replace(", while ", "; ")

@@ -2824,6 +2824,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .usage-pace { font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px;
     font-variant-numeric: tabular-nums; }
   .usage-pace .ahead { color: var(--c-warning-fg); font-weight: 600; }
+  /* A week about to reset (ED-181): fine, so no colour; said in words. */
+  .usage-pace .use { color: var(--fg); font-weight: 600; }
   /* A Codex pool's heading in the tray: its name, and whether Codex sessions
      run on it. Words, not colour: being in use is not a status. */
   .usage-pool {
@@ -4025,7 +4027,7 @@ window.DOC_LISTENERS_PAUSED = false;
       <span><input type="number" id="pref-pace-margin" min="0" max="100" step="1"
              placeholder="15" autocomplete="off"> <span class="pref-label">points</span></span>
     </div>
-    <p class="cfg-hint">A kind whose 7-day use is past the share of the week gone by, plus the head start, is ahead of pace (15 points: about 15% at a reset, 43% after two days, the warning from day 4.6). A new owner, review or handover then goes to the other kind while that one is not. Pacing never stops work, and a task set to keep its agents is not paced.</p>
+    <p class="cfg-hint">A kind whose 7-day use is past the share of the week gone by, plus the head start, is ahead of pace (15 points: about 15% at a reset, 43% after two days, the warning from day 4.6). A new owner, review or handover then goes to the other kind while that one is not. In a week's last 12 hours what is left would be lost at the reset, so that kind is not paced and is used up to the alarm. Pacing never stops work, and a task set to keep its agents is not paced.</p>
     <!-- The New session dialog's model suggestions (#im-model). -->
     <datalist id="model-presets">
       <option value="opus"></option>
@@ -16686,10 +16688,11 @@ function usageChipPart(src) {
     (named ? `<i class="usage-chip-wname">${esc(w.label)}</i>` : '')
     + `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
-  const pace = usagePaceOf(src);
+  const pace = usagePaceOf(src), useIt = usageUseItOf(src);
   const tip = name + (used ? ` (sessions use the ${usageCodexPoolName(used)})` : '')
     + ' — ' + all.map(w => usageChipTip(w, name)).join(' · ')
-    + (pace ? ` · ${usagePaceText(name, pace)}${pace.ahead ? ', ahead of pace' : ''}` : '');
+    + (useIt ? ` · week ${usageUseItText(useIt)}`
+      : pace ? ` · ${usagePaceText(name, pace)}${pace.ahead ? ', ahead of pace' : ''}` : '');
   return `<span class="usage-chip-kind" title="${esc(tip)}"
     >${esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b></span>`;
 }
@@ -16723,8 +16726,9 @@ function usageWindowRow(win, srcName, pace) {
     pctCls = win.trusted ? '' : 'unknown';
   }
   const reset = !win.rolledOver && win.resetsAt ? usageResetText(win.resetsAt) : '';
-  // Today's pace mark on this kind's paced 7-day bar.
-  const tick = pace && pace.state === 'known' && !win.rolledOver && win.percent != null
+  // Today's pace mark on this kind's paced 7-day bar; none in a week's last
+  // hours, when the week is no longer paced (ED-181).
+  const tick = pace && pace.state === 'known' && !pace.nearReset && !win.rolledOver && win.percent != null
     ? `<b class="usage-pace-tick" style="left:${Math.max(0, Math.min(100, pace.pace))}%"
          title="Pace: ${esc(String(pace.pace))}% by today"></b>` : '';
   return `<div class="usage-win" title="${esc(why || reset)}">
@@ -16838,7 +16842,7 @@ function usageSourceHtml(src) {
     </div>
     ${inUse}
     ${rows}
-    ${usagePaceLine(name, pace)}
+    ${usagePaceLine(name, pace, usageUseItOf(src))}
     ${spent}${frozen}${rolled}${unverifiable}${via}
   </div>`;
 }
@@ -16852,11 +16856,32 @@ function usagePaceOf(src) {
   return k && k.state === 'known' ? k : null;
 }
 
+// A kind whose week resets within hours (ED-181): the hub seats it up to the
+// alarm, paced or not, since what is left is lost at the reset. Null otherwise.
+function usageUseItOf(src) {
+  const k = ((USAGE.pace || {}).kinds || {})[src.source];
+  if (!(k && k.state === 'known' && k.nearReset)) return null;
+  // Spent: the week, or a current 5-hour window of the same pool, at the alarm.
+  const alarm = USAGE.alarmPercent ?? 95;
+  const spent = k.percent >= alarm || (src.windows || []).some(w => w.kind === 'five_hour'
+    && !w.rolledOver && w.percent != null && w.percent >= alarm
+    && (!k.pool || (w.pool || 'codex') === k.pool));
+  return { ...k, spent };
+}
+// "resets 14:00 — use it", or only "resets 14:00" once it is spent.
+function usageUseItText(k) {
+  return usageResetText(k.resetsAt) + (k.spent ? '' : ' — use it');
+}
+
 // "Codex 7-day 52% · pace 43%" and, past the mark, "ahead of pace".
 function usagePaceText(name, pace) {
   return `${name} 7-day ${pace.atLeast ? '≥' : ''}${Math.round(pace.percent)}% · pace ${Math.round(pace.pace)}%`;
 }
-function usagePaceLine(name, pace) {
+function usagePaceLine(name, pace, useIt) {
+  if (useIt) {
+    return `<div class="usage-pace" title="Its week resets within hours and what is left is lost then, so it is not paced and new seats go to ${esc(name)} until the ${esc(String(USAGE.alarmPercent ?? 95))}% alarm.">${
+      esc(`${name} 7-day ${useIt.atLeast ? '≥' : ''}${Math.round(useIt.percent)}% · `)}<span class="use">${esc(usageUseItText(useIt))}</span></div>`;
+  }
   if (!pace) return '';
   const pool = pace.poolLabel ? ` (${pace.poolLabel} pool)` : '';
   return `<div class="usage-pace" title="The share of the week gone by plus ${esc(String((USAGE.pace || {}).marginPoints ?? 15))} points, never above the warning. Ahead of it, new seats go to the other kind while that one is not.">${esc(usagePaceText(name, pace) + pool)}${
