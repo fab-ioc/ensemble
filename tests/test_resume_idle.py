@@ -443,6 +443,64 @@ class ASpecAmendmentReachesARunningOwner(_Stops):
         self.assertEqual(dashboard.hub_input_kind(typed[0]), {"kind": "spec"})
         self.assertIn("one line to claude", self.log())
 
+    def test_a_quiet_resume_reads_the_transcript_for_a_line_already_taken(self):
+        # Review 1: a quiet resume knows no turn state; the busy owner's line
+        # is taken when its own transcript holds it, and then nothing is typed.
+        for took, typed_n in ((True, 0), (False, 1)):
+            rid = self.room(spec="Sell the X5.")
+            chatroom.patch_participant(rid, "claude", dashboard.spec_seen(self.part(rid), "Sell the X5."))
+            self.running(rid, "claude", "working")
+            h = _Ring()
+            self.amend(rid, "Sell the X3.", h)
+            line = h.rung[0][2]
+            self.assertTrue(self.part(rid)["specRung"]["head"].startswith("[spec] "))
+            turns = [{"role": "user", "text": line if took else "something else"},
+                     {"role": "assistant", "text": line}]     # an echo is not a read
+            self.stop(rid)
+            with mock.patch.object(dashboard, "read_session_turns", lambda sid: turns):
+                self.handler()._resume_room(chatroom.get_room(rid, public=False), quiet=True)
+                self.join()
+            self.assertEqual(len(self.typed(rid)["claude"]), typed_n, took)
+
+    def test_a_seeded_resume_has_seen_the_spec_it_was_given(self):
+        rid = self.room(spec="Sell the X5.")
+        full = chatroom.get_room(rid, public=False)
+        full["messages"] = []
+        chatroom.update_room(full)
+        chatroom.patch_participant(rid, "claude", dashboard.spec_seen(self.part(rid), "Sell the X4."))
+        h = self.handler()
+        plain = h._resume_room_agent_pty
+
+        def seeded(room_full, part, collab=True, seed="", human=False):
+            return {**plain(room_full, part, collab, seed, human), "prompted": bool(seed)}
+        h._resume_room_agent_pty = seeded
+        h._resume_room(chatroom.get_room(rid, public=False), quiet=True)
+        self.join()
+        self.assertEqual(self.part(rid)["specSeen"]["rev"], dashboard._spec_rev("Sell the X5."))
+
+    def test_amending_your_own_spec_marks_it_seen(self):
+        ctx = self.caller()
+        rid = ctx["room"]["id"]
+        full = chatroom.get_room(rid, public=False)
+        full.update(launched=True, spec="Plan it.")
+        chatroom.update_room(full)
+        chatroom.patch_participant(rid, "claude", {"sessionId": "sid-planner"})
+        ctx["part"] = self.part(rid)
+        self.running(rid, "claude", "working")
+        ensemble_tools._update_task(ctx, {"taskId": rid, "spec": "Plan it well."}, _Ring())
+        self.assertFalse(dashboard.spec_unseen(chatroom.get_room(rid, public=False), self.part(rid)))
+        self.assertEqual(self.part(rid)["specSeen"]["rev"], dashboard._spec_rev("Plan it well."))
+
+    def test_a_whitespace_only_edit_keeps_the_spec_and_its_revision(self):
+        # A spec stored with whitespace around it (made by another path): an
+        # edit that only trims it is not rung, so its revision must stay.
+        rid = self.room(spec="Sell the X5.\n")
+        rev = dashboard._spec_rev("Sell the X5.\n")
+        ok, room, _err = dashboard.update_task(rid, spec="  Sell the X5.")
+        self.assertTrue(ok)
+        self.assertEqual(dashboard._spec_rev(room["spec"]), rev)
+        self.assertEqual(dashboard._spec_rev(chatroom.get_room(rid, public=False)["spec"]), rev)
+
     def test_the_same_spec_again_rings_nobody(self):
         rid = self.room(spec="Sell the X5.")
         self.running(rid, "claude", "idle")

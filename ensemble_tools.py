@@ -1565,6 +1565,14 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
     lose it; the next resume note must then still send it to read the spec.
     An administrator amending its own task's spec is not rung: it wrote it."""
     if room["id"] == ctx["room"]["id"]:
+        # It wrote it: it has seen this revision (a quiet return must not
+        # tell it, dashboard.spec_unseen).
+        if ctx.get("part"):
+            try:
+                _d.chatroom.patch_participant(room["id"], ctx["identity"],
+                                              _d.spec_seen(ctx["part"], new_spec))
+            except Exception:   # noqa: BLE001
+                pass
         return "you amended your own spec: nobody else to tell"
     line, inlined = _d.spec_change_line(room, old_spec, new_spec, by=_amender_name(ctx, room))
     owners = _d.chatroom.owners(room)
@@ -1590,7 +1598,8 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
             # A busy owner's line is only queued: ``specRung`` lets a hub
             # restart that finds it idle count it as taken (dashboard.spec_unseen).
             mark = (_d.spec_seen(part, new_spec) if ident in idle
-                    else {"specRung": _d.spec_seen(part, new_spec)["specSeen"]})
+                    else {"specRung": {**_d.spec_seen(part, new_spec)["specSeen"],
+                                       "head": line.splitlines()[0][:200]}})
             try:
                 _d.chatroom.patch_participant(room["id"], ident, mark)
             except Exception:   # noqa: BLE001

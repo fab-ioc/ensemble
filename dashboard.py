@@ -2232,7 +2232,8 @@ def spec_unseen(room: dict, part: dict, state: str = "") -> bool:
     """Whether this very session read an older revision of the spec than the
     one now (``specSeen``); no record says nothing (it is not guessed). A
     ``[spec]`` line typed while it was busy (``specRung``) counts as seen when
-    it is ``idle`` now: the queued line became a turn, and that turn ended."""
+    it is ``idle`` now (the queued line became a turn, and that turn ended)
+    or when its transcript holds the line (a quiet resume knows no state)."""
     seen = part.get("specSeen")
     sid = part.get("sessionId") or ""
     if not (isinstance(seen, dict) and sid and seen.get("sessionId") == sid):
@@ -2241,8 +2242,23 @@ def spec_unseen(room: dict, part: dict, state: str = "") -> bool:
     if seen.get("rev") == rev:
         return False
     rung = part.get("specRung")
-    return not (state == "idle" and isinstance(rung, dict)
-                and rung.get("sessionId") == sid and rung.get("rev") == rev)
+    if not (isinstance(rung, dict) and rung.get("sessionId") == sid and rung.get("rev") == rev):
+        return True
+    return not (state == "idle" or _spec_line_taken(sid, rung))
+
+
+def _spec_line_taken(sid: str, rung: dict) -> bool:
+    """Whether the session's transcript holds the ``[spec]`` line typed into
+    it (``specRung["head"]``, its first line): it was read, however the
+    session ended after. Unknown reads as not taken."""
+    head = rung.get("head") or ""
+    if not head:
+        return False
+    try:
+        turns = read_session_turns(sid) or []
+    except Exception:       # noqa: BLE001 — unknown: the owner is told
+        return False
+    return any(t.get("role") != "assistant" and head in (t.get("text") or "") for t in turns)
 
 
 def resume_note_for(room: dict, part: dict) -> str:
@@ -10666,6 +10682,10 @@ def update_task(rid: str, title=None, spec=None,
             # When it was last amended: an amendment after a task's open ask
             # answers it (attention._open_to_human).
             room["specAt"] = time.time()
+        else:
+            # Only the whitespace around it: the spec, and its revision, stay
+            # as they are (no owner is told, so none may read it as new).
+            s = room.get("spec") or s
         room["spec"] = s
         patch["spec"] = s
     if priority is not None:
@@ -12715,7 +12735,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
                 if info.get("prompted"):
-                    pass                # its first prompt is its wake
+                    # Its first prompt is its wake, and the spec as it stands.
+                    if seed:
+                        part.update(spec_seen(part, seed))
                 elif restart is not None:
                     st = restart.get(part["identity"])
                     label = task_label(room_full) or room_full["id"]
