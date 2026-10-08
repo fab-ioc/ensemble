@@ -103,6 +103,7 @@ class SessionRows(unittest.TestCase):
                 mock.patch.object(dashboard, "_room_is_live", return_value=False),
                 mock.patch.object(dashboard, "compute_room_cost", return_value={"dollars": 0}),
                 mock.patch.object(dashboard.attention, "by_room", return_value={}),
+                mock.patch.object(dashboard.attention, "reported_by_room", return_value={}),
             ]
             with mock.patch("builtins.print") as printed:
                 with ExitStack() as stack:

@@ -187,6 +187,7 @@ class CatchUpLine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = (fold_block(SRC) + js_line(SRC, "const READ_KEY = ") + js_function(SRC, "loadRead")
+                + "let DRAWN_ROOM_TS = 0;\nfunction seenTell() {}\n"   # the hub's read point: not this test's
                 + js_function(SRC, "markRead") + js_function(SRC, "catchUpOpen") + js_function(SRC, "readElsewhere"))
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
