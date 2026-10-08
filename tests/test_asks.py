@@ -109,7 +109,7 @@ out.openAfter = T.openAsks(m, P).map(a => a.n);
 out.answered = T.askBodyHtml(m, P, t => t, null);
 const A = T.pointMaps({ open: 0, planned: 0, delivered: 0, items: [], approvals: ['s:1'] });
 out.approvedOpen = T.openAsks(m, A).map(a => a.n);
-// Words of the person's in the chat after it, or a week gone: not waiting any more.
+// Words of the person's in the chat after it: not waiting any more (age alone ends nothing).
 const S = T.pointMaps({ open: 0, planned: 0, delivered: 0, items: [], approvals: [], asksSettledAt: now - 30 });
 out.settledOpen = T.openAsks(m, S).length;
 out.settledBody = T.askBodyHtml(m, S, t => t, null);
@@ -219,11 +219,11 @@ class TheMarker(unittest.TestCase):
         self.assertIn('aria-pressed="true"', a)
         self.assertEqual(self.o["approvedOpen"], [1, 2], "a thumbs up answers the ask that had a recommendation")
 
-    def test_words_in_the_chat_or_a_week_end_the_wait(self):
+    def test_words_in_the_chat_end_the_wait_age_does_not(self):
         self.assertEqual(self.o["settledOpen"], 0)
         self.assertIn("You answered after this", self.o["settledBody"])
         self.assertEqual(self.o["settledBody"].count("<textarea"), 3, "the cards still answer")
-        self.assertEqual(self.o["ages"], [3, 0, 3], "6 days: open; 8 days: not; unknown time: until answered")
+        self.assertEqual(self.o["ages"], [3, 3, 3], "6 days, 8 days, unknown time: open until answered (issue 11)")
         self.assertEqual(self.o["doneOpen"], 0, "a Done task waits for nobody")
         self.assertIn("This task is done", self.o["doneBody"])
 

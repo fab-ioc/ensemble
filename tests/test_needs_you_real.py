@@ -192,6 +192,15 @@ class APO(_Needs):
         self.report("question", "Which broker first?")
         self.assertEqual(self.item()["askKind"], "question")
 
+    def test_what_it_asks_unread_stays_past_a_week(self):
+        # Review 1: asks.py once dropped every marked ask after seven days,
+        # and a PO has nothing else that keeps it in Needs you.
+        chatroom.post_message(self.rid, "claude", "Ask: Which broker first?", to="user")
+        ts = self.age_last(9 * DAY)
+        self.assertEqual(self.item()["askKind"], "asks")
+        self.seen(ts)
+        self.assertIsNone(self.item())
+
 
 class TheReadPoint(_Needs):
     def test_moves_forward_only_and_never_past_now(self):
@@ -233,8 +242,42 @@ class TheReadPoint(_Needs):
                                   encoding="utf-8", timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout), [0, 9.5])
-        i = page.index("function renderBubbles(")
-        self.assertIn("DRAWN_ROOM_TS = roomLatestTs(ROOM_OBJ);", page[i:i + 200])
+        # Review 1: the bound is what the room held before the transcript now
+        # drawn was fetched; a redraw of older items (renderBubbles on a click,
+        # a newer ROOM_OBJ) moves nothing.
+        draw = _js_fn(page, "function renderBubbles(")
+        self.assertNotIn("DRAWN_ROOM_TS", draw)
+        solo = _js_fn(page, "async function renderSolo(")
+        took, fetched = solo.index("const roomTs = roomLatestTs(ROOM_OBJ);"), solo.index("await fetch(")
+        self.assertLess(took, fetched)
+        self.assertLess(solo.index("DRAWN_ROOM_TS = roomTs;"), solo.index("renderBubbles(items);"))
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_a_failed_read_notice_is_sent_again(self):
+        page = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+        decl = re.search(r"^let SEEN_TOLD = .*$", page, re.M).group(0)
+        js = "\n".join([
+            "let ROOM = 'room-abc', calls = [], answer = [];",
+            "globalThis.fetch = (url, opt) => { calls.push(JSON.parse(opt.body).ts);",
+            "  const a = answer.shift(); return a === 'net' ? Promise.reject(new Error('down'))",
+            "    : Promise.resolve({ ok: a === 200, status: a }); };",
+            decl, _js_fn(page, "function seenTell("),
+            "const tick = () => new Promise(r => setTimeout(r, 5));",
+            "(async () => {",
+            "  answer = ['net', 500, 200];",
+            "  seenTell(10); seenTell(10); await tick();",   # one in flight: not twice
+            "  seenTell(10); await tick();",                  # failed: sent again
+            "  seenTell(10); await tick();",                  # refused: sent again, taken
+            "  seenTell(10); seenTell(9); await tick();",     # taken: nothing more
+            "  console.log(JSON.stringify({ calls, told: SEEN_TOLD }));",
+            "})();"])
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "seen.cjs"
+            script.write_text(js, encoding="utf-8")
+            proc = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                                  encoding="utf-8", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), {"calls": [10, 10, 10], "told": 10})
 
 
 class TheProjectCount(unittest.TestCase):
@@ -271,6 +314,11 @@ const keys = k => g[k].map(e => e.key);
 console.log(JSON.stringify({ needs: keys('needs'), review: keys('review'), running: keys('running'),
                              at: (g.review.find(e => e.key === 'r-done') || {}).at }));
 """
+
+
+def _js_fn(src, head):
+    i = src.index(head)
+    return src[i:src.index("\n}\n", i) + 3]
 
 
 def _fn(head):

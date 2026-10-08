@@ -2681,18 +2681,17 @@ function askAnswer(m, a, P) {
   if (P && P.approvals && P.approvals.has(m.id) && a.recommended >= 0) return { approved: a.options[a.recommended].label };
   return null;
 }
-// Waiting for the person, by the hub's rules (asks.open_in): a week at most
-// (one of unknown time, until answered), and only until they write in the
-// chat after it, answering it in words or setting it aside. Its card still
-// answers then; it just no longer holds the balloon or asks for attention.
-const ASK_OPEN_S = 7 * 86400;
+// Waiting for the person, by the hub's rules (asks.open_in): until answered,
+// or until they write in the chat after it, answering it in words or setting
+// it aside. Its card still answers then; it just no longer holds the balloon
+// or asks for attention. (Needs you also lets go of one read a day ago.)
 // A Done task waits for nobody (asks.open_by_room): its column as stored.
 const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
 const askSettledAt = P => Math.max((P && P.asksSettledAt) || 0,
   ...((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.reportsToRoom ? []
     : ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.participants) || [])
       .filter(p => p.kind === 'agent').map(p => +p.answeredAt || 0))));
-const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < askSettledAt(P)));
+const askSettled = (m, P) => roomDone() || (!!m.ts && m.ts < askSettledAt(P));
 const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
 // One ask drawn: its question, then its quick answers or, answered, what was
 // answered with the buttons settled (pressed, disabled).
@@ -3556,8 +3555,9 @@ const ROOM_NOS = new Map();     // a task's room id → { no }: its number, once
 let STICK = true;          // at the end of the chat: new messages keep it there
 let LAST_ITEMS = null;     // what was last drawn, to draw it again after a click
 // A turn's time is when it began, so a report the agent made later in it is
-// newer than the chat's last line: what the room held when the chat was
-// last drawn (hub times) counts as read with it.
+// newer than the chat's last line: what the room held before the transcript
+// now drawn was fetched (hub times) is in it, so it counts as read with it.
+// Set only by renderSolo: a redraw of older items says nothing newer.
 let DRAWN_ROOM_TS = 0;
 const roomLatestTs = room => ((room && room.messages) || []).reduce((t, m) => Math.max(t, +m.ts || 0), 0);
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
@@ -3596,7 +3596,6 @@ function keepPlace(box, place) {
 function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
   LAST_ITEMS = items;
-  DRAWN_ROOM_TS = roomLatestTs(ROOM_OBJ);
   pmIndex(items, ROOM_OBJ);
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
@@ -3906,12 +3905,17 @@ function markRead() {
 // The hub keeps how far the person has read each task's chat (any device):
 // what they read leaves Needs you (a finished report at once, an ask a day
 // after it came; GitHub issue 11). Told once per newer message read.
-let SEEN_TOLD = 0;
+// Told once the hub took it: a failed send is told again at the next read
+// (markRead runs on each rest at the end, on leaving, and on Mark read).
+let SEEN_TOLD = 0, SEEN_SENDING = 0;
 function seenTell(ts) {
-  if (!/^room-/.test(ROOM || '') || !(ts > SEEN_TOLD)) return;
-  SEEN_TOLD = ts;
+  if (!/^room-/.test(ROOM || '') || !(ts > SEEN_TOLD) || ts <= SEEN_SENDING) return;
+  SEEN_SENDING = ts;
   fetch('/api/attention/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                 body: JSON.stringify({ roomId: ROOM, ts }) }).catch(() => {});
+                                 body: JSON.stringify({ roomId: ROOM, ts }), keepalive: true })
+    .then(r => { if (r.ok) SEEN_TOLD = Math.max(SEEN_TOLD, ts); })
+    .catch(() => {})
+    .finally(() => { if (SEEN_SENDING === ts) SEEN_SENDING = 0; });
 }
 // Another tab read further: the line here counts from that point, or goes when
 // nothing is left after it. A point behind this one changes nothing.
@@ -4584,6 +4588,7 @@ async function renderSolo(sid, agentId, force) {
   if (!sid) return;
   if (SOLO_FETCHING) { if (force) SOLO_AGAIN = true; return; }
   SOLO_FETCHING = true;
+  const roomTs = roomLatestTs(ROOM_OBJ);
   try {
     const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
     const raw = d.turns || [];
@@ -4616,6 +4621,7 @@ async function renderSolo(sid, agentId, force) {
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     items = withHubRows(items, ROOM_OBJ);
     CHAT_DRAWN = true;
+    DRAWN_ROOM_TS = roomTs;
     renderBubbles(items);
     if (!wantOk) soloWantFailed(w);
   } catch (e) {
