@@ -140,6 +140,9 @@ def _build_death(sess: "PtySession", code) -> dict:
         "killed": bool(sess._killed),
         "endedAt": time.time(),
         "startedAt": sess.created,
+        # When a person last typed into it (the hub sets ``last_input``): an
+        # exit right after is theirs (/exit, Ctrl+C), not a death.
+        "lastInput": float(getattr(sess, "last_input", 0) or 0),
         "tail": sess.tail(),
     }
 

@@ -195,10 +195,10 @@ def measure() -> dict[str, object]:
     # Read the task switcher's painted selectors, rather than assuming that a
     # semantic token with the right name is the one the interface uses.
     state_selectors = {
-        "running": ".sw-st.working",
+        "running": ".sw-st.live",
         "waiting": ".sw-st.warning",
         "blocked": ".sw-st.danger",
-        "done": ".sw-st.success",
+        "new": ".sw-st.new",
     }
     states = {label: _painted_token(page_text, selector) for label, selector in state_selectors.items()}
     state_rows = {}

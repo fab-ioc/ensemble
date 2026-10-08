@@ -71,6 +71,27 @@ def is_workspace_cwd(cwd: str) -> bool:
     return cwd == _WS or cwd.startswith(_WS + os.sep)
 
 
+# A process is created before its session file says the session started; one
+# created this long after it holds a reused pid.
+PID_REUSE_SLACK_S = 60
+
+
+def pid_reused(backend, pid, started_ms) -> bool:
+    """Whether the process holding ``pid`` began after the session that wrote
+    the pid file (``startedAt``, ms): then the session's own process is gone
+    and its file named a pid Windows has since handed on (GitHub issue 13).
+    False when either time is unknown."""
+    try:
+        started = float(started_ms) / 1000.0
+    except (TypeError, ValueError):
+        return False
+    try:
+        created = backend.process_started(int(pid))
+    except Exception:
+        return False
+    return bool(started) and created is not None and created > started + PID_REUSE_SLACK_S
+
+
 def read_session_files() -> list[dict]:
     """Read ~/.claude/sessions/<pid>.json for every live, interactive session."""
     from . import get_backend  # lazy: avoids import cycle at module load
@@ -89,6 +110,8 @@ def read_session_files() -> list[dict]:
         pid = d.get("pid")
         if not pid or not backend.process_alive(pid):
             continue
+        if pid_reused(backend, pid, d.get("startedAt")):
+            continue  # its Claude ended without removing the file; the pid is another's now
         if is_workspace_cwd(d.get("cwd", "") or ""):
             continue  # transient `claude -p` invoked by us
         # Skip non-interactive claude processes (e.g. `--bg-spare` daemons that
@@ -120,7 +143,9 @@ def read_agent_session_files() -> list[dict]:
         except (json.JSONDecodeError, OSError, ValueError):
             continue
         pid = d.get("pid")
-        if not pid or not backend.process_alive(int(pid)):
+        started = d.get("startedAt")   # seconds here
+        if (not pid or not backend.process_alive(int(pid))
+                or pid_reused(backend, pid, float(started) * 1000 if isinstance(started, (int, float)) else None)):
             try:
                 f.unlink()
             except OSError:

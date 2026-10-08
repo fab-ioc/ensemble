@@ -43,9 +43,9 @@ class IntelliJDarkTheme(unittest.TestCase):
         self.assertEqual(result["drift"], {})
         self.assertEqual(result["failed"], [])
         self.assertGreaterEqual(result["minimum_ratio"], 4.5)
-        self.assertEqual(set(result["states"]), {"running", "waiting", "blocked", "done"})
-        self.assertEqual(result["states"]["running"]["selector"], ".sw-st.working")
-        self.assertEqual(result["states"]["running"]["token"], "--run-working")
+        self.assertEqual(set(result["states"]), {"running", "waiting", "blocked", "new"})
+        self.assertEqual(result["states"]["running"]["selector"], ".sw-st.live")
+        self.assertEqual(result["states"]["running"]["token"], "--run-live")
         self.assertEqual(len({row["colour"] for row in result["states"].values()}), 4)
         self.assertGreaterEqual(min(row["on_surface"] for row in result["states"].values()), 3)
         separation = result["diff_ground_separation"]
