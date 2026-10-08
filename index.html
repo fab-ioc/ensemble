@@ -245,6 +245,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --run-working: var(--c-progress-bold);
     --run-idle: var(--fg-disabled);
     --run-off: var(--border-strong);
+    /* The list's dot for a row with a live terminal on the hub, working or
+       idle: green means running, and nothing else (GitHub issue 13). */
+    --run-live: var(--c-success-bold);
 
     /* Agent identity. Outside the semantic six on purpose: an avatar says
        WHO, never WHAT. Solid fill + light text, so it can never be read as
@@ -2514,10 +2517,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sw-st.warning { background: var(--c-warning-bold); }
   .sw-st.danger { background: var(--c-danger-bold); }
   .sw-st.neutral { background: var(--c-neutral-bold); }
-  .sw-st.working { background: var(--run-working); }
-  .sw-st.idle { background: var(--run-idle); }
+  .sw-st.live { background: var(--run-live); }
   .sw-st.new { background: var(--c-discovery-bold); }
-  .sw-st.success { background: var(--c-success-bold); }
   .sw-title {
     min-width: 0; font-size: var(--fs-300); line-height: 20px; color: var(--fg);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -6543,13 +6544,12 @@ function swState(e, group) {
     const tone = ['danger', 'warning', 'neutral'].find(t => wait.some(t2 => t2.it && swTone(t2.it.state) === t)) || 'warning';
     return { cls: tone, tip: `${wait.length} of its tasks need${wait.length === 1 ? 's' : ''} you` };
   }
-  const run = r.isLive && !r.draft ? (r.status === 'busy' ? 'working' : 'idle') : '';
-  if (run === 'working') return { cls: 'working', tip: 'working' };
-  if (sg && sg.working) return { cls: 'working', tip: `${sg.working} of its tasks working` };
+  // Green is a live terminal on the hub (the row's own, a PO's its own: its
+  // tasks' are counted in the line under it), working or idle, and nothing
+  // else: not Done, not a recent write (GitHub issue 13).
+  if (r.isLive && !r.draft) return { cls: 'live', tip: r.status === 'busy' ? 'running, working' : 'running, idle' };
   if (e.row && isUnread(r)) return { cls: 'new', tip: 'New messages since you last read this chat' };
-  if (run) return { cls: 'idle', tip: 'idle' };
-  if (group === 'done') return { cls: 'success', tip: 'done' };
-  return { cls: 'off', tip: e.row ? 'not running' : '' };
+  return { cls: 'off', tip: !e.row ? '' : group === 'done' ? 'done, not running' : 'not running' };
 }
 // Who is on a running task: "claude, codex".
 function swAgents(r) {

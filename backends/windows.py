@@ -46,6 +46,10 @@ _kernel32.TerminateProcess.restype = wintypes.BOOL
 _kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
 _kernel32.CloseHandle.restype = wintypes.BOOL
 _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+_kernel32.GetProcessTimes.restype = wintypes.BOOL
+_kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME),
+                                      ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME),
+                                      ctypes.POINTER(wintypes.FILETIME))
 
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _PROCESS_TERMINATE = 0x0001
@@ -351,6 +355,24 @@ class WindowsBackend(Backend):
             if _kernel32.GetExitCodeProcess(h, ctypes.byref(code)):
                 return code.value == _STILL_ACTIVE
             return True
+        finally:
+            _kernel32.CloseHandle(h)
+
+    def process_started(self, pid: int) -> float | None:
+        """When the process now holding ``pid`` was created (epoch seconds),
+        or None when it cannot be read. Windows hands a freed pid to the next
+        process, so a pid file can name a stranger (GitHub issue 13)."""
+        if not pid:
+            return None
+        h = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return None
+        try:
+            t = [wintypes.FILETIME() for _ in range(4)]
+            if not _kernel32.GetProcessTimes(h, *(ctypes.byref(x) for x in t)):
+                return None
+            ticks = (t[0].dwHighDateTime << 32) | t[0].dwLowDateTime
+            return ticks / 10_000_000 - 11644473600   # 100 ns since 1601 -> epoch
         finally:
             _kernel32.CloseHandle(h)
 

@@ -113,6 +113,11 @@ class Backend:
         except OSError:
             return False
 
+    def process_started(self, pid: int) -> float | None:
+        """When the process holding ``pid`` was created (epoch seconds), or
+        None when unknown. Default: unknown."""
+        return None
+
     def live_cwd_of_pid(self, pid: int) -> str | None:
         """Resolve a live process's cwd. Default: unknown (recorded cwd is used)."""
         return None

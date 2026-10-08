@@ -112,6 +112,36 @@ _ANSWER_AFTER = 5
 # module exists to fix. After a week it is history, not news.
 _DEATH_MAX_AGE = 7 * 86400
 
+# A clean exit this soon after a person typed into the terminal is theirs:
+# /exit, Ctrl+C twice, Ctrl+D (GitHub issue 13). A crash after a prompt exits
+# with an error and stays news.
+_PERSON_ENDED_S = 20
+
+
+def dealt_with(room: dict, part: dict, death: dict) -> bool:
+    """Whether a death that nobody stopped is still news: "agent gone" means
+    an agent the hub expected to run died and nobody has done anything about
+    it since (GitHub issue 13). It is not when
+
+    * the task is Done, or was stopped after it died;
+    * this agent was resumed or handed to a fresh session since (a resume
+      also gives it a new terminal, so the old record stops matching);
+    * the person's own keystrokes ended it: a clean exit moments after they
+      typed into it.
+
+    What the person does with a teammate (a chat message, typing into its
+    terminal) settles nothing about this agent.
+    """
+    ended = float(death.get("endedAt") or 0)
+    if (room.get("workflow") or "") == "done":
+        return True
+    if float(room.get("stoppedAt") or 0) >= ended:
+        return True
+    if max(float(part.get("resumedAt") or 0), float(part.get("rotatedAt") or 0)) >= ended:
+        return True
+    typed = float(death.get("lastInput") or 0)
+    return death.get("exitCode") == 0 and bool(typed) and 0 <= ended - typed <= _PERSON_ENDED_S
+
 
 # ---------------------------------------------------------------------------
 # Reading a terminal's last screen
@@ -823,6 +853,7 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
                         "rang": rang or []},
         "specAt": room.get("specAt", 0),
         "workflow": room.get("workflow", ""),
+        "stoppedAt": room.get("stoppedAt", 0),
         "po": po,
         "isPo": bool(is_po),
         "seenAt": seen_at(room),
@@ -1171,6 +1202,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
             return None            # we stopped it on purpose
         if now - float(death.get("endedAt") or 0) > _DEATH_MAX_AGE:
             return None            # old enough to be history rather than news
+        if dealt_with(room, part, death):
+            return None            # the person ended it, or carried on since
         code = death.get("exitCode")
         exit_txt = "exit status unknown" if code is None else f"exit status {code}"
         extra = {"exitCode": code, "endedAt": death.get("endedAt"),
@@ -1648,6 +1681,7 @@ def on_pty_death(rec: dict) -> None:
             "exitCode": rec.get("exitCode"),
             "killed": bool(rec.get("killed")),
             "endedAt": rec.get("endedAt", time.time()),
+            "lastInput": float(rec.get("lastInput") or 0),
             "tail": (rec.get("tail") or "")[-_TAIL_KEEP:],
         })
     except Exception:

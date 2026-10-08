@@ -182,7 +182,9 @@ misstated a floor.
 
 ### Run state — what a process is doing
 
-`--run-working` (the progress-bold shade, pulses) · `--run-idle` · `--run-off`. This is **separate from workflow status** and is
+`--run-working` (the progress-bold shade, pulses) · `--run-idle` · `--run-off` · `--run-live` (the
+success-bold shade: the left list's dot for a terminal running on the hub, working or idle, and
+nothing else; never a Done task, never a recent write — GitHub issue 13). This is **separate from workflow status** and is
 never a board column. Only `--run-working` pulses; nothing else in the product animates. Disable the
 pulse under `prefers-reduced-motion`.
 
@@ -1234,7 +1236,8 @@ self-contained component, so a later layout can host it elsewhere.
   row of it (its PO, the Board and search reach it). Activity is what each row already carries
   (`swActivity`: the newest of `updatedAt`, `newsAt` and its ask's time; nothing read per row); a
   PO's is its own and its tasks'. **What a project's tasks say is on its PO's row**: its dot takes
-  the tone of a task that needs you (the worst first), else works while one works; and a line under
+  the tone of a task that needs you (the worst first), else follows the PO's own terminal (its
+  tasks' running count is in the line under it); and a line under
   the row (`swSigHtml`, `.sw-tasks`, indented to the title, `--fs-200` `--fg-muted`, after any
   Details) says "1 needs you #12 · 2 ready for your check #3 #5 · 3 running · 1 done today",
   "needs you" in `--fg` 600, each number a small `.sw-tk` (mono, `--surface` on `--border`,
@@ -1282,9 +1285,10 @@ self-contained component, so a later layout can host it elsewhere.
 - **A row is two lines.** One: the state's 8px dot, the key (`--font-mono` `--fs-200`
   `--fg-muted`) and title (`--fs-300`, one line, ellipsis, the full text in the tooltip) and the
   age at the end (`--fs-100`, `--fg-muted`, ticks in place). The dot (`swState`) says the state in
-  the colour that means it: what needs you in its lozenge's tone, working `--run-working`, news you
-  have not read `--c-discovery-bold` ("new", standing in for the unread dot, and the title goes
-  600), idle `--run-idle`, done `--c-success-bold`, else `--run-off`; it carries its words in
+  the colour that means it: what needs you in its lozenge's tone, a terminal running on the hub
+  `--run-live` (green, working or idle: "running, working" / "running, idle"), news you have not
+  read `--c-discovery-bold` ("new", standing in for the unread dot, and the title goes 600), else
+  `--run-off` (a Done task that does not run is off: "done, not running"); it carries its words in
   `aria-label`. Two (`--fs-200`, `--fg-muted`, indented to the title): Needs you's lozenge, then
   one line of words, the project first: who is on a running task ("claude, codex"), or why a task
   is ready ("in review", "reported", "paused"), then `+ −`. An Unassigned row gives the folder it
