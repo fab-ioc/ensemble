@@ -183,6 +183,7 @@ async function main() {
     // A desktop opens on the last conversation or the first Needs you entry
     // (#135): each of these pages starts on none, as its checks expect.
     if (!boot) await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}" }, sessionId);   // the grouped list: its rows include a project's tasks (#189)
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
     await until('window.ensBooted === true', 30000);
