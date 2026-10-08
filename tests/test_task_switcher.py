@@ -268,7 +268,7 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn('aria-current="true"', busy)
         self.assertNotIn('unread-dot', busy)                             # bold title + dot say it now
         self.assertIn('<span class="tno">ED-7</span> Busy one', busy)    # the number with its project's key
-        self.assertIn('<span class="sw-st working" role="img" aria-label="working"></span>', busy)
+        self.assertIn('<span class="sw-st live" role="img" aria-label="running, working"></span>', busy)
         self.assertIn('>+40 −2</span>', busy)                            # #110's change count
         self.assertIn('<span class="sw-sub">Ensemble Dashboard</span>', busy)
         self.assertIn(f'data-ago="{1790500000 + 50}"', busy)             # its last news, as an age
@@ -287,8 +287,8 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn('>+1200 −40</span>', review)
         self.assertIn('<span class="sw-sub">Ensemble Dashboard · paused</span>', row_of(h, 'data-sid="r11"'))
         self.assertIn('<span class="sw-sub">Ensemble Dashboard · in review</span>', row_of(h, 'data-sid="r3"'))
-        self.assertIn('class="sw-st idle"', row_of(h, 'data-sid="r14"'))
-        self.assertIn('class="sw-st success"', row_of(h, 'data-sid="r4"'))  # done today
+        self.assertIn('class="sw-st live"', row_of(h, 'data-sid="r14"'))
+        self.assertIn('class="sw-st off"', row_of(h, 'data-sid="r4"'))  # done today, not running
         self.assertIn('class="sw-st off"', row_of(h, 'data-sid="r3"'))
         self.assertNotIn('class="dot ', h)                               # no run chip in a row
         team = row_of(self.r["teamRow"], 'data-sid="r2"')
@@ -300,7 +300,7 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn(">Ensemble Dashboard · PO</span>", po1)
         self.assertIn('<span class="sw-sub">8 answers to check · 3 asks open</span>', po1)
         self.assertIn('class="sw-row unread"', po1)
-        self.assertIn('class="sw-st working"', po1)                       # busy beats unread
+        self.assertIn('class="sw-st live"', po1)                          # its own terminal runs: beats unread
         self.assertNotIn('class="sw-row on', po1)
         po2 = re.findall(r'<button type="button" class="sw-row[^"]*" data-po="p2".*?</button>', h, re.S)
         self.assertEqual(len(po2), 2)                                     # in Needs you and in Projects
@@ -511,7 +511,7 @@ class TaskSwitcher(unittest.TestCase):
         live = row_of(h, 'data-sid="u1"')
         self.assertIn('>Question number 1</span>', live)
         self.assertIn('<span class="sw-sub">work1</span>', live)
-        self.assertIn('<span class="sw-st working" role="img" aria-label="working"></span>', live)
+        self.assertIn('<span class="sw-st live" role="img" aria-label="running, working"></span>', live)
         self.assertIn('title="Question number 1 · D:\\code\\work1"', live)
         self.assertIn('<span class="sw-sub">work2 · past session</span>', row_of(h, 'data-sid="u2"'))
         self.assertIn('>Named one</span>', row_of(h, 'data-sid="u3"'))
