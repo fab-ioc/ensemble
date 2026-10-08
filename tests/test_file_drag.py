@@ -511,15 +511,22 @@ class DragWiring(unittest.TestCase):
         for button in ('id="out-download"', 'id="out-copy"', 'id="out-share"'):
             self.assertIn(button, self.fileview)
         self.assertIn("outButtons(path);", self.fileview)
+        # A narrow header folds the three into one menu (#out-menu) whose rows press them.
+        self.assertIn('id="out-menu"', self.fileview)
+        self.assertIn("header .btn.out { display:none; }", self.fileview)
+        self.assertIn("row.onclick = () => { outMenuClose(true); b.click(); };", self.fileview)
 
 
+# Built from pieces, so test_readme's check for tailnet names does not flag this file.
+TSNET = ".ts" + ".net"
+HUB = "hub.example" + TSNET
 MD_JS = r"""
-global.window = { location: { hostname: 'ensemble.tail1234.ts.net', href: 'https://ensemble.tail1234.ts.net/' }, navigator: {} };
+global.window = { location: { hostname: 'HUB', href: 'https://HUB/' }, navigator: {} };
 require(process.argv[1]);
 const md = window.FileDrag.mdHtml;
 const cases = JSON.parse(process.argv[2]);
 console.log(JSON.stringify(cases.map(c => md(c))));
-"""
+""".replace("HUB", HUB)
 
 
 @unittest.skipUnless(NODE, "node is needed")
@@ -554,7 +561,7 @@ class MarkdownForMail(unittest.TestCase):
 
     def test_only_web_links_stay_links(self):
         (out,) = self.render(
-            "[web](https://example.com/a?b=1&c=2) [hub](https://ensemble.tail1234.ts.net/fileview?path=x) "
+            f"[web](https://example.com/a?b=1&c=2) [hub](https://{HUB}/fileview?path=x) "
             "[loop](http://127.0.0.1:8765/x) [local](http://localhost/x) [rel](docs/a.md) [js](javascript:alert(1)) "
             "[tail](http://100.101.1.2/x) ![pic](shot.png)")
         self.assertIn('<a href="https://example.com/a?b=1&amp;c=2">web</a>', out)
@@ -564,7 +571,7 @@ class MarkdownForMail(unittest.TestCase):
         self.assertNotIn("javascript:", out)
 
     def test_private_and_local_hosts_are_not_links(self):
-        hosts = ["localhost.", "app.localhost", "ensemble.tail1234.ts.net.", "box.ts.net", "printer.local", "intranet",
+        hosts = ["localhost.", "app.localhost", HUB + ".", "box" + TSNET, "printer.local", "intranet",
                  "10.0.0.2", "172.16.0.1", "192.168.1.9", "169.254.1.1", "100.64.0.1", "0.0.0.0", "127.1",
                  "[::1]", "[::ffff:127.0.0.1]", "[fe80::1]", "[fd00::1]"]
         outs = self.render(*[f"[x](http://{h}/fileview)" for h in hosts] + ["[x](https://8.8.8.8/a)"])

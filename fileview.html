@@ -475,8 +475,17 @@
     header .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }
     header .grow { flex:1 1 0; min-width:0; }
     header .btn { flex:none; }
-    #cmt-file .lbl, header .out .lbl { display:none; }
+    #cmt-file .lbl { display:none; }
+    /* Download, Copy and Share… fold into one menu button. */
+    header .btn.out { display:none; }
+    header #out-menu { display:inline-flex; }
   }
+  #out-menu { display:none; padding:0 var(--s-100); }
+  .out-pop { position:fixed; z-index:62; min-width:150px; padding:var(--s-100); background:var(--surface-overlay);
+    border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); }
+  .out-pop button { display:flex; align-items:center; gap:var(--s-200); width:100%; padding:var(--s-100) var(--s-200);
+    border:0; border-radius:var(--r-200); background:none; color:var(--fg); font:inherit; font-size:var(--fs-200); text-align:left; cursor:pointer; }
+  .out-pop button:hover, .out-pop button:focus-visible { background:var(--hover); outline:none; }
   @media (max-width: 440px) { header .meta { display:none; } }
   .seg { display:inline-flex; }
   .seg .btn + .btn { margin-left:-1px; }
@@ -640,7 +649,7 @@
     }
     header a.btn, header button.btn { min-width: var(--touch-min); height: auto; }
     #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
-    .dir-row { min-height: var(--touch-min); }
+    .dir-row, .out-pop button { min-height: var(--touch-min); }
     #cmt-tray .cmt-item { padding-right: var(--touch-min); }
     /* A phone zooms into any field under 16px and stays zoomed. The comment
        box's own rule sets font: inherit, so it is named here. */
@@ -679,6 +688,7 @@
   <a class="btn out" id="out-download" hidden title="Download the file, with its name, to send it to someone"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg><span class="lbl">&nbsp;Download</span></a>
   <button class="btn out" id="out-copy" type="button" hidden title="Copy the file’s content, to paste it into a mail or a chat"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5" y="5" width="8.5" height="9" rx="1.5"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H10"/></svg><span class="lbl">&nbsp;Copy</span></button>
   <button class="btn out" id="out-share" type="button" hidden title="Share the file with another app"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.5 8 1.5l3 3M4.5 7H3.5v7h9V7h-1"/></svg><span class="lbl">&nbsp;Share…</span></button>
+  <button class="btn" id="out-menu" type="button" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Download, copy or share" title="Download, copy or share the file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg>&nbsp;▾</button>
 </header>
 <main id="main"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
@@ -1517,6 +1527,7 @@ function outButtons(path) {
   const opts = { room: ROOM, cwd: CWD };
   const dl = document.getElementById('out-download'), cp = document.getElementById('out-copy'), sh = document.getElementById('out-share');
   dl.hidden = false;
+  document.getElementById('out-menu').hidden = false;
   dl.onclick = e => { e.preventDefault(); FileDrag.download(path, opts); };
   cp.hidden = !FileDrag.isText(path);
   cp.onclick = () => FileDrag.copy(path, opts).then(name => toast('Copied the content of ' + name), e => {
@@ -1532,6 +1543,46 @@ function outButtons(path) {
     toast(e && e.name === 'NotAllowedError' ? 'The file is ready: choose Share… again.' : 'The file could not be shared: use Download.');
   });
 }
+// In a narrow header the three buttons fold into #out-menu: a small menu
+// whose rows press the matching (hidden) button.
+function outMenuClose(focus) {
+  const pop = document.querySelector('.out-pop'), btn = document.getElementById('out-menu');
+  if (!pop) return;
+  pop.remove(); btn.setAttribute('aria-expanded', 'false');
+  if (focus) btn.focus();
+}
+function outMenuOpen() {
+  const btn = document.getElementById('out-menu');
+  if (document.querySelector('.out-pop')) { outMenuClose(true); return; }
+  const pop = document.createElement('div');
+  pop.className = 'out-pop'; pop.setAttribute('role', 'menu');
+  document.querySelectorAll('header .out').forEach(b => {
+    if (b.hidden) return;
+    const row = document.createElement('button');
+    row.type = 'button'; row.setAttribute('role', 'menuitem'); row.dataset.out = b.id;
+    row.innerHTML = b.querySelector('svg').outerHTML + esc(b.querySelector('.lbl').textContent.trim());
+    row.onclick = () => { outMenuClose(true); b.click(); };
+    if (b.id === 'out-share') { row.onpointerenter = row.onfocus = () => b.onfocus && b.onfocus(); }
+    pop.appendChild(row);
+  });
+  document.body.appendChild(pop);
+  const r = btn.getBoundingClientRect();
+  pop.style.top = (r.bottom + 4) + 'px';
+  pop.style.left = Math.max(4, Math.min(r.right - pop.offsetWidth, innerWidth - pop.offsetWidth - 4)) + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+  pop.querySelector('button').focus();
+  pop.addEventListener('keydown', e => {
+    const rows = [...pop.querySelectorAll('button')], i = rows.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); outMenuClose(true); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length].focus();
+    }
+  });
+}
+document.getElementById('out-menu').onclick = outMenuOpen;
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('.out-pop, #out-menu')) outMenuClose(false);
+}, true);
 function toast(msg) { const n = document.createElement('div'); n.className = 'cmt-toast'; n.textContent = msg; document.body.appendChild(n); setTimeout(() => n.remove(), 2800); }
 let _cDocWired = false;
 function enableComments(root) {
@@ -1714,7 +1765,7 @@ async function showDir(path, main) {
       ? `<a class="dir-row is-dir" href="${fileHref(join(e.name))}">${esc(e.name)}${sep}</a>`
       : `<a class="dir-row" href="${fileHref(join(e.name))}">${esc(e.name)}<span class="sz">${esc(fmtSize(e.size))}</span></a>`));
   document.getElementById('raw').style.display = 'none';   // a folder has no raw bytes
-  document.querySelectorAll('header .out').forEach(b => { b.hidden = true; });
+  document.querySelectorAll('header .out, #out-menu').forEach(b => { b.hidden = true; });
   main.innerHTML = '';
   if ((d.entries || []).length >= 2000) main.appendChild(noteEl(['Showing the first 2000 entries only.']));
   const list = document.createElement('div');
