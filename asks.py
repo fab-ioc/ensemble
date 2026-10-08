@@ -55,7 +55,6 @@ def bind(dashboard_module) -> None:
 
 QUESTION_MAX = 200      # an ask's words kept and quoted
 LABEL_MAX = 80          # an option's label
-OPEN_DAYS = 7           # an unanswered ask counts as waiting this long
 CACHE_S = 5.0           # the open asks of every room are worked out at most this often
 
 _FENCE = re.compile(r"^[ \t]*(```|~~~)")
@@ -424,15 +423,17 @@ def answered(room_id: str) -> dict:
 
 def open_in(summary: dict, now: float | None = None) -> list[dict]:
     """The asks of a room still waiting for the person, oldest first:
-    ``[{mid, n, question, ts, who}]``. An ask counts for :data:`OPEN_DAYS`
-    (one whose time is unknown, until answered), and until the person
+    ``[{mid, n, question, ts, who}]``. An ask counts until it is answered
+    (an unread one never ages out: GitHub issue 11), and until the person
     writes in the chat after it (``asksSettledAt``: they answered in words,
     or set it aside); one whose message was approved with a thumbs up ("go
     with your recommendation") is answered if it has a recommendation. The
-    page's ``openAsks`` keeps the same rules."""
+    page's ``openAsks`` keeps the same rules. Needs you also lets go of an
+    ask the person has read once it is a day old (attention.read_and_old):
+    it stays open in the chat, for them to come back to."""
     now = time.time() if now is None else now
     rid = summary.get("id", "")
-    marked = [x for x in _room_asks(summary) if not x[1] or now - x[1] < OPEN_DAYS * 86400]
+    marked = _room_asks(summary)
     if not marked:
         return []
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
@@ -444,6 +445,8 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     out = []
     for mid, ts, qs, who in marked:
         if ts and ts < settled:
+            continue
+        if _d.attention.read_and_old(summary, ts, now):
             continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):

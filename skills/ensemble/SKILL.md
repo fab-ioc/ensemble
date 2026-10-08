@@ -386,7 +386,7 @@ verdict in its `attention` field.
 |---|---|---|
 | `agent_gone` | its terminal died and nobody asked it to — carries `exitCode` and the last lines it printed | relaunching, once you know why |
 | `blocked` | still running, but it cannot continue: its own output shows a usage or credit limit or an expired login, or it reported `blocked` (`cause: "reported"`). The offending line or the report is in `quote` | waiting for a reset, the product owner logging in, or the help it asked for |
-| `waiting_for_you` | it reported `completed` or asked a question, sent something to the user nobody answered, hit a permission, tool-approval or folder-trust prompt (Claude's or Codex's), or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
+| `waiting_for_you` | it asked a question or sent something to the user nobody answered (a `completed` report is not listed: the dashboard shows it as ready for a check; an ask the user read over a day ago and a PO's plain message are not listed either), hit a permission, tool-approval or folder-trust prompt (Claude's or Codex's), or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
 | `stalled` | (tasks without a PO; a PO project's stalls go to its PO, see *Reporting*) it was woken to do something, or started again or handed to a fresh session and told to carry on, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled, unless it was started again and has done nothing since | a look, then a nudge or a restart |
 
 In a project with a PO, a task's ask to the PO is not in this list: its row

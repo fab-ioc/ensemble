@@ -155,7 +155,8 @@ class ProjectCountsLeaveOutThePo(unittest.TestCase):
     def test_its_tasks_still_count(self):
         out = self.build([
             {"roomId": "room-po", "sessionId": "room-po", "isLive": True, "status": "waiting_human"},
-            {"roomId": "room-a", "sessionId": "room-a", "isLive": True, "status": "waiting_human"},
+            {"roomId": "room-a", "sessionId": "room-a", "isLive": True, "status": "waiting_human",
+             "attention": {"state": "waiting_for_you"}},
             {"roomId": "room-b", "sessionId": "room-b", "attention": {"state": "agent_gone"}},
         ])
         p = out["projects"][0]

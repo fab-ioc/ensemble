@@ -151,6 +151,10 @@ class _Bell(_Room):
         return next((it for it in attention.snapshot(max_age=-1)["items"]
                      if it["roomId"] == self.rid), None)
 
+    def reported(self):
+        """The finished report /api/attention keeps for "Ready for your check"."""
+        return attention.snapshot(max_age=-1)["reported"].get(self.rid)
+
     def busy(self):
         self.screen = BUSY_SCREEN
         self.sess.last_output = time.time()
@@ -195,16 +199,20 @@ class TheBellKeepsIt(_Bell):
             self.assertIsNone(self.item())
         self.report("blocked", BLOCKED)
         self.report("completed", "Sold.")
-        it = self.item()
-        self.assertEqual((it["state"], it["quote"]), ("waiting_for_you", "Sold."))
-        self.assertEqual(it["askKind"], "completed")     # the task switcher: ready to review
+        # A finished report is never Needs you (GitHub issue 11): it is
+        # ready for the person's check, beside the items.
+        self.assertIsNone(self.item())
+        self.assertEqual(self.reported()["line"], "Sold.")
 
     def test_the_item_names_what_was_put_to_the_person(self):
-        # The task switcher (index.html) files a "completed" under Ready to
-        # review and the rest under Needs you; the board's row carries it too.
-        for kind in ("blocked", "question", "completed"):
+        # What needs the person carries what it is; a "completed" is no item
+        # (the hub's `reported`, ready for a check); the board's row carries it too.
+        for kind in ("blocked", "question"):
             self.report(kind, "Over to you.")
             self.assertEqual(self.item()["askKind"], kind)
+        self.report("completed", "Over to you.")
+        self.assertIsNone(self.item())
+        self.assertIsNotNone(self.reported())
         src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
         self.assertIn('if k in ("state", "reason", "agentIdentity", "since", "askKind")}', src)
 
@@ -411,9 +419,11 @@ class AnsweredInTheTerminal(_Bell):
             chatroom.post_message(self.rid, "claude", "Which price?", to="user")
             self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "waiting_human")
             self.report("completed", "Sold.")
-            it = self.item()                # the finished work is what the bell holds now
-            self.assertEqual((it["state"], it["quote"]), ("waiting_for_you", "Sold."))
+            # The finished work closes the question; it is ready for a check, not Needs you.
+            self.assertIsNone(self.item())
+            self.assertEqual(self.reported()["line"], "Sold.")
             self.report("update", "Archived the listing.")
+            self.assertIsNone(self.reported())
             self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "active")
             self.assertIsNone(self.item(), mode)
             self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
