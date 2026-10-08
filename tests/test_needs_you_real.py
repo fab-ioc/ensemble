@@ -290,14 +290,67 @@ class TheReadPoint(_Needs):
         self.assertEqual(out["gaveUp"], {"calls": 5, "waits": [5000, 20000, 60000, 180000]})
         self.assertEqual(out["told"], 10)
 
-    def test_a_held_draw_is_not_read(self):
-        # Review 2: with a comment open or text selected the chat keeps its old
-        # balloons; what it was handed is not on screen, so it is not told.
-        page = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
-        draw = _js_fn(page, "function renderBubbles(")
-        self.assertEqual(draw.count("{ DRAW_HELD = true; return; }"), 2)
-        self.assertLess(draw.index("DRAW_HELD = false;"), draw.index("const stick = "))
-        self.assertIn("if (!DRAW_HELD) seenTell(Math.max(ts, DRAWN_ROOM_TS));", _js_fn(page, "function markRead("))
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_a_held_draw_is_drawn_and_read_when_the_hold_ends(self):
+        # Reviews 2 and 3: with a comment open (or text selected) the chat keeps
+        # its old balloons. What came meanwhile is not read, here or on the hub;
+        # when the hold ends it is drawn, and then reading it counts. Runs the
+        # page's own renderBubbles, markRead and flushHeldDraw in the folding
+        # test's page stand-in.
+        import test_session_folding as F
+        page = F.SRC
+        code = (F.NOUN + F.fold_block(page) + F.sends_block(page) + F.js_function(page, "renderBubbles")
+                + F.js_function(page, "patchChildren") + F.js_function(page, "markRead")
+                + F.js_function(page, "flushHeldDraw"))
+        code += "\n" + "\n".join(re.search(rf"^{k} = .*$", page, re.M).group(0)
+                                 for k in ("const taskRefProject", "let TASK_REF_PID"))
+        code += ("\nconst clearTimeout = () => {}, READ_KEY = () => 'k';"
+                 "\nlet READ_TIMER = 0, READ_MEM = null, DRAWN_ROOM_TS = 0, DRAW_HELD = false, TOLD = [], TICKS = 0;"
+                 "\nconst loadRead = () => READ_MEM; function seenTell(ts) { TOLD.push(ts); }\n")
+        head = F.RENDER_JS[:F.RENDER_JS.index("const out = {};")]
+        head = head.replace("const readTick = () => {},", "const readTick = () => { TICKS++; },")
+        head = head.replace("set: (k, v) => eval(k + ' = v'),",
+                            "set: (k, v) => eval(k + ' = v'), markRead: () => markRead(), "
+                            "flush: () => flushHeldDraw(),")
+        js = head + r"""
+const ids = () => box.kids.map(k => k.dataset.key || k.dataset.mid || '').filter(Boolean);
+const m = (id, ts) => ({ id, from: 'claude', to: 'user', text: 'Line ' + id, ts });
+const first = [m('a1', 100), m('a2', 110)];
+T.render(first);
+T.markRead();
+const out = { told0: T.get('TOLD').slice() };
+T.set('_cmtComposerOpen', true);
+T.render(first.concat([m('a3', 120)]));           // a poll brings a3 while a comment is open
+out.held = T.get('DRAW_HELD');
+out.shownHeld = ids().join(',');
+T.markRead();                                     // the read wait ends while held
+out.toldHeld = T.get('TOLD').slice();
+out.memHeld = T.get('READ_MEM') && T.get('READ_MEM').id;
+T.set('_cmtComposerOpen', false);
+T.flush();                                        // the composer closes
+out.heldAfter = T.get('DRAW_HELD');
+out.shownAfter = ids().join(',');
+out.ticks = T.get('TICKS');
+T.markRead();
+out.toldAfter = T.get('TOLD').slice();
+out.memAfter = T.get('READ_MEM').id;
+console.log(JSON.stringify(out));
+"""
+        out = subprocess.run([NODE, "-e", js], input=json.dumps({"code": code}), capture_output=True,
+                             text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        o = json.loads(out.stdout)
+        self.assertEqual(o["told0"], [110])
+        self.assertTrue(o["held"])
+        self.assertNotIn("a3", o["shownHeld"])
+        self.assertEqual((o["toldHeld"], o["memHeld"]), ([110], "a2"), "a held draw is not read")
+        self.assertFalse(o["heldAfter"])
+        self.assertIn("a3", o["shownAfter"], "the held draw runs when the hold ends")
+        self.assertGreaterEqual(o["ticks"], 1, "and the read wait starts again")
+        self.assertEqual((o["toldAfter"], o["memAfter"]), ([110, 120], "a3"))
+        # The two ways a hold ends call it.
+        self.assertIn("_cmtComposerOpen = false; att.clear(); setTimeout(flushHeldDraw, 0);", page)
+        self.assertIn("document.addEventListener('selectionchange', () => { if (DRAW_HELD) setTimeout(flushHeldDraw, 0); });", page)
 
 
 class TheProjectCount(unittest.TestCase):

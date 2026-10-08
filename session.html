@@ -3560,6 +3560,15 @@ let LAST_ITEMS = null;     // what was last drawn, to draw it again after a clic
 // Set only by renderSolo: a redraw of older items says nothing newer.
 let DRAWN_ROOM_TS = 0;
 let DRAW_HELD = false;    // the last draw was held back: what it had is not on screen
+// The hold ends (the comment composer closed, the selection gone): draw what
+// came meanwhile, and the read wait starts again if the reader is at the end.
+// An unchanged transcript draws nothing by itself, so this is the only way in.
+function flushHeldDraw() {
+  if (!DRAW_HELD || !LAST_ITEMS) return;
+  renderBubbles(LAST_ITEMS);
+  if (!DRAW_HELD) readTick(false);
+}
+document.addEventListener('selectionchange', () => { if (DRAW_HELD) setTimeout(flushHeldDraw, 0); });
 const roomLatestTs = room => ((room && room.messages) || []).reduce((t, m) => Math.max(t, +m.ts || 0), 0);
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
 let DEC_N = 0;             // of those, how many ask for a decision
@@ -3888,6 +3897,7 @@ function catchUpOpen() {
 // newer than it is in view, so a reader resting at the end writes nothing.
 function markRead() {
   clearTimeout(READ_TIMER); READ_TIMER = 0;
+  if (DRAW_HELD) return;   // what it holds is not on screen: drawn once the hold ends (flushHeldDraw)
   const items = LAST_ITEMS || [];
   for (let i = items.length - 1; i >= 0; i--) {
     const m = items[i];
@@ -3899,7 +3909,7 @@ function markRead() {
       READ_MEM = ahead ? { id: m.id, ts, at: now } : { id: cur.id, ts: cur.ts, at: now };
       try { localStorage.setItem(READ_KEY(), JSON.stringify(READ_MEM)); } catch (e) {}
     }
-    if (!DRAW_HELD) seenTell(Math.max(ts, DRAWN_ROOM_TS));
+    seenTell(Math.max(ts, DRAWN_ROOM_TS));
     break;
   }
   if (CU_POINT) { CU_POINT = null; CU_SNAP = null; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
@@ -5987,7 +5997,7 @@ function openComposer(data) {
   });
   attWire(ta, pop, att);
   chips.addEventListener('click', e => { const x = e.target.closest && e.target.closest('[data-att-x]'); if (x) att.remove(x.dataset.attX); });
-  const close = () => { pop.remove(); _cmtComposerOpen = false; att.clear(); };
+  const close = () => { pop.remove(); _cmtComposerOpen = false; att.clear(); setTimeout(flushHeldDraw, 0); };
   pop.querySelector('.cmt-cancel').onclick = close;
   pop.querySelector('.cmt-add').onclick = () => {
     const note = ta.value.trim(), images = att.stored();
