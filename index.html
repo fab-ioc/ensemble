@@ -2574,7 +2574,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-subtle); font-family: var(--font-mono); font-size: var(--fs-200); font-weight: 500;
     font-variant-numeric: tabular-nums; cursor: pointer;
   }
-  span.sw-tk { cursor: default; }
   button.sw-tk:hover { background: var(--hover); color: var(--fg); }
   .sw-tk:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--focus-ring); }
   .sw-tk.named { max-width: 160px; font-family: inherit; }
@@ -6438,7 +6437,8 @@ function swRecent(rows, items, projects, opts) {
   };
   for (const r of rows || []) {
     const pj = r && r.roomId && pjOf.get(r.roomId);
-    if (!pj || r.roomId === pj.poRoomId || r.draft || r.archived) continue;
+    // Only its tasks: a terminal session filed in the project (by its folder) does not move the PO.
+    if (!pj || !r.headless || r.roomId === pj.poRoomId || r.draft || r.archived) continue;
     const s = sig(pj.id);
     s.at = Math.max(s.at, swActivity(r, itemOf.get(r.roomId)));
   }
@@ -6611,8 +6611,9 @@ function swSigHtml(e) {
     const tip = [no, name, t.it && t.it.reason].filter(Boolean).join(' · ');
     // A task with no number is named by its title, cut short.
     const label = no ? esc(no) : `<span class="sw-tk-name">${esc(name || '(task)')}</span>`;
-    return t.row ? `<button type="button" class="sw-tk${no ? '' : ' named'}" data-sid="${esc(t.row.sessionId)}" data-room="${esc(t.key)}" title="${esc(tip)}" aria-label="${esc('Open ' + tip)}">${label}</button>`
-                 : `<span class="sw-tk${no ? '' : ' named'}" title="${esc(tip)}">${label}</span>`;
+    // A task past the page's rows has no sid: it opens its chat in a tab of its own.
+    const sid = t.row ? ` data-sid="${esc(t.row.sessionId)}"` : '';
+    return `<button type="button" class="sw-tk${no ? '' : ' named'}"${sid} data-room="${esc(t.key)}" title="${esc(tip)}" aria-label="${esc('Open ' + tip)}">${label}</button>`;
   }).join('') + (list.length > SW_SIG_NOS ? `<span class="sw-tk-more">+${list.length - SW_SIG_NOS}</span>` : '');
   const parts = [];
   if (s.needs.length) parts.push(`<span class="sw-tk-say needs">${s.needs.length} need${s.needs.length === 1 ? 's' : ''} you</span>${nos(s.needs)}`);
@@ -16660,10 +16661,7 @@ function swRender() {
   // A task can be in two groups (Running and Unassigned): focus goes back to
   // the row in the group it was in.
   const act = box.ownerDocument.activeElement;   // its own window's, when it is out
-  const key = focusKeyIn(box), had = key && act.dataset.room;
-  const hadGroup = had && act.closest('[data-group]');
-  const inGroup = hadGroup ? `[data-group="${CSS.escape(hadGroup.dataset.group)}"] ` : '';
-  const hadCls = had && document.activeElement.classList.contains('sw-diag-btn') ? '.sw-diag-btn' : '.sw-row';
+  const key = focusKeyIn(box), had = key && swFocusNote(act);
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
   if (!phone) rememberConv(sel);
@@ -16673,13 +16671,28 @@ function swRender() {
   if (wrote) swExpandHide();
   swDiagFit(box);   // before the focus goes back: a Details it lands on must show
   if (wrote && key) {
-    // A Details the list widened away (it fits now) hands the focus to its row.
-    const at = (cls) => box.querySelector(`${inGroup}${cls}[data-room="${CSS.escape(had)}"]`);
-    let back = had && at(hadCls);
-    if (back && back.hidden) back = at('.sw-row');
+    const back = had && swFocusBack(box, had);
     if (back) back.focus(); else restoreFocus(box, key);
   }
   if (back && phone) box.scrollTop = PH_BACK.top;
+}
+// The list control that had the focus, noted before a redraw: its task, its
+// group and what it is (a row, its Details, or a task number on a PO's row,
+// #189). After the redraw swFocusBack finds the same control in the new list.
+function swFocusNote(act) {
+  const room = act && act.dataset && act.dataset.room;
+  if (!room) return null;
+  const grp = act.closest('[data-group]');
+  const cls = act.classList.contains('sw-diag-btn') ? '.sw-diag-btn' : act.classList.contains('sw-tk') ? '.sw-tk' : '.sw-row';
+  return { room, group: grp ? grp.dataset.group : '', cls };
+}
+function swFocusBack(box, n) {
+  const inGroup = n.group ? `[data-group="${CSS.escape(n.group)}"] ` : '';
+  const at = (cls) => box.querySelector(`${inGroup}${cls}[data-room="${CSS.escape(n.room)}"]`);
+  let back = at(n.cls);
+  // A Details the list widened away (it fits now) hands the focus to its row.
+  if (back && back.hidden) back = at('.sw-row');
+  return back;
 }
 // A reason's Details shows where its two lines cut it off, at the width the
 // list has now (measured, not counted: the letters decide). Nothing to
@@ -16728,9 +16741,10 @@ $('#sw-filtered').addEventListener('click', (ev) => {
 $('#sw-list').addEventListener('click', (ev) => {
   if (ev.target.closest('.sw-more[data-more="unassigned"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }
   // A task a PO's row names (#189): it opens as its own row would.
-  const tk = ev.target.closest('.sw-tk[data-sid]');
+  const tk = ev.target.closest('.sw-tk[data-room]');
   if (tk) {
-    if (!((ev.ctrlKey || ev.metaKey) && pdRowPanel(tk.dataset.sid))) openDetail(tk.dataset.sid);
+    if (!tk.dataset.sid) swOpenRoomTab(tk.dataset.room);
+    else if (!((ev.ctrlKey || ev.metaKey) && pdRowPanel(tk.dataset.sid))) openDetail(tk.dataset.sid);
     if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
     return;
   }
@@ -16760,13 +16774,19 @@ function pdRowPanel(sid) {
   const r = sid ? rowBySid(sid) : null;
   return !!(r && r.roomId && r.headless && !r.orphan && pdChatOpen(r.roomId));
 }
-$('#sw-list').addEventListener('mousedown', (ev) => { if (ev.button === 1 && ev.target.closest('.sw-row[data-sid], .sw-tk[data-sid]')) ev.preventDefault(); });
+$('#sw-list').addEventListener('mousedown', (ev) => { if (ev.button === 1 && ev.target.closest('.sw-row[data-sid], .sw-tk[data-room]')) ev.preventDefault(); });
 $('#sw-list').addEventListener('auxclick', (ev) => {
-  const row = ev.button === 1 && ev.target.closest('.sw-row[data-sid], .sw-tk[data-sid]');
+  const row = ev.button === 1 && ev.target.closest('.sw-row[data-sid], .sw-tk[data-room]');
   if (!row) return;
   ev.preventDefault();
-  if (!pdRowPanel(row.dataset.sid)) openDetail(row.dataset.sid);
+  if (!row.dataset.sid) swOpenRoomTab(row.dataset.room);
+  else if (!pdRowPanel(row.dataset.sid)) openDetail(row.dataset.sid);
 });
+// A task the page does not list (past its newest rows): its chat in a tab of
+// its own, as the search opens one.
+function swOpenRoomTab(rid) {
+  if (rid) window.open('/session?room=' + encodeURIComponent(rid), '_blank', 'noopener');
+}
 // A PO's conversation from the list: its project's screen, where the PO leads
 // (the task panel steps aside). Where the dock failed to load, its drawer.
 function openPoConv(pj) {
