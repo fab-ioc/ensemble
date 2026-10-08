@@ -8,7 +8,8 @@
 # https, checks it against the release's SHA256SUMS.txt, checks the app's own
 # (ad-hoc) signature, puts Ensemble.app in /Applications (or ~/Applications
 # when /Applications is not writable without admin rights), makes sure that
-# copy carries no quarantine attribute, and opens it. Run again, it replaces
+# copy carries no quarantine attribute, opens it and waits until its hub
+# answers (or says why it does not). Run again, it replaces
 # the installed app with this release, stopping a running Ensemble first and
 # starting it again after. Nothing else on the machine is changed.
 #
@@ -18,6 +19,10 @@
 #                         points it at a local folder)
 #   ENSEMBLE_INSTALL_DIR  the folder to install into (default: see above)
 #   ENSEMBLE_NO_OPEN=1    install only, do not start the app
+#   ENSEMBLE_REPLACE_OLD_HUB=1  an older Ensemble hub on port 8765 (one run
+#                         from a source checkout, say) is stopped without
+#                         asking, with the LaunchAgent that starts it
+#   ENSEMBLE_WAIT_SECONDS how long to wait for the app to answer (default 30)
 set -eu
 
 VERSION="@VERSION@"
@@ -106,6 +111,80 @@ ditto -x -k "$TMP/$ZIP" "$TMP/unpacked" || die "could not unpack $ZIP"
 codesign --verify --deep --strict "$TMP/unpacked/$APP" 2>/dev/null \
   || die "the app's signature does not verify; not installed"
 
+# After the install: whether the app can have its port, and whether it answers.
+PORT=8765
+LOG="$HOME/Library/Logs/ensemble.log"
+WAIT="${ENSEMBLE_WAIT_SECONDS:-30}"
+not_started() {
+  printf 'Ensemble install: Ensemble %s is installed in %s but was not started: %s
+' "$VERSION" "$TARGET" "$*" >&2
+  exit 1
+}
+wait_hub() {
+  i=0
+  while [ $i -lt "$WAIT" ]; do
+    curl -fs --max-time 2 "http://127.0.0.1:$PORT/api/version" 2>/dev/null | grep -q "\"$VERSION\"" && return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+not_answering() {
+  {
+    echo "Ensemble install: Ensemble $VERSION was started but does not answer on http://127.0.0.1:$PORT/ after $WAIT s."
+    st=$("$TARGET/Contents/MacOS/Ensemble" --port-status --port "$PORT" 2>/dev/null | sed -n 's/^message=//p') || st=
+    case "$st" in "Port $PORT is free."|"") ;; *) echo "$st" ;; esac
+    echo "Its log is $LOG; the last lines:"
+    tail -n 20 "$LOG" 2>/dev/null | sed 's/^/  /' || echo "  (no log)"
+  } >&2
+  exit 1
+}
+# Before opening the app: the port is free, or held by an Ensemble hub it can
+# use, or by an older Ensemble hub that is stopped only when the person says so
+# (asked at the terminal, or ENSEMBLE_REPLACE_OLD_HUB=1). Anything else on the
+# port is never stopped: the person is told what it is.
+check_port() {
+  exe="$TARGET/Contents/MacOS/Ensemble"
+  status=$("$exe" --port-status --port "$PORT" 2>/dev/null) || return 0
+  state=$(printf '%s
+' "$status" | sed -n 's/^state=//p')
+  msg=$(printf '%s
+' "$status" | sed -n 's/^message=//p')
+  case "$state" in
+    free|"") return 0 ;;
+    other) not_started "$msg" ;;
+    ensemble)
+      v=$(printf '%s
+' "$status" | sed -n 's/^version=//p')
+      newest=$(printf '%s
+%s
+' "$v" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+      if [ "$v" = "$VERSION" ] || [ "$newest" = "$v" ]; then
+        say "Ensemble $v already serves port $PORT: opening it."
+        open "http://127.0.0.1:$PORT/" || true
+        finished=1
+        exit 0
+      fi ;;
+  esac
+  say "$msg"
+  answer=
+  if [ "${ENSEMBLE_REPLACE_OLD_HUB:-}" = 1 ]; then
+    answer=y
+  elif ( : </dev/tty ) 2>/dev/null; then
+    printf 'Stop that hub (and the sign-in service that starts it) and start Ensemble %s? [y/N] ' "$VERSION" >/dev/tty
+    read -r answer </dev/tty || answer=
+  fi
+  case "$answer" in
+    y|Y|yes|YES|Yes)
+      "$exe" --stop-old-hub --port "$PORT" | sed 's/^/  /' || true
+      st=$("$exe" --port-status --port "$PORT" 2>/dev/null | sed -n 's/^state=//p') || st=
+      [ "$st" = free ] || not_started "the older hub did not stop; see above"
+      ;;
+    *)
+      not_started "stop that hub first, or run the install again and let it stop the hub:
+  curl -fsSL https://github.com/$REPO/releases/latest/download/install-mac.sh | ENSEMBLE_REPLACE_OLD_HUB=1 sh" ;;
+  esac
+}
+
 # Where: an existing install is updated where it is.
 if [ -n "${ENSEMBLE_INSTALL_DIR:-}" ]; then
   DEST="$ENSEMBLE_INSTALL_DIR"
@@ -179,12 +258,20 @@ if [ -n "$was_running" ]; then
   start_app || die "could not start the new Ensemble the way it ran; nothing was changed"
   finished=1
   say "Installed Ensemble $VERSION in $TARGET and started it again."
+  rm -rf "$OLD" 2>/dev/null || say "Note: could not remove the previous app at $OLD"
+  OLD=
+  wait_hub || not_answering
+  say "Ensemble $VERSION is running: http://127.0.0.1:$PORT/"
 else
   finished=1
   say "Installed Ensemble $VERSION in $TARGET"
+  rm -rf "$OLD" 2>/dev/null || say "Note: could not remove the previous app at $OLD"
+  OLD=
   if [ "${ENSEMBLE_NO_OPEN:-}" != 1 ]; then
-    open "$TARGET" || die "installed, but could not open it: open Ensemble from $TARGET"
-    say "Opening Ensemble: the dashboard opens in your browser in a few seconds."
+    check_port
+    open "$TARGET" || not_started "could not open it: open Ensemble from $TARGET"
+    say "Starting Ensemble ..."
+    wait_hub || not_answering
+    say "Ensemble $VERSION is running: the dashboard opens in your browser (http://127.0.0.1:$PORT/)."
   fi
 fi
-rm -rf "$OLD" 2>/dev/null || say "Note: could not remove the previous app at $OLD"

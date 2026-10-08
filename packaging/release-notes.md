@@ -8,7 +8,7 @@
 curl -fsSL https://github.com/fab-ioc/ensemble/releases/latest/download/install-mac.sh | sh
 ```
 
-It downloads `Ensemble-@VERSION@-macos-universal.zip`, checks it against `SHA256SUMS.txt` and the app's own signature, puts Ensemble in `/Applications` (or `~/Applications`) and opens it. macOS does not block an app installed this way. Run it again to update in place.
+It downloads `Ensemble-@VERSION@-macos-universal.zip`, checks it against `SHA256SUMS.txt` and the app's own signature, puts Ensemble in `/Applications` (or `~/Applications`), opens it and waits until the dashboard answers, or prints why not and the end of the log. macOS does not block an app installed this way. Run it again to update in place. If an older Ensemble hub (one run from a clone) holds port 8765, the install asks before stopping it (`| ENSEMBLE_REPLACE_OLD_HUB=1 sh` stops it without asking); it never stops another program.
 
 **The disk image** (`Ensemble-@VERSION@-macos-universal.dmg`) works too, but the app has no Apple developer signature, so macOS blocks the first open and right-click › Open is not enough on macOS 15 or later:
 

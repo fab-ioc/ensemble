@@ -204,7 +204,10 @@ jobs:
           if xattr -r "$app" | grep -q com.apple.quarantine; then fail "$app carries the quarantine attribute"; fi
           codesign --verify --deep --strict "$app" || fail "the installed app's signature does not verify"
           answers || fail "the installed app did not answer /api/version with $VERSION"
-          echo "installed and serving"
+          for i in $(seq 20); do grep -q "opened the dashboard in the browser: http://127.0.0.1:8765/" "$HOME/Library/Logs/ensemble.log" && break; sleep 1; done
+          grep "ensemble app:" "$HOME/Library/Logs/ensemble.log" || true
+          grep -q "opened the dashboard in the browser: http://127.0.0.1:8765/" "$HOME/Library/Logs/ensemble.log"             || fail "the app did not open the dashboard in the browser"
+          echo "installed and serving, the dashboard opened"
           # Again, with the app running: updated in place and started again.
           before=$(hub)
           curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh || fail "the second install failed"
@@ -271,6 +274,67 @@ jobs:
           echo "open failing: the old app is back in place"
           launchctl bootout "gui/$(id -u)/com.ensemble.dashboard" || true
           rm -f "$plist"
+          pkill -f "$app/Contents/MacOS/Ensemble" || true
+          for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8765/ || break; sleep 1; done
+          # The port held by another program: the install says so, starts
+          # nothing and stops nothing; the app opened by itself says so too.
+          python3 -m http.server 8765 --bind 127.0.0.1 > /dev/null 2>&1 &
+          other=$!
+          for i in $(seq 20); do curl -fs -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
+          if out=$(curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh 2>&1); then echo "$out"; fail "an install with another program on the port reported success"; fi
+          echo "$out"
+          echo "$out" | grep -q "in use by another program (process $other" || fail "the install did not name the program on the port"
+          kill -0 "$other" || fail "the install stopped another program"
+          [ -z "$(hub)" ] || fail "the app started although the port was held"
+          rc=0; ENSEMBLE_NO_DIALOG=1 "$app/Contents/MacOS/Ensemble" || rc=$?
+          [ "$rc" = 1 ] || fail "the app with the port held exited $rc"
+          tail -n 3 "$HOME/Library/Logs/ensemble.log" | grep -q "tells the person: Port 8765 is in use by another program"             || fail "the app did not say the port was held"
+          kill "$other"
+          echo "another program on the port: named, not stopped"
+          for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8765/ || break; sleep 1; done
+          # An older hub run from a source checkout (no /api/version): named,
+          # stopped only when asked, then the new app serves.
+          old="$RUNNER_TEMP/old checkout"; mkdir -p "$old"
+          cp tests/fixtures/old_hub/dashboard.py tests/fixtures/old_hub/install-launchd.sh "$old/"
+          /usr/bin/python3 "$old/dashboard.py" --port 8765 > /dev/null 2>&1 &
+          oldpid=$!
+          for i in $(seq 20); do curl -fs -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
+          if out=$(curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh 2>&1); then echo "$out"; fail "an install with an older hub on the port reported success"; fi
+          echo "$out"
+          echo "$out" | grep -q "in use by an older Ensemble hub" || fail "the install did not name the older hub"
+          echo "$out" | grep -q "ENSEMBLE_REPLACE_OLD_HUB=1" || fail "the install did not say how to switch over"
+          kill -0 "$oldpid" || fail "the install stopped the older hub without being asked"
+          rc=0; ENSEMBLE_NO_DIALOG=1 "$app/Contents/MacOS/Ensemble" || rc=$?
+          [ "$rc" = 1 ] || fail "the app with an older hub on the port exited $rc"
+          tail -n 3 "$HOME/Library/Logs/ensemble.log" | grep -q "tells the person: Port 8765 is in use by an older Ensemble hub"             || fail "the app did not say an older hub holds the port"
+          kill -0 "$oldpid" || fail "the app stopped the older hub without being asked"
+          curl -fsSL http://127.0.0.1:8777/install-mac.sh | ENSEMBLE_REPLACE_OLD_HUB=1 sh || fail "the switch-over install failed"
+          ! kill -0 "$oldpid" 2>/dev/null || fail "the older hub still runs"
+          answers || fail "the new app did not serve after the older hub was stopped"
+          pkill -f "$app/Contents/MacOS/Ensemble" || true
+          for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8765/ || break; sleep 1; done
+          echo "an older hub: named, stopped when asked"
+          # The same, started by its own LaunchAgent (KeepAlive, the checkout's
+          # label): booted out, its file moved aside, and it does not come back.
+          cat > "$plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>Label</key><string>com.ensemble.dashboard</string>
+          <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>$old/dashboard.py</string><string>--port</string><string>8765</string></array>
+          <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>2</integer>
+          </dict></plist>
+          PLIST
+          launchctl bootstrap "gui/$(id -u)" "$plist" || fail "could not load the older hub's LaunchAgent"
+          for i in $(seq 20); do curl -fs -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
+          curl -fs http://127.0.0.1:8765/ | grep -q "<title>Ensemble</title>" || fail "the older hub's LaunchAgent did not start it"
+          curl -fsSL http://127.0.0.1:8777/install-mac.sh | ENSEMBLE_REPLACE_OLD_HUB=1 sh || fail "the switch-over from a LaunchAgent failed"
+          ! launchctl print "gui/$(id -u)/com.ensemble.dashboard" > /dev/null 2>&1 || fail "the older hub's LaunchAgent is still loaded"
+          [ ! -e "$plist" ] && [ -e "$HOME/.ensemble/old-launch-agents/com.ensemble.dashboard.plist" ] || fail "the older hub's LaunchAgent was not moved aside"
+          sleep 5
+          answers || fail "the new app did not serve after the LaunchAgent's hub was stopped"
+          ! pgrep -f "$old/dashboard.py" > /dev/null || fail "the older hub came back"
+          echo "an older hub under a LaunchAgent: stopped, moved aside, the new app serves"
           pkill -f "$app/Contents/MacOS/Ensemble" || true
           rm -rf "$app"
       - uses: actions/upload-artifact@v4
