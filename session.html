@@ -2749,7 +2749,7 @@ function askDraftsLoad(store = sessionStorage) {
 }
 function askDraftsSave(map = ASK_DRAFT, store = sessionStorage) {
   try {
-    const d = Object.fromEntries([...map].filter(([k, v]) => v && v.trim()));
+    const d = Object.fromEntries([...map].filter(([k, v]) => typeof v === 'string' && v));
     if (Object.keys(d).length) store.setItem(ASK_DRAFT_KEY(), JSON.stringify(d));
     else store.removeItem(ASK_DRAFT_KEY());
   } catch (e) {}
@@ -2765,9 +2765,10 @@ function askRestoreDrafts(box) {
     const d = ASK_DRAFT.get(ta.dataset.ask);
     if (d && !ta.value) ta.value = d;
   });
-  // An ask answered (here or on another device) keeps no draft.
+  // An ask answered (here or on another device) keeps no draft; one still
+  // being sent from here keeps it until the hub has taken it.
   let gone = false;
-  box.querySelectorAll('.qa.done[data-ask]').forEach(c => { if (ASK_DRAFT.delete(c.dataset.ask)) gone = true; });
+  box.querySelectorAll('.qa.done[data-ask]').forEach(c => { if (!ASK_LOCAL.has(c.dataset.ask) && ASK_DRAFT.delete(c.dataset.ask)) gone = true; });
   if (gone) askDraftsSave();
 }
 function askSyncDraft(key) {

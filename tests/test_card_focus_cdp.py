@@ -140,6 +140,22 @@ async function main() {
     await key('keyUp', 'Enter', 2);
     try { await until(`document.querySelectorAll('#msgs .qa')[2].classList.contains('done') && !document.querySelectorAll('#msgs .qa')[2].classList.contains('busy')`, 8000); out.sentDone = true; }
     catch (e) { out.sentDone = false; out.valueAfterKeys = await evalIn(`(${TA} || {}).value || null`); }
+    // A send the hub refuses keeps the comment: in the box, and in storage
+    // while it is on its way (review 1).
+    const QA1 = `document.querySelectorAll('#msgs .qa')[1]`;
+    await evalIn(`(() => { ${QA1}.querySelector('textarea').focus(); return 1; })()`);
+    await send('Input.insertText', { text: 'not this time  ' }, sessionId);
+    await sleep(200);
+    out.failedSend = await evalIn(`(async () => {
+      const key = ${QA1}.dataset.ask; let release;
+      const p = askSend(key, '', () => new Promise((_, no) => { release = no; }));
+      await new Promise(r => setTimeout(r, 300));
+      const mid = { busy: ${QA1}.classList.contains('busy'), stored: JSON.parse(sessionStorage.getItem(ASK_DRAFT_KEY()) || '{}')[key] || null };
+      release(new Error('the hub did not answer'));
+      await p;
+      const ta = ${QA1}.querySelector('textarea');
+      return { mid, value: ta ? ta.value : null, stored: JSON.parse(sessionStorage.getItem(ASK_DRAFT_KEY()) || '{}')[key] || null };
+    })()`);
     // A comment kept across a reload: the first card's.
     await evalIn(`(() => { const ta = document.querySelectorAll('#msgs .qa')[0].querySelector('textarea'); ta.focus(); return 1; })()`);
     await send('Input.insertText', { text: 'kept over a reload' }, sessionId);
@@ -246,6 +262,14 @@ class TypingThroughRedraws(unittest.TestCase):
 
     def test_a_comment_survives_a_reload(self):
         self.assertEqual(self.got["afterReload"], "kept over a reload")
+
+    def test_a_refused_send_keeps_the_comment(self):
+        f = self.got["failedSend"]
+        self.assertTrue(f["mid"]["busy"], "the card shows it is being sent")
+        self.assertEqual(f["mid"]["stored"], "not this time  ", "kept while on its way")
+        self.assertEqual(f["value"], "not this time  ")
+        self.assertEqual(f["stored"], "not this time  ")
+        self.assertFalse([t for t, k in self.sent if "not this time" in t], "the refused answer was not delivered")
 
     def test_send_tooltips_name_the_shortcut(self):
         for tip in self.got["tips"]:

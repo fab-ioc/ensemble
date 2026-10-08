@@ -72,8 +72,8 @@ class CardKeys(unittest.TestCase):
     def test_a_draft_is_kept_per_room_until_emptied(self):
         g = self.got
         self.assertEqual(g["emptyAtStart"], 0)
-        self.assertEqual(g["stored"], {"s:1:0": "half a thought"}, "blank comments are not kept")
-        self.assertEqual(g["loaded"], [["s:1:0", "half a thought"]])
+        self.assertEqual(g["stored"], {"s:1:0": "half a thought", "s:1:2": "  "}, "any unsent text is kept, spaces too")
+        self.assertEqual(g["loaded"], [["s:1:0", "half a thought"], ["s:1:2", "  "]])
         self.assertIsNone(g["afterEmpty"], "nothing left: the key is removed")
         self.assertEqual(g["badValue"], [["s:1:1", "ok"]])
         self.assertEqual(g["badJson"], 0)
