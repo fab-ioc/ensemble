@@ -90,6 +90,8 @@ class Receipts(unittest.TestCase):
             mock.patch.object(dashboard.ptyrun, "get", lambda pid: self.ptys.get(pid)),
             mock.patch.object(dashboard.ptyrun, "list_sessions", lambda: []),
             mock.patch.object(dashboard.rotation, "IDLE_S", 0),
+            # Not a hub that has just started (its rooms still coming back).
+            mock.patch.object(sends, "STARTED_AT", 0),
             mock.patch.object(dashboard.attention, "looks_like_prompt", lambda tail: False),
             mock.patch.object(dashboard, "load_projects", lambda: []),
             mock.patch.object(dashboard, "RESUME_NOTE_WAIT_S", 2),
@@ -503,15 +505,37 @@ class Receipts(unittest.TestCase):
             sends.sync(rid, room=room, force=True, now=now + 5 + sends.RESCAN_UNKNOWN_S + 1)
             self.assertEqual(len(reads), 4)
 
-    def test_a_send_its_transcript_never_shows_is_not_failed_for_retry(self):
-        # Its turn is skipped by the reader ("<", "Caveat:"): the agent read
-        # it, so Retry would type it in twice.
+    def test_a_send_the_chat_does_not_draw_is_read_from_the_raw_transcript(self):
+        # Its turn is skipped by the chat reader ("<", "Caveat:"): looked for
+        # in the transcript itself, so it is confirmed (no balloon to point
+        # at) or, never read by a stopped agent, failed: never pending for good.
         rid = self.room()
-        status, out = self.post({"roomId": rid, "text": "<b>bold</b> please", "key": "send:lt"})
+        status, out = self.post({"roomId": rid, "text": "<b>bold</b> please", "key": "send:lu"})
+        with tempfile.TemporaryDirectory() as d:
+            tp = Path(d) / "t.jsonl"
+            tp.write_text(json.dumps({"type": "user", "timestamp": iso(out["send"]["at"] + 2),
+                                      "message": {"role": "user", "content": out["send"]["text"]}}),
+                          encoding="utf-8")
+            sends._SCANNED.clear()
+            # The transcript's own time is the hidden line's: written since the send.
+            with mock.patch.object(dashboard, "find_transcript", lambda sid: tp), \
+                    mock.patch.object(points, "_session_stat", lambda sid: None):
+                rows = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
+        # Shown once, as read: the chat draws no turn for it.
+        [row] = [s for s in rows if s["key"] == "send:lu"]
+        self.assertEqual((row["state"], row.get("read"), row.get("mid")), ("confirmed", True, None))
+        s = sends.get(rid, "send:lu")
+        self.assertEqual((s["state"], s.get("mid")), ("confirmed", ""))
+        # Kept past the day a confirmed send is remembered: its balloon is the message.
+        self.assertTrue(sends._prune([s], s["stateAt"] + sends.KEEP_S + 5))
+        later = s["stateAt"] + sends.SHOW_CONFIRMED_S + 5
+        self.assertIn("send:lu", [x["key"] for x in sends.view(rid, now=later)])
+        status, out = self.post({"roomId": rid, "text": "<please review this>", "key": "send:lt"})
         self.assertEqual(out["send"]["state"], "delivered")
         self.ptys["pty-live-0"]._alive = False
-        [s] = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
-        self.assertEqual(s["state"], "delivered")
+        later = out["send"]["at"] + sends.STOPPED_AFTER_S + 5
+        [s] = [x for x in self.payload(rid, now=later)["sends"] if x["key"] == "send:lt"]
+        self.assertEqual((s["state"], s["error"]), ("failed", "the session stopped before it read this"))
 
     def test_a_send_the_team_chat_did_not_take_fails_with_retry(self):
         rid = self.room(agents=("claude", "codex"), mode="collab")
