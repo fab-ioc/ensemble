@@ -4516,9 +4516,10 @@ function sendsToShow(items) {
   const open = [];
   for (const { s, ev } of sendsBySize(all)) {
     const own = s.mid && items.find(m => m.id === s.mid);
-    if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid) gone.add(s); else open.push({ s, ev });
+    if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid && !s.read) gone.add(s); else open.push({ s, ev });
   }
   for (const { s, ev } of open) {
+    if (s.read) continue;     // read, and the chat draws no turn for it: its balloon is the message
     if (ev.kind && items.some(m => m.from === 'user' && m.id
       && (!m.ts || m.ts >= (s.at || 0) - 120) && turn(m).take(ev))) gone.add(s);
   }
@@ -4543,10 +4544,12 @@ function sendHtml(s, md) {
       + `<button type="button" class="send-discard" data-send="${esc(s.key)}">Discard</button></div>`
     : s.state === 'queued'
       ? `<div class="pend-state ok" role="status">${sent}Queued: it goes in once the session is up.</div>`
+      : s.read
+        ? `<div class="pend-state ok" role="status">${sent}Read by the agent.</div>`
       : `<div class="pend-state ok" role="status">${sent}${again && s.state === 'delivered'
         ? `Typed in again at ${esc(again)}; not yet read by the agent.` : 'Delivered, not yet read by the agent.'}`
         + (s.state === 'delivered' ? ` <button type="button" class="send-hide" data-send="${esc(s.key)}" title="Stop showing it here (it was typed in)">Hide</button>` : '') + '</div>';
-  return `<div class="msg user pending${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
+  return `<div class="msg user${s.read ? '' : ' pending'}${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
     + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div><div class="text md">${md(stripPointLines(s.text))}</div>${sendPointsHtml(s.text)}${st}</div>`;
 }
 // The asks a send holds, as the bar under a balloon names them: "P438 ·

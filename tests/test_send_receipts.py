@@ -521,9 +521,15 @@ class Receipts(unittest.TestCase):
             with mock.patch.object(dashboard, "find_transcript", lambda sid: tp), \
                     mock.patch.object(points, "_session_stat", lambda sid: None):
                 rows = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
-        self.assertNotIn("send:lu", [s["key"] for s in rows])
+        # Shown once, as read: the chat draws no turn for it.
+        [row] = [s for s in rows if s["key"] == "send:lu"]
+        self.assertEqual((row["state"], row.get("read"), row.get("mid")), ("confirmed", True, None))
         s = sends.get(rid, "send:lu")
         self.assertEqual((s["state"], s.get("mid")), ("confirmed", ""))
+        # Kept past the day a confirmed send is remembered: its balloon is the message.
+        self.assertTrue(sends._prune([s], s["stateAt"] + sends.KEEP_S + 5))
+        later = s["stateAt"] + sends.SHOW_CONFIRMED_S + 5
+        self.assertIn("send:lu", [x["key"] for x in sends.view(rid, now=later)])
         status, out = self.post({"roomId": rid, "text": "<please review this>", "key": "send:lt"})
         self.assertEqual(out["send"]["state"], "delivered")
         self.ptys["pty-live-0"]._alive = False

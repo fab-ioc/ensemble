@@ -124,7 +124,9 @@ def _save(room_id: str, items: list[dict]) -> None:
 
 
 def _prune(items: list[dict], now: float) -> list[dict]:
-    return [s for s in items if not (s["state"] == "confirmed"
+    """Confirmed sends past KEEP_S go, but one the chat does not draw
+    (``read``): its balloon is the only place the message shows."""
+    return [s for s in items if not (s["state"] == "confirmed" and not s.get("read")
                                      and now - float(s.get("stateAt") or 0) > KEEP_S)]
 
 
@@ -529,6 +531,10 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
                 _set(s, "confirmed", now)
                 mid = hits[s["key"]]
                 s["mid"], s["confirmedAt"] = ("" if HIDDEN_MID in mid else mid), now
+                if HIDDEN_MID in mid:
+                    # The chat draws no turn for it: its own balloon stays,
+                    # saying it was read (review 2).
+                    s["read"] = True
                 changed = True
             elif s["key"] in gone:
                 _set(s, "failed", now, "the session stopped before it read this")
@@ -570,10 +576,10 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
     items = reconcile(room_id, now)
     out = []
     for s in sorted(items, key=lambda s: s["at"]):
-        if s["state"] == "confirmed" and (not s.get("mid") or now - float(
+        if s["state"] == "confirmed" and not s.get("read") and (not s.get("mid") or now - float(
                 s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
             continue        # in the conversation (or never to be: a /command)
-        row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid")
+        row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read")
                if s.get(k) not in (None, "")}
         if s.get("redeliveries"):
             row["redeliveredAt"] = s["redeliveries"][-1]["at"]     # "typed in again at …"
