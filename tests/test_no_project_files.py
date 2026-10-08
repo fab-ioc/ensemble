@@ -767,7 +767,7 @@ async function main() {
         await p.rclick('#po-dock .wsp-tree .wse.file[data-path$="page.html"]'); await sleep(300);
         W.menu = await p.evalIn(`(() => { const m = ${PANE}.querySelector('.dcm'); if (!m) return null; const b = m.getBoundingClientRect();
           return { head: m.querySelector('.dcm-head').textContent, items: [...m.querySelectorAll('.dcm-item')].map(e => e.textContent), role: m.getAttribute('role'),
-            inView: b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight, focus: document.activeElement.textContent, fly: PD.dock.flyOpen() }; })()`);
+            inView: b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight, focus: document.activeElement.textContent, fly: PD.dock.flyOpen(), share: FileDrag.canShare() }; })()`);
         await p.shot('window-row-menu');
         before = await wins();
         await p.click('#po-dock .dcm .dcm-item[data-act="window"]');
@@ -1207,8 +1207,9 @@ class ThePage(unittest.TestCase):
 
     def test_a_file_row_s_menu_opens_it_in_a_window(self):
         w = self.got["windows"]
-        self.assertEqual(w["menu"], {"head": "page.html", "items": ["Open", "Open in new window"], "role": "menu", "inView": True,
-                                     "focus": "Open", "fly": "workspace"})
+        share = ["Share…"] if w["menu"]["share"] else []
+        self.assertEqual(w["menu"], {"head": "page.html", "items": ["Open", "Open in new window", "Download", "Copy content"] + share,
+                                     "role": "menu", "inView": True, "focus": "Open", "fly": "workspace", "share": w["menu"]["share"]})
         self.assertTrue(w["menuGone"])
         self.assertEqual(w["html"]["page"], {"sandbox": "allow-same-origin", "h1": "Brake chart"})
         self.assertEqual(w["three"], 3)

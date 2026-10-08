@@ -5975,14 +5975,16 @@ def file_at_mime(path: Path) -> str:
 
 # A dragstart cannot await a read: browsers close its writable dataTransfer
 # store as soon as the event returns. The page therefore prefetches metadata on
-# hover/focus and uses it only when ready; otherwise it immediately falls back
-# to the URL. The file itself is a separate attachment response so Chromium can
-# hand it to Finder/Explorer.
+# hover/focus and uses it only when ready; otherwise the drag carries the file
+# alone. No hub address is handed to another program as text. The file itself
+# is a separate attachment response so Chromium can hand it to Finder/Explorer.
 FILE_DRAG_TEXT_MAX = 1024 * 1024
+# Kept equal to TEXT_EXTS in static/filedrag.js, which offers Copy content.
 _FILE_DRAG_TEXT_EXTS = {
-    ".md", ".txt", ".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".html", ".css",
-    ".json", ".yaml", ".yml", ".toml", ".csv", ".sh", ".ps1", ".sql", ".xml",
-    ".log", ".ini", ".cfg",
+    ".md", ".markdown", ".txt", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".html", ".htm", ".css",
+    ".scss", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".sh", ".ps1", ".bat", ".cmd", ".sql", ".xml",
+    ".log", ".ini", ".cfg", ".conf", ".rst", ".tex", ".java", ".kt", ".kts", ".go", ".rs", ".c", ".h", ".cpp",
+    ".hpp", ".cs", ".swift", ".rb", ".php", ".lua", ".r", ".pl", ".vue", ".gradle", ".properties",
 }
 
 
