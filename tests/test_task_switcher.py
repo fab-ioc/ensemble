@@ -122,7 +122,48 @@ log.bar = actionsCell(rows.find(r => r.sessionId === 'u2'), false);
 log.poSel = swListHtml(g, { po: 'p2' }, true);
 log.empty = swListHtml(swGroups([], [], [], opts), {}, false);
 log.byProject = swListHtml(g, { po: 'p2' }, false, {}, 'project');
-log.by = swGroupByHtml('project');
+// The recent list (#189): POs and tasks in no project, latest activity first.
+const rc = swRecent(rows, items, P, opts);
+log.recent = rc.recent.map(e => [e.key, e.grp, e.at - T0]);
+log.recentUn = rc.unassigned.map(e => e.key);
+log.recentSig = Object.fromEntries(rc.recent.filter(e => e.sig).map(e => [e.key, {
+  needs: e.sig.needs.map(t => t.key), review: e.sig.review.map(t => t.key), running: e.sig.running, working: e.sig.working, done: e.sig.done }]));
+log.recentHtml = swListHtml(rc, { po: 'p2' }, false, { open: false });
+log.recentSel = swListHtml(rc, { sid: 'rx' }, false, {});
+// A terminal session filed in a project (by its folder) is not one of its tasks: it does not move the PO.
+const PT = P.map(p => p.id === 'p2' ? { ...p, sessions: [...p.sessions, { roomId: 'term-2' }] } : p);
+log.termAt = swRecent([...rows, { sessionId: 'term-2', roomId: 'term-2', headless: false, updatedAt: T0 + 99999 }], items, PT, opts)
+  .recent.map(e => [e.key, e.at - T0]);
+// A project with no PO has a row only while one of its tasks says something.
+const P3 = P.map(p => p.id === 'p3' ? { ...p, sessions: [{ roomId: 'r30' }] } : p);
+const r30 = row('r30', 30, 'Plain task blocked', { isLive: false, updatedAt: T0 + 900 });
+log.plain = swRecent([...rows, r30], [...items, { roomId: 'r30', state: 'blocked', askedAt: T0 + 950, reason: 'stuck', projectId: 'p3' }], P3, opts).recent.map(e => [e.key, e.grp]);
+log.plainQuiet = swRecent([...rows, { ...r30, workflow: 'backlog' }], items, P3, opts).recent.map(e => e.key);
+log.plainHtml = swListHtml(swRecent([...rows, r30], [...items, { roomId: 'r30', state: 'blocked', askedAt: T0 + 950, reason: 'stuck', projectId: 'p3' }], P3, opts), {}, false, {});
+log.recentFrozen = keys(swFreeze(swRecent(rows.map(r => r.roomId === 'rx' ? { ...r, newsAt: T0 + 9000 } : r), items, P, opts),
+                                 { recent: log.recent.map(x => x[0]), unassigned: log.recentUn }));
+log.recentThawed = swRecent(rows.map(r => r.roomId === 'rx' ? { ...r, newsAt: T0 + 9000 } : r), items, P, opts).recent.map(e => e.key);
+// Focus after a redraw (#189): the second task number on a PO's row gets it back, not the first.
+const CSS = { escape: x => String(x) };
+const ctl = (cls, room, group) => ({ dataset: { room }, classList: { contains: c => c === cls },
+                                    closest: q => q === '[data-group]' && group ? { dataset: { group } } : null });
+const asked = [];
+const newList = { querySelector: q => { asked.push(q);
+  return q === '[data-group="recent"] .sw-tk[data-room="r9"]' ? { is: 'tk r9' }
+       : q === '[data-group="needs"] .sw-diag-btn[data-room="r1"]' ? { is: 'details r1', hidden: true }
+       : q === '[data-group="needs"] .sw-row[data-room="r1"]' ? { is: 'row r1' } : null; } };
+const tkNote = swFocusNote(ctl('sw-tk', 'r9', 'recent'));
+log.focus = { note: tkNote, back: swFocusBack(newList, tkNote).is,
+              details: swFocusBack(newList, swFocusNote(ctl('sw-diag-btn', 'r1', 'needs'))).is,
+              row: swFocusNote(ctl('sw-row', 'r1', '')), none: swFocusNote(ctl('sw-clear', '', '')), asked };
+log.menu = SW_VIEWS.map(([v, t]) => nounText(t));
+// A filter looks at every task: r15 (parked) and r12 (done yesterday) are in no group.
+const go = swGroups(rows, items, P, { ...opts, other: true });
+log.other = go.other.map(e => e.key);
+log.otherHtml = swListHtml({ ...go, other: go.other.filter(e => e.key === 'r15') }, {}, false, { open: true, all: true });
+log.noOther = 'other' in g;
+// A task with no number is named by its title on its PO's row.
+log.unnumbered = swSigHtml({ sig: { needs: [{ key: 'rq', row: row('rq', 0, 'No number here', {}), it: null }], review: [], running: 0, done: 0 } });
 // A running team task names who is on it.
 log.teamRow = swListHtml(swGroups([row('r2', 7, 'Team run', { status: 'busy', members: [{ agent: 'claude' }, { agent: 'codex' }] })], [], P, opts), {}, false);
 log.one = keys(swGroups(rows, items, P, { ...opts, project: 'p2' }));
@@ -184,7 +225,8 @@ class TaskSwitcher(unittest.TestCase):
             (ROOT / "static" / "actions.js").read_text(encoding="utf-8"), BAR,
             fn(INDEX, "function actionState("), fn(INDEX, "function actionEnv("), fn(INDEX, "function actionsCell("),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function rowTitle("), fn(INDEX, "function detailTitle("),
-            fn(INDEX, "function runChip("), block("Cost chip"), block("Task numbers"), block("Task switcher")])
+            fn(INDEX, "function runChip("), fn(INDEX, "function swFocusNote("), fn(INDEX, "function swFocusBack("),
+            block("Cost chip"), block("Task numbers"), block("Task switcher")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "switcher.cjs"
             script.write_text(JS % src, encoding="utf-8")
@@ -339,8 +381,85 @@ class TaskSwitcher(unittest.TestCase):
         self.assertNotIn('data-proj=""', h)
         self.assertLess(h.index('data-group="unassigned"'), h.index('data-group="done"'))
         self.assertIn('data-sid="rx"', h[h.index('data-group="unassigned"'):])
-        self.assertEqual(self.r["by"], '<option value="status">Group: status</option>'
-                                       '<option value="project" selected>Group: project</option>')
+        self.assertEqual(self.r["menu"], ["Recent activity", "Grouped by status", "Grouped by project"])
+
+    def test_the_recent_list_is_pos_and_tasks_in_no_project(self):
+        # Latest activity first: po-1's news (+500), po-2's ask (+400), rx (-50).
+        # No project task is listed; the Plain project (no PO, nothing to say)
+        # and the unregistered one have no row.
+        self.assertEqual(self.r["recent"], [["po-1", "projects", 500], ["po-2", "needs", 400], ["rx", "idle", -50]])
+        # Unassigned keeps your own sessions; its tasks are in the list above.
+        self.assertEqual(self.r["recentUn"], ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12"])
+        h = self.r["recentHtml"]
+        self.assertEqual(re.findall(r'data-group="(\w+)"', h), ["recent", "unassigned"])
+        top = h[:h.index('data-group="unassigned"')]
+        # A project's task is named on its PO's row at most, never a row of its own.
+        self.assertEqual(re.findall(r'<button type="button" class="sw-row', top).__len__(), 3)
+        self.assertEqual(re.findall(r'class="sw-row[^"]*" data-(?:po|sid)="[^"]*" data-room="([\w-]+)"', top), ["po-1", "po-2", "rx"])
+        self.assertIn('<span class="sw-gname">Recent activity</span><span class="sw-n">3</span>', top)
+        self.assertIn("Your own sessions in no project", h)
+
+    def test_focus_goes_back_to_the_same_task_number_after_a_redraw(self):
+        f = self.r["focus"]
+        self.assertEqual(f["note"], {"room": "r9", "group": "recent", "cls": ".sw-tk"})
+        self.assertEqual(f["back"], "tk r9")
+        # A Details the list widened away hands the focus to its row.
+        self.assertEqual(f["details"], "row r1")
+        self.assertEqual(f["row"], {"room": "r1", "group": "", "cls": ".sw-row"})
+        self.assertIsNone(f["none"])
+
+    def test_a_terminal_session_in_a_project_does_not_move_its_po(self):
+        self.assertEqual(self.r["termAt"], [["po-1", 500], ["po-2", 400], ["rx", -50]])
+
+    def test_a_po_row_carries_what_its_tasks_say(self):
+        self.assertEqual(self.r["recentSig"], {
+            "po-1": {"needs": ["r1"], "review": ["r11", "r13", "r3"], "running": 2, "working": 1, "done": 1},
+            "po-2": {"needs": ["r-old", "r9"], "review": ["r6"], "running": 1, "working": 1, "done": 0}})
+        h = self.r["recentHtml"]
+        po1 = h[h.index('data-room="po-1"'):h.index('data-room="po-2"')]
+        # Its dot says a task needs you (blocked: the danger tone), the row is marked for Needs you's ways in.
+        self.assertIn('class="sw-row needs-in unread" data-po="p1"', h)
+        self.assertIn('<span class="sw-st danger" role="img" aria-label="1 of its tasks needs you">', po1)
+        self.assertIn('<span class="sw-tk-say needs">1 needs you</span><button type="button" class="sw-tk" data-sid="r1" data-room="r1"', po1)
+        self.assertIn('<span class="sw-tk-say">3 ready for your check</span>', po1)
+        self.assertIn('>#11</button>', po1)
+        self.assertIn('<span class="sw-tk-say">2 running</span>', po1)
+        self.assertIn('<span class="sw-tk-say">1 done today</span>', po1)
+        # Past three numbers, "+N".
+        po2 = h[h.index('data-room="po-2"'):h.index('data-room="rx"')]
+        self.assertIn('class="sw-row needs needs-in on" data-po="p2"', h)   # its own ask, and on screen
+        # Its Details stays right after the row (swDiagFit reads the row before it).
+        self.assertLess(po2.index('class="sw-diag-btn"'), po2.index('class="sw-tasks"'))
+        # A task past the rows opens by its room (its chat in a tab of its own).
+        self.assertIn('<button type="button" class="sw-tk" data-room="r-old" title="MO-40 · Past the newest 300 · quiet" aria-label="Open MO-40 · Past the newest 300 · quiet">MO-40</button>', po2)
+        self.assertIn('<span class="sw-tk-say needs">2 need you</span>', po2)
+        # A task in no project is its own row, selected when open.
+        self.assertIn('class="sw-row on" data-sid="rx"', self.r["recentSel"])
+
+    def test_a_project_with_no_po_shows_only_while_its_tasks_say_something(self):
+        self.assertEqual(self.r["plain"][0], ["proj:p3", "project"])
+        self.assertNotIn("proj:p3", self.r["plainQuiet"])
+        h = self.r["plainHtml"]
+        self.assertIn('class="sw-row needs-in" data-proj="p3" data-room="proj:p3"', h)
+        self.assertIn('Project with no PO', h)
+        self.assertIn('data-sid="r30"', h)
+
+    def test_a_filter_looks_at_every_task(self):
+        self.assertFalse(self.r["noOther"], "no Other tasks group without a filter")
+        self.assertEqual(self.r["other"], ["r15", "rx", "r12"])   # rx: in no project, in no group
+        h = self.r["otherHtml"]
+        self.assertIn('<span class="sw-gname">Other tasks</span><span class="sw-n">1</span>', h)
+        # It names its project and its column.
+        self.assertIn('<span class="sw-sub">Ensemble Dashboard · to do</span>', h)
+
+    def test_a_task_with_no_number_is_named_by_its_title(self):
+        self.assertIn('class="sw-tk named" data-sid="rq"', self.r["unnumbered"])
+        self.assertIn('<span class="sw-tk-name">No number here</span>', self.r["unnumbered"])
+
+    def test_the_recent_list_holds_still_under_the_pointer(self):
+        # rx's news would take it to the top; frozen, it keeps its place.
+        self.assertEqual(self.r["recentThawed"][0], "rx")
+        self.assertEqual(self.r["recentFrozen"]["recent"], ["po-1", "po-2", "rx"])
 
     def test_the_filter_keeps_one_project(self):
         # One project: no Unassigned group at all.
@@ -424,8 +543,9 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("(ev.ctrlKey || ev.metaKey) && pdRowPanel(row.dataset.sid)", click)
         self.assertIn("SW_UN.open = ev.target.open", wiring)
         # Focus goes back to the row in the group it was in (a task can be in two).
-        self.assertIn("box.querySelector(`${inGroup}${cls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)
-        self.assertIn("let back = had && at(hadCls);", wiring)
+        # (swFocusNote / swFocusBack themselves are tested above.)
+        self.assertIn("had = key && swFocusNote(act);", wiring)
+        self.assertIn("const back = had && swFocusBack(box, had);", wiring)
         self.assertIn("unassigned: (un && un.sessions) || []", wiring)
         # The task bar's actions are the same as a row's; in the dock the bar keeps the primary alone, the rest are the panel's ⋯ (#150).
         self.assertIn("function detailActions(r, isLive) {\n  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { menu: !pdTask() });\n"
@@ -453,9 +573,10 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("openProjectPage(pj.id);", fn(INDEX, "function openPoConv("))
         # The filter is remembered per browser.
         self.assertIn("localStorage.setItem(SW_KEY + '-project'", wiring)
-        self.assertIn("localStorage.setItem(SW_KEY + '-group'", wiring)    # and the grouping
+        self.assertIn("localStorage.setItem(SW_KEY + '-view', v)", wiring)    # and a grouped view, from its ⋯ (#189)
+        self.assertIn("menuItems: () => swMenuItems()", INDEX)
+        self.assertNotIn('id="sw-by"', INDEX)
         self.assertIn('<label class="sw-pick sw-pick-proj"><select id="sw-proj"', INDEX)
-        self.assertIn('<label class="sw-pick sw-pick-by"><select id="sw-by"', INDEX)
         # Always there on a desktop, never on a phone; the page makes room.
         self.assertIn("function swOn() { try { return !isPhone() || phList(); }", wiring)
         self.assertIn("body.sw-on main { padding-left: calc(var(--list-w) + 20px); }", INDEX)

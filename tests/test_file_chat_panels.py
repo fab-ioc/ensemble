@@ -123,6 +123,7 @@ async function main() {
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: o.button || 'left', clickCount: 1, modifiers: o.modifiers || 0 }, sessionId);
     };
     const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.tasks[0]) + ')', 30000);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}" }, sessionId);   // the grouped list: its rows include a project's tasks (#189)
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
     return { evalIn, until, shot, click, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };

@@ -135,6 +135,7 @@ async function main() {
   const [TA, TB] = A.tasks;
   const rowTitle = r => `pdRowTitle(ALL_ROWS.find(x => x.roomId === ${JSON.stringify(r)}))`;
   try {
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}" }, sessionId);   // the grouped list: its rows include a project's tasks (#189)
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(TA) + ')', 30000);
     await evalIn(`(() => { try { ['cd-list-dock', 'cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs', 'cd-ws-panels', 'cd-chat-panels'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
