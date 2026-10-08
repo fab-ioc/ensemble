@@ -35,9 +35,11 @@ import app_version
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Files next to a checkout's dashboard.py (Ensemble's, or claude-dashboard's
-# before it) that no other program's dashboard.py has.
-CHECKOUT_MARKERS = ("install-launchd.sh", "legacy_install.py", "app_version.py",
-                    "com.ensemble.dashboard.plist.template")
+# before it) and the LaunchAgent labels they name.
+CHECKOUT_MARKERS = ("install-launchd.sh", "com.ensemble.dashboard.plist.template",
+                    "com.claude-code.dashboard.plist.template")
+CHECKOUT_LABELS = ("com.ensemble.dashboard", "com.claude-code.dashboard")
+_PYTHON_RE = re.compile(r"^(python[\d.]*(\.exe)?|Python)$", re.I)
 _TITLE_RE = re.compile(r"<title>\s*(Ensemble|Claude[ -]?(Code )?Dashboard)\s*</title>", re.I)
 
 
@@ -143,25 +145,65 @@ def _holder(port: int) -> dict | None:
     return {"pid": pid, "command": command, "cwd": cwd}
 
 
+def _is_checkout_script(script: Path) -> bool:
+    """A checkout's dashboard.py: next to it, the install-launchd.sh (or its
+    plist template) that names Ensemble's LaunchAgent, or claude-dashboard's
+    before it. No other program's dashboard.py has that."""
+    try:
+        if script.name != "dashboard.py" or not script.is_file():
+            return False
+    except OSError:
+        return False
+    for name in CHECKOUT_MARKERS:
+        try:
+            text = (script.parent / name).read_text(encoding="utf-8", errors="replace")[:200000]
+        except OSError:
+            continue
+        if any(label in text for label in CHECKOUT_LABELS):
+            return True
+    return False
+
+
+def _is_python(prefix: str) -> bool:
+    """Whether ``prefix`` (the start of a command line) is a Python
+    interpreter, with only its single-dash flags after it (-u, -B ...)."""
+    words = prefix.split()
+    while words and re.fullmatch(r"-[A-Za-z]+", words[-1]):
+        words.pop()
+    if not words:
+        return False
+    exe = " ".join(words)
+    if not _PYTHON_RE.match(Path(exe).name):
+        return False
+    bare = "/" not in exe and "\\" not in exe
+    try:
+        return bare or Path(exe).is_file()
+    except OSError:
+        return False
+
+
 def is_ensemble_command(command: str, cwd: str = "") -> bool:
-    """Whether a command line runs Ensemble: the built app, or a checkout's
-    dashboard.py (told apart from any other dashboard.py by the files next
-    to it)."""
-    if re.search(r"Ensemble\.app/Contents/MacOS/Ensemble(\s|$)|[\\/]Ensemble\.exe", command):
-        return True
+    """Whether a command line runs Ensemble: the built app's own program, or
+    Python running a checkout's dashboard.py (see _is_checkout_script). Only
+    as the program itself: a path merely mentioned in another program's
+    arguments does not count."""
     # ps shows the arguments unquoted: a path with spaces in it is tried from
-    # each space before "dashboard.py".
+    # the start (the program) or from each space (an argument).
+    for m in re.finditer(r"Ensemble\.app/Contents/MacOS/Ensemble(?=\s|$)|Ensemble\.exe(?=[\s\"]|$)", command):
+        try:
+            if Path(command[:m.end()].strip('"')).is_file():
+                return True
+        except OSError:
+            pass
     for m in re.finditer(r"dashboard\.py(?=[\s\"']|$)", command):
-        starts = [0] + [i + 1 for i, c in enumerate(command[:m.start()]) if c.isspace()]
-        for start in starts:
+        for start in [i + 1 for i, c in enumerate(command[:m.start()]) if c.isspace()]:
+            if not _is_python(command[:start]):
+                continue
             script = Path(command[start:m.end()].strip("\"' "))
             if not script.is_absolute() and cwd:
                 script = Path(cwd) / script
-            try:
-                if any((script.parent / mk).exists() for mk in CHECKOUT_MARKERS):
-                    return True
-            except OSError:
-                continue
+            if _is_checkout_script(script):
+                return True
     return False
 
 
@@ -169,31 +211,31 @@ def port_status(port: int) -> dict:
     """What holds the port:
 
     * ``free``: nothing listens;
-    * ``ensemble``: an Ensemble hub with /api/version (its ``version``,
-      ``executable`` and ``pid``);
+    * ``ensemble``: a hub that answers /api/version (its ``version`` and
+      ``executable``, as it says);
     * ``old``: an older Ensemble hub, without /api/version (a checkout's
       dashboard.py; when the process cannot be named, a page titled Ensemble);
     * ``other``: anything else.
 
-    ``pid`` and ``command`` are those of the process listening, when known.
+    ``pid`` and ``command`` are those of the process listening, from the
+    system (lsof, ps), never from what it answers; ``verified`` is true only
+    when that command line is Ensemble's (is_ensemble_command). Only a
+    verified hub is ever stopped.
     """
     v = _served(port)
-    if v:
-        return {"state": "ensemble", "port": port, "version": str(v.get("version")),
-                "executable": str(v.get("executable") or ""), "pid": v.get("pid"),
-                "command": str(v.get("executable") or "")}
-    if not _listening(port):
+    if not v and not _listening(port):
         return {"state": "free", "port": port}
     h = _holder(port) or {}
-    out = {"state": "other", "port": port, "pid": h.get("pid"), "command": h.get("command", "")}
-    if h.get("command"):
-        # Known process: only its command line counts (any web server started
-        # in a checkout serves a page titled Ensemble).
-        if is_ensemble_command(h["command"], h.get("cwd", "")):
-            out["state"] = "old"
-    else:
+    out = {"state": "other", "port": port, "pid": h.get("pid"), "command": h.get("command", ""),
+           "verified": bool(h.get("command")) and is_ensemble_command(h["command"], h.get("cwd", ""))}
+    if v:
+        out.update(state="ensemble", version=str(v.get("version")), executable=str(v.get("executable") or ""))
+    elif out["verified"]:
+        out["state"] = "old"
+    elif not h.get("command"):
         # Unknown (Windows, another user's process): told by its page, never
-        # stopped (stop_old_hub needs the command line).
+        # stopped. A known process counts only by its command line (any web
+        # server started in a checkout serves a page titled Ensemble).
         page = _http(port, "/")
         if page and _TITLE_RE.search(page[1]):
             out["state"] = "old"
@@ -289,25 +331,33 @@ def stop_old_hub(port: int, version: str, home: Path | None = None) -> dict:
     if st["state"] == "ensemble" and not app_version.is_newer(version, st.get("version", "")):
         return {"ok": False, "did": did,
                 "error": f"Ensemble {st.get('version')} serves port {port}: not older than {version}, not stopped"}
-    if st["state"] not in ("old", "ensemble"):
-        return {"ok": False, "did": did, "error": describe_status(st, version) + " It is not Ensemble: not stopped."}
+    if st["state"] not in ("old", "ensemble") or not st.get("verified"):
+        return {"ok": False, "did": did, "error": describe_status(st, version)
+                + " Its process is not one this app can tell is Ensemble: not stopped."}
     pid = st.get("pid")
     if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
         return {"ok": False, "did": did, "error": describe_status(st, version) + " Its process is not known: not stopped."}
-    if st["state"] == "old" and not st.get("command"):
-        return {"ok": False, "did": did, "error": describe_status(st, version) + " Its program is not known: not stopped."}
+
+    def same_hub() -> dict | None:
+        # Only while that same verified process still holds the port, checked
+        # again just before each step: a process id is soon given to another
+        # program. None when it does; else what is there now.
+        now = port_status(port)
+        return None if now.get("verified") and now.get("pid") == pid else now
+
     if sys.platform == "darwin":
+        now = same_hub()
+        if now is not None:
+            return {"ok": False, "did": did, "error": f"port {port} changed hands: {describe_status(now, version)}"}
         did += stop_launch_agents(pid, home)
     for sig, wait in ((signal.SIGTERM, 15), (getattr(signal, "SIGKILL", signal.SIGTERM), 5)):
         if not _alive(pid) and not _listening(port):
             break
         if _alive(pid):
-            # Only while that same process still holds the port (checked again
-            # just before): a process id is soon given to another program.
-            now = port_status(port)
-            if now["state"] == "free":
+            now = same_hub()
+            if now is not None and now["state"] == "free":
                 break
-            if now.get("pid") != pid or now["state"] not in ("old", "ensemble"):
+            if now is not None:
                 return {"ok": False, "did": did, "error": f"port {port} changed hands: {describe_status(now, version)}"}
             try:
                 os.kill(pid, sig)
@@ -408,7 +458,8 @@ def _open_when_up(port: int, seconds: float = 60) -> threading.Thread:
         while time.time() < end:
             if _served(port):
                 if not open_browser(f"http://127.0.0.1:{port}/"):
-                    notify(f"Ensemble is running: open http://127.0.0.1:{port}/ in your browser.")
+                    notify(f"Ensemble is running, but the browser did not open: "
+                           f"open http://127.0.0.1:{port}/ in your browser.")
                 return
             time.sleep(0.5)
         notify(f"Ensemble started but does not answer on port {port} after {int(seconds)} s. "
@@ -427,7 +478,7 @@ def _port_held(st: dict, version: str, background: bool, home: Path) -> bool:
         # starting the app again every few seconds.
         notify(msg)
         return False
-    if st["state"] in ("old", "ensemble") and st.get("pid"):
+    if st["state"] in ("old", "ensemble") and st.get("verified") and st.get("pid"):
         stop = "Stop it and start Ensemble"
         if dialog(msg, ("Quit", stop), default="Quit") == stop:
             res = stop_old_hub(st["port"], version, home)
@@ -472,8 +523,9 @@ def main(args: list[str]) -> int:
     if st["state"] == "ensemble" and not (app_version.packaged() and
                                           app_version.is_newer(app_version.VERSION, st["version"])):
         # Already running (this version, or a newer one): show it.
-        if not background:
-            open_browser(f"http://127.0.0.1:{port}/")
+        url = f"http://127.0.0.1:{port}/"
+        if not background and not open_browser(url):
+            dialog(f"Ensemble is running, but the browser did not open: open {url} in your browser.")
         return 0
     if st["state"] != "free":
         _log(f"port {port}: {st}")

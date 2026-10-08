@@ -235,7 +235,11 @@ jobs:
           answers || fail "the LaunchAgent's hub did not answer"
           lpid() { launchctl print "gui/$(id -u)/com.ensemble.dashboard" | awk '$1 == "pid" {print $3}'; }
           before=$(lpid)
-          curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh || fail "the install over a LaunchAgent failed"
+          out=$(curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh 2>&1) || { echo "$out"; fail "the install over a LaunchAgent failed"; }
+          echo "$out"
+          # launchd starts it with --background: the install opens the page itself.
+          echo "$out" | grep -q "Opened the dashboard in your browser: http://127.0.0.1:8765/" \
+            || fail "the install over a LaunchAgent did not open the dashboard"
           answers || fail "the LaunchAgent's hub did not answer after the install"
           after=$(lpid)
           [ -n "$after" ] && [ "$before" != "$after" ] || fail "launchd did not start the new copy ($before -> $after)"

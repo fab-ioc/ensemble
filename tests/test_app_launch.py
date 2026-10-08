@@ -89,7 +89,13 @@ class PortStatusTest(unittest.TestCase):
     def test_an_ensemble_hub(self):
         port = self.serve(ensemble_server("0.9.0", pid=77))
         st = app_launch.port_status(port)
-        self.assertEqual((st["state"], st["version"], st["pid"]), ("ensemble", "0.9.0", 77))
+        # The pid it reports is not taken: only the system's (lsof) is.
+        self.assertEqual((st["state"], st["version"], st["pid"], st["verified"]),
+                         ("ensemble", "0.9.0", None, False))
+        holder = {"pid": 78, "command": f"{sys.executable} {OLD_HUB} --port {port}", "cwd": ""}
+        with mock.patch.object(app_launch, "_holder", lambda p: holder):
+            st = app_launch.port_status(port)
+        self.assertEqual((st["pid"], st["verified"]), (78, True))
 
     def test_an_older_hub_without_api_version_by_its_page(self):
         port = self.serve(_Server({"/": (200, b"<html><head><title>Ensemble</title></head></html>")}))
@@ -97,7 +103,7 @@ class PortStatusTest(unittest.TestCase):
 
     def test_an_older_hub_by_its_command_line(self):
         port = self.serve(_Server({}))
-        holder = {"pid": 924, "command": f"/usr/bin/python3 {OLD_HUB} --port {port}", "cwd": "/"}
+        holder = {"pid": 924, "command": f"{sys.executable} {OLD_HUB} --port {port}", "cwd": "/"}
         with mock.patch.object(app_launch, "_holder", lambda p: holder):
             st = app_launch.port_status(port)
         self.assertEqual((st["state"], st["pid"]), ("old", 924))
@@ -126,20 +132,39 @@ class PortStatusTest(unittest.TestCase):
 
 
 class EnsembleCommandTest(unittest.TestCase):
-    def test_the_built_app(self):
-        self.assertTrue(app_launch.is_ensemble_command(
-            "/Users/x/Applications/Ensemble.app/Contents/MacOS/Ensemble --port 8765 --background"))
-        self.assertTrue(app_launch.is_ensemble_command(r"C:\Program Files\Ensemble\Ensemble.exe --port 8765"))
+    def test_the_built_app_as_the_program(self):
+        with tempfile.TemporaryDirectory() as d:
+            exe = Path(d) / "My Apps" / "Ensemble.app" / "Contents" / "MacOS" / "Ensemble"
+            exe.parent.mkdir(parents=True)
+            exe.write_bytes(b"")
+            win = Path(d) / "Ensemble.exe"
+            win.write_bytes(b"")
+            self.assertTrue(app_launch.is_ensemble_command(f"{exe.as_posix()} --port 8765 --background"))
+            self.assertTrue(app_launch.is_ensemble_command(f"{win} --port 8765"))
+            # Only as the program: mentioned in another program's arguments it is not.
+            self.assertFalse(app_launch.is_ensemble_command(f"/usr/bin/tail -f {exe.as_posix()}"))
+            self.assertFalse(app_launch.is_ensemble_command(f"{sys.executable} -m http.server --x {win}"))
 
     def test_a_checkout(self):
-        self.assertTrue(app_launch.is_ensemble_command(f"/usr/bin/python3 {OLD_HUB} --port 8765"))
+        self.assertTrue(app_launch.is_ensemble_command(f"{sys.executable} {OLD_HUB} --port 8765"))
+        self.assertTrue(app_launch.is_ensemble_command(f"{sys.executable} -u {OLD_HUB} --port 8765"))
         # Relative to the process's working directory.
         self.assertTrue(app_launch.is_ensemble_command("python3 dashboard.py --port 8765", str(OLD_HUB.parent)))
         self.assertTrue(app_launch.is_ensemble_command(f"python {ROOT / 'dashboard.py'}"))
 
+    def test_a_checkout_path_in_another_programs_arguments_is_not(self):
+        self.assertFalse(app_launch.is_ensemble_command(
+            f"python3 other_server.py --template {ROOT / 'dashboard.py'}"))
+        self.assertFalse(app_launch.is_ensemble_command(f"/usr/bin/less {OLD_HUB}"))
+        self.assertFalse(app_launch.is_ensemble_command(f"node {OLD_HUB}"))
+
     def test_any_other_dashboard_py_is_not(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "dashboard.py").write_text("", encoding="utf-8")
+            self.assertFalse(app_launch.is_ensemble_command(f"python3 {d}/dashboard.py --port 8765"))
+            # A web app of its own, even with files of the same names.
+            (Path(d) / "app_version.py").write_text("", encoding="utf-8")
+            (Path(d) / "install-launchd.sh").write_text("launchctl load com.example.web\n", encoding="utf-8")
             self.assertFalse(app_launch.is_ensemble_command(f"python3 {d}/dashboard.py --port 8765"))
         self.assertFalse(app_launch.is_ensemble_command("/usr/sbin/httpd -D FOREGROUND"))
         self.assertFalse(app_launch.is_ensemble_command(""))
@@ -172,8 +197,23 @@ class StopOldHubTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, mock.patch.object(app_launch, "_holder", lambda p: holder):
             res = app_launch.stop_old_hub(port, "0.9.2", Path(home))
         self.assertFalse(res["ok"])
-        self.assertIn("not Ensemble", res["error"])
+        self.assertIn("not stopped", res["error"])
         self.assertIsNone(proc.poll())
+
+    def test_a_forged_api_version_never_names_what_is_stopped(self):
+        # Any server can answer {"version": older, "pid": <some live process>}.
+        victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (victim.kill(), victim.wait()))
+        s = ensemble_server("0.9.1", pid=victim.pid)
+        self.addCleanup(s.close)
+        for holder in (None, {"pid": victim.pid, "command": f"{sys.executable} -c sleep", "cwd": ""}):
+            with tempfile.TemporaryDirectory() as home, \
+                    mock.patch.object(app_launch, "_holder", lambda p: holder), \
+                    mock.patch.object(app_launch, "stop_launch_agents") as agents:
+                res = app_launch.stop_old_hub(s.port, "0.9.2", Path(home))
+            self.assertFalse(res["ok"], holder)
+            agents.assert_not_called()
+            self.assertIsNone(victim.poll())
 
     def test_an_older_hub_whose_process_is_unknown_is_not_stopped(self):
         port, proc, _ = self.start_old_hub()
@@ -288,27 +328,42 @@ class MainTest(unittest.TestCase):
 
     def test_an_older_hub_quit(self):
         self.dialog_answer = "Quit"
-        rc = self.run_main({"state": "old", "pid": 924, "command": "python3 dashboard.py"})
+        rc = self.run_main({"state": "old", "pid": 924, "command": "python3 dashboard.py", "verified": True})
         self.assertEqual((rc, self.calls["started"], self.calls["stop"]), (1, 0, 0))
         self.assertIn("older Ensemble hub", self.calls["dialog"][0][0])
 
     def test_an_older_hub_stopped_then_this_one_starts(self):
         self.dialog_answer = "Stop it and start Ensemble"
-        rc = self.run_main({"state": "old", "pid": 924, "command": "python3 dashboard.py"})
+        rc = self.run_main({"state": "old", "pid": 924, "command": "python3 dashboard.py", "verified": True})
         self.assertEqual((rc, self.calls["started"], self.calls["stop"]), (0, 1, 1))
 
     def test_an_older_hub_that_does_not_stop(self):
         self.dialog_answer = "Stop it and start Ensemble"
         self.stop_result = {"ok": False, "did": [], "error": "it did not stop"}
-        rc = self.run_main({"state": "old", "pid": 924, "command": "python3 dashboard.py"})
+        rc = self.run_main({"state": "old", "pid": 924, "command": "python3 dashboard.py", "verified": True})
         self.assertEqual((rc, self.calls["started"]), (1, 0))
         self.assertIn("it did not stop", self.calls["dialog"][-1][0])
 
     def test_an_older_built_app_serving(self):
         self.dialog_answer = "Quit"
-        self.run_main({"state": "ensemble", "version": "0.1.0", "pid": 3, "executable": "/x/Ensemble"})
+        self.run_main({"state": "ensemble", "version": "0.1.0", "pid": 3, "executable": "/x/Ensemble",
+                       "verified": True})
         self.assertIn("Ensemble 0.1.0 is already running", self.calls["dialog"][0][0])
+        self.assertEqual(len(self.calls["dialog"][0][1]), 2)
         self.assertEqual(self.calls["browser"], [])
+
+    def test_an_unverified_hub_is_named_but_never_offered_to_stop(self):
+        rc = self.run_main({"state": "ensemble", "version": "0.1.0", "pid": 3, "verified": False})
+        self.assertEqual((rc, self.calls["stop"]), (1, 0))
+        self.assertEqual(self.calls["dialog"][0][1], ("OK",))
+        self.run_main({"state": "old", "pid": None, "command": "", "verified": False})
+        self.assertEqual(self.calls["dialog"][1][1], ("OK",))
+
+    def test_a_browser_that_does_not_open_is_said(self):
+        with mock.patch.object(app_launch, "open_browser", lambda u: False):
+            rc = self.run_main({"state": "ensemble", "version": app_version.VERSION, "pid": 1})
+        self.assertEqual(rc, 0)
+        self.assertIn("open http://127.0.0.1:8765/ in your browser", self.calls["dialog"][0][0])
 
     def test_at_sign_in_a_held_port_is_a_notification_and_exit_0(self):
         rc = self.run_main({"state": "other", "pid": 50, "command": "x"}, ["--background"])
@@ -354,6 +409,16 @@ class OpenWhenUpTest(unittest.TestCase):
         with mock.patch.object(app_launch, "open_browser", lambda u: opened.append(u) or True):
             app_launch._open_when_up(s.port, seconds=10).join(10)
         self.assertEqual(opened, [f"http://127.0.0.1:{s.port}/"])
+
+    def test_says_so_when_the_browser_does_not_open(self):
+        s = ensemble_server(app_version.VERSION)
+        self.addCleanup(s.close)
+        told = []
+        with mock.patch.object(app_launch, "open_browser", lambda u: False), \
+                mock.patch.object(app_launch, "notify", told.append):
+            app_launch._open_when_up(s.port, seconds=10).join(10)
+        self.assertEqual(len(told), 1)
+        self.assertIn(f"open http://127.0.0.1:{s.port}/ in your browser", told[0])
 
     def test_says_so_when_the_hub_never_answers(self):
         told = []
@@ -411,6 +476,16 @@ class InstallerTest(unittest.TestCase):
         self.assertNotIn("opens in your browser in a few seconds", self.sh)
         body = self.sh[self.sh.index("not_answering() {"):]
         self.assertIn('tail -n 20 "$LOG"', body)
+
+    def test_the_browser_is_opened_where_the_app_does_not_and_a_failure_said(self):
+        body = self.sh[self.sh.index("open_dashboard() {"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("the browser did not open", body)
+        self.assertIn("exit 1", body)
+        # A hub already serving, and a restart through the LaunchAgent (--background).
+        self.assertIn("open_dashboard\n        exit 0", self.sh)
+        self.assertIn('[ -z "$via_launchd" ] || [ "${ENSEMBLE_NO_OPEN:-}" = 1 ] || open_dashboard', self.sh)
+        self.assertNotIn('open "http://127.0.0.1:$PORT/" || true', self.sh)
 
 
 if __name__ == "__main__":

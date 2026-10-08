@@ -138,6 +138,17 @@ not_answering() {
   } >&2
   exit 1
 }
+# For a hub this script did not start with the app's own browser opening (one
+# already serving, one started by its LaunchAgent with --background).
+open_dashboard() {
+  if open "http://127.0.0.1:$PORT/"; then
+    say "Opened the dashboard in your browser: http://127.0.0.1:$PORT/"
+  else
+    printf 'Ensemble install: Ensemble is running, but the browser did not open: open http://127.0.0.1:%s/ in your browser.
+' "$PORT" >&2
+    exit 1
+  fi
+}
 # Before opening the app: the port is free, or held by an Ensemble hub it can
 # use, or by an older Ensemble hub that is stopped only when the person says so
 # (asked at the terminal, or ENSEMBLE_REPLACE_OLD_HUB=1). Anything else on the
@@ -160,8 +171,8 @@ check_port() {
 ' "$v" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
       if [ "$v" = "$VERSION" ] || [ "$newest" = "$v" ]; then
         say "Ensemble $v already serves port $PORT: opening it."
-        open "http://127.0.0.1:$PORT/" || true
         finished=1
+        open_dashboard
         exit 0
       fi ;;
   esac
@@ -262,6 +273,9 @@ if [ -n "$was_running" ]; then
   OLD=
   wait_hub || not_answering
   say "Ensemble $VERSION is running: http://127.0.0.1:$PORT/"
+  # Opened, the app opens the browser itself; its LaunchAgent starts it
+  # without (--background).
+  [ -z "$via_launchd" ] || [ "${ENSEMBLE_NO_OPEN:-}" = 1 ] || open_dashboard
 else
   finished=1
   say "Installed Ensemble $VERSION in $TARGET"
