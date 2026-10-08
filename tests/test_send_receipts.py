@@ -90,6 +90,8 @@ class Receipts(unittest.TestCase):
             mock.patch.object(dashboard.ptyrun, "get", lambda pid: self.ptys.get(pid)),
             mock.patch.object(dashboard.ptyrun, "list_sessions", lambda: []),
             mock.patch.object(dashboard.rotation, "IDLE_S", 0),
+            # Not a hub that has just started (its rooms still coming back).
+            mock.patch.object(sends, "STARTED_AT", 0),
             mock.patch.object(dashboard.attention, "looks_like_prompt", lambda tail: False),
             mock.patch.object(dashboard, "load_projects", lambda: []),
             mock.patch.object(dashboard, "RESUME_NOTE_WAIT_S", 2),

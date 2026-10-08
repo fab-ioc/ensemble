@@ -2413,6 +2413,12 @@ def key_held(room_id: str, key: str) -> bool:
                 and any(it.get("key") == key for it in res.queue))
 
 
+def _solo_room(room: dict) -> bool:
+    """A one-agent chat: the person's messages are typed into its terminal."""
+    agents = [p for p in room.get("participants", []) if p.get("kind") == "agent"]
+    return room.get("mode") == "solo" or len(agents) < 2
+
+
 def _send_left_behind(room_id: str, key: str) -> str:
     """Why a send the hub has just taken is going nowhere: still ``queued``
     while no resume of its room is under way to deliver it (nothing started,
@@ -2421,7 +2427,7 @@ def _send_left_behind(room_id: str, key: str) -> str:
     s = sends.get(room_id, key)
     if s is not None and s["state"] == "failed":
         return s.get("error") or "it was not delivered"     # already said, kept for Retry
-    if s is None or s["state"] != "queued":
+    if s is None or s["state"] != "queued" or rotation.holds_send(room_id, key):
         return ""
     with _RESUMES_LOCK:
         res = _RESUMES.get(room_id)
@@ -2571,7 +2577,11 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     another terminal never waits seconds for a long brief."""
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
-    body = "\x1b[200~" + text + "\x1b[201~" if "\n" in text else text
+    agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
+    # A long line typed raw reached Claude cut to its last 123 characters
+    # (#192: the handover ask, 10-05 and 10-08): it goes as a paste too.
+    pasted = "\n" in text or (agent == "claude" and len(text) > PASTE_LINE_OVER)
+    body = "\x1b[200~" + text + "\x1b[201~" if pasted else text
     writer = getattr(sess, "write", None)
     if callable(writer):
         with _INPUT_WRITE_LOCK:
@@ -2589,6 +2599,8 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
             entered = writer("\r")
         except (OSError, EOFError):
             return False
+        if entered is not False and pasted and agent == "codex":
+            _enter_codex_paste(sess, writer)
         return entered is not False and sess.alive()
 
     # Compatibility for the small test/adapter sessions that expose only the
@@ -2603,6 +2615,23 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
         with _INPUT_WRITE_LOCK:
             _record_typed_input_safely(sess, text, provenance, parts)
     return ok
+
+
+PASTE_LINE_OVER = 300           # a one-line text longer than this goes to Claude as a paste
+_CODEX_PASTE_LEFT = re.compile(r"\[Pasted Content \d+ chars\]")
+
+
+def _enter_codex_paste(sess, writer) -> None:
+    """Codex sometimes keeps a paste as ``[Pasted Content N chars]`` in its
+    box and drops the Enter that followed (#173, #176: 75 minutes unread).
+    Still there a moment later: Enter once more."""
+    time.sleep(1.5)
+    try:
+        lines = (sess.tail() or "").splitlines()[-6:]
+        if any(_CODEX_PASTE_LEFT.search(ln) for ln in lines):
+            writer("\r")
+    except (OSError, EOFError, AttributeError):
+        pass
 
 
 def _typed_sends(room_id: str, items: list[dict]) -> None:
@@ -2640,7 +2669,8 @@ def _fail_orphaned_sends(room_id: str) -> None:
         res = _RESUMES.get(room_id)
         if res is not None and res.state == "resuming":
             return
-    keys = sends.orphans(room_id, ORPHAN_AFTER_S)
+    keys = [k for k in sends.orphans(room_id, ORPHAN_AFTER_S)
+            if not rotation.holds_send(room_id, k)]     # on its way to a fresh session
     if keys:
         sends.mark(room_id, keys, "failed", "nothing was left to deliver it")
 
@@ -2900,8 +2930,12 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                     if (att.get("type") == "queued_command" and isinstance(prompt, str)
                             and att.get("commandMode") in (None, "prompt")
                             and prompt.strip() and not prompt.strip().startswith("<")):
+                        # One read from content blocks (it held an image) is
+                        # counted apart again (page_turn_ids): the queued
+                        # turns after it keep the ids they had (#192).
                         turns.append({"timestamp": att.get("timestamp") or d.get("timestamp", ""),
-                                      "role": "user", "text": prompt.strip(), "queued": True})
+                                      "role": "user", "text": prompt.strip(),
+                                      "queued": "blocks" if isinstance(att.get("prompt"), list) else True})
                     continue
                 if t == "user" and d.get("isMeta") and turns and turns[-1]["role"] == "user":
                     _claude_image_source(turns[-1], d)
@@ -3041,9 +3075,15 @@ def page_turn_ids(sid: str, raw: list[dict]) -> list[tuple[str, dict]]:
     page (soloItems in session.html): ``<sid>:<n>`` counting the turns with
     repeats of the turn before dropped; a line the agent read while busy (a
     queued command) is ``<sid>:q<n>``, counted apart, so the ids of the
-    others are what they were before those were shown."""
-    out, prev, n, q = [], None, 0, 0
+    others are what they were before those were shown. One read from
+    content blocks (a line with an image, read since #192) is
+    ``<sid>:qb<n>``, apart again, so the queued ids before #192 hold."""
+    out, prev, n, q, qb = [], None, 0, 0, 0
     for t in raw or []:
+        if t.get("queued") == "blocks":
+            out.append((f"{sid}:qb{qb}", t))
+            qb += 1
+            continue
         if t.get("queued"):
             out.append((f"{sid}:q{q}", t))
             q += 1
@@ -3188,6 +3228,7 @@ HUB_INPUT_KINDS = (
     ("[from the restart helper, not ", "helper"),   # the note after a hub restart
     ("[points] ", "points"),            # points.py: the person's points still open
     ("[stalled] ", "stalled"),          # stall.py: an idle owner with nothing open
+    ("[typed again] ", "again"),        # sends.py: a message the agent had not taken in
     ("[from the PO]", "po"),             # PO/tool ruling typed into a task
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
@@ -3224,7 +3265,7 @@ _FIRST_WORDS_KIND = {
     "restart": "After a hub restart",
     "handover": "Handover", "rotation": "Task conversation after a handover",
     "madepo": "PO conversation", "helper": "After a hub restart", "points": "Open points",
-    "pomsg": "Message from another PO", "stalled": "Stall check",
+    "pomsg": "Message from another PO", "stalled": "Stall check", "again": "Message typed again",
     "po": "Message from the PO",
     "issue": "GitHub issue", "issuecomment": "GitHub issue comment",
 }
@@ -13134,6 +13175,14 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         items = [send_item(text, to, now, key, project, origin)] if text else []
         start = direct = carried = False
+        if items and _solo_room(room_full) and rotation.room_rotating(rid):
+            # Its agent is being handed to a fresh session: the message waits
+            # for that session (#192), unless a failed resume holds earlier
+            # ones (those go first, the settled way).
+            with _RESUMES_LOCK:
+                failed = (_RESUMES.get(rid) or _Resume()).state == "failed"
+            if not failed and rotation.hold_sends(rid, items):
+                return {"resumed": [], "queued": len(items), "delivered": 0, "held": True}
         with _RESUMES_LOCK:
             res = _RESUMES.get(rid)
             if res is not None and res.state == "failed":
@@ -13347,6 +13396,9 @@ class Handler(BaseHTTPRequestHandler):
             return items
         with rotation.GATE:
             if rotation.room_rotating(rid):
+                # Held for the fresh session, typed in once it has settled.
+                if rotation.hold_sends(rid, items):
+                    return []
                 raise StartRoomError("handing over to a fresh session, try again shortly")
             if any((it.get("origin") or "human") == "human" for it in items):
                 sess.last_input = time.time()
@@ -15638,6 +15690,10 @@ def main():
 
     # The PO's rotation: a fresh session from its handover when it gets long.
     rotation.start_scheduler()
+
+    # A message typed into an agent that never took it in: typed again once
+    # it is idle, then shown as not delivered (sends.py).
+    sends.start_redeliverer()
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:

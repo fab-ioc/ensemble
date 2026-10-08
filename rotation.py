@@ -1169,6 +1169,7 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
                 _d.ptyrun.kill(old_pty)
         if old_pty:
             _await_death(old_pty)
+        _carry_unread(key)
         if cause == "usage_limit":
             text = (f"**PO provider failover** — {name(part['agent'])} "
                     f"`{_model_name(part['agent'], part.get('model'))}` → {name(other)} "
@@ -1703,7 +1704,25 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
     pts = _open_points(room)
     if pts:
         parts.append(pts)
+    carried = _carried_line(room)
+    if carried:
+        parts.append(carried)
     return _d.board_brief.prepend(_d, project, "\n\n".join(parts), room)
+
+
+def _carried_line(room: dict) -> str:
+    """When the person's messages the old session never read are waiting
+    (sends.py), the fresh one is told they follow its brief, as new."""
+    try:
+        n = len(_d.sends.unread(room.get("id", "")))
+    except Exception:       # noqa: BLE001 — the prompt goes without it
+        return ""
+    if not n:
+        return ""
+    return (f"{_d.operator_name()} sent {'a message' if n == 1 else f'{n} messages'} the "
+            f"previous session never read. The hub types {'it' if n == 1 else 'them'} in "
+            f"after this brief: {'it is' if n == 1 else 'they are'} new to you, so act on "
+            f"{'it' if n == 1 else 'them'} once you have your state.")
 
 
 def _open_points(room: dict) -> str:
@@ -1758,6 +1777,9 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
     pts = _open_points(room)
     if pts:
         parts.append(pts)
+    carried = _carried_line(room)
+    if carried:
+        parts.append(carried)
     return "\n\n".join(parts)
 
 
@@ -1935,6 +1957,65 @@ def hold_wake(room_id: str, identity: str, wake: str) -> bool:
         return True
 
 
+def hold_sends(room_id: str, items: list[dict]) -> bool:
+    """Hold a person's messages to a one-agent task being handed to a fresh
+    session (True): typed into that session once it has settled, as the
+    person's. Before #192 such a send was refused ("try again shortly")."""
+    with GATE:
+        key = next((k for k in _ROTATING if k[0] == room_id), None)
+        if key is None or not items:
+            return False
+        _HELD.setdefault(key, []).append({"sends": list(items)})
+        return True
+
+
+def holds_send(room_id: str, key: str) -> bool:
+    """A send with this key is held for a fresh session (hold_sends)."""
+    with GATE:
+        return any(isinstance(w, dict) and any(it.get("key") == key for it in w.get("sends") or [])
+                   for k, held in _HELD.items() if k[0] == room_id for w in held)
+
+
+def _carry_unread(key: tuple) -> None:
+    """The person's messages typed into the old session that it never read
+    (it was asked for its handover while they waited behind its turn): held
+    first for the fresh session, which is told of them in its brief."""
+    rid = key[0]
+    try:
+        _d.sends.sync(rid, force=True)
+        items = _d.sends.unread(rid)
+    except Exception as e:      # noqa: BLE001 — the rotation itself goes ahead
+        _log(f"{rid}: unread messages not carried: {str(e)[:200]}")
+        return
+    if items:
+        with GATE:
+            _HELD.setdefault(key, []).insert(0, {"sends": items, "carried": True})
+        _log(f"{rid}: {len(items)} unread message(s) carried to the fresh session")
+
+
+def _type_sends(rid: str, ident: str, sess, held: dict) -> None:
+    """Type held messages of the person into the fresh session as one input:
+    the person's words, no hub note. Ones it held while rotating are now
+    delivered; carried ones were delivered before and are counted as given
+    once more (sends.redelivered)."""
+    items = held.get("sends") or []
+    keys = [it.get("key") for it in items]
+    parts = [(_d.with_message_refs(it["text"], rid, _d.ref_project(it)),
+              _d._origin_sender_info(it["text"], it.get("origin") or "human")) for it in items]
+    if not parts:
+        return
+    if any((it.get("origin") or "human") == "human" for it in items):
+        sess.last_input = time.time()
+    if not _d._type_input(sess, "\n\n".join(t for t, _ in parts), parts[0][1], parts=parts):
+        _d.sends.mark(rid, keys, "failed", "the session stopped before it took this")
+        return
+    if held.get("carried"):
+        _d.sends.redelivered(rid, keys, "carried to the fresh session")
+    else:
+        _d._typed_sends(rid, items)
+        _d.note_answer(rid, ident)
+
+
 def note_stopped(room_id: str) -> None:
     """A Stop (or Delete) of this task: a rotation under way ends its fresh
     session instead of leaving the task running."""
@@ -1960,13 +2041,19 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
                 sess = _pty(part or {})
                 if sess is None:
                     _log(f"{rid}/{ident}: not running — {len(wakes)} held wake(s) dropped")
+                    lost = [it.get("key") for w in wakes if isinstance(w, dict)
+                            for it in w.get("sends") or []]
+                    _d.sends.mark(rid, lost, "failed", "the session stopped before it took this")
                     return
                 tail = sess.tail()
                 quiet = bool(tail) and time.time() - sess.last_output >= IDLE_S
                 if (quiet and not _d.attention.looks_like_prompt(tail)) or time.time() > end:
                     break
             with GATE:
-                _d._type_input(sess, wake)
+                if isinstance(wake, dict):
+                    _type_sends(rid, ident, sess, wake)
+                else:
+                    _d._type_input(sess, wake)
         _log(f"{rid}/{ident}: typed {len(wakes)} held wake(s) into the fresh session")
     threading.Thread(target=run, daemon=True, name=f"rotation-replay-{rid}-{ident}").start()
 
@@ -2096,6 +2183,8 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             rec["toSessionId"] = info["sessionId"] = _learn_session(rid, ident,
                                                                     info["ptyId"], sid)
     switched = owner and used.get("agent") != old_kind
+    if not flags["stopped"]:
+        _carry_unread(key)
     with GATE:
         stopped = flags["stopped"]
         if not stopped:

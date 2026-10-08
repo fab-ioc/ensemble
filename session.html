@@ -3709,7 +3709,17 @@ function renderBubbles(items, opt = {}) {
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
   CU_SHOWN = !!cu;
+  // What you sent that the conversation does not show yet, as the hub keeps
+  // it (sends.py): queued, typed in and waiting for the agent to take it, or
+  // not delivered with the reason, Retry and Discard. Held by the hub, so it
+  // outlives this page and shows in every copy of the chat. Nothing but the
+  // conversation showing it (or Discard) takes it away: no clock, no count.
+  // Each at its own time among the rows (#192: one read mid-turn sat at the
+  // bottom with no time, under the answers that came after it).
+  const shown = sendsToShow(given);
+  const due = shown.slice();
   items.forEach((m, i) => {
+    while (due.length && m.ts && m.ts > (due[0].at || 0)) rows.push(sendHtml(due.shift(), md));
     const k = foldKey(m, i);
     const gp = gapAt.get(i);
     const g = groupAt.get(i);
@@ -3743,13 +3753,7 @@ function renderBubbles(items, opt = {}) {
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
-  // What you sent that the conversation does not show yet, as the hub keeps
-  // it (sends.py): queued, typed in and waiting for the agent to take it, or
-  // not delivered with the reason, Retry and Discard. Held by the hub, so it
-  // outlives this page and shows in every copy of the chat. Nothing but the
-  // conversation showing it (or Discard) takes it away: no clock, no count.
-  const shown = sendsToShow(given);
-  shown.forEach(x => rows.push(sendHtml(x, md)));
+  due.forEach(x => rows.push(sendHtml(x, md)));
   // Held by a resume with no receipt of its own (a hub line): as it is held.
   const known = new Set(shown.map(x => x.key).concat(ROOM_SENDS.map(x => x.key)));
   const hubHeld = (ROOM_PENDING && ROOM_PENDING.items ? ROOM_PENDING.items : []).filter(p => !p.key || !known.has(p.key));
@@ -4413,17 +4417,40 @@ function sendsToShow(items) {
   return all.filter(s => !gone.has(s));
 }
 // A send as a balloon: the words as sent, and under them where it is, in words.
+// "17:18" today, "Oct 8, 17:18" before (the chat's own chatWhen; this block
+// stands on its own).
+function sendWhen(ts, day = true) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000), hm = { hour: '2-digit', minute: '2-digit', hour12: false };
+  return !day || d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], hm)
+    : d.toLocaleString([], Object.assign({ month: 'short', day: 'numeric' }, hm));
+}
 function sendHtml(s, md) {
+  const when = sendWhen(s.at);
+  const sent = when ? `<span class="pend-when">Sent ${esc(when)}&nbsp;·</span> ` : '';
+  const again = s.redeliveredAt ? sendWhen(s.redeliveredAt, false) : '';
   const st = s.state === 'failed'
-    ? `<div class="pend-state" role="status">Not delivered: ${esc(s.error || 'it did not go in')}. `
+    ? `<div class="pend-state" role="status">${sent}Not delivered: ${esc(s.error || 'it did not go in')}. `
       + `<button type="button" class="send-retry" data-send="${esc(s.key)}">Retry</button>`
       + `<button type="button" class="send-discard" data-send="${esc(s.key)}">Discard</button></div>`
     : s.state === 'queued'
-      ? '<div class="pend-state ok" role="status">Queued: it goes in once the session is up.</div>'
-      : `<div class="pend-state ok" role="status">Delivered, not yet read by the agent.`
+      ? `<div class="pend-state ok" role="status">${sent}Queued: it goes in once the session is up.</div>`
+      : `<div class="pend-state ok" role="status">${sent}${again && s.state === 'delivered'
+        ? `Typed in again at ${esc(again)}; not yet read by the agent.` : 'Delivered, not yet read by the agent.'}`
         + (s.state === 'delivered' ? ` <button type="button" class="send-hide" data-send="${esc(s.key)}" title="Stop showing it here (it was typed in)">Hide</button>` : '') + '</div>';
   return `<div class="msg user pending${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
-    + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div><div class="text md">${md(stripPointLines(s.text))}</div>${st}</div>`;
+    + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div><div class="text md">${md(stripPointLines(s.text))}</div>${sendPointsHtml(s.text)}${st}</div>`;
+}
+// The asks a send holds, as the bar under a balloon names them: "P438 ·
+// waiting for an answer" (#192: the pending balloon had lost its footer).
+function sendPointsHtml(text) {
+  const ids = [...String(text || '').matchAll(SEND_PT)].map(m => m[1]);
+  if (!ids.length) return '';
+  return '<div class="pt-bar">' + ids.map(id => {
+    const p = typeof POINTS === 'object' && POINTS ? POINTS.byId.get(id) : null;
+    const word = p && typeof PT_WORD === 'object' ? PT_WORD[p.state] || p.state : 'waiting for an answer';
+    return `<span class="pt-chip ${esc(p ? p.state : 'open')}" data-pt-id="${esc(id)}">${esc(id + ' · ' + word)}</span>`;
+  }).join('') + '</div>';
 }
 // Retry, Discard or Hide on a send the hub keeps.
 function sendAction(bt) {
@@ -4528,8 +4555,10 @@ function withHubRows(items, room) {
 // finds its balloon.
 function soloItems(raw, sid, agentId, keep) {
   const all = [];
-  let prev = null, n = 0, q = 0;
+  let prev = null, n = 0, q = 0, qb = 0;
   for (const t of raw) {
+    // Read from content blocks (it held an image; #192): apart again, ":qb<n>".
+    if (t.queued === 'blocks') { all.push({ t, id: sid + ':qb' + (qb++), n: -1 }); continue; }
     if (t.queued) { all.push({ t, id: sid + ':q' + (q++), n: -1 }); continue; }
     const same = !!prev && t.role === prev.role && t.text === prev.text;
     prev = t;

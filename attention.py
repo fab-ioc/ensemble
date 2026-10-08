@@ -1496,6 +1496,10 @@ def _items() -> list[dict]:
         open_asks = _d.asks.open_by_room(rooms, now)
     except Exception:
         open_asks = {}
+    try:
+        not_taken = _d.sends.not_taken_by_room()
+    except Exception:
+        not_taken = {}
 
     for room in rooms:
         if not room.get("launched", True):
@@ -1540,6 +1544,15 @@ def _items() -> list[dict]:
             found.append(("waiting_for_you", reason,
                           {"since": marked[0]["ts"], "quote": marked[0]["question"],
                            "askKind": "asks", "openAsks": k}, {}))
+        lost = not_taken.get(room["id"])
+        if lost and not any(f[0] == "waiting_for_you" for f in found):
+            # The person's message its agent did not take in, even typed a
+            # second time (sends.py): Retry or Discard is theirs (#192).
+            k = lost["count"]
+            found.append(("waiting_for_you",
+                          f"{k} message{'s' if k != 1 else ''} you sent {'were' if k != 1 else 'was'} "
+                          f"not taken in by the agent: “{lost['text']}”",
+                          {"since": lost["since"], "quote": lost["text"], "notDelivered": k}, {}))
         if not found:
             continue
         # One item per task: the worst thing wrong with it.
