@@ -104,6 +104,40 @@ def launch_agent_plist(home: Path | None = None) -> Path:
     return (home or Path.home()) / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 
 
+def launch_agent_program(plist: Path) -> str | None:
+    """The program a LaunchAgent file starts (its first ProgramArguments, or
+    Program); "" when it names none, None when there is no readable file."""
+    try:
+        data = plistlib.loads(plist.read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+    if not isinstance(data, dict):
+        return ""
+    args = data.get("ProgramArguments") or [data.get("Program") or ""]
+    return str(args[0])
+
+
+def is_app_program(program: str) -> bool:
+    """Whether a LaunchAgent's program is a built Ensemble app (the program
+    inside an Ensemble.app), not a checkout's Python running dashboard.py,
+    which install-launchd.sh writes under the same label."""
+    return (program or "").endswith(".app/Contents/MacOS/Ensemble")
+
+
+def move_launch_agent_aside(plist: Path, home: Path | None = None) -> Path:
+    """Moves a LaunchAgent file to ``~/.ensemble/old-launch-agents``, never
+    over one kept there before, so it can be moved back. Its new place;
+    OSError when it could not be moved."""
+    folder = (home or Path.home()) / ".ensemble" / "old-launch-agents"
+    folder.mkdir(parents=True, exist_ok=True)
+    aside, n = folder / plist.name, 1
+    while aside.exists():
+        aside = folder / f"{plist.stem}.{time.strftime('%Y%m%d-%H%M%S')}-{n}{plist.suffix}"
+        n += 1
+    shutil.move(str(plist), str(aside))
+    return aside
+
+
 def autostart_command(exe: Path, port: int) -> list[str]:
     return [str(exe), "--port", str(port), "--background"]
 
@@ -185,16 +219,26 @@ def set_autostart(enabled: bool, exe: Path, port: int, log: Path,
         return autostart_status(exe, platform)
     if platform == "darwin":
         plist = launch_agent_plist()
+        # The same label is a checkout's LaunchAgent too (install-launchd.sh):
+        # that file is never overwritten or deleted, only moved aside.
+        program = launch_agent_program(plist)
+        foreign = program is not None and not is_app_program(program)
+        moved = None
         if enabled:
+            if foreign:
+                moved = move_launch_agent_aside(plist)
             plist.parent.mkdir(parents=True, exist_ok=True)
             log.parent.mkdir(parents=True, exist_ok=True)
             data = mac_launch_agent(exe, port, log, os.environ.get("PATH", ""))
             plist.write_bytes(plistlib.dumps(data))
             # Loaded for the next sign-in; not started now (this app is the
             # hub already running).
-        else:
+        elif not foreign:
             # Not booted out: when launchd runs this hub, that would stop it.
             # Without the file it is not started at the next sign-in.
             plist.unlink(missing_ok=True)
-        return autostart_status(exe, platform)
+        res = autostart_status(exe, platform)
+        if moved:
+            res["movedAside"] = str(moved)
+        return res
     return {"enabled": False, "supported": False}

@@ -223,10 +223,23 @@ unquarantined "$NEW" || die "could not make sure the new app carries no quaranti
 codesign --verify --deep --strict "$NEW" 2>/dev/null || die "the copied app's signature does not verify; not installed"
 
 # A running Ensemble from this copy is stopped for the swap and started after.
+# Only a process whose program is this app's own (its command line starts with
+# it and the system names it as the process's executable), never one that
+# merely has the path among its arguments; checked again before each signal.
+is_app_pid() {
+  exe="$TARGET/Contents/MacOS/Ensemble"
+  args=$(ps -o args= -p "$1" 2>/dev/null) || return 1
+  case "$args" in "$exe"|"$exe "*) ;; *) return 1 ;; esac
+  case " $args " in *" --run "*) return 1 ;; esac
+  lsof -a -p "$1" -d txt -Fn 2>/dev/null | grep -qxF "n$exe"
+}
 hub_pids() {
   pgrep -f "$TARGET/Contents/MacOS/Ensemble" 2>/dev/null | while read -r pid; do
-    case " $(ps -o args= -p "$pid" 2>/dev/null) " in *" --run "*) ;; *) echo "$pid" ;; esac
+    if is_app_pid "$pid"; then echo "$pid"; fi
   done
+}
+signal_hubs() {
+  for pid in $(hub_pids); do kill "$1" "$pid" 2>/dev/null || true; done
 }
 plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 domain="gui/$(id -u)"
@@ -244,12 +257,11 @@ pids=$(hub_pids)
 if [ -n "$pids" ]; then
   [ -n "$was_running" ] || say "Stopping the running Ensemble ..."
   was_running=1
-  kill $pids 2>/dev/null || true
+  signal_hubs -TERM
   i=0
   while [ -n "$(hub_pids)" ] && [ $i -lt 30 ]; do sleep 1; i=$((i + 1)); done
-  pids=$(hub_pids)
-  if [ -n "$pids" ]; then
-    kill -9 $pids 2>/dev/null || true
+  if [ -n "$(hub_pids)" ]; then
+    signal_hubs -KILL
     sleep 2
   fi
   [ -z "$(hub_pids)" ] || die "the running Ensemble did not stop; nothing was changed"

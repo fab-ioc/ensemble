@@ -582,7 +582,7 @@ class Helper:
 
     def start_hub(self, exe: Path, via_service: bool) -> None:
         svc = self.plan.get("launchd")
-        if via_service and svc:
+        if via_service and svc and svc.get("plistIsApp", True):
             r = subprocess.run(["launchctl", "bootstrap", svc["domain"], svc["plist"]],
                                capture_output=True, timeout=60)
             self.log(f"launchctl bootstrap {svc['plist']}: {r.returncode}")

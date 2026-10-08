@@ -311,10 +311,9 @@ def stop_launch_agents(pid: int, home: Path) -> list[str]:
             continue
         _out(["launchctl", "bootout", f"gui/{_uid()}/{label}"], timeout=30)
         did.append(f"stopped its sign-in service {label}")
-        aside = home / ".ensemble" / "old-launch-agents" / plist.name
         try:
-            aside.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(plist), str(aside))
+            import app_setup
+            aside = app_setup.move_launch_agent_aside(plist, home)
             did.append(f"moved {plist} to {aside} (move it back to start that hub at sign-in again)")
         except OSError as e:
             did.append(f"could not move {plist} aside ({e}): that hub starts again at the next sign-in")
@@ -376,7 +375,25 @@ def stop_old_hub(port: int, version: str, home: Path | None = None) -> dict:
     if _listening(port):
         return {"ok": False, "did": did, "error": describe_status(port_status(port), version)}
     did.append(f"port {port} is free")
+    did += take_over_sign_in(did, port, home)
     return {"ok": True, "did": did}
+
+
+def take_over_sign_in(did: list[str], port: int, home: Path) -> list[str]:
+    """After the older hub's sign-in service was moved aside, the built app
+    writes its own in its place (the same label), so Ensemble still starts at
+    sign-in: the person is moved over, not left without it. Not loaded now:
+    the app is started next, by the installer or the person."""
+    if sys.platform != "darwin" or not app_version.packaged() \
+            or not any(line.startswith("moved ") for line in did):
+        return []
+    import app_setup
+    try:
+        res = app_setup.set_autostart(True, app_version.app_executable(), port, log_path(home))
+    except OSError as e:
+        return [f"could not set Ensemble to start at sign-in ({e}): turn it on in Settings"]
+    return [f"Ensemble {app_version.VERSION} now starts at sign-in in its place ({app_setup.launch_agent_plist()})"] \
+        if res.get("thisApp") else []
 
 
 # ---------- telling the person ----------

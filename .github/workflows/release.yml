@@ -189,7 +189,7 @@ jobs:
           for i in $(seq 20); do curl -fs -o /dev/null http://127.0.0.1:8777/SHA256SUMS.txt && break; sleep 1; done
           export ENSEMBLE_RELEASE_URL=http://127.0.0.1:8777
           app=/Applications/Ensemble.app
-          hub() { pgrep -f "$app/Contents/MacOS/Ensemble" | head -1; }
+          hub() { pgrep -f "^$app/Contents/MacOS/Ensemble" | head -1; }
           answers() {
             for i in $(seq 90); do
               if curl -fs http://127.0.0.1:8765/api/version | grep -q "\"$VERSION\""; then return 0; fi
@@ -209,8 +209,14 @@ jobs:
           grep -q "opened the dashboard in the browser: http://127.0.0.1:8765/" "$HOME/Library/Logs/ensemble.log"             || fail "the app did not open the dashboard in the browser"
           echo "installed and serving, the dashboard opened"
           # Again, with the app running: updated in place and started again.
+          # A program that only has the app's path among its arguments is not
+          # the app, and is left running.
+          /usr/bin/python3 -c 'import time; time.sleep(600)' "$app/Contents/MacOS/Ensemble" &
+          decoy=$!
           before=$(hub)
           curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh || fail "the second install failed"
+          kill -0 "$decoy" 2>/dev/null || fail "the install stopped a program that only names the app in its arguments"
+          kill "$decoy"
           answers || fail "the reinstalled app did not answer /api/version with $VERSION"
           after=$(hub)
           [ -n "$after" ] && [ "$before" != "$after" ] || fail "the running app was not started again from the new copy"
@@ -347,12 +353,17 @@ jobs:
           curl -fs http://127.0.0.1:8765/ | grep -q "<title>Ensemble</title>" || fail "the older hub's LaunchAgent did not start it"
           curl -fsSL http://127.0.0.1:8777/install-mac.sh | ENSEMBLE_REPLACE_OLD_HUB=1 sh || fail "the switch-over from a LaunchAgent failed"
           ! launchctl print "gui/$(id -u)/com.ensemble.dashboard" > /dev/null 2>&1 || fail "the older hub's LaunchAgent is still loaded"
-          [ ! -e "$plist" ] && [ -e "$HOME/.ensemble/old-launch-agents/com.ensemble.dashboard.plist" ] || fail "the older hub's LaunchAgent was not moved aside"
+          backup=$(grep -l "$old/dashboard.py" "$HOME/.ensemble/old-launch-agents/"*.plist) || fail "the older hub's LaunchAgent was not kept as a backup"
+          echo "kept: $backup"
+          # The app's own LaunchAgent takes its place (same label), for the next sign-in.
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist")" = "$app/Contents/MacOS/Ensemble" ] \
+            || { cat "$plist"; fail "the app's own LaunchAgent was not written in place of the older one"; }
           sleep 5
           answers || fail "the new app did not serve after the LaunchAgent's hub was stopped"
           ! pgrep -f "$old/dashboard.py" > /dev/null || fail "the older hub came back"
-          echo "an older hub under a LaunchAgent: stopped, moved aside, the new app serves"
+          echo "an older hub under a LaunchAgent: stopped, kept as a backup, the app's own LaunchAgent written, the new app serves"
           pkill -f "$app/Contents/MacOS/Ensemble" || true
+          rm -f "$plist"
           rm -rf "$app"
       - uses: actions/upload-artifact@v4
         with:
