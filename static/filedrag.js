@@ -325,7 +325,8 @@
 
   // The file as a File, read once and kept briefly, so a Share… pressed after
   // hovering it opens the share sheet without waiting. Only one file is kept,
-  // and only for BLOB_TTL_MS after it arrived.
+  // and only for BLOB_TTL_MS after it arrived; a read that another one replaced
+  // while it ran hands its file to whoever waits on it and keeps nothing.
   function fileOf(path, opts) {
     const info = actionInfo(path, opts), key = contextUrl('/api/file/download', info).href;
     const hit = shareFile;
@@ -337,7 +338,9 @@
       if (!r.ok) throw new Error(r.status === 403 ? 'not-allowed' : 'unreadable');
       return r.blob();
     }).then(blob => {
-      entry.file = new global.File([blob], fileName(path), { type: blob.type || 'application/octet-stream' });
+      const file = new global.File([blob], fileName(path), { type: blob.type || 'application/octet-stream' });
+      if (shareFile !== entry) return file;
+      entry.file = file;
       entry.at = Date.now();
       entry.timer = global.setTimeout(drop, BLOB_TTL_MS);
       return entry.file;

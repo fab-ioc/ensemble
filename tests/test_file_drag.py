@@ -585,6 +585,40 @@ class MarkdownForMail(unittest.TestCase):
         self.assertEqual(out.count("<blockquote>"), 8)
         self.assertIn("x", out)
 
+SHARE_JS = r"""
+const pending = [], timers = [];
+global.window = {
+  location: { hostname: 'hub.example', href: 'https://hub.example/', origin: 'https://hub.example' },
+  navigator: { share: () => Promise.resolve(), canShare: () => true },
+  File: class { constructor(parts, name) { this.parts = parts; this.name = name; } },
+  fetch: url => new Promise(ok => pending.push(() => ok({ ok: true, blob: () => Promise.resolve({ type: 'text/plain', url }) }))),
+  setTimeout: (fn, ms) => { timers.push(fn); return timers.length; },
+  clearTimeout: () => {},
+};
+require(process.argv[1]);
+const F = window.FileDrag;
+(async () => {
+  F.warmShare('/p/a.txt'); F.warmShare('/p/b.txt'); F.warmShare('/p/c.txt');
+  pending.forEach(go => go());
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  const kept = timers.length;
+  // The last one is kept: Share… on it needs no new read.
+  const before = pending.length;
+  await F.share('/p/c.txt');
+  console.log(JSON.stringify({ reads: 3, kept, reread: pending.length - before }));
+})();
+"""
+
+
+@unittest.skipUnless(NODE, "node is needed")
+class ShareKeepsOneFile(unittest.TestCase):
+    def test_reads_replaced_while_running_keep_nothing(self):
+        proc = subprocess.run([NODE, "-e", SHARE_JS, str(ROOT / "static" / "filedrag.js")],
+                              capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), {"reads": 3, "kept": 1, "reread": 0})
+
 
 if __name__ == "__main__":
     unittest.main()
