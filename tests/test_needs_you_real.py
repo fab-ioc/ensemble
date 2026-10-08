@@ -214,8 +214,27 @@ class TheReadPoint(_Needs):
         self.assertIn("self._page_refusal()", body)
         self.assertIn('re.fullmatch(r"room-[A-Za-z0-9_-]{1,64}", rid)', body)
         page = (ROOT / "session.html").read_text(encoding="utf-8")
-        self.assertIn("seenTell(ts);", page)
+        self.assertIn("seenTell(Math.max(ts, DRAWN_ROOM_TS));", page)
         self.assertIn("'/api/attention/seen'", page)
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_a_report_later_in_the_last_turn_counts_as_read(self):
+        # A turn is dated by its start: the report made in it is newer than
+        # the chat's last line, and still read with it (measured 10-08: 2 of 7
+        # finished tasks).
+        page = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+        line = re.search(r"^const roomLatestTs = .*$", page, re.M).group(0)
+        js = line + "\nconsole.log(JSON.stringify([roomLatestTs(null), roomLatestTs({messages: " \
+            "[{ts: 5}, {ts: 9.5}, {}]})]));\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "ts.cjs"
+            script.write_text(js, encoding="utf-8")
+            proc = subprocess.run([NODE, str(script)], capture_output=True, text=True,
+                                  encoding="utf-8", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), [0, 9.5])
+        i = page.index("function renderBubbles(")
+        self.assertIn("DRAWN_ROOM_TS = roomLatestTs(ROOM_OBJ);", page[i:i + 200])
 
 
 class TheProjectCount(unittest.TestCase):

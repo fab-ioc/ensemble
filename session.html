@@ -3555,6 +3555,11 @@ let CHAT_VIEW = null;           // { items, sup }: what was drawn, for the comme
 const ROOM_NOS = new Map();     // a task's room id → { no }: its number, once known
 let STICK = true;          // at the end of the chat: new messages keep it there
 let LAST_ITEMS = null;     // what was last drawn, to draw it again after a click
+// A turn's time is when it began, so a report the agent made later in it is
+// newer than the chat's last line: what the room held when the chat was
+// last drawn (hub times) counts as read with it.
+let DRAWN_ROOM_TS = 0;
+const roomLatestTs = room => ((room && room.messages) || []).reduce((t, m) => Math.max(t, +m.ts || 0), 0);
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
 let DEC_N = 0;             // of those, how many ask for a decision
 let SOLO_IDLE = false;     // the solo agent is not working: its silence is an answer not given
@@ -3591,6 +3596,7 @@ function keepPlace(box, place) {
 function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
   LAST_ITEMS = items;
+  DRAWN_ROOM_TS = roomLatestTs(ROOM_OBJ);
   pmIndex(items, ROOM_OBJ);
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
@@ -3892,7 +3898,7 @@ function markRead() {
       READ_MEM = ahead ? { id: m.id, ts, at: now } : { id: cur.id, ts: cur.ts, at: now };
       try { localStorage.setItem(READ_KEY(), JSON.stringify(READ_MEM)); } catch (e) {}
     }
-    seenTell(ts);
+    seenTell(Math.max(ts, DRAWN_ROOM_TS));
     break;
   }
   if (CU_POINT) { CU_POINT = null; CU_SNAP = null; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
