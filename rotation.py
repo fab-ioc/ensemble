@@ -129,6 +129,7 @@ GATE = threading.RLock()
 _ROTATING: dict[tuple, dict] = {}  # (roomId, identity) -> {stopped}, mid-rotation
 _WATCHING: dict[tuple, dict] = {}  # the same, for an owner just switched to the other kind
 _HELD: dict[tuple, list] = {}      # (roomId, identity) -> wakes held meanwhile
+_REPLAYING: dict[tuple, list] = {}  # (roomId, identity) -> held wakes released, not yet typed
 REPLAY_WAIT_S = 15 * 60            # a fresh session that never settles gets them anyway
 
 
@@ -1888,6 +1889,10 @@ def _release(key: tuple) -> None:
     with GATE:
         _ROTATING.pop(key, None)
         held = _HELD.pop(key, [])
+        if held:
+            # Still held until typed (or failed): the orphan sweep and the
+            # gone rule leave them alone meanwhile (#192 review 1).
+            _REPLAYING.setdefault(key, []).extend(held)
     if held:
         _replay(key[0], key[1], held)
 
@@ -1970,10 +1975,28 @@ def hold_sends(room_id: str, items: list[dict]) -> bool:
 
 
 def holds_send(room_id: str, key: str) -> bool:
-    """A send with this key is held for a fresh session (hold_sends)."""
+    """A send with this key is held for a fresh session (hold_sends), or
+    released and waiting for that session to settle to be typed."""
     with GATE:
         return any(isinstance(w, dict) and any(it.get("key") == key for it in w.get("sends") or [])
-                   for k, held in _HELD.items() if k[0] == room_id for w in held)
+                   for d in (_HELD, _REPLAYING)
+                   for k, held in d.items() if k[0] == room_id for w in held)
+
+
+def replaying(room_id: str) -> bool:
+    """Held wakes of this room are on their way into its fresh session."""
+    with GATE:
+        return any(k[0] == room_id and held for k, held in _REPLAYING.items())
+
+
+def _replayed(key: tuple, wakes: list) -> None:
+    """These released wakes were typed, or failed: no longer held."""
+    with GATE:
+        left = [w for w in _REPLAYING.get(key, []) if not any(w is x for x in wakes)]
+        if left:
+            _REPLAYING[key] = left
+        else:
+            _REPLAYING.pop(key, None)
 
 
 def _carry_unread(key: tuple) -> None:
@@ -2033,15 +2056,21 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
     settled (drawn its screen, then quiet for IDLE_S, as for the resume note),
     one at a time, in the background."""
     def run():
-        for wake in wakes:
+        try:
+            typed(wakes)
+        finally:
+            _replayed((rid, ident), wakes)
+
+    def typed(wakes):
+        for i, wake in enumerate(wakes):
             end = time.time() + REPLAY_WAIT_S
             while True:
                 time.sleep(1)
                 part = _d.chatroom.participant(_d.chatroom.get_room(rid) or {}, ident)
                 sess = _pty(part or {})
                 if sess is None:
-                    _log(f"{rid}/{ident}: not running — {len(wakes)} held wake(s) dropped")
-                    lost = [it.get("key") for w in wakes if isinstance(w, dict)
+                    _log(f"{rid}/{ident}: not running — {len(wakes) - i} held wake(s) dropped")
+                    lost = [it.get("key") for w in wakes[i:] if isinstance(w, dict)
                             for it in w.get("sends") or []]
                     _d.sends.mark(rid, lost, "failed", "the session stopped before it took this")
                     return
@@ -2054,6 +2083,7 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
                     _type_sends(rid, ident, sess, wake)
                 else:
                     _d._type_input(sess, wake)
+            _replayed((rid, ident), [wake])
         _log(f"{rid}/{ident}: typed {len(wakes)} held wake(s) into the fresh session")
     threading.Thread(target=run, daemon=True, name=f"rotation-replay-{rid}-{ident}").start()
 

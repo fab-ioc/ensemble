@@ -171,6 +171,7 @@ def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = 
         elif s["state"] == "failed":
             _set(s, "queued", now)
             s.pop("redelivered", None)      # a retry is a fresh start: one more redelivery
+            s.pop("enteredAt", None)
         else:
             return dict(s)
         try:
@@ -372,26 +373,66 @@ def _solo(room: dict) -> bool:
 
 
 def unseen(text: str) -> bool:
-    """A send its transcript never shows as a turn of its own: the reader
-    skips a user turn that starts with "<" or "Caveat:" (Claude Code's own
-    lines). It stays delivered (Dismiss hides it), never failed: Retry would
-    type in again what the agent read."""
+    """A send the chat reader never shows as a turn of its own: it skips a
+    user turn that starts with "<" or "Caveat:" (Claude Code's own lines).
+    Such a send is looked for in the raw transcript instead (_hidden_turns)."""
     t = (text or "").lstrip()
     return t.startswith("<") or t.startswith("Caveat:")
+
+
+HIDDEN_MID = ":h"               # a turn the chat does not draw: confirmed with no balloon to point at
+
+
+def _hidden_turns(sid: str, since: float, now: float) -> list[tuple[str, dict]]:
+    """A Claude session's user turns the chat reader leaves out ("<",
+    "Caveat:"), typed or read mid-turn, from ``since`` on: so a send that
+    starts that way is confirmed or failed like any other, never left
+    delivered for good (#192 review 1)."""
+    path = _d.find_transcript(sid)
+    if not path:
+        return []
+    out: list[tuple[str, dict]] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if '"user"' not in line and '"queued_command"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict) or d.get("isMeta"):
+                    continue
+                text, ts = None, d.get("timestamp", "")
+                if d.get("type") == "user" and isinstance(d.get("message"), dict):
+                    text = _d._unwrap_pasted(_d._extract_text(d["message"].get("content")) or "")
+                elif d.get("type") == "attachment" and isinstance(d.get("attachment"), dict):
+                    att = d["attachment"]
+                    if att.get("type") == "queued_command":
+                        text, ts = _d._queued_prompt_text(att.get("prompt")), att.get("timestamp") or ts
+                text = (text or "").strip() if isinstance(text, str) else ""
+                if not unseen(text) or (_d._turn_epoch(ts) or now) < since:
+                    continue
+                out.append((f"{sid}{HIDDEN_MID}{len(out)}", {"timestamp": ts, "role": "user", "text": text}))
+    except OSError:
+        return []
+    return out
 
 
 RESCAN_UNKNOWN_S = 30           # a transcript whose size and time cannot be read: read again this often
 
 
-def _user_turns(room_id: str, sid: str, since: float, now: float) -> list[tuple[str, dict]]:
+def _user_turns(room_id: str, sid: str, since: float, now: float,
+                hidden: bool = False) -> list[tuple[str, dict]]:
     """A session's user turns from ``since`` on, read again only when its
     transcript changed (a PO's is megabytes, and the page polls every two
     seconds); one whose stat cannot be had, every RESCAN_UNKNOWN_S. A session
-    not written since ``since`` holds none."""
+    not written since ``since`` holds none. ``hidden``: with the turns the
+    chat does not draw (_hidden_turns)."""
     st = _d.points._session_stat(sid)
     if st is not None and float(st[1]) < since:
         return []
-    seen = _SCANNED.get((room_id, sid))
+    seen = _SCANNED.get((room_id, sid, hidden))
     if seen is not None and seen[1] <= since and (
             seen[0] == st if st is not None else seen[0] is None and now - seen[3] < RESCAN_UNKNOWN_S):
         return seen[2]
@@ -402,7 +443,9 @@ def _user_turns(room_id: str, sid: str, since: float, now: float) -> list[tuple[
         return []
     turns = [(mid, t) for mid, t in _d.page_turn_ids(sid, raw)
              if t.get("role") == "user" and (_d._turn_epoch(t.get("timestamp")) or now) >= since]
-    _SCANNED[(room_id, sid)] = (st, since, turns, now)
+    if hidden:
+        turns += _hidden_turns(sid, since, now)
+    _SCANNED[(room_id, sid, hidden)] = (st, since, turns, now)
     return turns
 
 
@@ -419,7 +462,7 @@ def _coming_back(room_id: str, now: float) -> bool:
         return True
     try:
         rot = _d.rotation
-        if rot.room_rotating(room_id) or rot.switching(room_id):
+        if rot.room_rotating(room_id) or rot.switching(room_id) or rot.replaying(room_id):
             return True
         with _d._RESUMES_LOCK:
             res = _d._RESUMES.get(room_id)
@@ -451,8 +494,9 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
         return
     since = min(float(s["at"]) for s in waiting) - SLACK_S
     turns: list[tuple[str, dict]] = []
+    hidden = any(unseen(s["text"]) for s in waiting)
     for sid in _session_ids(room):
-        turns += _user_turns(room_id, sid, since, now)
+        turns += _user_turns(room_id, sid, since, now, hidden)
     live = _d._room_is_live(room) or _coming_back(room_id, now)
     # What of each turn the sends it confirmed already have not claimed:
     # one turn may confirm several sends (a resume types them in as one
@@ -470,7 +514,7 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
                     and left[mid].take(ev)), None)
         if hit:
             hits[s["key"]] = hit
-        elif (not live and not unseen(s["text"])
+        elif (not live
               and now - float(s.get("deliveredAt") or s["stateAt"]) > STOPPED_AFTER_S):
             gone.add(s["key"])
     if not hits and not gone:
@@ -483,7 +527,8 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
                 continue
             if s["key"] in hits:
                 _set(s, "confirmed", now)
-                s["mid"], s["confirmedAt"] = hits[s["key"]], now
+                mid = hits[s["key"]]
+                s["mid"], s["confirmedAt"] = ("" if HIDDEN_MID in mid else mid), now
                 changed = True
             elif s["key"] in gone:
                 _set(s, "failed", now, "the session stopped before it read this")
@@ -553,13 +598,13 @@ _IN_BOX = re.compile(r"\[Pasted (?:Content|text)\b", re.I)
 
 def unread(room_id: str) -> list[dict]:
     """The sends typed into the room's agent that its conversation does not
-    show yet (oldest first): neither a ``/command`` nor one it never shows."""
+    show yet (oldest first), less a ``/command``."""
     if not _ROOM_ID.fullmatch(room_id or ""):
         return []
     with _LOCK:
         items = _load(room_id)
     return sorted((dict(s) for s in items if s["state"] == "delivered"
-                   and not typed_confirms(s["text"]) and not unseen(s["text"])),
+                   and not typed_confirms(s["text"])),
                   key=lambda s: s["at"])
 
 
@@ -579,6 +624,25 @@ def redelivered(room_id: str, keys, how: str, now: float | None = None) -> None:
                 s["deliveredAt"] = now
                 s["redelivered"] = int(s.get("redelivered") or 0) + 1
                 s.setdefault("redeliveries", []).append({"at": now, "how": how})
+                changed = True
+        if changed:
+            _save(room_id, items)
+
+
+def entered(room_id: str, keys, now: float | None = None) -> None:
+    """Enter was pressed for these sends, seen still in the agent's box: not
+    the one redelivery (an Enter may have taken some other text), so a send
+    still unread after it is typed again before it fails. Once per send."""
+    keys = [k for k in (keys or []) if k]
+    if not keys or not _ROOM_ID.fullmatch(room_id or ""):
+        return
+    now = time.time() if now is None else now
+    with _LOCK:
+        items = _load(room_id)
+        changed = False
+        for s in items:
+            if s["key"] in keys and s["state"] == "delivered":
+                s["deliveredAt"] = s["enteredAt"] = now
                 changed = True
         if changed:
             _save(room_id, items)
@@ -672,17 +736,20 @@ def _redeliver_room(room_id: str, now: float) -> None:
     first = [s for s in due if not s.get("redelivered")]
     if not first:
         return
-    keys = [s["key"] for s in first]
-    if _in_box(sess.tail() or "", first[0]["text"]):
+    tail = sess.tail() or ""
+    boxed = [s for s in first if not s.get("enteredAt") and _in_box(tail, s["text"])]
+    if boxed:
         # Typed but never submitted (a Codex paste whose Enter was lost):
-        # Enter takes it in; typing it again would put it there twice.
+        # Enter takes it in; typing it again would put it there twice. The
+        # others wait for the next idle look.
         try:
             sess.write("\r")
         except (OSError, EOFError):
             return
-        redelivered(room_id, keys, "Enter pressed on the text left in the box", now)
-        _log(f"{room_id}: Enter pressed for {len(keys)} send(s) left in the box")
+        entered(room_id, [s["key"] for s in boxed], now)
+        _log(f"{room_id}: Enter pressed for {len(boxed)} send(s) left in the box")
         return
+    keys = [s["key"] for s in first]
     parts = [(AGAIN_NOTE, _d._input_sender_info(AGAIN_NOTE))] + [
         (_d.with_message_refs(s["text"], room_id), _d._origin_sender_info(s["text"], "human"))
         for s in first]

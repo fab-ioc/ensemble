@@ -505,15 +505,31 @@ class Receipts(unittest.TestCase):
             sends.sync(rid, room=room, force=True, now=now + 5 + sends.RESCAN_UNKNOWN_S + 1)
             self.assertEqual(len(reads), 4)
 
-    def test_a_send_its_transcript_never_shows_is_not_failed_for_retry(self):
-        # Its turn is skipped by the reader ("<", "Caveat:"): the agent read
-        # it, so Retry would type it in twice.
+    def test_a_send_the_chat_does_not_draw_is_read_from_the_raw_transcript(self):
+        # Its turn is skipped by the chat reader ("<", "Caveat:"): looked for
+        # in the transcript itself, so it is confirmed (no balloon to point
+        # at) or, never read by a stopped agent, failed: never pending for good.
         rid = self.room()
-        status, out = self.post({"roomId": rid, "text": "<b>bold</b> please", "key": "send:lt"})
+        status, out = self.post({"roomId": rid, "text": "<b>bold</b> please", "key": "send:lu"})
+        with tempfile.TemporaryDirectory() as d:
+            tp = Path(d) / "t.jsonl"
+            tp.write_text(json.dumps({"type": "user", "timestamp": iso(out["send"]["at"] + 2),
+                                      "message": {"role": "user", "content": out["send"]["text"]}}),
+                          encoding="utf-8")
+            sends._SCANNED.clear()
+            # The transcript's own time is the hidden line's: written since the send.
+            with mock.patch.object(dashboard, "find_transcript", lambda sid: tp), \
+                    mock.patch.object(points, "_session_stat", lambda sid: None):
+                rows = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
+        self.assertNotIn("send:lu", [s["key"] for s in rows])
+        s = sends.get(rid, "send:lu")
+        self.assertEqual((s["state"], s.get("mid")), ("confirmed", ""))
+        status, out = self.post({"roomId": rid, "text": "<please review this>", "key": "send:lt"})
         self.assertEqual(out["send"]["state"], "delivered")
         self.ptys["pty-live-0"]._alive = False
-        [s] = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
-        self.assertEqual(s["state"], "delivered")
+        later = out["send"]["at"] + sends.STOPPED_AFTER_S + 5
+        [s] = [x for x in self.payload(rid, now=later)["sends"] if x["key"] == "send:lt"]
+        self.assertEqual((s["state"], s["error"]), ("failed", "the session stopped before it read this"))
 
     def test_a_send_the_team_chat_did_not_take_fails_with_retry(self):
         rid = self.room(agents=("claude", "codex"), mode="collab")

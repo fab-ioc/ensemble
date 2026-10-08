@@ -206,7 +206,32 @@ class TypedAgainOnce(Harness):
         self.pty.screen = "› [Pasted Content 1204 chars]\n\n  ? for shortcuts"
         sends.redeliver_tick(now=time.time())
         self.assertEqual((self.pty.typed, self.pty.writes), ([], ["\r"]))
+        s = sends.get(self.rid, "send:u")
+        self.assertNotIn("redelivered", s)      # an Enter is not its one retry
+        # Still unread at the next idle: Enter is not pressed again; typed
+        # again once, then failed.
+        later = time.time() + sends.REDELIVER_AFTER_S + 5
+        sends.redeliver_tick(now=later)
+        self.assertEqual((len(self.pty.typed), self.pty.writes), (1, ["\r"]))
         self.assertEqual(sends.get(self.rid, "send:u")["redelivered"], 1)
+        sends.redeliver_tick(now=later + sends.REDELIVER_AFTER_S + 5)
+        self.assertEqual(sends.get(self.rid, "send:u")["state"], "failed")
+
+    def test_one_enter_counts_only_for_the_send_seen_in_the_box(self):
+        self.delivered(self.rid, "send:w", "a second message waiting behind it", self.at + 1)
+        self.pty.screen = "› a second message waiting behind it"
+        sends.redeliver_tick(now=time.time())
+        self.assertEqual((self.pty.typed, self.pty.writes), ([], ["\r"]))
+        self.assertIn("enteredAt", sends.get(self.rid, "send:w"))
+        self.assertNotIn("enteredAt", sends.get(self.rid, "send:u"))
+        # The other one gets its own retry, typed again.
+        self.pty.screen = "› "
+        sends.redeliver_tick(now=time.time() + 1)
+        [typed] = self.pty.typed
+        self.assertIn("please check the branch", typed)
+        self.assertNotIn("a second message", typed)
+        self.assertEqual(sends.get(self.rid, "send:u")["redelivered"], 1)
+        self.assertNotIn("redelivered", sends.get(self.rid, "send:w"))
 
     def test_not_while_busy_or_on_a_prompt_or_asked_for_its_handover(self):
         self.turn_over = False
@@ -282,6 +307,28 @@ class HandedOver(Harness):
         self.assertEqual(self.pty_typed(), ["never read by the old session", "[due] something due"])
         s = sends.get(self.rid, "send:c")
         self.assertEqual((s["state"], s["redeliveries"][0]["how"]), ("delivered", "carried to the fresh session"))
+
+    def test_released_but_not_yet_typed_is_still_held(self):
+        status, out = self.post({"roomId": self.rid, "text": "sent during the handover", "key": "send:g"})
+        go = threading.Event()
+        real = rotation._type_sends
+
+        def slow(*a, **k):
+            go.wait(10)
+            return real(*a, **k)
+        with mock.patch.object(rotation, "_type_sends", slow):
+            rotation._release(self.key)
+            later = time.time() + dashboard.ORPHAN_AFTER_S + 5
+            with mock.patch.object(sends.time, "time", lambda: later):
+                dashboard._fail_orphaned_sends(self.rid)
+            self.assertEqual(sends.get(self.rid, "send:g")["state"], "queued")
+            self.assertTrue(rotation.holds_send(self.rid, "send:g"))
+            self.assertTrue(rotation.replaying(self.rid))
+            go.set()
+            self.wait_replay()
+        self.assertEqual(sends.get(self.rid, "send:g")["state"], "delivered")
+        self.assertFalse(rotation.holds_send(self.rid, "send:g"))
+        self.assertFalse(rotation.replaying(self.rid))
 
     def test_no_session_after_the_handover_fails_them_with_retry(self):
         status, out = self.post({"roomId": self.rid, "text": "into the void", "key": "send:v"})
