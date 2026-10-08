@@ -296,6 +296,19 @@ jobs:
           kill "$other"
           echo "another program on the port: named, not stopped"
           for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8765/ || break; sleep 1; done
+          # Another program that answers /api/version as this version: still another program.
+          forged="$RUNNER_TEMP/forged"; mkdir -p "$forged/api"
+          printf '{"version": "%s", "pid": 1}' "$VERSION" > "$forged/api/version"
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$forged" > /dev/null 2>&1 &
+          other=$!
+          for i in $(seq 20); do curl -fs -o /dev/null http://127.0.0.1:8765/api/version && break; sleep 1; done
+          if out=$(curl -fsSL http://127.0.0.1:8777/install-mac.sh | sh 2>&1); then echo "$out"; fail "an install with a forged /api/version on the port reported success"; fi
+          echo "$out"
+          echo "$out" | grep -q "in use by another program (process $other" || fail "a forged /api/version was taken for Ensemble"
+          kill -0 "$other" || fail "the install stopped the program with a forged /api/version"
+          kill "$other"
+          echo "a forged /api/version: another program"
+          for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8765/ || break; sleep 1; done
           # An older hub run from a source checkout (no /api/version): named,
           # stopped only when asked, then the new app serves.
           old="$RUNNER_TEMP/old checkout"; mkdir -p "$old"

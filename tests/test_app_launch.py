@@ -97,6 +97,15 @@ class PortStatusTest(unittest.TestCase):
             st = app_launch.port_status(port)
         self.assertEqual((st["pid"], st["verified"]), (78, True))
 
+    def test_a_forged_api_version_from_a_known_other_program_is_another_program(self):
+        port = self.serve(ensemble_server(app_version.VERSION))
+        holder = {"pid": 61, "command": "/usr/bin/node unrelated.js", "cwd": "/"}
+        with mock.patch.object(app_launch, "_holder", lambda p: holder):
+            st = app_launch.port_status(port)
+        self.assertEqual((st["state"], st["pid"], st["verified"]), ("other", 61, False))
+        self.assertIn("another program (process 61: /usr/bin/node unrelated.js)",
+                      app_launch.describe_status(st, app_version.VERSION))
+
     def test_an_older_hub_without_api_version_by_its_page(self):
         port = self.serve(_Server({"/": (200, b"<html><head><title>Ensemble</title></head></html>")}))
         self.assertEqual(app_launch.port_status(port)["state"], "old")

@@ -212,7 +212,8 @@ def port_status(port: int) -> dict:
 
     * ``free``: nothing listens;
     * ``ensemble``: a hub that answers /api/version (its ``version`` and
-      ``executable``, as it says);
+      ``executable``, as it says), and whose command line is Ensemble's
+      when the process can be named;
     * ``old``: an older Ensemble hub, without /api/version (a checkout's
       dashboard.py; when the process cannot be named, a page titled Ensemble);
     * ``other``: anything else.
@@ -228,7 +229,10 @@ def port_status(port: int) -> dict:
     h = _holder(port) or {}
     out = {"state": "other", "port": port, "pid": h.get("pid"), "command": h.get("command", ""),
            "verified": bool(h.get("command")) and is_ensemble_command(h["command"], h.get("cwd", ""))}
-    if v:
+    if v and (out["verified"] or not h.get("command")):
+        # A known process counts only by its command line: an answer on
+        # /api/version alone proves nothing. Unknown (Windows, another
+        # user's process): taken at its word, never stopped.
         out.update(state="ensemble", version=str(v.get("version")), executable=str(v.get("executable") or ""))
     elif out["verified"]:
         out["state"] = "old"
