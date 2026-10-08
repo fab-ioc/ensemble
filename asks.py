@@ -429,7 +429,9 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     writes in the chat after it (``asksSettledAt``: they answered in words,
     or set it aside); one whose message was approved with a thumbs up ("go
     with your recommendation") is answered if it has a recommendation. The
-    page's ``openAsks`` keeps the same rules."""
+    page's ``openAsks`` keeps the same rules. Needs you also lets go of an
+    ask the person has read once it is a day old (attention.read_and_old):
+    it stays open in the chat, for them to come back to."""
     now = time.time() if now is None else now
     rid = summary.get("id", "")
     marked = [x for x in _room_asks(summary) if not x[1] or now - x[1] < OPEN_DAYS * 86400]
@@ -444,6 +446,8 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     out = []
     for mid, ts, qs, who in marked:
         if ts and ts < settled:
+            continue
+        if _d.attention.read_and_old(summary, ts, now):
             continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):

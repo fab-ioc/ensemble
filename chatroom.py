@@ -804,6 +804,28 @@ def record_answer(room_id: str, identity: str, at: float) -> dict | None:
         return dict(part)
 
 
+def record_seen(room_id: str, ts: float) -> float | None:
+    """The person read the room's chat up to the message of time ``ts`` (the
+    page's read point, session.html ``markRead``): kept on the room as
+    ``seenAt``, which only moves forward and never past now. What the person
+    has read leaves Needs you on attention's rules (a finished report at
+    once, an ask a day after it was put). ``updatedAt`` is left alone: reading
+    is not news. Returns the room's ``seenAt``, or None when the room is gone."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        try:
+            ts = min(float(ts), _now())
+        except (TypeError, ValueError):
+            return None
+        seen = float(room.get("seenAt") or 0)
+        if ts > seen:
+            room["seenAt"] = seen = ts
+            _write(room)
+        return seen
+
+
 def last_real_report(room: dict) -> dict:
     """The task's last report that is not an ``update``, or {}. A task that
     reported before ``lastRealReport`` was kept falls back to ``lastReport``

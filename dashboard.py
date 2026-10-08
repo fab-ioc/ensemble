@@ -6282,7 +6282,10 @@ def build_projects() -> dict:
             agents_live += len(s.get("agents") or [1])
         # "Needs you" now means what the notifications mean — a dead agent or
         # one at its usage limit counts, not just a task that says it's waiting.
-        if s.get("attention") or s.get("status") in ("waiting", "waiting_human"):
+        # A task's room waiting on the person is attention's to judge (a read
+        # ask leaves, a PO's plain message asks nothing); only a session in no
+        # task goes by its own status.
+        if s.get("attention") or (not s.get("roomId") and s.get("status") in ("waiting", "waiting_human")):
             g["waiting"] += 1
             needs_you += 1
     projects = []
@@ -9204,6 +9207,10 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     except Exception:
         po_waits = {}
     try:
+        reported = attention.reported_by_room()
+    except Exception:
+        reported = {}
+    try:
         for rm in rooms:
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
@@ -9297,14 +9304,16 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "reviewAllocations": [a for a in (rm.get("reviewAllocations") or [])
                                       if isinstance(a, dict) and a.get("changed")][-1:],
                 # {state, reason, agentIdentity, since, askKind} when this task
-                # needs a human; askKind names what it put to them (a
-                # "completed" report is ready to review, not a question).
+                # needs a human; askKind names what it put to them.
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since", "askKind")}
                               if rid in att_by_room else None),
                 # {since, kind, line, agent}: an ask its PO has not answered
                 # yet (task → PO → CEO) — shown quietly, it is not the CEO's.
                 "waitingOnPo": po_waits.get(rid),
+                # {since, line, agent}: a finished report the person has not
+                # looked at yet: ready for their check, never Needs you.
+                "reported": reported.get(rid),
                 # {open, answered}: the person's points waiting, or None.
                 "points": _points_counts(rid),
                 # How many conversations it has left behind (past_conversations).
@@ -11583,8 +11592,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            # The chat says what the person has read (/api/attention/seen, a
+            # page-only write), also when it is opened on its own.
             self._send_file(STATIC_DIR / "session.html",
-                            "text/html; charset=utf-8")
+                            "text/html; charset=utf-8", self._ui_key_headers())
             return
         if p in ("/", "/index.html"):
             # The Update now button lives on this page; hand the browser the
@@ -14739,6 +14750,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             file_history.request(home, None, "snapshot now")
             self._send_json(200, {"ok": True, "queued": True})
+            return
+        if p == "/api/attention/seen":
+            # {roomId, ts}: the person read this chat up to the message of time
+            # ts (session.html markRead). Read asks leave Needs you on
+            # attention's rules, so only the page may say so, never an agent.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if not re.fullmatch(r"room-[A-Za-z0-9_-]{1,64}", rid):
+                self._send_json(400, {"error": "bad_room"})
+                return
+            seen = chatroom.record_seen(rid, data.get("ts"))
+            if seen is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            asks.forget()
+            self._send_json(200, {"ok": True, "seenAt": seen})
             return
         if p == "/api/history/restore":
             # {projectId, rev, path}: put an old version back. A write, so only

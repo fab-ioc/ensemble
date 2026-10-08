@@ -1335,8 +1335,9 @@ def _list_attention(ctx, args, handler):
             "count": len(items), "needAttention": items,
             "states": {"agent_gone": "its terminal died and nobody asked it to",
                        "blocked": "running, but it says it cannot continue",
-                       "waiting_for_you": "it is waiting on a human answer — including "
-                                          "a task that reported it finished or asked a question",
+                       "waiting_for_you": "it is waiting on a human answer: a question, a "
+                                          "message or a prompt nobody has answered (a finished report is "
+                                          "not one: the list shows it as ready for a check)",
                        "stalled": "asked to do something, not working, never reported back"}}
 
 

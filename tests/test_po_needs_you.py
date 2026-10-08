@@ -256,8 +256,11 @@ class ProjectCountsThePoThatCannotGoOn(unittest.TestCase):
     def test_beside_its_tasks(self):
         tasks = [{"roomId": "room-a", "sessionId": "room-a", "isLive": True, "status": "waiting_human"},
                  {"roomId": "room-b", "sessionId": "room-b", "attention": {"state": "stalled"}}]
-        self.assertEqual(self.build({"isLive": True, "attention": {"state": "blocked"}}, tasks), (1, 3, 3, 1))
-        self.assertEqual(self.build({"isLive": True, "status": "waiting"}, tasks), (1, 2, 2, 1))
+        # A task's room waiting on the person with no attention item is not
+        # Needs you: attention judges rooms (a read ask, a PO's plain message;
+        # GitHub issue 11). Only the stalled task counts beside the PO.
+        self.assertEqual(self.build({"isLive": True, "attention": {"state": "blocked"}}, tasks), (1, 2, 2, 1))
+        self.assertEqual(self.build({"isLive": True, "status": "waiting"}, tasks), (1, 1, 1, 1))
 
     def test_a_po_kept_in_another_project_counts_for_the_one_that_names_it(self):
         reg = [{"id": "a", "name": "A", "path": "", "poRoomId": "po-a"},

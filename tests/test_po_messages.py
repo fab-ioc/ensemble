@@ -442,7 +442,7 @@ class LoopGuard(_World):
         with mock.patch.object(attention, "_classify_agent", return_value=None), \
                 mock.patch.object(attention, "_duplicate_ptys", return_value=None), \
                 mock.patch.object(attention, "_room_level",
-                                  side_effect=lambda room, live: asked if room["id"] == self.dock else None), \
+                                  side_effect=lambda room, live, now=None: asked if room["id"] == self.dock else None), \
                 mock.patch.object(attention, "_claude_status_by_session", return_value={}), \
                 mock.patch.object(attention, "_evidence", return_value={"alive": True}), \
                 mock.patch.object(dashboard, "project_keys", return_value={}):

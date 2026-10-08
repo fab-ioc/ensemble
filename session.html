@@ -3892,9 +3892,20 @@ function markRead() {
       READ_MEM = ahead ? { id: m.id, ts, at: now } : { id: cur.id, ts: cur.ts, at: now };
       try { localStorage.setItem(READ_KEY(), JSON.stringify(READ_MEM)); } catch (e) {}
     }
+    seenTell(ts);
     break;
   }
   if (CU_POINT) { CU_POINT = null; CU_SNAP = null; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
+}
+// The hub keeps how far the person has read each task's chat (any device):
+// what they read leaves Needs you (a finished report at once, an ask a day
+// after it came; GitHub issue 11). Told once per newer message read.
+let SEEN_TOLD = 0;
+function seenTell(ts) {
+  if (!/^room-/.test(ROOM || '') || !(ts > SEEN_TOLD)) return;
+  SEEN_TOLD = ts;
+  fetch('/api/attention/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify({ roomId: ROOM, ts }) }).catch(() => {});
 }
 // Another tab read further: the line here counts from that point, or goes when
 // nothing is left after it. A point behind this one changes nothing.

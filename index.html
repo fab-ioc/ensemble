@@ -6276,11 +6276,20 @@ const SW_GROUPS = [
   ['done', 'Done today'],
 ];
 // A finished report waits for a look, not an answer: it is ready for your
-// check. Anything else /api/attention lists (blocked, a question, a prompt, a death,
-// a stall) needs you. A hub from before `askKind` says it only in the reason.
+// check. The hub says so on the row (`reported`, {since, line, agent}) and
+// never lists it in /api/attention (GitHub issue 11); it leaves once you read
+// that chat, write in it, or the task is Done or stopped. Anything
+// /api/attention lists (blocked, a question, a prompt, a death, a stall) needs
+// you. A hub from before `reported` listed the report as waiting for you, by
+// `askKind`, or before that only in the reason.
 function swReported(a) {
   if (!a || a.state !== 'waiting_for_you') return false;
   return a.askKind ? a.askKind === 'completed' : / reported the work is finished/.test(a.reason || '');
+}
+// When a row's finished report arrived (seconds), or 0 when it has none.
+function swReportedAt(r, a) {
+  if (swReported(a)) return Number(a.askedAt || a.since) || 1;
+  return (r && r.reported && (Number(r.reported.since) || 1)) || 0;
 }
 function swTone(state) {
   return (state === 'agent_gone' || state === 'blocked') ? 'danger' : state === 'stalled' ? 'neutral' : 'warning';
@@ -6330,9 +6339,10 @@ function swGroups(rows, items, projects, opts) {
     const wf = workflowOf(r);
     if (wf === 'done') {
       if (o.dayStart && Number(r.updatedAt) >= o.dayStart) g.done.push(entry(r.roomId, r, null, { at: Number(r.updatedAt) }));
-    } else if (wf === 'inreview' || swReported(a) || swPaused(r)) {
+    } else if (wf === 'inreview' || swReportedAt(r, a) || swPaused(r)) {
+      const rep = swReportedAt(r, a);
       g.review.push(entry(r.roomId, r, swReported(a) ? a : null,
-                          { at: Number(swReported(a) && (a.askedAt || a.since)) || Number(r.updatedAt) || 0 }));
+                          { at: (rep > 1 ? rep : 0) || Number(r.updatedAt) || 0 }));
     } else if (r.isLive) {
       g.running.push(entry(r.roomId, r, null, { at: lastNews(r) }));
     }
@@ -6457,7 +6467,7 @@ function swRowHtml(e, group, selected) {
     if (e.project) words.push(e.project);
     if (needs && it.agentIdentity) words.push(it.agentIdentity);
     if (group === 'running' && e.row && swAgents(r)) words.push(swAgents(r));
-    if (group === 'review' && e.row) words.push(workflowOf(r) === 'inreview' ? 'in review' : it ? 'reported' : 'paused');
+    if (group === 'review' && e.row) words.push(workflowOf(r) === 'inreview' ? 'in review' : (it || r.reported) ? 'reported' : 'paused');
   }
   if (words.length) bits.push(`<span class="sw-sub">${esc(words.join(' · '))}</span>`);
   if (e.row && (group === 'running' || group === 'review' || group === 'done')) bits.push(changesChipHtml(r, 'sw-chg').trim());

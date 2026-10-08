@@ -17,10 +17,12 @@ answers *can it continue on its own?*; the reason answers *why not?*:
     Still running, but its own output says it cannot get any further: a usage or
     credit limit, an expired login, an authentication failure. The line is quoted.
 ``waiting_for_you``
-    The agent asked a question, is sitting on a permission prompt, reported
-    that it finished (``ensemble_report``) or sent something to the user that
-    nobody has answered, or the room is waiting on the human (including a
-    collaboration paused at its hop limit).
+    The agent asked a question, is sitting on a permission prompt, or sent
+    something to the user that nobody has answered, or the room is waiting on
+    the human (including a collaboration paused at its hop limit). A report
+    that it finished is not one: it is ``reported`` beside the items (ready
+    for a check). What the person has read leaves a day after it was put, and
+    a PO's plain message is its news, not an ask (GitHub issue 11).
 ``stalled``
     Alive, was asked to do something — woken by a message, or the owner of a
     team at launch — isn't working, and never answered anyone. A one-agent
@@ -587,6 +589,45 @@ def _po_of(room: dict) -> str:
         return ""
 
 
+def _is_po_room(room: dict, projects: list[dict] | None = None) -> bool:
+    """The room is a project's PO (some project names it as its PO room)."""
+    rid = (room or {}).get("id", "")
+    if not rid or _d is None:
+        return False
+    try:
+        projects = _d.load_projects() if projects is None else projects
+    except Exception:
+        return False
+    return any((p.get("poRoomId") or "").strip() == rid for p in projects)
+
+
+# An ask the person has read leaves Needs you this long after it was put,
+# answered or not: Needs you is for what they have not seen to, and a read
+# question a day old is theirs to come back to from the task's own chat
+# (GitHub issue 11: rows the CEO had long seen stayed there for days).
+READ_ASK_KEEP_S = 24 * 3600
+
+
+def seen_at(room: dict) -> float:
+    """Up to when the person has read the room's chat (``seenAt``, written by
+    ``chatroom.record_seen`` from the page's read point), or 0."""
+    try:
+        return float((room or {}).get("seenAt") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def read_and_old(room: dict, ts, now: float | None = None) -> bool:
+    """What was put to the person at ``ts`` is read (their read point is at or
+    past it) and older than :data:`READ_ASK_KEEP_S`."""
+    try:
+        ts = float(ts or 0)
+    except (TypeError, ValueError):
+        return False
+    now = time.time() if now is None else now
+    return bool(ts) and seen_at(room) >= ts and now - ts >= READ_ASK_KEEP_S
+
+
 def _to_person(m: dict) -> bool:
     """A plain message addressed to the person ("user"). Only that says the
     agent carries on: a message to everyone that happened to wake nobody (a
@@ -594,7 +635,8 @@ def _to_person(m: dict) -> bool:
     return (m.get("to") or "").strip() == "user"
 
 
-def _open_to_human(room: dict, msgs: list, po: str | None = None) -> dict | None:
+def _open_to_human(room: dict, msgs: list, po: str | None = None,
+                   is_po: bool | None = None) -> dict | None:
     """What an agent put to a human that is still open: a report of
     completed / question / blocked, or a message sent to "user" —
     ``{from, ts, kind, text, id, line, to}``, or None. ``to`` is who it is
@@ -639,9 +681,17 @@ def _open_to_human(room: dict, msgs: list, po: str | None = None) -> dict | None
     and the bell, the chat's line and the progress check all read this one
     rule. Such an answer ends the scan where the person speaking in chat
     would: what the agent put to them after it is as open as ever, whatever it
-    had asked before."""
+    had asked before.
+
+    **A PO's plain message asks nothing** (``is_po``: the room is a project's
+    PO; None looks it up). A PO talks to the person all day — answers, news,
+    "#205 is live" — and every one of those sat in Needs you until the person
+    typed in its chat (GitHub issue 11). What a PO asks, it marks (``Ask:``,
+    ``ensemble_ask``: asks.py, which Needs you reads as well) or reports."""
     if po is None:
         po = _po_of(room)
+    if is_po is None:
+        is_po = _is_po_room(room)
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent"}
     answered: dict[str, float] = {}
@@ -693,7 +743,7 @@ def _open_to_human(room: dict, msgs: list, po: str | None = None) -> dict | None
             if _to_person(m):
                 carried_on.add(frm)
             continue
-        if (m.get("to") or "") == "user" and message is None:
+        if (m.get("to") or "") == "user" and message is None and not is_po:
             message = {"from": frm, "ts": m.get("ts", 0), "kind": "message", "id": m.get("id", ""),
                        "text": " ".join((m.get("text") or "").split())[:400],
                        "line": _first_line(m.get("text")), "to": "user"}
@@ -724,12 +774,15 @@ def open_ask_now(room: dict) -> dict | None:
     return ask if ask and ask["kind"] != "completed" else None
 
 
-def _summarize(room: dict, po: str | None = None) -> dict:
+def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> dict:
     """The few room fields attention needs, without its whole message log.
-    ``po``: the room of the PO the task reports to (see ``_open_to_human``)."""
+    ``po``: the room of the PO the task reports to (see ``_open_to_human``);
+    ``is_po``: the room is a project's PO."""
     msgs = room.get("messages") or []
     if po is None:
         po = _po_of(room)
+    if is_po is None:
+        is_po = _is_po_room(room)
     # A task owner's "new session" notice is for the human and asks nothing of
     # anyone: the rotation itself is the ask (the participant's rotatedAt). A
     # PO's rotation sets no rotatedAt, so its notice still ends any older ask.
@@ -771,14 +824,17 @@ def _summarize(room: dict, po: str | None = None) -> dict:
         "specAt": room.get("specAt", 0),
         "workflow": room.get("workflow", ""),
         "po": po,
-        "openToHuman": _open_to_human(room, msgs, po),
+        "isPo": bool(is_po),
+        "seenAt": seen_at(room),
+        "openToHuman": _open_to_human(room, msgs, po, is_po),
     }
 
 
 def _po_still(summary: dict, projects: list[dict], links: dict) -> bool:
-    """A cached summary still names the PO its task reports to."""
+    """A cached summary still names the PO its task reports to, and still
+    says rightly whether the room is a PO's."""
     try:
-        return _d.room_po_id(summary, projects, links) == summary.get("po", "")
+        return _d.room_po_id(summary, projects, links) == summary.get("po", "")             and _is_po_room(summary, projects) == bool(summary.get("isPo"))
     except Exception:
         return True
 
@@ -819,7 +875,7 @@ def _room_summaries() -> list[dict]:
             po = _d.room_po_id(room, projects, links)
         except Exception:
             po = ""
-        summary = _summarize(room, po)
+        summary = _summarize(room, po, _is_po_room(room, projects))
         with _CACHE_LOCK:
             _SUMMARY_CACHE[rid] = (mtime, summary)
         out.append(summary)
@@ -1135,6 +1191,13 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     put = put if put and put.get("from") == identity else None
     if put and put.get("to") == "po":
         put = None              # its PO's to answer, not the CEO's (task → PO → CEO)
+    # Put to the person, and nothing for them to do (GitHub issue 11): a
+    # finished report is ready for their check (``reported``), never Needs
+    # you; an ask they read a day ago is theirs to come back to. Either way
+    # the agent waits on the person, so it is not stalled either.
+    rested = bool(put) and (put["kind"] == "completed" or read_and_old(room, put.get("ts"), now))
+    if rested:
+        put = None
     q = (put or {}).get("text", "")
     asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", ""),
              "askKind": put.get("kind", "")} if put else {}
@@ -1172,12 +1235,12 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     # checking on its own (a doorbell, a progress check, a restart) has not
     # been answered, and "a busy Claude is never blocked" above is about walls
     # read off the screen, not about what the agent itself reported.
+    if rested:
+        return None
     if put:
         if put["kind"] == "blocked":
             return ("blocked", f"{who} reported it is blocked and needs help: “{q}”",
                     {**asked, "cause": "reported"})
-        if put["kind"] == "completed":
-            return ("waiting_for_you", f"{who} reported the work is finished: “{q}”", asked)
         if put["kind"] == "question":
             return ("waiting_for_you", f"{who} asked: “{q}”", asked)
         return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", asked)
@@ -1257,10 +1320,13 @@ def _ago(seconds) -> str:
 # The join
 # ---------------------------------------------------------------------------
 
-def _room_level(room: dict, live_agents: list[str]) -> tuple[str, str, dict] | None:
+def _room_level(room: dict, live_agents: list[str],
+                now: float | None = None) -> tuple[str, str, dict] | None:
     """Attention the room itself declares: it is waiting on the human, or the
     collaboration hit its hop limit and paused. Only meaningful while an agent
-    is still alive to receive the answer."""
+    is still alive to receive the answer. A PO's room waiting on the person
+    asks nothing by that alone (see ``_open_to_human``), and what the person
+    read a day ago has left (``read_and_old``)."""
     if not live_agents:
         return None
     status = room.get("status", "active")
@@ -1268,12 +1334,15 @@ def _room_level(room: dict, live_agents: list[str]) -> tuple[str, str, dict] | N
         return ("waiting_for_you",
                 f"the agents handed off {room['hopCount']} times without you and "
                 f"paused at their limit — they need your steer", {})
-    if status == "waiting_human" and room.get("po"):
+    if status == "waiting_human" and (room.get("po") or room.get("isPo")):
         # A task's message to the person in a project with a PO asks nobody
-        # (see _open_to_human): what it needs goes to the PO as a report.
+        # (see _open_to_human): what it needs goes to the PO as a report. A
+        # PO's own message is its news; what it asks it marks (asks.py).
         return None
     if status in ("waiting_human", "paused"):
         last = room.get("lastMessage") or {}
+        if read_and_old(room, last.get("ts"), now):
+            return None
         who = last.get("from", "") or room.get("waitingFor", "") or "the agents"
         text = " ".join((last.get("text") or "").split())[:200]
         reason = f"{who} is waiting on your reply"
@@ -1353,8 +1422,26 @@ def waiting_on_po() -> dict[str, dict]:
     return out
 
 
+def _reported(room: dict, live_agents: list[str]) -> dict | None:
+    """A finished report the person has not looked at: ``{since, line,
+    agent}`` for the list's "Ready for your check", or None. It is never
+    Needs you (GitHub issue 11), and it leaves when the person reads the chat
+    past it (``seenAt``), writes in it (the report is no longer open, see
+    ``_open_to_human``), or the task is Done or stopped (no agent running)."""
+    put = room.get("openToHuman")
+    if not put or put.get("kind") != "completed" or put.get("to") != "user" or not live_agents:
+        return None
+    if _d is not None and _d.normalize_workflow(room.get("workflow")) == "done":
+        return None
+    ts = float(put.get("ts") or 0)
+    if ts and seen_at(room) >= ts:
+        return None
+    return {"since": ts, "line": put.get("line", ""), "agent": put.get("from", "")}
+
+
 def _items() -> list[dict]:
     now = time.time()
+    _REPORTED.clear()
     rooms = _room_summaries()
     statuses = _claude_status_by_session()
     stall = _stall_seconds()
@@ -1397,7 +1484,10 @@ def _items() -> list[dict]:
             # Worse than anything an agent says: the room's record and its
             # terminals disagree. First, so it wins a tie with another block.
             found.insert(0, dup)
-        room_hit = _room_level(room, live_agents)
+        rep = _reported(room, live_agents)
+        if rep:
+            _REPORTED[room["id"]] = rep
+        room_hit = _room_level(room, live_agents, now)
         if room_hit and not any(f[0] == "waiting_for_you" for f in found):
             found.append((*room_hit, {}))
         held = held_po.get(room["id"])
@@ -1475,6 +1565,11 @@ def _items() -> list[dict]:
     return items
 
 
+# The finished reports nobody has looked at yet, by room (``_reported``),
+# filled by ``_items`` under ``_COMPUTE_LOCK`` and published with its result.
+_REPORTED: dict[str, dict] = {}
+
+
 # A short result cache so the page can poll every couple of seconds for free.
 _RESULT_TTL = 1.5
 _result: tuple[float, dict] = (0.0, {})
@@ -1500,11 +1595,19 @@ def snapshot(max_age: float = _RESULT_TTL) -> dict:
         by_state: dict[str, int] = {}
         for it in items:
             by_state[it["state"]] = by_state.get(it["state"], 0) + 1
+        # ``reported``: finished reports waiting for a look, by room — the
+        # list's "Ready for your check", never Needs you (``_reported``).
         payload = {"items": items, "count": len(items), "byState": by_state,
-                   "generatedAt": time.time()}
+                   "reported": dict(_REPORTED), "generatedAt": time.time()}
         with _RESULT_LOCK:
             _result = (payload["generatedAt"], payload)
         return payload
+
+
+def reported_by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:
+    """The finished reports waiting for the person's look, by room
+    (``_reported``): ``/api/sessions`` stamps them on the rows."""
+    return snapshot(max_age).get("reported") or {}
 
 
 def by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:
