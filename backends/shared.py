@@ -71,9 +71,11 @@ def is_workspace_cwd(cwd: str) -> bool:
     return cwd == _WS or cwd.startswith(_WS + os.sep)
 
 
-# A process is created before its session file says the session started; one
-# created this long after it holds a reused pid.
-PID_REUSE_SLACK_S = 60
+# A process is created before its session file says the session started (the
+# CLI writes it once up, the agent wrapper right after its shell starts;
+# measured: 1 s before); one created later than this holds a reused pid. The
+# slack covers whole-second stamps and clock rounding only.
+PID_REUSE_SLACK_S = 5
 
 
 def pid_reused(backend, pid, started_ms) -> bool:

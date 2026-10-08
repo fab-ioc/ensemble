@@ -112,8 +112,9 @@ _ANSWER_AFTER = 5
 # module exists to fix. After a week it is history, not news.
 _DEATH_MAX_AGE = 7 * 86400
 
-# An exit this soon after a person typed into the terminal is theirs: /exit,
-# Ctrl+C twice, Ctrl+D (GitHub issue 13).
+# A clean exit this soon after a person typed into the terminal is theirs:
+# /exit, Ctrl+C twice, Ctrl+D (GitHub issue 13). A crash after a prompt exits
+# with an error and stays news.
 _PERSON_ENDED_S = 20
 
 
@@ -123,10 +124,13 @@ def dealt_with(room: dict, part: dict, death: dict) -> bool:
     it since (GitHub issue 13). It is not when
 
     * the task is Done, or was stopped after it died;
-    * this agent was resumed or handed to a fresh session since;
-    * the person wrote in the chat, or typed into one of the task's terminals
-      (``typedAt``, set by :func:`_items` from the live ones), after it died;
-    * the person's own keystrokes ended it, moments before.
+    * this agent was resumed or handed to a fresh session since (a resume
+      also gives it a new terminal, so the old record stops matching);
+    * the person's own keystrokes ended it: a clean exit moments after they
+      typed into it.
+
+    What the person does with a teammate (a chat message, typing into its
+    terminal) settles nothing about this agent.
     """
     ended = float(death.get("endedAt") or 0)
     if (room.get("workflow") or "") == "done":
@@ -135,10 +139,8 @@ def dealt_with(room: dict, part: dict, death: dict) -> bool:
         return True
     if max(float(part.get("resumedAt") or 0), float(part.get("rotatedAt") or 0)) >= ended:
         return True
-    if max(float(room.get("personAt") or 0), float(room.get("typedAt") or 0)) > ended:
-        return True
     typed = float(death.get("lastInput") or 0)
-    return bool(typed) and 0 <= ended - typed <= _PERSON_ENDED_S
+    return death.get("exitCode") == 0 and bool(typed) and 0 <= ended - typed <= _PERSON_ENDED_S
 
 
 # ---------------------------------------------------------------------------
@@ -852,9 +854,6 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "specAt": room.get("specAt", 0),
         "workflow": room.get("workflow", ""),
         "stoppedAt": room.get("stoppedAt", 0),
-        # The person's last word in the chat: a room they wrote in after an
-        # agent died is one they carried on with (GitHub issue 13).
-        "personAt": max((float(m.get("ts") or 0) for m in msgs if m.get("from") == "user"), default=0.0),
         "po": po,
         "isPo": bool(is_po),
         "seenAt": seen_at(room),
@@ -947,7 +946,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
     pty_id = (part.get("ptyId") or "").strip()
     sess = ptyrun.get(pty_id) if pty_id else None
     alive = bool(sess and sess.alive())
-    tail, idle, death, submitted, printed, hook, typed = "", None, None, 0.0, 0.0, None, 0.0
+    tail, idle, death, submitted, printed, hook = "", None, None, 0.0, 0.0, None
     if alive:
         tail, scan = _analyse_live(sess)
         try:
@@ -966,7 +965,6 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
             submitted = float(sess.last_submit() or 0)
         except Exception:
             submitted = 0.0
-        typed = float(getattr(sess, "last_input", 0) or 0)
     else:
         scan = None
     if not alive and pty_id:
@@ -995,7 +993,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
         limit = (hook or {}).get("limit") or _d.stall.limit_hit(part)
     return {
         "ptyId": pty_id, "alive": alive, "tail": tail, "idleSeconds": idle,
-        "lastSubmit": submitted, "lastInput": typed, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
+        "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
         "claudeStatus": said[0], "claudeStatusAt": said[1],
         "hook": hook, "lastOutput": printed, "limit": limit,
     }
@@ -1507,13 +1505,8 @@ def _items() -> list[dict]:
             continue
         found: list[tuple[str, str, dict, dict]] = []   # (state, reason, extra, part)
         live_agents: list[str] = []
-        evs = [(part, _evidence(part, statuses)) for part in agents]
-        # The person typing into any of its live terminals is using the task:
-        # a teammate's death before that is not news (dealt_with).
-        typed = max((ev["lastInput"] for _p, ev in evs if ev["alive"]), default=0.0)
-        if typed:
-            room = {**room, "typedAt": typed}
-        for part, ev in evs:
+        for part in agents:
+            ev = _evidence(part, statuses)
             if ev["alive"]:
                 live_agents.append(part.get("identity", ""))
             hit = _classify_agent(room, part, ev, stall, now)

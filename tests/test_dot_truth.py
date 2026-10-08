@@ -64,13 +64,14 @@ class AgentGone(_Bell):
         self.patch_part(resumedAt=0, rotatedAt=self.ended + 5)
         self.assertIsNone(self.state())
 
-    def test_the_person_wrote_in_the_chat_since(self):
-        self.assertEqual(self.state(), "agent_gone")
+    def test_a_chat_message_alone_does_not_settle_it(self):
+        # Writing to a dead agent brings it back (a resume: new terminal,
+        # resumedAt); a message that did not is still waiting on a dead one.
         chatroom.post_message(self.rid, "user", "carry on please")
         attention._SUMMARY_CACHE.clear()
-        self.assertIsNone(self.state())
+        self.assertEqual(self.state(), "agent_gone")
 
-    def test_the_person_typed_into_a_live_teammate_since(self):
+    def test_using_a_live_teammate_does_not_settle_it(self):
         full = chatroom.get_room(self.rid, public=False)
         full["participants"].append({"identity": "codex", "agent": "codex", "role": "reviewer", "kind": "agent",
                                      "ptyId": "pty-2"})
@@ -81,14 +82,21 @@ class AgentGone(_Bell):
             last_input=self.ended + 30, meta={"room": self.rid, "identity": "codex"})
         sessions = {"pty-1": self.sess, "pty-2": mate}
         dashboard.ptyrun.get.side_effect = lambda pid: sessions.get(pid)
-        self.assertIsNone(self.state())
-        mate.last_input = self.ended - 30            # typed before it died: still news
+        chatroom.post_message(self.rid, "user", "go on", to="codex")
+        attention._SUMMARY_CACHE.clear()
         self.assertEqual(self.state(), "agent_gone")
+        self.assertIn("claude", self.item()["reason"])
 
     def test_the_persons_own_keystrokes_ended_it(self):
-        self.died["lastInput"] = self.ended - 5      # /exit, Ctrl+C
+        self.died.update(exitCode=0, lastInput=self.ended - 5)     # /exit, Ctrl+C
         self.assertIsNone(self.state())
-        self.died["lastInput"] = self.ended - 30     # typed a while before: it died on its own
+        self.died["lastInput"] = self.ended - 30     # typed a while before: it ended on its own
+        self.assertEqual(self.state(), "agent_gone")
+
+    def test_a_crash_right_after_a_prompt_stays_red(self):
+        self.died.update(exitCode=1, lastInput=self.ended - 5)
+        self.assertEqual(self.state(), "agent_gone")
+        self.died.update(exitCode=None)              # status unknown: not shown to be theirs
         self.assertEqual(self.state(), "agent_gone")
 
     def test_a_kill_is_not(self):
@@ -98,16 +106,17 @@ class AgentGone(_Bell):
 
 class DealtWith(unittest.TestCase):
     def test_rules(self):
-        d = {"endedAt": 1000.0}
+        d = {"endedAt": 1000.0, "exitCode": 0}
         self.assertFalse(attention.dealt_with({}, {}, d))
         self.assertTrue(attention.dealt_with({"workflow": "done"}, {}, d))
         self.assertTrue(attention.dealt_with({"stoppedAt": 1000.0}, {}, d))
         self.assertTrue(attention.dealt_with({}, {"rotatedAt": 1001}, d))
-        self.assertFalse(attention.dealt_with({"personAt": 1000.0}, {}, d))   # not after
-        self.assertTrue(attention.dealt_with({"typedAt": 1000.5}, {}, d))
+        self.assertFalse(attention.dealt_with({"stoppedAt": 999.0}, {}, d))
+        self.assertFalse(attention.dealt_with({}, {"resumedAt": 999.0}, d))
         self.assertTrue(attention.dealt_with({}, {}, {**d, "lastInput": 980.0}))
         self.assertFalse(attention.dealt_with({}, {}, {**d, "lastInput": 979.0}))
         self.assertFalse(attention.dealt_with({}, {}, {**d, "lastInput": 1001.0}))  # after: not its end
+        self.assertFalse(attention.dealt_with({}, {}, {**d, "lastInput": 995.0, "exitCode": 1}))  # a crash
 
 
 class PidReuse(unittest.TestCase):
@@ -118,7 +127,8 @@ class PidReuse(unittest.TestCase):
         started_ms = 1_000_000 * 1000
         self.assertTrue(shared.pid_reused(self.backend(1_000_000 + 3600), 42, started_ms))
         self.assertFalse(shared.pid_reused(self.backend(1_000_000 - 1), 42, started_ms))
-        self.assertFalse(shared.pid_reused(self.backend(1_000_000 + 30), 42, started_ms))  # slack
+        self.assertTrue(shared.pid_reused(self.backend(1_000_000 + 30), 42, started_ms))   # reused fast
+        self.assertFalse(shared.pid_reused(self.backend(1_000_000 + 3), 42, started_ms))   # rounding
 
     def test_unknown_times_say_not_reused(self):
         self.assertFalse(shared.pid_reused(self.backend(None), 42, 1_000_000_000))
