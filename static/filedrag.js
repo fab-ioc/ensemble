@@ -23,7 +23,7 @@
     '.hpp', '.cs', '.swift', '.rb', '.php', '.lua', '.r', '.pl', '.vue', '.gradle', '.properties',
   ]);
   const metaCache = new Map();
-  const blobCache = new Map();
+  let shareFile = null;          // the one file Share… has read: { key, file, at, promise, timer }
   let ghost = null;
 
   const fileName = path => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'file';
@@ -163,7 +163,8 @@
     }
     if (typeof meta.text === 'string') {
       try { dt.setData('text/plain', meta.text); } catch (e) {}
-      if (isMarkdown(name)) try { dt.setData('text/html', mdHtml(meta.text)); } catch (e) {}
+      const html = isMarkdown(name) ? mdHtmlOrNull(meta.text) : null;
+      if (html !== null) try { dt.setData('text/html', html); } catch (e) {}
     }
     try { dt.setData(INTERNAL, JSON.stringify({ path: info.path, view: info.view, name })); } catch (e) {}
     dragImage(dt, name, el.ownerDocument || document);
@@ -178,13 +179,26 @@
     let url;
     try { url = new URL(raw.replace(/&amp;/g, '&')); } catch (e) { return ''; }
     if (!/^https?:$/.test(url.protocol)) return '';
-    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    const here = global.location && global.location.hostname && global.location.hostname.toLowerCase();
-    if (host === 'localhost' || host === here || host === '::1' || host === '0.0.0.0' || /^127\./.test(host)
-        || /\.ts\.net$/.test(host) || /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return '';
+    // Host names compared without a trailing dot ("localhost." is localhost).
+    const bare = h => String(h || '').toLowerCase().replace(/\.+$/, '');
+    const host = bare(url.hostname);
+    if (!host || host === bare(global.location && global.location.hostname)) return '';
+    // An IPv6 literal is never the public web a colleague can open here
+    // (loopback, link-local, unique-local and IPv4-mapped forms included).
+    if (host.startsWith('[')) return '';
+    const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+    if (v4) {
+      const [a, b] = [+v4[1], +v4[2]];
+      if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+          || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return '';
+    } else if (!host.includes('.') || /(?:^|\.)(?:localhost|local|internal|intranet|lan|home|corp|home\.arpa|ts\.net)$/.test(host)) return '';
     return url.href;
   }
-  function mdHtml(src) {
+  // Quotes nest at most this deep; deeper ">" stay text (a long run of them
+  // must not recurse without end).
+  const MD_QUOTE_DEPTH = 8;
+  function mdHtml(src, depth) {
+    depth = depth || 0;
     const escH = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const inline = t => {
       const keep = [];
@@ -237,11 +251,11 @@
         const td = (tag, c) => `<${tag} style="border:1px solid #ccc;padding:4px 8px;text-align:left">${inline(c)}</${tag}>`;
         out.push('<table style="border-collapse:collapse"><thead><tr>' + head.map(c => td('th', c)).join('') + '</tr></thead><tbody>'
           + rows.map(r => '<tr>' + r.map(c => td('td', c)).join('') + '</tr>').join('') + '</tbody></table>');
-      } else if ((m = /^\s*>\s?(.*)$/.exec(l))) {
+      } else if (depth < MD_QUOTE_DEPTH && (m = /^\s*>\s?(.*)$/.exec(l))) {
         flush();
         const q = [m[1]];
         while (i + 1 < lines.length && (m = /^\s*>\s?(.*)$/.exec(lines[i + 1]))) { q.push(m[1]); i++; }
-        out.push('<blockquote>' + mdHtml(q.join('\n')) + '</blockquote>');
+        out.push('<blockquote>' + mdHtml(q.join('\n'), depth + 1) + '</blockquote>');
       } else if ((m = /^\s*([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(l))) {
         const tag = /\d/.test(m[1]) ? 'ol' : 'ul';
         if (para.length || (list && list.tag !== tag)) flush();
@@ -252,6 +266,11 @@
     }
     flush();
     return out.join('\n');
+  }
+
+  // The rendered HTML, or none: plain text still goes when rendering fails.
+  function mdHtmlOrNull(text) {
+    try { return mdHtml(text); } catch (e) { return null; }
   }
 
   // ---- The same hand-over without a drag: Download, Copy content, Share… --
@@ -284,7 +303,12 @@
     const clip = global.navigator && global.navigator.clipboard;
     if (clip && clip.write && global.ClipboardItem) {
       const item = { 'text/plain': read.then(m => new Blob([m.text], { type: 'text/plain' })) };
-      if (isMarkdown(fileName(path))) item['text/html'] = read.then(m => new Blob([mdHtml(m.text)], { type: 'text/html' }));
+      // Markdown also as rendered HTML; if that cannot be made, the escaped
+      // text in its place, so the plain text is copied all the same.
+      if (isMarkdown(fileName(path))) item['text/html'] = read.then(m => {
+        const html = mdHtmlOrNull(m.text);
+        return new Blob([html !== null ? html : '<pre>' + m.text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>'], { type: 'text/html' });
+      });
       let made;
       try { made = new global.ClipboardItem(item); } catch (e) { made = null; }
       if (made) return clip.write([made]).then(() => read).catch(e => read.then(() => { throw e; })).then(m => m.name);
@@ -300,21 +324,25 @@
   }
 
   // The file as a File, read once and kept briefly, so a Share… pressed after
-  // hovering it opens the share sheet without waiting.
+  // hovering it opens the share sheet without waiting. Only one file is kept,
+  // and only for BLOB_TTL_MS after it arrived.
   function fileOf(path, opts) {
     const info = actionInfo(path, opts), key = contextUrl('/api/file/download', info).href;
-    const hit = blobCache.get(key);
-    if (hit && (!hit.at || Date.now() - hit.at < BLOB_TTL_MS)) return hit;
-    const entry = { file: null, at: 0, promise: null };
+    const hit = shareFile;
+    if (hit && hit.key === key && (!hit.at || Date.now() - hit.at < BLOB_TTL_MS)) return hit;
+    if (hit) clearTimeout(hit.timer);
+    const entry = { key, file: null, at: 0, promise: null, timer: 0 };
+    const drop = () => { if (shareFile === entry) shareFile = null; };
     entry.promise = global.fetch(key, { credentials: 'same-origin' }).then(r => {
       if (!r.ok) throw new Error(r.status === 403 ? 'not-allowed' : 'unreadable');
       return r.blob();
     }).then(blob => {
       entry.file = new global.File([blob], fileName(path), { type: blob.type || 'application/octet-stream' });
       entry.at = Date.now();
+      entry.timer = global.setTimeout(drop, BLOB_TTL_MS);
       return entry.file;
-    }, e => { if (blobCache.get(key) === entry) blobCache.delete(key); throw e; });
-    blobCache.set(key, entry);
+    }, e => { drop(); throw e; });
+    shareFile = entry;
     return entry;
   }
 

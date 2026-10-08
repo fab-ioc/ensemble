@@ -563,6 +563,21 @@ class MarkdownForMail(unittest.TestCase):
         self.assertEqual(out.count("<a "), 1, out)
         self.assertNotIn("javascript:", out)
 
+    def test_private_and_local_hosts_are_not_links(self):
+        hosts = ["localhost.", "app.localhost", "ensemble.tail1234.ts.net.", "box.ts.net", "printer.local", "intranet",
+                 "10.0.0.2", "172.16.0.1", "192.168.1.9", "169.254.1.1", "100.64.0.1", "0.0.0.0", "127.1",
+                 "[::1]", "[::ffff:127.0.0.1]", "[fe80::1]", "[fd00::1]"]
+        outs = self.render(*[f"[x](http://{h}/fileview)" for h in hosts] + ["[x](https://8.8.8.8/a)"])
+        for host, out in zip(hosts, outs):
+            with self.subTest(host=host):
+                self.assertNotIn("<a ", out)
+        self.assertIn('<a href="https://8.8.8.8/a">x</a>', outs[-1])
+
+    def test_a_deep_quote_does_not_break_rendering(self):
+        (out,) = self.render("> " * 5000 + "x")
+        self.assertEqual(out.count("<blockquote>"), 8)
+        self.assertIn("x", out)
+
 
 if __name__ == "__main__":
     unittest.main()
