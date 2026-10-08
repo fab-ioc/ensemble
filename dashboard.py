@@ -2867,6 +2867,19 @@ def _unwrap_pasted(text: str) -> str:
     return _PASTED.sub(lambda m: m.group(2), text) if "<pasted_content" in text else text
 
 
+def _queued_prompt_text(prompt) -> str | None:
+    """The words of a line Claude Code read mid-turn (a ``queued_command``'s
+    prompt). A line with an image in it is logged as content blocks, not a
+    string: the trading PO read P438 that way (2026-10-08), and its balloon
+    stayed "not yet read" at the bottom of the chat for 22 minutes."""
+    if isinstance(prompt, str):
+        return _unwrap_pasted(prompt)
+    if isinstance(prompt, list):
+        words = [x.get("text") or "" for x in prompt if isinstance(x, dict) and x.get("type") == "text"]
+        return _unwrap_pasted("\n".join(w for w in words if w)) if any(words) else None
+    return None
+
+
 def _claude_text_turns(tpath: Path) -> list[dict]:
     """A Claude transcript's user and assistant text turns, unclassified."""
     turns = []
@@ -2883,7 +2896,7 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                     # the queued command it read at its next pause: without
                     # this, a message sent to a working agent never showed.
                     att = d.get("attachment") if isinstance(d.get("attachment"), dict) else {}
-                    prompt = _unwrap_pasted(att["prompt"]) if isinstance(att.get("prompt"), str) else None
+                    prompt = _queued_prompt_text(att.get("prompt"))
                     if (att.get("type") == "queued_command" and isinstance(prompt, str)
                             and att.get("commandMode") in (None, "prompt")
                             and prompt.strip() and not prompt.strip().startswith("<")):
@@ -12364,7 +12377,14 @@ class Handler(BaseHTTPRequestHandler):
                     # for the agent; a retry of a held send keeps its own.
                     if text and not held:
                         text, pids = self._take_points(room_full, text, to, key)
-                    text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
+                        text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
+                    elif paths and not held:
+                        # Images alone are a message too: its point goes
+                        # under them, as under any other.
+                        text = message_refs.with_images("", paths, attachment_names(data.get("attachments")))
+                        text, pids = self._take_points(room_full, text, to, key)
+                    else:
+                        text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                 if text and not held:
                     sends.accept(rid, key, text, to)
                 result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
