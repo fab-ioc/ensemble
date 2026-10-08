@@ -412,6 +412,12 @@ async function main() {
       const dt=new DataTransfer(); row.dispatchEvent(new DragEvent('dragstart', {bubbles:true,cancelable:true,dataTransfer:dt}));
       const out={draggable:row.draggable, effect:dt.effectAllowed, types:[...dt.types], plain:dt.getData('text/plain'), moving:!!DOCS_DRAG};
       row.dispatchEvent(new DragEvent('dragend', {bubbles:true,cancelable:true,dataTransfer:dt})); return out; })()`);
+    // A right click on a document row: Download, Copy content (and Share… where the browser shares files).
+    out.rowMenu = await p.evalIn(`(() => { const row=[...PD.els.workspace.querySelectorAll('.wse.doc[data-path]')].find(x => x.dataset.path.endsWith('#1 Notes.md'));
+      const b = row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:b.left + 10, clientY:b.top + 5}));
+      const m = PD.els.workspace.querySelector('.dcm[role="menu"]'), items = m ? [...m.querySelectorAll('.dcm-item')].map(i => i.textContent) : [];
+      if (m) m.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+      return {items, share:FileDrag.canShare(), gone:!PD.els.workspace.querySelector('.dcm[role="menu"]')}; })()`);
     // The roadmap opens in a tab, in its own view and editor.
     await p.evalIn('PD.els.workspace.querySelector(".wse.doc[data-roadmap]").click(); 0');
     await p.until('(() => { const rm = document.getElementById("rm-panel"); return !rm.hidden && !!rm.closest("#ws-panel") && /Motors roadmap/.test(rm.innerText); })()', 15000);
@@ -970,7 +976,10 @@ class InChrome(unittest.TestCase):
         self.assertTrue(chat["draggable"])
         self.assertEqual(chat["kind"], "link")
         self.assertIn("downloadurl", [x.lower() for x in chat["types"]])
-        self.assertIn("/api/file/download?", chat["uri"])
+        self.assertEqual(chat["uri"], "", "no hub link for other programs")
+        menu = self.got["rowMenu"]
+        self.assertEqual(menu["items"], ["Open", "Open in new window", "Download", "Copy content"] + (["Share…"] if menu["share"] else []))
+        self.assertTrue(menu["gone"])
         workspace = self.got["workspaceDrag"]
         self.assertTrue(workspace["draggable"])
         self.assertIn("application/x-ensemble-file", workspace["types"])
@@ -992,7 +1001,7 @@ class InChrome(unittest.TestCase):
         self.assertFalse(external["tabDraggable"])
         self.assertTrue(external["handleDraggable"])
         self.assertIn("downloadurl", [x.lower() for x in external["types"]])
-        self.assertIn("/api/file/download?", external["uri"])
+        self.assertEqual(external["uri"], "", "no hub link for other programs")
         events = self.got["docDockMove"]
         self.assertIn("pointerup", events)
         self.assertNotIn("pointercancel", events)

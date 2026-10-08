@@ -9011,9 +9011,41 @@ function wsOpenWindow(v, path) {
   try { w.focus(); } catch (e) {}
   return w;
 }
-// A file row's menu in a Workspace (a right click): Open, and Open in new
-// window. A documents project's Files panel has its own, with these and more
-// (docsMenuOpen). Gone on a click elsewhere, Escape, a scroll or a resize.
+// Download, Copy content (a text file) and Share… (where the browser shares
+// files): the file itself or its content, never the hub's address, for
+// someone outside Ensemble (FileDrag). The rows, and what a row does.
+function fileOutItems(path, item) {
+  return '<div class="ov-rule" role="separator"></div>' + item('download', 'Download')
+    + (FileDrag.isText(path) ? item('copy', 'Copy content') : '')
+    + (FileDrag.canShare() ? item('share', 'Share…') : '');
+}
+function fileOutWarm(menu, path, opts) {
+  const warm = e => { if (e.target.closest && e.target.closest('[data-act="share"]')) FileDrag.warmShare(path, opts); };
+  menu.addEventListener('pointerover', warm);
+  menu.addEventListener('focusin', warm);
+}
+function fileOutAct(act, path, opts) {
+  if (act === 'download') FileDrag.download(path, opts);
+  else if (act === 'copy') {
+    FileDrag.copy(path, opts).then(name => toast('Copied the content of ' + name), e => {
+      const why = e && e.message;
+      toast(why === 'not-text' ? 'Only a text file up to 1 MB can be copied: use Download.'
+        : why === 'unreadable' ? 'The file could not be read.'
+        : 'The browser did not allow copying here: use Download.', 5000, 'err');
+    });
+  } else if (act === 'share') {
+    FileDrag.share(path, opts).catch(e => {
+      if (e && e.name === 'AbortError') return;
+      if (e && e.name === 'NotAllowedError') toast('The file is ready: choose Share… again.', 5000);
+      else toast('The file could not be shared: use Download.', 5000, 'err');
+    });
+  } else return false;
+  return true;
+}
+// A file row's menu in a Workspace (a right click): Open, Open in new window,
+// then Download, Copy content and Share…. A documents project's Files panel
+// has its own, with these and more (docsMenuOpen). Gone on a click elsewhere,
+// Escape, a scroll or a resize.
 function wsRowMenuClose(v) {
   const m = v.rowMenu;
   if (!m) return;
@@ -9027,7 +9059,10 @@ function wsRowMenu(v, row, x, y) {
   const el = doc.createElement('div');
   el.className = 'dcm'; el.setAttribute('role', 'menu'); el.setAttribute('aria-label', 'Actions for ' + name);
   const item = (act, label) => `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="${act}">${label}</button>`;
-  el.innerHTML = `<div class="dcm-head" title="${esc(tildeify(path))}">${esc(name)}</div>` + item('open', 'Open') + item('window', 'Open in new window');
+  const out = { room: row.dataset.fileRoom || '' };
+  el.innerHTML = `<div class="dcm-head" title="${esc(tildeify(path))}">${esc(name)}</div>` + item('open', 'Open')
+    + (isPhone() ? '' : item('window', 'Open in new window')) + fileOutItems(path, item);
+  fileOutWarm(el, path, out);
   v.el.appendChild(el);
   docsMenuPlace(el, { left: x, right: x, top: y, bottom: y });
   const close = () => wsRowMenuClose(v);
@@ -9051,6 +9086,7 @@ function wsRowMenu(v, row, x, y) {
     const b = e.target.closest('.dcm-item');
     if (!b) return;
     close();
+    if (fileOutAct(b.dataset.act, path, out)) return;
     if (b.dataset.act !== 'window') { wsOpenTab(v, path); return; }
     // Files as panels: the file's panel, in a window of its own (from the click).
     if (wsPanelsMode() && !wsIsRoadmap(v, path)) {
@@ -14580,9 +14616,11 @@ function docsFilesWire(el, pid) {
   });
   tree.addEventListener('contextmenu', (e) => {
     const row = e.target.closest('.wse[data-path]');
-    // A row of the Documents node is a view of a file, not its place: no menu there.
-    if (!row || row.classList.contains('wsroot') || row.classList.contains('doc') || e.target.closest('.wse-edit, .wse-wait')) return;
+    if (!row || row.classList.contains('wsroot') || e.target.closest('.wse-edit, .wse-wait')) return;
     e.preventDefault();
+    // A row of the Documents node is a view of a file, not its place: only
+    // the menu that opens or hands over a file (Download, Copy, Share…).
+    if (row.classList.contains('doc')) { docsMenuClose(menu, false); wsRowMenu(v, row, e.clientX, e.clientY); return; }
     docsMenuOpen(menu, row, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
   });
   tree.addEventListener('dragstart', (e) => {
@@ -14700,6 +14738,9 @@ function docsFilesWire(el, pid) {
       items[to].focus();
     }
   });
+  const warmShare = e => { const c = menu._ctx; if (c && !c.dir && e.target.closest && e.target.closest('[data-act="share"]')) FileDrag.warmShare(c.abs, c.out); };
+  menu.addEventListener('pointerover', warmShare);
+  menu.addEventListener('focusin', warmShare);
   menu.addEventListener('click', (e) => {
     const b = e.target.closest('.dcm-item'), c = menu._ctx;
     if (!b || !c) return;
@@ -14714,6 +14755,7 @@ function docsFilesWire(el, pid) {
       if (c.dir) { v.open.add(c.abs); v.mark = docsInTask(v, c.abs) ? '' : c.abs; wsPersist(v); wsSync(v); }
       else wsOpenTab(v, c.abs);
     } else if (act === 'history') { wsOpenTab(v, c.abs); histOpen(v, c.abs); }
+    else if (fileOutAct(act, c.abs, c.out)) {}
     else if (act === 'rename') docsRename(el, pid, c);
     else if (act === 'delete') docsDelete(el, pid, c);
   });
@@ -14729,12 +14771,12 @@ function docsMenuOpen(menu, row, rect) {
   if (!rel) return;
   docsMenuClose(menu, false);
   const dir = row.classList.contains('dir'), held = row.hasAttribute('data-task');
-  menu._ctx = { abs: row.dataset.path, rel, dir };
+  menu._ctx = { abs: row.dataset.path, rel, dir, out: { room: row.dataset.fileRoom || '' } };
   const item = (act, label, cls) => `<button type="button" role="menuitem" class="ov-item dcm-item${cls ? ' ' + cls : ''}" data-act="${act}">${label}</button>`;
   menu.innerHTML = `<div class="dcm-head" title="${esc(rel)}">${esc(upBase(rel))}</div>`
     + item('open', dir ? 'Open folder' : 'Open') + (dir || isPhone() ? '' : item('window', 'Open in new window'))
     + (held ? '' : item('rename', 'Rename') + item('moveto', 'Move to…'))
-    + (dir ? '' : item('history', 'History'))
+    + (dir ? '' : item('history', 'History') + fileOutItems(row.dataset.path, item))
     + (held ? `<div class="dcm-empty">In a task's folder, which its task looks after: it is not renamed, moved or deleted here.</div>`
             : '<div class="ov-rule" role="separator"></div>' + item('delete', 'Delete', 'danger'));
   menu.setAttribute('aria-label', `Actions for ${upBase(rel)}`);
