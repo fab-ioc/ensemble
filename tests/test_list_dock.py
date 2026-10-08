@@ -75,7 +75,7 @@ const GEOM = `(() => {
   const d = LD.dock, sw = SW_EL, mid = document.querySelector('main');
   const strip = document.querySelector('#list-dock .dk-strip');
   const stripBtn = document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="list"]');
-  const menu = document.querySelector('#list-dock [data-dk-act="menu"]'), by = sw.querySelector('#sw-by');
+  const menu = document.querySelector('#list-dock [data-dk-act="menu"]'), by = sw.querySelector('#sw-proj');
   const cs = getComputedStyle(document.body);
   return { visible: d ? d.isVisible('list') : null, notice: !!document.querySelector('#list-dock .dk-outnote'), dock: !!d, mode: d ? d.viewMode('list') : null, side: d ? d.side('list') : null, fly: d ? d.flyOpen() : null, out: d ? d.isOut('list') : null,
     here: sw.ownerDocument === document, home: sw.parentNode === document.body, rootHidden: document.getElementById('list-dock').hidden,
