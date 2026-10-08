@@ -9531,8 +9531,13 @@ def _launchd_service() -> dict | None:
     if sys.platform != "darwin" or os.environ.get("XPC_SERVICE_NAME") != app_setup.LAUNCHD_LABEL:
         return None
     uid = os.getuid()
+    plist = app_setup.launch_agent_plist()
+    # The same label is a checkout's LaunchAgent too: a file that runs no
+    # Ensemble.app is not started again after the update (it would start the
+    # checkout's hub in place of the new app).
     return {"target": f"gui/{uid}/{app_setup.LAUNCHD_LABEL}", "domain": f"gui/{uid}",
-            "plist": str(app_setup.launch_agent_plist())}
+            "plist": str(plist),
+            "plistIsApp": app_setup.is_app_program(app_setup.launch_agent_program(plist) or "")}
 
 
 def update_plan(rel: dict, new_app: Path, lease: str) -> dict:

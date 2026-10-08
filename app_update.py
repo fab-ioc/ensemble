@@ -582,7 +582,7 @@ class Helper:
 
     def start_hub(self, exe: Path, via_service: bool) -> None:
         svc = self.plan.get("launchd")
-        if via_service and svc:
+        if via_service and svc and svc.get("plistIsApp", True):
             r = subprocess.run(["launchctl", "bootstrap", svc["domain"], svc["plist"]],
                                capture_output=True, timeout=60)
             self.log(f"launchctl bootstrap {svc['plist']}: {r.returncode}")
@@ -614,7 +614,8 @@ class Helper:
 
     def preflight(self, new_exe: Path) -> bool:
         port = _spare_port()
-        proc = _start(new_exe, ["--port", str(port), "--log", str(self.plan["preflightLog"])])
+        # --background: the try opens no browser tab.
+        proc = _start(new_exe, ["--port", str(port), "--background", "--log", str(self.plan["preflightLog"])])
         try:
             got = wait_served(port, self.plan["toVersion"], SERVE_TIMEOUT_S, self.renew)
         finally:
