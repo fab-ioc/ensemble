@@ -2718,8 +2718,8 @@ function askCardHtml(m, a, total, P) {
   const aside = !askSettled(m, P) ? ''
     : `<div class="qa-note">${roomDone() ? 'This task is done' : m.ts < askSettledAt(P) ? 'You answered after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
   return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
-    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? '' : 'Goes with the answer you press, or alone with Send comment'}"></textarea>`
-    + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'}">${open ? 'Send' : 'Send comment'}</button></div></div>`;
+    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? `${MOD_ENTER} sends` : `Goes with the answer you press, or alone with Send comment (${MOD_ENTER})`}"></textarea>`
+    + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'} (${MOD_ENTER})">${open ? 'Send' : 'Send comment'}</button></div></div>`;
 }
 // An agent's balloon with asks: its words as always, each ask's lines drawn
 // as its card in their place, then the balloon's bar.
@@ -2737,18 +2737,105 @@ function askBodyHtml(m, P, md, bar) {
     return `<div class="text md">${h}</div>${bar ? bar(m) : ''}`;
   });
 }
-// The draft comments, kept across a redraw that replaces a balloon.
-const ASK_DRAFT = new Map();
+// The draft comments ("mid:n" → text), kept across a redraw that replaces a
+// balloon and, per room in sessionStorage like the message box's draft,
+// across a reload, until sent or emptied (#191).
+const ASK_DRAFT_KEY = () => 'cd-askdraft:' + (ROOM || location.pathname + location.search);
+function askDraftsLoad(store = sessionStorage) {
+  try {
+    const d = JSON.parse(store.getItem(ASK_DRAFT_KEY()) || 'null');
+    return new Map(d && typeof d === 'object' ? Object.entries(d).filter(([k, v]) => typeof v === 'string' && v) : []);
+  } catch (e) { return new Map(); }
+}
+function askDraftsSave(map = ASK_DRAFT, store = sessionStorage) {
+  try {
+    const d = Object.fromEntries([...map].filter(([k, v]) => v && v.trim()));
+    if (Object.keys(d).length) store.setItem(ASK_DRAFT_KEY(), JSON.stringify(d));
+    else store.removeItem(ASK_DRAFT_KEY());
+  } catch (e) {}
+}
+const ASK_DRAFT = (() => { try { return askDraftsLoad(); } catch (e) { return new Map(); } })();
+function askDraftSet(key, text) {
+  if (text) ASK_DRAFT.set(key, text); else ASK_DRAFT.delete(key);
+  askDraftsSave();
+}
 const ASK_COMPOSING = new Set(), ASK_AFTER_COMPOSE = new Map();
 function askRestoreDrafts(box) {
   box.querySelectorAll('.qa-cm textarea[data-ask]').forEach(ta => {
     const d = ASK_DRAFT.get(ta.dataset.ask);
     if (d && !ta.value) ta.value = d;
   });
+  // An ask answered (here or on another device) keeps no draft.
+  let gone = false;
+  box.querySelectorAll('.qa.done[data-ask]').forEach(c => { if (ASK_DRAFT.delete(c.dataset.ask)) gone = true; });
+  if (gone) askDraftsSave();
 }
 function askSyncDraft(key) {
   const ta = [...document.querySelectorAll('.qa-cm textarea[data-ask]')].find(x => x.dataset.ask === key);
-  if (ta) ASK_DRAFT.set(key, ta.value);
+  if (ta) askDraftSet(key, ta.value);
+}
+// What a key in a card's comment does: Ctrl+Enter (⌘+Enter on a Mac) is its
+// Send, as in the message box; Enter alone, or with Shift or Alt, types.
+const askKeyAction = e => e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey ? 'send' : null;
+const MOD_ENTER = (typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')) ? '⌘+Enter' : 'Ctrl+Enter';
+// A redraw keeps the card being typed in (#191). The element with focus in a
+// card (its comment, an answer, Send) and every element around it up to the
+// balloon stay the same nodes; only what is around them is replaced by the
+// new markup, so focus, caret, selection, scroll and an IME composition all
+// stay. old: the balloon on screen; neu: its new markup's element. false
+// when the new markup has no such element (the card answered meanwhile) or
+// is shaped otherwise: the balloon is then replaced as before.
+function askFocusSel(el) {
+  const k = el.dataset && el.dataset.ask;
+  if (!k) return '';
+  const q = v => '"' + String(v).replace(/["\\]/g, '\\$&') + '"';
+  if (el.matches('.qa-cm textarea')) return `.qa-cm textarea[data-ask=${q(k)}]`;
+  if (el.matches('.qa-send')) return `.qa-send[data-ask=${q(k)}]`;
+  if (el.matches('.qa-opt')) return `.qa-opt[data-ask=${q(k)}][data-opt=${q(el.dataset.opt || '')}]`;
+  return '';
+}
+// Should a redraw still have to replace or move the focused card element (a
+// reorder), the new one takes the focus back with the same caret, selection
+// and scroll. Returns what to call after the redraw.
+function askFocusKeep(box) {
+  const el = document.activeElement;
+  const sel = el && box.contains(el) && el.closest('.qa') ? askFocusSel(el) : '';
+  if (!sel) return () => {};
+  const ta = el.tagName === 'TEXTAREA';
+  const s = ta ? [el.selectionStart, el.selectionEnd, el.selectionDirection, el.scrollTop] : null;
+  return () => {
+    if (el.isConnected && document.activeElement === el) return;
+    const n = box.querySelector(sel);
+    if (!n || n.disabled) return;
+    n.focus({ preventScroll: true });
+    if (s && n.tagName === 'TEXTAREA') { try { n.setSelectionRange(s[0], s[1], s[2]); } catch (e) {} n.scrollTop = s[3]; }
+  };
+}
+function syncAttrs(o, n) {
+  [...o.attributes].forEach(a => { if (!n.hasAttribute(a.name)) o.removeAttribute(a.name); });
+  [...n.attributes].forEach(a => { if (o.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value); });
+}
+function askKeepFocused(old, neu, keep) {
+  const sel = keep && old.contains(keep) && keep !== old ? askFocusSel(keep) : '';
+  const nk = sel && neu.querySelector(sel);
+  if (!nk || old.tagName !== neu.tagName) return false;
+  const po = [], pn = [];
+  for (let x = keep; x !== old; x = x.parentElement) po.unshift(x);
+  for (let x = nk; x !== neu; x = x.parentElement) pn.unshift(x);
+  if (po.length !== pn.length || po.some((x, i) => x.tagName !== pn[i].tagName)) return false;
+  const oc = [old, ...po], nc = [neu, ...pn];
+  for (let i = 0; i < oc.length; i++) {
+    syncAttrs(oc[i], nc[i]);
+    if (i === oc.length - 1) break;              // the focused element's own contents stay
+    const o = oc[i], stay = oc[i + 1], at = nc[i + 1];
+    [...o.childNodes].forEach(c => { if (c !== stay) o.removeChild(c); });
+    let before = true;
+    [...nc[i].childNodes].forEach(c => {
+      if (c === at) { before = false; return; }
+      if (before) o.insertBefore(c, stay); else o.appendChild(c);
+    });
+  }
+  return true;
 }
 // A click on an option (or Send): sent once from this page, and the hub takes
 // it once from any device. The reply's points settle the card.
@@ -2765,14 +2852,14 @@ async function askSend(key, option, post) {
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   try {
     const r = await post('/api/room/ask', { roomId: ROOM, mid, n, option, comment, to: SOLO_MODE ? '' : m.from });
-    ASK_DRAFT.delete(key);
+    askDraftSet(key, '');
     if (r && r.points) pointsChanged(r.points, ptTicket());
     return r;
   } catch (e) {
     // The hub's points first: a kept answer is recorded, its card settled.
     if (e && e.points) pointsChanged(e.points, ptTicket());
     if (e && e.kept) {
-      ASK_DRAFT.delete(key);
+      askDraftSet(key, '');
       pointsNote('Your answer is kept but not delivered yet: Retry it in the chat.');
       setTimeout(refresh, 400);
     } else {
@@ -2786,6 +2873,10 @@ async function askSend(key, option, post) {
 }
 function askClick(e) {
   const b = e.target.closest && e.target.closest('.qa-opt, .qa-send');
+  return askPress(b);
+}
+// An option or Send pressed: by a click, or Ctrl/⌘+Enter in the card's comment.
+function askPress(b) {
   if (!b || b.disabled) return false;
   const key = b.dataset.ask, option = b.classList.contains('qa-opt') ? b.dataset.opt : '';
   askSyncDraft(key);
@@ -3759,8 +3850,10 @@ function renderBubbles(items, opt = {}) {
     + (failed && i === hubHeld.length - 1
       ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
       : '') + '</div>'));
+  const focus = askFocusKeep(box);
   patchChildren(box, rows);
   askRestoreDrafts(box);
+  focus();
   showAskLine(items);
   MD_CACHE = used;
   if (stick) {
@@ -4010,11 +4103,17 @@ function patchChildren(box, rows) {
     if (same) same.push(k); else pool.set(k._h, [k]);
     if (k.dataset && k.dataset.group) groups.set(k.dataset.group, k);
   }
-  const used = new Set();
-  let at = box.firstElementChild;
+  // A card with focus (its comment being typed in, #191): its balloon stays
+  // the same element, its new markup put around the focused one (askKeepFocused).
+  const act = document.activeElement;
+  const typing = act && act !== box && box.contains(act) && act.closest('.qa') ? act : null;
+  let typingRow = typing;
+  while (typingRow && typingRow.parentElement !== box) typingRow = typingRow.parentElement;
+  const used = new Set(), order = [];
   for (const h of rows) {
     const same = pool.get(h);
     let n = same && same.shift();
+    if (n && used.has(n)) n = null;
     if (!n) {
       const t = document.createElement('template');
       t.innerHTML = h;
@@ -4023,18 +4122,26 @@ function patchChildren(box, rows) {
       // click or keyboard focus: only its words and attributes change.
       const old = n.dataset && n.dataset.group && groups.get(n.dataset.group);
       if (old && !used.has(old) && old.tagName === n.tagName) {
-        [...old.attributes].forEach(a => { if (!n.hasAttribute(a.name)) old.removeAttribute(a.name); });
-        [...n.attributes].forEach(a => { if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value); });
+        syncAttrs(old, n);
         old.innerHTML = n.innerHTML;
         n = old;
+      } else if (typingRow && !used.has(typingRow) && n.dataset && n.dataset.key && n.dataset.key === typingRow.dataset.key
+        && askKeepFocused(typingRow, n, typing)) {
+        n = typingRow;
       }
       n._h = h;
     }
     used.add(n);
+    order.push(n);
+  }
+  // What is gone goes first, so a row that stays is never moved for it (a
+  // moved element loses focus): only what is new, or reordered, is inserted.
+  [...box.children].forEach(k => { if (!used.has(k)) k.remove(); });
+  let at = box.firstElementChild;
+  for (const n of order) {
     if (n === at) at = at.nextElementSibling;
     else box.insertBefore(n, at);
   }
-  while (at) { const nx = at.nextElementSibling; at.remove(); at = nx; }
 }
 // "Latest ↓": shown only away from the end, with how many arrived since.
 function showLatest() {
@@ -6172,7 +6279,17 @@ $('#points-line').addEventListener('click', e => {
 });
 $('#msgs').addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
-  if (ta) ASK_DRAFT.set(ta.dataset.ask, ta.value);
+  if (ta) askDraftSet(ta.dataset.ask, ta.value);
+});
+// Ctrl/⌘+Enter in a card's comment is its Send, sent once (askSend's guard;
+// a held key's repeats do nothing). Mid-composition it waits for the text.
+$('#msgs').addEventListener('keydown', e => {
+  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
+  if (!ta || askKeyAction(e) !== 'send') return;
+  e.preventDefault();
+  if (e.repeat) return;
+  const card = ta.closest('.qa');
+  askPress(card && [...card.querySelectorAll('.qa-send')].find(b => b.dataset.ask === ta.dataset.ask));
 });
 $('#msgs').addEventListener('compositionstart', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
@@ -6182,7 +6299,7 @@ $('#msgs').addEventListener('compositionend', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
   if (!ta) return;
   const key = ta.dataset.ask;
-  ASK_DRAFT.set(key, ta.value);
+  askDraftSet(key, ta.value);
   ASK_COMPOSING.delete(key);
   if (!ASK_AFTER_COMPOSE.has(key)) return;
   const option = ASK_AFTER_COMPOSE.get(key);

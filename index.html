@@ -10475,6 +10475,8 @@ function drPaint(v) {
   if (!box.isConnected || rv.view !== v || !v.head || !v.head.isConnected) return;
   const typing = box.querySelector('.dcx textarea');
   const hadFocus = typing && typing.ownerDocument.activeElement === typing;
+  // Repainted while typed in: the same caret, selection and scroll after (#191).
+  const caret = hadFocus ? [typing.value, typing.selectionStart, typing.selectionEnd, typing.selectionDirection, typing.scrollTop] : null;
   box.querySelectorAll('.drv .dc, .drv .dcx').forEach(n => n.remove());
   box.querySelectorAll('.dr.sel').forEach(n => n.classList.remove('sel'));
   const d = v.draft, at = new Map(), away = [];
@@ -10503,9 +10505,11 @@ function drPaint(v) {
     if (v.draft && v.draft.att && el.isConnected) drAttPaint(v, v.draft.att);
     const ta = v.draft && el.isConnected ? el.querySelector('textarea') : null;
     if (ta && (d.focus || hadFocus)) {
+      const back = !d.focus && caret && caret[0] === ta.value;
       d.focus = false;
       ta.focus({ preventScroll: true });
-      ta.setSelectionRange(ta.value.length, ta.value.length);
+      if (back) { ta.setSelectionRange(caret[1], caret[2], caret[3]); ta.scrollTop = caret[4]; }
+      else ta.setSelectionRange(ta.value.length, ta.value.length);
       el.scrollIntoView({ block: 'nearest' });
     }
   }

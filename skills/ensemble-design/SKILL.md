@@ -1643,6 +1643,10 @@ desktop is untouched by construction.
     A pointer press on Send, a quick answer's Send, or Retry starts that action before a Dock
     strip or other host layout can move its frame. Suppress the matching click so it sends once;
     keyboard activation still uses click. A blocked send states its reason beside the button.
+    In a quick answer's comment Ctrl/⌘+Enter is its Send (once, as a click is), Enter a new line;
+    the Send tooltip names the shortcut. A redraw never takes a card being typed in away: its
+    nodes stay (`askKeepFocused`), so focus, caret and selection stay, and its unsent comment is
+    kept per room across a reload until sent or emptied.
     The composer menu closes on an outside click or focus change. Escape closes it and
     returns focus to its trigger before other Escape handlers act.
 14. **No balloon under chrome.** Notices occupy their own flex rows; balloons cannot shrink
