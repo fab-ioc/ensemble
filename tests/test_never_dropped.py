@@ -62,7 +62,17 @@ class Pty(base.FakePty):
 
 class Harness(unittest.TestCase):
     setUp = base.Receipts.setUp
-    tearDown = base.Receipts.tearDown
+
+    def tearDown(self):
+        # This class's own patches stop first, newest first: several patch
+        # what the base also patches (load_projects, STARTED_AT), and stopped
+        # after the base's they would put the base's fakes back for every
+        # later test module.
+        for p in reversed(getattr(self, "extra", [])):
+            p.stop()
+        self.extra = []
+        base.Receipts.tearDown(self)
+
     spawn = base.Receipts.spawn
     stat = base.Receipts.stat
     join = base.Receipts.join
@@ -75,16 +85,16 @@ class Harness(unittest.TestCase):
         for pid in list(self.ptys):
             old = self.ptys[pid]
             self.ptys[pid] = Pty(pid, old._alive)
-        self.extra = [
+        new = [
             mock.patch.object(sends, "STARTED_AT", 0),
             mock.patch.object(rotation, "_transcript_of", lambda part: (None, lambda p: {"turnOver": self.turn_over})),
             mock.patch.object(dashboard.attention, "looks_busy", lambda tail: False),
             mock.patch.object(dashboard, "_type_input", self.type_input),
             mock.patch.object(dashboard, "operator_name", lambda: "Fab"),
         ]
-        for p in self.extra:
+        for p in new:
             p.start()
-        self.addCleanup(lambda: [p.stop() for p in self.extra])
+        self.extra = getattr(self, "extra", []) + new
         self.turn_over = True
         return rid
 
