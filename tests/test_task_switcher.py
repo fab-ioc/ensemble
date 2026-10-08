@@ -140,6 +140,13 @@ log.recentFrozen = keys(swFreeze(swRecent(rows.map(r => r.roomId === 'rx' ? { ..
                                  { recent: log.recent.map(x => x[0]), unassigned: log.recentUn }));
 log.recentThawed = swRecent(rows.map(r => r.roomId === 'rx' ? { ...r, newsAt: T0 + 9000 } : r), items, P, opts).recent.map(e => e.key);
 log.menu = SW_VIEWS.map(([v, t]) => nounText(t));
+// A filter looks at every task: r15 (parked) and r12 (done yesterday) are in no group.
+const go = swGroups(rows, items, P, { ...opts, other: true });
+log.other = go.other.map(e => e.key);
+log.otherHtml = swListHtml({ ...go, other: go.other.filter(e => e.key === 'r15') }, {}, false, { open: true, all: true });
+log.noOther = 'other' in g;
+// A task with no number is named by its title on its PO's row.
+log.unnumbered = swSigHtml({ sig: { needs: [{ key: 'rq', row: row('rq', 0, 'No number here', {}), it: null }], review: [], running: 0, done: 0 } });
 // A running team task names who is on it.
 log.teamRow = swListHtml(swGroups([row('r2', 7, 'Team run', { status: 'busy', members: [{ agent: 'claude' }, { agent: 'codex' }] })], [], P, opts), {}, false);
 log.one = keys(swGroups(rows, items, P, { ...opts, project: 'p2' }));
@@ -405,6 +412,18 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn('class="sw-row needs-in" data-proj="p3" data-room="proj:p3"', h)
         self.assertIn('Project with no PO', h)
         self.assertIn('data-sid="r30"', h)
+
+    def test_a_filter_looks_at_every_task(self):
+        self.assertFalse(self.r["noOther"], "no Other tasks group without a filter")
+        self.assertEqual(self.r["other"], ["r15", "rx", "r12"])   # rx: in no project, in no group
+        h = self.r["otherHtml"]
+        self.assertIn('<span class="sw-gname">Other tasks</span><span class="sw-n">1</span>', h)
+        # It names its project and its column.
+        self.assertIn('<span class="sw-sub">Ensemble Dashboard · to do</span>', h)
+
+    def test_a_task_with_no_number_is_named_by_its_title(self):
+        self.assertIn('class="sw-tk named" data-sid="rq"', self.r["unnumbered"])
+        self.assertIn('<span class="sw-tk-name">No number here</span>', self.r["unnumbered"])
 
     def test_the_recent_list_holds_still_under_the_pointer(self):
         # rx's news would take it to the top; frozen, it keeps its place.

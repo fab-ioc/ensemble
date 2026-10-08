@@ -2577,6 +2577,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   span.sw-tk { cursor: default; }
   button.sw-tk:hover { background: var(--hover); color: var(--fg); }
   .sw-tk:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--focus-ring); }
+  .sw-tk.named { max-width: 160px; font-family: inherit; }
+  .sw-tk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sw-tk-more { font-size: var(--fs-100); }
   /* Unassigned's "Show all (N)": a quiet line under its rows. */
   .sw-more {
@@ -6294,6 +6296,7 @@ const SW_GROUPS = [
   ['projects', '{Projects}'],
   ['unassigned', 'Unassigned'],
   ['done', 'Done today'],
+  ['other', 'Other tasks'],
 ];
 // A finished report waits for a look, not an answer: it is ready for your
 // check. Anything else /api/attention lists (blocked, a question, a prompt, a death,
@@ -6380,6 +6383,17 @@ function swGroups(rows, items, projects, opts) {
       g.unassigned.push({ key, row: r, it: null, pid: '', project: '', at: Number(r.updatedAt) || 0 });
     }
   }
+  // A filter looks at every task (#189): opts.other adds the ones in no group
+  // above (idle, parked, done before today), latest activity first.
+  if (o.other) {
+    const inGroup = new Set([...g.needs, ...g.running, ...g.review, ...g.done].map(e => e.key));
+    g.other = [];
+    for (const r of byRoom.values()) {
+      if (!r.headless || r.draft || r.archived || inGroup.has(r.roomId) || poRooms.has(r.roomId)) continue;
+      const e = entry(r.roomId, r, null, { at: Math.max(Number(r.updatedAt) || 0, Number(r.newsAt) || 0) });
+      if (!o.project || e.pid === o.project) g.other.push(e);
+    }
+  }
   const byAge = (a, b) => (a.at - b.at) || String(a.key).localeCompare(String(b.key));
   const newest = (a, b) => (b.at - a.at) || a.project.localeCompare(b.project) || String(a.key).localeCompare(String(b.key));
   g.needs.sort(byAge);
@@ -6389,6 +6403,7 @@ function swGroups(rows, items, projects, opts) {
   g.projects.sort(newest);
   if (g.unassigned) g.unassigned.sort(newest);
   g.done.sort(newest);
+  if (g.other) g.other.sort(newest);
   return g;
 }
 // A row's last activity (seconds): the newest of its last change (a message,
@@ -6562,6 +6577,7 @@ function swRowHtml(e, group, selected) {
     if (needs && it.agentIdentity) words.push(it.agentIdentity);
     if ((group === 'running' || (group === 'idle' && r.isLive)) && e.row && swAgents(r)) words.push(swAgents(r));
     if (group === 'review' && e.row) words.push(workflowOf(r) === 'inreview' ? 'in review' : it ? 'reported' : 'paused');
+    if (group === 'other' && e.row) words.push(String(((WORKFLOW_COLS.find(c => c.k === workflowOf(r)) || {}).name) || workflowOf(r)).toLowerCase());
   }
   if (words.length) bits.push(`<span class="sw-sub">${esc(words.join(' · '))}</span>`);
   if (e.row && (group === 'running' || group === 'review' || group === 'done' || group === 'idle')) bits.push(changesChipHtml(r, 'sw-chg').trim());
@@ -6591,9 +6607,12 @@ function swSigHtml(e) {
   if (!s) return '';
   const nos = list => list.slice(0, SW_SIG_NOS).map(t => {
     const no = t.row ? taskNoText(t.row, false) : (t.it && t.it.ref) || '';
-    const tip = [no, t.row ? rowTitle(t.row) : (t.it && t.it.title) || '', t.it && t.it.reason].filter(Boolean).join(' · ');
-    return t.row ? `<button type="button" class="sw-tk" data-sid="${esc(t.row.sessionId)}" data-room="${esc(t.key)}" title="${esc(tip)}" aria-label="${esc('Open ' + tip)}">${esc(no)}</button>`
-                 : `<span class="sw-tk" title="${esc(tip)}">${esc(no)}</span>`;
+    const name = t.row ? rowTitle(t.row) : (t.it && t.it.title) || '';
+    const tip = [no, name, t.it && t.it.reason].filter(Boolean).join(' · ');
+    // A task with no number is named by its title, cut short.
+    const label = no ? esc(no) : `<span class="sw-tk-name">${esc(name || '(task)')}</span>`;
+    return t.row ? `<button type="button" class="sw-tk${no ? '' : ' named'}" data-sid="${esc(t.row.sessionId)}" data-room="${esc(t.key)}" title="${esc(tip)}" aria-label="${esc('Open ' + tip)}">${label}</button>`
+                 : `<span class="sw-tk${no ? '' : ' named'}" title="${esc(tip)}">${label}</span>`;
   }).join('') + (list.length > SW_SIG_NOS ? `<span class="sw-tk-more">+${list.length - SW_SIG_NOS}</span>` : '');
   const parts = [];
   if (s.needs.length) parts.push(`<span class="sw-tk-say needs">${s.needs.length} need${s.needs.length === 1 ? 's' : ''} you</span>${nos(s.needs)}`);
@@ -6635,7 +6654,7 @@ function swByProject(g) {
   };
   for (const e of g.needs || []) add(e, 'needs');
   for (const e of g.projects || []) add(e, 'projects');
-  for (const k of ['running', 'review']) for (const e of g[k] || []) add(e, k);
+  for (const k of ['running', 'review', 'other']) for (const e of g[k] || []) add(e, k);
   return [...out.values()].sort((a, b) => (a.pid ? 0 : 1) - (b.pid ? 0 : 1) || a.name.localeCompare(b.name));
 }
 // sel: {sid} the open task, or {po} the project whose PO is on screen.
@@ -6686,6 +6705,7 @@ function swListHtml(g, sel, doneOpen, un, by) {
   return SW_GROUPS.map(([k, name]) => {
     if (k === 'done') return done();
     if (k === 'unassigned') return unassigned();
+    if (k === 'other' && !g.other) return '';   // only while a filter looks at every task
     const list = g[k] || [];
     return `<section class="sw-group${list.length ? '' : ' empty'}" data-group="${k}" aria-label="${esc(nounText(name))}">
       <h3 class="sw-ghead">${head(nounText(name), list.length)}</h3>${list.map(e => swRowHtml(e, k, on(e, k))).join('')}</section>`;
@@ -16543,11 +16563,11 @@ function swProject() {
   return id && projectById(id) ? id : '';
 }
 // The list's view (#189): the recent list unless the ⋯ menu chose a grouped
-// one, kept per browser. A phone has no ⋯ for its list: always the recent.
-// The older 'cd-switcher-group' (#123's Group select) is not read: the recent
-// list is everyone's default.
+// one, kept per browser (a phone's list has no ⋯: it keeps the recent list
+// unless that browser chose otherwise as a desktop). The older
+// 'cd-switcher-group' (#123's Group select) is not read: the recent list is
+// everyone's default.
 function swView() {
-  if (phoneNow()) return 'recent';
   let v = '';
   try { v = localStorage.getItem(SW_KEY + '-view') || ''; } catch (e) {}
   return v === 'status' || v === 'project' ? v : 'recent';
@@ -16628,7 +16648,8 @@ function swRender() {
   const q = SW_FILTER.trim();
   const recent = view === 'recent' && !chosen && !parseSearchQuery(q).groups.length;
   const by = view === 'project' ? 'project' : 'status';
-  const all = recent ? swRecent(ALL_ROWS, attentionItems(), projects, gOpts) : swGroups(ALL_ROWS, attentionItems(), projects, gOpts);
+  const all = recent ? swRecent(ALL_ROWS, attentionItems(), projects, gOpts)
+    : swGroups(ALL_ROWS, attentionItems(), projects, { ...gOpts, other: !!parseSearchQuery(q).groups.length });
   const fg = recent ? all : swFilterGroups(all, q);
   const g = swFreeze(fg, el.matches(':hover') ? SW_SHOWN : null);
   const note = $('#sw-filtered');

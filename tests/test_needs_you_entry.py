@@ -68,9 +68,9 @@ const node = (name, isRow) => ({ name, attrs: {}, clicked: 0,
 let head, firstRow;
 const reset = () => { head = node('needs-head', false); firstRow = node('needs-row', true); focused = null; calls = []; };
 const list = { querySelector: s => s === '[data-group="needs"] > .sw-ghead' ? (byProject ? null : head)
-                                   : s === '.sw-row.needs' ? firstRow : null };
+                                   : s === '.sw-row.needs, .sw-row.needs-in' ? firstRow : null };
 const document = { body, getElementById: id => id === 'sw-list' ? list : null,
-                   querySelector: s => s === '#sw-list .sw-row.needs' ? firstRow : null };
+                   querySelector: s => s === '#sw-list .sw-row.needs, #sw-list .sw-row.needs-in' ? firstRow : null };
 
 // The wordmark on a desktop: the middle empties, the list shows Needs you.
 reset(); goHome();

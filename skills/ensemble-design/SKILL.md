@@ -1221,12 +1221,30 @@ self-contained component, so a later layout can host it elsewhere.
   on a phone the list comes back where it was, then scrolls there. A project chosen in the list's
   filter that would hide a Needs you entry gives way to All projects then: the bell showed every
   project's.
-- **Its head** is two quiet controls, each a native `select` with its box and arrow drawn away
+- **Its head** is one quiet control, a native `select` with its box and arrow drawn away
   (`.sw-pick`): the project filter as a chip on `--selected-bg` (`#sw-proj`: "All projects", then
-  every registered project by name; it narrows what you see) and **Group: status / project** as a
-  Subtle button (`#sw-by`). Both are remembered per browser (`cd-switcher-project`,
-  `cd-switcher-group`), and every group follows the filter.
-- **Six groups, in this order:** **Needs you** (`/api/attention`'s items less finished reports,
+  every registered project by name; it narrows what you see), remembered per browser
+  (`cd-switcher-project`). The list's view is in its panel's ⋯ (`swMenuItems`, #189): **Recent
+  activity** (the default), **Grouped by status**, **Grouped by project**, the one shown ticked;
+  a grouped view is remembered per browser (`cd-switcher-view`; #123's `cd-switcher-group` is not
+  read, so everyone starts on the recent list).
+- **The recent list** (#189, GitHub issue 12; `swRecent`), shown while every project is and the
+  filter is empty: one group, **Recent activity**, latest activity first, of each project's **PO**
+  and the **tasks in no project**, then Unassigned folded at the foot. A project's task is never a
+  row of it (its PO, the Board and search reach it). Activity is what each row already carries
+  (`swActivity`: the newest of `updatedAt`, `newsAt` and its ask's time; nothing read per row); a
+  PO's is its own and its tasks'. **What a project's tasks say is on its PO's row**: its dot takes
+  the tone of a task that needs you (the worst first), else works while one works; and a line under
+  the row (`swSigHtml`, `.sw-tasks`, indented to the title, `--fs-200` `--fg-muted`, after any
+  Details) says "1 needs you #12 · 2 ready for your check #3 #5 · 3 running · 1 done today",
+  "needs you" in `--fg` 600, each number a small `.sw-tk` (mono, `--surface` on `--border`,
+  `--r-100`; the title cut short when it has no number; the first three, then "+N";
+  `--touch-min` on a phone) that opens its task. A project with no PO has a row (`data-proj`,
+  opening the project) only while one of its tasks says something. Unassigned keeps the sessions in
+  no project that are no task (your own conversations, Make PO). One project chosen, or any filter
+  text, shows the groups below; a filter then also lists **Other tasks** (every task in no group:
+  idle, parked, done before today), so it finds any task, each row naming its project.
+- **The grouped view's six groups, in this order:** **Needs you** (`/api/attention`'s items less finished reports,
   oldest first: blocked or waiting POs, a PO that could not start with its message waiting, held
   PO-to-PO wakes and every task that waits on you), **Running** (live tasks not waiting for
   a check, by project and number, so a row does not jump each time its agent takes a turn),

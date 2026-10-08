@@ -114,7 +114,8 @@ async function main() {
     await ready();
     return { evalIn, until, shot, click, key, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-list-dock', 'cd-list-dock-axis', 'cd-tool-strip', 'cd-tool-open'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  const go = (p, proj, keep) => p.evalIn(`(() => { try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {} // its rows are a project's tasks: the grouped view (#189)
+    if (!${!!keep}) try { ['cd-list-dock', 'cd-list-dock-axis', 'cd-tool-strip', 'cd-tool-open'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SW_DONE_OPEN = true; SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
   const ldReady = p => p.until('!!LD.dock && !!PD.dock && document.body.classList.contains("po-dock") && !!SW_EL.querySelector(".sw-row")', 30000);
   const row = `.sw-row[data-room="${A.task}"]`;
