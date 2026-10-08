@@ -18,7 +18,7 @@ import app_version  # noqa: E402
 APP_EXE = "/Applications/Ensemble.app/Contents/MacOS/Ensemble"
 
 
-def _checkout_plist(path: Path, script: str = "/Users/me/ensemble/dashboard.py") -> bytes:
+def _checkout_plist(path: Path, script: str = "/srv/ensemble/dashboard.py") -> bytes:
     data = plistlib.dumps({"Label": app_setup.LAUNCHD_LABEL,
                            "ProgramArguments": ["/usr/bin/python3", script, "--port", "8765"],
                            "KeepAlive": True})
@@ -30,7 +30,7 @@ def _checkout_plist(path: Path, script: str = "/Users/me/ensemble/dashboard.py")
 class LaunchAgentKindTest(unittest.TestCase):
     def test_the_app_is_told_from_a_checkout_by_its_program(self):
         self.assertTrue(app_setup.is_app_program(APP_EXE))
-        self.assertTrue(app_setup.is_app_program("/Users/me/Applications/Ensemble.app/Contents/MacOS/Ensemble"))
+        self.assertTrue(app_setup.is_app_program("/Volumes/Apps/Ensemble.app/Contents/MacOS/Ensemble"))
         for program in ("/usr/bin/python3", "/opt/homebrew/bin/python3.12", "",
                         "/Applications/Ensemble.app/Contents/MacOS/Ensemble-helper"):
             self.assertFalse(app_setup.is_app_program(program), program)
@@ -105,7 +105,7 @@ class TakeOverSignInTest(unittest.TestCase):
                 mock.patch.object(app_version, "packaged", return_value=True), \
                 mock.patch.object(app_version, "app_executable", return_value=Path(APP_EXE)), \
                 mock.patch.object(app_setup, "set_autostart", return_value={"thisApp": True}) as sa:
-            out = app_launch.take_over_sign_in(did, 8765, Path("/Users/me"))
+            out = app_launch.take_over_sign_in(did, 8765, Path("/home-of-someone"))
         sa.assert_called_once()
         self.assertTrue(sa.call_args.args[0])
         self.assertEqual(sa.call_args.args[1], Path(APP_EXE))
@@ -116,7 +116,7 @@ class TakeOverSignInTest(unittest.TestCase):
             with mock.patch.object(app_launch.sys, "platform", "darwin"), \
                     mock.patch.object(app_version, "packaged", return_value=packaged), \
                     mock.patch.object(app_setup, "set_autostart") as sa:
-                self.assertEqual(app_launch.take_over_sign_in(did, 8765, Path("/Users/me")), [])
+                self.assertEqual(app_launch.take_over_sign_in(did, 8765, Path("/home-of-someone")), [])
             sa.assert_not_called()
 
 
