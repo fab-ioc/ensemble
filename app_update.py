@@ -614,7 +614,8 @@ class Helper:
 
     def preflight(self, new_exe: Path) -> bool:
         port = _spare_port()
-        proc = _start(new_exe, ["--port", str(port), "--log", str(self.plan["preflightLog"])])
+        # --background: the try opens no browser tab.
+        proc = _start(new_exe, ["--port", str(port), "--background", "--log", str(self.plan["preflightLog"])])
         try:
             got = wait_served(port, self.plan["toVersion"], SERVE_TIMEOUT_S, self.renew)
         finally:

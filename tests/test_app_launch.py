@@ -104,6 +104,13 @@ class PortStatusTest(unittest.TestCase):
         self.assertIn("older Ensemble hub", app_launch.describe_status(st, "0.9.2"))
         self.assertIn("process 924", app_launch.describe_status(st, "0.9.2"))
 
+    def test_a_web_server_serving_a_checkout_is_not_an_older_hub(self):
+        # python3 -m http.server in a checkout serves its index.html, titled Ensemble.
+        port = self.serve(_Server({"/": (200, b"<html><head><title>Ensemble</title></head></html>")}))
+        holder = {"pid": 31, "command": f"/usr/bin/python3 -m http.server {port}", "cwd": str(ROOT)}
+        with mock.patch.object(app_launch, "_holder", lambda p: holder):
+            self.assertEqual(app_launch.port_status(port)["state"], "other")
+
     def test_another_web_server(self):
         port = self.serve(_Server({"/": (200, b"<html><title>Something else</title></html>")}))
         st = app_launch.port_status(port)

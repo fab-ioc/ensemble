@@ -172,7 +172,7 @@ def port_status(port: int) -> dict:
     * ``ensemble``: an Ensemble hub with /api/version (its ``version``,
       ``executable`` and ``pid``);
     * ``old``: an older Ensemble hub, without /api/version (a checkout's
-      dashboard.py, or a page titled Ensemble);
+      dashboard.py; when the process cannot be named, a page titled Ensemble);
     * ``other``: anything else.
 
     ``pid`` and ``command`` are those of the process listening, when known.
@@ -186,9 +186,14 @@ def port_status(port: int) -> dict:
         return {"state": "free", "port": port}
     h = _holder(port) or {}
     out = {"state": "other", "port": port, "pid": h.get("pid"), "command": h.get("command", "")}
-    if h.get("command") and is_ensemble_command(h["command"], h.get("cwd", "")):
-        out["state"] = "old"
+    if h.get("command"):
+        # Known process: only its command line counts (any web server started
+        # in a checkout serves a page titled Ensemble).
+        if is_ensemble_command(h["command"], h.get("cwd", "")):
+            out["state"] = "old"
     else:
+        # Unknown (Windows, another user's process): told by its page, never
+        # stopped (stop_old_hub needs the command line).
         page = _http(port, "/")
         if page and _TITLE_RE.search(page[1]):
             out["state"] = "old"
