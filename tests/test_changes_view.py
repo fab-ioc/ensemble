@@ -458,6 +458,11 @@ async function main() {
       out.composer = await p.evalIn(`(() => { const x = ${PANE}, dcx = x.querySelector('.dcx'); return { loc: dcx.querySelector('.dc-loc').textContent, afterRow: dcx.previousElementSibling.classList.contains('sr'),
         sel: [...x.querySelectorAll('.dr.sel')].map(e => e.className), focused: document.activeElement === dcx.querySelector('textarea') }; })()`);
       await p.evalIn(`(() => { const ta = ${PANE}.querySelector('.dcx textarea'); ta.value = 'Why drop this line?'; ta.dispatchEvent(new Event('input', { bubbles: true })); })(); 0`);
+      // Another copy of the page changed the comments meanwhile: the box is
+      // repainted with the same focus, selection and words (#191).
+      out.repaint = await p.evalIn(`(() => { const ta = ${PANE}.querySelector('.dcx textarea'); ta.focus(); ta.setSelectionRange(4, 8);
+        drChanged([...DR_REVIEWS.values()].find(r => r.view && r.view.box && r.view.box.contains(ta)));
+        const t2 = ${PANE}.querySelector('.dcx textarea'); return { focused: document.activeElement === t2, sel: [t2.selectionStart, t2.selectionEnd], value: t2.value }; })()`);
       await p.evalIn(`${PANE}.querySelector('.dcx-add').click(); 0`);
       await p.until(`!!${PANE}.querySelector('.drv .dc')`, 5000); await sleep(200);
       out.card = await p.evalIn(`(() => { const x = ${PANE}, dc = x.querySelector('.drv .dc'); return { loc: dc.querySelector('.dc-loc').textContent, note: dc.querySelector('.dc-note').textContent, afterRow: dc.previousElementSibling.classList.contains('sr'),
@@ -819,6 +824,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual(len(c["sel"]), 1)
         self.assertIn("old", c["sel"][0].split(), "the removed line's cell is the selection")
         self.assertTrue(c["focused"])
+        self.assertEqual(self.got["repaint"], {"focused": True, "sel": [4, 8], "value": "Why drop this line?"})
         k = self.got["card"]
         self.assertEqual((k["loc"], k["note"], k["afterRow"], k["tray"], k["split"]), ("removed line 9", "Why drop this line?", True, "1 comment", True))
         self.assertEqual(k["item"], "src/app/main.py · removed line 9")
