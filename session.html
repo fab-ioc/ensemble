@@ -3559,6 +3559,7 @@ let LAST_ITEMS = null;     // what was last drawn, to draw it again after a clic
 // now drawn was fetched (hub times) is in it, so it counts as read with it.
 // Set only by renderSolo: a redraw of older items says nothing newer.
 let DRAWN_ROOM_TS = 0;
+let DRAW_HELD = false;    // the last draw was held back: what it had is not on screen
 const roomLatestTs = room => ((room && room.messages) || []).reduce((t, m) => Math.max(t, +m.ts || 0), 0);
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
 let DEC_N = 0;             // of those, how many ask for a decision
@@ -3599,10 +3600,11 @@ function renderBubbles(items, opt = {}) {
   pmIndex(items, ROOM_OBJ);
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
-  if (_cmtComposerOpen || selShown()) return;
+  if (_cmtComposerOpen || selShown()) { DRAW_HELD = true; return; }
   const _liveSel = window.getSelection();
   if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
-      box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
+      box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) { DRAW_HELD = true; return; }
+  DRAW_HELD = false;
   const stick = STICK && !opt.anchor;
   const place = stick ? null : readingPlace(box, opt.anchor);
   const given = items;       // as the conversation has them, point lines and all (sendsToShow)
@@ -3897,7 +3899,7 @@ function markRead() {
       READ_MEM = ahead ? { id: m.id, ts, at: now } : { id: cur.id, ts: cur.ts, at: now };
       try { localStorage.setItem(READ_KEY(), JSON.stringify(READ_MEM)); } catch (e) {}
     }
-    seenTell(Math.max(ts, DRAWN_ROOM_TS));
+    if (!DRAW_HELD) seenTell(Math.max(ts, DRAWN_ROOM_TS));
     break;
   }
   if (CU_POINT) { CU_POINT = null; CU_SNAP = null; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
@@ -3905,17 +3907,21 @@ function markRead() {
 // The hub keeps how far the person has read each task's chat (any device):
 // what they read leaves Needs you (a finished report at once, an ask a day
 // after it came; GitHub issue 11). Told once per newer message read.
-// Told once the hub took it: a failed send is told again at the next read
-// (markRead runs on each rest at the end, on leaving, and on Mark read).
+// Told once the hub took it: a failed send is tried again by itself (5 s,
+// 20 s, 1 min, 3 min), and again at the next read after that.
+const SEEN_RETRY_MS = [5000, 20000, 60000, 180000];
 let SEEN_TOLD = 0, SEEN_SENDING = 0;
-function seenTell(ts) {
+function seenTell(ts, tries = 0) {
   if (!/^room-/.test(ROOM || '') || !(ts > SEEN_TOLD) || ts <= SEEN_SENDING) return;
   SEEN_SENDING = ts;
   fetch('/api/attention/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                  body: JSON.stringify({ roomId: ROOM, ts }), keepalive: true })
-    .then(r => { if (r.ok) SEEN_TOLD = Math.max(SEEN_TOLD, ts); })
-    .catch(() => {})
-    .finally(() => { if (SEEN_SENDING === ts) SEEN_SENDING = 0; });
+    .then(r => r.ok, () => false)
+    .then(ok => {
+      if (SEEN_SENDING === ts) SEEN_SENDING = 0;
+      if (ok) SEEN_TOLD = Math.max(SEEN_TOLD, ts);
+      else if (tries < SEEN_RETRY_MS.length) setTimeout(() => seenTell(ts, tries + 1), SEEN_RETRY_MS[tries]);
+    });
 }
 // Another tab read further: the line here counts from that point, or goes when
 // nothing is left after it. A point behind this one changes nothing.

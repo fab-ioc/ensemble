@@ -254,22 +254,29 @@ class TheReadPoint(_Needs):
 
     @unittest.skipUnless(NODE, "node is not installed")
     def test_a_failed_read_notice_is_sent_again(self):
+        # Review 2: a chat left open at its end may never read again, so a
+        # failed notice tries again by itself, a few times, then stops.
         page = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
-        decl = re.search(r"^let SEEN_TOLD = .*$", page, re.M).group(0)
+        decls = "\n".join(re.search(rf"^{h}.*$", page, re.M).group(0)
+                          for h in (r"const SEEN_RETRY_MS = ", r"let SEEN_TOLD = "))
         js = "\n".join([
-            "let ROOM = 'room-abc', calls = [], answer = [];",
+            "let ROOM = 'room-abc', calls = [], answer = [], waits = [];",
             "globalThis.fetch = (url, opt) => { calls.push(JSON.parse(opt.body).ts);",
             "  const a = answer.shift(); return a === 'net' ? Promise.reject(new Error('down'))",
             "    : Promise.resolve({ ok: a === 200, status: a }); };",
-            decl, _js_fn(page, "function seenTell("),
-            "const tick = () => new Promise(r => setTimeout(r, 5));",
+            "const realTimeout = setTimeout;",
+            "globalThis.setTimeout = (f, ms) => { waits.push(ms); return realTimeout(f, 0); };",
+            decls, _js_fn(page, "function seenTell("),
+            "const settle = () => new Promise(r => realTimeout(r, 50));",
             "(async () => {",
             "  answer = ['net', 500, 200];",
-            "  seenTell(10); seenTell(10); await tick();",   # one in flight: not twice
-            "  seenTell(10); await tick();",                  # failed: sent again
-            "  seenTell(10); await tick();",                  # refused: sent again, taken
-            "  seenTell(10); seenTell(9); await tick();",     # taken: nothing more
-            "  console.log(JSON.stringify({ calls, told: SEEN_TOLD }));",
+            "  seenTell(10); seenTell(10); await settle();",   # one in flight; tried again by itself
+            "  const one = { calls: calls.slice(), waits: waits.slice(), told: SEEN_TOLD };",
+            "  seenTell(10); seenTell(9); await settle();",     # taken: nothing more
+            "  const after = calls.length;",
+            "  calls = []; waits = []; answer = Array(9).fill(503);",
+            "  seenTell(20); await settle();",                  # the hub keeps refusing: it stops
+            "  console.log(JSON.stringify({ one, after, gaveUp: { calls: calls.length, waits }, told: SEEN_TOLD }));",
             "})();"])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "seen.cjs"
@@ -277,7 +284,20 @@ class TheReadPoint(_Needs):
             proc = subprocess.run([NODE, str(script)], capture_output=True, text=True,
                                   encoding="utf-8", timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout), {"calls": [10, 10, 10], "told": 10})
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["one"], {"calls": [10, 10, 10], "waits": [5000, 20000], "told": 10})
+        self.assertEqual(out["after"], 3)
+        self.assertEqual(out["gaveUp"], {"calls": 5, "waits": [5000, 20000, 60000, 180000]})
+        self.assertEqual(out["told"], 10)
+
+    def test_a_held_draw_is_not_read(self):
+        # Review 2: with a comment open or text selected the chat keeps its old
+        # balloons; what it was handed is not on screen, so it is not told.
+        page = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+        draw = _js_fn(page, "function renderBubbles(")
+        self.assertEqual(draw.count("{ DRAW_HELD = true; return; }"), 2)
+        self.assertLess(draw.index("DRAW_HELD = false;"), draw.index("const stick = "))
+        self.assertIn("if (!DRAW_HELD) seenTell(Math.max(ts, DRAWN_ROOM_TS));", _js_fn(page, "function markRead("))
 
 
 class TheProjectCount(unittest.TestCase):

@@ -61,7 +61,7 @@ const clearTimeout = () => {};
 function showGotoNote(t) { if (t) out.notes.push(t); }
 function nearEnd() { return false; }
 function showLatest() {}
-function withHubRows(items) { return items; }
+function withHubRows(items) { return items; } const roomLatestTs = () => 0; let DRAWN_ROOM_TS = 0;
 const ROOM_OBJ = null;
 let nodes = new Map(), drawn = [];
 function node(id) {
