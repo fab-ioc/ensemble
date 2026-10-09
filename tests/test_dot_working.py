@@ -142,6 +142,33 @@ class APORowKeepsTheSameRule(_Needs):
         self.assertIsNone(self.item())
 
 
+class AProjectCard(unittest.TestCase):
+    """Its dot is green while its PO or one of its tasks works; a PO running
+    alone at its prompt is the idle ring, not "idle" (review 2)."""
+
+    def build(self, po: dict, tasks: list | None = None):
+        rows = [{"roomId": "room-po", "sessionId": "room-po", **po}] + (tasks or [])
+        reg = [{"id": "p1", "name": "One", "path": "", "poRoomId": "room-po"}]
+        with mock.patch.object(dashboard, "load_projects", return_value=reg), \
+                mock.patch.object(dashboard, "load_session_projects",
+                                  return_value={r["roomId"]: "p1" for r in rows}), \
+                mock.patch.object(dashboard, "load_sessions", return_value=rows), \
+                mock.patch.object(dashboard, "project_home", return_value=""):
+            p = dashboard.build_projects()["projects"][0]
+        return p["working"], p["live"], p["poLive"]
+
+    def test_a_po_alone(self):
+        self.assertEqual(self.build({"isLive": True, "status": "idle"}), (0, 0, True))
+        self.assertEqual(self.build({"isLive": True, "status": "busy"}), (1, 0, True))
+        self.assertEqual(self.build({"isLive": False, "status": "idle"}), (0, 0, False))
+
+    def test_its_tasks(self):
+        tasks = [{"roomId": "room-a", "isLive": True, "status": "busy"},
+                 {"roomId": "room-b", "isLive": True, "status": "idle"},
+                 {"roomId": "room-c", "isLive": False, "status": "idle"}]
+        self.assertEqual(self.build({"isLive": True, "status": "idle"}, tasks), (1, 2, True))
+
+
 class _H:
     """Just the headers of a request, for the Handler's own checks."""
     _is_page_navigation = dashboard.Handler._is_page_navigation
@@ -254,6 +281,29 @@ class TheDot(unittest.TestCase):
         self.assertEqual(self.dot("po_working"), ("working", "working: 2 of its tasks"))
         self.assertEqual(self.dot("po_idle"), ("idle", "idle: 1 of its tasks running, none working"))
         self.assertEqual(self.dot("po_needs"), ("danger", "1 of its tasks needs you"))
+
+    def test_cards_and_the_board_take_what_needs_you(self):
+        src = "\n".join([
+            "const ATTN_LABEL = {waiting_for_you: 'waiting for you', agent_gone: 'agent gone', stalled: 'stalled'};",
+            "const esc = s => String(s);",
+            _js_fn(INDEX, "function swTone("),
+            _js_fn(INDEX, "function attnDot("),
+            _js_fn(INDEX, "function projectSessionState("),
+            _js_fn(INDEX, "function runChip("),
+            "const rows = {ask: {isLive: true, status: 'busy', attention: {state: 'waiting_for_you'}},"
+            " gone: {isLive: false, attention: {state: 'agent_gone'}}, stalled: {isLive: true, status: 'idle', attention: {state: 'stalled'}},"
+            " busy: {isLive: true, status: 'busy'}, idle: {isLive: true, status: 'idle'}, off: {isLive: false}};",
+            "const out = {}; for (const k in rows) out[k] = [projectSessionState(rows[k]), runChip(rows[k]).match(/class=\"dot ([a-z]+)\"/)[1]];",
+            "console.log(JSON.stringify(out));",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "card.cjs"
+            script.write_text(src, encoding="utf-8")
+            proc = subprocess.run([NODE, str(script)], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), {
+            "ask": ["wait", "warning"], "gone": ["danger", "danger"], "stalled": ["idle", "idle"],
+            "busy": ["work", "working"], "idle": ["idle", "idle"], "off": ["off", "off"]})
 
     def test_an_idle_dot_is_a_ring_and_green_is_working(self):
         self.assertIn("--run-working: var(--c-success-bold)", INDEX)

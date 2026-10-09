@@ -6306,7 +6306,8 @@ def build_projects() -> dict:
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
                            "isGit": p.get("isGit", False), "registered": True,
-                           "sessions": [], "live": 0, "working": 0, "waiting": 0, "updatedAt": 0}
+                           "sessions": [], "live": 0, "working": 0, "poLive": False,
+                           "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
     # A project's PO is not one of its tasks: it stays in `sessions` (the page
     # finds and chooses the PO there) and is never a task live. It needs you
@@ -6331,6 +6332,9 @@ def build_projects() -> dict:
         if s.get("isLive") and s.get("status") == "busy":
             groups[po_rooms.get(s.get("roomId"), pid)]["working"] += 1
         if s.get("roomId") and s.get("roomId") in po_rooms:
+            # A PO running at its prompt: its card shows the idle ring, not "idle".
+            if s.get("isLive"):
+                groups[po_rooms[s["roomId"]]]["poLive"] = True
             if (s.get("attention") or {}).get("state") in PO_NEEDS_STATES:
                 groups[po_rooms[s["roomId"]]]["waiting"] += 1
                 needs_you += 1

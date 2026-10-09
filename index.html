@@ -1388,6 +1388,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sdot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .sdot.work { background: var(--run-working); animation: livep 1.6s infinite; }
   .sdot.wait { background: var(--c-warning-bold); } .sdot.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--run-idle); } .sdot.off { background: var(--run-off); }
+  .sdot.danger { background: var(--c-danger-bold); }
   .srow .stitle { color: var(--fg); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .srow .stime { color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .proj .metarow { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
@@ -2284,6 +2285,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .run .dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--run-off); }
   .run .dot.working { background: var(--run-working); animation: cardpulse 2s infinite; }
   .run .dot.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--run-idle); }
+  .run .dot.warning { background: var(--c-warning-bold); }
+  .run .dot.danger { background: var(--c-danger-bold); }
   @keyframes cardpulse {
     0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); }
     70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--run-working) 0%, transparent); }
@@ -6089,11 +6092,15 @@ function renderHeadlessRow(r, parsed, now) {
 // ---------------------------------------------------------------------------
 function runChip(r, compact = false) {
   if (r.draft) return `<span class="run"><span class="dot off"></span>not started</span>`;
-  if (r.isLive && r.status === 'busy') return `<span class="run"><span class="dot working"></span>working</span>`;
-  if (r.isLive) return `<span class="run"><span class="dot idle"></span>idle</span>`;
+  // What needs you colours the dot (its words stay the run state's): yellow
+  // waits on you, red is blocked or gone (#193).
+  const a = attnDot(r);
+  const dot = cls => a ? `<span class="dot ${a.tone}" title="${esc(a.tip)}"></span>` : `<span class="dot ${cls}"></span>`;
+  if (r.isLive && r.status === 'busy') return `<span class="run">${dot('working')}working</span>`;
+  if (r.isLive) return `<span class="run">${dot('idle')}idle</span>`;
   // Calm on purpose: this is the whole board for a minute after every hub
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
-  return `<span class="run off"><span class="dot off"></span>${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
+  return `<span class="run off">${dot('off')}${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
 }
 
 // ---- Task numbers: begin ----------------------------------------------------
@@ -7641,14 +7648,23 @@ function projectsChromeHtml() {
     + (s && s.changed ? `<span class="lc-changed" title="${esc(nounText('Uncommitted files across every {project}: each card says which'))}">◆ ${s.changed} changed</span>` : '')
     + `${viewSwitchHtml()}</div>`;
 }
+// A dot that needs you takes its lozenge's tone (yellow waits on you, red is
+// blocked or gone), as in the left list; else green is an agent in a turn (the
+// row's status, as the hub reads it), never a terminal that only printed, and
+// a running agent between turns is a ring (#193, point P157).
+function attnDot(r) {
+  const a = r && r.attention && r.attention.state;
+  const tone = a ? swTone(a) : '';
+  return tone === 'danger' || tone === 'warning' ? { tone, tip: ATTN_LABEL[a] || a } : null;
+}
 function projectSessionState(sn) {
-  if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
-  // Green is an agent in a turn (the row's status, as the hub reads it), never
-  // a terminal that only printed: idle is a ring (#193, point P157).
+  const a = attnDot(sn);
+  if (a) return a.tone === 'danger' ? 'danger' : 'wait';
   if (sn.isLive) return sn.status === 'busy' ? 'work' : 'idle';
   return 'off';
 }
-const SDOT_TIP = { work: 'working', wait: 'waiting for you', idle: 'idle: running, not working', off: 'stopped' };
+const SDOT_TIP = { work: 'working', wait: 'waiting for you', danger: 'needs you', idle: 'idle: running, not working', off: 'stopped' };
+const sdotTip = (sn, st) => (attnDot(sn) || {}).tip || SDOT_TIP[st];
 function projectsLandingHtml() {
   if (!PROJECTS) return `<p class="empty">${esc(nounText('Loading {projects}…'))}</p>`;
   const cards = PROJECTS.projects.map(p => {
@@ -7656,12 +7672,13 @@ function projectsLandingHtml() {
     const count = tasks.length;
     const rows = tasks.slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}" title="${SDOT_TIP[st]}" aria-label="${SDOT_TIP[st]}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}" title="${esc(sdotTip(sn, st))}" aria-label="${esc(sdotTip(sn, st))}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
     }).join('');
     const more = count > 4 ? `<div class="srow more">… ${count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
     const live = p.working ? `<span class="live" title="${esc(nounText(`Working now: ${p.working} in this {project}`))}"><span class="live-dot"></span>${p.working} working</span>`
-      : p.live ? `<span class="live" title="Running, none working"><span class="live-dot idle"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
+      : p.live ? `<span class="live" title="Running, none working"><span class="live-dot idle"></span>${p.live} live</span>`
+      : p.poLive ? `<span class="live" title="Its PO runs, not working"><span class="live-dot idle"></span>PO idle</span>` : `<span class="live off">idle</span>`;
     const changed = p.isGit ? (p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`) : '';
     const unassigned = p.id === UNASSIGNED_ID;
     const sub = unassigned

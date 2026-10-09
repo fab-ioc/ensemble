@@ -225,7 +225,7 @@ class TaskSwitcher(unittest.TestCase):
             (ROOT / "static" / "actions.js").read_text(encoding="utf-8"), BAR,
             fn(INDEX, "function actionState("), fn(INDEX, "function actionEnv("), fn(INDEX, "function actionsCell("),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function rowTitle("), fn(INDEX, "function detailTitle("),
-            fn(INDEX, "function runChip("), fn(INDEX, "function swFocusNote("), fn(INDEX, "function swFocusBack("),
+            fn(INDEX, "function attnDot("), fn(INDEX, "function runChip("), fn(INDEX, "function swFocusNote("), fn(INDEX, "function swFocusBack("),
             block("Cost chip"), block("Task numbers"), block("Task switcher")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "switcher.cjs"

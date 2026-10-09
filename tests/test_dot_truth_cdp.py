@@ -41,6 +41,7 @@ import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 from tests import chrome_profile  # noqa: E402
+from tests.test_po_chat_clean import _turn  # noqa: E402
 
 NODE = shutil.which("node")
 
@@ -90,27 +91,45 @@ async function main() {
         const cs = d && getComputedStyle(d); o[k] = cs ? [cs.backgroundColor, cs.boxShadow] : null; }
       return o; })()`;
     got.paint = await evalIn(paint);
-    // A hub restart draws a new page key while this page stays open (the
-    // Python side swaps it when asked); the chats then opened in a frame of
-    // the page read their old questions, and both rows leave Waiting for you.
+    // A hub restart draws a new page key while this page and its chats stay
+    // open (the Python side swaps it when asked). The chats, opened before in
+    // hidden frames of the page (nothing in view, so nothing read), are then
+    // shown and read the way a person does: the first read is refused with the
+    // old key, the page fetches the new one and sends it again, and both rows
+    // leave Waiting for you.
+    got.oldOpen = await evalIn(`(async () => { const R = ${rooms}, out = {};
+      const row = rid => !!document.querySelector('#sw-list .sw-row.needs[data-room="' + rid + '"]');
+      window.__frames = {};
+      for (const k of ['oldtask', 'oldpo']) {
+        out[k] = { before: row(R[k]) };
+        const f = document.createElement('iframe');
+        f.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;z-index:99999';
+        f.hidden = true;
+        f.src = '/session?room=' + R[k];
+        document.body.appendChild(f);
+        for (let i = 0; i < 150 && !(f.contentWindow && f.contentDocument.readyState === 'complete'
+          && f.contentWindow.eval('typeof CHAT_DRAWN !== "undefined" && CHAT_DRAWN')); i++) await new Promise(r => setTimeout(r, 100));
+        out[k].drawn = !!f.contentWindow.eval('CHAT_DRAWN && LAST_ITEMS && LAST_ITEMS.length');
+        const log = [], fetch0 = f.contentWindow.fetch;
+        f.contentWindow.fetch = (u, o) => fetch0(u, o).then(r => { if (String(u).includes('/api/attention/seen')) log.push(r.status); return r; });
+        window.__frames[k] = { f, log };
+      }
+      return out; })()`);
     const fs = require('fs');
     fs.writeFileSync(A.tmp + '/rotate', '1');
     for (let i = 0; i < 100 && !fs.existsSync(A.tmp + '/rotated'); i++) await sleep(100);
     got.oldRead = await evalIn(`(async () => { const R = ${rooms}, out = {};
       const row = rid => !!document.querySelector('#sw-list .sw-row.needs[data-room="' + rid + '"]');
-      for (const k of ['oldtask', 'oldpo']) out[k] = { before: row(R[k]) };
       for (const k of ['oldtask', 'oldpo']) {
-        const f = document.createElement('iframe');
-        f.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;z-index:99999';
-        f.src = '/session?room=' + R[k];
-        document.body.appendChild(f);
-        for (let i = 0; i < 100 && !(f.contentWindow && typeof f.contentWindow.seenTell === 'function'
-          && f.contentDocument.readyState === 'complete'); i++) await new Promise(r => setTimeout(r, 100));
-        // This hub has no transcripts for the chat to draw, so its reader is
-        // not at the end of anything: say the read point the way markRead does.
-        f.contentWindow.eval('seenTell(Date.now() / 1000)');
+        const { f, log } = window.__frames[k];
+        f.hidden = false;
+        await new Promise(r => setTimeout(r, 500));
+        const b = f.contentDocument.querySelector('#msgs .cu-read');
+        out[k] = { markRead: !!b };
+        if (b) b.click();
         for (let i = 0; i < 150 && row(R[k]); i++) await new Promise(r => setTimeout(r, 100));
         out[k].after = row(R[k]);
+        out[k].seen = log.slice();
         f.remove();
       }
       return out; })()`);
@@ -249,9 +268,14 @@ class TheDotsInChrome(unittest.TestCase):
         assert ok, why
         chatroom.record_report(rooms["oldtask"], "claude", "question", "Which colour?")
         chatroom.post_message(rooms["oldpo"], "claude", "Ask: Start task #1 now?", to="user")
-        for rid in (rooms["oldtask"], rooms["oldpo"]):     # asked two days ago, never read
+        ago = time.time() - 2 * 86400
+        (base / "transcripts" / "C--x").mkdir()
+        for rid, ask in ((rooms["oldtask"], "Which colour?"), (rooms["oldpo"], "Ask: Start task #1 now?")):
+            # Asked two days ago, never read: the chat draws the agent's transcript.
+            turns = [_turn("user", "Please look at it", ago - 60), _turn("assistant", ask, ago)]
+            (base / "transcripts" / "C--x" / f"s-{rid}.jsonl").write_text(
+                "".join(json.dumps(t) + "\n" for t in turns), encoding="utf-8")
             full = chatroom.get_room(rid, public=False)
-            full["mode"] = "collab"        # its chat draws the room's messages
             for m in full["messages"][-1:]:
                 m["ts"] = float(m["ts"]) - 2 * 86400
             for k in ("lastReport", "lastRealReport"):
@@ -268,6 +292,19 @@ class TheDotsInChrome(unittest.TestCase):
                     return
                 time.sleep(0.1)
         cls.addClassCleanup(setattr, dashboard, "_UI_KEY", dashboard._UI_KEY)
+        # What the hub answered each read point: the page's chats (its own
+        # embedded chat too) send them, so which frame met the old key varies.
+        cls.seen_log = []
+        refusal = dashboard.Handler._page_refusal
+
+        def logged(h):
+            why = refusal(h)
+            if h.path.startswith("/api/attention/seen"):
+                cls.seen_log.append("refused" if why else "ok")
+            return why
+        p = mock.patch.object(dashboard.Handler, "_page_refusal", logged)
+        p.start()
+        cls.addClassCleanup(p.stop)
         threading.Thread(target=swap_key, daemon=True).start()
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
@@ -311,15 +348,26 @@ class TheDotsInChrome(unittest.TestCase):
         self.assertEqual(self.got["phonePaint"], self.got["paint"])
 
     def test_an_old_question_read_after_a_new_key_leaves(self):
-        want = {"before": True, "after": False}
+        self.assertEqual(self.got["oldOpen"], {k: {"before": True, "drawn": True} for k in ("oldtask", "oldpo")},
+                         "both wait for you, and their chats are drawn, unread")
+        for k, r in self.got["oldRead"].items():
+            self.assertFalse(r["after"], f"{k} left Waiting for you: {r}")
+        # The read of the PO's chat can come from the page's own PO panel (an
+        # embedded chat of the same room), so which frame sent it varies; the
+        # hub's log below holds them all.
+        log = self.seen_log
+        self.assertIn("refused", log, "a read met the old key")
+        self.assertIn("ok", log[log.index("refused"):], f"and was sent again with the new one: {log}")
         self.assertTrue(all(self.seen.values()), f"the hub kept the read point: {self.seen}")
-        self.assertEqual(self.got["oldRead"], {"oldtask": want, "oldpo": want}, self.got["oldRead"])
 
     def test_a_phones_project_cards_are_green_only_for_work(self):
         c = self.got["cards"]
         self.assertTrue(c["rows"], c)
         for k, dot in c["rows"].items():
             self.assertEqual(dot.startswith("sdot work"), k == "busy", c)
+        # What needs you shows on the card too: an ask is yellow, a death red.
+        self.assertTrue(c["rows"].get("asks", "").startswith("sdot wait"), c)
+        self.assertTrue(c["rows"].get("gone", "").startswith("sdot danger"), c)
         self.assertEqual(c["card"], "1 working|false", c)
 
     def test_done_with_this_takes_the_row_out(self):
