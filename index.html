@@ -18512,6 +18512,16 @@ async function focusByPid(pid) {
 // page (the Activity tab's /session iframe) already draws. Pressed again,
 // Terminal brings that terminal to the front; that is what Focus was for.
 
+// Why Open in editor found nothing: where it looked for the code folder.
+// It names folders, never the board's word (a code folder is not a board).
+function nothingToOpenText(looked) {
+  if (!looked.length) return 'Nothing to open in the editor: no folder is recorded for it.';
+  const gone = looked.filter(x => !x.exists).map(x => tildeify(x.path));
+  if (gone.length === 1) return `Nothing to open in the editor: looked for its code in ${gone[0]}, which no longer exists.`;
+  const list = gone.slice(0, -1).join(', ') + ' and ' + gone[gone.length - 1];
+  return `Nothing to open in the editor: looked for its code in ${list}; none of these folders exists any more.`;
+}
+
 // IDE: the editor on the hub machine, the Workspace tab anywhere else.
 async function ideAction(btn) {
   const sid = btn.dataset.sid;
@@ -18519,9 +18529,10 @@ async function ideAction(btn) {
   if (!onHubMachine()) { openWorkspaceTab(sid); return; }
   btn.classList.add('busy');
   try {
-    const repos = await api('/api/repos/' + sid);
+    const r = await api('/api/repos/' + sid);
+    const repos = Array.isArray(r) ? r : (r.repos || []);
     btn.classList.remove('busy');
-    if (!repos.length) { toast(nounText('no {project} found in this session'), 3000, 'err'); return; }
+    if (!repos.length) { toast(nothingToOpenText(r.lookedIn || []), 6000, 'err'); return; }
     if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
     showIjMenu(btn._at || btn, repos);   // a stand-in (pdRunAction) names the ⋯ to open under
   } catch (e) {
