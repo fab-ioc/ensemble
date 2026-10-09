@@ -126,5 +126,130 @@ class Suggest(unittest.TestCase):
         file_refs.forget_indexes()
 
 
+class WhatAWalkCosts(unittest.TestCase):
+    """The PO's cost review: a folder is walked once and reused, by one request
+    at a time; one request walks at most MAX_ENTRIES entries over all its
+    folders; the cache drops its oldest folder, not all of them."""
+
+    def setUp(self):
+        file_refs.forget_indexes()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.t = Path(self._tmp.name)
+
+    def tearDown(self):
+        file_refs.forget_indexes()
+        self._tmp.cleanup()
+
+    def test_a_cached_index_is_reused(self):
+        a = write(self.t / "a" / "deep" / "x.md")
+        w = file_refs.WALKS
+        self.assertEqual(file_refs.find_by_tail("x.md", [str(self.t)]), a)
+        self.assertEqual(file_refs.find_by_tail("deep/x.md", [str(self.t)]), a)
+        file_refs.suggest("y.md", [str(self.t)])
+        self.assertEqual(file_refs.WALKS - w, 1)
+
+    def test_one_walk_of_a_folder_at_a_time(self):
+        import threading
+        from unittest import mock
+        for i in range(20):
+            write(self.t / f"d{i}" / f"f{i}.md")
+        real, started, go = file_refs._walk, threading.Event(), threading.Event()
+
+        def slow(top, cap):
+            started.set()
+            go.wait(5)
+            return real(top, cap)
+
+        got = []
+        with mock.patch.object(file_refs, "_walk", slow):
+            w = file_refs.WALKS
+            ts = [threading.Thread(target=lambda: got.append(file_refs.name_index(str(self.t))[1]))
+                  for _ in range(3)]
+            ts[0].start()
+            self.assertTrue(started.wait(5))
+            for x in ts[1:]:
+                x.start()
+            time.sleep(0.2)
+            go.set()
+            for x in ts:
+                x.join(5)
+        self.assertEqual(file_refs.WALKS - w, 1, "the others waited for the one walk")
+        self.assertEqual(len(got), 3)
+        self.assertEqual(len(set(got)), 1)
+
+    def test_the_budget_is_per_request_over_all_folders(self):
+        from unittest import mock
+        one, two = self.t / "one", self.t / "two"
+        for i in range(30):
+            write(one / f"f{i}.md")
+        hit = write(two / "only-here.md")
+        with mock.patch.object(file_refs, "MAX_ENTRIES", 20):
+            w = file_refs.WALKS
+            self.assertIsNone(file_refs.find_by_tail("only-here.md", [str(one), str(two)]))
+            self.assertEqual(file_refs.WALKS - w, 1, "the first folder spent it: the second is not walked")
+            self.assertEqual(file_refs.find_by_tail("only-here.md", [str(two), str(one)]), hit)
+            b = file_refs.Budget()
+            self.assertEqual(b.left, 20)
+            self.assertIsNone(file_refs.resolve("x/only-here.md", [str(one), str(two)], budget=b)[0])
+            self.assertLessEqual(b.left, 0, "a later check of the same request has nothing left")
+            self.assertIsNone(file_refs.resolve("x/only-here.md", [str(two)], budget=b)[0])
+            self.assertEqual(file_refs.resolve("only-here.md", [str(two)], budget=b)[0], hit,
+                             "what is written is still found without a walk")
+
+    def test_the_oldest_folder_goes_first(self):
+        from unittest import mock
+        dirs = []
+        for i in range(4):
+            dirs.append(self.t / f"r{i}")
+            write(dirs[-1] / "a.md")
+        with mock.patch.object(file_refs, "INDEX_KEEP", 3):
+            for d in dirs:
+                file_refs.name_index(str(d))
+                time.sleep(0.01)
+            keys = set(file_refs._INDEX)
+        self.assertEqual(len(keys), 3)
+        self.assertNotIn(os.path.normcase(os.path.normpath(str(dirs[0]))), keys)
+        self.assertIn(os.path.normcase(os.path.normpath(str(dirs[3]))), keys)
+
+
+RECHECK_JS = r"""
+const asked = [];
+let answer = [false];
+globalThis.fetch = async (url) => {
+  const q = JSON.parse(decodeURIComponent(url.split('?q=')[1]));
+  asked.push(q);
+  return { status: 200, ok: true, json: async () => ({ there: q.items.map(() => answer.shift() ?? false) }) };
+};
+const link = { getAttribute: () => '/fileview?path=' + encodeURIComponent('Documents/later.md') + '&room=r1',
+               classList: { contains: () => false, add() {}, remove() {} }, dataset: {}, removeAttribute() {} };
+(async () => {
+  FileLinks.scan({ querySelectorAll: () => [link] });
+  await new Promise(r => setTimeout(r, 20));
+  FileLinks.recheck();
+  await new Promise(r => setTimeout(r, 20));
+  console.log(JSON.stringify(asked));
+})();
+"""
+
+
+class PageRecheck(unittest.TestCase):
+    def test_a_recheck_asks_without_a_search_by_name(self):
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        src = (ROOT / "static" / "filelinks.js").read_text(encoding="utf-8") + RECHECK_JS
+        with tempfile.TemporaryDirectory() as t:
+            js = Path(t) / "recheck.cjs"
+            js.write_text(src, encoding="utf-8")
+            out = subprocess.run([node, str(js)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        first, again = __import__("json").loads(out.stdout)
+        self.assertNotIn("tail", first, "a first ask may search by name")
+        self.assertEqual(again["tail"], False)
+        self.assertEqual(again["items"], [["Documents/later.md", 0]])
+
+
 if __name__ == "__main__":
     unittest.main()

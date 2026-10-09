@@ -17,7 +17,10 @@
 // "not written yet", still a link: the file view says what is (not) there.
 // FileLinks.recheck(), on the page's own refresh, asks again about the ones
 // that were missing (at most every RECHECK_MS), so a file a task writes later
-// turns into a normal link by itself. A hub older than /api/files/check
+// turns into a normal link by itself. A recheck asks with "tail": false: the
+// hub only looks where the path is written and walks no folder for a file by
+// its name, so a page left open costs a few stat calls, not a walk of every
+// folder each RECHECK_MS. A hub older than /api/files/check
 // answers 404: then nothing is marked and every link stays as it was.
 const FileLinks = (() => {
   // ?path=&line=&room=&roomName=&cwd=, in that order (tests compare hrefs).
@@ -30,9 +33,10 @@ const FileLinks = (() => {
   const SEP = '\u0001', BATCH = 80, RECHECK_MS = 10000;
   const MISSING_TITLE = 'This file does not exist yet';
   const state = new Map();   // path SEP room SEP cwd -> true (there) | false (not there)
-  const queue = new Map();   // the same keys, waiting for the next request
+  const queue = new Map();   // the same keys, waiting for the next request -> true: a first ask
+                             // (the hub may search by name), false: a recheck (it does not)
   const asking = new Set();  // keys in the request on its way
-  const failed = new Set();  // keys a request did not answer: asked again by the next recheck
+  const failed = new Map();  // keys a request did not answer, as queued: asked again by the next recheck
   let busy = false, off = false, lastRecheck = 0;
   function keyOf(a) {
     const h = a.getAttribute('href') || '';
@@ -75,15 +79,17 @@ const FileLinks = (() => {
     const now = Date.now();
     if (now - lastRecheck < RECHECK_MS) return;
     lastRecheck = now;
-    for (const [k, there] of state) if (there === false) queue.set(k, true);
-    for (const k of failed) queue.set(k, true);
+    for (const [k, there] of state) if (there === false && !queue.has(k)) queue.set(k, false);
+    for (const [k, tail] of failed) if (!queue.has(k) || tail) queue.set(k, tail);
     failed.clear();
     flush();
   }
   async function flush() {
     if (busy || off || !queue.size || typeof fetch !== 'function') return;
     busy = true;
-    const keys = [...queue.keys()].slice(0, BATCH);
+    // one kind per request: first asks, or rechecks, whichever is first in the queue
+    const tail = queue.values().next().value;
+    const keys = [...queue].filter(([, t]) => t === tail).slice(0, BATCH).map(([k]) => k);
     keys.forEach(k => { queue.delete(k); asking.add(k); });
     const ctx = [], at = new Map();
     const items = keys.map(k => {
@@ -93,9 +99,10 @@ const FileLinks = (() => {
     });
     let again = false;
     try {
-      const r = await fetch('/api/files/check?q=' + encodeURIComponent(JSON.stringify({ ctx, items })), { cache: 'no-store' });
+      const q = tail ? { ctx, items } : { ctx, items, tail: false };
+      const r = await fetch('/api/files/check?q=' + encodeURIComponent(JSON.stringify(q)), { cache: 'no-store' });
       if (r.status === 404) { off = true; return; }
-      if (!r.ok) { keys.forEach(k => failed.add(k)); return; }
+      if (!r.ok) { keys.forEach(k => failed.set(k, tail)); return; }
       const there = ((await r.json()) || {}).there || [];
       const changed = new Set();
       keys.forEach((k, i) => {
@@ -108,7 +115,7 @@ const FileLinks = (() => {
       }
       again = queue.size > 0;
     } catch (e) {
-      keys.forEach(k => failed.add(k));   // the hub is away: asked again by the next recheck
+      keys.forEach(k => failed.set(k, tail));   // the hub is away: asked again by the next recheck
     } finally {
       keys.forEach(k => asking.delete(k));
       busy = false;

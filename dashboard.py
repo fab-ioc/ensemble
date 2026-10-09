@@ -6295,15 +6295,14 @@ def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[
     """(bases, search): folders a relative file mention ("docs/plan.md") may be relative to, in
     the order file_refs documents: an explicit cwd, then the room's own
     folders (cwd, task dir, shared cwd, each agent's cwd), then its project's
-    home, Documents folder, code folder and the task folders of the project.
+    home, Documents folder and code folder. The other tasks' folders are not
+    among them: a file of another task is reached through the project home,
+    and trying or walking each one costs a whole checkout.
     The project is found the same way _task_project finds it for a task-id
     link, so a PO's own room (linked by the project's poRoomId, not a
     room.projectId) still reaches its project's Documents folder (P64).
-    ``search`` is the same list without the other tasks' folders: the ones
-    walked for a file by its name (the project home holds them anyway, and
-    walking each one costs a whole checkout)."""
+    ``search``, the folders walked for a file by its name, is the same list."""
     bases: list[str] = []
-    search: list[str] = []
     seen: set[str] = set()
 
     def add(x) -> None:
@@ -6335,15 +6334,7 @@ def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[
             except Exception:
                 pass
             add(pj.get("path"))
-            try:
-                tasks = _task_index()
-            except Exception:
-                tasks = []
-            search = list(bases)
-            for t in sorted(tasks, key=lambda t: -(t.get("createdAt") or 0)):
-                if t.get("projectId") == pid:
-                    add(t.get("taskDir"))
-    return bases, (search or list(bases))
+    return bases, list(bases)
 
 
 def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
@@ -6354,7 +6345,8 @@ def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
         return None, ""
     bases, search = _file_ref_places(room_id, cwd)
     ok = _readable_check()
-    return file_refs.resolve(raw, bases, dirs=dirs, search=[x for x in search if ok(x)])
+    return file_refs.resolve(raw, bases, dirs=dirs, search=[x for x in search if ok(x)],
+                             budget=file_refs.Budget())
 
 
 def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
@@ -6367,9 +6359,9 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
 def _readable_check():
     """workspace_access_ok with its roots read once: for the batched checks,
     which ask it for every link. The cwd a page sends is the client's word, so
-    what the hub walks and answers stays inside what /api/file would serve:
-    no folder outside is walked for a name, and a file there reads as not
-    there (it would not open)."""
+    the walk for a file by its name only goes through folders /api/file may
+    read. What is written (an absolute path, or one at a relative path) is
+    answered as /api/file answers it: there when the file is."""
     roots = [p["path"] for p in load_projects()] + [str(CS_ROOT), str(PROJECTS_ROOT)]
     return lambda path: bool(path) and (any(_within(path, r) for r in roots) or session_folder_ok(path))
 
@@ -6377,10 +6369,11 @@ def _readable_check():
 def file_ref_suggestions(raw: str, room_id: str = "", cwd: str = "") -> dict:
     """GET /api/file/suggest: what a missing path may have become — the files
     of the same name (moved) and of a close name (renamed) under the room's
-    folders, its project's home, Documents and task folders, those the hub may
+    folders, its project's home, Documents and code folder, those the hub may
     read."""
     ok = _readable_check()
-    out = file_refs.suggest(raw, [b for b in _file_ref_places(room_id, cwd)[1] if ok(b)])
+    out = file_refs.suggest(raw, [b for b in _file_ref_places(room_id, cwd)[1] if ok(b)],
+                            budget=file_refs.Budget())
     out["same"] = [x for x in out["same"] if ok(x)]
     out["close"] = [x for x in out["close"] if ok(x)]
     return out
@@ -6392,7 +6385,10 @@ FILES_CHECK_MAX = 200
 def files_check(query: dict) -> dict:
     """GET /api/files/check?q={"ctx": [[room, cwd], ...], "items": [[path, ctx], ...]}:
     for each item, whether the path names a file or folder there now —
-    one batched answer for every file link a page has just drawn."""
+    one batched answer for every file link a page has just drawn. With
+    "tail": false (the page's periodic recheck) no folder is walked for a
+    file by its name: only what is written is looked at. All the items share
+    one Budget of entries walked."""
     ctxs = query.get("ctx") if isinstance(query, dict) else None
     items = query.get("items") if isinstance(query, dict) else None
     if not isinstance(ctxs, list) or not isinstance(items, list):
@@ -6400,6 +6396,8 @@ def files_check(query: dict) -> dict:
     places: dict[int, tuple[list[str], list[str]]] = {}
     out: list[bool] = []
     ok = _readable_check()
+    tail = query.get("tail", True) is not False
+    budget = file_refs.Budget()
     for it in items[:FILES_CHECK_MAX]:
         path, ci = (it[0], it[1]) if isinstance(it, list) and len(it) == 2 else ("", -1)
         if not isinstance(path, str) or not path.strip():
@@ -6412,11 +6410,12 @@ def files_check(query: dict) -> dict:
             room = c[0] if len(c) > 0 and isinstance(c[0], str) else ""
             cwd = c[1] if len(c) > 1 and isinstance(c[1], str) else ""
             bases, search = _file_ref_places(room.strip(), cwd.strip())
-            places[ci] = (bases, [x for x in search if ok(x)])
+            places[ci] = (bases, [x for x in search if ok(x)] if tail else [])
         bases, search = places[ci]
         # there when /api/file would open it: what is written (absolute, or at the relative
         # path) is served as it is, and the walk for a name only goes through readable folders
-        out.append(file_refs.resolve(path, bases, dirs=True, search=search)[0] is not None)
+        out.append(file_refs.resolve(path, bases, dirs=True, search=search,
+                                     budget=budget)[0] is not None)
     return {"there": out}
 
 

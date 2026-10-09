@@ -12,11 +12,13 @@ The order, for a path as an agent wrote it (`Documents\\#3 Plan.md`,
    then the room's cwd, task folder, shared folder and each agent's cwd;
 3. the project home;
 4. the project's Documents folder;
-5. the project's code folder;
-6. the task folders of the project;
-7. nowhere at that relative path: the file whose path ends with what was
+5. the project's code folder (not the other tasks' folders: their files
+   are reached through the project home);
+6. nowhere at that relative path: the file whose path ends with what was
    written (the agent dropped some folders), under the same folders, the
-   shallowest and then the newest.
+   shallowest and then the newest. One request walks at most MAX_ENTRIES
+   entries over all its folders (``Budget``), and a page's periodic recheck
+   does not search by name at all.
 
 Each way the text may be spelled is tried in that order: as written, then
 with ``%20``/``%23``-style escapes decoded. A path that resolves to nothing is
@@ -41,9 +43,10 @@ from urllib.parse import unquote
 SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
                "build", ".idea", ".tox", "site-packages", ".git"}
 MAX_DEPTH = 12          # Java sources sit 9 folders down (src/main/java/com/...)
-MAX_ENTRIES = 80000
+MAX_ENTRIES = 40000     # entries walked for one request, over all its folders (Budget)
 INDEX_TTL = 60.0          # seconds a folder's name index is reused (a file at the
                           # written path is found without it, the moment it is there)
+INDEX_KEEP = 64           # folders whose index is kept; past it the oldest goes
 
 _PCT = re.compile(r"%[0-9A-Fa-f]{2}")
 # a line on the end of a file name: "x.py:12", "x.py:12:3", "x.java#L887", "#L10-L20"
@@ -95,43 +98,91 @@ def _parts(rel: str) -> list[str]:
 
 
 # ---- the name index of a folder: one bounded walk, reused a while ---------
-_INDEX: dict[str, tuple[float, dict[str, list[tuple[int, str]]]]] = {}
+# key -> (made at, index, entries walked, complete, cap it was walked with)
+_INDEX: dict[str, tuple[float, dict[str, list[tuple[int, str]]], int, bool, int]] = {}
 _INDEX_LOCK = threading.Lock()
+_BUILDING: dict[str, threading.Event] = {}   # one walk of a folder at a time
+WALKS = 0                                    # walks made (the tests count them)
 
 
-def name_index(root: str) -> dict[str, list[tuple[int, str]]]:
-    """{lowercased file name: [(depth, full path), ...]} for the files under
-    ``root``: hidden and dependency folders skipped, depth and entries capped
-    (the same bounds the tail search always had). Reused for INDEX_TTL
-    seconds, so a page's batch of checks walks a folder once."""
+class Budget:
+    """The entries one request may walk, over all its folders: a page's batch
+    of checks, one file view, one list of suggestions. A folder costs the
+    entries its index holds, walked now or cached, so the cap limits how
+    much one request walks: once spent, the folders after go unsearched."""
+
+    def __init__(self, left: int | None = None):
+        self.left = MAX_ENTRIES if left is None else left
+
+
+def _usable(hit, cap: int, now: float) -> bool:
+    return bool(hit) and now - hit[0] < INDEX_TTL and (hit[3] or hit[4] >= cap)
+
+
+def name_index(root: str, cap: int | None = None) -> tuple[dict[str, list[tuple[int, str]]], int]:
+    """({lowercased file name: [(depth, full path), ...]}, entries walked) for
+    the files under ``root``: hidden and dependency folders skipped, at most
+    MAX_DEPTH down and ``cap`` entries (default MAX_ENTRIES). Reused for
+    INDEX_TTL seconds; a folder is walked by one request at a time, and the
+    others asking for it meanwhile wait for that walk and share it."""
+    cap = MAX_ENTRIES if cap is None else cap
     try:
         top = os.path.normpath(os.path.expanduser(root))
         key = os.path.normcase(top)   # the cache key; the walk keeps the folder's own case
     except (ValueError, OSError):
-        return {}
-    now = time.monotonic()
-    with _INDEX_LOCK:
-        hit = _INDEX.get(key)
-        if hit and now - hit[0] < INDEX_TTL:
-            return hit[1]
-    idx: dict[str, list[tuple[int, str]]] = {}
-    if os.path.isdir(top):
-        base_depth = top.rstrip("\\/").count(os.sep)
-        budget = MAX_ENTRIES
-        for dirpath, dirnames, filenames in os.walk(top, topdown=True):
-            depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
-            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in SEARCH_SKIP] \
-                if depth < MAX_DEPTH else []
-            budget -= len(filenames) + len(dirnames)
-            for fn in filenames:
-                idx.setdefault(fn.lower(), []).append((depth, os.path.join(dirpath, fn)))
-            if budget <= 0:
+        return {}, 0
+    while True:
+        with _INDEX_LOCK:
+            hit = _INDEX.get(key)
+            if _usable(hit, cap, time.monotonic()):
+                return hit[1], hit[2]
+            ev = _BUILDING.get(key)
+            if ev is None:
+                ev = _BUILDING[key] = threading.Event()
                 break
-    with _INDEX_LOCK:
-        if len(_INDEX) > 64:
-            _INDEX.clear()
-        _INDEX[key] = (now, idx)
-    return idx
+        ev.wait(30)       # another request is walking it: take its index
+    try:
+        idx, n, complete = _walk(top, cap)
+        with _INDEX_LOCK:
+            _INDEX[key] = (time.monotonic(), idx, n, complete, cap)
+            while len(_INDEX) > INDEX_KEEP:
+                del _INDEX[min(_INDEX, key=lambda k: _INDEX[k][0])]
+        return idx, n
+    finally:
+        with _INDEX_LOCK:
+            _BUILDING.pop(key, None)
+        ev.set()
+
+
+def _walk(top: str, cap: int) -> tuple[dict[str, list[tuple[int, str]]], int, bool]:
+    global WALKS
+    WALKS += 1
+    idx: dict[str, list[tuple[int, str]]] = {}
+    n = 0
+    if not os.path.isdir(top):
+        return idx, 0, True
+    base_depth = top.rstrip("\\/").count(os.sep)
+    for dirpath, dirnames, filenames in os.walk(top, topdown=True):
+        depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in SEARCH_SKIP] \
+            if depth < MAX_DEPTH else []
+        n += len(filenames) + len(dirnames)
+        for fn in filenames:
+            idx.setdefault(fn.lower(), []).append((depth, os.path.join(dirpath, fn)))
+        if n >= cap:
+            return idx, n, False
+    return idx, n, True
+
+
+def _indexes(bases: list[str], budget: Budget | None):
+    """(root, index) for each folder in turn, while the request's budget lasts."""
+    budget = budget or Budget()
+    for r in _roots(bases):
+        if budget.left <= 0:
+            return
+        idx, n = name_index(r, budget.left)
+        budget.left -= n
+        yield r, idx
 
 
 def forget_indexes() -> None:
@@ -152,12 +203,13 @@ def _roots(bases: list[str]) -> list[str]:
     return out
 
 
-def find_by_tail(rel: str, bases: list[str]) -> Path | None:
+def find_by_tail(rel: str, bases: list[str], budget: Budget | None = None) -> Path | None:
     """The file under one of ``bases`` whose path ends with ``rel`` (a bare
     name or a partial path): the first base that has one, its shallowest and
     then newest. A ``...`` folder in ``rel`` ("common/.../tws/X.java", the
     middle left out) matches any folders: the part after it is the tail, and
-    the folders before it must appear in the path, in order."""
+    the folders before it must appear in the path, in order. ``budget``:
+    the entries the request may still walk (a fresh Budget by default)."""
     parts = _parts(rel)
     lead: list[str] = []
     if any(x in _ELLIPSIS for x in parts):
@@ -168,8 +220,8 @@ def find_by_tail(rel: str, bases: list[str]) -> Path | None:
         return None
     name, tail = parts[-1].lower(), os.sep.join(parts).lower()
     best: tuple[int, float, str] | None = None
-    for b in _roots(bases):
-        for depth, full in name_index(b).get(name, []):
+    for _b, idx in _indexes(bases, budget):
+        for depth, full in idx.get(name, []):
             if not full.lower().endswith(tail):
                 continue
             # the tail must start at a folder boundary: "a.md" is not "data.md"
@@ -196,12 +248,14 @@ def _in_order(want: list[str], have: list[str]) -> bool:
 
 
 def resolve(raw: str, bases: list[str], dirs: bool = False,
-            search: list[str] | None = None) -> tuple[Path | None, str]:
+            search: list[str] | None = None,
+            budget: Budget | None = None) -> tuple[Path | None, str]:
     """(the file ``raw`` names, how it was found: "absolute", "relative" or
     "tail"), or (None, "") when nothing is there. ``bases`` are the folders a
     relative path is tried under, in order (the module docstring). ``dirs``:
     a folder counts too (a link to a folder opens its listing). ``search``:
-    the folders walked for step 7, when not all of ``bases``."""
+    the folders walked for step 6, when not all of ``bases`` (``[]``: no
+    search by name). ``budget``: shared by the resolves of one request."""
     forms = spellings(raw)
     for s in forms:
         fp = _expand(s)
@@ -223,7 +277,7 @@ def resolve(raw: str, bases: list[str], dirs: bool = False,
         fp = _expand(s)
         if fp is None or fp.is_absolute():
             continue
-        hit = find_by_tail(s, bases if search is None else search)
+        hit = find_by_tail(s, bases if search is None else search, budget)
         if hit is not None:
             return hit, "tail"
     return None, ""
@@ -236,7 +290,7 @@ def _stem(name: str) -> str:
     return os.path.splitext(name)[0].lower()
 
 
-def suggest(raw: str, roots: list[str], limit: int = 8) -> dict:
+def suggest(raw: str, roots: list[str], limit: int = 8, budget: Budget | None = None) -> dict:
     """What a missing path may have become: ``same`` — files with its name
     anywhere under ``roots`` (moved); ``close`` — files of the same kind whose
     name is close to it (renamed: most of the words, or the same task number
@@ -250,8 +304,7 @@ def suggest(raw: str, roots: list[str], limit: int = 8) -> dict:
     no = _NO_RE.match(stem)
     seen: set[str] = set()
     close: list[tuple[float, int, str]] = []
-    for r in _roots(roots):
-        idx = name_index(r)
+    for _r, idx in _indexes(roots, budget):
         for depth, full in sorted(idx.get(low, [])):
             k = os.path.normcase(full)
             if k not in seen:

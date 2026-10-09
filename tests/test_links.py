@@ -521,11 +521,10 @@ class PoRoomFileBase(unittest.TestCase):
                  {"projectId": "proj-1", "taskDir": r"C:\home\Ensemble\t1", "createdAt": 1},
                  {"projectId": "proj-2", "taskDir": r"C:\home\Other\t2", "createdAt": 2}]):
             bases, search = dashboard._file_ref_places(room_id="room-po1", cwd=room["cwd"])
-        # the order file_refs documents: the room's folders, the project home, its Documents, then
-        # the tasks of the same project (not walked for a name: the home holds them)
-        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents",
-                                 r"C:\home\Ensemble\t1"])
-        self.assertEqual(search, bases[:3])
+        # the order file_refs documents: the room's folders, the project home, its Documents; not
+        # the other tasks' folders (the home holds them), neither tried nor walked
+        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents"])
+        self.assertEqual(search, bases)
 
     def test_resolves_a_documents_path_under_the_project_home(self):
         import tempfile

@@ -498,16 +498,19 @@ they like: nothing here asks them to write differently.
 - **Where a path points** (`file_refs`, in this order): an absolute path (`C:\…`, `\\server\…`,
   `~/…`, `/…`) is that file; a relative one is tried under the link's cwd, then the chat's cwd, task
   folder, shared folder and each agent's cwd, then the project home, its Documents folder, its code
-  folder and the project's task folders; failing those, the file whose path ends with what was written
-  (folders dropped; a `...` folder stands for any folders), the shallowest and then the newest. Each
-  path is tried as written, then %-decoded, then without a `:12` or `#L12` line on its end. The walk
-  for a name only goes through folders the hub may read (`workspace_access_ok`).
+  folder (another task's files are reached through the project home); failing those, the file whose
+  path ends with what was written (folders dropped; a `...` folder stands for any folders), the
+  shallowest and then the newest. Each path is tried as written, then %-decoded, then without a `:12`
+  or `#L12` line on its end. The walk for a name only goes through folders the hub may read
+  (`workspace_access_ok`), walks at most 40,000 entries a request, and one folder is walked by one
+  request at a time.
 - **Not written yet:** a link whose file is not there is drawn in `--fg-muted` with a dotted underline
   and a chip after it — `not written yet`, `--fs-100`, `0 var(--s-100)`, a dashed
   `--border-strong`, `--r-100` — and the title "This file does not exist yet". It stays a link: it
   opens the panel below. The page asks once for all its links (`GET /api/files/check`, 80 a batch),
   paints a link it has asked about before at once (no flicker on a redraw), and asks again about
-  the missing ones at most every 10 s, so the chip goes the moment the task writes the file.
+  the missing ones at most every 10 s, so the chip goes the moment the task writes the file. That
+  recheck only looks where the path is written (`"tail": false`), never searches by name.
 - **Missing panel** (the file view, when nothing is there): "<name> does not exist (yet)", the path
   the link holds, the files of that name (moved) and of a close name (renamed, or the same `#N` in front) as
   rows that open them, and a **Check again** button. When exactly one file has that name, the view

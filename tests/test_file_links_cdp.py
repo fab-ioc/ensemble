@@ -162,5 +162,18 @@ class OnlyWhatTheHubMayRead(Hub):
         self.assertEqual(dashboard.file_ref_suggestions('a/secret.md', cwd=str(inside))['same'], [str(inside / 'secret.md')])
         self.assertIsNone(dashboard.resolve_file_ref('x/secret.md', cwd=str(outside)))
 
+    def test_a_recheck_does_not_search_by_name(self):
+        # "tail": false (the page's periodic recheck): only what is written is looked at
+        file_refs.forget_indexes(); self.addCleanup(file_refs.forget_indexes)
+        inside = Path(dashboard.find_project(self.ed)['path']) / 'docs'
+        (inside / 'a').mkdir(parents=True)
+        (inside / 'a' / 'later.md').write_text('x', encoding='utf-8')
+        items = [['later.md', 0], ['a/later.md', 0], [str(inside / 'a' / 'later.md'), 0]]
+        q = {'ctx': [['', str(inside)]], 'items': items}
+        w = file_refs.WALKS
+        self.assertEqual(dashboard.files_check(dict(q, tail=False)), {'there': [False, True, True]})
+        self.assertEqual(file_refs.WALKS, w, 'no folder walked')
+        self.assertEqual(dashboard.files_check(q), {'there': [True, True, True]})
+
 
 if __name__ == '__main__': unittest.main()
