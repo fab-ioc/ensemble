@@ -15614,6 +15614,10 @@ def main():
     except Exception as e:
         print(f"task numbers backfill skipped: {e}", flush=True)
 
+    # Answers recorded before an ask of two questions became two asks (#195)
+    # move to the ask they answer.
+    threading.Thread(target=asks.realign_all, daemon=True, name="asks-realign").start()
+
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
         if ACCESS_TOKEN:

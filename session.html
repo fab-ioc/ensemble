@@ -2687,7 +2687,7 @@ function qiCore(s) {
   return t.trim().replace(QI.ends, '');
 }
 function qiAlternatives(core) {
-  if (!qiTop(core, QI.lastOr).length && qiWords(core) > 6) return [];
+  if (!qiTop(core, QI.lastOr).length && (qiWords(core) > 6 || (QI.aux.test(core) && !QI.asker.test(core)))) return [];
   const items = qiOrItems(core, QI.chooser.test(core));
   return items ? qiOptions(items) : [];
 }
@@ -2822,10 +2822,11 @@ function safetyAsk(text) {
   let q = '', following = [], loose = false;
   // A list counts as the options when its lines are lettered or numbered;
   // any list does after "Decision needed:" or under a line naming the
-  // options ("Your options:") — asks.safety.
+  // options ("Your options:"), unless it asks yes or no — asks.safety.
   const trail = /^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$/i;
   const optionLine = (line, wide) => { const m = line.match(trail); if (m) return m[1]; const it = wide ? line.match(QA_RE.item) : null; return it ? it[2] : null; };
-  if (last && body.length - last.index <= 1000) { q = last[1].trim(); following = body.slice(last.index + last[0].length).trim().split('\n'); loose = true; }
+  if (last && body.length - last.index <= 1000) { q = last[1].trim(); following = body.slice(last.index + last[0].length).trim().split('\n');
+    loose = !askInline(askPlain(q)).some(g => askKind(g.options) === 'yesno'); }   // a plain list under a yes/no question is its reasons
   else if (tail.endsWith('?')) {
     const parts = body.split(/\n[ \t]*\n/), tailLines = tail.split('\n');
     q = tailLines.at(-1).trim();

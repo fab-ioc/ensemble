@@ -379,6 +379,12 @@ def _deliverable(text: str, ids: list[str]) -> str:
 # The ledger on disk
 # ---------------------------------------------------------------------------
 
+# How the answered asks are numbered: 2 since an ask holding two questions is
+# two asks (#195), which moves the number of every ask after it in its
+# message; asks.realign renumbers a ledger from before.
+ASKS_KEYS = 2
+
+
 def _dir() -> Path:
     # Beside the rooms, wherever they are kept.
     return Path(_d.chatroom.ROOMS_DIR).parent / "points"
@@ -395,7 +401,8 @@ def _path(room_id: str) -> Path:
 
 def _empty(room_id: str) -> dict:
     return {"version": 1, "roomId": room_id, "next": 1, "points": [],
-            "approvals": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED}
+            "approvals": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED,
+            "asksKeys": ASKS_KEYS}
 
 
 def _valid(d) -> bool:
@@ -411,6 +418,7 @@ def _clean(led: dict, room_id: str) -> dict:
         out["approvals"] = led["approvals"]
     if isinstance(led.get("asks"), dict):
         out["asks"] = led["asks"]
+    out["asksKeys"] = led["asksKeys"] if isinstance(led.get("asksKeys"), int) else 1
     try:
         out["asksSettledAt"] = float(led.get("asksSettledAt") or 0)
     except (TypeError, ValueError):

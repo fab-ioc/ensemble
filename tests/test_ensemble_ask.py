@@ -54,13 +54,34 @@ class Validation(unittest.TestCase):
                               {"question": "Deploy tonight, or keep it for Friday?"},
                               {"question": "What should the empty list say?"},
                               {"question": "Start #4 now? And close #2?"}], warnings)
-        self.assertEqual([(a["kind"], [o["label"] for o in a["options"]]) for a in got],
-                         [("yesno", ["Yes", "No"]), ("decision", ["Deploy tonight", "Keep it for Friday"]),
-                          ("open", []), ("yesno", ["Yes", "No"])])
+        self.assertEqual([(a["n"], a["kind"], [o["label"] for o in a["options"]]) for a in got],
+                         [(0, "yesno", ["Yes", "No"]), (1, "decision", ["Deploy tonight", "Keep it for Friday"]),
+                          (2, "open", []), (3, "yesno", ["Yes", "No"]), (4, "yesno", ["Yes", "No"])])
+        self.assertEqual([a["question"] for a in got[3:]], ["Start #4 now?", "And close #2?"])
         self.assertEqual([w.split(" ", 1)[0] for w in warnings], ["questions[1]", "questions[2]", "questions[3]"])
         self.assertIn("comment box only", warnings[1])
-        self.assertIn("2 questions", warnings[2])
+        self.assertIn("2 questions; each became its own card", warnings[2])
         self.assertEqual(asks.validated([{"question": "Deploy tonight?"}]), asks.validated([{"question": "Deploy tonight?"}], []))
+
+    def test_two_questions_in_every_option_mode(self):
+        """Review 1: two questions are two cards with no options or yesno, and
+        a warning before posting when they share one set of options."""
+        two = "Should I deploy? Also, should I notify the team?"
+        for item in ({"question": two}, {"question": two, "yesno": True}):
+            with self.subTest(item=item):
+                warnings: list[str] = []
+                got = asks.validated([item, {"question": "Ship it?", "yesno": True}], warnings)
+                self.assertEqual([(a["n"], a["question"], a["kind"]) for a in got],
+                                 [(0, "Should I deploy?", "yesno"), (1, "Also, should I notify the team?", "yesno"),
+                                  (2, "Ship it?", "yesno")])
+                self.assertEqual(len(warnings), 1)
+                self.assertIn("2 questions", warnings[0])
+        warnings = []
+        got = asks.validated([{"question": two, "options": [{"label": "Now"}, {"label": "Later"}]}], warnings)
+        self.assertEqual(len(got), 1)
+        self.assertIn("one set of options", warnings[0])
+        with self.assertRaises(ValueError):
+            asks.validated([{"question": two}] * 6)
 
     def test_lists_are_role_scoped_for_both_agent_kinds(self):
         for kind in ("claude", "codex"):

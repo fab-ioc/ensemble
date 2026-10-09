@@ -68,6 +68,8 @@ ASKS = {
     "rec_yes": "Ask: start #29 now? I recommend yes.",
     "rec_no": "Ask: Restart the hub tonight? I recommend against it.",
     "lead_label": "Ask: Routing: do you object to switching to CBOE for the paper proof, or would you rather keep SMART?",
+    "short_yesno_or": "Ask: Have you read or reviewed it?",
+    "asker_or": "Ask: Should I buy or lease?",
     "choose_many": "Ask: Do you want both, only one, or a different cap, for example exactly 40?",
 }
 
@@ -85,6 +87,7 @@ FALLBACK = {
     "status_bullets": "- Merged the fix\n- Tests pass\n\nShall I deploy?",
     "so_what": "Re P4: nothing for now. P5 also arrived with no text, so what do you want done?",
     "when_or": "Two ways.\n\nWhen: early, meaning you ask for an offer now, or January?",
+    "decision_status": "Decision needed: Should I deploy?\n- Tests passed\n- Ready on staging",
     "lettered": "Options:\nA. Keep it\nB. Drop it\n\nWhich should I use?",
 }
 
@@ -124,7 +127,7 @@ class TheWordsGiveTheOptions(unittest.TestCase):
         self.assertEqual(a["options"][0]["detail"], "about CHF 490/yr saved")
 
     def test_a_yes_no_question_gets_yes_and_no(self):
-        for key in ("yesno_plain", "yesno_with_or", "parens_list"):
+        for key in ("yesno_plain", "yesno_with_or", "parens_list", "short_yesno_or"):
             with self.subTest(key=key):
                 a = self.one(key)
                 self.assertEqual((a["kind"], labels(a)), ("yesno", ["Yes", "No"]))
@@ -133,6 +136,7 @@ class TheWordsGiveTheOptions(unittest.TestCase):
         self.assertEqual(labels(self.one("or_comma")), ["Add the tranches in the console now", "Skip today's run"])
         self.assertEqual(labels(self.one("or_short")), ["Add tranche now", "Skip today"])
         self.assertEqual(labels(self.one("bare_or")), ["Buy", "Lease"])
+        self.assertEqual(labels(self.one("asker_or")), ["Buy", "Lease"])
         self.assertEqual(labels(self.one("or_what")), ["Approve this design", "What should change"])
         self.assertEqual(labels(self.one("lead_label")),
                          ["Object to switching to CBOE for the paper proof", "Keep SMART"])
@@ -200,6 +204,8 @@ class TheFallback(unittest.TestCase):
         a, = asks.safety(FALLBACK["decision_bullets"])
         self.assertEqual(labels(a), ["#19*", "#23", "#20"])
         self.assertEqual(a["recommended"], 0)
+        a, = asks.safety(FALLBACK["decision_status"])
+        self.assertEqual(labels(a), ["Yes", "No"], "a status list under a yes/no question is not its options")
 
     def test_a_wh_question_names_no_options(self):
         for key in ("wh_next", "so_what"):
@@ -246,37 +252,46 @@ if __name__ == "__main__":
 
 from tests.test_asks import CHROME, ChromePage  # noqa: E402
 
-WORDS = """Three things before I start.
+# Every form above, as the agents wrote them: the asks in one message, then
+# each fallback question as a message of its own.
+WORDS = "\n\n".join(ASKS.values())
+EVERY = [WORDS] + list(FALLBACK.values())
 
-1. **Ask:** Add tranche now, or skip today?
-2. **Ask:** Should I check whether your four doctors are on the 2027 lists?
-3. **Ask:** Do you want to move basic insurance for 2027? Options: (1) everyone at insurer K, (2) K for the adults plus insurer A for the kids, or (3) stay where we are.
 
-I carry on meanwhile."""
+def _expected() -> list[list[str]]:
+    found = asks.parse(WORDS) + [a for t in FALLBACK.values() for a in asks.safety(t)]
+    return [[o["label"] for o in a["options"]] for a in found]
 
 
 @unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
 class InChrome(ChromePage):
-    """At 1728 and 390 px the asks whose options are only in their words
-    draw buttons; one click sends one tracked answer with the comment kept."""
-    TEXT = WORDS
-    VIEWS = [[1728, 1000, False, 0, "Skip today"], [390, 844, True, 1, "Yes"]]
+    """At 1728 and 390 px on a throwaway hub (port 8798 when free) every form
+    draws the buttons the hub reads, and none is wider than the screen; one
+    click sends one tracked answer with the comment kept."""
+    TEXT = EVERY
+    NEED = len(_expected())
+    PORT = 8798
+    VIEWS = [[1728, 1000, False, 0, asks.parse(WORDS)[0]["options"][1]["label"]],
+             [390, 844, True, 2, "Yes"]]
 
-    def test_buttons_from_the_words(self):
+    def test_every_form_draws_its_buttons(self):
+        want = _expected()
+        self.assertGreater(sum(1 for x in want if x), 30)
         for w in ("1728", "390"):
             with self.subTest(width=w):
                 o = self.got[w]
-                self.assertEqual(o["before"]["cards"], 3)
+                self.assertEqual(o["before"]["labels"], want)
                 self.assertLessEqual(o["before"]["scrollX"], 1)
                 self.assertTrue(o["before"]["inside"])
-                # 2 + 2 + 3 options and a send per open card; at 390 the first is answered.
-                self.assertEqual(len(o["before"]["heights"]), {"1728": 7 + 3, "390": 5 + 2}[w])
 
     def test_one_click_one_answer(self):
-        self.assertEqual([k for _, k in self.sent], ["ask:po-sid:1:0", "ask:po-sid:1:1"])
-        self.assertIn("Re “Add tranche now, or skip today?”: Skip today\n\nfrom the 1728 page", self.sent[0][0])
-        self.assertIn("Re “Should I check whether your four doctors are on the 2027 lists?”: Yes\n\nfrom the 390 page",
-                      self.sent[1][0])
+        first, third = asks.parse(WORDS)[0], asks.parse(WORDS)[2]
+        self.assertEqual(third["kind"], "yesno")
+        self.assertEqual([k for _, k in self.sent], ["ask:po-sid:1:0", "ask:po-sid:1:2"])
+        self.assertIn(f"Re “{first['question']}”: {first['options'][1]['label']}\n\nfrom the 1728 page",
+                      self.sent[0][0])
+        self.assertIn(f"Re “{third['question']}”: Yes\n\nfrom the 390 page", self.sent[1][0])
         self.assertEqual(self.got["1728"]["kept"], "from the 1728 page")
-        self.assertEqual(self.got["390"]["after"]["done"], [True, True, False])
+        done = self.got["390"]["after"]["done"]
+        self.assertEqual([k for k, d in enumerate(done) if d], [0, 2])
         self.assertEqual(self.got["390"]["card"]["pressed"], ["Yes"])

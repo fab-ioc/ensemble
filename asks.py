@@ -294,8 +294,8 @@ def _core(s: str) -> str:
 
 def _alternatives(core: str) -> list[dict]:
     """"Should I A, or B?" / "buy or lease?": the alternatives it names."""
-    if not _top(core, _LAST_OR) and _words(core) > 6:
-        return []
+    if not _top(core, _LAST_OR) and (_words(core) > 6 or (_AUX.match(core) and not _ASKER.match(core))):
+        return []       # "Have you read or reviewed it?" is a yes/no question
     items = _or_items(core, bool(_CHOOSER.match(core)))
     return _options(items) if items else []
 
@@ -463,8 +463,10 @@ def check(ask: dict, option: str) -> str | None:
 def validated(questions, warnings: list | None = None) -> list[dict]:
     """Normalize tool input, refusing any question that cannot make a card.
     A question with no options gets them from its words as an ``Ask:`` does
-    (Yes and No for a yes/no question); every other case without options
-    adds a line to ``warnings``."""
+    (Yes and No for a yes/no question), and two questions in one become two
+    cards (with ``yesno`` too). Every case without options but plain Yes/No,
+    and two questions sharing one set of options, adds a line to
+    ``warnings``."""
     if not isinstance(questions, list) or not questions:
         raise ValueError("questions must be a non-empty list")
     if len(questions) > 10:
@@ -507,29 +509,42 @@ def validated(questions, warnings: list | None = None) -> list[dict]:
                 if not isinstance(rec, bool):
                     raise ValueError(f"{loc}.recommended must be true or false")
                 opts.append({"label": label.strip(), "detail": detail.strip(), "recommended": rec})
+        parts = [(" ".join(q.split()), opts)]
+        found = inline(q)
         if not opts:
-            found = inline(q)
-            opts = found[0]["options"] if found else []
+            # Its words give the options; two questions are two cards.
+            parts = [(g["question"], g["options"]) for g in found] or [(" ".join(q.split()), [])]
             if warnings is not None:
-                said = " / ".join(o["label"] for o in opts)
-                if len(found) > 1:
-                    warnings.append(f"{where} holds {len(found)} questions; the card answers only the first. "
+                said = "; ".join(" / ".join(o["label"] for o in o2) for _, o2 in parts if o2)
+                if len(parts) > 1:
+                    warnings.append(f"{where} holds {len(parts)} questions; each became its own card. "
                                     "Ask each as its own question, with its options.")
-                elif not opts:
+                if any(not o2 for _, o2 in parts):
                     warnings.append(f"{where} has no options and is not a yes/no question, so its card is a comment "
                                     "box only. Give it 2-6 options (or yesno: true) so it is answered with one click.")
-                elif _kind(opts) != "yesno":
+                elif any(_kind(o2) != "yesno" for _, o2 in parts):
                     warnings.append(f"{where} has no options; its buttons were taken from its words ({said}). "
                                     "Pass the options explicitly.")
-        if len({o["label"].casefold() for o in opts}) != len(opts):
-            raise ValueError(f"{where}.options have duplicate labels")
-        recommended = [k for k, o in enumerate(opts) if o["recommended"]]
-        if len(recommended) > 1:
-            raise ValueError(f"{where}.options may have at most one recommended option")
-        labels = sorted(o["label"].lower() for o in opts)
-        kind = "yesno" if yesno or labels == ["no", "yes"] else "decision" if opts else "open"
-        out.append({"n": n, "question": " ".join(q.split()), "kind": kind,
-                    "options": opts, "recommended": recommended[0] if recommended else -1})
+        elif yesno and len(found) > 1:
+            parts = [(g["question"], [dict(o) for o in opts]) for g in found]
+            if warnings is not None:
+                warnings.append(f"{where} holds {len(parts)} questions; each became its own Yes/No card. "
+                                "Ask each as its own question.")
+        elif len(found) > 1 and warnings is not None:
+            warnings.append(f"{where} holds {len(found)} questions but one set of options, so one card answers "
+                            "them all. Ask each as its own question.")
+        for question, opts in parts:
+            if len({o["label"].casefold() for o in opts}) != len(opts):
+                raise ValueError(f"{where}.options have duplicate labels")
+            recommended = [k for k, o in enumerate(opts) if o["recommended"]]
+            if len(recommended) > 1:
+                raise ValueError(f"{where}.options may have at most one recommended option")
+            labels = sorted(o["label"].lower() for o in opts)
+            kind = "yesno" if yesno or labels == ["no", "yes"] else "decision" if opts else "open"
+            out.append({"n": len(out), "question": question[:QUESTION_MAX], "kind": kind,
+                        "options": opts, "recommended": recommended[0] if recommended else -1})
+    if len(out) > 10:
+        raise ValueError("questions may contain at most 10 questions")
     return out
 
 
@@ -565,11 +580,13 @@ def safety(text: str) -> list[dict]:
     decision = list(_DECISION.finditer(body))
     # A list counts as the options when its lines are lettered or numbered;
     # any list does after "Decision needed:" or under a line naming the
-    # options ("Your options:").
+    # options ("Your options:"), unless it asks yes or no.
     loose = False
     if decision and len(body) - decision[-1].start() <= 1000:
         q = decision[-1].group(1).strip()
-        following, loose = body[decision[-1].end():].strip().splitlines(), True
+        following = body[decision[-1].end():].strip().splitlines()
+        # A plain list under a yes/no question is its reasons, not its options.
+        loose = not any(_kind(g["options"]) == "yesno" for g in inline(_plain(q)))
     elif tail.endswith("?"):
         tail_lines = tail.splitlines()
         q = tail_lines[-1].strip()
@@ -769,6 +786,55 @@ def balloon_asks(room_id: str, mid: str) -> list[dict]:
     except Exception:       # noqa: BLE001
         return []
     return of_message({"text": text or ""})
+
+
+def _same(a, b) -> bool:
+    return " ".join(str(a or "").split()).casefold() == " ".join(str(b or "").split()).casefold()
+
+
+def realign(room_id: str) -> int:
+    """A ledger from before #195 keyed its answers by the ask's number when an
+    ask holding two questions was one ask: each answer moves to the ask whose
+    question it quotes (the first part of a split one), once. How many
+    messages' answers moved."""
+    P = _d.points
+    with P._LOCK:
+        led = P.load(room_id)
+        if led.get("asksKeys", 1) >= P.ASKS_KEYS:
+            return 0
+        moved = 0
+        for mid, got in list(led["asks"].items()):
+            if not isinstance(got, dict) or not got:
+                continue
+            found = balloon_asks(room_id, mid)
+            new: dict = {}
+            for k, ans in sorted(got.items(), key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 0):
+                q, at = (ans or {}).get("question"), int(k) if str(k).isdigit() else -1
+                j = at
+                if q and not (0 <= at < len(found) and _same(found[at]["question"], q)):
+                    j = next((i for i, a in enumerate(found) if _same(a["question"], q)), None)
+                    if j is None:
+                        j = next((i for i, a in enumerate(found)
+                                  if " ".join(q.split()).casefold().startswith(" ".join(a["question"].split()).casefold())), at)
+                new.setdefault(str(j), ans)
+            if new != got:
+                led["asks"][mid] = new
+                moved += 1
+        led["asksKeys"] = P.ASKS_KEYS
+        P._save(room_id, led)
+    forget()
+    return moved
+
+
+def realign_all() -> None:
+    """:func:`realign` every ledger on disk (once, at the hub's start)."""
+    for f in sorted(_d.points._dir().glob("room-*.json")):
+        try:
+            n = realign(f.stem)
+            if n:
+                print(f"[asks] {f.stem}: answers of {n} message(s) moved to their asks", flush=True)
+        except Exception as e:      # noqa: BLE001 — one room never stops the others
+            print(f"[asks] {f.stem}: answers not realigned: {e!r}", flush=True)
 
 
 def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, list[dict]]:

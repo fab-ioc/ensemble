@@ -267,6 +267,25 @@ class TheEndpoint(_World):
         room = chatroom.get_room(rid)
         self.assertEqual([a["n"] for a in asks.open_in(room)], [1, 2])
 
+    def test_answers_from_before_two_question_asks_move_to_their_ask(self):
+        """#195 review 1: an ask of two questions became two asks, so the asks
+        after it moved up one; an answer recorded before keeps its ask."""
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "[rotation] You are the PO.", self.t0),
+                 turn("assistant", "Ask: Start #4 now? And close #2?\nAsk: Ship it?", self.t0 + 2))
+        with points._LOCK:
+            led = points.load(rid)
+            led["asks"]["sid-1:1"] = {"0": {"option": "Yes", "comment": "", "question": "Start #4 now? And close #2?"},
+                                      "1": {"option": "No", "comment": "", "question": "Ship it?"}}
+            led["asksKeys"] = 1
+            points._save(rid, led)
+        self.assertEqual(asks.realign(rid), 1)
+        got = points.load(rid)
+        self.assertEqual({k: v["option"] for k, v in got["asks"]["sid-1:1"].items()}, {"0": "Yes", "2": "No"})
+        self.assertEqual(got["asksKeys"], points.ASKS_KEYS)
+        self.assertEqual(asks.realign(rid), 0, "once")
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1])
+
     def test_a_wrong_answer_and_a_refused_send(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
@@ -379,6 +398,7 @@ async function main() {
         scrollX: document.documentElement.scrollWidth - innerWidth,
         inside: [...document.querySelectorAll('#msgs .qa, #msgs .qa-opt, #msgs .qa-cm textarea')].every(e => { const r = e.getBoundingClientRect(), b = e.closest('.msg').getBoundingClientRect(); return r.left >= b.left - 1 && r.right <= b.right + 1; }),
         heights: [...document.querySelectorAll('#msgs .qa:not(.done) .qa-opt, #msgs .qa:not(.done) .qa-send')].map(e => Math.round(e.getBoundingClientRect().height)),
+        labels: [...document.querySelectorAll('#msgs .qa')].map(c => [...c.querySelectorAll('.qa-opt')].map(b => b.dataset.opt)),
         coarse: matchMedia('(pointer: coarse)').matches }))()`);
       const o = { before: await look() };
       await evalIn(`document.querySelector('#msgs .qa').scrollIntoView({ block: 'start' }); 0`);
@@ -414,6 +434,7 @@ class ChromePage(unittest.TestCase):
     TEXT = THREE
     NEED = 3
     VIEWS = [[1280, 800, False, 0, "30 days"], [390, 844, True, 1, "Yes"]]
+    PORT = 0
 
     @classmethod
     def setUpClass(cls):
@@ -464,10 +485,14 @@ class ChromePage(unittest.TestCase):
         ok, why = dashboard.set_project_po(proj["id"], cls.po)
         assert ok, why
         t0 = time.time() - 600
-        lines = [_turn("user", "[rotation] You are the PO of Motors. Read PO-HANDOVER.md.", t0),
-                 _turn("assistant", cls.TEXT, t0 + 5)]
+        texts = cls.TEXT if isinstance(cls.TEXT, list) else [cls.TEXT]
+        lines = [_turn("user", "[rotation] You are the PO of Motors. Read PO-HANDOVER.md.", t0)] + \
+            [_turn("assistant", t, t0 + 5 + k) for k, t in enumerate(texts)]
         (base / "transcripts" / "C--po" / "po-sid.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
-        server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", cls.PORT), dashboard.Handler)
+        except OSError:     # the port is taken by another test hub: any free one
+            server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
         server.handle_error = lambda *a: None
         threading.Thread(target=server.serve_forever, daemon=True).start()
