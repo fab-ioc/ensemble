@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -193,6 +194,22 @@ class RestoreTest(Repo):
         one = checkpoints.diff(self.root, ROOM, 1, "a.txt")["diff"]
         self.assertIn("-two", one)
         self.assertIn("+TWO", one)
+
+    def test_a_same_size_edit_in_the_index_second_is_seen(self):
+        # The agent's index and its next edit share a timestamp and a size:
+        # only git's racy-clean check catches it, and that needs the
+        # temporary index to keep the real one's mtime.
+        self.take()
+        a = os.path.join(self.root, "a.txt")
+        index = os.path.join(self.root, ".git", "index")
+        st = os.stat(a)    # the stat the index has cached for a.txt
+        self.write("a.txt", "one\nTWO\n")
+        os.utime(a, ns=(st.st_atime_ns, st.st_mtime_ns))
+        os.utime(index, ns=(st.st_atime_ns, st.st_mtime_ns))
+        time.sleep(1.1)
+        self.take()
+        d = checkpoints.diff(self.root, ROOM, 1)
+        self.assertEqual([(f["path"], f["status"]) for f in d["files"]], [("a.txt", "M")])
 
     def test_an_unknown_checkpoint_is_a_plain_refusal(self):
         self.take()

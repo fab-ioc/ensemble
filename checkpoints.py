@@ -193,7 +193,10 @@ def _snapshot(root: str) -> dict:
     try:
         tmp = os.path.join(tmpdir, "index")
         if os.path.isfile(real):
-            shutil.copyfile(real, tmp)
+            # copy2 keeps the index's mtime: git trusts a cached stat only
+            # for files older than the index, so a fresh mtime would hide a
+            # same-size edit made in the second the index was written.
+            shutil.copy2(real, tmp)
         index_tree = ""
         if os.path.isfile(tmp):
             # The staged state, as the agent left it (none while a merge has conflicts).
