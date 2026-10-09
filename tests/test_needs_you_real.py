@@ -306,7 +306,9 @@ class TheReadPoint(_Needs):
                                  for k in ("const taskRefProject", "let TASK_REF_PID"))
         code += ("\nconst clearTimeout = () => {}, READ_KEY = () => 'k';"
                  "\nlet READ_TIMER = 0, READ_MEM = null, DRAWN_ROOM_TS = 0, DRAW_HELD = false, TOLD = [], TICKS = 0;"
-                 "\nconst loadRead = () => READ_MEM; function seenTell(ts) { TOLD.push(ts); }\n")
+                 "\nconst loadRead = () => READ_MEM; function seenTell(ts) { TOLD.push(ts); }"
+                 # Checkpoint rows (#197) have their own tests; none are drawn here.
+                 "\nfunction withCheckpoints(items) { return items; }\nconst isCheckpoint = () => false;\n")
         head = F.RENDER_JS[:F.RENDER_JS.index("const out = {};")]
         head = head.replace("const readTick = () => {},", "const readTick = () => { TICKS++; },")
         head = head.replace("set: (k, v) => eval(k + ' = v'),",

@@ -1904,6 +1904,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .att-thumb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* A picture an agent named by its path: its thumbnail, the path's link under it (the shared link block). */
   .path-img > .att-thumb { width: fit-content; margin: var(--s-100) 0; }
+  /* A file link whose path names nothing on the hub yet (static/filelinks.js):
+     a quiet chip, still a link; the file view says what is (not) there. */
+  body a.file-link.file-missing { color:var(--fg-muted); text-decoration:underline dotted; text-underline-offset:2px; }
+  body a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
   .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-bottom: var(--s-200); }
   .att-chips[hidden] { display: none; }
   .att-chip { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 0 0 var(--s-050);
@@ -3843,7 +3847,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/taskcard.js"></script>
 <script src="/static/filedrag.js"></script>
 <script src="/static/pagekey.js"></script>
-<script>FileDrag.attach(document);</script>
+<script src="/static/filelinks.js"></script>
+<script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
@@ -4331,16 +4336,24 @@ const ABS_PATH_RE = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/;   // C:\dir, C:/dir, \\u
 const unescPath = s => (s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 // "dashboard.py:4620" or ":4620:8": the file, and the line for the viewer.
+// A link target's GitHub-style anchor ("x.java#L887", "#L10-L20") is its line too.
 function splitLine(s) {
-  const m = (s || '').match(/:(\d+)(?::\d+)?$/);
+  s = s || '';
+  const m = s.match(/:(\d+)(?::\d+)?$/) || s.match(/#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?$/);
   return m && /\.\w{1,8}$/.test(s.slice(0, m.index))
-    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s || '', line: 0 };
+    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s, line: 0 };
 }
+// What no file name is, though the patterns above take it (the link audit of
+// #199 over every room's messages): an "extension" with no letter ("0.45/0.53",
+// a ratio), a glob or a placeholder ("*/<sid>.jsonl"), or two names in one
+// span ("merge_check.py index.html": a dotted word, then more words).
+const fileExtOk = t => /\.\w*[A-Za-z]\w*$/.test(t);
+const notOneName = t => /[*?<>|"]/.test(t) || /\.[A-Za-z]\w{0,7} \S/.test(t);
 // A bare name is a file by its extension: the kinds agents write about, and
 // every picture /api/file serves (as a camera or Windows writes it too).
 const BARE_EXT = 'md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg'
   + '|png|jpg|jpeg|gif|webp|svg|bmp|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP';
-const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
+const BARE_RE = new RegExp('^\\w[\\w-]*\\.(?:' + BARE_EXT + ')$');
 // A code span stands alone, so a relative path there may hold a folder or
 // file name with spaces ("Documents/Screen layout.md", "Documents/#118 Fix
 // the thing.md") and a wider set of punctuation (#, &, (), ', , — the same
@@ -4352,6 +4365,7 @@ const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
 const REL_PATH_SPACED_RE = /^(?:\.\.?[\\\/]|…[\\\/])?[\w.#&(),'-]+[\\\/](?:[\w.#&(),'-]+(?: [\w.#&(),'-]+)*[\\\/])*[\w.#&(),'-]+(?: [\w.#&(),'-]+)*\.\w{1,8}$/;
 const looksFilePath = (s, spaced) => {
   const t = splitLine((s || '').trim()).path;
+  if (!fileExtOk(t) || notOneName(t)) return false;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
   if (spaced) return REL_PATH_SPACED_RE.test(t) || BARE_RE.test(t);
   return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t) || BARE_RE.test(t);
@@ -4361,7 +4375,7 @@ const looksFilePath = (s, spaced) => {
 // link target): in running text "C:\temp and" would swallow the sentence.
 const looksDirPath = s => {
   const t = (s || '').trim();
-  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t))
+  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t) && !notOneName(t))
       || /^\/(?:Users|home)\/\S*\/$/.test(t);
 };
 function resolvePath(p, base) {
@@ -4515,7 +4529,7 @@ const LINK_RE = (() => {
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
-      + String.raw`|[\w-]+\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+      + String.raw`|\w[\w-]*\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
 })();
@@ -4531,7 +4545,9 @@ function linkify(t, keep) {
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u, 'text')) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
     if (win != null && !winPathSure(win)) return m;
-    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), h = fileRefHtml(s.path, pth, s.line, 'text');
+    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
+    if (!fileExtOk(s.path)) return m;
+    const h = fileRefHtml(s.path, pth, s.line, 'text');
     return h ? (p2 ?? p3 ?? p4) + put(h) : m;
   });
 }
@@ -4618,8 +4634,7 @@ function withPathAbbrevs(text, fn) {
 // ---- Links in rendered text: end shared block ------------------------------
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
 let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
-const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
-  + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '') + (FILE_LINK_BASE ? '&cwd=' + encodeURIComponent(FILE_LINK_BASE) : '');
+const fileHref = (p, line) => FileLinks.href(p, { line, room: FILE_LINK_ROOM, cwd: FILE_LINK_BASE });
 // Markdown for one task: its relative file mentions resolve against its own
 // folder, whatever task was rendered last.
 function mdIn(r, text) {
@@ -8661,8 +8676,7 @@ function wsFileUrl(v, path) {
   const room = wsRoomForPath(v, path);
   // The viewer names the chat it will post to, so nobody sends a review into a
   // task they didn't mean.
-  return '/fileview?path=' + encodeURIComponent(path)
-    + (room ? '&room=' + encodeURIComponent(room.id) + '&roomName=' + encodeURIComponent(room.name) : '');
+  return FileLinks.href(path, room ? { room: room.id, roomName: room.name } : {});
 }
 function wsDragMark(v, el, path, kind, title) {
   if (!el || !path) return el;
@@ -10304,7 +10318,7 @@ function drShow(rv, box, root, file, text, keep) {
   if (!content && /\/$/.test(file) && root) {
     // An untracked folder is one entry to git: it opens as a folder instead.
     body = '<div class="wsp-empty">An untracked folder: git lists it as one entry, not the files in it. '
-      + '<a href="/fileview?path=' + encodeURIComponent(wsJoin(root, file.replace(/\/$/, ''))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
+      + '<a href="' + esc(FileLinks.href(wsJoin(root, file.replace(/\/$/, '')))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
   } else if (!content) {
     body = '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
   } else {
@@ -11716,7 +11730,7 @@ function openTurnChanges(rid, n, here) {
 function tchOpenInWorkspace(sid, root, file, line) {
   const path = drPath(root, file);
   if (!wsRoots({ kind: 'task', sid }).length) {
-    window.open('/fileview?path=' + encodeURIComponent(path) + (line ? '&line=' + line : ''), '_blank', 'noopener');
+    window.open(FileLinks.href(path, { line }), '_blank', 'noopener');
     return;
   }
   openWorkspaceTab(sid);
@@ -15900,6 +15914,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
     _refreshInFlight = false;
+    FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
   }
 }
 // A hidden tab stops polling; bring it up to date the moment it is looked at.
@@ -18667,7 +18682,7 @@ async function ideAction(btn) {
 function openWorkspaceTab(sid) {
   const row = ALL_ROWS.find(x => x.sessionId === sid);
   if (row && row.cwd && !wsRoots({ kind: 'task', sid }).length) {
-    window.open('/fileview?path=' + encodeURIComponent(row.cwd), '_blank', 'noopener');
+    window.open(FileLinks.href(row.cwd), '_blank', 'noopener');
     return;
   }
   ISSUE_TAB_SID = sid;
@@ -19353,7 +19368,7 @@ document.addEventListener('click', async (ev) => {
     const path = finderBtn.dataset.path;
     // From another computer, a file manager opening on the hub's screen is
     // nothing you can see. Show the folder here instead.
-    if (!onHubMachine()) { window.open('/fileview?path=' + encodeURIComponent(path), '_blank', 'noopener'); return; }
+    if (!onHubMachine()) { window.open(FileLinks.href(path), '_blank', 'noopener'); return; }
     finderBtn.classList.add('busy');
     try {
       const r = await api('/api/open-path', {

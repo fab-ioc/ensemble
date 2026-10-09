@@ -37,6 +37,7 @@ import signal
 import socket
 import subprocess
 import feedback
+import file_refs
 import sys
 import tempfile
 import threading
@@ -530,7 +531,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
-              "static/pagekey.js",
+              "static/pagekey.js", "static/filelinks.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
@@ -6189,6 +6190,7 @@ def _task_index() -> list[dict]:
                  "workflow": room.get("workflow"), "workflowAt": room.get("workflowAt"),
                  "createdAt": room.get("createdAt"),
                  "branch": ((room.get("workspace") or {}).get("branch") or ""),
+                 "taskDir": room.get("taskDir") or "",
                  "participants": [{k: pp.get(k) for k in ("identity", "kind", "agent", "role", "ptyId", "pid")}
                                   for pp in room.get("participants") or []],
                  "report": {"kind": rep.get("kind", ""), "text": (rep.get("text") or "")[:1000]} if rep else None}
@@ -6415,17 +6417,31 @@ def unregister_project(project_id: str) -> bool:
 
 
 def _file_ref_bases(room_id: str = "", cwd: str = "") -> list[str]:
-    """Folders a relative file mention ("docs/plan.md") may be relative to, in
-    order: an explicit cwd, then the room's own folders (cwd, task dir, each
-    agent's cwd), then its project's code folder and home — its project found
-    the same way _task_project finds it for a task-id link, so a PO's own
-    room (linked by the project's poRoomId, not a room.projectId) still
-    reaches its project's Documents folder in the project home."""
+    """The folders of ``_file_ref_places``, in order."""
+    return _file_ref_places(room_id, cwd)[0]
+
+
+def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[str]]:
+    """(bases, search): folders a relative file mention ("docs/plan.md") may be relative to, in
+    the order file_refs documents: an explicit cwd, then the room's own
+    folders (cwd, task dir, shared cwd, each agent's cwd), then its project's
+    home, Documents folder and code folder. The other tasks' folders are not
+    among them: a file of another task is reached through the project home,
+    and trying or walking each one costs a whole checkout.
+    The project is found the same way _task_project finds it for a task-id
+    link, so a PO's own room (linked by the project's poRoomId, not a
+    room.projectId) still reaches its project's Documents folder (P64).
+    ``search``, the folders walked for a file by its name, is the same list."""
     bases: list[str] = []
+    seen: set[str] = set()
 
     def add(x) -> None:
         x = (x or "").strip() if isinstance(x, str) else ""
-        if x and x not in bases:
+        if not x:
+            return
+        k = os.path.normcase(os.path.normpath(x))
+        if k not in seen:
+            seen.add(k)
             bases.append(x)
 
     add(cwd)
@@ -6440,40 +6456,97 @@ def _file_ref_bases(room_id: str = "", cwd: str = "") -> list[str]:
                 add(part.get("cwd"))
         projects = load_projects()
         pid = _task_project(rm, load_session_projects(), projects)
-        if pid:
-            for pj in projects:
-                if pj.get("id") == pid:
-                    add(pj.get("path"))
-                    add(pj.get("home") or project_home(pj, create=False))
-                    break
-    return bases
+        pj = next((x for x in projects if x.get("id") == pid), None) if pid else None
+        if pj:
+            add(pj.get("home") or project_home(pj, create=False))
+            try:
+                add(project_documents_dir(pj, persist=False))
+            except Exception:
+                pass
+            add(pj.get("path"))
+    return bases, list(bases)
+
+
+def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
+                         dirs: bool = False) -> tuple[Path | None, str]:
+    """file_refs.resolve over the room's folders: (the file, how it was
+    found — "absolute", "relative" or "tail"), or (None, "")."""
+    if not (raw or "").strip():
+        return None, ""
+    bases, search = _file_ref_places(room_id, cwd)
+    ok = _readable_check()
+    return file_refs.resolve(raw, bases, dirs=dirs, search=[x for x in search if ok(x)],
+                             budget=file_refs.Budget())
 
 
 def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
-    """The file an agent mentioned: absolute paths as-is; a relative one is
-    tried against ``_file_ref_bases`` and the first existing file wins."""
-    raw = (raw or "").strip().strip("\"'")
-    if not raw:
-        return None
-    try:
-        fp = Path(os.path.expanduser(raw))
-    except (ValueError, OSError):
-        return None
-    if fp.is_absolute():
-        return fp if fp.is_file() else None
-    rel = raw.replace("/", os.sep)
-    bases = _file_ref_bases(room_id, cwd)
-    for b in bases:
-        try:
-            cand = Path(os.path.expanduser(b)) / rel
-            if cand.is_file():
-                return cand
-        except (ValueError, OSError):
+    """The file an agent mentioned, by the one resolver every file link uses
+    (file_refs; its docstring has the order): absolute paths as written, a
+    relative one under ``_file_ref_bases``, else by its trailing path."""
+    return resolve_file_ref_how(raw, room_id, cwd)[0]
+
+
+def _readable_check():
+    """workspace_access_ok with its roots read once: for the batched checks,
+    which ask it for every link. The cwd a page sends is the client's word, so
+    the walk for a file by its name only goes through folders /api/file may
+    read. What is written (an absolute path, or one at a relative path) is
+    answered as /api/file answers it: there when the file is."""
+    roots = [p["path"] for p in load_projects()] + [str(CS_ROOT), str(PROJECTS_ROOT)]
+    return lambda path: bool(path) and (any(_within(path, r) for r in roots) or session_folder_ok(path))
+
+
+def file_ref_suggestions(raw: str, room_id: str = "", cwd: str = "") -> dict:
+    """GET /api/file/suggest: what a missing path may have become — the files
+    of the same name (moved) and of a close name (renamed) under the room's
+    folders, its project's home, Documents and code folder, those the hub may
+    read."""
+    ok = _readable_check()
+    out = file_refs.suggest(raw, [b for b in _file_ref_places(room_id, cwd)[1] if ok(b)],
+                            budget=file_refs.Budget())
+    out["same"] = [x for x in out["same"] if ok(x)]
+    out["close"] = [x for x in out["close"] if ok(x)]
+    return out
+
+
+FILES_CHECK_MAX = 200
+
+
+def files_check(query: dict) -> dict:
+    """GET /api/files/check?q={"ctx": [[room, cwd], ...], "items": [[path, ctx], ...]}:
+    for each item, whether the path names a file or folder there now —
+    one batched answer for every file link a page has just drawn. With
+    "tail": false (the page's periodic recheck) no folder is walked for a
+    file by its name: only what is written is looked at. All the items share
+    one Budget of entries walked."""
+    ctxs = query.get("ctx") if isinstance(query, dict) else None
+    items = query.get("items") if isinstance(query, dict) else None
+    if not isinstance(ctxs, list) or not isinstance(items, list):
+        return {"error": "bad_query"}
+    places: dict[int, tuple[list[str], list[str]]] = {}
+    out: list[bool] = []
+    ok = _readable_check()
+    tail = query.get("tail", True) is not False
+    budget = file_refs.Budget()
+    for it in items[:FILES_CHECK_MAX]:
+        path, ci = (it[0], it[1]) if isinstance(it, list) and len(it) == 2 else ("", -1)
+        if not isinstance(path, str) or not path.strip():
+            out.append(False)
             continue
-    # "navigation.html" mentioned after "docs/ui/sketches/console.html": the
-    # agent dropped the folder. Look for the name (or trailing path) under the
-    # same folders, bounded, and take the shallowest / newest match.
-    return _find_file_by_tail(rel, bases)
+        if not isinstance(ci, int) or not 0 <= ci < len(ctxs):
+            ci = -1
+        if ci not in places:
+            c = ctxs[ci] if ci >= 0 and isinstance(ctxs[ci], list) else []
+            room = c[0] if len(c) > 0 and isinstance(c[0], str) else ""
+            cwd = c[1] if len(c) > 1 and isinstance(c[1], str) else ""
+            bases, search = _file_ref_places(room.strip(), cwd.strip())
+            places[ci] = (bases, [x for x in search if ok(x)] if tail else [])
+        bases, search = places[ci]
+        # there when /api/file would open it: what is written (absolute, or at the relative
+        # path) is served as it is, and the walk for a name only goes through readable folders
+        out.append(file_refs.resolve(path, bases, dirs=True, search=search,
+                                     budget=budget)[0] is not None)
+    return {"there": out}
 
 
 _FILE_AT_DOT = {"", ".", ".."}
@@ -6604,57 +6677,12 @@ def file_content_disposition(path: Path) -> str:
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
-_FILE_SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
-                     "build", ".idea", ".tox", "site-packages", ".git"}
+_FILE_SEARCH_SKIP = file_refs.SEARCH_SKIP
 
 
-def _find_file_by_tail(rel: str, bases: list[str], max_depth: int = 6,
-                       max_entries: int = 40000) -> Path | None:
-    """First file under any base whose path ends with ``rel`` (a bare name or a
-    partial path like ``sketches/navigation.html``). Bounded walk: hidden and
-    dependency folders are skipped, depth and total entries are capped."""
-    parts = [x for x in rel.replace("/", os.sep).split(os.sep) if x and x != "."]
-    if not parts or ".." in parts:
-        return None
-    name = parts[-1].lower()
-    tail = os.sep.join(parts).lower()
-    best: tuple[int, float, Path] | None = None
-    seen_roots: set[str] = set()
-    budget = max_entries
-    for b in bases:
-        try:
-            root = os.path.expanduser(b)
-            key = os.path.normcase(os.path.normpath(root))
-        except (ValueError, OSError):
-            continue
-        if key in seen_roots or not os.path.isdir(root):
-            continue
-        seen_roots.add(key)
-        base_depth = root.rstrip("\\/").count(os.sep)
-        for dirpath, dirnames, filenames in os.walk(root, topdown=True):
-            depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
-            dirnames[:] = [d for d in dirnames
-                           if not d.startswith(".") and d.lower() not in _FILE_SEARCH_SKIP] \
-                if depth < max_depth else []
-            budget -= len(filenames) + len(dirnames)
-            for fn in filenames:
-                if fn.lower() != name:
-                    continue
-                full = os.path.join(dirpath, fn)
-                if not full.lower().endswith(tail):
-                    continue
-                try:
-                    mtime = os.stat(full).st_mtime
-                except OSError:
-                    continue
-                cand = (depth, -mtime, Path(full))
-                if best is None or cand[:2] < best[:2]:
-                    best = cand
-            if budget <= 0:
-                break
-        if best is not None and best[0] == 0:
-            break
-    return best[2] if best else None
+def _find_file_by_tail(rel: str, bases: list[str]) -> Path | None:
+    """First file under any base whose path ends with ``rel`` (file_refs.find_by_tail)."""
+    return file_refs.find_by_tail(rel, bases)
 
 
 def load_session_projects() -> dict[str, str]:
@@ -12444,23 +12472,45 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # Relative mentions ("docs/plan.md") resolve against the room's
             # folders and its project, so agents needn't spell out full paths.
-            fp = resolve_file_ref(raw, room_id=(q.get("room", [""])[0]).strip(),
-                                  cwd=(q.get("cwd", [""])[0]).strip())
+            fp, how = resolve_file_ref_how(raw, room_id=(q.get("room", [""])[0]).strip(),
+                                           cwd=(q.get("cwd", [""])[0]).strip())
             if fp is None:
                 self._send_json(404, {"error": "not_found"})
                 return
+            # Where the file was found, so the viewer can say when it is not
+            # where the link put it (found by its name: moved).
+            found = (("X-Ensemble-Found", how), ("X-Ensemble-Path", quote(str(fp), safe="")))
             ext = fp.suffix.lower()
             img = {".png": "image/png", ".jpg": "image/jpeg",
                    ".jpeg": "image/jpeg", ".gif": "image/gif",
                    ".webp": "image/webp", ".svg": "image/svg+xml",
                    ".ico": "image/x-icon", ".bmp": "image/bmp"}
             if ext in img:
-                self._send_file(fp, img[ext])
+                self._send_file(fp, img[ext], found)
             elif ext == ".pdf":
-                self._send_file(fp, "application/pdf")
+                self._send_file(fp, "application/pdf", found)
             else:
                 # Everything else (md, code, text, unknown) as inline UTF-8 text.
-                self._send_file(fp, "text/plain; charset=utf-8")
+                self._send_file(fp, "text/plain; charset=utf-8", found)
+            return
+        if p == "/api/files/check":
+            # The page's file links, all at once: is each one there now.
+            try:
+                query = json.loads((parse_qs(u.query).get("q", [""])[0]) or "{}")
+            except (ValueError, RecursionError):
+                query = None
+            got = files_check(query if isinstance(query, dict) else {})
+            self._send_json(400 if got.get("error") else 200, got)
+            return
+        if p == "/api/file/suggest":
+            # A missing path: the files of its name or a close one (moved, renamed).
+            q = parse_qs(u.query)
+            raw = (q.get("path", [""])[0]).strip()
+            if not raw:
+                self._send_json(400, {"error": "missing_path"})
+                return
+            self._send_json(200, file_ref_suggestions(raw, room_id=(q.get("room", [""])[0]).strip(),
+                                                      cwd=(q.get("cwd", [""])[0]).strip()))
             return
         if p.startswith("/api/file-at/"):
             # A rendered page's own picture, stylesheet or font, from the

@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 PAGES = {n: (ROOT / n).read_text(encoding="utf-8").replace("\r\n", "\n") for n in ("session.html", "index.html", "fileview.html")}
 SRC = PAGES["session.html"]
+FILELINKS = (ROOT / "static" / "filelinks.js").read_text(encoding="utf-8")
 ATTACH = (ROOT / "static" / "attach.js").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 
@@ -158,7 +159,7 @@ class PathImages(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = "\n".join([
-            ATTACH,
+            ATTACH, FILELINKS,
             js_const("esc"),
             block("// ---- Links in rendered text: begin shared block", "// ---- Links in rendered text: end shared block"),
             block("// ---- Numbered points: begin", "// ---- Numbered points: end"),

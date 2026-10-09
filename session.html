@@ -18,6 +18,7 @@
 <script src="/static/pointrefs.js"></script>
 <script src="/static/pagekey.js"></script>
 <script src="/static/filedrag.js"></script>
+<script src="/static/filelinks.js"></script>
 <script>FileDrag.attach(document);</script>
 <script src="/static/vendor/xterm/xterm.min.js"></script>
 <script src="/static/vendor/xterm/xterm-addon-fit.min.js"></script>
@@ -916,6 +917,10 @@
   .msg .text.md pre.cb[data-lang]::before { content:attr(data-lang); display:block; font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:5px; }
   .msg .text.md blockquote { margin:4px 0; padding:2px 10px; border-left:3px solid var(--border); color:var(--dim); }
   .msg .text.md a { color:var(--link); }
+  /* A file link whose path names nothing on the hub yet (static/filelinks.js):
+     a quiet chip, still a link; the file view says what is (not) there. */
+  a.file-link.file-missing, .msg .text.md a.file-link.file-missing { color:var(--fg-muted); text-decoration:underline dotted; text-underline-offset:2px; }
+  a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
   .msg .text.md hr { border:0; border-top:1px solid var(--border); margin:8px 0; }
   .msg .text.md table { border-collapse:collapse; margin:8px 0; display:block; overflow-x:auto; max-width:100%; }
   .msg .text.md th, .msg .text.md td { border:1px solid var(--border); padding:4px 8px; text-align:left; vertical-align:top; }
@@ -1488,16 +1493,24 @@ const ABS_PATH_RE = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/;   // C:\dir, C:/dir, \\u
 const unescPath = s => (s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 // "dashboard.py:4620" or ":4620:8": the file, and the line for the viewer.
+// A link target's GitHub-style anchor ("x.java#L887", "#L10-L20") is its line too.
 function splitLine(s) {
-  const m = (s || '').match(/:(\d+)(?::\d+)?$/);
+  s = s || '';
+  const m = s.match(/:(\d+)(?::\d+)?$/) || s.match(/#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?$/);
   return m && /\.\w{1,8}$/.test(s.slice(0, m.index))
-    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s || '', line: 0 };
+    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s, line: 0 };
 }
+// What no file name is, though the patterns above take it (the link audit of
+// #199 over every room's messages): an "extension" with no letter ("0.45/0.53",
+// a ratio), a glob or a placeholder ("*/<sid>.jsonl"), or two names in one
+// span ("merge_check.py index.html": a dotted word, then more words).
+const fileExtOk = t => /\.\w*[A-Za-z]\w*$/.test(t);
+const notOneName = t => /[*?<>|"]/.test(t) || /\.[A-Za-z]\w{0,7} \S/.test(t);
 // A bare name is a file by its extension: the kinds agents write about, and
 // every picture /api/file serves (as a camera or Windows writes it too).
 const BARE_EXT = 'md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg'
   + '|png|jpg|jpeg|gif|webp|svg|bmp|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP';
-const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
+const BARE_RE = new RegExp('^\\w[\\w-]*\\.(?:' + BARE_EXT + ')$');
 // A code span stands alone, so a relative path there may hold a folder or
 // file name with spaces ("Documents/Screen layout.md", "Documents/#118 Fix
 // the thing.md") and a wider set of punctuation (#, &, (), ', , — the same
@@ -1509,6 +1522,7 @@ const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
 const REL_PATH_SPACED_RE = /^(?:\.\.?[\\\/]|…[\\\/])?[\w.#&(),'-]+[\\\/](?:[\w.#&(),'-]+(?: [\w.#&(),'-]+)*[\\\/])*[\w.#&(),'-]+(?: [\w.#&(),'-]+)*\.\w{1,8}$/;
 const looksFilePath = (s, spaced) => {
   const t = splitLine((s || '').trim()).path;
+  if (!fileExtOk(t) || notOneName(t)) return false;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
   if (spaced) return REL_PATH_SPACED_RE.test(t) || BARE_RE.test(t);
   return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t) || BARE_RE.test(t);
@@ -1518,7 +1532,7 @@ const looksFilePath = (s, spaced) => {
 // link target): in running text "C:\temp and" would swallow the sentence.
 const looksDirPath = s => {
   const t = (s || '').trim();
-  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t))
+  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t) && !notOneName(t))
       || /^\/(?:Users|home)\/\S*\/$/.test(t);
 };
 function resolvePath(p, base) {
@@ -1672,7 +1686,7 @@ const LINK_RE = (() => {
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
-      + String.raw`|[\w-]+\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+      + String.raw`|\w[\w-]*\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
 })();
@@ -1688,7 +1702,9 @@ function linkify(t, keep) {
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u, 'text')) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
     if (win != null && !winPathSure(win)) return m;
-    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), h = fileRefHtml(s.path, pth, s.line, 'text');
+    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
+    if (!fileExtOk(s.path)) return m;
+    const h = fileRefHtml(s.path, pth, s.line, 'text');
     return h ? (p2 ?? p3 ?? p4) + put(h) : m;
   });
 }
@@ -1977,8 +1993,7 @@ const pmPlain = t => String(t || '').replace(PM_SCAN_RE, (m, label, target) =>
   label !== undefined ? '[' + pmWords(label) + '](' + target + ')' : m.startsWith('pm-') ? pmWords(m) : m);
 // ---- PO message names: end ------------------------------------------------
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
-const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
-  + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (fileBase() ? '&cwd=' + encodeURIComponent(fileBase()) : '');
+const fileHref = (p, line) => FileLinks.href(p, { line, room: ROOM, cwd: fileBase() });
 function mdToHtml(src) {
   // The whole message read once for the paths its "..." abbreviations stand for.
   if (!PATH_ABBR) return withPathAbbrevs(src, () => mdToHtml(src));
@@ -5240,6 +5255,7 @@ async function refresh() {
   try { await refreshRoom(); }
   finally {
     REFRESH_BUSY = false;
+    FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
     if (REFRESH_AGAIN) { REFRESH_AGAIN = false; refresh(); }
   }
 }
@@ -6505,7 +6521,7 @@ const ACTS = {
     // From another computer a file manager would open on the hub's own screen,
     // where nobody sees it: browse the folder in the file viewer instead.
     if (!onHubMachine()) {
-      window.open('/fileview?path=' + encodeURIComponent(cwd) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''), '_blank', 'noopener');
+      window.open(FileLinks.href(cwd, { room: ROOM }), '_blank', 'noopener');
       return;
     }
     jpost('/api/open-path', { path: cwd, app: 'finder' });
@@ -7255,7 +7271,7 @@ if (window.parent !== window) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tickNow(); });
 }
 if (!ROOM) { $('#title').textContent = '(no session id)'; }
-else { refresh(); setInterval(tick, 2000); }
+else { FileLinks.watch(); refresh(); setInterval(tick, 2000); }
 </script>
 </body>
 </html>
