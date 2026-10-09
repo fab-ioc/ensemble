@@ -99,11 +99,9 @@ class InChrome(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": str(base),
-                "base": f"http://127.0.0.1:{server.server_address[1]}", "po": cls.rid, "shots": shots}
-        script = CDP_JS.replace("[[1280, 800, false, 0, '30 days'], [390, 844, true, 1, 'Yes']]",
-                                "[[1728, 1117, false, 0, 'Now'], [390, 844, true, 1, 'Yes']]")
-        script = script.replace('querySelectorAll("#msgs .qa").length >= 3', 'querySelectorAll("#msgs .qa").length >= 2')
-        script = script.replace('cards: document.querySelectorAll(\'#msgs .qa\').length,',
+                "base": f"http://127.0.0.1:{server.server_address[1]}", "po": cls.rid, "shots": shots,
+                "need": 2, "views": [[1728, 1117, False, 0, "Now"], [390, 844, True, 1, "Yes"]]}
+        script = CDP_JS.replace('cards: document.querySelectorAll(\'#msgs .qa\').length,',
                                 'approve: document.querySelectorAll(\'#msgs .pt-approve\').length, cards: document.querySelectorAll(\'#msgs .qa\').length,')
         path = base / "asktool_cdp.js"
         path.write_text(script, encoding="utf-8")
