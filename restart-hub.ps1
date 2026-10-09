@@ -106,6 +106,10 @@ for ($i = 0; $i -lt 30 -and -not $pfUp; $i++) { Nap 2; $pfUp = Ok "http://127.0.
 # 10-09: 88-94s measured cold against the real history (90s cap failed a
 # healthy restart); 170s stays under the 180s restart lease, which is only
 # renewed between waits.
+# ED-200: what a hub read of each transcript is kept on disk (filefacts);
+# with it a cold call takes 9 s, without it (the first start after that
+# change, or a cache version bump) 52 s. The cap stays at 170 s: 60 s would
+# not leave 3x headroom over the start without the cache.
 $sessTimeoutSec = 170
 if ($env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S) {
   try { $sessTimeoutSec = [int]$env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S } catch {}
