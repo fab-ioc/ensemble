@@ -230,6 +230,72 @@ class RestoreTest(Repo):
             checkpoints.restore(self.root, ROOM, n=0)
         self.assertEqual(self.read("a.txt"), before)
 
+    def test_the_branch_never_points_at_a_checkpoint_commit(self):
+        self.take()
+        self.write("a.txt", "x\n")
+        self.write("u.txt", "untracked\n")
+        self.take()
+        res = checkpoints.restore(self.root, ROOM, n=0)
+        checkpoints.restore(self.root, ROOM, undo=res["restore"])
+        ours = {r["sha"] for r in checkpoints._records(self.root, ROOM)}
+        seen = set(git(self.root, "reflog", "--format=%H", "refs/heads/main").split())
+        self.assertFalse(ours & seen)
+        self.assertEqual(git(self.root, "log", "--format=%s", "main"), "first")
+
+    def test_a_restore_that_fails_is_rolled_back_and_leaves_no_record(self):
+        self.take()
+        self.write("a.txt", "turn1\n")
+        self.take()
+        self.write("a.txt", "now\n")
+        real = checkpoints._apply
+        calls = []
+        def failing(root, rec):
+            calls.append(rec)
+            if len(calls) == 1:
+                real(root, rec)          # half done, then git gives up
+                raise subprocess.CalledProcessError(1, ["git"], "", "boom")
+            real(root, rec)
+        checkpoints._apply = failing
+        self.addCleanup(setattr, checkpoints, "_apply", real)
+        with self.assertRaises(checkpoints.CheckpointError):
+            checkpoints.restore(self.root, ROOM, n=0)
+        self.assertEqual(self.read("a.txt"), "now\n")
+        self.assertEqual(checkpoints.list_checkpoints(self.root, ROOM)["restores"], [])
+
+    def test_a_file_git_cannot_add_fails_the_snapshot(self):
+        self.take()
+        self.write("a.txt", "turn1\n")
+        real = checkpoints._git
+        def git_add_fails(root, *args, **kw):
+            if args[:1] == ("add",):
+                raise subprocess.CalledProcessError(128, ["git", "add"], "", "unable to read a.txt")
+            return real(root, *args, **kw)
+        checkpoints._git = git_add_fails
+        self.addCleanup(setattr, checkpoints, "_git", real)
+        self.assertIsNone(self.take())                   # a turn: no mark, no error
+        with self.assertRaisesRegex(checkpoints.CheckpointError, "nothing was changed"):
+            checkpoints.restore(self.root, ROOM, n=0)    # a restore: refused
+        self.assertEqual(self.read("a.txt"), "turn1\n")
+        self.assertEqual(len(checkpoints._records(self.root, ROOM)), 1)
+
+    def test_pruning_counts_only_the_kind_just_added(self):
+        old = checkpoints.MAX_TURNS, checkpoints.MAX_RESTORES
+        checkpoints.MAX_TURNS, checkpoints.MAX_RESTORES = 3, 2
+        self.addCleanup(lambda: (setattr(checkpoints, "MAX_TURNS", old[0]),
+                                 setattr(checkpoints, "MAX_RESTORES", old[1])))
+        for i in range(3):
+            self.write("a.txt", f"v{i}\n")
+            self.take()                                  # turns 0, 1, 2: full
+        checkpoints.restore(self.root, ROOM, n=1)
+        checkpoints.restore(self.root, ROOM, n=2)        # restores 1, 2: full
+        lst = checkpoints.list_checkpoints(self.root, ROOM)
+        self.assertEqual([t["n"] for t in lst["turns"]], [0, 1, 2])
+        self.write("a.txt", "v9\n")
+        self.take()                                      # a turn drops a turn, not a restore
+        lst = checkpoints.list_checkpoints(self.root, ROOM)
+        self.assertEqual([t["n"] for t in lst["turns"]], [1, 2, 3])
+        self.assertEqual([r["m"] for r in lst["restores"]], [1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

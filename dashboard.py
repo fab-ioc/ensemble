@@ -1783,19 +1783,22 @@ def checkpoint_restore(room_id: str, n=None, undo=None) -> tuple[int, dict]:
     folder = checkpoint_dir(room)
     if not folder:
         return 400, {"error": "no_checkpoints", "message": "This task has no git workspace to restore."}
-    why = checkpoint_refusal(room)
-    if why:
-        return 409, {"error": "busy", "message": why}
-    try:
-        lst = checkpoints.list_checkpoints(folder, room_id)
-        res = checkpoints.restore(folder, room_id, n=n, undo=undo, by=operator_name())
-    except checkpoints.CheckpointError as e:
-        return 409, {"error": "refused", "message": str(e)}
-    except (OSError, ValueError, subprocess.SubprocessError) as e:
-        return 500, {"error": "failed", "message": f"The restore failed: {str(e)[:200]}"}
-    finally:
-        _CP_LIST.pop(room_id, None)
-        invalidate_session_listing()
+    # The check and the restore are one step against starts (launch lock)
+    # and typed input (the gate), so no turn begins in between.
+    with rotation.launch_lock(room_id), rotation.GATE:
+        why = checkpoint_refusal(room)
+        if why:
+            return 409, {"error": "busy", "message": why}
+        try:
+            lst = checkpoints.list_checkpoints(folder, room_id)
+            res = checkpoints.restore(folder, room_id, n=n, undo=undo, by=operator_name())
+        except checkpoints.CheckpointError as e:
+            return 409, {"error": "refused", "message": str(e)}
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            return 500, {"error": "failed", "message": f"The restore failed: {str(e)[:200]}"}
+        finally:
+            _CP_LIST.pop(room_id, None)
+            invalidate_session_listing()
     at = 0.0
     if undo is not None:
         at = next((float(r.get("at") or 0) for r in lst["restores"] if r.get("m") == undo), 0.0)
@@ -1835,8 +1838,12 @@ def checkpoint_read(what: str, q: dict) -> tuple[int, dict]:
 
 
 def checkpoint_forget(room: dict | None) -> int:
-    """Delete a task's checkpoints (its task deleted, or done long enough)."""
+    """Delete a task's checkpoints (its task deleted, or done long enough);
+    with its folder gone, from its project's repository."""
     folder = (room or {}).get("cwd") or ""
+    if room and not (folder and os.path.isdir(folder)):
+        pid = _room_project_id(room.get("id", ""), room, load_session_projects())
+        folder = ((find_project(pid) if pid else None) or {}).get("path") or ""
     if not room or not folder or not os.path.isdir(folder):
         return 0
     try:
@@ -1875,12 +1882,13 @@ def _checkpoint_codex_tick() -> None:
         key = (rid, ident)
         if not size or _CP_CODEX.get(key) == size:
             continue
-        tr = reader(tpath)
-        if tr.get("turnOver"):
-            first = key not in _CP_CODEX
-            _CP_CODEX[key] = size
-            if not first:
-                checkpoint_turn(rid, ident)
+        # First sight records where the rollout is: a turn already over then
+        # ended before the hub watched it (checkpoint 0 covers a new task);
+        # one under way is checkpointed when it ends.
+        first = key not in _CP_CODEX
+        _CP_CODEX[key] = size
+        if reader(tpath).get("turnOver") and not first:
+            checkpoint_turn(rid, ident)
 
 
 def _checkpoint_sweep() -> None:
@@ -1893,7 +1901,7 @@ def _checkpoint_sweep() -> None:
         if workflow_of(room) != "done":
             continue
         at = float(room.get("mergedAt") or room.get("workflowAt") or 0)
-        if at and now - at > checkpoints.KEEP_AFTER_DONE_S and checkpoint_dir(room):
+        if at and now - at > checkpoints.KEEP_AFTER_DONE_S:
             checkpoint_forget(room)
     for proj in load_projects():
         path = proj.get("path") or ""

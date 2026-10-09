@@ -107,6 +107,24 @@ class TurnEnds(CheckpointHub):
         turns = self.turns(rid)
         self.assertEqual([(t["n"], t["files"]) for t in turns], [(0, 0), (1, 1)])
 
+    def test_a_codex_first_turn_seen_while_working_is_checkpointed(self):
+        # The usual start (and a hub restarted mid-turn): the first tick sees
+        # the rollout while the turn runs.
+        rid = self.task("codex")
+        rollout = Path(self.tmp.name) / "rollout.jsonl"
+        rollout.write_text('{"x":1}\n', encoding="utf-8")
+        over = {"turnOver": False}
+        sessions = [{"meta": {"room": rid, "identity": "codex"}, "alive": True}]
+        with mock.patch.object(dashboard.ptyrun, "list_sessions", return_value=sessions), \
+                mock.patch.object(dashboard.rotation, "_transcript_of",
+                                  return_value=(rollout, lambda p: dict(over))):
+            dashboard._checkpoint_codex_tick()
+            (self.repo / "b.txt").write_text("new\n", encoding="utf-8")
+            over["turnOver"] = True
+            rollout.write_text('{"x":1}\n{"z":3}\n', encoding="utf-8")
+            dashboard._checkpoint_codex_tick()
+        self.assertEqual([(t["n"], t["files"]) for t in self.turns(rid)], [(0, 0), (1, 1)])
+
     def test_a_documents_project_or_no_git_has_none(self):
         rid = self.task()
         room = chatroom.get_room(rid, public=False)

@@ -201,7 +201,9 @@ def _snapshot(root: str) -> dict:
         if os.path.isfile(tmp):
             # The staged state, as the agent left it (none while a merge has conflicts).
             index_tree = _git(root, "write-tree", index=tmp, check=False)
-        _git(root, "add", "-A", "--ignore-errors", index=tmp, timeout=300, check=False)
+        # Every file or none: a file git cannot read (locked, unreadable)
+        # fails the snapshot rather than leaving it out of it.
+        _git(root, "add", "-A", index=tmp, timeout=300)
         tree = _git(root, "write-tree", index=tmp)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -280,16 +282,17 @@ def _take(root, room, kind, msg_id, identity, extra, force):
         ref = f"{PREFIX}/{room}/{n}"
     sha = _commit(root, snap, meta)
     _git(root, "update-ref", ref, sha)
-    _prune(root, turns, rests)
+    _prune(root, turns, rests, meta["kind"])
     meta.update(ref=ref, sha=sha, tree=snap["tree"], ms=round((time.monotonic() - t0) * 1000))
     return meta
 
 
-def _prune(root: str, turns: list[dict], rests: list[dict]) -> None:
-    """At most MAX_TURNS turn checkpoints (counting the new one) and
-    MAX_RESTORES restore points; the oldest go."""
-    drop = [r["ref"] for r in turns[:max(0, len(turns) + 1 - MAX_TURNS)]]
-    drop += [r["ref"] for r in rests[:max(0, len(rests) + 1 - MAX_RESTORES)]]
+def _prune(root: str, turns: list[dict], rests: list[dict], kind: str) -> None:
+    """At most MAX_TURNS turn checkpoints and MAX_RESTORES restore points,
+    counting the new one (of ``kind``); the oldest go."""
+    new_rest = kind == "restore"
+    drop = [r["ref"] for r in turns[:max(0, len(turns) + (not new_rest) - MAX_TURNS)]]
+    drop += [r["ref"] for r in rests[:max(0, len(rests) + new_rest - MAX_RESTORES)]]
     if drop:
         _git(root, "update-ref", "--stdin", input_text="".join(f"delete {r}\n" for r in drop), check=False)
 
@@ -378,19 +381,29 @@ def restore(path: str, room: str, n: int | None = None, undo: int | None = None,
             raise CheckpointError("Git is busy in this workspace (index.lock). Try again in a moment.")
         extra = {"by": by, "after": target["sha"], "to": target.get("n") if undo is None else None,
                  "toKind": "undo" if undo is not None else "checkpoint", "undo": undo}
-        point = _take(root, room, "restore", "", "", extra, True)
+        try:
+            point = _take(root, room, "restore", "", "", extra, True)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise CheckpointError("Could not save the current state first, so nothing was changed: "
+                                  + _why(e))
         try:
             _apply(root, target)
         except (OSError, subprocess.SubprocessError) as e:
-            # Put back what was there; the restore point holds it.
+            # Put back what was there (the restore point holds it); once it is
+            # back, the restore never happened and its record goes.
             try:
                 _apply(root, point)
             except (OSError, subprocess.SubprocessError):
-                pass
-            raise CheckpointError("Git could not restore the files: "
-                                  + (getattr(e, "stderr", "") or str(e)).strip()[:300])
+                raise CheckpointError(f"Git could not restore the files ({_why(e)}), nor put the "
+                                      f"earlier state back: Undo on this restore brings it back.")
+            _git(root, "update-ref", "-d", point["ref"], point["sha"], check=False)
+            raise CheckpointError("Git could not restore the files, so nothing was changed: " + _why(e))
         return {"root": root, "restore": point.get("m"), "n": target.get("n"), "undo": undo,
                 "at": target.get("at"), "head": _parent_head(root, target["sha"])}
+
+
+def _why(e: Exception) -> str:
+    return (getattr(e, "stderr", "") or str(e)).strip()[:300]
 
 
 def _apply(root: str, rec: dict) -> None:
@@ -402,12 +415,12 @@ def _apply(root: str, rec: dict) -> None:
             _git(root, "symbolic-ref", "HEAD", f"refs/heads/{branch}")
     # Index and files to the snapshot (tracked files it lacks go, untracked
     # ones in the way are overwritten), then the files made since go (not the
-    # ignored ones), then the branch back to the recorded HEAD and the index
-    # to what was staged.
-    _git(root, "reset", "-q", "--hard", sha, index="", env=_env_write(), timeout=300)
+    # ignored ones), then the branch to the recorded HEAD and the index to
+    # what was staged. The branch never points at the checkpoint commit.
+    _git(root, "read-tree", "-u", "--reset", sha, env=_env_write(), timeout=300)
     _git(root, "clean", "-f", "-d", "-q", env=_env_write(), timeout=300)
     if head:
-        _git(root, "reset", "-q", "--soft", head, env=_env_write())
+        _git(root, "update-ref", "-m", "ensemble: restore checkpoint", "HEAD", head, env=_env_write())
     else:
         ref = _git(root, "symbolic-ref", "--quiet", "HEAD", check=False)
         if ref:
