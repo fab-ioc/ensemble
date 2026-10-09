@@ -82,7 +82,8 @@ async function main() {
       try { got = await evalIn(read); } catch (e) { got = null; }
       if (got && got.gone.length && got.gone.every(s => s.startsWith('danger'))
           && got.busy.length && got.busy.every(s => s.startsWith('working'))
-          && got.asks.length && got.asks.every(s => s.startsWith('warning'))) break;   // the attention answer is in
+          && got.asks.length && got.asks.every(s => s.startsWith('warning'))   // the attention answer is in
+          && await evalIn(`['oldtask', 'oldpo'].every(k => document.querySelector('#sw-list .sw-row.needs[data-room="' + ${rooms}[k] + '"]'))`)) break;   // and the PO's row, placed once the projects came
       await sleep(250);
     }
     // How the dots look: green fill for working, a ring and no fill for idle.

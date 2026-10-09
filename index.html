@@ -6095,12 +6095,12 @@ function runChip(r, compact = false) {
   // What needs you colours the dot (its words stay the run state's): yellow
   // waits on you, red is blocked or gone (#193).
   const a = attnDot(r);
-  const dot = cls => a ? `<span class="dot ${a.tone}" title="${esc(a.tip)}"></span>` : `<span class="dot ${cls}"></span>`;
-  if (r.isLive && r.status === 'busy') return `<span class="run">${dot('working')}working</span>`;
-  if (r.isLive) return `<span class="run">${dot('idle')}idle</span>`;
+  const dot = (cls, tip) => `<span class="dot ${a ? a.tone : cls}" title="${esc(a ? a.tip : tip)}"></span>`;
+  if (r.isLive && r.status === 'busy') return `<span class="run">${dot('working', 'working')}working</span>`;
+  if (r.isLive) return `<span class="run">${dot('idle', 'idle: running, not working')}idle</span>`;
   // Calm on purpose: this is the whole board for a minute after every hub
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
-  return `<span class="run off">${dot('off')}${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
+  return `<span class="run off">${dot('off', 'stopped')}${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
 }
 
 // ---- Task numbers: begin ----------------------------------------------------
