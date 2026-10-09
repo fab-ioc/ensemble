@@ -76,6 +76,8 @@ import agent_hooks
 import model_limit
 # Which tasks need a human, and why (the /api/attention join).
 import attention
+# What the task list read from each transcript, kept across hub starts (ED-200).
+import filefacts
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import backup
 # A session's files copied into the documents project it becomes the PO of.
@@ -625,6 +627,12 @@ def cwd_of(path: Path) -> str:
     key = str(path)
     if key in _CWD_CACHE:
         return _CWD_CACHE[key]
+    # A transcript's folder is its first line that names one: once found, its
+    # later growth cannot change it, so an earlier hub's answer stands (ED-200).
+    cwd = filefacts.get("cwd", key, None)
+    if isinstance(cwd, str) and cwd:
+        _CWD_CACHE[key] = cwd
+        return cwd
     cwd = ""
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
@@ -639,6 +647,8 @@ def cwd_of(path: Path) -> str:
     except FileNotFoundError:
         pass
     _CWD_CACHE[key] = cwd
+    if cwd:
+        filefacts.put("cwd", key, None, cwd)
     return cwd
 
 
@@ -689,12 +699,20 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
     if not jsonl_path:
         return empty
     try:
-        mtime = jsonl_path.stat().st_mtime
+        stt = jsonl_path.stat()
     except OSError:
         return empty
+    mtime = stt.st_mtime
     cached = _COST_CACHE.get(jsonl_path)
     if cached and cached[0] == mtime:
         return cached[1]
+    # What an earlier hub read of this file, while it is unchanged (ED-200).
+    sig = filefacts.sig_of(stt)
+    kept = filefacts.get("cost", jsonl_path, sig)
+    if isinstance(kept, dict) and isinstance(kept.get("r"), dict):
+        _COST_CACHE[jsonl_path] = (mtime, kept["r"])
+        _SAID_AT[jsonl_path] = float(kept.get("s") or 0.0)
+        return kept["r"]
     by_model: dict[str, dict[str, int]] = {}
     # A single API response can appear as several `type: "assistant"` lines
     # (one per content block: text, tool_use, follow-up text). Every one of
@@ -763,10 +781,38 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
     }
     _COST_CACHE[jsonl_path] = (mtime, result)
     _SAID_AT[jsonl_path] = _turn_epoch(said) if said else 0.0
+    filefacts.put("cost", jsonl_path, sig, {"r": result, "s": _SAID_AT[jsonl_path]})
     return result
 
 
 _TRANSCRIPT_PATHS: dict[str, Path] = {}
+# Every transcript by session id, from one listing of the project folders,
+# listed again when a lookup misses and it is older than _TRANSCRIPT_INDEX_TTL_S.
+# A glob for one id stats every project folder (18 ms each, 33 s for a cold
+# task list's 1,800 lookups, ED-200); one listing costs about as much as ten.
+_TRANSCRIPT_INDEX: tuple[str, float, dict[str, Path]] = ("", 0.0, {})
+_TRANSCRIPT_INDEX_TTL_S = 2.0
+_TRANSCRIPT_INDEX_LOCK = threading.Lock()
+
+
+def _transcript_index(fresh: bool = False) -> dict[str, Path]:
+    """{session id: transcript}, the first in listing order for an id held in
+    several folders (as the glob for one id gave). ``fresh`` lists again unless
+    the listing is younger than _TRANSCRIPT_INDEX_TTL_S; one caller lists, the
+    others wait for it."""
+    global _TRANSCRIPT_INDEX
+    with _TRANSCRIPT_INDEX_LOCK:
+        root = str(PROJ_DIR)
+        was, at, idx = _TRANSCRIPT_INDEX
+        if was != root:
+            at, idx = 0.0, {}
+        if fresh and time.time() - at >= _TRANSCRIPT_INDEX_TTL_S:
+            at = time.time()
+            idx = {}
+            for f in PROJ_DIR.glob("*/*.jsonl"):
+                idx.setdefault(f.stem, f)
+            _TRANSCRIPT_INDEX = (root, at, idx)
+        return idx
 
 
 def find_transcript(session_id: str) -> Path | None:
@@ -776,10 +822,14 @@ def find_transcript(session_id: str) -> Path | None:
     hit = _TRANSCRIPT_PATHS.get(session_id)
     if hit is not None and hit.exists():
         return hit
-    hits = list(PROJ_DIR.glob(f"*/{session_id}.jsonl"))
-    if hits:
-        _TRANSCRIPT_PATHS[session_id] = hits[0]
-        return hits[0]
+    if not session_id or any(c in session_id for c in "*?[]/\\"):
+        return None
+    found = _transcript_index().get(session_id)
+    if found is None or not found.exists():
+        found = _transcript_index(fresh=True).get(session_id)
+    if found is not None:
+        _TRANSCRIPT_PATHS[session_id] = found
+        return found
     _TRANSCRIPT_PATHS.pop(session_id, None)
     return None
 
@@ -801,9 +851,100 @@ def _codex_rollouts(session_id: str) -> list[Path]:
         return hit[1]
     ag = agents.get_agent("codex")
     root = ag.sessions_dir() if ag is not None and hasattr(ag, "sessions_dir") else None
-    paths = sorted(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")) if root and root.exists() else []
+    if not root or not root.exists():
+        paths = []
+    elif not _UUID_RE.fullmatch(session_id or ""):
+        paths = sorted(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")) if session_id else []
+    else:
+        # One listing of every rollout serves all the ids (a glob per id walked
+        # every day folder: 14 s for a cold task list, ED-200).
+        idx = _codex_rollout_index(root, fresh=False)
+        if session_id not in idx:
+            idx = _codex_rollout_index(root, fresh=True)
+        paths = list(idx.get(session_id, []))
     _CODEX_ROLLOUT_PATHS[session_id] = (now, paths)
     return paths
+
+
+# {sessions folder: (listed at, {session id: [rollouts, sorted]})}: the uuid
+# a rollout's name ends with, as the glob "rollout-*-<id>.jsonl" matched it.
+_CODEX_ROLLOUT_INDEX: dict[str, tuple[float, dict[str, list[Path]]]] = {}
+_CODEX_ROLLOUT_INDEX_LOCK = threading.Lock()
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_ROLLOUT_ID_RE = re.compile(r"^rollout-.+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
+
+
+def _codex_rollout_index(root: Path, fresh: bool) -> dict[str, list[Path]]:
+    """Every rollout under ``root`` by the session id its name ends with.
+    ``fresh`` lists again unless the listing is younger than
+    _TRANSCRIPT_INDEX_TTL_S; one caller lists, the others wait for it."""
+    key = str(root)
+    with _CODEX_ROLLOUT_INDEX_LOCK:
+        at, idx = _CODEX_ROLLOUT_INDEX.get(key, (0.0, {}))
+        if fresh and time.time() - at >= _TRANSCRIPT_INDEX_TTL_S:
+            at = time.time()
+            idx = {}
+            for f in root.glob("*/*/*/rollout-*.jsonl"):
+                m = _ROLLOUT_ID_RE.match(f.name)
+                if m:
+                    idx.setdefault(m.group(1), []).append(f)
+            for v in idx.values():
+                v.sort()
+            _CODEX_ROLLOUT_INDEX[key] = (at, idx)
+        return idx
+
+
+def _codex_file_usage(name: str) -> dict | None:
+    """One rollout's token counts per model and the time of its last assistant
+    text: ``{"m": {model: tokens}, "s": epoch}``."""
+    by_model: dict[str, dict[str, int]] = {}
+    said = 0.0
+    model = "codex"
+    prev_total = None
+    try:
+        with open(name, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                said_line = '"role":"assistant"' in line
+                if not said_line and '"turn_context"' not in line and '"token_count"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = rec.get("payload") if isinstance(rec, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                if said_line:
+                    if (rec.get("type") == "response_item" and payload.get("type") == "message"
+                            and payload.get("role") == "assistant"
+                            and any(isinstance(b, dict) and str(b.get("text") or "").strip()
+                                    for b in payload.get("content") or [])):
+                        said = max(said, _turn_epoch(rec.get("timestamp") or ""))
+                    continue
+                if rec.get("type") == "turn_context":
+                    model = payload.get("model") or model
+                    continue
+                if payload.get("type") != "token_count":
+                    continue
+                info = payload.get("info") or {}
+                total, last = info.get("total_token_usage"), info.get("last_token_usage")
+                if not isinstance(total, dict) or not isinstance(last, dict):
+                    continue
+                if total == prev_total:
+                    continue
+                prev_total = total
+                cached_in = int(last.get("cached_input_tokens") or 0)
+                bucket = by_model.setdefault(model, {
+                    "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0})
+                bucket["input"] += max(0, int(last.get("input_tokens") or 0) - cached_in)
+                bucket["output"] += int(last.get("output_tokens") or 0)
+                bucket["cacheWrite"] += int(last.get("cache_write_input_tokens") or 0)
+                bucket["cacheRead"] += cached_in
+    except (OSError, ValueError, TypeError):
+        # What was counted before the fault still counts, as it always has;
+        # it is not kept, so the file is read again next time.
+        return {"m": by_model, "s": said, "partial": True}
+    return {"m": by_model, "s": said}
 
 
 def compute_codex_session_cost(session_id: str) -> dict:
@@ -836,50 +977,21 @@ def compute_codex_session_cost(session_id: str) -> dict:
         return cached[1]
     by_model: dict[str, dict[str, int]] = {}
     said = 0.0
-    for name, _, _ in sig:
-        model = "codex"
-        prev_total = None
-        try:
-            with open(name, encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    said_line = '"role":"assistant"' in line
-                    if not said_line and '"turn_context"' not in line and '"token_count"' not in line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    payload = rec.get("payload") if isinstance(rec, dict) else None
-                    if not isinstance(payload, dict):
-                        continue
-                    if said_line:
-                        if (rec.get("type") == "response_item" and payload.get("type") == "message"
-                                and payload.get("role") == "assistant"
-                                and any(isinstance(b, dict) and str(b.get("text") or "").strip()
-                                        for b in payload.get("content") or [])):
-                            said = max(said, _turn_epoch(rec.get("timestamp") or ""))
-                        continue
-                    if rec.get("type") == "turn_context":
-                        model = payload.get("model") or model
-                        continue
-                    if payload.get("type") != "token_count":
-                        continue
-                    info = payload.get("info") or {}
-                    total, last = info.get("total_token_usage"), info.get("last_token_usage")
-                    if not isinstance(total, dict) or not isinstance(last, dict):
-                        continue
-                    if total == prev_total:
-                        continue
-                    prev_total = total
-                    cached_in = int(last.get("cached_input_tokens") or 0)
-                    bucket = by_model.setdefault(model, {
-                        "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0})
-                    bucket["input"] += max(0, int(last.get("input_tokens") or 0) - cached_in)
-                    bucket["output"] += int(last.get("output_tokens") or 0)
-                    bucket["cacheWrite"] += int(last.get("cache_write_input_tokens") or 0)
-                    bucket["cacheRead"] += cached_in
-        except (OSError, ValueError, TypeError):
-            continue
+    for name, mtime_ns, size in sig:
+        # Each file counts on its own (its model and running total start
+        # afresh), so what an earlier hub read of an unchanged one is reused.
+        fsig = (size, mtime_ns)
+        got = filefacts.get("codexcost", name, fsig)
+        if not (isinstance(got, dict) and isinstance(got.get("m"), dict)):
+            got = _codex_file_usage(name)
+            if not got.get("partial"):
+                filefacts.put("codexcost", name, fsig, got)
+        said = max(said, float(got.get("s") or 0.0))
+        for model, t in got["m"].items():
+            bucket = by_model.setdefault(model, {
+                "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0})
+            for k in bucket:
+                bucket[k] += int(t.get(k) or 0)
     tokens = {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0}
     for t in by_model.values():
         for k, v in t.items():
@@ -1112,6 +1224,8 @@ def _branch_worker() -> None:
             _BRANCH_CHANGES[root] = (key, got)
             if _BRANCH_WANT.get(root) == key:
                 del _BRANCH_WANT[root]
+        if got is not None:
+            filefacts.put("branch", root, None, {"k": list(key), "r": got})
 
 
 def branch_changes(root: str, background: bool = True) -> dict | None:
@@ -1128,6 +1242,12 @@ def branch_changes(root: str, background: bool = True) -> dict | None:
     hit = _BRANCH_CHANGES.get(root)
     if hit and hit[0] == key:
         return hit[1]
+    # The same pair of heads always counts the same: an earlier hub's count
+    # stands, so a start does not run git for every task (ED-200).
+    kept = filefacts.get("branch", root, None)
+    if isinstance(kept, dict) and kept.get("k") == list(key) and isinstance(kept.get("r"), dict):
+        _BRANCH_CHANGES[root] = (key, kept["r"])
+        return kept["r"]
     if not background:
         got = _count_branch(root, key)
         _BRANCH_CHANGES[root] = (key, got)
@@ -1188,6 +1308,7 @@ def iter_user_turns(path: Path):
 
 # str(path) -> [bytes consumed, first, last, count, max_len, file identity]
 _FLU_CACHE: dict[str, list] = {}
+_FLU_KEPT: set[str] = set()     # handed to filefacts by this process
 
 
 def _flu_take(st: list, raw: bytes, max_len: int) -> None:
@@ -1221,8 +1342,14 @@ def first_last_user(path: Path, max_len: int = 200):
         return "", "", 0
     size, ident = stt.st_size, (stt.st_ino, stt.st_dev)
     st = _FLU_CACHE.get(key)
+    if st is None:
+        # Where an earlier hub got to in this file (ED-200).
+        kept = filefacts.get("flu", key, None)
+        if isinstance(kept, list) and len(kept) == 6 and isinstance(kept[5], list):
+            st = kept[:5] + [tuple(kept[5])]
     if st is None or st[4] != max_len or st[5] != ident or size < st[0]:
         st = [0, "", "", 0, max_len, ident]
+    was = st[0]
     tail = b""
     if size > st[0]:
         try:
@@ -1238,6 +1365,9 @@ def first_last_user(path: Path, max_len: int = 200):
             _flu_take(st, raw, max_len)
         st[0] += len(done)
     _FLU_CACHE[key] = st
+    if st[0] != was or key not in _FLU_KEPT:
+        _FLU_KEPT.add(key)
+        filefacts.put("flu", key, None, st[:5] + [list(st[5])])
     res = list(st)
     if tail.strip():
         _flu_take(res, tail, max_len)
@@ -9306,6 +9436,7 @@ SESSION_LIST_MAX_AGE = 365 * 86400
 _SESS_GEN = 0
 _SESS_CACHE: dict[int, tuple[float, int, list]] = {}
 _SESS_LOCKS: dict[int, threading.Lock] = {}
+_SESS_FIRST_SAVED = False
 
 
 def invalidate_session_listing() -> None:
@@ -9361,6 +9492,13 @@ def load_sessions(n: int = 200) -> list[dict]:
             gen = _SESS_GEN
             rows = _load_sessions_uncached(n)
             _SESS_CACHE[n] = (time.time(), gen, rows)
+            global _SESS_FIRST_SAVED
+            if not _SESS_FIRST_SAVED:
+                # The first list of a start read everything that changed:
+                # kept now, not half a minute on (a preflight hub is stopped
+                # seconds after its first answer).
+                _SESS_FIRST_SAVED = True
+                filefacts.save_soon()
     return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
 
 
@@ -16157,6 +16295,9 @@ def main():
             print(note, flush=True)
     except Exception as e:
         print(f"claude-dashboard migration skipped: {e}", flush=True)
+    # What earlier hubs read of each transcript: the first task list reads
+    # only what changed since (ED-200).
+    filefacts.use_file(DASHBOARD_DIR / "cache" / "file-facts.json")
     # Remote bind, if any. Loopback is always served (agents reach /mcp on
     # 127.0.0.1, and so does the local browser) — a non-loopback bind adds a
     # SECOND, token-gated listener on that interface only (e.g. the tailnet IP),

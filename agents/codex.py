@@ -15,6 +15,7 @@ CODEX_HOME overrides the default `~/.codex` location, matching the CLI.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import os
 import re
@@ -22,6 +23,8 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+
+import filefacts
 
 from .base import AgentSession, AgentType
 
@@ -132,9 +135,21 @@ def _parse_rollout(path: Path) -> AgentSession | None:
         hit = _ROLLOUT_CACHE.get(str(path))
         if hit and hit[0] == sig:
             return copy.copy(hit[1]) if hit[1] is not None else None
+        # What an earlier hub read of this file, while it is unchanged (ED-200).
+        kept = filefacts.get("rollout", path, (sig[1], sig[0]))
+        if isinstance(kept, dict):
+            try:
+                res = AgentSession(**kept)
+            except TypeError:
+                res = None
+            if res is not None:
+                _ROLLOUT_CACHE[str(path)] = (sig, res)
+                return copy.copy(res)
     res = _parse_rollout_uncached(path)
     if sig is not None:
         _ROLLOUT_CACHE[str(path)] = (sig, res)
+        if res is not None:
+            filefacts.put("rollout", path, (sig[1], sig[0]), dataclasses.asdict(res))
     return copy.copy(res) if res is not None else None
 
 
