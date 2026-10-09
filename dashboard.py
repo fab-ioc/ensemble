@@ -8765,7 +8765,12 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
         if not key or key in seen:
             continue
         # The project's code folder, or a folder in it (a session or an
-        # in-place task working there): never the larger repo around it.
+        # in-place task working there): never the larger repo around it. A
+        # task folder bounds the walk only when it holds the folder (a
+        # worktree); it is the nearer bound then.
+        stop_key = os.path.normcase(os.path.normpath(stop)) if stop else ""
+        if stop_key and not (key == stop_key or key.startswith(stop_key.rstrip(os.sep) + os.sep)):
+            stop = ""
         if code_key and key == code_key:
             exact = True
         elif code_key and not stop and key.startswith(code_key.rstrip(os.sep) + os.sep):

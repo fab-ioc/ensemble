@@ -71,7 +71,8 @@ class ReposForSession(unittest.TestCase):
         links = {"room-0000a001": "proj-app", "room-0000a002": "proj-old", "room-0000a003": "proj-notes",
                  "room-0000b001": "proj-app", "room-0000b002": "proj-notes", "room-0000b003": "proj-gone",
                  "sess-linked-gone": "proj-app", "room-0000a004": "proj-mono", "room-0000b004": "proj-app",
-                 "sess-mono": "proj-mono", "sess-mono-src": "proj-mono"}
+                 "sess-mono": "proj-mono", "sess-mono-src": "proj-mono",
+                 "room-0000b005": "proj-mono"}
         cwds = {"sess-loose": str(loose), "sess-plain": str(b / "plain"), "sess-gone": str(b / "nowhere"),
                 "sess-past-task": str(task / "repo"), "sess-linked-gone": str(b / "nowhere2"), "sess-none": "",
                 "sess-root": str(root), "sess-mono": str(mono / "packages" / "app"),
@@ -107,6 +108,8 @@ class ReposForSession(unittest.TestCase):
         room("room-0000b002", notes / "write_letter", notes / "write_letter")   # documents task
         room("room-0000a004", b / "cs" / "07_po")                      # PO of a code folder inside a monorepo
         room("room-0000b004", task / "notes", task)                    # task working in a subfolder
+        (root / "Mono" / "inplace_task").mkdir(parents=True)
+        room("room-0000b005", mono / "packages" / "app" / "src", root / "Mono" / "inplace_task")  # in-place task
         room("room-0000b003", root / "Gone" / "t" / "repo", root / "Gone" / "t")  # every folder gone
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
@@ -186,6 +189,11 @@ class ReposForSession(unittest.TestCase):
         # Review 2: a session of the project working in its code folder, or below it.
         self.assertEqual(self.paths("sess-mono"), [str(self.p_mono)])
         self.assertEqual(self.paths("sess-mono-src"), [str(self.p_mono)])
+
+    def test_in_place_task_below_the_code_folder_opens_it(self):
+        # Review 3: its task folder does not hold its working folder, so the
+        # code folder bounds the walk.
+        self.assertEqual(self.paths("room-0000b005"), [str(self.p_mono)])
 
     def test_no_folder_known(self):
         self.assertEqual(self.get("sess-none"), {"repos": [], "lookedIn": []})
