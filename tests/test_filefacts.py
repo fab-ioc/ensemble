@@ -313,8 +313,8 @@ class TranscriptIndex(Base):
         self.assertIsNone(dashboard.find_transcript("nope"))
         b = self.proj / "p2" / "bbbb.jsonl"
         claude_transcript(b, "C:/w", 1)
-        with mock.patch.object(dashboard, "_TRANSCRIPT_INDEX_TTL_S", 0.0):
-            self.assertEqual(dashboard.find_transcript("bbbb"), b)
+        # Written after the listing, within its TTL: still found.
+        self.assertEqual(dashboard.find_transcript("bbbb"), b)
         a.unlink()
         with mock.patch.object(dashboard, "_TRANSCRIPT_INDEX_TTL_S", 0.0):
             self.assertIsNone(dashboard.find_transcript("aaaa"))
@@ -326,6 +326,10 @@ class TranscriptIndex(Base):
         codex_rollout(f, sid, "C:/w", 1)
         self.assertEqual(dashboard._codex_rollouts(sid), [f])
         self.assertEqual(dashboard._codex_rollouts(sid_of(4)), [])
+        dashboard._CODEX_ROLLOUT_PATHS.clear()
+        g = f.with_name(f"rollout-2026-10-01T00-00-00-{sid_of(5)}.jsonl")
+        codex_rollout(g, sid_of(5), "C:/w", 1)
+        self.assertEqual(dashboard._codex_rollouts(sid_of(5)), [g], "written after the listing")
 
 
 if __name__ == "__main__":

@@ -788,7 +788,8 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
 
 _TRANSCRIPT_PATHS: dict[str, Path] = {}
 # Every transcript by session id, from one listing of the project folders,
-# listed again when a lookup misses and it is older than _TRANSCRIPT_INDEX_TTL_S.
+# listed again when a lookup misses and it is older than _TRANSCRIPT_INDEX_TTL_S
+# (a miss on a younger one globs for that id alone).
 # A glob for one id stats every project folder (18 ms each, 33 s for a cold
 # task list's 1,800 lookups, ED-200); one listing costs about as much as ten.
 _TRANSCRIPT_INDEX: tuple[str, float, dict[str, Path]] = ("", 0.0, {})
@@ -828,6 +829,11 @@ def find_transcript(session_id: str) -> Path | None:
     found = _transcript_index().get(session_id)
     if found is None or not found.exists():
         found = _transcript_index(fresh=True).get(session_id)
+    if found is None or not found.exists():
+        # A listing younger than its TTL may predate the file: the glob for
+        # this one id, as before, so a lookup never misses a transcript.
+        hits = list(PROJ_DIR.glob(f"*/{session_id}.jsonl"))
+        found = hits[0] if hits else None
     if found is not None:
         _TRANSCRIPT_PATHS[session_id] = found
         return found
@@ -863,6 +869,9 @@ def _codex_rollouts(session_id: str) -> list[Path]:
         if session_id not in idx:
             idx = _codex_rollout_index(root, fresh=True)
         paths = list(idx.get(session_id, []))
+        if not paths:
+            # A listing younger than its TTL may predate the file.
+            paths = sorted(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
     _CODEX_ROLLOUT_PATHS[session_id] = (now, paths)
     return paths
 
