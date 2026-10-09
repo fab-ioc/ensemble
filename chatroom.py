@@ -826,6 +826,23 @@ def record_seen(room_id: str, ts: float) -> float | None:
         return seen
 
 
+def record_dealt(room_id: str) -> float | None:
+    """The person is done with what the room has put to them so far (Done
+    with this, on the list's Details): ``dealtAt`` is now, and the chat counts
+    as read up to now as well. What it asked leaves Needs you at once on every
+    device (attention.set_aside); a later ask is news again. Returns the
+    room's ``dealtAt``, or None when the room is gone."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        now = _now()
+        room["dealtAt"] = now
+        room["seenAt"] = max(float(room.get("seenAt") or 0), now)
+        _write(room)
+        return now
+
+
 def last_real_report(room: dict) -> dict:
     """The task's last report that is not an ``update``, or {}. A task that
     reported before ``lastRealReport`` was kept falls back to ``lastReport``
