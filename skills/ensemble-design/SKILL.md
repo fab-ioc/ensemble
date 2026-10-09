@@ -182,9 +182,11 @@ misstated a floor.
 
 ### Run state — what a process is doing
 
-`--run-working` (the progress-bold shade, pulses) · `--run-idle` · `--run-off` · `--run-live` (the
-success-bold shade: the left list's dot for a terminal running on the hub, working or idle, and
-nothing else; never a Done task, never a recent write — GitHub issue 13). This is **separate from workflow status** and is
+`--run-working` (the success-bold shade: an agent working now, as the hub reads its turn — its
+hooks, Claude's status file, else the screen — and nothing else; never a terminal that only runs,
+never a Done task, never a recent write — GitHub issue 13, #193) · `--run-idle` (the neutral-bold
+shade, drawn as a ring on dots: a terminal that runs and does nothing) · `--run-off`. There is no
+`--run-live`. This is **separate from workflow status** and is
 never a board column. Only `--run-working` pulses; nothing else in the product animates. Disable the
 pulse under `prefers-reduced-motion`.
 
@@ -1285,10 +1287,11 @@ self-contained component, so a later layout can host it elsewhere.
 - **A row is two lines.** One: the state's 8px dot, the key (`--font-mono` `--fs-200`
   `--fg-muted`) and title (`--fs-300`, one line, ellipsis, the full text in the tooltip) and the
   age at the end (`--fs-100`, `--fg-muted`, ticks in place). The dot (`swState`) says the state in
-  the colour that means it: what needs you in its lozenge's tone, a terminal running on the hub
-  `--run-live` (green, working or idle: "running, working" / "running, idle"), news you have not
-  read `--c-discovery-bold` ("new", standing in for the unread dot, and the title goes 600), else
-  `--run-off` (a Done task that does not run is off: "done, not running"); it carries its words in
+  the colour that means it: what needs you in its lozenge's tone, an agent working now
+  `--run-working` (green, "working"; a PO row is green while the PO or one of its tasks works,
+  "working: N of its tasks"), a terminal that runs and does nothing a `--run-idle` ring ("idle:
+  running, not working"), news you have not read `--c-discovery-bold` ("new", standing in for the
+  unread dot, and the title goes 600), else `--run-off` ("stopped", "done, stopped"); it carries its words in
   `aria-label`. Two (`--fs-200`, `--fg-muted`, indented to the title): Needs you's lozenge, then
   one line of words, the project first: who is on a running task ("claude, codex"), or why a task
   is ready ("in review", "reported", "paused"), then `+ −`. An Unassigned row gives the folder it
@@ -1302,7 +1305,12 @@ self-contained component, so a later layout can host it elsewhere.
   again when the list resizes: letters, not a character count, decide) a quiet **Details** line under
   the row (`.sw-diag-btn`, a disclosure with `▸`/`▾`, `--touch-min` on a phone) opens the reason in
   full and the last screen in `--font-mono` (`.sw-diag`, on `--surface`), kept open across redraws.
-  A PO's row names its agent too.
+  A row you can settle yourself (an ask or report its agent put, a room waiting on you, a marked
+  ask; never a wall, a prompt, a death, a message not delivered or held) always has Details, and in
+  it a compact **Done with this** (`.rm-btn.sw-done`, 24px): it records `dealtAt` on the room
+  (`POST /api/attention/done`) and the row leaves; an ask made later brings it back (#193).
+  Waiting for you follows one rule for a PO row and a task row: an ask you have read and that is
+  old leaves the list. A PO's row names its agent too.
 - **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
   its drawer). Its muted words step up to `--fg-subtle` there and under the pointer (`--fg-muted`
   and `.tno` on `--selected-bg` or `--hover` are under 4.5:1 in Light).
