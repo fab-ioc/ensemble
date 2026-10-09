@@ -9265,12 +9265,15 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     except Exception:
         reported = {}
     try:
+        run_state = attention.run_by_room()
+    except Exception:
+        run_state = {}
+    try:
         for rm in rooms:
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
             live = _room_is_live(rm)
             idle = None
-            busy = False
             for pp in agents_in:
                 pid = pp.get("ptyId")
                 sess = ptyrun.get(pid) if pid else None
@@ -9278,8 +9281,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                     isec = sess.info().get("idleSeconds")
                     if isec is not None:
                         idle = isec if idle is None else min(idle, isec)
-                        if isec < 2.5:
-                            busy = True
+            # Busy is an agent in a turn, as attention reads it (its hooks,
+            # Claude's status file, else the screen), not a terminal that
+            # printed in the last moments: every run dot reads this, and green
+            # is an agent working (GitHub issue 13, point P157).
+            busy = run_state.get(rm["id"]) == "working"
             rid = rm["id"]
             msgs = rm.get("messages", []) or []
             _user_msgs = [m for m in msgs
@@ -11361,9 +11367,15 @@ class Handler(BaseHTTPRequestHandler):
         # machine's loopback), so a page opened over the tailnet's plain http
         # has none; there a navigation still says Upgrade-Insecure-Requests and
         # asks for HTML. A bare curl sends neither.
+        # A frame of the page's own (a chat in the list's panel, /ui-key) is
+        # one too: the key changes with every hub restart, and a page left
+        # open across one kept the old key for all its frames, so every read
+        # point it sent was refused (GitHub issue 13, point P157).
         mode = self.headers.get("Sec-Fetch-Mode")
         if mode is not None:
-            return mode == "navigate" and self.headers.get("Sec-Fetch-Dest") == "document"
+            dest = self.headers.get("Sec-Fetch-Dest")
+            return mode == "navigate" and (dest == "document" or (
+                dest in ("iframe", "frame") and self.headers.get("Sec-Fetch-Site") == "same-origin"))
         return (self.headers.get("Upgrade-Insecure-Requests") == "1"
                 and "text/html" in (self.headers.get("Accept") or ""))
 
@@ -11621,6 +11633,20 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/pty-test":
             self._send_file(STATIC_DIR / "pty-test.html",
                             "text/html; charset=utf-8")
+            return
+        if p == "/ui-key":
+            # A page opened before the hub last restarted holds the old key:
+            # a hidden frame of its own loads this to get today's
+            # (static/pagekey.js), then sends the write it was refused again.
+            body = b"<!doctype html><meta charset=utf-8><title>key</title>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            for k, v in self._ui_key_headers():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
             return
         if p == "/session":
             # /session?room=#18 (&project=…), ?room=ED-18 or ?task=18: the page
@@ -14841,6 +14867,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             asks.forget()
             self._send_json(200, {"ok": True, "seenAt": seen})
+            return
+        if p == "/api/attention/done":
+            # {roomId}: the person is done with what this task or PO has put
+            # to them (Done with this, on the list's Details): it leaves Needs
+            # you on every device. A page-only write, like the read point.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if not re.fullmatch(r"room-[A-Za-z0-9_-]{1,64}", rid):
+                self._send_json(400, {"error": "bad_room"})
+                return
+            dealt = chatroom.record_dealt(rid)
+            if dealt is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            asks.forget()
+            attention.snapshot(0)
+            self._send_json(200, {"ok": True, "dealtAt": dealt})
             return
         if p == "/api/history/restore":
             # {projectId, rev, path}: put an old version back. A write, so only

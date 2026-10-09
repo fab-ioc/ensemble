@@ -43,21 +43,24 @@ class IntelliJDarkTheme(unittest.TestCase):
         self.assertEqual(result["drift"], {})
         self.assertEqual(result["failed"], [])
         self.assertGreaterEqual(result["minimum_ratio"], 4.5)
-        self.assertEqual(set(result["states"]), {"running", "waiting", "blocked", "new"})
-        self.assertEqual(result["states"]["running"]["selector"], ".sw-st.live")
-        self.assertEqual(result["states"]["running"]["token"], "--run-live")
+        self.assertEqual(set(result["states"]), {"working", "waiting", "blocked", "new"})
+        self.assertEqual(result["states"]["working"]["selector"], ".sw-st.working")
+        self.assertEqual(result["states"]["working"]["token"], "--run-working")
         self.assertEqual(len({row["colour"] for row in result["states"].values()}), 4)
         self.assertGreaterEqual(min(row["on_surface"] for row in result["states"].values()), 3)
         separation = result["diff_ground_separation"]
         self.assertTrue(separation["passed"])
         self.assertGreaterEqual(separation["rgb_distance"], separation["minimum"])
 
-    def test_the_working_state_uses_progress_not_done(self):
+    def test_working_is_green_and_idle_is_not(self):
+        # GitHub issue 13, point P157: green is an agent working now, and a
+        # terminal running idle is a calm neutral, never green.
         for name in ("index.html", "session.html"):
             page = (ROOT / name).read_text(encoding="utf-8")
             with self.subTest(page=name):
-                self.assertIn("--run-working: var(--c-progress-bold);", page)
-                self.assertNotIn("--run-working: var(--c-success-bold);", page)
+                self.assertIn("--run-working: var(--c-success-bold);", page)
+                self.assertIn("--run-idle: var(--c-neutral-bold);", page)
+                self.assertNotIn("--run-live", page)
 
 
 if __name__ == "__main__":
