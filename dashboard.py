@@ -8669,44 +8669,136 @@ def _is_project_dir(p: Path) -> bool:
     return any((p / m).exists() for m in _PROJECT_MARKERS)
 
 
-def find_repos_for_session(session_id: str, max_repos: int = 10) -> list[dict]:
-    """Find IDE-openable projects belonging to this session. Only looks at the cwd:
-    (1) enclosing project (walk up for .git or .idea), and (2) direct children
-    with .git or .idea. Transcript mentions are not used."""
-    cwd = cwd_for_session(session_id)
-    if cwd and not Path(cwd).exists():
-        for s in _read_session_files():
-            if s.get("sessionId") == session_id:
-                live = live_cwd_of_pid(s.get("pid", 0) or 0)
-                if live:
-                    cwd = live
-                break
+def _not_code_folder(p: Path) -> bool:
+    """The projects folder (it is a git repo of its own, for backups) or a
+    folder above it: never a task's or a project's code."""
+    try:
+        r = os.path.normcase(os.path.realpath(str(PROJECTS_ROOT)))
+        c = os.path.normcase(os.path.realpath(str(p)))
+    except OSError:
+        return False
+    return c == r or r.startswith(c.rstrip(os.sep) + os.sep)
 
+
+def _repos_in(folder: Path, stop: str = "", max_repos: int = 10) -> dict[str, str]:
+    """The IDE-openable folders of ``folder``: (1) the one enclosing it (walk
+    up for .git or .idea, not above ``stop`` and never the projects folder),
+    and (2) its direct children with .git or .idea."""
     repos: dict[str, str] = {}
-    if not cwd or not Path(cwd).exists():
-        return []
-
-    # (1) Enclosing project (walk up)
-    path = Path(cwd)
+    stop_n = os.path.normcase(os.path.normpath(stop)) if stop else ""
+    path = folder
     for _ in range(8):
+        if _not_code_folder(path):
+            break
         if _is_project_dir(path):
             repos[str(path)] = path.name
             break
-        if path == path.parent:
+        if path == path.parent or (stop_n and os.path.normcase(os.path.normpath(str(path))) == stop_n):
             break
         path = path.parent
-
-    # (2) Direct children that are projects
     try:
-        for child in Path(cwd).iterdir():
-            if not child.is_dir():
-                continue
-            if _is_project_dir(child):
-                repos.setdefault(str(child), child.name)
+        for child in folder.iterdir():
             if len(repos) >= max_repos:
                 break
+            if child.is_dir() and _is_project_dir(child):
+                repos.setdefault(str(child), child.name)
     except OSError:
         pass
+    return repos
+
+
+def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
+    """What Open in editor opens for a session or task, and where it looked.
+
+    A project's PO opens the project's code folder (project.json's path; a
+    documents project's own folder). A task opens the repo in its working
+    folder (its worktree, ``<task>/repo``), else its task folder; a task of a
+    documents project its task folder. A session in no project opens the repo
+    its working folder is in, or the folders with a repo inside it, else that
+    folder itself. A folder that no longer exists is skipped for the next one
+    (a task's or session's project's code folder last).
+
+    Returns ``{"repos": [{path, name, language, editor, iconUrl}],
+    "lookedIn": [{"path", "exists"}]}``: when ``repos`` is empty, ``lookedIn``
+    says where it looked (empty: no folder is known for it)."""
+    projects = load_projects()
+    links = load_session_projects()
+    room = None
+    if session_id.startswith("room-"):
+        try:
+            room = chatroom.get_room(session_id, public=False)
+        except Exception:
+            room = None
+    if room:
+        cwd = room.get("cwd", "") or ""
+        project_id = _task_project(room, links, projects)
+    else:
+        cwd = cwd_for_session(session_id)
+        if cwd and not Path(cwd).exists():
+            for s in _read_session_files():
+                if s.get("sessionId") == session_id:
+                    live = live_cwd_of_pid(s.get("pid", 0) or 0)
+                    if live:
+                        cwd = live
+                    break
+        project_id = links.get(session_id) or _project_for_cwd(cwd, projects)
+    project = next((p for p in projects if p["id"] == project_id), None) if project_id else None
+    code = (project or {}).get("path") or ""
+    documents = (project or {}).get("kind") == "documents"
+    is_po = bool(room and project and room.get("id") == (project.get("poRoomId") or "").strip())
+
+    # (folder, stop, exact): the folders to try, in order. stop bounds the
+    # walk up; an exact folder opens as it is (the project's configured code
+    # folder, even inside a larger repo; a documents folder).
+    tries: list[tuple[str, str, bool]] = []
+    if is_po:
+        tries = [(code, "", True), (cwd, "", documents)]
+    elif room and project:
+        task_dir = room.get("taskDir") or ""
+        tries = ([(task_dir or cwd, "", True)] if documents
+                 else [(cwd, task_dir, False), (task_dir, task_dir, False)])
+        tries.append((code, "", True))
+    else:
+        tries = [(cwd, "", False)] + ([(code, "", True)] if project else [])
+
+    # Every folder is tried for a repo first; only when none has one does the
+    # first existing folder open as it is (never the projects folder).
+    looked: list[dict] = []
+    repos: dict[str, str] = {}
+    plain = ""
+    seen: set[str] = set()
+    code_key = os.path.normcase(os.path.normpath(code)) if code else ""
+    for folder, stop, exact in tries:
+        key = os.path.normcase(os.path.normpath(folder)) if folder else ""
+        if not key or key in seen:
+            continue
+        # The project's code folder, or a folder in it (a session or an
+        # in-place task working there): never the larger repo around it. A
+        # task folder bounds the walk only when it holds the folder (a
+        # worktree); it is the nearer bound then.
+        stop_key = os.path.normcase(os.path.normpath(stop)) if stop else ""
+        if stop_key and not (key == stop_key or key.startswith(stop_key.rstrip(os.sep) + os.sep)):
+            stop = ""
+        if code_key and key == code_key:
+            exact = True
+        elif code_key and not stop and key.startswith(code_key.rstrip(os.sep) + os.sep):
+            stop = code
+        seen.add(key)
+        p = Path(folder)
+        exists = p.is_dir()
+        looked.append({"path": folder, "exists": exists})
+        if not exists:
+            continue
+        if exact:
+            repos = {str(p): p.name}
+        else:
+            repos = _repos_in(p, stop, max_repos)
+            if not repos and not plain and not _not_code_folder(p):
+                plain = str(p)
+        if repos:
+            break
+    if not repos and plain:
+        repos = {plain: Path(plain).name}
 
     enriched = []
     for path_str, name in sorted(repos.items()):
@@ -8718,7 +8810,7 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> list[dict]:
             "editor": editor,
             "iconUrl": icon_url,
         })
-    return enriched
+    return {"repos": enriched, "lookedIn": looked}
 
 
 def open_path(path: str, app: str = "default") -> str:
