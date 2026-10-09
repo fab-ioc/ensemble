@@ -363,7 +363,7 @@ async function main() {
   const send = (method, params = {}, sessionId) => { const i = ++id; return new Promise((res, rej) => { waits.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, sessionId })); }); };
   const out = {};
   try {
-    for (const [w, h, mob, n, opt] of [[1280, 800, false, 0, '30 days'], [390, 844, true, 1, 'Yes']]) {
+    for (const [w, h, mob, n, opt] of A.views) {
       const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
       const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
       await send('Page.enable', {}, sessionId);
@@ -373,7 +373,7 @@ async function main() {
       const until = async (expr, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       const shot = async name => { if (!A.shots) return; const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
       await send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
-      await until('document.querySelectorAll("#msgs .qa").length >= 3');
+      await until('document.querySelectorAll("#msgs .qa").length >= ' + A.need);
       await sleep(400);
       const look = () => evalIn(`(() => ({ cards: document.querySelectorAll('#msgs .qa').length, done: [...document.querySelectorAll('#msgs .qa')].map(c => c.classList.contains('done')),
         scrollX: document.documentElement.scrollWidth - innerWidth,
@@ -407,8 +407,14 @@ main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
 
 
-@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
-class InChrome(unittest.TestCase):
+class ChromePage(unittest.TestCase):
+    """A PO message (TEXT) on a throwaway hub, opened in headless Chrome at
+    each of VIEWS (width, height, mobile, card, option to click); a class with
+    no tests of its own runs nothing."""
+    TEXT = THREE
+    NEED = 3
+    VIEWS = [[1280, 800, False, 0, "30 days"], [390, 844, True, 1, "Yes"]]
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="ens-asks-", ignore_cleanup_errors=True)
@@ -459,7 +465,7 @@ class InChrome(unittest.TestCase):
         assert ok, why
         t0 = time.time() - 600
         lines = [_turn("user", "[rotation] You are the PO of Motors. Read PO-HANDOVER.md.", t0),
-                 _turn("assistant", THREE, t0 + 5)]
+                 _turn("assistant", cls.TEXT, t0 + 5)]
         (base / "transcripts" / "C--po" / "po-sid.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
@@ -471,7 +477,7 @@ class InChrome(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{server.server_address[1]}",
-                "po": cls.po, "shots": shots}
+                "po": cls.po, "shots": shots, "need": cls.NEED, "views": cls.VIEWS}
         script = base / "asks_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
@@ -479,6 +485,10 @@ class InChrome(unittest.TestCase):
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
         cls.led = points.load(cls.po)
         cls.addClassCleanup(cls.tmp.cleanup)
+
+
+@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
+class InChrome(ChromePage):
 
     def test_three_cards_that_fit(self):
         for w in ("1280", "390"):
