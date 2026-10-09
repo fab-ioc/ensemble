@@ -486,6 +486,36 @@ and every page loads it; no page has chip or card CSS of its own.
   Dashboard` in the project's place (`.tc-assumed`, with a title saying why) — while the hub attaches
   no `[ref]` line for it.
 
+### File link
+
+A file an agent names in text — a balloon, a card, a comment, a report, a file view's Markdown — is
+a link to the file view. `static/filelinks.js` (`FileLinks`) is the one place a page makes that link
+(`FileLinks.href(path, {line, room, roomName, cwd})`) and asks whether the file is there; every page
+loads it and calls `FileLinks.watch()` once. `file_refs.py` is the one place the hub decides which file
+a written path means; no page and no endpoint has a resolver of its own. Agents write paths however
+they like: nothing here asks them to write differently.
+
+- **Where a path points** (`file_refs`, in this order): an absolute path (`C:\…`, `\\server\…`,
+  `~/…`, `/…`) is that file; a relative one is tried under the link's cwd, then the chat's cwd, task
+  folder, shared folder and each agent's cwd, then the project home, its Documents folder, its code
+  folder (another task's files are reached through the project home); failing those, the file whose
+  path ends with what was written (folders dropped; a `...` folder stands for any folders), the
+  shallowest and then the newest. Each path is tried as written, then %-decoded, then without a `:12`
+  or `#L12` line on its end. The walk for a name only goes through folders the hub may read
+  (`workspace_access_ok`), walks at most 40,000 entries a request, and one folder is walked by one
+  request at a time.
+- **Not written yet:** a link whose file is not there is drawn in `--fg-muted` with a dotted underline
+  and a chip after it — `not written yet`, `--fs-100`, `0 var(--s-100)`, a dashed
+  `--border-strong`, `--r-100` — and the title "This file does not exist yet". It stays a link: it
+  opens the panel below. The page asks once for all its links (`GET /api/files/check`, 80 a batch),
+  paints a link it has asked about before at once (no flicker on a redraw), and asks again about
+  the missing ones at most every 10 s, so the chip goes the moment the task writes the file. That
+  recheck only looks where the path is written (`"tail": false`), never searches by name.
+- **Missing panel** (the file view, when nothing is there): "<name> does not exist (yet)", the path
+  the link holds, the files of that name (moved) and of a close name (renamed, or the same `#N` in front) as
+  rows that open them, and a **Check again** button. When exactly one file has that name, the view
+  opens it straight away with a note naming the path the link pointed at.
+
 ### Avatar
 
 20px, `--r-full`, **solid** fill from the agent tokens with light text. Solid fill is load-bearing, not

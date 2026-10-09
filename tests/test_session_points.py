@@ -363,7 +363,9 @@ class PollAndLinks(unittest.TestCase):
         return json.loads(r.stdout)
 
     def test_the_room_poll_is_one_at_a_time_and_a_slow_answer_draws_nothing(self):
-        code = ("let POINTS_OPEN = false;\n" + SRC[SRC.index("let PT_GEN = 0"):SRC.index("function ptTicket")]
+        code = ("let POINTS_OPEN = false;\n"
+                + "const FileLinks = { recheck() {} };   // static/filelinks.js, which the page loads\n"
+                + SRC[SRC.index("let PT_GEN = 0"):SRC.index("function ptTicket")]
                 + fn_src("ptTicket") + fn_src("pointsChanged")
                 + SRC[SRC.index("let REFRESH_BUSY"):SRC.index("async function refreshRoom")])
         r = self.node(POLL_JS, code)

@@ -458,12 +458,12 @@
   /* What the file is, at a glance: language, lines, size. */
   header .meta { color:var(--fg-muted); font-size:var(--fs-200); white-space:nowrap; font-variant-numeric:tabular-nums; }
   header .grow { flex:1; }
-  header .btn { display:inline-flex; align-items:center; height:24px; color:var(--fg); text-decoration:none; font:inherit;
+  header .btn, .missing .btn { display:inline-flex; align-items:center; height:24px; color:var(--fg); text-decoration:none; font:inherit;
     font-size:var(--fs-200); border:1px solid var(--border-strong); padding:0 var(--s-200); border-radius:var(--r-200);
     background:var(--surface); white-space:nowrap; }
-  header button.btn { cursor:pointer; }
-  header .btn:hover { background:var(--hover); }
-  header .btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  header button.btn, .missing button.btn { cursor:pointer; }
+  header .btn:hover, .missing .btn:hover { background:var(--hover); }
+  header .btn:focus-visible, .missing .btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* A choice between two ways of showing the same file, and the wrap switch:
      the one showing is selected. */
   header .btn[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:var(--selected-fg); }
@@ -633,6 +633,19 @@
   .dir-row:hover { background:var(--hover); }
   .dir-row.is-dir { font-weight:600; }
   .dir-row .sz { margin-left:auto; color:var(--fg-muted); font-weight:400; }
+  /* A file link whose path names nothing on the hub yet (static/filelinks.js):
+     a quiet chip, still a link; the file view says what is (not) there. */
+  body a.file-link.file-missing { color:var(--fg-muted); text-decoration:underline dotted; text-underline-offset:2px; }
+  body a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
+  /* A path that names nothing on the hub: one panel, what is not there and
+     the files it may have become (moved: same name; renamed: a close name). */
+  .missing { padding:var(--s-400); max-width:880px; }
+  .missing-h { font:600 var(--fs-400)/24px var(--font-sans); color:var(--fg); margin:0 0 var(--s-100); word-break:break-word; }
+  .missing-p { color:var(--fg-subtle); margin:0 0 var(--s-300); word-break:break-word; }
+  .missing-p code { font:var(--fs-200)/16px var(--font-mono); }
+  .missing-s { font:600 var(--fs-200)/16px var(--font-sans); color:var(--fg-muted); margin:var(--s-300) 0 var(--s-100); }
+  .missing .dir-row .sz { max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
+  .missing .btn { margin-top:var(--s-300); }
   #cmt-tray .cmt-item-q { font-size:11px; color:var(--fg-muted); margin-bottom:2px; word-break:break-word; }
   #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
@@ -647,7 +660,7 @@
     header a.btn, header button.btn, .cmt-composer button, #cmt-tray button {
       min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
     }
-    header a.btn, header button.btn { min-width: var(--touch-min); height: auto; }
+    header a.btn, header button.btn, .missing button.btn { min-width: var(--touch-min); min-height: var(--touch-min); height: auto; }
     #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
     .dir-row, .out-pop button { min-height: var(--touch-min); }
     #cmt-tray .cmt-item { padding-right: var(--touch-min); }
@@ -695,7 +708,8 @@
 <script src="/static/selbar.js"></script>
 <script src="/static/taskcard.js"></script>
 <script src="/static/filedrag.js"></script>
-<script>FileDrag.attach(document);</script>
+<script src="/static/filelinks.js"></script>
+<script>FileDrag.attach(document); FileLinks.watch();</script>
 <script>
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
@@ -721,16 +735,24 @@ const ABS_PATH_RE = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/;   // C:\dir, C:/dir, \\u
 const unescPath = s => (s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 // "dashboard.py:4620" or ":4620:8": the file, and the line for the viewer.
+// A link target's GitHub-style anchor ("x.java#L887", "#L10-L20") is its line too.
 function splitLine(s) {
-  const m = (s || '').match(/:(\d+)(?::\d+)?$/);
+  s = s || '';
+  const m = s.match(/:(\d+)(?::\d+)?$/) || s.match(/#L(\d+)(?:C\d+)?(?:-L?\d+(?:C\d+)?)?$/);
   return m && /\.\w{1,8}$/.test(s.slice(0, m.index))
-    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s || '', line: 0 };
+    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s, line: 0 };
 }
+// What no file name is, though the patterns above take it (the link audit of
+// #199 over every room's messages): an "extension" with no letter ("0.45/0.53",
+// a ratio), a glob or a placeholder ("*/<sid>.jsonl"), or two names in one
+// span ("merge_check.py index.html": a dotted word, then more words).
+const fileExtOk = t => /\.\w*[A-Za-z]\w*$/.test(t);
+const notOneName = t => /[*?<>|"]/.test(t) || /\.[A-Za-z]\w{0,7} \S/.test(t);
 // A bare name is a file by its extension: the kinds agents write about, and
 // every picture /api/file serves (as a camera or Windows writes it too).
 const BARE_EXT = 'md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg'
   + '|png|jpg|jpeg|gif|webp|svg|bmp|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP';
-const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
+const BARE_RE = new RegExp('^\\w[\\w-]*\\.(?:' + BARE_EXT + ')$');
 // A code span stands alone, so a relative path there may hold a folder or
 // file name with spaces ("Documents/Screen layout.md", "Documents/#118 Fix
 // the thing.md") and a wider set of punctuation (#, &, (), ', , — the same
@@ -742,6 +764,7 @@ const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
 const REL_PATH_SPACED_RE = /^(?:\.\.?[\\\/]|…[\\\/])?[\w.#&(),'-]+[\\\/](?:[\w.#&(),'-]+(?: [\w.#&(),'-]+)*[\\\/])*[\w.#&(),'-]+(?: [\w.#&(),'-]+)*\.\w{1,8}$/;
 const looksFilePath = (s, spaced) => {
   const t = splitLine((s || '').trim()).path;
+  if (!fileExtOk(t) || notOneName(t)) return false;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
   if (spaced) return REL_PATH_SPACED_RE.test(t) || BARE_RE.test(t);
   return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t) || BARE_RE.test(t);
@@ -751,7 +774,7 @@ const looksFilePath = (s, spaced) => {
 // link target): in running text "C:\temp and" would swallow the sentence.
 const looksDirPath = s => {
   const t = (s || '').trim();
-  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t))
+  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t) && !notOneName(t))
       || /^\/(?:Users|home)\/\S*\/$/.test(t);
 };
 function resolvePath(p, base) {
@@ -905,7 +928,7 @@ const LINK_RE = (() => {
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
-      + String.raw`|[\w-]+\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+      + String.raw`|\w[\w-]*\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
 })();
@@ -921,7 +944,9 @@ function linkify(t, keep) {
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u, 'text')) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
     if (win != null && !winPathSure(win)) return m;
-    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), h = fileRefHtml(s.path, pth, s.line, 'text');
+    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
+    if (!fileExtOk(s.path)) return m;
+    const h = fileRefHtml(s.path, pth, s.line, 'text');
     return h ? (p2 ?? p3 ?? p4) + put(h) : m;
   });
 }
@@ -1050,7 +1075,7 @@ function fvScrollOwner(main) {
   if (f) { try { return f.contentDocument ? f.contentDocument.scrollingElement : null; } catch (e) { return null; } }
   return document.scrollingElement;
 }
-function fileHref(p, line) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (line ? '&line=' + line : '') + CTX; }
+function fileHref(p, line) { return FileLinks.href(resolvePath(p, FILE_BASE), { line, room: ROOM, cwd: CWD }); }
 // The <base href> a rendered page gets, so its own relative pictures, styles
 // and stylesheet url()s load from its folder instead of about:srcdoc (which
 // resolves nowhere). /api/file-at/<style>/<folder segments...>/ mirrors the
@@ -1705,7 +1730,9 @@ async function loadText(path, rawSrc) {
     const { bytes, truncated } = await readCapped(r);
     const binary = bytes.includes(0);
     const text = binary ? '' : new TextDecoder('utf-8').decode(bytes);
-    return { ok: true, text, binary, truncated,
+    let at = '';
+    try { at = decodeURIComponent(r.headers.get('X-Ensemble-Path') || ''); } catch (e) {}
+    return { ok: true, text, binary, truncated, found: r.headers.get('X-Ensemble-Found') || '', at,
              size: Number.isFinite(declared) ? declared : bytes.length };
   } catch (e) { return { ok: false, status: 0, why: String(e) }; }
 }
@@ -1750,6 +1777,50 @@ function fvOnKey(ev) {
   host.postMessage({ type: 'fv-key', key: 'recent' }, location.origin);
 }
 document.addEventListener('keydown', fvOnKey, true);
+// A path that names nothing on the hub (a file a task has not written yet, or
+// one moved or renamed since the link was written): one panel that says so,
+// and the files it may have become — the same name (moved) or a close name
+// (renamed) in the room's folders, the project home, its Documents and task
+// folders (GET /api/file/suggest, file_refs.suggest). Exactly one file of the
+// same name: it opens in place, saying it moved. Never a broken page.
+const MOVED_FROM = new URLSearchParams(location.search).get('moved') || '';
+async function showMissing(path, main) {
+  const name = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+  let sug = null;
+  try {
+    const r = await fetch('/api/file/suggest?path=' + encodeURIComponent(path) + CTX, { cache: 'no-store' });
+    if (r.ok) sug = await r.json();
+  } catch (e) {}
+  const same = (sug && sug.same) || [], close = (sug && sug.close) || [];
+  // In a Workspace tab the tab is the path: there the one file is listed instead.
+  if (same.length === 1 && !MOVED_FROM && !hostPage()) {
+    const u = new URL(fileHref(same[0]), location.href);
+    u.searchParams.set('moved', path);
+    location.replace(u.pathname + u.search);
+    return;
+  }
+  document.getElementById('raw').style.display = 'none';
+  document.querySelectorAll('header .out, #out-menu').forEach(b => { b.hidden = true; });
+  const row = p => {
+    const n = p.split(/[\\/]/).pop(), dir = p.slice(0, p.length - n.length).replace(/[\\/]$/, '');
+    return `<a class="dir-row" href="${esc(fileHref(p))}" title="${esc(p)}">${esc(n)}<span class="sz">${esc(dir)}</span></a>`;
+  };
+  const list = (head, ps) => ps.length ? `<div class="missing-s">${head}</div><div class="dir">${ps.map(row).join('')}</div>` : '';
+  main.innerHTML = `<div class="missing" role="status"><div class="missing-h">${esc(name)} does not exist (yet)</div>`
+    + `<div class="missing-p">Nothing is at <code>${esc(path)}</code> on the hub. A task may not have written it yet; `
+    + `this link opens it once it is there.</div>`
+    + list(same.length > 1 ? 'Files with this name' : 'A file with this name', same)
+    + list('Files with a close name', close)
+    + '<button class="btn" type="button" id="miss-again">Check again</button></div>';
+  document.getElementById('miss-again').onclick = () => location.reload();
+}
+function movedNote(from, at, main) {
+  if (document.getElementById('moved-note')) return;
+  const n = noteEl([`The link pointed at ${from}, where there is no such file. This is the file of that name at ${at}.`]);
+  n.id = 'moved-note';
+  n.style.margin = 'var(--s-200) var(--s-400) 0';
+  main.parentNode.insertBefore(n, main);
+}
 // A folder, listed; each entry opens in this viewer. true when it listed it,
 // 'forbidden' when the hub may not read there, false when it is not a folder.
 async function showDir(path, main) {
@@ -1851,10 +1922,12 @@ function wireFrameLinks(ifr) {
 
   // Not on the hub: said here, and to the Workspace tab this viewer is in.
   const notFound = () => {
-    main.innerHTML = '<div class="err">Could not open file (404) — it does not exist on the hub.</div>';
+    showMissing(path, main);
     const host = hostPage();
     if (host) host.postMessage({ type: 'fv-missing' }, location.origin);
   };
+  // Opened in place of a link whose file had moved (showMissing): said once, above the file.
+  if (MOVED_FROM) movedNote(MOVED_FROM, path, main);
   // A Workspace tab reopens where it was left and hears where the reader
   // scrolls to. Nothing is said until the start state is applied; until a
   // rendered page has loaded, the place to go back to is still the one given.
@@ -1897,6 +1970,8 @@ function wireFrameLinks(ifr) {
   }
 
   const res = await loadText(path, src);
+  // Found by its name, not where the link put it: the link's folders were wrong.
+  if (res.ok && res.found === 'tail' && res.at && /[\\/]/.test(path.replace(/^\.[\\/]/, '')) && !MOVED_FROM) movedNote(path, res.at, main);
   if (!res.ok) {
     // A folder with a dot in its name ("<home>\.ensemble") looked like a file.
     if (res.status === 404 && absPath && (await showDir(path, main)) === true) return;

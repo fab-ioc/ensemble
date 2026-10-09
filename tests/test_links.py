@@ -122,6 +122,14 @@ CASES = [
     "[Final report](D:/work/Documents/%23114%20Market-data%20manager.md)",
     "[notes](D:/w/a%20b/c.md)",
     "[bad](C:/x/100%zz.md)",
+    # 42-: #199's link audit - what is no file name stays text, a GitHub line anchor is the line.
+    "[x](src/X.java#L887)",
+    "`src/x.java#L10-L20`",
+    "ratio 0.45/0.53 now",
+    "`0.45/0.53`",
+    "`--foo.txt`",
+    "`~/.claude/projects/*/<sid>.jsonl`",
+    "`merge_check.py index.html`",
 ]
 
 
@@ -166,6 +174,13 @@ class GeneratedLinks(unittest.TestCase):
                          "D:/work/Documents/#114 Market-data manager.md")
         self.assertEqual(viewer_path(hrefs(r[CASES[40]])[0])[0], "D:/w/a b/c.md")
         self.assertEqual(viewer_path(hrefs(r[CASES[41]])[0])[0], "C:/x/100%zz.md")
+
+    def test_what_the_link_audit_found(self):
+        r = self.render("http://hub-host:8765/")
+        self.assertEqual(viewer_path(hrefs(r[CASES[42]])[0]), ("src/X.java", "887"))
+        self.assertEqual(viewer_path(hrefs(r[CASES[43]])[0]), ("src/x.java", "10"))
+        for c in CASES[44:49]:
+            self.assertEqual(hrefs(r[c]), [], c)
 
     def test_paths_and_markers_in_running_text(self):
         r = self.render("http://hub-host:8765/")
@@ -502,9 +517,14 @@ class PoRoomFileBase(unittest.TestCase):
         projects = [{"id": "proj-1", "path": r"C:\code\Ensemble", "home": r"C:\home\Ensemble"}]
         with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
              mock.patch.object(dashboard, "load_projects", lambda: projects), \
-             mock.patch.object(dashboard, "load_session_projects", lambda: {}):
-            bases = dashboard._file_ref_bases(room_id="room-po1", cwd=room["cwd"])
-        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble"])
+             mock.patch.object(dashboard, "load_session_projects", lambda: {}),              mock.patch.object(dashboard, "_task_index", lambda: [
+                 {"projectId": "proj-1", "taskDir": r"C:\home\Ensemble\t1", "createdAt": 1},
+                 {"projectId": "proj-2", "taskDir": r"C:\home\Other\t2", "createdAt": 2}]):
+            bases, search = dashboard._file_ref_places(room_id="room-po1", cwd=room["cwd"])
+        # the order file_refs documents: the room's folders, the project home, its Documents; not
+        # the other tasks' folders (the home holds them), neither tried nor walked
+        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents"])
+        self.assertEqual(search, bases)
 
     def test_resolves_a_documents_path_under_the_project_home(self):
         import tempfile
@@ -894,7 +914,8 @@ class HubMachineActions(unittest.TestCase):
                 re.search(r"^const ADOPTING = .*$", src, re.M).group(0),
                 re.search(r"^const ADOPTED = .*$", src, re.M).group(0)]
         shared = (ROOT / "static" / "actions.js").read_text(encoding="utf-8")
-        prog = HUB_ACTIONS_JS % "\n".join([shared] + defs + [top_level_function(src, n) for n in HUB_ACTION_FUNCTIONS])
+        filelinks = (ROOT / "static" / "filelinks.js").read_text(encoding="utf-8")
+        prog = HUB_ACTIONS_JS % "\n".join([shared, filelinks] + defs + [top_level_function(src, n) for n in HUB_ACTION_FUNCTIONS])
 
         def run(location):
             # From a file: with the shared script the program is past a command line's length.
@@ -1005,7 +1026,8 @@ class HubMachineActions(unittest.TestCase):
         lets go of the list, so polling carries on, and waits for a poll that
         never answers only until its own time is up."""
         src = PAGES["index.html"].replace("\r\n", "\n")
-        defs = [re.search(r"^let _refreshInFlight = .*$", src, re.M).group(0), top_level_function(src, "refresh")]
+        defs = [(ROOT / "static" / "filelinks.js").read_text(encoding="utf-8"),
+                re.search(r"^let _refreshInFlight = .*$", src, re.M).group(0), top_level_function(src, "refresh")]
         out = subprocess.run([NODE, "-e", REAL_REFRESH_JS % "\n".join(defs)], capture_output=True, text=True,
                              encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)

@@ -32,6 +32,8 @@ PAGE = (ROOT / "fileview.html").read_text(encoding="utf-8")
 HL = (ROOT / "static" / "hl.js").read_text(encoding="utf-8")
 # The task chips (static/taskcard.js, #152) the page draws for #18 in Markdown.
 TASKCARD = (ROOT / "static" / "taskcard.js").read_text(encoding="utf-8")
+# Every file link the page draws comes from static/filelinks.js (#199).
+FILELINKS = (ROOT / "static" / "filelinks.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 
@@ -47,7 +49,7 @@ def render_code() -> str:
 const fetch = url => Promise.resolve(/ref=%2318/.test(url) ? { status: 200, ok: true, json: () => Promise.resolve(TASK) } : { status: 404, ok: false, json: () => Promise.resolve({}) });
 const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => {} });
 """
-    return TASKCARD + "\n" + HL + PAGE[start:end] + refs
+    return FILELINKS + "\n" + TASKCARD + "\n" + HL + PAGE[start:end] + refs
 
 
 JS = r"""
