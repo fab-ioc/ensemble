@@ -731,7 +731,8 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     with your recommendation") is answered if it has a recommendation. The
     page's ``openAsks`` keeps the same rules. Needs you also lets go of an
     ask the person has read once it is a day old (attention.read_and_old):
-    it stays open in the chat, for them to come back to."""
+    it stays open in the chat, for them to come back to; and at once of one
+    they said they are done with (attention.set_aside: Done with this)."""
     now = time.time() if now is None else now
     rid = summary.get("id", "")
     marked = _room_asks(summary)
@@ -747,7 +748,7 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     for mid, ts, qs, who in marked:
         if ts and ts < settled:
             continue
-        if _d.attention.read_and_old(summary, ts, now):
+        if _d.attention.read_and_old(summary, ts, now) or _d.attention.set_aside(summary, ts):
             continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):

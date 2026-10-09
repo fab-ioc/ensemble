@@ -701,7 +701,7 @@ def top_level_function(src: str, name: str) -> str:
     return src[m.start():src.index("\n}\n", m.start()) + 3]
 
 
-HUB_ACTION_FUNCTIONS = ("actionState", "actionEnv", "actionsCell", "ideAction", "openWorkspaceTab", "terminalAction",
+HUB_ACTION_FUNCTIONS = ("actionState", "actionEnv", "actionsCell", "ideAction", "nothingToOpenText", "openWorkspaceTab", "terminalAction",
                         "openHeadless", "termsAction", "toggleCapturedTerms", "capturedTermsShown", "waitFor",
                         "showCapturedTerminal", "makePoWords", "isPoRoom", "poRoomIds", "currentPoRooms")
 
@@ -717,6 +717,8 @@ const CHAT_SCHEME_ON = {};
 const PROJECTS = { projects: [] }, projectOfRoom = () => null;
 const CSS = { escape: s => s };
 const toast = (msg) => log.push('toast:' + msg);
+const tildeify = p => p;
+let REPOS_REPLY = { repos: [{ path: '/code/x', editor: 'code' }], lookedIn: [{ path: '/code/x', exists: true }] };
 const ADOPT_WAIT_MS = 1500;
 const closeThemeMenu = () => {};
 const closeIjMenu = () => {}, showIjMenu = () => log.push('ij-menu'), openInEditor = async p => log.push('editor:' + p);
@@ -727,7 +729,7 @@ let ALL_ROWS = [], SELECTED_SID = null, ISSUE_TAB = '', ISSUE_TAB_SID = '', NEW_
 let STALE_REFRESHES = 0, POLLS_HELD = false, HUNG = false, ADOPT_ID = 'room-0000new1';
 const api = async (url) => {
   log.push('api:' + url);
-  if (url.startsWith('/api/repos/')) return [{ path: '/code/x', editor: 'code' }];
+  if (url.startsWith('/api/repos/')) return REPOS_REPLY;
   if (url === '/api/session/adopt') { await new Promise(r => setTimeout(r, 50)); return { room: { id: ADOPT_ID } }; }
   return { result: 'ok' };
 };
@@ -802,6 +804,17 @@ const take = () => log.splice(0);
 
   // IDE
   await ideAction(btn({ sid: liveRoom.sessionId })); out.ideRoom = [take(), ISSUE_TAB, ISSUE_TAB_SID];
+  // Nothing to open: the toast says where it looked (#194), never the board's word.
+  out.ideNone = [];
+  if (onHubMachine()) for (const looked of [[], [{ path: '/t/repo', exists: false }],
+                        [{ path: '/t/repo', exists: false }, { path: '/t', exists: false }, { path: '/code', exists: false }],
+                        [{ path: '/shared', exists: true }]]) {
+    REPOS_REPLY = { repos: [], lookedIn: looked };
+    await ideAction(btn({ sid: liveRoom.sessionId })); out.ideNone.push(take());
+  }
+  REPOS_REPLY = [{ path: '/code/old', editor: 'code' }];   // the reply before #194: a bare list
+  if (onHubMachine()) { await ideAction(btn({ sid: liveRoom.sessionId })); out.ideNone.push(take()); }
+  REPOS_REPLY = { repos: [{ path: '/code/x', editor: 'code' }], lookedIn: [] };
   await ideAction(btn({ sid: history.sessionId })); out.ideNoFolder = take();
 
   // Terminal on a history session
@@ -906,6 +919,16 @@ class HubMachineActions(unittest.TestCase):
         self.assertNotIn("dp-terms-hide", hub["menu"])
         self.assertIn('am-lbl">Open in editor<', hub["menu"])
         self.assertEqual(hub["ideRoom"][0], ["api:/api/repos/room-0000aaa1", "editor:/code/x"])
+        none = hub["ideNone"]
+        self.assertEqual(none[0][1], "toast:Nothing to open in the editor: no folder is recorded for it.")
+        self.assertEqual(none[1][1], "toast:Nothing to open in the editor: looked for its code in /t/repo, "
+                                     "which no longer exists.")
+        self.assertEqual(none[2][1], "toast:Nothing to open in the editor: looked for its code in /t/repo, /t "
+                                     "and /code; none of these folders exists any more.")
+        self.assertEqual(none[3][1], "toast:Nothing to open in the editor: looked for its code in /shared and found none.")
+        self.assertEqual(none[4], ["api:/api/repos/room-0000aaa1", "editor:/code/old"])
+        for msg in none[:4]:
+            self.assertNotRegex(msg[1], r"(?i)project|initiative|board")
         self.assertIn("api:/api/open", hub["terminalHistory"])
         self.assertNotIn("api:/api/session/adopt", hub["terminalHistory"])
         self.assertEqual(hub["firstPress"][0], ["post:toggleTerms"])

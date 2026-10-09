@@ -103,7 +103,7 @@ class ThePoHeader(unittest.TestCase):
         src = "\n".join([
             NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function pointsCountText("),
-            fn(INDEX, "function pointsCountTip("), fn(INDEX, "function runChip("), fn(INDEX, "function shortModel("),
+            fn(INDEX, "function pointsCountTip("), fn(INDEX, "function attnDot("), fn(INDEX, "function runChip("), fn(INDEX, "function shortModel("),
             fn(INDEX, "function poAgent("), fn(INDEX, "function poOpenCount("), fn(INDEX, "function poMenuItems("),
             re.search(r"^const DOCK_MENU_INTERIM = .*$", INDEX, re.M).group(0), fn(INDEX, "function poHeadHtml(")])
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,7 +123,7 @@ class ThePoHeader(unittest.TestCase):
         self.assertIn('<div class="po-name">Ensemble Dashboard · PO</div>', h)
         # A part a span (CSS draws the " · "), so a narrow header cuts the project's name first.
         self.assertIn('<div class="po-sub"><span>claude opus</span><span class="po-sub-proj">project Ensemble Dashboard</span>'
-                      '<span>2 tasks open</span><span class="run"><span class="dot idle"></span>idle</span><span class="po-pts"', h)
+                      '<span>2 tasks open</span><span class="run"><span class="dot idle" title="idle: running, not working"></span>idle</span><span class="po-pts"', h)
         self.assertIn(".po-sub > * + *::before { content: \"·\";", INDEX)
         self.assertIn(".po-sub > .po-sub-proj { flex-shrink: 1000; }", INDEX)
         self.assertNotIn("Ensemble Dashboard PO", h)  # the row's label is gone from it

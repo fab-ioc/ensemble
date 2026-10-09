@@ -67,7 +67,7 @@ function sessionActions(s, env) {
         title: hub ? `Open its working folder in ${FM}` : 'Browse its working folder in the file viewer' }
     : off({ id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', title: '' }, NO_FOLDER);
   const ideItem = { id: 'ide', label: hub ? 'Open in editor' : 'Show in Workspace', cls: 'ij-btn', data: { sid },
-    title: hub ? 'Open the project in its preferred editor (found from its language)' : 'Show its files in the Workspace tab' };
+    title: hub ? 'Open its code folder in its preferred editor (found from its language)' : 'Show its files in the Workspace tab' };
   const colours = (key) => {
     const cur = s.currentTheme || '';
     const item = { id: 'colours', label: cur ? `Terminal colours: ${cur}` : 'Terminal colours…', cls: 'theme-dd-trigger',

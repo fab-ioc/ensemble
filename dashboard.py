@@ -527,6 +527,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
+              "static/pagekey.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
@@ -6307,7 +6308,8 @@ def build_projects() -> dict:
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
                            "isGit": p.get("isGit", False), "registered": True,
-                           "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+                           "sessions": [], "live": 0, "working": 0, "poLive": False,
+                           "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
     # A project's PO is not one of its tasks: it stays in `sessions` (the page
     # finds and chooses the PO there) and is never a task live. It needs you
@@ -6324,11 +6326,17 @@ def build_projects() -> dict:
             if UNASSIGNED not in groups:
                 groups[UNASSIGNED] = {"id": UNASSIGNED, "name": "Unassigned",
                                       "path": "", "isGit": False, "registered": False,
-                                      "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+                                      "sessions": [], "live": 0, "working": 0, "waiting": 0, "updatedAt": 0}
         g = groups[pid]
         g["sessions"].append(s)
         g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
+        # Its card's dot is green while its PO or one of its tasks works (#193).
+        if s.get("isLive") and s.get("status") == "busy":
+            groups[po_rooms.get(s.get("roomId"), pid)]["working"] += 1
         if s.get("roomId") and s.get("roomId") in po_rooms:
+            # A PO running at its prompt: its card shows the idle ring, not "idle".
+            if s.get("isLive"):
+                groups[po_rooms[s["roomId"]]]["poLive"] = True
             if (s.get("attention") or {}).get("state") in PO_NEEDS_STATES:
                 groups[po_rooms[s["roomId"]]]["waiting"] += 1
                 needs_you += 1
@@ -8663,44 +8671,136 @@ def _is_project_dir(p: Path) -> bool:
     return any((p / m).exists() for m in _PROJECT_MARKERS)
 
 
-def find_repos_for_session(session_id: str, max_repos: int = 10) -> list[dict]:
-    """Find IDE-openable projects belonging to this session. Only looks at the cwd:
-    (1) enclosing project (walk up for .git or .idea), and (2) direct children
-    with .git or .idea. Transcript mentions are not used."""
-    cwd = cwd_for_session(session_id)
-    if cwd and not Path(cwd).exists():
-        for s in _read_session_files():
-            if s.get("sessionId") == session_id:
-                live = live_cwd_of_pid(s.get("pid", 0) or 0)
-                if live:
-                    cwd = live
-                break
+def _not_code_folder(p: Path) -> bool:
+    """The projects folder (it is a git repo of its own, for backups) or a
+    folder above it: never a task's or a project's code."""
+    try:
+        r = os.path.normcase(os.path.realpath(str(PROJECTS_ROOT)))
+        c = os.path.normcase(os.path.realpath(str(p)))
+    except OSError:
+        return False
+    return c == r or r.startswith(c.rstrip(os.sep) + os.sep)
 
+
+def _repos_in(folder: Path, stop: str = "", max_repos: int = 10) -> dict[str, str]:
+    """The IDE-openable folders of ``folder``: (1) the one enclosing it (walk
+    up for .git or .idea, not above ``stop`` and never the projects folder),
+    and (2) its direct children with .git or .idea."""
     repos: dict[str, str] = {}
-    if not cwd or not Path(cwd).exists():
-        return []
-
-    # (1) Enclosing project (walk up)
-    path = Path(cwd)
+    stop_n = os.path.normcase(os.path.normpath(stop)) if stop else ""
+    path = folder
     for _ in range(8):
+        if _not_code_folder(path):
+            break
         if _is_project_dir(path):
             repos[str(path)] = path.name
             break
-        if path == path.parent:
+        if path == path.parent or (stop_n and os.path.normcase(os.path.normpath(str(path))) == stop_n):
             break
         path = path.parent
-
-    # (2) Direct children that are projects
     try:
-        for child in Path(cwd).iterdir():
-            if not child.is_dir():
-                continue
-            if _is_project_dir(child):
-                repos.setdefault(str(child), child.name)
+        for child in folder.iterdir():
             if len(repos) >= max_repos:
                 break
+            if child.is_dir() and _is_project_dir(child):
+                repos.setdefault(str(child), child.name)
     except OSError:
         pass
+    return repos
+
+
+def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
+    """What Open in editor opens for a session or task, and where it looked.
+
+    A project's PO opens the project's code folder (project.json's path; a
+    documents project's own folder). A task opens the repo in its working
+    folder (its worktree, ``<task>/repo``), else its task folder; a task of a
+    documents project its task folder. A session in no project opens the repo
+    its working folder is in, or the folders with a repo inside it, else that
+    folder itself. A folder that no longer exists is skipped for the next one
+    (a task's or session's project's code folder last).
+
+    Returns ``{"repos": [{path, name, language, editor, iconUrl}],
+    "lookedIn": [{"path", "exists"}]}``: when ``repos`` is empty, ``lookedIn``
+    says where it looked (empty: no folder is known for it)."""
+    projects = load_projects()
+    links = load_session_projects()
+    room = None
+    if session_id.startswith("room-"):
+        try:
+            room = chatroom.get_room(session_id, public=False)
+        except Exception:
+            room = None
+    if room:
+        cwd = room.get("cwd", "") or ""
+        project_id = _task_project(room, links, projects)
+    else:
+        cwd = cwd_for_session(session_id)
+        if cwd and not Path(cwd).exists():
+            for s in _read_session_files():
+                if s.get("sessionId") == session_id:
+                    live = live_cwd_of_pid(s.get("pid", 0) or 0)
+                    if live:
+                        cwd = live
+                    break
+        project_id = links.get(session_id) or _project_for_cwd(cwd, projects)
+    project = next((p for p in projects if p["id"] == project_id), None) if project_id else None
+    code = (project or {}).get("path") or ""
+    documents = (project or {}).get("kind") == "documents"
+    is_po = bool(room and project and room.get("id") == (project.get("poRoomId") or "").strip())
+
+    # (folder, stop, exact): the folders to try, in order. stop bounds the
+    # walk up; an exact folder opens as it is (the project's configured code
+    # folder, even inside a larger repo; a documents folder).
+    tries: list[tuple[str, str, bool]] = []
+    if is_po:
+        tries = [(code, "", True), (cwd, "", documents)]
+    elif room and project:
+        task_dir = room.get("taskDir") or ""
+        tries = ([(task_dir or cwd, "", True)] if documents
+                 else [(cwd, task_dir, False), (task_dir, task_dir, False)])
+        tries.append((code, "", True))
+    else:
+        tries = [(cwd, "", False)] + ([(code, "", True)] if project else [])
+
+    # Every folder is tried for a repo first; only when none has one does the
+    # first existing folder open as it is (never the projects folder).
+    looked: list[dict] = []
+    repos: dict[str, str] = {}
+    plain = ""
+    seen: set[str] = set()
+    code_key = os.path.normcase(os.path.normpath(code)) if code else ""
+    for folder, stop, exact in tries:
+        key = os.path.normcase(os.path.normpath(folder)) if folder else ""
+        if not key or key in seen:
+            continue
+        # The project's code folder, or a folder in it (a session or an
+        # in-place task working there): never the larger repo around it. A
+        # task folder bounds the walk only when it holds the folder (a
+        # worktree); it is the nearer bound then.
+        stop_key = os.path.normcase(os.path.normpath(stop)) if stop else ""
+        if stop_key and not (key == stop_key or key.startswith(stop_key.rstrip(os.sep) + os.sep)):
+            stop = ""
+        if code_key and key == code_key:
+            exact = True
+        elif code_key and not stop and key.startswith(code_key.rstrip(os.sep) + os.sep):
+            stop = code
+        seen.add(key)
+        p = Path(folder)
+        exists = p.is_dir()
+        looked.append({"path": folder, "exists": exists})
+        if not exists:
+            continue
+        if exact:
+            repos = {str(p): p.name}
+        else:
+            repos = _repos_in(p, stop, max_repos)
+            if not repos and not plain and not _not_code_folder(p):
+                plain = str(p)
+        if repos:
+            break
+    if not repos and plain:
+        repos = {plain: Path(plain).name}
 
     enriched = []
     for path_str, name in sorted(repos.items()):
@@ -8712,7 +8812,7 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> list[dict]:
             "editor": editor,
             "iconUrl": icon_url,
         })
-    return enriched
+    return {"repos": enriched, "lookedIn": looked}
 
 
 def open_path(path: str, app: str = "default") -> str:
@@ -9267,12 +9367,15 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     except Exception:
         reported = {}
     try:
+        run_state = attention.run_by_room()
+    except Exception:
+        run_state = {}
+    try:
         for rm in rooms:
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
             live = _room_is_live(rm)
             idle = None
-            busy = False
             for pp in agents_in:
                 pid = pp.get("ptyId")
                 sess = ptyrun.get(pid) if pid else None
@@ -9280,8 +9383,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                     isec = sess.info().get("idleSeconds")
                     if isec is not None:
                         idle = isec if idle is None else min(idle, isec)
-                        if isec < 2.5:
-                            busy = True
+            # Busy is an agent in a turn, as attention reads it (its hooks,
+            # Claude's status file, else the screen), not a terminal that
+            # printed in the last moments: every run dot reads this, and green
+            # is an agent working (GitHub issue 13, point P157).
+            busy = run_state.get(rm["id"]) == "working"
             rid = rm["id"]
             msgs = rm.get("messages", []) or []
             _user_msgs = [m for m in msgs
@@ -11363,9 +11469,15 @@ class Handler(BaseHTTPRequestHandler):
         # machine's loopback), so a page opened over the tailnet's plain http
         # has none; there a navigation still says Upgrade-Insecure-Requests and
         # asks for HTML. A bare curl sends neither.
+        # A frame of the page's own (a chat in the list's panel, /ui-key) is
+        # one too: the key changes with every hub restart, and a page left
+        # open across one kept the old key for all its frames, so every read
+        # point it sent was refused (GitHub issue 13, point P157).
         mode = self.headers.get("Sec-Fetch-Mode")
         if mode is not None:
-            return mode == "navigate" and self.headers.get("Sec-Fetch-Dest") == "document"
+            dest = self.headers.get("Sec-Fetch-Dest")
+            return mode == "navigate" and (dest == "document" or (
+                dest in ("iframe", "frame") and self.headers.get("Sec-Fetch-Site") == "same-origin"))
         return (self.headers.get("Upgrade-Insecure-Requests") == "1"
                 and "text/html" in (self.headers.get("Accept") or ""))
 
@@ -11623,6 +11735,20 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/pty-test":
             self._send_file(STATIC_DIR / "pty-test.html",
                             "text/html; charset=utf-8")
+            return
+        if p == "/ui-key":
+            # A page opened before the hub last restarted holds the old key:
+            # a hidden frame of its own loads this to get today's
+            # (static/pagekey.js), then sends the write it was refused again.
+            body = b"<!doctype html><meta charset=utf-8><title>key</title>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            for k, v in self._ui_key_headers():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
             return
         if p == "/session":
             # /session?room=#18 (&project=…), ?room=ED-18 or ?task=18: the page
@@ -14843,6 +14969,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             asks.forget()
             self._send_json(200, {"ok": True, "seenAt": seen})
+            return
+        if p == "/api/attention/done":
+            # {roomId}: the person is done with what this task or PO has put
+            # to them (Done with this, on the list's Details): it leaves Needs
+            # you on every device. A page-only write, like the read point.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if not re.fullmatch(r"room-[A-Za-z0-9_-]{1,64}", rid):
+                self._send_json(400, {"error": "bad_room"})
+                return
+            dealt = chatroom.record_dealt(rid)
+            if dealt is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            asks.forget()
+            attention.snapshot(0)
+            self._send_json(200, {"ok": True, "dealtAt": dealt})
             return
         if p == "/api/history/restore":
             # {projectId, rev, path}: put an old version back. A write, so only

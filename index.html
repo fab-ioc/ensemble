@@ -242,12 +242,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --c-discovery-bg: #F3F0FF; --c-discovery-fg: #5E4DB2; --c-discovery-bold: #8270DB;
 
     /* Run state — what a process is doing. Never a board column. */
-    --run-working: var(--c-progress-bold);
-    --run-idle: var(--fg-disabled);
+    /* Green is an agent working now, and nothing else; a terminal running
+       idle is a calm neutral ring (GitHub issue 13, point P157). */
+    --run-working: var(--c-success-bold);
+    --run-idle: var(--c-neutral-bold);
     --run-off: var(--border-strong);
-    /* The list's dot for a row with a live terminal on the hub, working or
-       idle: green means running, and nothing else (GitHub issue 13). */
-    --run-live: var(--c-success-bold);
 
     /* Agent identity. Outside the semantic six on purpose: an avatar says
        WHO, never WHAT. Solid fill + light text, so it can never be read as
@@ -992,7 +991,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .status.idle {
     width: 9px; height: 9px; border-radius: 50%;
-    background: var(--run-idle);
+    box-shadow: inset 0 0 0 2px var(--run-idle);
   }
   .status.busy {
     color: var(--run-working);
@@ -1370,6 +1369,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .mention { color: var(--c-discovery-fg); font-weight: 600; background: var(--c-discovery-bg); border-radius: var(--r-100); padding: 0 3px; }
   /* Projects-first shell */
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run-working); animation: livep 1.6s infinite; }
+  .live-dot.idle { background: transparent; animation: none; box-shadow: inset 0 0 0 2px var(--run-idle); }
   @keyframes livep { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); } 70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run-working) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); } }
   .listctl { display: flex; align-items: center; gap: 10px; padding: 6px 4px 12px; font-size: 12px; color: var(--fg-subtle); }
   .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 4px 2px 20px; }
@@ -1387,7 +1387,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .srow:hover { background: var(--hover); }
   .sdot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
   .sdot.work { background: var(--run-working); animation: livep 1.6s infinite; }
-  .sdot.wait { background: var(--c-warning-bold); } .sdot.idle { background: var(--run-idle); } .sdot.off { background: var(--run-off); }
+  .sdot.wait { background: var(--c-warning-bold); } .sdot.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--run-idle); } .sdot.off { background: var(--run-off); }
+  .sdot.danger { background: var(--c-danger-bold); }
   .srow .stitle { color: var(--fg); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .srow .stime { color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .proj .metarow { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
@@ -2283,7 +2284,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .run.off { color: var(--fg-muted); }
   .run .dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--run-off); }
   .run .dot.working { background: var(--run-working); animation: cardpulse 2s infinite; }
-  .run .dot.idle { background: var(--run-idle); }
+  .run .dot.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--run-idle); }
+  .run .dot.warning { background: var(--c-warning-bold); }
+  .run .dot.danger { background: var(--c-danger-bold); }
   @keyframes cardpulse {
     0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); }
     70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--run-working) 0%, transparent); }
@@ -2517,7 +2520,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sw-st.warning { background: var(--c-warning-bold); }
   .sw-st.danger { background: var(--c-danger-bold); }
   .sw-st.neutral { background: var(--c-neutral-bold); }
-  .sw-st.live { background: var(--run-live); }
+  .sw-st.working { background: var(--run-working); }
+  /* Running, not working: a ring, so it never reads as off or as a tone. */
+  .sw-st.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--run-idle); }
   .sw-st.new { background: var(--c-discovery-bold); }
   .sw-title {
     min-width: 0; font-size: var(--fs-300); line-height: 20px; color: var(--fg);
@@ -2559,6 +2564,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .sw-diag-why + .sw-diag-lines { border-top: 1px solid var(--border); padding-top: var(--s-200); }
   .sw-diag > :first-child { margin-top: 0; }
+  .sw-diag .sw-done { display: block; height: 24px; margin-top: var(--s-200); padding: 0 var(--s-200); font-size: var(--fs-200); }
   /* Under a PO's row in the recent list (#189): what its tasks say, in
      words, each task named by a number that opens it. Indented to the
      title; "needs you" is the one that draws the eye (--fg, 600). */
@@ -3836,6 +3842,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/attach.js"></script>
 <script src="/static/taskcard.js"></script>
 <script src="/static/filedrag.js"></script>
+<script src="/static/pagekey.js"></script>
 <script>FileDrag.attach(document);</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
@@ -6085,11 +6092,15 @@ function renderHeadlessRow(r, parsed, now) {
 // ---------------------------------------------------------------------------
 function runChip(r, compact = false) {
   if (r.draft) return `<span class="run"><span class="dot off"></span>not started</span>`;
-  if (r.isLive && r.status === 'busy') return `<span class="run"><span class="dot working"></span>working</span>`;
-  if (r.isLive) return `<span class="run"><span class="dot idle"></span>idle</span>`;
+  // What needs you colours the dot (its words stay the run state's): yellow
+  // waits on you, red is blocked or gone (#193).
+  const a = attnDot(r);
+  const dot = (cls, tip) => `<span class="dot ${a ? a.tone : cls}" title="${esc(a ? a.tip : tip)}"></span>`;
+  if (r.isLive && r.status === 'busy') return `<span class="run">${dot('working', 'working')}working</span>`;
+  if (r.isLive) return `<span class="run">${dot('idle', 'idle: running, not working')}idle</span>`;
   // Calm on purpose: this is the whole board for a minute after every hub
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
-  return `<span class="run off"><span class="dot off"></span>${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
+  return `<span class="run off">${dot('off', 'stopped')}${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
 }
 
 // ---- Task numbers: begin ----------------------------------------------------
@@ -6544,12 +6555,17 @@ function swState(e, group) {
     const tone = ['danger', 'warning', 'neutral'].find(t => wait.some(t2 => t2.it && swTone(t2.it.state) === t)) || 'warning';
     return { cls: tone, tip: `${wait.length} of its tasks need${wait.length === 1 ? 's' : ''} you` };
   }
-  // Green is a live terminal on the hub (the row's own, a PO's its own: its
-  // tasks' are counted in the line under it), working or idle, and nothing
-  // else: not Done, not a recent write (GitHub issue 13).
-  if (r.isLive && !r.draft) return { cls: 'live', tip: r.status === 'busy' ? 'running, working' : 'running, idle' };
+  // Green is an agent working now, as the hub reads its turn (its hooks,
+  // Claude's status file, else the screen), and nothing else; a PO's row is
+  // green while the PO or one of its tasks works. A terminal that runs and
+  // does nothing is a calm ring, "idle" (GitHub issue 13, point P157).
+  const live = r.isLive && !r.draft;
+  if (live && r.status === 'busy') return { cls: 'working', tip: 'working' };
+  if (sg && sg.working) return { cls: 'working', tip: `working: ${sg.working} of its tasks` };
+  if (live) return { cls: 'idle', tip: 'idle: running, not working' };
+  if (sg && sg.running) return { cls: 'idle', tip: `idle: ${sg.running} of its tasks running, none working` };
   if (e.row && isUnread(r)) return { cls: 'new', tip: 'New messages since you last read this chat' };
-  return { cls: 'off', tip: !e.row ? '' : group === 'done' ? 'done, not running' : 'not running' };
+  return { cls: 'off', tip: !e.row ? '' : group === 'done' ? 'done, stopped' : 'stopped' };
 }
 // Who is on a running task: "claude, codex".
 function swAgents(r) {
@@ -6601,10 +6617,10 @@ function swRowHtml(e, group, selected) {
   const data = e.po ? `data-po="${esc(e.pid)}"` : e.proj ? `data-proj="${esc(e.pid)}"` : `data-sid="${esc(r.sessionId || e.key)}"`;
   const needsIn = !!(e.sig && e.sig.needs.length);
   return `<button type="button" class="sw-row${needs ? ' needs' : ''}${needsIn ? ' needs-in' : ''}${selected ? ' on' : ''}${unread ? ' unread' : ''}" ${data} data-room="${esc(e.key)}" title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>`
-    + `<span class="sw-st ${st.cls}"${st.tip ? ` role="img" aria-label="${esc(st.tip)}"` : ''}></span>`
+    + `<span class="sw-st ${st.cls}"${st.tip ? ` role="img" aria-label="${esc(st.tip)}" title="${esc(st.tip)}"` : ''}></span>`
     + `<span class="sw-title">${no ? `<span class="tno">${esc(no)}</span> ` : ''}${esc(title)}</span>${age}`
     + `<span class="sw-l2">${bits.join('')}</span>${why}</button>`
-    + (needs && (it.lastLines || it.reason) ? swDiagHtml(e.key, it) : '')
+    + (needs && (it.lastLines || it.reason || it.canDismiss) ? swDiagHtml(e.key, it) : '')
     + swSigHtml(e);   // after Details: swDiagFit finds the row just before its button
 }
 // Under a PO's row in the recent list (#189): what its tasks, not listed
@@ -6640,13 +6656,41 @@ const SW_DIAG = new Set();
 // full and the last lines of its screen. With a reason alone it waits hidden
 // (data-clip) until swDiagFit finds the reason cut off where it is drawn.
 function swDiagHtml(key, it) {
-  const open = SW_DIAG.has(key), id = 'sw-diag-' + key, clip = !it.lastLines && !open;
+  // What the person can say they are done with keeps its Details, for Done with this.
+  const open = SW_DIAG.has(key), id = 'sw-diag-' + key, clip = !it.lastLines && !it.canDismiss && !open;
   return `<button type="button" class="sw-diag-btn" data-room="${esc(key)}" aria-expanded="${open}" aria-controls="${esc(id)}"${clip ? ' data-clip hidden' : ''}`
     + ` aria-label="${esc(it.lastLines ? 'Details: why, and the last lines of its screen' : 'Details: why, in full')}">`
     + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> Details</button>`
     + `<div class="sw-diag" id="${esc(id)}"${open ? '' : ' hidden'}>`
     + (it.reason ? `<p class="sw-diag-why">${esc(it.reason)}</p>` : '')
-    + (it.lastLines ? `<pre class="sw-diag-lines">${esc(it.lastLines)}</pre>` : '') + '</div>';
+    + (it.lastLines ? `<pre class="sw-diag-lines">${esc(it.lastLines)}</pre>` : '')
+    + (it.canDismiss ? `<button type="button" class="rm-btn sw-done" data-room="${esc(key)}"`
+      + ` title="It leaves Needs you on every device; a new ask comes back">Done with this</button>` : '') + '</div>';
+}
+// Done with this (GitHub issue 13, point P157): the person dealt with what the
+// task or PO put to them, in its chat, its terminal or elsewhere. The hub
+// keeps it (dealtAt), so the row leaves Needs you on every device.
+async function swDone(btn) {
+  const rid = btn.dataset.room;
+  btn.disabled = true;
+  try {
+    const r = await (window.pageWrite ? pageWrite('/api/attention/done', { roomId: rid })
+      : fetch('/api/attention/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid }) }));
+    if (!r.ok) {
+      let why = '';
+      try { why = (await r.json()).message || ''; } catch (e) {}
+      throw new Error(why || `HTTP ${r.status}`);
+    }
+    SW_DIAG.delete(rid);
+    // Gone at once here; the next poll says the same from the hub.
+    ATTENTION = { ...ATTENTION, items: (ATTENTION.items || []).filter(x => x.roomId !== rid) };
+    ATTENTION_BY_ROOM.delete(rid);
+    renderAttention();
+    updateRoomsBadge();
+  } catch (e) {
+    btn.disabled = false;
+    toast('Not done: ' + e.message, 5000, 'err');
+  }
 }
 // The list's views, in its ⋯ menu (#189): the recent list (the default),
 // or the groups it had before, by status or by project.
@@ -7604,11 +7648,23 @@ function projectsChromeHtml() {
     + (s && s.changed ? `<span class="lc-changed" title="${esc(nounText('Uncommitted files across every {project}: each card says which'))}">◆ ${s.changed} changed</span>` : '')
     + `${viewSwitchHtml()}</div>`;
 }
+// A dot that needs you takes its lozenge's tone (yellow waits on you, red is
+// blocked or gone), as in the left list; else green is an agent in a turn (the
+// row's status, as the hub reads it), never a terminal that only printed, and
+// a running agent between turns is a ring (#193, point P157).
+function attnDot(r) {
+  const a = r && r.attention && r.attention.state;
+  const tone = a ? swTone(a) : '';
+  return tone === 'danger' || tone === 'warning' ? { tone, tip: ATTN_LABEL[a] || a } : null;
+}
 function projectSessionState(sn) {
-  if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
-  if (sn.isLive) return (sn.idleSeconds != null && sn.idleSeconds < 2.5) ? 'work' : 'idle';
+  const a = attnDot(sn);
+  if (a) return a.tone === 'danger' ? 'danger' : 'wait';
+  if (sn.isLive) return sn.status === 'busy' ? 'work' : 'idle';
   return 'off';
 }
+const SDOT_TIP = { work: 'working', wait: 'waiting for you', danger: 'needs you', idle: 'idle: running, not working', off: 'stopped' };
+const sdotTip = (sn, st) => (attnDot(sn) || {}).tip || SDOT_TIP[st];
 function projectsLandingHtml() {
   if (!PROJECTS) return `<p class="empty">${esc(nounText('Loading {projects}…'))}</p>`;
   const cards = PROJECTS.projects.map(p => {
@@ -7616,11 +7672,13 @@ function projectsLandingHtml() {
     const count = tasks.length;
     const rows = tasks.slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}" title="${esc(sdotTip(sn, st))}" aria-label="${esc(sdotTip(sn, st))}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
     }).join('');
     const more = count > 4 ? `<div class="srow more">… ${count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
-    const live = p.live ? `<span class="live"><span class="live-dot"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
+    const live = p.working ? `<span class="live" title="${esc(nounText(`Working now: ${p.working} in this {project}`))}"><span class="live-dot"></span>${p.working} working</span>`
+      : p.live ? `<span class="live" title="Running, none working"><span class="live-dot idle"></span>${p.live} live</span>`
+      : p.poLive ? `<span class="live" title="Its PO runs, not working"><span class="live-dot idle"></span>PO idle</span>` : `<span class="live off">idle</span>`;
     const changed = p.isGit ? (p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`) : '';
     const unassigned = p.id === UNASSIGNED_ID;
     const sub = unassigned
@@ -16762,6 +16820,8 @@ $('#sw-list').addEventListener('click', (ev) => {
     if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
     return;
   }
+  const done = ev.target.closest('.sw-done');
+  if (done) { swDone(done); return; }
   const more = ev.target.closest('.sw-diag-btn');
   if (more) {
     // Details: open or folded, kept across redraws; the focus stays on it.
@@ -18512,6 +18572,17 @@ async function focusByPid(pid) {
 // page (the Activity tab's /session iframe) already draws. Pressed again,
 // Terminal brings that terminal to the front; that is what Focus was for.
 
+// Why Open in editor found nothing: where it looked for the code folder.
+// It names folders, never the board's word (a code folder is not a board).
+function nothingToOpenText(looked) {
+  if (!looked.length) return 'Nothing to open in the editor: no folder is recorded for it.';
+  const all = looked.map(x => tildeify(x.path)), gone = looked.filter(x => !x.exists);
+  const list = all.length === 1 ? all[0] : all.slice(0, -1).join(', ') + ' and ' + all[all.length - 1];
+  if (gone.length < looked.length) return `Nothing to open in the editor: looked for its code in ${list} and found none.`;
+  if (all.length === 1) return `Nothing to open in the editor: looked for its code in ${list}, which no longer exists.`;
+  return `Nothing to open in the editor: looked for its code in ${list}; none of these folders exists any more.`;
+}
+
 // IDE: the editor on the hub machine, the Workspace tab anywhere else.
 async function ideAction(btn) {
   const sid = btn.dataset.sid;
@@ -18519,9 +18590,10 @@ async function ideAction(btn) {
   if (!onHubMachine()) { openWorkspaceTab(sid); return; }
   btn.classList.add('busy');
   try {
-    const repos = await api('/api/repos/' + sid);
+    const r = await api('/api/repos/' + sid);
+    const repos = Array.isArray(r) ? r : (r.repos || []);
     btn.classList.remove('busy');
-    if (!repos.length) { toast(nounText('no {project} found in this session'), 3000, 'err'); return; }
+    if (!repos.length) { toast(nothingToOpenText(r.lookedIn || []), 6000, 'err'); return; }
     if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
     showIjMenu(btn._at || btn, repos);   // a stand-in (pdRunAction) names the ⋯ to open under
   } catch (e) {
