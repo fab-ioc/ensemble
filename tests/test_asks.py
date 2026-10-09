@@ -415,6 +415,39 @@ class TheEndpoint(_World):
                       "no point made here: it quotes the question")
         self.assertTrue(points.load(rid)["asks"]["m-two"]["0"]["undone"])
 
+    def test_an_answer_held_by_a_resume_is_taken_back(self):
+        """A stopped task's answer waits in its resume's queue: under way, or
+        failed (kept for Retry). Not typed yet, so Undo takes it back."""
+        rid = self._room()
+        self.addCleanup(dashboard._RESUMES.pop, rid, None)
+        for state in ("failed", "resuming"):
+            with self.subTest(state=state):
+                key = f"ask:sid-1:1:{0 if state == 'failed' else 1}"
+                sends.accept(rid, key, "Re “Q”: Yes")
+                res = dashboard._Resume(rid)
+                res.state = state
+                res.queue = [{"text": "Re “Q”: Yes", "key": key, "at": time.time()},
+                             {"text": "another", "key": "k-other", "at": time.time()}]
+                dashboard._RESUMES[rid] = res
+                self.assertTrue(dashboard.withdraw_send(rid, key))
+                self.assertEqual([it["key"] for it in res.queue], ["k-other"], "the others stay")
+                self.assertIsNone(sends.get(rid, key))
+                self.assertFalse(dashboard.withdraw_send(rid, key), "once")
+                # The last one taken from a failed resume ends it; one under way goes on.
+                res.queue = [{"text": "x", "key": key, "at": time.time()}]
+                sends.accept(rid, key, "x")
+                self.assertTrue(dashboard.withdraw_send(rid, key))
+                self.assertEqual(rid in dashboard._RESUMES, state == "resuming")
+                dashboard._RESUMES.pop(rid, None)
+        # Typed in already (posted): the queue no longer has it to give back.
+        res = dashboard._Resume(rid)
+        res.queue = [{"text": "x", "key": "ask:sid-1:1:2", "at": time.time(), "posted": True}]
+        dashboard._RESUMES[rid] = res
+        sends.accept(rid, "ask:sid-1:1:2", "x")
+        self.assertFalse(dashboard.withdraw_send(rid, "ask:sid-1:1:2"))
+        self.assertEqual(len(res.queue), 1)
+
+    def test_words_in_the_chat_end_the_wait_and_a_quick_answer_does_not(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
             http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 0, "option": "30 days"})

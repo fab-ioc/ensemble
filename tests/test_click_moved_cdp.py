@@ -191,6 +191,42 @@ async function main() {
       R.expBefore = !!(await undoAt());
       await inF(`ASK_UNDO.forEach((v,k)=>ASK_UNDO.set(k,Date.now()-1)); renderBubbles(LAST_ITEMS); 0`);
       R.expAfter = !!(await undoAt());
+      if (!touch) {
+      // (g) The person's own wheel scroll brings an option under the still
+      // pointer: a click right after it answers (moves the page makes are guarded).
+      await sleep(400); await inF(`__card('wheel', 4, [], 8); const b=$('#msgs'); const o=b.querySelector('.qa-opt'); b.scrollTop+=o.getBoundingClientRect().top-b.getBoundingClientRect().top-b.clientHeight/2; 0`);
+      await sleep(300);
+      const w0 = await opt();
+      const W = {x:Math.round(w0.x), y:Math.round(w0.y - 150)};
+      await moveTo(W.x,W.y); await sleep(450);
+      R.wheelBefore = await kindAt(W.x,W.y);
+      await c.send('Input.dispatchMouseEvent',{type:'mouseWheel',x:W.x,y:W.y,deltaX:0,deltaY:150},s);
+      await sleep(200);
+      const w1 = await opt();
+      R.wheelUnder = await kindAt(W.x,W.y);
+      const WX = R.wheelUnder === 'OPT' ? W : {x:Math.round(w1.x), y:Math.round(w1.y)};
+      await click(WX.x,WX.y);
+      await sleep(250);
+      R.wheelAsked = await inF('window.__asked');
+      }
+      // (h) A header button that starts or stops, come under a still pointer:
+      // nothing within 400 ms, a click later acts.
+      await sleep(400); await inF('LAST_ITEMS=null; renderBubbles([]); 0'); await sleep(100);
+      const hb = await inF(`(() => {window.__hdr=0; const h=document.createElement('button'); h.type='button'; h.className='am-btn am-primary'; h.dataset.act='zz-test'; h.textContent='Start'; h.style.cssText='position:fixed;left:40px;top:300px;width:90px;height:32px;z-index:99';
+        h.addEventListener('click',()=>{window.__hdr++;}); h.style.display='none'; document.body.appendChild(h); window.__hb=h; return 1;})()`);
+      const fr = await ev(`(() => {const a=${F}.getBoundingClientRect(); return {x:Math.round(a.x+85), y:Math.round(a.y+316)};})()`);
+      // A finger has no hover: where it last touched is where it is (a double tap).
+      R.hdrFirstOn = await kindAt(fr.x,fr.y);
+      await moveTo(fr.x,fr.y); if (touch) await click(fr.x,fr.y); await sleep(450);
+      await inF(`__hb.style.display=''; 0`); await sleep(80);
+      await click(fr.x,fr.y);
+      await sleep(150);
+      R.hdrEarly = await inF('window.__hdr');
+      await sleep(500);
+      await click(fr.x,fr.y);
+      await sleep(150);
+      R.hdrLater = await inF('window.__hdr');
+      await inF('__hb.remove(); 0');
       await c.send('Target.closeTarget',{targetId});
       await c.send('Target.disposeBrowserContext',{browserContextId});
     }
@@ -276,6 +312,20 @@ class ClickMoved(unittest.TestCase):
                 self.assertFalse(g['undoAfter'], g)
                 self.assertTrue(g['expBefore'], g)
                 self.assertFalse(g['expAfter'], g)
+
+
+    def test_own_scroll_then_click_answers(self):
+        g = self.got['1728']
+        self.assertNotEqual(g['wheelBefore'], 'OPT', g)
+        self.assertEqual(g['wheelUnder'], 'OPT', g)     # the wheel brought it under the pointer
+        self.assertEqual([a['mid'] for a in g['wheelAsked']], ['wheel'], g)
+
+    def test_header_button_come_under_the_pointer(self):
+        for w in ('1728', '390'):
+            g = self.got[w]
+            with self.subTest(w=w):
+                self.assertNotIn(g['hdrFirstOn'], ('OPT', 'ctl'), g)
+                self.assertEqual((g['hdrEarly'], g['hdrLater']), (0, 1), g)
 
 
 if __name__ == '__main__':

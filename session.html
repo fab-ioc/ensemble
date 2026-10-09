@@ -5609,19 +5609,26 @@ $('#compose').addEventListener('compositionend', e => {
 // pointer (moved or appeared there within PG_SETTLE ms before the press).
 // Anything else does nothing. Keyboard activation (detail 0) is not a press.
 const PG_SEL = '#send, .qa-opt, .qa-send, .qa-undo, .send-retry, .send-discard, .send-hide, .pend-retry, .pend-discard, '
-  + '.pt-btn, .pc-opt, .pc-btn, .cmt-submit, .cu-read';
+  + '.pt-btn, .pc-opt, .pc-btn, .cmt-submit, .cu-read, .am-primary[data-act], .am-item[data-act]';
 const PG_SETTLE = 400, PG_SLOP = 4, PG_HOLD = 300;
 // at: where the pointer was last (null: not over this page); any: when a press
 // on the page began (0: none on); down: the same for a press on the
 // conversation; up: when the last of those ended; press: what it was on; click:
 // a click is being dispatched (a draw it makes is the person's own, never
 // held); later: a poll's update waiting for the press to be over; typed: when
-// the person last typed in the box. (var: renderBubbles may run before this line.)
-var PG = { els: new WeakMap(), keys: new Map(), at: null, any: 0, down: 0, up: 0, press: null, click: false, queued: false, flush: 0, later: null, typed: -Infinity };
+// the person last typed in the box; scrolled: when they last scrolled (wheel,
+// a scroll key, a touch drag). (var: renderBubbles may run before this line.)
+var PG = { els: new WeakMap(), keys: new Map(), at: null, any: 0, down: 0, up: 0, press: null, click: false, queued: false, flush: 0, later: null, typed: -Infinity, scrolled: -Infinity };
 document.addEventListener('input', e => { if (e.target.closest && e.target.closest('#compose')) PG.typed = performance.now(); }, true);
+const pgScrolled = () => { PG.scrolled = performance.now(); };
+window.addEventListener('wheel', pgScrolled, { capture: true, passive: true });
+window.addEventListener('touchmove', pgScrolled, { capture: true, passive: true });
+window.addEventListener('keydown', e => {
+  if (/^(Page(Up|Down)|Home|End|Arrow(Up|Down)| )$/.test(e.key) && !(e.target.closest && e.target.closest('textarea, input, select, [contenteditable]'))) pgScrolled();
+}, true);
 function pgKey(b) {
   const d = b.dataset;
-  return [PG_SEL.split(', ').find(s => b.matches(s.trim())), d.ask, d.opt, d.pt, d.ptAct, d.mid, d.send, d.i, d.k].join(String.fromCharCode(1));
+  return [PG_SEL.split(', ').find(s => b.matches(s.trim())), d.ask, d.opt, d.pt, d.ptAct, d.mid, d.send, d.i, d.k, d.act].join(String.fromCharCode(1));
 }
 // Places are taken on the whole window, not this frame: the frame itself moves
 // too (the accident: the conversation's frame widened under the pointer, the
@@ -5633,8 +5640,10 @@ function pgOff() {
 }
 function pgRect(b, off = pgOff()) { const r = b.getBoundingClientRect(); return [r.left + off[0], r.top + off[1], r.width, r.height]; }
 const pgSame = (a, b) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <= PG_SLOP);
-// Send moving as the person types (the box grows) is their own doing.
-const pgOwn = b => b.id === 'send' && performance.now() - PG.typed < 1000;
+// Send moving as the person types (the box grows) is their own doing, and so is
+// everything moving as they scroll (a smooth or inertial scroll ends after its
+// last wheel event): the page moving things is what is guarded.
+const pgOwn = b => (b.id === 'send' && performance.now() - PG.typed < 1000) || performance.now() - PG.scrolled < 600;
 const pgUnder = r => !!PG.at && PG.at.x >= r[0] && PG.at.x <= r[0] + r[2] && PG.at.y >= r[1] && PG.at.y <= r[1] + r[3];
 // Where each control is, noted after anything that can move it. A control that
 // moves, or appears, under the pointer notes when (t): pressed soon after,
