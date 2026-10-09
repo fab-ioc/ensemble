@@ -40,12 +40,15 @@ from urllib.parse import unquote
 
 SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
                "build", ".idea", ".tox", "site-packages", ".git"}
-MAX_DEPTH = 6
-MAX_ENTRIES = 40000
+MAX_DEPTH = 12          # Java sources sit 9 folders down (src/main/java/com/...)
+MAX_ENTRIES = 80000
 INDEX_TTL = 60.0          # seconds a folder's name index is reused (a file at the
                           # written path is found without it, the moment it is there)
 
 _PCT = re.compile(r"%[0-9A-Fa-f]{2}")
+# a line on the end of a file name: "x.py:12", "x.py:12:3", "x.java#L887", "#L10-L20"
+_LINE = re.compile(r"(?:#L\d+(?:C\d+)?(?:-L?\d+(?:C\d+)?)?|:\d+(?::\d+)?)$")
+_ELLIPSIS = {"...", "…"}
 
 
 def spellings(raw: str) -> list[str]:
@@ -65,6 +68,11 @@ def spellings(raw: str) -> list[str]:
             d = s
         if d and d not in out:
             out.append(d)
+    # then each without a line on its end, when what is left is a file name
+    for f in list(out):
+        m = _LINE.search(f)
+        if m and m.start() and re.search(r"\.\w{1,8}$", f[:m.start()]) and f[:m.start()] not in out:
+            out.append(f[:m.start()])
     return out
 
 
@@ -97,7 +105,8 @@ def name_index(root: str) -> dict[str, list[tuple[int, str]]]:
     (the same bounds the tail search always had). Reused for INDEX_TTL
     seconds, so a page's batch of checks walks a folder once."""
     try:
-        key = os.path.normcase(os.path.normpath(os.path.expanduser(root)))
+        top = os.path.normpath(os.path.expanduser(root))
+        key = os.path.normcase(top)   # the cache key; the walk keeps the folder's own case
     except (ValueError, OSError):
         return {}
     now = time.monotonic()
@@ -106,10 +115,10 @@ def name_index(root: str) -> dict[str, list[tuple[int, str]]]:
         if hit and now - hit[0] < INDEX_TTL:
             return hit[1]
     idx: dict[str, list[tuple[int, str]]] = {}
-    if os.path.isdir(key):
-        base_depth = key.rstrip("\\/").count(os.sep)
+    if os.path.isdir(top):
+        base_depth = top.rstrip("\\/").count(os.sep)
         budget = MAX_ENTRIES
-        for dirpath, dirnames, filenames in os.walk(key, topdown=True):
+        for dirpath, dirnames, filenames in os.walk(top, topdown=True):
             depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
             dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in SEARCH_SKIP] \
                 if depth < MAX_DEPTH else []
@@ -146,8 +155,15 @@ def _roots(bases: list[str]) -> list[str]:
 def find_by_tail(rel: str, bases: list[str]) -> Path | None:
     """The file under one of ``bases`` whose path ends with ``rel`` (a bare
     name or a partial path): the first base that has one, its shallowest and
-    then newest."""
+    then newest. A ``...`` folder in ``rel`` ("common/.../tws/X.java", the
+    middle left out) matches any folders: the part after it is the tail, and
+    the folders before it must appear in the path, in order."""
     parts = _parts(rel)
+    lead: list[str] = []
+    if any(x in _ELLIPSIS for x in parts):
+        i = max(i for i, x in enumerate(parts) if x in _ELLIPSIS)
+        lead = [x.lower() for x in parts[:i] if x not in _ELLIPSIS]
+        parts = parts[i + 1:]
     if not parts or ".." in parts:
         return None
     name, tail = parts[-1].lower(), os.sep.join(parts).lower()
@@ -160,6 +176,8 @@ def find_by_tail(rel: str, bases: list[str]) -> Path | None:
             pre = full[:len(full) - len(tail)]
             if pre and pre[-1] not in "\\/":
                 continue
+            if lead and not _in_order(lead, _parts(pre)):
+                continue
             try:
                 mtime = os.stat(full).st_mtime
             except OSError:
@@ -170,6 +188,11 @@ def find_by_tail(rel: str, bases: list[str]) -> Path | None:
         if best is not None and best[0] == 0:
             break
     return Path(best[2]) if best else None
+
+
+def _in_order(want: list[str], have: list[str]) -> bool:
+    it = iter(x.lower() for x in have)
+    return all(w in it for w in want)
 
 
 def resolve(raw: str, bases: list[str], dirs: bool = False,
@@ -187,7 +210,7 @@ def resolve(raw: str, bases: list[str], dirs: bool = False,
                 return fp, "absolute"
             continue
         rel = os.sep.join(_parts(s)) if s.strip() not in (".", "./") else ""
-        if not rel:
+        if not rel or any(x in _ELLIPSIS for x in _parts(s)):
             continue
         for b in bases:
             bp = _expand(b)
