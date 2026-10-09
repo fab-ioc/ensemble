@@ -15761,8 +15761,8 @@ def main():
         print(f"task numbers backfill skipped: {e}", flush=True)
 
     # Answers recorded before an ask of two questions became two asks (#195)
-    # move to the ask they answer.
-    threading.Thread(target=asks.realign_all, daemon=True, name="asks-realign").start()
+    # move to the ask they answer, before any answer can come in.
+    asks.realign_all()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)

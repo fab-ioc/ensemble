@@ -65,7 +65,7 @@ class Validation(unittest.TestCase):
 
     def test_two_questions_in_every_option_mode(self):
         """Review 1: two questions are two cards with no options or yesno, and
-        a warning before posting when they share one set of options."""
+        refused before posting when they share one set of options."""
         two = "Should I deploy? Also, should I notify the team?"
         for item in ({"question": two}, {"question": two, "yesno": True}):
             with self.subTest(item=item):
@@ -76,10 +76,8 @@ class Validation(unittest.TestCase):
                                   (2, "Ship it?", "yesno")])
                 self.assertEqual(len(warnings), 1)
                 self.assertIn("2 questions", warnings[0])
-        warnings = []
-        got = asks.validated([{"question": two, "options": [{"label": "Now"}, {"label": "Later"}]}], warnings)
-        self.assertEqual(len(got), 1)
-        self.assertIn("one set of options", warnings[0])
+        with self.assertRaisesRegex(ValueError, "one set of options"):
+            asks.validated([{"question": two, "options": [{"label": "Now"}, {"label": "Later"}]}])
         with self.assertRaises(ValueError):
             asks.validated([{"question": two}] * 6)
 

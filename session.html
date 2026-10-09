@@ -2588,6 +2588,7 @@ const QI = {
   leadLabel: /^([^:?]{1,40}):[ \t]+/,
   asker: /^(?:should|shall|can|could|may|will|would|do|did)[ \t]+(?:i|we|you)[ \t]+(?:(?:rather|want|like|prefer)[ \t]+(?:me[ \t]+|us[ \t]+)?(?:to[ \t]+)?)?/i,
   chooser: /^(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather)\b/i,
+  picker: /^(?:(?:should|shall)[ \t]+(?:i|we)|(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather))\b/i,
   rec: /[ \t]*\([ \t]*(?:my[ \t]+|i(?:'d|[ \t]+would)?[ \t]+)?recommend(?:ed|ation)?\b[^)]*\)|,?[ \t]+which[ \t]+i(?:'d|[ \t]+would)?[ \t]+recommend\b|[ \t]+[—–-][ \t]+(?:my[ \t]+)?recommend(?:ed|ation)\b/i,
   recNo: /\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:no|not|against)\b/i,
   recYes: /\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:yes|it|that|so|both|starting|doing|going)\b|\(recommended\)|\bmy recommendation is yes\b/i,
@@ -2688,7 +2689,16 @@ function qiCore(s) {
   return t.trim().replace(QI.ends, '');
 }
 function qiAlternatives(core) {
-  if (!qiTop(core, QI.lastOr).length && (qiWords(core) > 6 || (QI.aux.test(core) && !QI.asker.test(core)))) return [];
+  if (!qiTop(core, QI.lastOr).length) {
+    if (qiWords(core) > 6) return [];
+    if (QI.aux.test(core) && !QI.picker.test(core)) {
+      // "Is it red or blue?" names two answers; "Did you read or review it?" asks yes or no — asks._alternatives.
+      const bare = qiTop(core, QI.bareOr);
+      if (bare.length !== 1 || qiTop(core, QI.comma).length) return [];
+      const head = core.slice(0, bare[0].index).split(' ').filter(Boolean), tail = core.slice(bare[0].index + bare[0][0].length).split(' ').filter(Boolean);
+      return head.length >= 2 && tail.length === 1 ? qiOptions([head[head.length - 1], tail[0]]) : [];
+    }
+  }
   const items = qiOrItems(core, QI.chooser.test(core));
   return items ? qiOptions(items) : [];
 }

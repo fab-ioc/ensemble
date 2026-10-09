@@ -286,6 +286,27 @@ class TheEndpoint(_World):
         self.assertEqual(asks.realign(rid), 0, "once")
         self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1])
 
+    def test_realign_places_each_answer_once(self):
+        """Review 2: the same question twice, and an answer with no ask."""
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "[rotation] You are the PO.", self.t0),
+                 turn("assistant", "Ask: Should I deploy? And notify the team?\nAsk: Should I deploy?", self.t0 + 2))
+
+        def old(answers):
+            with points._LOCK:
+                led = points.load(rid)
+                led["asks"]["sid-1:1"] = {k: {"option": o, "comment": "", "question": q} for k, (o, q) in answers.items()}
+                led["asksKeys"] = 1
+                points._save(rid, led)
+
+        old({"0": ("No", "Should I deploy? And notify the team?"), "1": ("Yes", "Should I deploy?")})
+        self.assertEqual(asks.realign(rid), 1)
+        self.assertEqual({k: v["option"] for k, v in points.load(rid)["asks"]["sid-1:1"].items()}, {"0": "No", "2": "Yes"})
+        old({"0": ("No", "Something else entirely?")})
+        self.assertEqual(asks.realign(rid), 0)
+        led = points.load(rid)
+        self.assertEqual((led["asksKeys"], list(led["asks"]["sid-1:1"])), (1, ["0"]), "left as it was, tried again later")
+
     def test_a_wrong_answer_and_a_refused_send(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):

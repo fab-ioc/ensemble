@@ -136,6 +136,7 @@ _LEAD_LABEL = re.compile(r"^([^:?]{1,40}):[ \t]+")
 _ASKER = re.compile(r"^(?:should|shall|can|could|may|will|would|do|did)[ \t]+(?:i|we|you)[ \t]+"
                     r"(?:(?:rather|want|like|prefer)[ \t]+(?:me[ \t]+|us[ \t]+)?(?:to[ \t]+)?)?", re.I)
 _CHOOSER = re.compile(r"^(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather)\b", re.I)
+_PICKER = re.compile(r"^(?:(?:should|shall)[ \t]+(?:i|we)|(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather))\b", re.I)
 _INLINE_REC = re.compile(
     r"[ \t]*\([ \t]*(?:my[ \t]+|i(?:'d|[ \t]+would)?[ \t]+)?recommend(?:ed|ation)?\b[^)]*\)"
     r"|,?[ \t]+which[ \t]+i(?:'d|[ \t]+would)?[ \t]+recommend\b"
@@ -294,8 +295,18 @@ def _core(s: str) -> str:
 
 def _alternatives(core: str) -> list[dict]:
     """"Should I A, or B?" / "buy or lease?": the alternatives it names."""
-    if not _top(core, _LAST_OR) and (_words(core) > 6 or (_AUX.match(core) and not _ASKER.match(core))):
-        return []       # "Have you read or reviewed it?" is a yes/no question
+    if not _top(core, _LAST_OR):
+        if _words(core) > 6:
+            return []
+        if _AUX.match(core) and not _PICKER.match(core):
+            # "Is it red or blue?" names two answers; "Did you read or
+            # review it?" asks yes or no: one word after the "or" is a choice
+            # between it and the word before.
+            bare = _top(core, _BARE_OR)
+            if len(bare) != 1 or _top(core, _COMMA):
+                return []
+            head, tail = core[:bare[0].start()].split(), core[bare[0].end():].split()
+            return _options([head[-1], tail[0]]) if len(head) >= 2 and len(tail) == 1 else []
     items = _or_items(core, bool(_CHOOSER.match(core)))
     return _options(items) if items else []
 
@@ -530,9 +541,9 @@ def validated(questions, warnings: list | None = None) -> list[dict]:
             if warnings is not None:
                 warnings.append(f"{where} holds {len(parts)} questions; each became its own Yes/No card. "
                                 "Ask each as its own question.")
-        elif len(found) > 1 and warnings is not None:
-            warnings.append(f"{where} holds {len(found)} questions but one set of options, so one card answers "
-                            "them all. Ask each as its own question.")
+        elif len(found) > 1:
+            raise ValueError(f"{where} holds {len(found)} questions but one set of options; ask each as its own "
+                             "question with its own options")
         for question, opts in parts:
             if len({o["label"].casefold() for o in opts}) != len(opts):
                 raise ValueError(f"{where}.options have duplicate labels")
@@ -793,11 +804,30 @@ def _same(a, b) -> bool:
     return " ".join(str(a or "").split()).casefold() == " ".join(str(b or "").split()).casefold()
 
 
+def _place(found: list[dict], k: str, ans, taken: dict) -> str | None:
+    """Where an answer recorded as ask ``k`` goes now: its own number when
+    that ask quotes it, else the ask that quotes it (the first part of one
+    split in two) nearest at or after ``k`` — a split only moves asks down —
+    and not taken by another answer. None when none fits."""
+    at = int(k) if str(k).isdigit() else -1
+    q = " ".join(str((ans or {}).get("question") or "").split()).casefold()
+    if not q:
+        return None if str(k) in taken else str(k)
+    def own(i: int) -> str:
+        return " ".join(found[i]["question"].split()).casefold()
+    for test in (lambda i: own(i) == q, lambda i: q.startswith(own(i))):
+        fits = [i for i in range(len(found)) if test(i) and str(i) not in taken]
+        if fits:
+            return str(min(fits, key=lambda i: (i < at, abs(i - at))))
+    return None
+
+
 def realign(room_id: str) -> int:
     """A ledger from before #195 keyed its answers by the ask's number when an
     ask holding two questions was one ask: each answer moves to the ask whose
-    question it quotes (the first part of a split one), once. How many
-    messages' answers moved."""
+    question it quotes (the first part of a split one), once. An answer with
+    no ask of its own leaves the ledger as it was (it is tried again at the
+    next start). How many messages' answers moved."""
     P = _d.points
     with P._LOCK:
         led = P.load(room_id)
@@ -810,14 +840,11 @@ def realign(room_id: str) -> int:
             found = balloon_asks(room_id, mid)
             new: dict = {}
             for k, ans in sorted(got.items(), key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 0):
-                q, at = (ans or {}).get("question"), int(k) if str(k).isdigit() else -1
-                j = at
-                if q and not (0 <= at < len(found) and _same(found[at]["question"], q)):
-                    j = next((i for i, a in enumerate(found) if _same(a["question"], q)), None)
-                    if j is None:
-                        j = next((i for i, a in enumerate(found)
-                                  if " ".join(q.split()).casefold().startswith(" ".join(a["question"].split()).casefold())), at)
-                new.setdefault(str(j), ans)
+                j = _place(found, k, ans, new)
+                if j is None:
+                    _d.points._log(f"{room_id}: answer {mid}:{k} has no ask of its own; the ledger stays as it was")
+                    return 0
+                new[j] = ans
             if new != got:
                 led["asks"][mid] = new
                 moved += 1

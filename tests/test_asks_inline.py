@@ -70,6 +70,10 @@ ASKS = {
     "lead_label": "Ask: Routing: do you object to switching to CBOE for the paper proof, or would you rather keep SMART?",
     "short_yesno_or": "Ask: Have you read or reviewed it?",
     "asker_or": "Ask: Should I buy or lease?",
+    "aux_did_or": "Ask: Did you read or review it?",
+    "aux_colour": "Ask: Is it red or blue?",
+    "aux_when": "Ask: Are we deploying now or later?",
+    "yesno_list_options": "Ask: Should I deploy?\n- **Now** - tonight\n- **Friday** - after the close",
     "choose_many": "Ask: Do you want both, only one, or a different cap, for example exactly 40?",
 }
 
@@ -127,7 +131,7 @@ class TheWordsGiveTheOptions(unittest.TestCase):
         self.assertEqual(a["options"][0]["detail"], "about CHF 490/yr saved")
 
     def test_a_yes_no_question_gets_yes_and_no(self):
-        for key in ("yesno_plain", "yesno_with_or", "parens_list", "short_yesno_or"):
+        for key in ("yesno_plain", "yesno_with_or", "parens_list", "short_yesno_or", "aux_did_or"):
             with self.subTest(key=key):
                 a = self.one(key)
                 self.assertEqual((a["kind"], labels(a)), ("yesno", ["Yes", "No"]))
@@ -137,6 +141,10 @@ class TheWordsGiveTheOptions(unittest.TestCase):
         self.assertEqual(labels(self.one("or_short")), ["Add tranche now", "Skip today"])
         self.assertEqual(labels(self.one("bare_or")), ["Buy", "Lease"])
         self.assertEqual(labels(self.one("asker_or")), ["Buy", "Lease"])
+        self.assertEqual(labels(self.one("aux_colour")), ["Red", "Blue"])
+        self.assertEqual(labels(self.one("aux_when")), ["Now", "Later"])
+        self.assertEqual(labels(self.one("yesno_list_options")), ["Now", "Friday"],
+                         "a list under an Ask: is its options, whatever the question's shape (#163)")
         self.assertEqual(labels(self.one("or_what")), ["Approve this design", "What should change"])
         self.assertEqual(labels(self.one("lead_label")),
                          ["Object to switching to CBOE for the paper proof", "Keep SMART"])
