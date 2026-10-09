@@ -658,6 +658,26 @@ def read_and_old(room: dict, ts, now: float | None = None) -> bool:
     return bool(ts) and seen_at(room) >= ts and now - ts >= READ_ASK_KEEP_S
 
 
+def dealt_at(room: dict) -> float:
+    """Up to when the person said they are done with what the room put to
+    them (``dealtAt``, Done with this on the list's Details, written by
+    ``chatroom.record_dealt``), or 0 (GitHub issue 13, point P157)."""
+    try:
+        return float((room or {}).get("dealtAt") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def set_aside(room: dict, ts) -> bool:
+    """What was put to the person at ``ts`` is one they said they are done
+    with: it leaves Needs you at once, read or not, on every device."""
+    try:
+        ts = float(ts or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(ts) and dealt_at(room) >= ts
+
+
 def _to_person(m: dict) -> bool:
     """A plain message addressed to the person ("user"). Only that says the
     agent carries on: a message to everyone that happened to wake nobody (a
@@ -857,6 +877,7 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "po": po,
         "isPo": bool(is_po),
         "seenAt": seen_at(room),
+        "dealtAt": dealt_at(room),
         "openToHuman": _open_to_human(room, msgs, po, is_po),
     }
 
@@ -1097,7 +1118,11 @@ def turn_state(part: dict, statuses: dict | None = None) -> tuple[str, str]:
     | ``screen`` — what said so, in the order ``_classify_agent`` believes
     them: the agent's hooks, Claude's status file, then the screen (all codex
     and a hook-less agent have)."""
-    ev = _evidence(part, _claude_status_by_session() if statuses is None else statuses)
+    return _turn(_evidence(part, _claude_status_by_session() if statuses is None else statuses))
+
+
+def _turn(ev: dict) -> tuple[str, str]:
+    """:func:`turn_state` from evidence already gathered."""
     if not ev["alive"]:
         return "stopped", ""
     hooked = _hook_status(ev)
@@ -1228,7 +1253,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     # finished report is ready for their check (``reported``), never Needs
     # you; an ask they read a day ago is theirs to come back to. Either way
     # the agent waits on the person, so it is not stalled either.
-    rested = bool(put) and (put["kind"] == "completed" or read_and_old(room, put.get("ts"), now))
+    rested = bool(put) and (put["kind"] == "completed" or read_and_old(room, put.get("ts"), now)
+                            or set_aside(room, put.get("ts")))
     if rested:
         put = None
     q = (put or {}).get("text", "")
@@ -1273,10 +1299,10 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if put:
         if put["kind"] == "blocked":
             return ("blocked", f"{who} reported it is blocked and needs help: “{q}”",
-                    {**asked, "cause": "reported"})
+                    {**asked, "cause": "reported", "dismiss": True})
         if put["kind"] == "question":
-            return ("waiting_for_you", f"{who} asked: “{q}”", asked)
-        return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", asked)
+            return ("waiting_for_you", f"{who} asked: “{q}”", {**asked, "dismiss": True})
+        return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", {**asked, "dismiss": True})
 
     if _d is not None and identity in (room.get("owners") or []) \
             and _d.stall.silent_owner_owes(room, identity):
@@ -1374,14 +1400,14 @@ def _room_level(room: dict, live_agents: list[str],
         return None
     if status in ("waiting_human", "paused"):
         last = room.get("lastMessage") or {}
-        if read_and_old(room, last.get("ts"), now):
+        if read_and_old(room, last.get("ts"), now) or set_aside(room, last.get("ts")):
             return None
         who = last.get("from", "") or room.get("waitingFor", "") or "the agents"
         text = " ".join((last.get("text") or "").split())[:200]
         reason = f"{who} is waiting on your reply"
         if text:
             reason += f": “{text}”"
-        return ("waiting_for_you", reason, {"quote": text})
+        return ("waiting_for_you", reason, {"quote": text, "dismiss": True})
     return None
 
 
@@ -1467,7 +1493,7 @@ def _reported(room: dict, live_agents: list[str]) -> dict | None:
     if _d is not None and _d.normalize_workflow(room.get("workflow")) == "done":
         return None
     ts = float(put.get("ts") or 0)
-    if ts and seen_at(room) >= ts:
+    if ts and (seen_at(room) >= ts or set_aside(room, ts)):
         return None
     return {"since": ts, "line": put.get("line", ""), "agent": put.get("from", "")}
 
@@ -1475,6 +1501,7 @@ def _reported(room: dict, live_agents: list[str]) -> dict | None:
 def _items() -> list[dict]:
     now = time.time()
     _REPORTED.clear()
+    _RUN.clear()
     rooms = _room_summaries()
     statuses = _claude_status_by_session()
     stall = _stall_seconds()
@@ -1513,6 +1540,12 @@ def _items() -> list[dict]:
             ev = _evidence(part, statuses)
             if ev["alive"]:
                 live_agents.append(part.get("identity", ""))
+                try:
+                    turn = _turn(ev)[0]
+                except (KeyError, TypeError):     # evidence without a turn: no colour
+                    turn = ""
+                if _RUN_RANK.get(turn, 0) > _RUN_RANK.get(_RUN.get(room["id"], ""), 0):
+                    _RUN[room["id"]] = turn
             hit = _classify_agent(room, part, ev, stall, now)
             if hit:
                 found.append((*hit, part))
@@ -1543,7 +1576,7 @@ def _items() -> list[dict]:
                       f"“{marked[0]['question'][:160]}”" + (" and more" if k > 1 else ""))
             found.append(("waiting_for_you", reason,
                           {"since": marked[0]["ts"], "quote": marked[0]["question"],
-                           "askKind": "asks", "openAsks": k}, {}))
+                           "askKind": "asks", "openAsks": k, "dismiss": True}, {}))
         lost = not_taken.get(room["id"])
         if lost and not any(f[0] == "waiting_for_you" for f in found):
             # The person's message its agent did not take in, even typed a
@@ -1597,6 +1630,10 @@ def _items() -> list[dict]:
                   "openAsks"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
+        if extra.get("dismiss"):
+            # What Done with this clears (set_aside): an ask, a report or a
+            # message put to the person, not a wall, a prompt or a death.
+            item["canDismiss"] = True
         if held and "heldPoMessages" not in item:
             # Worse or other news won the item: the held messages still show
             # on it, so the CEO sees two POs are being held back as well.
@@ -1614,6 +1651,15 @@ def _items() -> list[dict]:
 # The finished reports nobody has looked at yet, by room (``_reported``),
 # filled by ``_items`` under ``_COMPUTE_LOCK`` and published with its result.
 _REPORTED: dict[str, dict] = {}
+
+# What each task with a live terminal is doing, by room: ``working`` while
+# one of its agents is in a turn (its hooks, Claude's status file, else the
+# screen: :func:`turn_state`), else ``waiting`` (a prompt is up) or ``idle``.
+# The rows' ``status`` and so every run dot read it: green is an agent
+# working, never a terminal merely alive (GitHub issue 13, point P157).
+# Filled by ``_items`` like ``_REPORTED``.
+_RUN: dict[str, str] = {}
+_RUN_RANK = {"idle": 1, "waiting": 2, "working": 3}
 
 
 # A short result cache so the page can poll every couple of seconds for free.
@@ -1644,7 +1690,7 @@ def snapshot(max_age: float = _RESULT_TTL) -> dict:
         # ``reported``: finished reports waiting for a look, by room — the
         # list's "Ready for your check", never Needs you (``_reported``).
         payload = {"items": items, "count": len(items), "byState": by_state,
-                   "reported": dict(_REPORTED), "generatedAt": time.time()}
+                   "reported": dict(_REPORTED), "run": dict(_RUN), "generatedAt": time.time()}
         with _RESULT_LOCK:
             _result = (payload["generatedAt"], payload)
         return payload
@@ -1654,6 +1700,12 @@ def reported_by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:
     """The finished reports waiting for the person's look, by room
     (``_reported``): ``/api/sessions`` stamps them on the rows."""
     return snapshot(max_age).get("reported") or {}
+
+
+def run_by_room(max_age: float = _RESULT_TTL) -> dict[str, str]:
+    """What each task with a live terminal is doing (``_RUN``): ``working`` |
+    ``waiting`` | ``idle``; a room missing has no live terminal."""
+    return snapshot(max_age).get("run") or {}
 
 
 def by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:

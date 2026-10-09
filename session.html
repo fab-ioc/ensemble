@@ -16,6 +16,7 @@
 <script src="/static/attach.js"></script>
 <script src="/static/taskcard.js"></script>
 <script src="/static/pointrefs.js"></script>
+<script src="/static/pagekey.js"></script>
 <script src="/static/filedrag.js"></script>
 <script>FileDrag.attach(document);</script>
 <script src="/static/vendor/xterm/xterm.min.js"></script>
@@ -232,8 +233,8 @@
     --c-discovery-bg: #F3F0FF;
     --c-discovery-fg: #5E4DB2;
     --c-discovery-bold: #8270DB;
-    --run-working: var(--c-progress-bold);
-    --run-idle: var(--fg-disabled);
+    --run-working: var(--c-success-bold);
+    --run-idle: var(--c-neutral-bold);
     --run-off: var(--border-strong);
     --agent-claude-bg: #A9502F;
     --agent-claude-fg: #FFFFFF;
@@ -4022,8 +4023,11 @@ let SEEN_TOLD = 0, SEEN_SENDING = 0;
 function seenTell(ts, tries = 0) {
   if (!/^room-/.test(ROOM || '') || !(ts > SEEN_TOLD) || ts <= SEEN_SENDING) return;
   SEEN_SENDING = ts;
-  fetch('/api/attention/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                 body: JSON.stringify({ roomId: ROOM, ts }), keepalive: true })
+  // A key the hub's restart made old is renewed and the read sent again (pagekey.js).
+  const post = typeof window !== 'undefined' && window.pageWrite ? window.pageWrite('/api/attention/seen', { roomId: ROOM, ts }, { keepalive: true })
+    : fetch('/api/attention/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ roomId: ROOM, ts }), keepalive: true });
+  post
     .then(r => r.ok, () => false)
     .then(ok => {
       if (SEEN_SENDING === ts) SEEN_SENDING = 0;
