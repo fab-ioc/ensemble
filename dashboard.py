@@ -8759,10 +8759,17 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
     repos: dict[str, str] = {}
     plain = ""
     seen: set[str] = set()
+    code_key = os.path.normcase(os.path.normpath(code)) if code else ""
     for folder, stop, exact in tries:
         key = os.path.normcase(os.path.normpath(folder)) if folder else ""
         if not key or key in seen:
             continue
+        # The project's code folder, or a folder in it (a session or an
+        # in-place task working there): never the larger repo around it.
+        if code_key and key == code_key:
+            exact = True
+        elif code_key and not stop and key.startswith(code_key.rstrip(os.sep) + os.sep):
+            stop = code
         seen.add(key)
         p = Path(folder)
         exists = p.is_dir()

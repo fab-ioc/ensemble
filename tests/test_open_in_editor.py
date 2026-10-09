@@ -52,7 +52,7 @@ class ReposForSession(unittest.TestCase):
         (b / "plain").mkdir()
         (task / "notes").mkdir()                         # a task working in a subfolder with no repo
         mono = _repo(b / "mono")                         # a project whose code is a folder of a larger repo
-        (mono / "packages" / "app").mkdir(parents=True)
+        (mono / "packages" / "app" / "src").mkdir(parents=True)
         cls.p_mono = mono / "packages" / "app"
         cls.p = {"root": root, "code": code, "home": home, "task": task, "notes": notes, "loose": loose}
 
@@ -70,10 +70,12 @@ class ReposForSession(unittest.TestCase):
         ]
         links = {"room-0000a001": "proj-app", "room-0000a002": "proj-old", "room-0000a003": "proj-notes",
                  "room-0000b001": "proj-app", "room-0000b002": "proj-notes", "room-0000b003": "proj-gone",
-                 "sess-linked-gone": "proj-app", "room-0000a004": "proj-mono", "room-0000b004": "proj-app"}
+                 "sess-linked-gone": "proj-app", "room-0000a004": "proj-mono", "room-0000b004": "proj-app",
+                 "sess-mono": "proj-mono", "sess-mono-src": "proj-mono"}
         cwds = {"sess-loose": str(loose), "sess-plain": str(b / "plain"), "sess-gone": str(b / "nowhere"),
                 "sess-past-task": str(task / "repo"), "sess-linked-gone": str(b / "nowhere2"), "sess-none": "",
-                "sess-root": str(root)}
+                "sess-root": str(root), "sess-mono": str(mono / "packages" / "app"),
+                "sess-mono-src": str(mono / "packages" / "app" / "src")}
         patches = [
             mock.patch.object(dashboard, "PROJECTS_ROOT", root),
             mock.patch.object(chatroom, "ROOMS_DIR", b / "rooms"),
@@ -179,6 +181,11 @@ class ReposForSession(unittest.TestCase):
     def test_po_opens_the_configured_code_folder_not_the_repo_around_it(self):
         # Review 1: a code folder inside a monorepo opens as configured.
         self.assertEqual(self.paths("room-0000a004"), [str(self.p_mono)])
+
+    def test_session_in_the_code_folder_opens_it_not_the_repo_around_it(self):
+        # Review 2: a session of the project working in its code folder, or below it.
+        self.assertEqual(self.paths("sess-mono"), [str(self.p_mono)])
+        self.assertEqual(self.paths("sess-mono-src"), [str(self.p_mono)])
 
     def test_no_folder_known(self):
         self.assertEqual(self.get("sess-none"), {"repos": [], "lookedIn": []})
