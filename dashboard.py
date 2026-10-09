@@ -1875,6 +1875,8 @@ OWNER_OUTPUT_NOTE = (
 ASK_NOTE = (
     "A question for the user goes through ensemble_ask (or, in a plain reply, "
     "a standalone Ask: marker); never put a question to them in prose. "
+    "Every question carries its answers: options (ensemble_ask options, or a "
+    "list under the Ask: line), or Yes and No (yesno: true, or Ask (yes/no):). "
     "A task with a PO routes its question to that PO unless forCeo is true; "
     "reviewers ask the owner.")
 

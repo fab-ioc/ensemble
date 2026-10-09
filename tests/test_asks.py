@@ -56,7 +56,7 @@ THREE = """Three things need you before I merge.
    - **30 days** — saves about 2 GB (recommended)
    - **90 days** — what we have now
 2. **Ask (yes/no):** Turn on the nightly backup?
-3. **Ask:** Anything else to fold into this release?
+3. **Ask:** What else should go into this release?
 
 I carry on with the tests meanwhile."""
 
@@ -158,7 +158,7 @@ class TheMarker(unittest.TestCase):
         self.assertEqual([a["kind"] for a in c], ["decision", "yesno", "open"])
         self.assertEqual([a["question"] for a in c], ["Which retention for old transcripts?",
                                                       "Turn on the nightly backup?",
-                                                      "Anything else to fold into this release?"])
+                                                      "What else should go into this release?"])
         self.assertEqual(c[0]["options"], [{"label": "30 days", "detail": "saves about 2 GB", "recommended": True},
                                            {"label": "90 days", "detail": "what we have now", "recommended": False}])
         self.assertEqual([o["label"] for o in c[1]["options"]], ["Yes", "No"])
@@ -172,7 +172,8 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(asks.parse(FIXTURES["fenced"]), [])
         self.assertEqual(asks.parse(FIXTURES["plain"]), [])
         s = asks.parse(FIXTURES["sibling"])
-        self.assertEqual((s[0]["kind"], s[0]["options"]), ("open", []), "a same-indent bullet is a sibling, not an option")
+        self.assertEqual((s[0]["kind"], [o["label"] for o in s[0]["options"]]), ("yesno", ["Yes", "No"]),
+                         "a same-indent bullet is a sibling, not an option: the yes/no question gets Yes and No")
         self.assertEqual(asks.parse(FIXTURES["quoted"])[0]["kind"], "yesno")
         r = asks.parse(FIXTURES["rec_lead"])[0]
         self.assertEqual([(o["label"], o["recommended"]) for o in r["options"]], [("Keep it", True), ("Drop it", False)])

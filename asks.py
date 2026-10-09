@@ -21,7 +21,9 @@ ask, so the rule can be quoted.
 
 **Kinds.** An ask with options is a ``decision``; one whose options are just
 Yes and No, or that says ``(yes/no)``, is ``yesno``; one with neither is
-``open`` (a comment only). At most one option is recommended: the first one
+``open`` (a comment only). An ask with no list gets its options from its
+words when they name them, and Yes and No when it is not a wh-question
+(:func:`inline`, GitHub issue 16); ``Ask (open):`` keeps the comment alone. At most one option is recommended: the first one
 marked ``(recommended)`` (or ``[recommended]``, ``— recommended``, a leading
 ``Recommended:``).
 
@@ -110,6 +112,263 @@ def _option(text: str) -> dict | None:
     return {"label": label, "detail": _plain(detail), "recommended": rec}
 
 
+# ---------------------------------------------------------------------------
+# Options in the words (GitHub issue 16, #195): an ask with no list under it
+# still gets buttons when its words give them. Read from the agents' real
+# questions: "Options: (1) …, (2) …, or (3) …", "(a) … or (b) …", "A, or
+# B?", "Who? Just you, your family, or outside users?", "The card offers
+# three choices: A, B, or C.", "… (recommended)? Or do you want B, or C?";
+# two questions in one ask ("…? And do you approve …?") are two asks; a
+# question that is not a wh-question is answered Yes or No. Only a wh-question
+# with no options in its words keeps a comment box alone. The page has the
+# same rules (askInline in session.html).
+# ---------------------------------------------------------------------------
+
+_SENTENCE = re.compile(r"(?<=[?!.])[ \t]+(?=[\"'(*_]*[A-Z0-9])")
+_WH = re.compile(r"^(?:(?:on|in|at|by|for|from|to|with|until|since)[ \t]+)?(?:what|which|who|whom|whose|where|when|why|how)\b", re.I)
+_AUX = re.compile(r"^(?:should|shall|can|could|may|might|must|will|would|do|does|did|is|are|was|were|am|have|has|had)\b", re.I)
+_JOIN = re.compile(r"^(?:and|also|plus|so|then)\b[ \t]*,?[ \t]*", re.I)
+_OR = re.compile(r"^or\b[ \t]*,?[ \t]*", re.I)
+_EG = re.compile(r"^(?:for example|for instance|e\.g\.|such as|like)[ \t]*[,:]?[ \t]+", re.I)
+_TAIL = re.compile(r"^(?:for example|for instance|e\.g\.|such as|meaning|i\.e\.|that is|with|which|since|because|so that)\b", re.I)
+_SUB = re.compile(r"^(?:when|if|once|after|before|while|as soon as)\b", re.I)
+_LEAD_LABEL = re.compile(r"^([^:?]{1,40}):[ \t]+")
+_ASKER = re.compile(r"^(?:should|shall|can|could|may|will|would|do|did)[ \t]+(?:i|we|you)[ \t]+"
+                    r"(?:(?:rather|want|like|prefer)[ \t]+(?:me[ \t]+|us[ \t]+)?(?:to[ \t]+)?)?", re.I)
+_CHOOSER = re.compile(r"^(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather)\b", re.I)
+_INLINE_REC = re.compile(
+    r"[ \t]*\([ \t]*(?:my[ \t]+|i(?:'d|[ \t]+would)?[ \t]+)?recommend(?:ed|ation)?\b[^)]*\)"
+    r"|,?[ \t]+which[ \t]+i(?:'d|[ \t]+would)?[ \t]+recommend\b"
+    r"|[ \t]+[—–-][ \t]+(?:my[ \t]+)?recommend(?:ed|ation)\b", re.I)
+_REC_NO = re.compile(r"\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:no|not|against)\b", re.I)
+_REC_YES = re.compile(r"\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:yes|it|that|so|both|starting|doing|going)\b"
+                      r"|\(recommended\)|\bmy recommendation is yes\b", re.I)
+_ENUM = re.compile(r"(?:^|(?<=[ \t:,;]))\(?([1-9]|[a-hA-H])\)[ \t]+")
+_LAST_OR = re.compile(r",[ \t]+or[ \t]+", re.I)
+_BARE_OR = re.compile(r"[ \t]+or[ \t]+", re.I)
+_COMMA = re.compile(r",[ \t]+")
+_LABEL_CUT = re.compile(r",[ \t]+(?![#0-9])")      # not in "#214, #217"
+_ENDS = re.compile(r"[ \t?.!;,:]+$")
+_QMARK = re.compile(r"\?[ \t*_\"')]*$")
+
+
+def _mask(s: str) -> str:
+    """``s`` with every parenthesis and what it holds blanked out (same
+    length), so a comma or an "or" in brackets splits nothing."""
+    out, depth = [], 0
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        out.append("\0" if depth else ch)
+        if ch == ")" and depth:
+            depth -= 1
+    return "".join(out)
+
+
+def _top(s: str, rx) -> list:
+    """The top-level matches of ``rx`` in ``s`` (none inside brackets)."""
+    return list(rx.finditer(_mask(s)))
+
+
+def _words(s: str) -> int:
+    return len(_mask(s).split())
+
+
+def _cap(s: str) -> str:
+    return s[:1].upper() + s[1:]
+
+
+def _inline_option(item: str) -> dict | None:
+    t, rec = item.strip(), False
+    if _INLINE_REC.search(t):
+        t, rec = _INLINE_REC.sub("", t, count=1), True
+    t = _ENDS.sub("", _OR.sub("", _ASKER.sub("", t.strip(), count=1), count=1)).strip()
+    cut = _top(t, _LABEL_CUT)
+    label, detail = (t[:cut[0].start()], t[cut[0].end():]) if cut else (t, "")
+    if len(label) > LABEL_MAX:
+        m = _mask(label)
+        bare = " ".join("".join(c for c, k in zip(label, m) if k != "\0").split())
+        aside = "; ".join(x.strip("() ") for x in re.findall(r"\([^()]*\)", label))
+        if bare and aside:
+            label, detail = bare, aside + ("; " + detail if detail else "")
+    label = _ENDS.sub("", " ".join(label.split()))
+    if len(label) > LABEL_MAX:
+        label = label[:LABEL_MAX - 1].rstrip() + "…"
+    if not label:
+        return None
+    return {"label": _cap(label), "detail": " ".join(detail.split()).rstrip(".;,"), "recommended": rec}
+
+
+def _options(items: list[str]) -> list[dict]:
+    """Options from the items of a list in the words: an item that only goes
+    on about the one before it ("for example …", "meaning …") is its detail.
+    Fewer than two, or more than six, is no list."""
+    merged: list[str] = []
+    for it in items:
+        it = it.strip()
+        if merged and (not it or _TAIL.match(it)):
+            merged[-1] += ", " + it
+        elif it:
+            merged.append(it)
+    out, seen = [], set()
+    for it in merged:
+        o = _inline_option(it)
+        if o and o["label"].lower() not in seen:
+            seen.add(o["label"].lower())
+            out.append(o)
+    return out if 2 <= len(out) <= 6 else []
+
+
+def _or_items(t: str, multi: bool) -> list[str] | None:
+    """``A, B, or C`` / ``A or B``: the items, or None when the words hold no
+    "or". ``multi`` false: the part before the last ", or" is one item."""
+    t = _ENDS.sub("", t.strip())
+    last = _top(t, _LAST_OR)
+    if last:
+        head, tail = t[:last[-1].start()], t[last[-1].end():]
+        if multi:
+            return [head[a:b] for a, b in _cuts(head, _COMMA)] + [tail]
+        return [head, tail]
+    bare = _top(t, _BARE_OR)
+    if len(bare) == 1 and not _top(t, _COMMA):
+        return [t[:bare[0].start()], t[bare[0].end():]]
+    return None
+
+
+def _cuts(s: str, rx) -> list[tuple[int, int]]:
+    spans, at = [], 0
+    for m in _top(s, rx):
+        spans.append((at, m.start()))
+        at = m.end()
+    spans.append((at, len(s)))
+    return spans
+
+
+def _enum_options(s: str) -> tuple[str, list[dict]] | None:
+    """``(1) … (2) …`` / ``(a) … or (b) …`` in a sentence: the words before
+    the first, and the options."""
+    want, marks = None, []
+    for m in _ENUM.finditer(s):
+        v = m.group(1).lower()
+        if want is None:
+            if v not in ("1", "a"):
+                continue
+            want = v
+        if v != want:
+            continue
+        marks.append(m)
+        want = chr(ord(want) + 1)
+    if len(marks) < 2:
+        return None
+    items = [s[m.end():(marks[k + 1].start() if k + 1 < len(marks) else len(s))] for k, m in enumerate(marks)]
+    items = [re.sub(r"(?:,?[ \t]+or|,)[ \t]*$", "", _ENDS.sub("", it), flags=re.I) for it in items]
+    opts = _options(items)
+    return (s[:marks[0].start()], opts) if opts else None
+
+
+def _colon_options(s: str) -> list[dict]:
+    """"…: A, B, or C." — a list after a colon, joined by "or"."""
+    m = _top(s, re.compile(r":[ \t]+"))
+    if not m:
+        return []
+    items = _or_items(s[m[0].end():], True)
+    return _options(items) if items else []
+
+
+def _core(s: str) -> str:
+    """The question itself: without a lead label ("Decision:"), a lead "And",
+    a clause before it ("…, so what …", "When you …, should …")."""
+    t = _JOIN.sub("", s.strip(), count=1)
+    m = _LEAD_LABEL.match(t)
+    if m and len(m.group(1).split()) <= 5:
+        t = t[m.end():]
+    so = _top(t, re.compile(r"[,;][ \t]+(?:so|but|then)[ \t]+", re.I))
+    if so:
+        t = t[so[-1].end():]
+    if _SUB.match(t):
+        c = _top(t, _COMMA)
+        if c:
+            t = t[c[0].end():]
+    return _ENDS.sub("", t.strip())
+
+
+def _alternatives(core: str) -> list[dict]:
+    """"Should I A, or B?" / "buy or lease?": the alternatives it names."""
+    if not _top(core, _LAST_OR) and _words(core) > 6:
+        return []
+    items = _or_items(core, bool(_CHOOSER.match(core)))
+    return _options(items) if items else []
+
+
+def _yes_no(text: str) -> list[dict]:
+    rec = "No" if _REC_NO.search(text) else "Yes" if _REC_YES.search(text) else ""
+    return [{"label": x, "detail": "", "recommended": x == rec} for x in ("Yes", "No")]
+
+
+def inline(text: str) -> list[dict]:
+    """The asks the words of one question hold: ``[{question, options}]``,
+    options [] for a wh-question that names none. [] when there is no
+    question in it."""
+    text = " ".join((text or "").split())
+    if not text:
+        return []
+    sents = [s for s in _SENTENCE.split(text) if s.strip()]
+    asked = any(_QMARK.search(s) for s in sents)
+    groups: list[dict] = []
+    pre: list[str] = []
+    for s in sents:
+        isq = bool(_QMARK.search(s)) or not asked
+        if not groups:
+            if not isq:
+                pre.append(s)
+                continue
+            groups.append({"text": pre + [s], "core": s, "opts": None})
+            pre = []
+            continue
+        g = groups[-1]
+        if isq and not asked:
+            g["text"].append(s)
+        elif isq and _OR.match(s) and not g["opts"]:
+            rest = _OR.sub("", s, count=1)
+            items = _or_items(_ASKER.sub("", rest.strip(), count=1), True) or [rest]
+            g["opts"] = _options([_core(g["core"])] + items) or None
+            g["text"].append(s)
+        elif isq and (_JOIN.match(s) or _AUX.match(s) or _WH.match(s)):
+            groups.append({"text": [s], "core": s, "opts": None})
+        elif isq and not g["opts"] and \
+                (items := _or_items(_EG.sub("", s, count=1), True)) and \
+                all(_words(x) <= 8 for x in items) and (opts := _options(items)):
+            g["opts"] = opts
+            g["text"].append(s)
+        else:
+            if not g["opts"]:
+                found = _enum_options(s)
+                g["opts"] = (found[1] if found else _colon_options(s)) or None
+            g["text"].append(s)
+    out = []
+    for g in groups:
+        opts = g["opts"]
+        if not opts:
+            found = _enum_options(g["core"])
+            opts = found[1] if found else _colon_options(g["core"])
+        if not opts:
+            core = _core(g["core"])
+            if _WH.match(core):
+                opts = []
+            else:
+                opts = _alternatives(core) or _yes_no(" ".join(g["text"]))
+        rec = [k for k, o in enumerate(opts) if o["recommended"]][:1]
+        for k, o in enumerate(opts):
+            o["recommended"] = [k] == rec
+        out.append({"question": text if len(groups) == 1 else " ".join(g["text"]), "options": opts})
+    return out
+
+
+def _kind(opts: list[dict]) -> str:
+    labels = sorted(o["label"].lower() for o in opts)
+    return "yesno" if labels == ["no", "yes"] else "decision" if opts else "open"
+
+
 def parse(text: str) -> list[dict]:
     """The asks a message marks, in order: ``{n, question, kind, options:
     [{label, detail, recommended}], recommended (index or -1), line, end}``
@@ -165,22 +424,20 @@ def parse(text: str) -> list[dict]:
         if not question:
             continue
         tag = " ".join((m.group("kind") or "").split())
-        labels = sorted(o["label"].lower() for o in opts)
-        if opts and labels == ["no", "yes"]:
-            kind = "yesno"
-        elif opts:
-            kind = "decision"
+        if opts or _OPEN_TAG.match(tag):
+            found = [(question, opts)]
         elif _YESNO_TAG.match(tag):
-            kind = "yesno"
-            opts = [{"label": "Yes", "detail": "", "recommended": False},
-                    {"label": "No", "detail": "", "recommended": False}]
+            found = [(question, _yes_no(_plain(q)))]
         else:
-            kind = "open"
-        rec = next((k for k, o in enumerate(opts) if o["recommended"]), -1)
-        for k, o in enumerate(opts):
-            o["recommended"] = k == rec
-        out.append({"n": len(out), "question": question, "kind": kind, "options": opts,
-                    "recommended": rec, "line": start, "end": max(end, start + 1)})
+            # No list: the options its words give, Yes and No for a yes/no
+            # question, two asks for two questions.
+            found = [(g["question"][:QUESTION_MAX], g["options"]) for g in inline(_plain(q))] or [(question, [])]
+        for question, opts in found:
+            rec = next((k for k, o in enumerate(opts) if o["recommended"]), -1)
+            for k, o in enumerate(opts):
+                o["recommended"] = k == rec
+            out.append({"n": len(out), "question": question, "kind": _kind(opts), "options": opts,
+                        "recommended": rec, "line": start, "end": max(end, start + 1)})
     return out
 
 
@@ -203,8 +460,11 @@ def check(ask: dict, option: str) -> str | None:
     return next((o["label"] for o in ask["options"] if o["label"].lower() == option.lower()), None)
 
 
-def validated(questions) -> list[dict]:
-    """Normalize tool input, refusing any question that cannot make a card."""
+def validated(questions, warnings: list | None = None) -> list[dict]:
+    """Normalize tool input, refusing any question that cannot make a card.
+    A question with no options gets them from its words as an ``Ask:`` does
+    (Yes and No for a yes/no question); every other case without options
+    adds a line to ``warnings``."""
     if not isinstance(questions, list) or not questions:
         raise ValueError("questions must be a non-empty list")
     if len(questions) > 10:
@@ -247,6 +507,20 @@ def validated(questions) -> list[dict]:
                 if not isinstance(rec, bool):
                     raise ValueError(f"{loc}.recommended must be true or false")
                 opts.append({"label": label.strip(), "detail": detail.strip(), "recommended": rec})
+        if not opts:
+            found = inline(q)
+            opts = found[0]["options"] if found else []
+            if warnings is not None:
+                said = " / ".join(o["label"] for o in opts)
+                if len(found) > 1:
+                    warnings.append(f"{where} holds {len(found)} questions; the card answers only the first. "
+                                    "Ask each as its own question, with its options.")
+                elif not opts:
+                    warnings.append(f"{where} has no options and is not a yes/no question, so its card is a comment "
+                                    "box only. Give it 2-6 options (or yesno: true) so it is answered with one click.")
+                elif _kind(opts) != "yesno":
+                    warnings.append(f"{where} has no options; its buttons were taken from its words ({said}). "
+                                    "Pass the options explicitly.")
         if len({o["label"].casefold() for o in opts}) != len(opts):
             raise ValueError(f"{where}.options have duplicate labels")
         recommended = [k for k, o in enumerate(opts) if o["recommended"]]
@@ -264,6 +538,11 @@ _REPORTED_QUESTION = re.compile(r"^(?:(?:the )?(?:user|ceo)|you)\s+(?:asked|said
 _TRAIL_OPTION = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])"
     r"(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$", re.I)
+_OPTIONS_LEAD = re.compile(r"\b(?:options?|choices?|alternatives?)\b[^:\n]*:[ \t*_]*$", re.I)
+
+
+def _option_line(line: str, loose: bool):
+    return _TRAIL_OPTION.match(line) or (_ITEM.match(line) if loose else None)
 
 
 def safety(text: str) -> list[dict]:
@@ -284,23 +563,25 @@ def safety(text: str) -> list[dict]:
     parts = re.split(r"\n[ \t]*\n", body)
     tail = parts[-1].strip()
     decision = list(_DECISION.finditer(body))
+    # A list counts as the options when its lines are lettered or numbered;
+    # any list does after "Decision needed:" or under a line naming the
+    # options ("Your options:").
+    loose = False
     if decision and len(body) - decision[-1].start() <= 1000:
         q = decision[-1].group(1).strip()
-        following = body[decision[-1].end():].strip().splitlines()
+        following, loose = body[decision[-1].end():].strip().splitlines(), True
     elif tail.endswith("?"):
         tail_lines = tail.splitlines()
         q = tail_lines[-1].strip()
         if _REPORTED_QUESTION.match(q):
             return []
-        preceding = tail_lines[:-1]
-        following = [line for line in preceding if _TRAIL_OPTION.match(line)]
-        if len(following) < 2 or len(preceding) - len(following) > 1:
-            following = []
-        if not following and len(parts) > 1:
-            preceding = parts[-2].strip().splitlines()
-            following = [line for line in preceding if _TRAIL_OPTION.match(line)]
-            if len(following) < 2 or len(preceding) - len(following) > 1:
-                following = []
+        following = []
+        for preceding in (tail_lines[:-1], parts[-2].strip().splitlines() if len(parts) > 1 else []):
+            lead = bool(preceding) and bool(_OPTIONS_LEAD.search(preceding[0]))
+            opts = [line for line in preceding if _option_line(line, lead)]
+            if len(opts) >= 2 and len(preceding) - len(opts) <= 1:
+                following, loose = opts, lead
+                break
     else:
         return []
     q = re.sub(r"^(?:[-*]|[1-6][.)])[ \t]+", "", q).strip("* ")
@@ -308,9 +589,9 @@ def safety(text: str) -> list[dict]:
         return []
     options = []
     for line in following:
-        match = _TRAIL_OPTION.match(line)
+        match = _option_line(line, loose)
         if match:
-            opt = _option(match.group(1))
+            opt = _option(match.group(1) if match.re is _TRAIL_OPTION else match.group("t"))
             if opt:
                 options.append(opt)
         elif line.strip() and options:
@@ -318,13 +599,16 @@ def safety(text: str) -> list[dict]:
     if not 1 <= len(options) <= 6:
         options = []
     if options:
-        for opt in options:
-            opt["recommended"] = False
-    else:
-        options = [{"label": "Yes", "detail": "", "recommended": False},
-                   {"label": "No", "detail": "", "recommended": False}]
-    return [{"n": 0, "question": _plain(q), "kind": "decision" if len(options) > 2 else "yesno",
-             "options": options, "recommended": -1}]
+        rec = next((k for k, o in enumerate(options) if o["recommended"]), -1)
+        for k, opt in enumerate(options):
+            opt["recommended"] = k == rec
+        return [{"n": 0, "question": _plain(q), "kind": _kind(options), "options": options, "recommended": rec}]
+    out = []
+    for g in inline(_plain(q)):
+        rec = next((k for k, o in enumerate(g["options"]) if o["recommended"]), -1)
+        out.append({"n": len(out), "question": g["question"][:QUESTION_MAX], "kind": _kind(g["options"]),
+                    "options": g["options"], "recommended": rec})
+    return out
 
 
 def of_message(message: dict, eligible: bool = True) -> list[dict]:

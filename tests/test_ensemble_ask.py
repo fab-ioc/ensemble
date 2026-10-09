@@ -46,6 +46,22 @@ class Validation(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 asks.validated(case)
 
+    def test_a_question_without_options(self):
+        """GitHub issue 16: a yes/no question gets Yes and No; options in its
+        words become buttons, with a warning; an open one warns."""
+        warnings: list[str] = []
+        got = asks.validated([{"question": "Deploy tonight?"},
+                              {"question": "Deploy tonight, or keep it for Friday?"},
+                              {"question": "What should the empty list say?"},
+                              {"question": "Start #4 now? And close #2?"}], warnings)
+        self.assertEqual([(a["kind"], [o["label"] for o in a["options"]]) for a in got],
+                         [("yesno", ["Yes", "No"]), ("decision", ["Deploy tonight", "Keep it for Friday"]),
+                          ("open", []), ("yesno", ["Yes", "No"])])
+        self.assertEqual([w.split(" ", 1)[0] for w in warnings], ["questions[1]", "questions[2]", "questions[3]"])
+        self.assertIn("comment box only", warnings[1])
+        self.assertIn("2 questions", warnings[2])
+        self.assertEqual(asks.validated([{"question": "Deploy tonight?"}]), asks.validated([{"question": "Deploy tonight?"}], []))
+
     def test_lists_are_role_scoped_for_both_agent_kinds(self):
         for kind in ("claude", "codex"):
             for role in ("engineer", "ProductOwner"):

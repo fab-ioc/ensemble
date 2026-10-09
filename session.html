@@ -2550,6 +2550,7 @@ const QA_RE = {
   boldHead: /^(?:\*\*|__)([^*_\n]+?)(?:\*\*|__)[ \t]*(.*)$/,
   split: /[ \t]+[—–][ \t]+|[ \t]+-{1,2}[ \t]+|:[ \t]+/,
   yesno: /^(?:yes[ \t]*(?:\/|-|or)[ \t]*no|y\/n|yesno)$/i,
+  open: /^(?:open|free[ \t]*text|text)$/i,
 };
 const ASK_Q_MAX = 200, ASK_LABEL_MAX = 80;
 const askPlain = s => String(s || '').replace(/\*\*|__|`/g, '').split(/\s+/).filter(Boolean).join(' ');
@@ -2569,6 +2570,175 @@ function askOption(text) {
   if (Array.from(label).length > ASK_LABEL_MAX) label = askCut(label, ASK_LABEL_MAX - 1).trimEnd() + '…';
   return label ? { label, detail: askPlain(detail), recommended: rec } : null;
 }
+// Options in the words (GitHub issue 16, #195): an ask with no list under it
+// still gets buttons when its words give them ("Options: (1) …, (2) …",
+// "A, or B?", "Who? Just you, or your family?", "…: A, B, or C."); two
+// questions in one ask are two asks; one that is not a wh-question is
+// answered Yes or No. asks.py inline() has the same rules.
+const QI = {
+  sentence: /(?<=[?!.])[ \t]+(?=["'(*_]*[A-Z0-9])/,
+  wh: /^(?:(?:on|in|at|by|for|from|to|with|until|since)[ \t]+)?(?:what|which|who|whom|whose|where|when|why|how)\b/i,
+  aux: /^(?:should|shall|can|could|may|might|must|will|would|do|does|did|is|are|was|were|am|have|has|had)\b/i,
+  join: /^(?:and|also|plus|so|then)\b[ \t]*,?[ \t]*/i,
+  or: /^or\b[ \t]*,?[ \t]*/i,
+  eg: /^(?:for example|for instance|e\.g\.|such as|like)[ \t]*[,:]?[ \t]+/i,
+  tail: /^(?:for example|for instance|e\.g\.|such as|meaning|i\.e\.|that is|with|which|since|because|so that)\b/i,
+  sub: /^(?:when|if|once|after|before|while|as soon as)\b/i,
+  leadLabel: /^([^:?]{1,40}):[ \t]+/,
+  asker: /^(?:should|shall|can|could|may|will|would|do|did)[ \t]+(?:i|we|you)[ \t]+(?:(?:rather|want|like|prefer)[ \t]+(?:me[ \t]+|us[ \t]+)?(?:to[ \t]+)?)?/i,
+  chooser: /^(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather)\b/i,
+  rec: /[ \t]*\([ \t]*(?:my[ \t]+|i(?:'d|[ \t]+would)?[ \t]+)?recommend(?:ed|ation)?\b[^)]*\)|,?[ \t]+which[ \t]+i(?:'d|[ \t]+would)?[ \t]+recommend\b|[ \t]+[—–-][ \t]+(?:my[ \t]+)?recommend(?:ed|ation)\b/i,
+  recNo: /\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:no|not|against)\b/i,
+  recYes: /\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:yes|it|that|so|both|starting|doing|going)\b|\(recommended\)|\bmy recommendation is yes\b/i,
+  enumMark: /(?:^|(?<=[ \t:,;]))\(?([1-9]|[a-hA-H])\)[ \t]+/g,
+  lastOr: /,[ \t]+or[ \t]+/gi, bareOr: /[ \t]+or[ \t]+/gi, comma: /,[ \t]+/g,
+  labelCut: /,[ \t]+(?![#0-9])/g, colon: /:[ \t]+/g, so: /[,;][ \t]+(?:so|but|then)[ \t]+/gi,
+  ends: /[ \t?.!;,:]+$/, qmark: /\?[ \t*_"')]*$/,
+};
+function qiMask(s) {
+  let out = '', depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(') depth++;
+    out += depth ? '\0' : ch;
+    if (ch === ')' && depth) depth--;
+  }
+  return out;
+}
+const qiTop = (s, rx) => [...qiMask(s).matchAll(rx)];
+const qiWords = s => qiMask(s).split(/\s+/).filter(Boolean).length;
+const qiCap = s => { const c = Array.from(s); return c.length ? c[0].toUpperCase() + c.slice(1).join('') : s; };
+const qiSpaced = s => s.split(/\s+/).filter(Boolean).join(' ');
+function qiOption(item) {
+  let t = item.trim(), rec = false;
+  if (QI.rec.test(t)) { t = t.replace(QI.rec, ''); rec = true; }
+  t = t.trim().replace(QI.asker, '').replace(QI.or, '').replace(QI.ends, '').trim();
+  const cut = qiTop(t, QI.labelCut);
+  let label = cut.length ? t.slice(0, cut[0].index) : t, detail = cut.length ? t.slice(cut[0].index + cut[0][0].length) : '';
+  if (Array.from(label).length > ASK_LABEL_MAX) {
+    const m = qiMask(label);
+    const bare = qiSpaced(label.split('').filter((c, k) => m[k] !== '\0').join(''));
+    const aside = (label.match(/\([^()]*\)/g) || []).map(x => x.replace(/^[() ]+|[() ]+$/g, '')).join('; ');
+    if (bare && aside) { label = bare; detail = aside + (detail ? '; ' + detail : ''); }
+  }
+  label = qiSpaced(label).replace(QI.ends, '');
+  if (Array.from(label).length > ASK_LABEL_MAX) label = askCut(label, ASK_LABEL_MAX - 1).trimEnd() + '…';
+  if (!label) return null;
+  return { label: qiCap(label), detail: qiSpaced(detail).replace(/[.;,]+$/, ''), recommended: rec };
+}
+function qiOptions(items) {
+  const merged = [];
+  for (let it of items) {
+    it = it.trim();
+    if (merged.length && (!it || QI.tail.test(it))) merged[merged.length - 1] += ', ' + it;
+    else if (it) merged.push(it);
+  }
+  const out = [], seen = new Set();
+  for (const it of merged) {
+    const o = qiOption(it);
+    if (o && !seen.has(o.label.toLowerCase())) { seen.add(o.label.toLowerCase()); out.push(o); }
+  }
+  return out.length >= 2 && out.length <= 6 ? out : [];
+}
+function qiCuts(s, rx) {
+  const spans = []; let at = 0;
+  for (const m of qiTop(s, rx)) { spans.push(s.slice(at, m.index)); at = m.index + m[0].length; }
+  spans.push(s.slice(at));
+  return spans;
+}
+function qiOrItems(t, multi) {
+  t = t.trim().replace(QI.ends, '');
+  const last = qiTop(t, QI.lastOr);
+  if (last.length) {
+    const l = last[last.length - 1], head = t.slice(0, l.index), tail = t.slice(l.index + l[0].length);
+    return multi ? [...qiCuts(head, QI.comma), tail] : [head, tail];
+  }
+  const bare = qiTop(t, QI.bareOr);
+  if (bare.length === 1 && !qiTop(t, QI.comma).length) return [t.slice(0, bare[0].index), t.slice(bare[0].index + bare[0][0].length)];
+  return null;
+}
+function qiEnum(s) {
+  let want = null; const marks = [];
+  for (const m of s.matchAll(QI.enumMark)) {
+    const v = m[1].toLowerCase();
+    if (want === null) { if (v !== '1' && v !== 'a') continue; want = v; }
+    if (v !== want) continue;
+    marks.push(m); want = String.fromCharCode(want.charCodeAt(0) + 1);
+  }
+  if (marks.length < 2) return null;
+  const items = marks.map((m, k) => s.slice(m.index + m[0].length, k + 1 < marks.length ? marks[k + 1].index : s.length))
+    .map(it => it.replace(QI.ends, '').replace(/(?:,?[ \t]+or|,)[ \t]*$/i, ''));
+  const opts = qiOptions(items);
+  return opts.length ? opts : null;
+}
+function qiColon(s) {
+  const m = qiTop(s, QI.colon);
+  if (!m.length) return [];
+  const items = qiOrItems(s.slice(m[0].index + m[0][0].length), true);
+  return items ? qiOptions(items) : [];
+}
+function qiCore(s) {
+  let t = s.trim().replace(QI.join, '');
+  const m = t.match(QI.leadLabel);
+  if (m && m[1].split(/\s+/).filter(Boolean).length <= 5) t = t.slice(m[0].length);
+  const so = qiTop(t, QI.so);
+  if (so.length) { const l = so[so.length - 1]; t = t.slice(l.index + l[0].length); }
+  if (QI.sub.test(t)) { const c = qiTop(t, QI.comma); if (c.length) t = t.slice(c[0].index + c[0][0].length); }
+  return t.trim().replace(QI.ends, '');
+}
+function qiAlternatives(core) {
+  if (!qiTop(core, QI.lastOr).length && qiWords(core) > 6) return [];
+  const items = qiOrItems(core, QI.chooser.test(core));
+  return items ? qiOptions(items) : [];
+}
+function qiYesNo(text) {
+  const rec = QI.recNo.test(text) ? 'No' : QI.recYes.test(text) ? 'Yes' : '';
+  return ['Yes', 'No'].map(x => ({ label: x, detail: '', recommended: x === rec }));
+}
+// [{ question, options }]: options [] for a wh-question that names none.
+function askInline(text) {
+  text = qiSpaced(String(text || ''));
+  if (!text) return [];
+  const sents = text.split(QI.sentence).filter(s => s.trim());
+  const asked = sents.some(s => QI.qmark.test(s));
+  const groups = []; let pre = [];
+  for (const s of sents) {
+    const isq = QI.qmark.test(s) || !asked;
+    if (!groups.length) {
+      if (!isq) { pre.push(s); continue; }
+      groups.push({ text: [...pre, s], core: s, opts: null }); pre = [];
+      continue;
+    }
+    const g = groups[groups.length - 1];
+    let items, opts;
+    if (isq && !asked) g.text.push(s);
+    else if (isq && QI.or.test(s) && !g.opts) {
+      const rest = s.replace(QI.or, '');
+      const its = qiOrItems(rest.trim().replace(QI.asker, ''), true) || [rest];
+      g.opts = qiOptions([qiCore(g.core), ...its]);
+      if (!g.opts.length) g.opts = null;
+      g.text.push(s);
+    } else if (isq && (QI.join.test(s) || QI.aux.test(s) || QI.wh.test(s))) groups.push({ text: [s], core: s, opts: null });
+    else if (isq && !g.opts && (items = qiOrItems(s.replace(QI.eg, ''), true)) && items.every(x => qiWords(x) <= 8) && (opts = qiOptions(items)).length) {
+      g.opts = opts; g.text.push(s);
+    } else {
+      if (!g.opts) { const e = qiEnum(s); g.opts = e || qiColon(s); if (!g.opts.length) g.opts = null; }
+      g.text.push(s);
+    }
+  }
+  return groups.map(g => {
+    let opts = g.opts;
+    if (!opts) opts = qiEnum(g.core) || qiColon(g.core);
+    if (!opts.length) {
+      const core = qiCore(g.core);
+      opts = QI.wh.test(core) ? [] : (() => { const a = qiAlternatives(core); return a.length ? a : qiYesNo(g.text.join(' ')); })();
+    }
+    const rec = opts.findIndex(o => o.recommended);
+    opts.forEach((o, k) => { o.recommended = k === rec; });
+    return { question: groups.length === 1 ? text : g.text.join(' '), options: opts };
+  });
+}
+const askKind = opts => { const l = opts.map(o => o.label.toLowerCase()).sort(); return l.length === 2 && l[0] === 'no' && l[1] === 'yes' ? 'yesno' : opts.length ? 'decision' : 'open'; };
 // [{ n, question, kind: decision | yesno | open, options: [{ label, detail,
 // recommended }], recommended: index or -1, line, end }]: its lines, end exclusive.
 function parseAsks(text) {
@@ -2604,15 +2774,20 @@ function parseAsks(text) {
     const question = askCut(askPlain(q), ASK_Q_MAX);
     if (!question) continue;
     const tag = (m[3] || '').split(/\s+/).filter(Boolean).join(' ');
-    const labels = opts.map(o => o.label.toLowerCase()).sort();
-    let kind;
-    if (opts.length && labels.length === 2 && labels[0] === 'no' && labels[1] === 'yes') kind = 'yesno';
-    else if (opts.length) kind = 'decision';
-    else if (QA_RE.yesno.test(tag)) { kind = 'yesno'; opts = [{ label: 'Yes', detail: '', recommended: false }, { label: 'No', detail: '', recommended: false }]; }
-    else kind = 'open';
-    const rec = opts.findIndex(o => o.recommended);
-    opts.forEach((o, k) => { o.recommended = k === rec; });
-    out.push({ n: out.length, question, kind, options: opts, recommended: rec, line: start, end: Math.max(end, start + 1) });
+    let found;
+    if (opts.length || QA_RE.open.test(tag)) found = [[question, opts]];
+    else if (QA_RE.yesno.test(tag)) found = [[question, qiYesNo(askPlain(q))]];
+    else {
+      // No list: the options its words give, Yes and No for a yes/no
+      // question, two asks for two questions.
+      found = askInline(askPlain(q)).map(g => [askCut(g.question, ASK_Q_MAX), g.options]);
+      if (!found.length) found = [[question, []]];
+    }
+    for (const [qt, os] of found) {
+      const rec = os.findIndex(o => o.recommended);
+      os.forEach((o, k) => { o.recommended = k === rec; });
+      out.push({ n: out.length, question: qt, kind: askKind(os), options: os, recommended: rec, line: start, end: Math.max(end, start + 1) });
+    }
   }
   return out;
 }
@@ -2644,29 +2819,39 @@ function safetyAsk(text) {
   if (!body) return [];
   const decisions = [...body.matchAll(/^[ \t]*(?:\*\*)?Decision needed:(?:\*\*)?[ \t]*(.+)$/gim)];
   const last = decisions.at(-1), tail = body.split(/\n[ \t]*\n/).at(-1).trim();
-  let q = '', following = [];
-  if (last && body.length - last.index <= 1000) { q = last[1].trim(); following = body.slice(last.index + last[0].length).trim().split('\n'); }
+  let q = '', following = [], loose = false;
+  // A list counts as the options when its lines are lettered or numbered;
+  // any list does after "Decision needed:" or under a line naming the
+  // options ("Your options:") — asks.safety.
+  const trail = /^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$/i;
+  const optionLine = (line, wide) => { const m = line.match(trail); if (m) return m[1]; const it = wide ? line.match(QA_RE.item) : null; return it ? it[2] : null; };
+  if (last && body.length - last.index <= 1000) { q = last[1].trim(); following = body.slice(last.index + last[0].length).trim().split('\n'); loose = true; }
   else if (tail.endsWith('?')) {
     const parts = body.split(/\n[ \t]*\n/), tailLines = tail.split('\n');
     q = tailLines.at(-1).trim();
     if (/^(?:(?:the )?(?:user|ceo)|you)\s+(?:asked|said|wrote|wondered)\b/i.test(q)) return [];
-    const optionLine = line => /^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+/i.test(line);
-    for (const prior of [tailLines.slice(0, -1), (parts.at(-2) || '').trim().split('\n')]) {
-      const opts = prior.filter(optionLine);
-      if (opts.length >= 2 && prior.length - opts.length <= 1) { following = opts; break; }
+    for (const prior of [tailLines.slice(0, -1), parts.length > 1 ? parts.at(-2).trim().split('\n') : []]) {
+      const lead = prior.length > 0 && /\b(?:options?|choices?|alternatives?)\b[^:\n]*:[ \t*_]*$/i.test(prior[0]);
+      const opts = prior.filter(l => optionLine(l, lead) !== null);
+      if (opts.length >= 2 && prior.length - opts.length <= 1) { following = opts; loose = lead; break; }
     }
   }
   q = q.replace(/^(?:[-*]|[1-6][.)])[ \t]+/, '').replace(/^\*+|\*+$/g, '').trim();
   if (!q || [...q].length > ASK_Q_MAX) return [];
   let opts = [];
   for (const line of following) {
-    const m = line.match(/^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?(?:[A-Ca-c]|[1-6])(?:[.)]|[ \t]*\(recommended\):|:)(?:\*\*)?[ \t]+(.+)$/i);
-    if (m) { const o = askOption(m[1]); if (o) opts.push(o); }
+    const t = optionLine(line, loose);
+    if (t !== null) { const o = askOption(t); if (o) opts.push(o); }
     else if (line.trim() && opts.length) break;
   }
-  if (opts.length < 1 || opts.length > 6) opts = [{ label:'Yes', detail:'', recommended:false }, { label:'No', detail:'', recommended:false }];
-  opts.forEach(o => { o.recommended = false; });
-  return [{ n:0, question:q.replace(/\s+/g, ' '), kind:opts.length > 2 ? 'decision' : 'yesno', options:opts, recommended:-1 }];
+  if (opts.length > 6) opts = [];
+  if (opts.length) {
+    const rec = opts.findIndex(o => o.recommended);
+    opts.forEach((o, k) => { o.recommended = k === rec; });
+    return [{ n:0, question:askPlain(q), kind:askKind(opts), options:opts, recommended:rec }];
+  }
+  return askInline(askPlain(q)).map((g, n) => ({ n, question:askCut(g.question, ASK_Q_MAX), kind:askKind(g.options), options:g.options,
+    recommended:g.options.findIndex(o => o.recommended) }));
 }
 const hasAsks = m => asksOf(m).length > 0;
 // How an ask stands: { option, comment, at } once answered (the hub's, or this
