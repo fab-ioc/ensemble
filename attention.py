@@ -1540,7 +1540,10 @@ def _items() -> list[dict]:
             ev = _evidence(part, statuses)
             if ev["alive"]:
                 live_agents.append(part.get("identity", ""))
-                turn = _turn(ev)[0]
+                try:
+                    turn = _turn(ev)[0]
+                except (KeyError, TypeError):     # evidence without a turn: no colour
+                    turn = ""
                 if _RUN_RANK.get(turn, 0) > _RUN_RANK.get(_RUN.get(room["id"], ""), 0):
                     _RUN[room["id"]] = turn
             hit = _classify_agent(room, part, ev, stall, now)

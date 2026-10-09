@@ -1369,6 +1369,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .mention { color: var(--c-discovery-fg); font-weight: 600; background: var(--c-discovery-bg); border-radius: var(--r-100); padding: 0 3px; }
   /* Projects-first shell */
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run-working); animation: livep 1.6s infinite; }
+  .live-dot.idle { background: transparent; animation: none; box-shadow: inset 0 0 0 2px var(--run-idle); }
   @keyframes livep { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); } 70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run-working) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); } }
   .listctl { display: flex; align-items: center; gap: 10px; padding: 6px 4px 12px; font-size: 12px; color: var(--fg-subtle); }
   .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 4px 2px 20px; }
@@ -7642,9 +7643,12 @@ function projectsChromeHtml() {
 }
 function projectSessionState(sn) {
   if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
-  if (sn.isLive) return (sn.idleSeconds != null && sn.idleSeconds < 2.5) ? 'work' : 'idle';
+  // Green is an agent in a turn (the row's status, as the hub reads it), never
+  // a terminal that only printed: idle is a ring (#193, point P157).
+  if (sn.isLive) return sn.status === 'busy' ? 'work' : 'idle';
   return 'off';
 }
+const SDOT_TIP = { work: 'working', wait: 'waiting for you', idle: 'idle: running, not working', off: 'stopped' };
 function projectsLandingHtml() {
   if (!PROJECTS) return `<p class="empty">${esc(nounText('Loading {projects}…'))}</p>`;
   const cards = PROJECTS.projects.map(p => {
@@ -7652,11 +7656,12 @@ function projectsLandingHtml() {
     const count = tasks.length;
     const rows = tasks.slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}" title="${SDOT_TIP[st]}" aria-label="${SDOT_TIP[st]}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
     }).join('');
     const more = count > 4 ? `<div class="srow more">… ${count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
-    const live = p.live ? `<span class="live"><span class="live-dot"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
+    const live = p.working ? `<span class="live" title="${esc(nounText(`Working now: ${p.working} in this {project}`))}"><span class="live-dot"></span>${p.working} working</span>`
+      : p.live ? `<span class="live" title="Running, none working"><span class="live-dot idle"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
     const changed = p.isGit ? (p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`) : '';
     const unassigned = p.id === UNASSIGNED_ID;
     const sub = unassigned

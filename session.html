@@ -4024,7 +4024,7 @@ function seenTell(ts, tries = 0) {
   if (!/^room-/.test(ROOM || '') || !(ts > SEEN_TOLD) || ts <= SEEN_SENDING) return;
   SEEN_SENDING = ts;
   // A key the hub's restart made old is renewed and the read sent again (pagekey.js).
-  const post = window.pageWrite ? window.pageWrite('/api/attention/seen', { roomId: ROOM, ts }, { keepalive: true })
+  const post = typeof window !== 'undefined' && window.pageWrite ? window.pageWrite('/api/attention/seen', { roomId: ROOM, ts }, { keepalive: true })
     : fetch('/api/attention/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                      body: JSON.stringify({ roomId: ROOM, ts }), keepalive: true });
   post

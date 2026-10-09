@@ -8,7 +8,11 @@ throwaway hub in a thread (its own state in a temp dir, fake terminals):
 * a task whose agent died and was resumed since is not red;
 * the same death nobody dealt with is red, so the check above is not empty;
 * Done with this, in a waiting row's Details, takes the row out and the hub
-  keeps it (``dealtAt``), through the page's own key.
+  keeps it (``dealtAt``), through the page's own key;
+* a question two days old on a task and on a PO leaves Waiting for you once
+  its chat is opened and read, even after the hub drew a new page key while
+  the page stayed open (the Music PO, point P157);
+* a phone's project cards: green only for a project with an agent working.
 
 Skipped without Node or Chrome.
 """
@@ -86,11 +90,45 @@ async function main() {
         const cs = d && getComputedStyle(d); o[k] = cs ? [cs.backgroundColor, cs.boxShadow] : null; }
       return o; })()`;
     got.paint = await evalIn(paint);
+    // A hub restart draws a new page key while this page stays open (the
+    // Python side swaps it when asked); the chats then opened in a frame of
+    // the page read their old questions, and both rows leave Waiting for you.
+    const fs = require('fs');
+    fs.writeFileSync(A.tmp + '/rotate', '1');
+    for (let i = 0; i < 100 && !fs.existsSync(A.tmp + '/rotated'); i++) await sleep(100);
+    got.oldRead = await evalIn(`(async () => { const R = ${rooms}, out = {};
+      const row = rid => !!document.querySelector('#sw-list .sw-row.needs[data-room="' + rid + '"]');
+      for (const k of ['oldtask', 'oldpo']) out[k] = { before: row(R[k]) };
+      for (const k of ['oldtask', 'oldpo']) {
+        const f = document.createElement('iframe');
+        f.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:600px;z-index:99999';
+        f.src = '/session?room=' + R[k];
+        document.body.appendChild(f);
+        for (let i = 0; i < 100 && !(f.contentWindow && typeof f.contentWindow.seenTell === 'function'
+          && f.contentDocument.readyState === 'complete'); i++) await new Promise(r => setTimeout(r, 100));
+        // This hub has no transcripts for the chat to draw, so its reader is
+        // not at the end of anything: say the read point the way markRead does.
+        f.contentWindow.eval('seenTell(Date.now() / 1000)');
+        for (let i = 0; i < 150 && row(R[k]); i++) await new Promise(r => setTimeout(r, 100));
+        out[k].after = row(R[k]);
+        f.remove();
+      }
+      return out; })()`);
     // The same on a phone (390 px): the list's rows are drawn the same way.
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
     await sleep(300);
     got.phone = await evalIn(`(() => { const r = ${read}; return r && { busy: r.busy, live: r.live }; })()`);
     got.phonePaint = await evalIn(paint);
+    // A phone's home is the project cards: their dots follow the same rule.
+    got.cards = await evalIn(`(async () => { SELECTED_PROJECT = null; renderRows();
+      for (let i = 0; i < 40 && !document.querySelector('.proj[data-proj] .srow .sdot'); i++) await new Promise(r => setTimeout(r, 100));
+      const R = ${rooms}, out = {};
+      out.rows = {};
+      for (const [k, rid] of Object.entries(R)) { const d = document.querySelector('.proj .srow[data-sid="' + rid + '"] .sdot');
+        if (d) out.rows[k] = [...d.classList].join(' ') + '|' + d.title; }
+      const card = document.querySelector('.proj[data-proj]:not(.unassigned) .row1 .live');
+      out.card = card ? card.textContent.trim() + '|' + !!card.querySelector('.live-dot.idle') : null;
+      return out; })()`);
     await send('Emulation.clearDeviceMetricsOverride', {}, sessionId);
     await sleep(300);
     // Done with this: open the waiting row's Details, press it.
@@ -188,6 +226,8 @@ class TheDotsInChrome(unittest.TestCase):
             "live": task("Runs now", workflow="inprogress", part={"ptyId": "pty-live"}),
             "busy": task("Works now", workflow="inprogress", part={"ptyId": "pty-busy"}),
             "asks": task("Asks you", workflow="inprogress", part={"ptyId": "pty-asks"}),
+            "oldtask": task("Asked two days ago", workflow="inprogress", part={"ptyId": "pty-ot"}),
+            "oldpo": task("Motors PO", part={"ptyId": "pty-op"}),
             "done": task("Finished this morning", workflow="done", part={"ptyId": "pty-old"}),
             "resumed": task("Died then resumed", workflow="inprogress",
                             part={**gone("pty-r"), "resumedAt": died + 60}),
@@ -203,6 +243,32 @@ class TheDotsInChrome(unittest.TestCase):
                            lambda pid: (rooms["busy"], "claude"))
         live["pty-asks"] = _live(rooms["asks"], "pty-asks")
         chatroom.record_report(rooms["asks"], "claude", "question", "Which price?")
+        live["pty-ot"] = _live(rooms["oldtask"], "pty-ot")
+        live["pty-op"] = _live(rooms["oldpo"], "pty-op")
+        ok, why = dashboard.set_project_po(proj["id"], rooms["oldpo"])
+        assert ok, why
+        chatroom.record_report(rooms["oldtask"], "claude", "question", "Which colour?")
+        chatroom.post_message(rooms["oldpo"], "claude", "Ask: Start task #1 now?", to="user")
+        for rid in (rooms["oldtask"], rooms["oldpo"]):     # asked two days ago, never read
+            full = chatroom.get_room(rid, public=False)
+            full["mode"] = "collab"        # its chat draws the room's messages
+            for m in full["messages"][-1:]:
+                m["ts"] = float(m["ts"]) - 2 * 86400
+            for k in ("lastReport", "lastRealReport"):
+                if isinstance(full.get(k), dict) and full[k].get("ts"):
+                    full[k]["ts"] = float(full[k]["ts"]) - 2 * 86400
+            chatroom.update_room(full)
+
+        def swap_key():
+            flag = base / "rotate"
+            for _ in range(2000):
+                if flag.exists():
+                    dashboard._UI_KEY = "rotated-" + dashboard.secrets.token_urlsafe(16)
+                    (base / "rotated").write_text("1", encoding="utf-8")
+                    return
+                time.sleep(0.1)
+        cls.addClassCleanup(setattr, dashboard, "_UI_KEY", dashboard._UI_KEY)
+        threading.Thread(target=swap_key, daemon=True).start()
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
         server.handle_error = lambda *a: None
@@ -217,6 +283,7 @@ class TheDotsInChrome(unittest.TestCase):
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
         cls.dealt = chatroom.get_room(rooms["asks"], public=False).get("dealtAt")
+        cls.seen = {k: chatroom.get_room(rooms[k], public=False).get("seenAt") for k in ("oldtask", "oldpo")}
 
     @classmethod
     def tearDownClass(cls):
@@ -242,6 +309,18 @@ class TheDotsInChrome(unittest.TestCase):
     def test_a_phone_draws_the_same_dots(self):
         self.assertEqual(self.got["phone"], {"busy": self.got["busy"], "live": self.got["live"]}, self.got)
         self.assertEqual(self.got["phonePaint"], self.got["paint"])
+
+    def test_an_old_question_read_after_a_new_key_leaves(self):
+        want = {"before": True, "after": False}
+        self.assertTrue(all(self.seen.values()), f"the hub kept the read point: {self.seen}")
+        self.assertEqual(self.got["oldRead"], {"oldtask": want, "oldpo": want}, self.got["oldRead"])
+
+    def test_a_phones_project_cards_are_green_only_for_work(self):
+        c = self.got["cards"]
+        self.assertTrue(c["rows"], c)
+        for k, dot in c["rows"].items():
+            self.assertEqual(dot.startswith("sdot work"), k == "busy", c)
+        self.assertEqual(c["card"], "1 working|false", c)
 
     def test_done_with_this_takes_the_row_out(self):
         self.assertEqual(self.got["doneWithThis"], {"before": True, "after": False}, self.got["doneWithThis"])

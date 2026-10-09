@@ -527,6 +527,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
+              "static/pagekey.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
@@ -6305,7 +6306,7 @@ def build_projects() -> dict:
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
                            "isGit": p.get("isGit", False), "registered": True,
-                           "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+                           "sessions": [], "live": 0, "working": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
     # A project's PO is not one of its tasks: it stays in `sessions` (the page
     # finds and chooses the PO there) and is never a task live. It needs you
@@ -6322,10 +6323,13 @@ def build_projects() -> dict:
             if UNASSIGNED not in groups:
                 groups[UNASSIGNED] = {"id": UNASSIGNED, "name": "Unassigned",
                                       "path": "", "isGit": False, "registered": False,
-                                      "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+                                      "sessions": [], "live": 0, "working": 0, "waiting": 0, "updatedAt": 0}
         g = groups[pid]
         g["sessions"].append(s)
         g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
+        # Its card's dot is green while its PO or one of its tasks works (#193).
+        if s.get("isLive") and s.get("status") == "busy":
+            groups[po_rooms.get(s.get("roomId"), pid)]["working"] += 1
         if s.get("roomId") and s.get("roomId") in po_rooms:
             if (s.get("attention") or {}).get("state") in PO_NEEDS_STATES:
                 groups[po_rooms[s["roomId"]]]["waiting"] += 1
