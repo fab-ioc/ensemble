@@ -96,6 +96,7 @@ import po_messages
 import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
 import history as file_history
+import checkpoints
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
 # Moving from claude-dashboard (the predecessor): its state is copied in at startup.
@@ -1613,6 +1614,312 @@ def learn_cli_default(part: dict, tpath, hit: dict | None = None, pty_id: str = 
     model = ((hit or {}).get("model") if (hit or {}).get("family") else "") \
         or model_limit.last_model(tpath)
     model_limit.learn_default(model or "")
+
+
+# ---- Per-turn checkpoints (ED-197) ------------------------------------------
+# Each turn of a task's owner ends with the workspace saved under a hidden ref
+# (checkpoints.py). The chat shows a mark per checkpoint; from it the page can
+# show the turn's changes and put the code back (page only, owner idle).
+
+CHECKPOINT_TICK_S = 5
+CHECKPOINT_SWEEP_S = 3600
+_CP_DIR: dict[str, tuple[float, str, tuple]] = {}   # room -> (when, folder, owner identities)
+_CP_LIST: dict[str, tuple[float, dict]] = {}       # room -> (when, list for the page)
+_CP_RUNNING: dict[str, bool] = {}                  # room -> another turn end came while one ran
+_CP_BASED: set[str] = set()                        # rooms whose checkpoint 0 exists
+_CP_CODEX: dict[tuple[str, str], int] = {}         # (room, identity) -> rollout size last seen at a turn end
+_CP_LOCK = threading.Lock()
+
+
+def checkpoint_dir(room: dict | None) -> str:
+    """The folder a task's checkpoints save: its working folder when that is
+    the top of a git checkout (a worktree, a copy with its own repository, a
+    code project used in place, a one-agent task's own repository); "" for a
+    documents project (it has its file history), a PO, or no repository."""
+    if not room or room.get("id") in rotation._po_room_ids():
+        return ""
+    cwd = (room.get("cwd") or "").strip()
+    if not cwd or not path_is_git(cwd) or not os.path.isdir(cwd):
+        return ""
+    pid = _room_project_id(room.get("id", ""), room, load_session_projects())
+    proj = find_project(pid) if pid else None
+    if proj and proj.get("kind") == "documents":
+        return ""
+    return cwd
+
+
+def _cp_target(room_id: str) -> tuple[str, tuple]:
+    """(folder, owner identities) of a task, read again every minute."""
+    now = time.time()
+    hit = _CP_DIR.get(room_id)
+    if hit and now - hit[0] < 60:
+        return hit[1], hit[2]
+    room = chatroom.get_room(room_id, public=False)
+    folder = checkpoint_dir(room)
+    owners = tuple(p.get("identity", "") for p in rotation.task_owners(room)) if folder else ()
+    _CP_DIR[room_id] = (now, folder, owners)
+    return folder, owners
+
+
+def checkpoint_turn(room_id: str, identity: str = "", kind: str = "turn") -> None:
+    """Save a task's workspace after its owner's turn (or at its start, kind
+    "base"). Runs in the caller's thread; a turn end arriving while one is
+    being taken is taken right after it. Never raises."""
+    try:
+        folder, owners = _cp_target(room_id)
+        if not folder or (identity and identity not in owners):
+            return
+        with _CP_LOCK:
+            if room_id in _CP_RUNNING:
+                _CP_RUNNING[room_id] = True
+                return
+            _CP_RUNNING[room_id] = False
+        try:
+            while True:
+                msg_id = ""
+                if kind != "base":
+                    room = chatroom.get_room(room_id, public=False) or {}
+                    mine = [m for m in room.get("messages") or [] if m.get("from") == identity]
+                    msg_id = (mine[-1].get("id") or "") if mine else ""
+                checkpoints.take(folder, room_id, kind=kind, msg_id=msg_id, identity=identity)
+                _CP_BASED.add(room_id)
+                _CP_LIST.pop(room_id, None)
+                with _CP_LOCK:
+                    if not _CP_RUNNING.get(room_id):
+                        _CP_RUNNING.pop(room_id, None)
+                        return
+                    _CP_RUNNING[room_id] = False
+                kind = "turn"
+        except BaseException:
+            with _CP_LOCK:
+                _CP_RUNNING.pop(room_id, None)
+            raise
+    except Exception as e:                                   # noqa: BLE001 — never the agent's problem
+        print(f"[checkpoints] {room_id}: {str(e)[:200]}", flush=True)
+
+
+def checkpoint_list(room_id: str) -> dict | None:
+    """The task's checkpoints for its chat (cached; the hub is the only one
+    writing them), or None when it has no git workspace."""
+    folder, _ = _cp_target(room_id)
+    if not folder:
+        return None
+    now = time.time()
+    hit = _CP_LIST.get(room_id)
+    if hit and now - hit[0] < 60:
+        return hit[1]
+    try:
+        lst = checkpoints.list_checkpoints(folder, room_id)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    out = {"turns": lst["turns"], "restores": lst["restores"]}
+    _CP_LIST[room_id] = (now, out)
+    return out
+
+
+def checkpoint_refusal(room: dict) -> str:
+    """Why the code cannot be put back right now, or "": every agent of the
+    task must be between turns, and no reviewer running."""
+    owners = [p.get("identity") for p in rotation.task_owners(room)]
+    for p in chatroom.agent_participants(room):
+        if rotation.is_rotating(room["id"], p.get("identity", "")):
+            return "The task is being handed over to a fresh session. Try again once that is done."
+        sess = rotation._pty(p)
+        if sess is None:
+            continue
+        name = p.get("identity", "the agent")
+        if p.get("identity") not in owners:
+            return f"{name} is running (a review). Go back once it is over."
+        state, _ = attention.turn_state(p)
+        if state != "idle":
+            return f"{name} is working. Go back once its turn is over."
+    return ""
+
+
+def _checkpoint_told_line(res: dict, rec_at: float) -> str:
+    who = operator_name() or "The person"
+    try:
+        when = time.strftime("%m-%d %H:%M", time.localtime(float(rec_at or 0)))
+    except (OverflowError, OSError, ValueError):
+        when = ""
+    if res.get("undo") is not None:
+        return (f"[checkpoint] {who} undid the restore: the code is back as it was just before it"
+                f"{' (' + when + ')' if when else ''}. Your conversation is unchanged. "
+                f"Re-read the files before you go on.")
+    return (f"[checkpoint] {who} restored the code to checkpoint {res.get('n')}"
+            f"{' (end of turn of ' + when + ')' if when else ''}. Later changes are gone from the "
+            f"files and the branch; your conversation is unchanged. Re-read the files before you go on.")
+
+
+def _checkpoint_tell(room_id: str, line: str, wait_s: float = 900) -> None:
+    """Type the owner the line once it is idle, through the normal send path
+    (recorded as hub input). Gives up when it is not running or never idles."""
+    end = time.time() + wait_s
+    while time.time() < end:
+        room = chatroom.get_room(room_id, public=False)
+        owners = rotation.task_owners(room) if room else []
+        if not owners:
+            return
+        part = owners[0]
+        with rotation.GATE:
+            sess = rotation._pty(part)
+            if sess is None:
+                return
+            ident = part.get("identity", "")
+            if not (rotation.is_rotating(room_id, ident) or rotation.awaiting_handover(room_id, ident)):
+                tpath, reader = rotation._transcript_of(part)
+                if rotation._idle(part, reader(tpath)) and not rotation._submitted_lately(sess):
+                    _type_input(sess, line)
+                    return
+        time.sleep(3)
+
+
+def checkpoint_restore(room_id: str, n=None, undo=None) -> tuple[int, dict]:
+    """POST /api/checkpoints/restore: put the code back to checkpoint ``n``
+    or undo restore ``undo``; the owner is told."""
+    room = chatroom.get_room(room_id, public=False)
+    if room is None:
+        return 404, {"error": "no_such_room", "message": "That task no longer exists."}
+    folder = checkpoint_dir(room)
+    if not folder:
+        return 400, {"error": "no_checkpoints", "message": "This task has no git workspace to restore."}
+    why = checkpoint_refusal(room)
+    if why:
+        return 409, {"error": "busy", "message": why}
+    try:
+        lst = checkpoints.list_checkpoints(folder, room_id)
+        res = checkpoints.restore(folder, room_id, n=n, undo=undo, by=operator_name())
+    except checkpoints.CheckpointError as e:
+        return 409, {"error": "refused", "message": str(e)}
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return 500, {"error": "failed", "message": f"The restore failed: {str(e)[:200]}"}
+    finally:
+        _CP_LIST.pop(room_id, None)
+        invalidate_session_listing()
+    at = 0.0
+    if undo is not None:
+        at = next((float(r.get("at") or 0) for r in lst["restores"] if r.get("m") == undo), 0.0)
+    else:
+        at = float(res.get("at") or 0)
+    threading.Thread(target=_checkpoint_tell, daemon=True,
+                     args=(room_id, _checkpoint_told_line(res, at))).start()
+    return 200, {"ok": True, **res, "checkpoints": checkpoint_list(room_id)}
+
+
+def checkpoint_read(what: str, q: dict) -> tuple[int, dict]:
+    """GET /api/checkpoints/diff and /preview (reads only)."""
+    rid = (q.get("room", [""])[0] or "").strip()
+    room = chatroom.get_room(rid, public=False) if rid else None
+    folder = checkpoint_dir(room)
+    if not folder:
+        return 404, {"error": "no_checkpoints", "message": "This task has no checkpoints."}
+    if not workspace_access_ok(folder):
+        return 403, {"error": "path_not_allowed"}
+    def num(k):
+        v = (q.get(k, [""])[0] or "").strip()
+        return int(v) if v.isdigit() else None
+    try:
+        if what == "preview":
+            n, undo = num("n"), num("undo")
+            if (n is None) == (undo is None):
+                return 400, {"error": "bad_request"}
+            return 200, checkpoints.preview(folder, rid, n=n, undo=undo)
+        n = num("n")
+        if n is None:
+            return 400, {"error": "bad_request"}
+        return 200, checkpoints.diff(folder, rid, n, (q.get("file", [""])[0] or "").strip())
+    except checkpoints.CheckpointError as e:
+        return 404, {"error": "no_such_checkpoint", "message": str(e)}
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return 500, {"error": "failed", "message": str(e)[:200]}
+
+
+def checkpoint_forget(room: dict | None) -> int:
+    """Delete a task's checkpoints (its task deleted, or done long enough)."""
+    folder = (room or {}).get("cwd") or ""
+    if not room or not folder or not os.path.isdir(folder):
+        return 0
+    try:
+        return checkpoints.delete_room(folder, room["id"])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
+    finally:
+        _CP_LIST.pop(room.get("id", ""), None)
+
+
+def _checkpoint_codex_tick() -> None:
+    """Turn ends the hooks do not report: a Codex owner's rollout ending on a
+    ``task_complete`` it had not ended on before; and checkpoint 0 for a task
+    that has just started."""
+    for info in ptyrun.list_sessions():
+        meta = info.get("meta") or {}
+        rid, ident = meta.get("room") or "", meta.get("identity") or ""
+        if not (rid and ident and info.get("alive")):
+            continue
+        folder, owners = _cp_target(rid)
+        if not folder or ident not in owners:
+            continue
+        if rid not in _CP_BASED:
+            if not checkpoints.list_checkpoints(folder, rid)["turns"]:
+                checkpoint_turn(rid, ident, kind="base")
+            _CP_BASED.add(rid)
+        room = chatroom.get_room(rid, public=False) or {}
+        part = chatroom.participant(room, ident) or {}
+        if part.get("agent") != "codex":
+            continue
+        tpath, reader = rotation._transcript_of(part)
+        try:
+            size = tpath.stat().st_size if tpath else 0
+        except OSError:
+            continue
+        key = (rid, ident)
+        if not size or _CP_CODEX.get(key) == size:
+            continue
+        tr = reader(tpath)
+        if tr.get("turnOver"):
+            first = key not in _CP_CODEX
+            _CP_CODEX[key] = size
+            if not first:
+                checkpoint_turn(rid, ident)
+
+
+def _checkpoint_sweep() -> None:
+    """Checkpoints of a task deleted, or Done 14 days ago, go."""
+    now = time.time()
+    rooms = {r["id"]: r for r in chatroom.list_rooms()}
+    if not rooms:
+        return              # never read as "every task is gone"
+    for rid, room in rooms.items():
+        if workflow_of(room) != "done":
+            continue
+        at = float(room.get("mergedAt") or room.get("workflowAt") or 0)
+        if at and now - at > checkpoints.KEEP_AFTER_DONE_S and checkpoint_dir(room):
+            checkpoint_forget(room)
+    for proj in load_projects():
+        path = proj.get("path") or ""
+        if proj.get("kind") == "documents" or not path_is_git(path):
+            continue
+        try:
+            for rid in checkpoints.rooms_in(path):
+                if rid not in rooms:
+                    checkpoints.delete_room(path, rid)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+
+
+def checkpoint_scheduler() -> None:
+    def loop():
+        last_sweep = 0.0
+        while True:
+            try:
+                _checkpoint_codex_tick()
+                if time.time() - last_sweep > CHECKPOINT_SWEEP_S:
+                    last_sweep = time.time()
+                    _checkpoint_sweep()
+            except Exception as e:                           # noqa: BLE001
+                print(f"[checkpoints] tick: {str(e)[:200]}", flush=True)
+            time.sleep(CHECKPOINT_TICK_S)
+    threading.Thread(target=loop, name="checkpoints", daemon=True).start()
 
 
 _SHOWN: dict[str, tuple[float, str]] = {}
@@ -3233,6 +3540,7 @@ HUB_INPUT_KINDS = (
     ("[stalled] ", "stalled"),          # stall.py: an idle owner with nothing open
     ("[typed again] ", "again"),        # sends.py: a message the agent had not taken in
     ("[from the PO]", "po"),             # PO/tool ruling typed into a task
+    ("[checkpoint] ", "checkpoint"),    # _checkpoint_told_line: the code was put back (ED-197)
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
 # A message from another project's PO (po_messages.wake_line): the project's
@@ -11308,6 +11616,7 @@ def delete_task(rid: str, members=None) -> dict:
                     "transcripts": [], "folders": []}
         room = chatroom.get_room(rid, public=False) or room
         cwds.append(room.get("cwd", "") or "")
+        checkpoint_forget(room)          # while its folder (a worktree) is still there
         members = [{"agent": session_agent(pp, sid), "sessionId": sid,
                     "cwd": pp.get("cwd", "")}
                    for pp in room.get("participants", [])
@@ -12041,6 +12350,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(*git_diff(path, fpath, q.get("branch", [""])[0] == "1",
                                       (q.get("commit", [""])[0] or "").strip()))
             return
+        if p in ("/api/checkpoints/diff", "/api/checkpoints/preview"):
+            # ?room=&n=[&file=]: what a turn changed (its files, or one file's
+            # diff); preview: what going back to n (or &undo=m) would change.
+            q = parse_qs(u.query)
+            self._send_json(*checkpoint_read(p.rsplit("/", 1)[1], q))
+            return
         if p == "/api/git/log":
             # ?path=<repo>[&project=<id>][&n=30]: what landed on its main line.
             q = parse_qs(u.query)
@@ -12086,6 +12401,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             out = _annotate_room_liveness(room, with_points=True)
             out["reportsToRoom"] = room_po_id(room)
+            out["checkpoints"] = checkpoint_list(room.get("id", rid))
             try:
                 # The pop-out's "Make PO of a new project…", as the list row has it.
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
@@ -14491,6 +14807,8 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_hook_turn_ended, daemon=True,
                                  args=(payload.get("ptyId"), payload.get("room"),
                                        payload.get("identity"), event.get("session_id"))).start()
+                threading.Thread(target=checkpoint_turn, daemon=True,
+                                 args=(payload.get("room") or "", payload.get("identity") or "")).start()
 
     def _feedback_post(self, path):
         if self.headers.get("Origin") and not self._same_origin_request():
@@ -14989,6 +15307,21 @@ class Handler(BaseHTTPRequestHandler):
             asks.forget()
             attention.snapshot(0)
             self._send_json(200, {"ok": True, "dealtAt": dealt})
+            return
+        if p == "/api/checkpoints/restore":
+            # {room, n} or {room, undo}: put a task's code back to a turn's
+            # checkpoint, or undo a restore. Page only, never an agent (ED-197).
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            def num(v):
+                return int(v) if isinstance(v, int) or (isinstance(v, str) and v.isdigit()) else None
+            n, undo = num(data.get("n")), num(data.get("undo"))
+            if (n is None) == (undo is None):
+                self._send_json(400, {"error": "bad_request", "message": "Name one checkpoint or one restore."})
+                return
+            self._send_json(*checkpoint_restore(str(data.get("room") or ""), n=n, undo=undo))
             return
         if p == "/api/history/restore":
             # {projectId, rev, path}: put an old version back. A write, so only
@@ -15832,6 +16165,7 @@ def main():
     # Documents projects: every version of every file, snapshotted on its own
     # thread (a task's turn or report, a scan every few minutes, Snapshot now).
     file_history.start_scheduler(_history_homes, _history_running, _history_turn_ends)
+    checkpoint_scheduler()
 
     # Plan allowance: refreshed on its own thread so /api/usage is a cache read.
     usage.start_scheduler()
