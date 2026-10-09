@@ -12438,7 +12438,9 @@ function pdEnsure() {
     popUrl: '/static/dock/src/popout.html',
     popBackButton: false,
     themeEvent: 'cd-theme',
-    modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
+    // A conversation's frame while a press is on it (session.html): focus moving
+    // into it closes nothing; its release does, once the click is over (#198).
+    modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, iframe[data-pressed]',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
   // A panel this page no longer has (Documents, #103) keeps no place in a
@@ -12755,14 +12757,22 @@ function pdToolRemember() {
   if (id) pdShown(id);
   else barCrumbs();
 }
-// A press in a conversation's frame that Dock does not see (session.html says
-// which: the frame had focus already, or the window was not active): a tool
-// slid out goes back through Dock's closeFly(), the list's too (#137). Dock
-// v0.14.1 handles a press that moves focus into the frame, its ⋯ menu included.
-function pdChatClicked(win) {
-  if (document.querySelector('.dk-menu')) return;
+// A click in a conversation's frame, told once it is over (session.html; the
+// frame is marked data-pressed meanwhile, which Dock's modalSelector counts as
+// a modal, so the press itself closes nothing and the conversation does not
+// move under the pointer, #198): an open Dock menu closes as a press outside it
+// would close it (the first such click closes a tool's own menu, not the
+// tool); else a tool slid out goes back, the list's too (#137).
+// `menu`: a Dock menu was open at the press (focus leaving it closed it then).
+function pdChatClicked(win, menu) {
   const f = [...document.querySelectorAll('iframe')].find(x => x.contentWindow === win);
-  if (!f || f.closest('.dk-flyout')) return;
+  if (!f) return;
+  f.removeAttribute('data-pressed');
+  if (f.closest('.dk-flyout')) return;
+  if (menu || document.querySelector('.dk-menu')) {
+    if (document.querySelector('.dk-menu')) document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, isPrimary: true, button: 0 }));
+    return;
+  }
   for (const d of [LD.dock, PD.dock]) if (d && !d.narrow() && d.flyOpen()) d.closeFly();
 }
 // The tool the breadcrumb names: the one slid out, else the first docked one
@@ -16950,7 +16960,7 @@ function ldMake() {
       popUrl: '/static/dock/src/popout.html',
       popBackButton: false,
       themeEvent: 'cd-theme',
-      modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
+      modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, iframe[data-pressed]',
     });
   } finally { window.DOC_LISTENERS_PAUSED = false; }
   document.body.classList.add('ld-on');
@@ -18176,7 +18186,7 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
   if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
-  if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source);
+  if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
   // A file viewer in a Workspace tab, saying how the tab was left.
   if (d && (d.type === 'fv-state' || d.type === 'fv-missing' || d.type === 'fv-key') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
 });

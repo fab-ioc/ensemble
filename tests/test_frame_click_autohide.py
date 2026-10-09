@@ -4,11 +4,11 @@ In headless Chrome over CDP at 1728x1117 and 1280x800, against the hub of
 test_tool_strip.py, with real mouse clicks:
 
 * a tool opened from the strip slides back on a click into the conversation's
-  frame, and Dock does it (the page's own relay, pdChatClicked, is not called);
+  frame, once the click is over (#198: the page's relay, pdChatClicked, told by
+  the frame after the click; the press itself closes nothing);
 * a click on the tool's own content keeps it out;
 * with the tool's ⋯ menu open, the first click into the frame closes only the
-  menu, a second puts the tool back (through the relay: the first left focus
-  in the frame);
+  menu, a second puts the tool back;
 * the press Dock cannot see (the frame already had focus when the tool opened)
   still puts it back, through the relay and Dock's closeFly();
 * Send in the conversation sends on the first click while a tool is out, and
@@ -70,7 +70,7 @@ async function main() {
       await until(`document.body.classList.contains("po-dock") && !!PD.dock && !!document.querySelector("#po-dock .dk-strip-btn") && !!document.querySelector(${JSON.stringify(CHAT)})?.contentWindow?.eval("ROOM_OBJ")`, 30000);
       await sleep(500);
       // Count the page's relay (the presses Dock cannot see); it still works.
-      await evalIn('window.__relays = 0; { const f = window.pdChatClicked; window.pdChatClicked = (win) => { window.__relays++; return f(win); }; } 0');
+      await evalIn('window.__relays = 0; { const f = window.pdChatClicked; window.pdChatClicked = (...a) => { window.__relays++; return f(...a); }; } 0');
       const r = out[w] = {};
       const open = async (id) => { await click(tool(id)); await until(`PD.dock.flyOpen() === ${JSON.stringify(id)}`, 5000); await sleep(300); };
       // A tool opened from the strip, then a click into the conversation.
@@ -138,14 +138,14 @@ class FrameClick(unittest.TestCase):
             with self.subTest(w=w):
                 yield self.got[str(w)]
 
-    def test_a_click_into_the_conversation_puts_the_tool_back_by_dock(self):
+    def test_a_click_into_the_conversation_puts_the_tool_back_after_it(self):
         for g in self.sizes():
             self.assertEqual(g["opened"]["fly"], "changes", g)
             self.assertIsNone(g["chat"]["fly"], g)
             self.assertTrue(g["chat"]["chatFocused"], g)
-            self.assertEqual(g["chat"]["relays"], 0, "Dock, not the page's relay")
+            self.assertEqual(g["chat"]["relays"], 1, "the page's relay, after the click (#198)")
             self.assertIsNone(g["chatAfterOwn"]["fly"], g)
-            self.assertEqual(g["chatAfterOwn"]["relays"], 0, g)
+            self.assertEqual(g["chatAfterOwn"]["relays"], 2, g)
 
     def test_a_click_on_the_tool_s_own_content_keeps_it(self):
         for g in self.sizes():
@@ -156,8 +156,6 @@ class FrameClick(unittest.TestCase):
             self.assertEqual((g["menuOpen"]["fly"], g["menuOpen"]["menu"]), ("board", True), g)
             self.assertEqual((g["menuFirst"]["fly"], g["menuFirst"]["menu"]), ("board", False), g)
             self.assertIsNone(g["menuSecond"]["fly"], g)
-            # The first click left focus in the frame, so Dock hears nothing of
-            # the second: the page's relay puts the tool back.
             self.assertEqual(g["menuSecond"]["relays"] - g["menuFirst"]["relays"], 1, g)
 
     def test_a_press_dock_cannot_see_goes_through_close_fly(self):

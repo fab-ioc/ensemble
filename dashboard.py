@@ -2491,6 +2491,38 @@ def discard_pending(room_id: str, key: str = "") -> bool:
     return True
 
 
+def withdraw_send(room_id: str, key: str) -> bool:
+    """Take back a send of the person's that nothing has read yet (#198:
+    the Undo of a quick answer): held by a resume (under way or failed;
+    its delivery takes the queue whole, under the same lock), or posted to
+    a team's chat that none of the agents it reaches has read. What the
+    send did to the points goes with it. False when it was read (typed into
+    a solo agent's terminal counts as read), or is not known here."""
+    item = None
+    with _RESUMES_LOCK:
+        res = _RESUMES.get(room_id)
+        it = next((x for x in (res.queue if res else []) if x.get("key") == key), None)
+        if it is not None and not it.get("posted"):
+            res.queue.remove(it)
+            item = it
+            if not res.queue and res.state == "failed":
+                _RESUMES.pop(room_id, None)
+    if item is None:
+        s = sends.get(room_id, key)
+        if (s is None or s["state"] != "confirmed" or not s.get("mid")
+                or not chatroom.withdraw_message(room_id, s["mid"])):
+            return False
+        item = {"text": s["text"], "key": key}
+    sends.drop(room_id, [key])
+    with _SAY_KEYS_LOCK:
+        _SAY_KEYS.pop((room_id, key), None)
+    try:
+        points.discard(room_id, points.point_ids(item.get("text") or ""), key)
+    except Exception as e:      # noqa: BLE001 — the withdrawal itself stands
+        print(f"[points] {room_id}: withdrawn send's points not taken back: {e!r}", flush=True)
+    return True
+
+
 def _input_sender_info(text: str, forced: dict | None = None) -> dict:
     """Display identity for an input the hub supplied.
 
@@ -15278,6 +15310,46 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:  # noqa: BLE001
                     print(f"[asks] {rid}: answer not taken back: {e!r}", flush=True)
             self._send_json(code, {**reply, "points": _points_view(rid)})
+            return
+        if p == "/api/room/ask/undo":
+            # Undo of a quick answer, offered for 10 s after it was sent
+            # (#198): {roomId, mid, n}. Not read yet, it is withdrawn and the
+            # ask is open again; read, the agent is told to ignore it, as a
+            # follow-up on its point, and the answer is marked taken back.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            mid = str(data.get("mid") or "").strip()[:200]
+            room_full = chatroom.get_room(rid, public=False) if rid else None
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            try:
+                n = int(data.get("n"))
+            except (TypeError, ValueError):
+                n = -1
+            got = ((points.load(rid).get("asks") or {}).get(mid) or {}).get(str(n)) if mid and n >= 0 else None
+            if not isinstance(got, dict):
+                self._send_json(404, {"error": "no_such_answer", "message": "That answer is not there any more."})
+                return
+            if got.get("undone"):
+                self._send_json(200, {"ok": True, "duplicate": True, "points": _points_view(rid)})
+                return
+            key = f"ask:{mid}:{n}"
+            to = (sends.get(rid, key) or {}).get("to") or ""
+            pid = points.ask_point(rid, key)
+            if withdraw_send(rid, key):
+                points.unanswer_ask(rid, mid, n)
+                asks.forget()
+                self._send_json(200, {"ok": True, "withdrawn": True, "points": _points_view(rid)})
+                return
+            q = " ".join(str(got.get("question") or "").split())[:200]
+            text = (f"Re {pid}: Ignore my previous answer to {pid}, I clicked it by mistake." if pid
+                    else f"Ignore my previous answer to “{q}”, I clicked it by mistake.")
+            code, reply = self._room_resume({"roomId": rid, "to": to, "key": "undo:" + key, "text": text})
+            if code == 200 or reply.get("kept"):
+                points.undo_ask(rid, mid, n)
+            self._send_json(code, {**reply, "followUp": True, "points": _points_view(rid)})
             return
         if p == "/api/room/approve":
             # A thumbs up on a balloon asking for a decision: "yes, go with

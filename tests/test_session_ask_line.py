@@ -156,7 +156,7 @@ class TheAskLine(unittest.TestCase):
     def test_it_is_wired_into_the_page(self):
         self.assertLess(SRC.index('<div id="ask-line" role="status" hidden></div>'), SRC.index('<div id="msgs"></div>'))
         self.assertIn("showAskLine(items);", js_function(SRC, "renderBubbles"))
-        self.assertIn("showAskLine(null);", js_function(SRC, "refreshRoom"))
+        self.assertIn("showAskLine(null);", js_function(SRC, "refreshShow"))
         self.assertIn("ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a[data-point]')", SRC)
 
     def test_it_looks_like_the_catch_up_line_from_tokens_alone(self):
