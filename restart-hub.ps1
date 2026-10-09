@@ -103,7 +103,10 @@ for ($i = 0; $i -lt 30 -and -not $pfUp; $i++) { Nap 2; $pfUp = Ok "http://127.0.
 # right on top of the old 30s cap - the exact cause of "PREFLIGHT FAILED" on an
 # otherwise healthy hub. Give it real headroom; a genuinely broken /api/sessions
 # still fails preflight, just not until $sessTimeoutSec runs out.
-$sessTimeoutSec = 90
+# 10-09: 88-94s measured cold against the real history (90s cap failed a
+# healthy restart); 170s stays under the 180s restart lease, which is only
+# renewed between waits.
+$sessTimeoutSec = 170
 if ($env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S) {
   try { $sessTimeoutSec = [int]$env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S } catch {}
 }
