@@ -56,7 +56,7 @@ THREE = """Three things need you before I merge.
    - **30 days** — saves about 2 GB (recommended)
    - **90 days** — what we have now
 2. **Ask (yes/no):** Turn on the nightly backup?
-3. **Ask:** Anything else to fold into this release?
+3. **Ask:** What else should go into this release?
 
 I carry on with the tests meanwhile."""
 
@@ -158,7 +158,7 @@ class TheMarker(unittest.TestCase):
         self.assertEqual([a["kind"] for a in c], ["decision", "yesno", "open"])
         self.assertEqual([a["question"] for a in c], ["Which retention for old transcripts?",
                                                       "Turn on the nightly backup?",
-                                                      "Anything else to fold into this release?"])
+                                                      "What else should go into this release?"])
         self.assertEqual(c[0]["options"], [{"label": "30 days", "detail": "saves about 2 GB", "recommended": True},
                                            {"label": "90 days", "detail": "what we have now", "recommended": False}])
         self.assertEqual([o["label"] for o in c[1]["options"]], ["Yes", "No"])
@@ -172,7 +172,8 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(asks.parse(FIXTURES["fenced"]), [])
         self.assertEqual(asks.parse(FIXTURES["plain"]), [])
         s = asks.parse(FIXTURES["sibling"])
-        self.assertEqual((s[0]["kind"], s[0]["options"]), ("open", []), "a same-indent bullet is a sibling, not an option")
+        self.assertEqual((s[0]["kind"], [o["label"] for o in s[0]["options"]]), ("yesno", ["Yes", "No"]),
+                         "a same-indent bullet is a sibling, not an option: the yes/no question gets Yes and No")
         self.assertEqual(asks.parse(FIXTURES["quoted"])[0]["kind"], "yesno")
         r = asks.parse(FIXTURES["rec_lead"])[0]
         self.assertEqual([(o["label"], o["recommended"]) for o in r["options"]], [("Keep it", True), ("Drop it", False)])
@@ -265,6 +266,60 @@ class TheEndpoint(_World):
         self.assertIn("sid-1:1", r["points"]["asks"])
         room = chatroom.get_room(rid)
         self.assertEqual([a["n"] for a in asks.open_in(room)], [1, 2])
+
+    def test_answers_from_before_two_question_asks_move_to_their_ask(self):
+        """#195 review 1: an ask of two questions became two asks, so the asks
+        after it moved up one; an answer recorded before keeps its ask."""
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "[rotation] You are the PO.", self.t0),
+                 turn("assistant", "Ask: Start #4 now? And close #2?\nAsk: Ship it?", self.t0 + 2))
+        with points._LOCK:
+            led = points.load(rid)
+            led["asks"]["sid-1:1"] = {"0": {"option": "Yes", "comment": "", "question": "Start #4 now? And close #2?"},
+                                      "1": {"option": "No", "comment": "", "question": "Ship it?"}}
+            led["asksKeys"] = 1
+            points._save(rid, led)
+        self.assertEqual(asks.realign(rid), 1)
+        got = points.load(rid)
+        self.assertEqual({k: v["option"] for k, v in got["asks"]["sid-1:1"].items()}, {"0": "Yes", "2": "No"})
+        self.assertEqual(got["asksKeys"], points.ASKS_KEYS)
+        self.assertEqual(asks.realign(rid), 0, "once")
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1])
+
+    def test_realign_places_each_answer_once(self):
+        """Review 2: the same question twice, and an answer with no ask."""
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "[rotation] You are the PO.", self.t0),
+                 turn("assistant", "Ask: Should I deploy? And notify the team?\nAsk: Should I deploy?", self.t0 + 2))
+
+        def old(answers):
+            with points._LOCK:
+                led = points.load(rid)
+                led["asks"]["sid-1:1"] = {k: {"option": o, "comment": "", "question": q} for k, (o, q) in answers.items()}
+                led["asksKeys"] = 1
+                points._save(rid, led)
+
+        old({"0": ("No", "Should I deploy? And notify the team?"), "1": ("Yes", "Should I deploy?")})
+        self.assertEqual(asks.realign(rid), 1)
+        self.assertEqual({k: v["option"] for k, v in points.load(rid)["asks"]["sid-1:1"].items()}, {"0": "No", "2": "Yes"})
+        old({"0": ("No", "Something else entirely?")})
+        self.assertEqual(asks.realign(rid), 0)
+        led = points.load(rid)
+        self.assertEqual((led["asksKeys"], list(led["asks"]["sid-1:1"])), (1, ["0"]), "left as it was, tried again later")
+
+    def test_realign_keeps_an_answer_with_its_own_line(self):
+        """Review 3: the split gives a question the next Ask: line asks too;
+        the answer stays with its own line."""
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "[rotation] You are the PO.", self.t0),
+                 turn("assistant", "Ask: Should I deploy? And should I notify?\nAsk: And should I notify?", self.t0 + 2))
+        with points._LOCK:
+            led = points.load(rid)
+            led["asks"]["sid-1:1"] = {"1": {"option": "Yes", "comment": "", "question": "And should I notify?"}}
+            led["asksKeys"] = 1
+            points._save(rid, led)
+        self.assertEqual(asks.realign(rid), 1)
+        self.assertEqual(list(points.load(rid)["asks"]["sid-1:1"]), ["2"])
 
     def test_a_wrong_answer_and_a_refused_send(self):
         rid = self._room()
@@ -362,7 +417,7 @@ async function main() {
   const send = (method, params = {}, sessionId) => { const i = ++id; return new Promise((res, rej) => { waits.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, sessionId })); }); };
   const out = {};
   try {
-    for (const [w, h, mob, n, opt] of [[1280, 800, false, 0, '30 days'], [390, 844, true, 1, 'Yes']]) {
+    for (const [w, h, mob, n, opt] of A.views) {
       const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
       const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
       await send('Page.enable', {}, sessionId);
@@ -372,12 +427,13 @@ async function main() {
       const until = async (expr, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       const shot = async name => { if (!A.shots) return; const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
       await send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
-      await until('document.querySelectorAll("#msgs .qa").length >= 3');
+      await until('document.querySelectorAll("#msgs .qa").length >= ' + A.need);
       await sleep(400);
       const look = () => evalIn(`(() => ({ cards: document.querySelectorAll('#msgs .qa').length, done: [...document.querySelectorAll('#msgs .qa')].map(c => c.classList.contains('done')),
         scrollX: document.documentElement.scrollWidth - innerWidth,
         inside: [...document.querySelectorAll('#msgs .qa, #msgs .qa-opt, #msgs .qa-cm textarea')].every(e => { const r = e.getBoundingClientRect(), b = e.closest('.msg').getBoundingClientRect(); return r.left >= b.left - 1 && r.right <= b.right + 1; }),
         heights: [...document.querySelectorAll('#msgs .qa:not(.done) .qa-opt, #msgs .qa:not(.done) .qa-send')].map(e => Math.round(e.getBoundingClientRect().height)),
+        labels: [...document.querySelectorAll('#msgs .qa')].map(c => [...c.querySelectorAll('.qa-opt')].map(b => b.dataset.opt)),
         coarse: matchMedia('(pointer: coarse)').matches }))()`);
       const o = { before: await look() };
       await evalIn(`document.querySelector('#msgs .qa').scrollIntoView({ block: 'start' }); 0`);
@@ -406,8 +462,15 @@ main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
 
 
-@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
-class InChrome(unittest.TestCase):
+class ChromePage(unittest.TestCase):
+    """A PO message (TEXT) on a throwaway hub, opened in headless Chrome at
+    each of VIEWS (width, height, mobile, card, option to click); a class with
+    no tests of its own runs nothing."""
+    TEXT = THREE
+    NEED = 3
+    VIEWS = [[1280, 800, False, 0, "30 days"], [390, 844, True, 1, "Yes"]]
+    PORT = 0
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="ens-asks-", ignore_cleanup_errors=True)
@@ -457,10 +520,14 @@ class InChrome(unittest.TestCase):
         ok, why = dashboard.set_project_po(proj["id"], cls.po)
         assert ok, why
         t0 = time.time() - 600
-        lines = [_turn("user", "[rotation] You are the PO of Motors. Read PO-HANDOVER.md.", t0),
-                 _turn("assistant", THREE, t0 + 5)]
+        texts = cls.TEXT if isinstance(cls.TEXT, list) else [cls.TEXT]
+        lines = [_turn("user", "[rotation] You are the PO of Motors. Read PO-HANDOVER.md.", t0)] + \
+            [_turn("assistant", t, t0 + 5 + k) for k, t in enumerate(texts)]
         (base / "transcripts" / "C--po" / "po-sid.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
-        server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", cls.PORT), dashboard.Handler)
+        except OSError:     # the port is taken by another test hub: any free one
+            server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
         server.handle_error = lambda *a: None
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -470,7 +537,7 @@ class InChrome(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{server.server_address[1]}",
-                "po": cls.po, "shots": shots}
+                "po": cls.po, "shots": shots, "need": cls.NEED, "views": cls.VIEWS}
         script = base / "asks_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
@@ -478,6 +545,10 @@ class InChrome(unittest.TestCase):
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
         cls.led = points.load(cls.po)
         cls.addClassCleanup(cls.tmp.cleanup)
+
+
+@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
+class InChrome(ChromePage):
 
     def test_three_cards_that_fit(self):
         for w in ("1280", "390"):

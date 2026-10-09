@@ -176,7 +176,11 @@ _ALL_TOOLS = [
             "Ask the product owner through clickable cards. Use this for every real "
             "question to the CEO; never ask in prose. A task with a project PO "
             "routes the question to that PO unless forCeo is true, which sends "
-            "a card to the user. One call posts one message in your own chat."
+            "a card to the user. One call posts one message in your own chat. "
+            "Give every question its answers: 2-6 options (one may be recommended), "
+            "or yesno: true. A question without options gets Yes and No when it is a "
+            "yes/no question; any other comes back with a warning, and its card is a "
+            "comment box only."
         ),
         "inputSchema": {"type": "object", "properties": {
             "questions": {"type": "array", "minItems": 1, "maxItems": 10,
@@ -1148,7 +1152,8 @@ def _report(ctx, args, handler, *, structured_asks=None):
 
 def _ask(ctx, args, handler):
     try:
-        questions = _d.asks.validated(args.get("questions"))
+        warnings: list[str] = []
+        questions = _d.asks.validated(args.get("questions"), warnings)
     except ValueError as e:
         raise ToolError(str(e)) from None
     context = args.get("context", "")
@@ -1173,7 +1178,8 @@ def _ask(ctx, args, handler):
     if po and args.get("forCeo") is not True:
         routed = _report(ctx, {"kind": "question", "text": body}, handler,
                          structured_asks=questions)
-        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay."}
+        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay.",
+                **({"warnings": warnings} if warnings else {})}
     result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
                                       structured_asks=questions, ask_audience="user")
     if result is None:
@@ -1181,7 +1187,8 @@ def _ask(ctx, args, handler):
     handler._ring_recipients(room["id"], result)
     _d.asks.forget()
     return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
-            "questions": len(questions), "note": "The card is waiting for the user's answer."}
+            "questions": len(questions), "note": "The card is waiting for the user's answer.",
+            **({"warnings": warnings} if warnings else {})}
 
 
 def _review_done(ctx, args, handler):

@@ -19,8 +19,8 @@ running under Ensemble — say so instead of guessing.
 ## Orientation: always start with `ensemble_whoami`
 
 Every real question for the user goes through `ensemble_ask`; in a plain reply,
-write a standalone `Ask:` line with options underneath. Never ask the user a
-question in prose. A task with a project PO sends its question to that PO;
+write a standalone `Ask:` line with options underneath. Every question carries
+its answers: options, or Yes and No. Never ask the user a question in prose. A task with a project PO sends its question to that PO;
 set `forCeo: true` to send a card directly to the user.
 
 It returns your identity, role, task id, project, working directory, task folder
@@ -796,8 +796,11 @@ the hub nudged an idle owner and it did not carry on: look at it, steer it or
 stop it.
 
 **Asking the product owner to decide.** Call `ensemble_ask` with the question,
-1–6 options (or `yesno: true`), and optional Markdown context. It posts a
-quick-answer card; their click sends the answer and closes the ask. In a plain
+its options (2–6, one may be `recommended`) or `yesno: true`, and optional
+Markdown context. It posts a quick-answer card; their click sends the answer
+and closes the ask. A question sent without options gets Yes and No when it is
+a yes/no question; any other comes back with a `warnings` line and a card with
+a comment box only, so give the options. In a plain
 reply, use the `Ask:` format below. Never put a question to them in prose.
 
 **Several questions in one message: one `Ask:` each.** When a reply holds
@@ -811,7 +814,9 @@ message, `Re “<question>”: <option>` with their comment under it, once.
    - **30 days** — saves about 2 GB (recommended)
    - **90 days** — what we have now
 2. **Ask (yes/no):** Turn on the nightly backup?
-3. **Ask:** Anything else to fold into this release?
+3. **Ask:** Ship it on Friday?
+   - Yes (recommended)
+   - No
 ```
 
 - The `Ask:` line stands on its own (a list, quote or bold mark before it is
@@ -820,8 +825,14 @@ message, `Re “<question>”: <option>` with their comment under it, once.
   deeper). Lead each with its name in bold or before ` — `; the rest is what it
   means for them. Mark at most one `(recommended)`; a thumbs up on the message
   then answers each ask with its recommendation.
-- `Ask (yes/no):` with no list, or a list of exactly Yes and No, gives Yes and
-  No buttons; an ask with no options gets a comment box only.
+- **Every ask gives its answers.** A choice lists its options; a yes/no
+  question lists Yes and No (mark the one you recommend) or says
+  `Ask (yes/no):`. Options written in the line ("A, or B?", "Options: (1) …,
+  (2) …") still become buttons, and a question with no options that is not a
+  what/which/who/how question gets Yes and No, but write them as a list: that
+  is what you get. One question per `Ask:` line; two in one line become two
+  cards. Only a question that truly needs their words (`Ask (open):`, or a
+  what/which question with no options) gets a comment box alone.
 - Only for their real decisions and questions: an `Ask:` stays on their Needs
   you list until they answer it, write to the chat after it, or a week passes. Never mark your own rhetorical
   questions, or quote the marker inside code.
