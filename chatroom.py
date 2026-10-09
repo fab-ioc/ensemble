@@ -992,6 +992,29 @@ def _visible_to(msg: dict, identity: str) -> bool:
             or msg.get("to") == identity)
 
 
+def withdraw_message(room_id: str, msg_id: str, sender: str = HUMAN_IDENTITY) -> bool:
+    """Take back a message of ``sender``'s that none of the agents it reaches
+    has read yet (chat_read moves past it): the Undo of a quick answer sent by
+    mistake (#198). False when it is not there, or one of them read it."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return False
+        msgs = room.get("messages", [])
+        m = next((x for x in msgs if x.get("id") == msg_id and x.get("from") == sender), None)
+        if m is None:
+            return False
+        reads = room.get("reads") or {}
+        for p in room.get("participants", []):
+            if (p.get("kind") == "agent" and _visible_to(m, p["identity"])
+                    and float(reads.get(p["identity"], 0.0)) >= m["ts"]):
+                return False
+        msgs.remove(m)
+        room["updatedAt"] = _now()
+        _write(room)
+        return True
+
+
 def read_new_for(room_id: str, identity: str) -> list[dict]:
     """Return messages visible to ``identity`` that it hasn't read yet, and
     advance its read cursor. Backs the ``chat_read`` tool."""
