@@ -8739,21 +8739,27 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
     documents = (project or {}).get("kind") == "documents"
     is_po = bool(room and project and room.get("id") == (project.get("poRoomId") or "").strip())
 
-    # (folder, stop): the folders to try, in order; stop bounds the walk up.
-    tries: list[tuple[str, str]] = []
+    # (folder, stop, exact): the folders to try, in order. stop bounds the
+    # walk up; an exact folder opens as it is (the project's configured code
+    # folder, even inside a larger repo; a documents folder).
+    tries: list[tuple[str, str, bool]] = []
     if is_po:
-        tries = [(code, ""), (cwd, "")]
+        tries = [(code, "", True), (cwd, "", documents)]
     elif room and project:
         task_dir = room.get("taskDir") or ""
-        tries = [(task_dir or cwd, "")] if documents else [(cwd, task_dir), (task_dir, task_dir)]
-        tries.append((code, ""))
+        tries = ([(task_dir or cwd, "", True)] if documents
+                 else [(cwd, task_dir, False), (task_dir, task_dir, False)])
+        tries.append((code, "", True))
     else:
-        tries = [(cwd, "")] + ([(code, "")] if project else [])
+        tries = [(cwd, "", False)] + ([(code, "", True)] if project else [])
 
+    # Every folder is tried for a repo first; only when none has one does the
+    # first existing folder open as it is (never the projects folder).
     looked: list[dict] = []
     repos: dict[str, str] = {}
+    plain = ""
     seen: set[str] = set()
-    for folder, stop in tries:
+    for folder, stop, exact in tries:
         key = os.path.normcase(os.path.normpath(folder)) if folder else ""
         if not key or key in seen:
             continue
@@ -8763,12 +8769,16 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
         looked.append({"path": folder, "exists": exists})
         if not exists:
             continue
-        if not documents:
-            repos = _repos_in(p, stop, max_repos)
-        # A folder with no repo in or above it opens as it is.
-        if not repos:
+        if exact:
             repos = {str(p): p.name}
-        break
+        else:
+            repos = _repos_in(p, stop, max_repos)
+            if not repos and not plain and not _not_code_folder(p):
+                plain = str(p)
+        if repos:
+            break
+    if not repos and plain:
+        repos = {plain: Path(plain).name}
 
     enriched = []
     for path_str, name in sorted(repos.items()):

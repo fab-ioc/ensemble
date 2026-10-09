@@ -807,7 +807,8 @@ const take = () => log.splice(0);
   // Nothing to open: the toast says where it looked (#194), never the board's word.
   out.ideNone = [];
   if (onHubMachine()) for (const looked of [[], [{ path: '/t/repo', exists: false }],
-                        [{ path: '/t/repo', exists: false }, { path: '/t', exists: false }, { path: '/code', exists: false }]]) {
+                        [{ path: '/t/repo', exists: false }, { path: '/t', exists: false }, { path: '/code', exists: false }],
+                        [{ path: '/shared', exists: true }]]) {
     REPOS_REPLY = { repos: [], lookedIn: looked };
     await ideAction(btn({ sid: liveRoom.sessionId })); out.ideNone.push(take());
   }
@@ -924,8 +925,9 @@ class HubMachineActions(unittest.TestCase):
                                      "which no longer exists.")
         self.assertEqual(none[2][1], "toast:Nothing to open in the editor: looked for its code in /t/repo, /t "
                                      "and /code; none of these folders exists any more.")
-        self.assertEqual(none[3], ["api:/api/repos/room-0000aaa1", "editor:/code/old"])
-        for msg in none[:3]:
+        self.assertEqual(none[3][1], "toast:Nothing to open in the editor: looked for its code in /shared and found none.")
+        self.assertEqual(none[4], ["api:/api/repos/room-0000aaa1", "editor:/code/old"])
+        for msg in none[:4]:
             self.assertNotRegex(msg[1], r"(?i)project|initiative|board")
         self.assertIn("api:/api/open", hub["terminalHistory"])
         self.assertNotIn("api:/api/session/adopt", hub["terminalHistory"])

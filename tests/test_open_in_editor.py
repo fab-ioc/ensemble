@@ -50,6 +50,10 @@ class ReposForSession(unittest.TestCase):
         loose = b / "loose"
         _repo(loose / "one"); _repo(loose / "two")       # a folder holding two repos
         (b / "plain").mkdir()
+        (task / "notes").mkdir()                         # a task working in a subfolder with no repo
+        mono = _repo(b / "mono")                         # a project whose code is a folder of a larger repo
+        (mono / "packages" / "app").mkdir(parents=True)
+        cls.p_mono = mono / "packages" / "app"
         cls.p = {"root": root, "code": code, "home": home, "task": task, "notes": notes, "loose": loose}
 
         projects = [
@@ -59,14 +63,17 @@ class ReposForSession(unittest.TestCase):
              "kind": "code", "poRoomId": "room-0000a002"},
             {"id": "proj-notes", "name": "Notes", "path": str(notes), "home": str(notes), "kind": "documents",
              "poRoomId": "room-0000a003"},
+            {"id": "proj-mono", "name": "Mono", "path": str(mono / "packages" / "app"), "home": str(root / "Mono"),
+             "kind": "code", "poRoomId": "room-0000a004"},
             {"id": "proj-gone", "name": "Gone", "path": str(b / "code" / "gone"), "home": str(root / "Gone"),
              "kind": "code", "poRoomId": ""},
         ]
         links = {"room-0000a001": "proj-app", "room-0000a002": "proj-old", "room-0000a003": "proj-notes",
                  "room-0000b001": "proj-app", "room-0000b002": "proj-notes", "room-0000b003": "proj-gone",
-                 "sess-linked-gone": "proj-app"}
+                 "sess-linked-gone": "proj-app", "room-0000a004": "proj-mono", "room-0000b004": "proj-app"}
         cwds = {"sess-loose": str(loose), "sess-plain": str(b / "plain"), "sess-gone": str(b / "nowhere"),
-                "sess-past-task": str(task / "repo"), "sess-linked-gone": str(b / "nowhere2"), "sess-none": ""}
+                "sess-past-task": str(task / "repo"), "sess-linked-gone": str(b / "nowhere2"), "sess-none": "",
+                "sess-root": str(root)}
         patches = [
             mock.patch.object(dashboard, "PROJECTS_ROOT", root),
             mock.patch.object(chatroom, "ROOMS_DIR", b / "rooms"),
@@ -96,6 +103,8 @@ class ReposForSession(unittest.TestCase):
         room("room-0000a003", notes)                                   # documents project's PO
         room("room-0000b001", task / "repo", task)                     # worktree task
         room("room-0000b002", notes / "write_letter", notes / "write_letter")   # documents task
+        room("room-0000a004", b / "cs" / "07_po")                      # PO of a code folder inside a monorepo
+        room("room-0000b004", task / "notes", task)                    # task working in a subfolder
         room("room-0000b003", root / "Gone" / "t" / "repo", root / "Gone" / "t")  # every folder gone
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
@@ -157,6 +166,19 @@ class ReposForSession(unittest.TestCase):
         self.assertEqual(r["lookedIn"], [{"path": str(gone / "t" / "repo"), "exists": False},
                                          {"path": str(gone / "t"), "exists": False},
                                          {"path": str(self.base / "code" / "gone"), "exists": False}])
+
+    def test_task_in_a_subfolder_without_a_repo_still_opens_its_worktree(self):
+        # Review 1: the plain subfolder is the last resort, after every other folder.
+        self.assertEqual(self.paths("room-0000b004"), [str(self.p["task"] / "repo")])
+
+    def test_projects_folder_is_never_offered(self):
+        # Review 1: a session working in the projects folder itself (a backup repo).
+        r = self.get("sess-root")
+        self.assertEqual(r, {"repos": [], "lookedIn": [{"path": str(self.p["root"]), "exists": True}]})
+
+    def test_po_opens_the_configured_code_folder_not_the_repo_around_it(self):
+        # Review 1: a code folder inside a monorepo opens as configured.
+        self.assertEqual(self.paths("room-0000a004"), [str(self.p_mono)])
 
     def test_no_folder_known(self):
         self.assertEqual(self.get("sess-none"), {"repos": [], "lookedIn": []})

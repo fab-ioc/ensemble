@@ -18516,9 +18516,10 @@ async function focusByPid(pid) {
 // It names folders, never the board's word (a code folder is not a board).
 function nothingToOpenText(looked) {
   if (!looked.length) return 'Nothing to open in the editor: no folder is recorded for it.';
-  const gone = looked.filter(x => !x.exists).map(x => tildeify(x.path));
-  if (gone.length === 1) return `Nothing to open in the editor: looked for its code in ${gone[0]}, which no longer exists.`;
-  const list = gone.slice(0, -1).join(', ') + ' and ' + gone[gone.length - 1];
+  const all = looked.map(x => tildeify(x.path)), gone = looked.filter(x => !x.exists);
+  const list = all.length === 1 ? all[0] : all.slice(0, -1).join(', ') + ' and ' + all[all.length - 1];
+  if (gone.length < looked.length) return `Nothing to open in the editor: looked for its code in ${list} and found none.`;
+  if (all.length === 1) return `Nothing to open in the editor: looked for its code in ${list}, which no longer exists.`;
   return `Nothing to open in the editor: looked for its code in ${list}; none of these folders exists any more.`;
 }
 
