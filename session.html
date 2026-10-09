@@ -635,6 +635,39 @@
     font-size:var(--fs-200); line-height:16px; }
   .rot-line::before, .rot-line::after { content:''; flex:1 1 24px; border-top:1px solid var(--border-strong); }
   .rot-line span { flex:0 1 auto; max-width:80%; text-align:center; }
+  /* A turn's checkpoint, a restore (#197): a quiet line, what the turn changed,
+     and Subtle buttons. Not a balloon, not a separator across the chat. */
+  .cp-line { display:flex; flex-wrap:wrap; align-items:center; gap:0 var(--s-100); color:var(--fg-muted);
+    font-size:var(--fs-200); line-height:16px; }
+  .cp-line::before { content:''; flex:0 0 16px; margin-right:var(--s-100); border-top:1px solid var(--border-strong); }
+  .cp-line .cp-what { flex:0 1 auto; margin-right:var(--s-100); }
+  .cp-line .cp-btn { min-height:24px; padding:0 var(--s-200); background:transparent; border-color:transparent;
+    color:var(--fg-subtle); font-size:var(--fs-200); }
+  .cp-line .cp-btn:hover { background:var(--hover); color:var(--fg); }
+  .cp-line .cp-btn:focus-visible, #cp-dlg button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* "Go back to here": what would change, then the restore. */
+  #cp-dlg { width:min(560px, calc(100vw - 32px)); max-height:min(80vh, 640px); padding:var(--s-400); box-sizing:border-box;
+    border:1px solid var(--border); border-radius:var(--r-300); background:var(--surface-overlay); color:var(--fg);
+    box-shadow:var(--e-200); font-size:var(--fs-300); }
+  #cp-dlg[open] { display:flex; flex-direction:column; gap:var(--s-200); }
+  #cp-dlg::backdrop { background:rgba(0,0,0,.5); }
+  #cp-dlg h3 { margin:0; font-size:var(--fs-400); font-weight:600; }
+  #cp-dlg p { margin:0; }
+  #cp-dlg .cp-lead, #cp-dlg .cp-none { color:var(--fg-subtle); }
+  #cp-dlg .cp-body { min-height:0; overflow:auto; display:flex; flex-direction:column; gap:var(--s-100); }
+  #cp-dlg .cp-sum { font-weight:500; }
+  #cp-dlg ul { margin:0; padding:0; list-style:none; font-size:var(--fs-200); line-height:20px; }
+  #cp-dlg .cp-files li { display:flex; gap:var(--s-200); justify-content:space-between; }
+  #cp-dlg .cp-path { font-family:var(--font-mono); overflow-wrap:anywhere; min-width:0; }
+  #cp-dlg .cp-n { color:var(--fg-muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  #cp-dlg .cp-commits code { font-family:var(--font-mono); color:var(--fg-muted); }
+  #cp-dlg .cp-err { color:var(--c-danger-fg); }
+  #cp-dlg .cp-err[hidden] { display:none; }
+  #cp-dlg .cp-acts { display:flex; justify-content:flex-end; gap:var(--s-200); margin-top:var(--s-100); }
+  #cp-dlg .cp-acts button { min-height:32px; padding:0 var(--s-400); font-size:var(--fs-300); font-weight:500; }
+  #cp-dlg .cp-ok { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+  #cp-dlg .cp-ok:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
+  #cp-dlg .cp-ok:disabled { background:var(--surface-sunken); border-color:var(--border); color:var(--fg-disabled); cursor:default; }
   /* A folded balloon: who, and its first line. A click opens it in place.
      Consecutive rows sit 4px apart (the chat's 10px gap less 3px each side). */
   .fold-note { color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
@@ -1129,6 +1162,7 @@
     /* Your asks: every link in the list and under a balloon is a tap target. */
     #points-list a.pt-link, .pt-bar a.pt-link, .pt-bar .pt-chip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
+    .cp-line .cp-btn, #cp-dlg .cp-acts button { min-height: var(--touch-min); }   /* a checkpoint's buttons (#197) */
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
        line of text and takes a finger's height with an invisible margin. */
     .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path: none; }
@@ -2306,7 +2340,8 @@ const FOLD_MIN = 10, FOLD_MAX = 25;
 // A line across the chat, not a balloon: a rotation, or the hub's row that it
 // was restarted (posted to a PO that was idle then: nothing was typed into it).
 const isHubRow = m => !!m && m.kind === 'notice' && m.noticeKind === 'restart';
-const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation) || isHubRow(m));
+// A checkpoint of the task's code (#197) is a line too (cpItems).
+const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation) || isHubRow(m) || m.cp || m.cpr);
 const foldKey = (m, i) => m.id || ('#' + i);
 function foldStart(items, quiet) {
   let seen = 0, start = items.length, userSeen = false;
@@ -3235,6 +3270,7 @@ function ceoWhy(m, N = CHAT_NAMES) {
 function forCeo(m, N = CHAT_NAMES) {
   if (!m) return false;
   if (isPersons(m)) return true;
+  if (m.cp || m.cpr) return true;     // a checkpoint: the person's way back (#197)
   if (isHubInput(m) || isLandmark(m) || m.from === 'ensemble') return false;
   if (isPoMsg(m)) return namesCeo(m.text, N);
   if (isDecision(m)) return true;
@@ -3949,6 +3985,7 @@ function renderBubbles(items, opt = {}) {
   const place = stick ? null : readingPlace(box, opt.anchor || (typeof pgPointed === 'function' ? pgPointed(box) : null));
   const given = items;       // as the conversation has them, point lines and all (sendsToShow)
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
+  items = withCheckpoints(items, ROOM_OBJ && ROOM_OBJ.checkpoints);
   // The person's words as sent: the hub's "[point P12]" lines are the agent's.
   items = items.map(m => m && m.from === 'user' && (hasPointLines(m.text) || hasImagePlaceholders(m.text))
     ? Object.assign({}, m, { text: stripImagePlaceholders(stripPointLines(m.text)) }) : m);
@@ -4072,6 +4109,7 @@ function renderBubbles(items, opt = {}) {
     }
     if (hiddenIn.has(i)) { if (quiet(m, i)) quietRows++; return; }
     if (plan[i] === 'line') {
+      if (isCheckpoint(m)) { rows.push(cpLineHtml(m)); return; }
       rows.push(`<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}" data-key="${esc(k)}"><span>${esc(isHubRow(m) ? m.text : rotationText(m.rotation || m.divider))}</span></div>`);
       return;
     }
@@ -4886,6 +4924,163 @@ function composePlaceholder(isPo, solo) {
   $('#input').placeholder = `Message ${who}…`;
   $('#input').title = `Message ${who}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
 }
+// ---- Checkpoints (#197): begin -----------------------------------------------
+// The hub keeps the task's code as it was at the end of each of the owner's
+// turns (a checkpoint), and as it was before each restore. They come with the
+// room (room.checkpoints), never as messages, and go in among the turns by
+// time: a quiet line each, with what the turn changed and the way back to it.
+function cpItems(cp) {
+  if (!cp) return [];
+  const out = [];
+  (cp.turns || []).forEach(t => out.push({ id: 'cp:' + t.n, ts: +t.at || 0, cp: t }));
+  const rs = cp.restores || [];
+  // Undo is offered once: on the newest restore to a checkpoint, until undone.
+  const undone = new Set(rs.filter(r => r.toKind === 'undo').map(r => r.undo));
+  const last = rs[rs.length - 1];
+  rs.forEach(r => out.push({ id: 'cpr:' + r.m, ts: +r.at || 0, cpr: r,
+    canUndo: r === last && r.toKind !== 'undo' && !undone.has(r.m) }));
+  return out.sort((a, b) => a.ts - b.ts);
+}
+// The checkpoints among the items: each before the first item newer than it,
+// never above the first item with a time (older turns are not shown).
+function withCheckpoints(items, cp) {
+  const rows = cpItems(cp);
+  if (!rows.length) return items;
+  const first = items.find(m => m && m.ts);
+  if (!first) return items;
+  const out = items.slice();
+  for (const r of rows) {
+    if (r.ts < first.ts) continue;
+    let at = out.length;
+    for (let i = out.length - 1; i >= 0; i--) { if (out[i].ts && out[i].ts > r.ts) at = i; }
+    out.splice(at, 0, r);
+  }
+  return out;
+}
+const isCheckpoint = m => !!m && !!(m.cp || m.cpr);
+const cpWhen = at => { const d = new Date((+at || 0) * 1000); const p = n => String(n).padStart(2, '0'); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const cpFiles = n => `${n} file${n === 1 ? '' : 's'}`;
+function cpLineHtml(m) {
+  const key = esc(m.id);
+  if (m.cpr) {
+    const r = m.cpr, by = r.by ? ` (by ${r.by})` : '';
+    const what = r.toKind === 'undo' ? `Undid the restore${by}` : `Restored to checkpoint ${r.to}${by}`;
+    return `<div class="cp-line cp-restore" role="group" aria-label="${esc(what)}" data-key="${key}" title="${esc(cpWhen(r.at))}">`
+      + `<span class="cp-what">${esc(what)}</span>`
+      + (m.canUndo ? `<button type="button" class="cp-btn" data-cp-undo="${esc(String(r.m))}">Undo</button>` : '') + '</div>';
+  }
+  const t = m.cp, n = String(t.n);
+  const base = t.kind === 'base';
+  const what = base ? 'Checkpoint 0 · the code when the task started'
+    : `Checkpoint ${n} · ${cpFiles(+t.files || 0)} +${+t.add || 0} −${+t.del || 0}`;
+  const when = base ? `Start of the task, ${cpWhen(t.at)}` : `End of the turn of ${cpWhen(t.at)}`;
+  return `<div class="cp-line" role="group" aria-label="${esc(what)}" data-key="${key}" title="${esc(when)}">`
+    + `<span class="cp-what">${esc(what)}</span>`
+    + (!base && +t.files ? `<button type="button" class="cp-btn" data-cp-diff="${esc(n)}">Changes in this turn</button>` : '')
+    + `<button type="button" class="cp-btn" data-cp-back="${esc(n)}">Go back to here</button></div>`;
+}
+// The room's checkpoints as last drawn: a solo chat draws again when they change.
+let CP_SIG = '';
+const cpSig = cp => cp ? JSON.stringify([(cp.turns || []).map(t => t.n), (cp.restores || []).map(r => r.m)]) : '';
+// "Changes in this turn": the dashboard's Changes tool for this task, on what
+// that turn changed; a chat in a window of its own opens the dashboard on it.
+function cpShowDiff(n) {
+  const host = dashboardHost();
+  if (host) host.postMessage({ type: 'checkpoint-diff', roomId: ROOM, n: +n }, location.origin);
+  else window.open('/?task=' + encodeURIComponent(ROOM) + '&turn=' + encodeURIComponent(n), '_blank', 'noopener');
+}
+// "Go back to here" (want: {n}) and Undo (want: {undo}): what would change,
+// then the restore once confirmed. Nothing is lost: the state it replaces is
+// kept, and Undo puts it back.
+function cpDialog() {
+  let d = document.getElementById('cp-dlg');
+  if (d) return d;
+  d = document.createElement('dialog');
+  d.id = 'cp-dlg';
+  d.setAttribute('aria-labelledby', 'cp-dlg-h');
+  d.innerHTML = '<h3 id="cp-dlg-h"></h3><p class="cp-lead"></p><div class="cp-body" aria-live="polite"></div>'
+    + '<p class="cp-err" role="alert" hidden></p>'
+    + '<div class="cp-acts"><button type="button" class="cp-cancel">Cancel</button><button type="button" class="cp-ok">Go back</button></div>';
+  document.body.appendChild(d);
+  d.querySelector('.cp-cancel').onclick = () => d.close();
+  d.addEventListener('click', e => { if (e.target === d) d.close(); });   // a click on the backdrop
+  return d;
+}
+const cpStatusWord = s => ({ A: 'added', D: 'deleted', M: 'changed' })[s] || 'changed';
+function cpPreviewHtml(p) {
+  const files = p.files || [], commits = p.commits || [];
+  if (!files.length && !commits.length) return '<p class="cp-none">Nothing would change: the code is already as it was then.</p>';
+  const num = (v, s) => v == null ? '' : `${s}${v}`;
+  let h = `<p class="cp-sum">${files.length ? `${cpFiles(files.length)} change · +${+p.add || 0} −${+p.del || 0} lines` : 'No file changes'}</p>`;
+  if (files.length) h += '<ul class="cp-files">' + files.map(f =>
+    `<li><span class="cp-path">${esc(f.path)}</span><span class="cp-n">${esc(cpStatusWord(f.status))}${f.add == null ? ' (binary)' : ` ${num(f.add, '+')} ${num(f.del, '−')}`}</span></li>`).join('') + '</ul>';
+  if (commits.length) h += `<p class="cp-sum">${commits.length} commit${commits.length === 1 ? '' : 's'} removed from ${esc(p.branch || 'the branch')}</p>`
+    + '<ul class="cp-commits">' + commits.map(c => `<li><code>${esc(String(c.sha).slice(0, 7))}</code> ${esc(c.subject || '')}</li>`).join('') + '</ul>';
+  return h;
+}
+async function cpGoBack(want) {
+  const d = cpDialog();
+  const undo = want.undo != null;
+  const q = undo ? 'undo=' + encodeURIComponent(want.undo) : 'n=' + encodeURIComponent(want.n);
+  const ok = d.querySelector('.cp-ok'), err = d.querySelector('.cp-err'), body = d.querySelector('.cp-body');
+  const gen = (d._gen || 0) + 1; d._gen = gen;
+  d.querySelector('#cp-dlg-h').textContent = undo ? 'Undo the restore?' : `Go back to checkpoint ${want.n}?`;
+  d.querySelector('.cp-lead').textContent = undo
+    ? 'The code goes back to how it was just before the restore.'
+    : (+want.n === 0 ? 'The code goes back to how it was when the task started.' : 'The code goes back to how it was at the end of that turn.')
+      + ' What is there now is kept: Undo puts it back.';
+  ok.textContent = undo ? 'Undo' : 'Go back';
+  ok.disabled = true;
+  err.hidden = true;
+  body.innerHTML = '<p class="cp-none">Working out what would change…</p>';
+  if (!d.open) d.showModal();
+  d.querySelector('.cp-cancel').focus();
+  let p;
+  try {
+    const r = await fetch('/api/checkpoints/preview?room=' + encodeURIComponent(ROOM) + '&' + q);
+    p = await r.json();
+    if (!r.ok) throw new Error(p.message || p.error || r.status);
+  } catch (e) {
+    if (d._gen !== gen) return;
+    body.innerHTML = '';
+    err.textContent = 'Could not read what would change: ' + e.message;
+    err.hidden = false;
+    return;
+  }
+  if (d._gen !== gen) return;
+  body.innerHTML = cpPreviewHtml(p);
+  ok.disabled = !(p.files || []).length && !(p.commits || []).length;
+  ok.onclick = async () => {
+    ok.disabled = true;
+    err.hidden = true;
+    let res, status = 0;
+    try {
+      const r = await fetch('/api/checkpoints/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ room: ROOM }, undo ? { undo: +want.undo } : { n: +want.n })) });
+      status = r.status;
+      res = await r.json().catch(() => ({}));
+    } catch (e) { res = { message: 'The hub could not be reached.' }; }
+    if (d._gen !== gen) return;
+    if (status !== 200 || !res.ok) {
+      err.textContent = res.message || res.error || 'The restore failed.';
+      err.hidden = false;
+      ok.disabled = false;
+      return;
+    }
+    d.close();
+    if (ROOM_OBJ && res.checkpoints) { ROOM_OBJ.checkpoints = res.checkpoints; CP_SIG = cpSig(res.checkpoints); }
+    STICK = true;
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  };
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('.cp-btn');
+  if (!b) return;
+  if (b.dataset.cpDiff != null) cpShowDiff(b.dataset.cpDiff);
+  else if (b.dataset.cpBack != null) cpGoBack({ n: b.dataset.cpBack });
+  else if (b.dataset.cpUndo != null) cpGoBack({ undo: b.dataset.cpUndo });
+});
+// ---- Checkpoints: end ----------------------------------------------------------
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
 function withHubRows(items, room) {
@@ -5133,9 +5328,11 @@ function refreshShow(room, ticket, sendsGen) {
     const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m)).length;
     const rowsChanged = hubRows !== HUB_ROWS_N;
     HUB_ROWS_N = hubRows;
+    const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;
+    CP_SIG = cpNow;
     if ((pendChanged || rowsChanged) && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
     else {
-      if (sendsChanged && LAST_ITEMS) renderBubbles(LAST_ITEMS);   // a send moved on
+      if ((sendsChanged || cpChanged) && LAST_ITEMS) renderBubbles(LAST_ITEMS);   // a send moved on
       checkSolo();   // stat-driven: first load + every new turn
     }
   } else {
