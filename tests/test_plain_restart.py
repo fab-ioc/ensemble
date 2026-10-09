@@ -65,7 +65,7 @@ class HelperScript(unittest.TestCase):
         # plain 30s default so a truly broken probe still fails in bounded time.
         text = SCRIPT.decode("ascii")
         self.assertRegex(text, r"function Ok\(\$u, \[int\]\$timeoutSec = 30\)")
-        self.assertRegex(text, r"\$sessTimeoutSec = 90")
+        self.assertRegex(text, r"\$sessTimeoutSec = 170")
         self.assertIn("ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S", text)
         i = text.index("$pfOk = ")
         line = text[i:text.index("\n", i)]
