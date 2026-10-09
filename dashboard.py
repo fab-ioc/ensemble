@@ -1628,24 +1628,46 @@ _CP_LIST: dict[str, tuple[float, dict]] = {}       # room -> (when, list for the
 _CP_RUNNING: dict[str, bool] = {}                  # room -> another turn end came while one ran
 _CP_BASED: set[str] = set()                        # rooms whose checkpoint 0 exists
 _CP_CODEX: dict[tuple[str, str], int] = {}         # (room, identity) -> rollout size last seen at a turn end
+_CP_RESTORING: dict[str, threading.Event] = {}     # room -> set when its restore is over
 _CP_LOCK = threading.Lock()
+CHECKPOINT_RESTORE_WAIT_S = 600                    # input to a task waits at most this for its restore
 
 
 def checkpoint_dir(room: dict | None) -> str:
-    """The folder a task's checkpoints save: its working folder when that is
-    the top of a git checkout (a worktree, a copy with its own repository, a
-    code project used in place, a one-agent task's own repository); "" for a
-    documents project (it has its file history), a PO, or no repository."""
-    if not room or room.get("id") in rotation._po_room_ids():
+    """The folder a task's checkpoints save: only the task's own worktree (a
+    "worktree" task's folder, a linked worktree at the top of its checkout).
+    "" for anything others work in too: a task in place in the project's
+    code folder, the main checkout, a PO, a documents project, a copy or no
+    repository. A restore rewrites the whole folder and moves its branch."""
+    if not room or room.get("id") in rotation._po_room_ids() or room.get("sharedCwd"):
+        return ""
+    if (room.get("workspace") or {}).get("mode") != "worktree":
         return ""
     cwd = (room.get("cwd") or "").strip()
-    if not cwd or not path_is_git(cwd) or not os.path.isdir(cwd):
+    if not cwd or not os.path.isdir(cwd) or not path_is_git(cwd):
         return ""
     pid = _room_project_id(room.get("id", ""), room, load_session_projects())
     proj = find_project(pid) if pid else None
-    if proj and proj.get("kind") == "documents":
+    ppath = (proj or {}).get("path") or ""
+    if proj and (proj.get("kind") == "documents" or (ppath and _same_path(ppath, cwd))):
         return ""
-    return cwd
+    return cwd if checkpoints.own_worktree(cwd) else ""
+
+
+def _same_path(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def checkpoint_restoring(room_id: str) -> bool:
+    return room_id in _CP_RESTORING
+
+
+def checkpoint_wait_restore(room_id: str) -> None:
+    """Input to a task whose code is being put back waits for that (only
+    this task's input; the hub's gate is not held meanwhile)."""
+    ev = _CP_RESTORING.get(room_id or "")
+    if ev is not None:
+        ev.wait(CHECKPOINT_RESTORE_WAIT_S)
 
 
 def _cp_target(room_id: str) -> tuple[str, tuple]:
@@ -1711,6 +1733,7 @@ def checkpoint_list(room_id: str) -> dict | None:
     try:
         lst = checkpoints.list_checkpoints(folder, room_id)
     except (OSError, ValueError, subprocess.SubprocessError):
+        _CP_LIST[room_id] = (now - 45, None)        # a broken repository: again in 15 s, not every poll
         return None
     out = {"turns": lst["turns"], "restores": lst["restores"]}
     _CP_LIST[room_id] = (now, out)
@@ -1783,12 +1806,18 @@ def checkpoint_restore(room_id: str, n=None, undo=None) -> tuple[int, dict]:
     folder = checkpoint_dir(room)
     if not folder:
         return 400, {"error": "no_checkpoints", "message": "This task has no git workspace to restore."}
-    # The check and the restore are one step against starts (launch lock)
-    # and typed input (the gate), so no turn begins in between.
-    with rotation.launch_lock(room_id), rotation.GATE:
-        why = checkpoint_refusal(room)
-        if why:
-            return 409, {"error": "busy", "message": why}
+    # No turn may begin while the code is put back. The idle check and the
+    # task's restoring mark are one step under the gate (typed input checks
+    # it there); the git work then runs under this task's launch lock (no
+    # start or resume of it) with input to it waiting, other tasks' not.
+    with rotation.launch_lock(room_id):
+        with rotation.GATE:
+            why = checkpoint_refusal(room)
+            if not why and room_id in _CP_RESTORING:
+                why = "The code is already being put back."
+            if why:
+                return 409, {"error": "busy", "message": why}
+            done = _CP_RESTORING[room_id] = threading.Event()
         try:
             lst = checkpoints.list_checkpoints(folder, room_id)
             res = checkpoints.restore(folder, room_id, n=n, undo=undo, by=operator_name())
@@ -1797,6 +1826,8 @@ def checkpoint_restore(room_id: str, n=None, undo=None) -> tuple[int, dict]:
         except (OSError, ValueError, subprocess.SubprocessError) as e:
             return 500, {"error": "failed", "message": f"The restore failed: {str(e)[:200]}"}
         finally:
+            _CP_RESTORING.pop(room_id, None)
+            done.set()
             _CP_LIST.pop(room_id, None)
             invalidate_session_listing()
     at = 0.0
@@ -2925,6 +2956,7 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     The global ordering lock covers only the text write and journal append.
     The TUI's ingestion pause and discrete Enter stay outside it so input in
     another terminal never waits seconds for a long brief."""
+    checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
     agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
@@ -14982,6 +15014,10 @@ class Handler(BaseHTTPRequestHandler):
             with rotation.GATE, _INPUT_WRITE_LOCK:
                 if rotation.room_rotating((sess.meta or {}).get("room", "")):
                     self._send_json(409, {"error": "handing over to a fresh session, "
+                                                   "try again shortly"})
+                    return
+                if checkpoint_restoring((sess.meta or {}).get("room", "")):
+                    self._send_json(409, {"error": "the code is being put back to a checkpoint, "
                                                    "try again shortly"})
                     return
                 if not typed:

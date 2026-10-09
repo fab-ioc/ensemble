@@ -164,28 +164,30 @@ class InChrome(unittest.TestCase):
         points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
         for d in (dashboard._CP_DIR, dashboard._CP_LIST, dashboard._CP_CODEX, dashboard._CP_BASED):
             d.clear()
-        repo = cls.repo = base / "task-repo"
-        repo.mkdir()
-        git(repo, "init", "-q", "-b", "main")
-        git(repo, "config", "user.email", "t@t")
-        git(repo, "config", "user.name", "t")
-        (repo / "a.txt").write_text("start\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-q", "-m", "first")
+        main = base / "main-repo"
+        main.mkdir()
+        git(main, "init", "-q", "-b", "main")
+        git(main, "config", "user.email", "t@t")
+        git(main, "config", "user.name", "t")
+        (main / "a.txt").write_text("start\n", encoding="utf-8")
+        git(main, "add", "-A")
+        git(main, "commit", "-q", "-m", "first")
+        repo = cls.repo = base / "task-repo"        # the task's own worktree
+        git(main, "worktree", "add", "-q", str(repo), "-b", "sess/task")
         ok, project, _ = dashboard.register_project("Undo")
         assert ok, project
         rid = cls.rid = chatroom.create_room("Fix the parser", [
             {"identity": "claude", "agent": "claude", "model": "", "role": "engineer"},
             {"identity": "codex", "agent": "codex", "model": "", "role": "reviewer"}])["id"]
         room = chatroom.get_room(rid, public=False)
-        room["cwd"] = str(repo)
+        room["cwd"], room["workspace"] = str(repo), {"mode": "worktree"}
         chatroom.update_room(room)
         dashboard.assign_session_project(rid, project["id"])
         # A one-agent task: its chat is the transcript of the agent's session.
         solo = cls.solo = chatroom.create_room("Tidy the docs", [
             {"identity": "claude", "agent": "claude", "model": "", "role": "engineer", "sessionId": "eng-sid"}])["id"]
         room = chatroom.get_room(solo, public=False)
-        room["cwd"] = str(repo)
+        room["cwd"], room["workspace"] = str(repo), {"mode": "worktree"}
         chatroom.update_room(room)
         dashboard.assign_session_project(solo, project["id"])
         t0 = time.time() - 600

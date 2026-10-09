@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -30,14 +31,17 @@ def git(root, *args):
 class CheckpointHub(Hub):
     def setUp(self):
         super().setUp()
+        # The project's checkout, and the task's own worktree of it.
+        self.main = Path(self.tmp.name) / "main-repo"
+        self.main.mkdir()
+        git(self.main, "init", "-q", "-b", "main")
+        git(self.main, "config", "user.email", "t@t")
+        git(self.main, "config", "user.name", "t")
+        (self.main / "a.txt").write_text("one\n", encoding="utf-8")
+        git(self.main, "add", "-A")
+        git(self.main, "commit", "-q", "-m", "first")
         self.repo = Path(self.tmp.name) / "task-repo"
-        self.repo.mkdir()
-        git(self.repo, "init", "-q", "-b", "main")
-        git(self.repo, "config", "user.email", "t@t")
-        git(self.repo, "config", "user.name", "t")
-        (self.repo / "a.txt").write_text("one\n", encoding="utf-8")
-        git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-q", "-m", "first")
+        git(self.main, "worktree", "add", "-q", str(self.repo), "-b", "sess/task")
         for d in (dashboard._CP_DIR, dashboard._CP_LIST, dashboard._CP_CODEX):
             d.clear()
         dashboard._CP_BASED.clear()
@@ -51,6 +55,7 @@ class CheckpointHub(Hub):
                                                "role": "engineer"}])["id"]
         room = chatroom.get_room(rid, public=False)
         room["cwd"] = str(self.repo)
+        room["workspace"] = {"mode": "worktree", "branch": "sess/task"}
         chatroom.update_room(room)
         return rid
 
@@ -135,6 +140,41 @@ class TurnEnds(CheckpointHub):
         status, out = self.json_call("GET", "/api/room?id=" + rid)
         self.assertEqual((status, out["checkpoints"]), (200, None))
 
+    def test_only_the_tasks_own_worktree_never_a_shared_folder(self):
+        rid = self.task()
+        room = chatroom.get_room(rid, public=False)
+        cases = [({"mode": "inplace"}, self.main),         # in place in the project's code folder
+                 ({"mode": "worktree"}, self.main),        # the main checkout
+                 ({}, self.repo),                          # no workspace recorded
+                 ({"mode": "copy"}, self.repo)]
+        for ws, cwd in cases:
+            room["workspace"], room["cwd"] = ws, str(cwd)
+            chatroom.update_room(room)
+            dashboard._CP_DIR.clear()
+            self.assertEqual(dashboard.checkpoint_dir(room), "", (ws, cwd))
+            dashboard.checkpoint_turn(rid, kind="base")
+            status, out = self.json_call("POST", "/api/checkpoints/restore", {"room": rid, "n": 0},
+                                         self.page_headers())
+            self.assertEqual((status, out.get("error")), (400, "no_checkpoints"), (ws, cwd))
+        self.assertEqual(checkpoints.rooms_in(str(self.main)), [])
+        # The project's own folder, even as a worktree task's cwd.
+        room["workspace"], room["cwd"] = {"mode": "worktree"}, str(self.repo)
+        with mock.patch.object(dashboard, "_room_project_id", return_value="p1"), \
+                mock.patch.object(dashboard, "find_project", return_value={"path": str(self.repo)}):
+            self.assertEqual(dashboard.checkpoint_dir(room), "")
+        self.assertEqual(dashboard.checkpoint_dir(room), str(self.repo))
+
+    def test_a_broken_repository_is_not_read_on_every_poll(self):
+        rid = self.task()
+        calls = []
+        def broken(*a):
+            calls.append(a)
+            raise subprocess.CalledProcessError(128, ["git"])
+        with mock.patch.object(checkpoints, "list_checkpoints", broken):
+            self.assertIsNone(dashboard.checkpoint_list(rid))
+            self.assertIsNone(dashboard.checkpoint_list(rid))
+        self.assertEqual(len(calls), 1)
+
 
 class Restore(CheckpointHub):
     def setUp(self):
@@ -190,6 +230,32 @@ class Restore(CheckpointHub):
         self.assertEqual(status, 200, out)
         self.assertEqual((self.repo / "later.txt").read_text(encoding="utf-8"), "later\n")
         self.assertIn("undid the restore", self.told[-1])
+
+    def test_the_hub_gate_is_free_while_git_works_and_input_to_the_task_waits(self):
+        seen = {}
+        real = checkpoints.restore
+        def watching(*a, **kw):
+            got = []
+            t = threading.Thread(target=lambda: got.append(dashboard.rotation.GATE.acquire(timeout=5)
+                                                            and (dashboard.rotation.GATE.release() or True)))
+            t.start()
+            t.join()
+            seen["gate_free"] = got == [True]
+            seen["restoring"] = dashboard.checkpoint_restoring(self.rid)
+            return real(*a, **kw)
+        with mock.patch.object(checkpoints, "restore", watching):
+            status, out = self.json_call("POST", "/api/checkpoints/restore", {"room": self.rid, "n": 1},
+                                         self.page_headers())
+        self.assertEqual(status, 200, out)
+        self.assertEqual(seen, {"gate_free": True, "restoring": True})
+        self.assertFalse(dashboard.checkpoint_restoring(self.rid))
+        # Typing to the task waits for a restore under way, then goes.
+        dashboard._CP_RESTORING[self.rid] = ev = threading.Event()
+        threading.Timer(0.5, lambda: (dashboard._CP_RESTORING.pop(self.rid, None), ev.set())).start()
+        t0 = time.time()
+        dashboard.checkpoint_wait_restore(self.rid)
+        self.assertGreaterEqual(time.time() - t0, 0.4)
+        dashboard.checkpoint_wait_restore("room-other")          # another task: no wait
 
     def test_a_deleted_task_takes_its_refs(self):
         self.assertTrue(checkpoints.rooms_in(str(self.repo)))

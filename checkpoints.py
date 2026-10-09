@@ -99,6 +99,23 @@ def git_root(path: str) -> str:
     return os.path.normpath(top) if top else ""
 
 
+def own_worktree(path: str) -> bool:
+    """``path`` is the top of a linked worktree (``git worktree add``): its
+    own HEAD and index, apart from the main checkout and other tasks'."""
+    root = git_root(path)
+    if not root or os.path.normcase(root) != os.path.normcase(os.path.normpath(path)):
+        return False
+    try:
+        out = _git(root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir",
+                   check=False).splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if len(out) != 2:
+        return False
+    a, b = (os.path.normcase(os.path.normpath(x)) for x in out)
+    return a != b
+
+
 def _valid_room(room: str) -> str:
     if not _ROOM_RE.match(room or "") or ".." in room:
         raise ValueError("bad room id")
@@ -367,9 +384,11 @@ def restore(path: str, room: str, n: int | None = None, undo: int | None = None,
     ``undo``, as it was just before restore number ``undo``. The state it
     replaces is saved first as a restore point (what Undo goes back to).
 
-    The branch moves to the recorded HEAD, the working tree and the index
-    become the snapshot's, and files made since are deleted; ignored files are
-    left alone. The caller checks the agents are idle."""
+    The branch moves to the recorded HEAD (only when it is the branch
+    recorded, still checked out), the working tree and the index become the
+    snapshot's, and files made since are deleted; ignored files are left
+    alone. The caller checks the folder is the task's own worktree and the
+    agents are idle."""
     room = _valid_room(room)
     root = git_root(path)
     if not root:
@@ -379,6 +398,7 @@ def restore(path: str, room: str, n: int | None = None, undo: int | None = None,
         target = _target(recs, n, undo)
         if os.path.exists(_git(root, "rev-parse", "--git-path", "index.lock")):
             raise CheckpointError("Git is busy in this workspace (index.lock). Try again in a moment.")
+        _branch_check(root, target)
         extra = {"by": by, "after": target["sha"], "to": target.get("n") if undo is None else None,
                  "toKind": "undo" if undo is not None else "checkpoint", "undo": undo}
         try:
@@ -402,6 +422,22 @@ def restore(path: str, room: str, n: int | None = None, undo: int | None = None,
                 "at": target.get("at"), "head": _parent_head(root, target["sha"])}
 
 
+def _branch_check(root: str, target: dict) -> None:
+    """Restore moves only the branch the workspace is on, and only when it is
+    the one recorded with the checkpoint; it never switches branch or
+    deletes one."""
+    now = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    was = target.get("branch") or ""
+    if now != was:
+        raise CheckpointError(
+            f"The workspace is now on {('branch ' + now) if now else 'no branch'}, not "
+            f"{('branch ' + was) if was else 'no branch'} as at that checkpoint. Nothing was changed.")
+    if not _parent_head(root, target["sha"]) and _git(root, "rev-parse", "--verify", "--quiet", "HEAD",
+                                                       check=False):
+        raise CheckpointError("That checkpoint is from before the branch's first commit; going back "
+                              "would delete the branch. Nothing was changed.")
+
+
 def _why(e: Exception) -> str:
     return (getattr(e, "stderr", "") or str(e)).strip()[:300]
 
@@ -409,10 +445,7 @@ def _why(e: Exception) -> str:
 def _apply(root: str, rec: dict) -> None:
     sha = rec["sha"]
     head = _parent_head(root, sha)
-    branch = rec.get("branch") or ""
-    if branch and _git(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False):
-        if _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False) != branch:
-            _git(root, "symbolic-ref", "HEAD", f"refs/heads/{branch}")
+    _branch_check(root, rec)
     # Index and files to the snapshot (tracked files it lacks go, untracked
     # ones in the way are overwritten), then the files made since go (not the
     # ignored ones), then the branch to the recorded HEAD and the index to
@@ -421,10 +454,6 @@ def _apply(root: str, rec: dict) -> None:
     _git(root, "clean", "-f", "-d", "-q", env=_env_write(), timeout=300)
     if head:
         _git(root, "update-ref", "-m", "ensemble: restore checkpoint", "HEAD", head, env=_env_write())
-    else:
-        ref = _git(root, "symbolic-ref", "--quiet", "HEAD", check=False)
-        if ref:
-            _git(root, "update-ref", "-d", ref, env=_env_write())
     itree = _index_tree(root, sha)
     if itree:
         _git(root, "read-tree", itree, env=_env_write())

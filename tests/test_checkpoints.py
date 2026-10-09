@@ -278,6 +278,44 @@ class RestoreTest(Repo):
         self.assertEqual(self.read("a.txt"), "turn1\n")
         self.assertEqual(len(checkpoints._records(self.root, ROOM)), 1)
 
+    def test_another_branch_checked_out_is_refused_and_never_moved(self):
+        self.take()
+        self.write("a.txt", "x\n")
+        self.take()
+        git(self.root, "checkout", "-q", "-b", "other")
+        git(self.root, "commit", "-q", "-am", "on other")
+        tips = git(self.root, "rev-parse", "main", "other")
+        with self.assertRaisesRegex(checkpoints.CheckpointError, "branch other, not branch main"):
+            checkpoints.restore(self.root, ROOM, n=0)
+        self.assertEqual(git(self.root, "rev-parse", "main", "other"), tips)
+        self.assertEqual(git(self.root, "symbolic-ref", "--short", "HEAD"), "other")
+        self.assertEqual(checkpoints.list_checkpoints(self.root, ROOM)["restores"], [])
+
+    def test_a_checkpoint_before_the_first_commit_never_deletes_the_branch(self):
+        root = tempfile.mkdtemp(prefix="cp-unborn-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        git(root, "init", "-q", "-b", "main")
+        git(root, "config", "user.email", "t@t")
+        git(root, "config", "user.name", "t")
+        with open(os.path.join(root, "f.txt"), "w", encoding="utf-8") as f:
+            f.write("f\n")
+        checkpoints.take(root, ROOM)                     # 0: no commit yet
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "first")
+        checkpoints.take(root, ROOM, force=True)
+        with self.assertRaisesRegex(checkpoints.CheckpointError, "first commit"):
+            checkpoints.restore(root, ROOM, n=0)
+        self.assertEqual(git(root, "log", "--format=%s", "main"), "first")
+
+    def test_own_worktree_only_a_linked_worktree_top(self):
+        wt = os.path.join(tempfile.mkdtemp(prefix="cp-wt-"), "task")
+        self.addCleanup(shutil.rmtree, os.path.dirname(wt), ignore_errors=True)
+        git(self.root, "worktree", "add", "-q", wt, "-b", "task")
+        self.assertTrue(checkpoints.own_worktree(wt))
+        self.assertFalse(checkpoints.own_worktree(self.root))      # the main checkout
+        os.makedirs(os.path.join(wt, "sub"))
+        self.assertFalse(checkpoints.own_worktree(os.path.join(wt, "sub")))
+
     def test_pruning_counts_only_the_kind_just_added(self):
         old = checkpoints.MAX_TURNS, checkpoints.MAX_RESTORES
         checkpoints.MAX_TURNS, checkpoints.MAX_RESTORES = 3, 2
