@@ -1904,6 +1904,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .att-thumb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* A picture an agent named by its path: its thumbnail, the path's link under it (the shared link block). */
   .path-img > .att-thumb { width: fit-content; margin: var(--s-100) 0; }
+  /* A file link whose path names nothing on the hub yet (static/filelinks.js):
+     a quiet chip, still a link; the file view says what is (not) there. */
+  body a.file-link.file-missing { color:var(--fg-muted); text-decoration:underline dotted; text-underline-offset:2px; }
+  body a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
   .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-bottom: var(--s-200); }
   .att-chips[hidden] { display: none; }
   .att-chip { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 0 0 var(--s-050);
@@ -3843,7 +3847,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/taskcard.js"></script>
 <script src="/static/filedrag.js"></script>
 <script src="/static/pagekey.js"></script>
-<script>FileDrag.attach(document);</script>
+<script src="/static/filelinks.js"></script>
+<script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
@@ -4618,8 +4623,7 @@ function withPathAbbrevs(text, fn) {
 // ---- Links in rendered text: end shared block ------------------------------
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
 let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
-const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
-  + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '') + (FILE_LINK_BASE ? '&cwd=' + encodeURIComponent(FILE_LINK_BASE) : '');
+const fileHref = (p, line) => FileLinks.href(p, { line, room: FILE_LINK_ROOM, cwd: FILE_LINK_BASE });
 // Markdown for one task: its relative file mentions resolve against its own
 // folder, whatever task was rendered last.
 function mdIn(r, text) {
@@ -8661,8 +8665,7 @@ function wsFileUrl(v, path) {
   const room = wsRoomForPath(v, path);
   // The viewer names the chat it will post to, so nobody sends a review into a
   // task they didn't mean.
-  return '/fileview?path=' + encodeURIComponent(path)
-    + (room ? '&room=' + encodeURIComponent(room.id) + '&roomName=' + encodeURIComponent(room.name) : '');
+  return FileLinks.href(path, room ? { room: room.id, roomName: room.name } : {});
 }
 function wsDragMark(v, el, path, kind, title) {
   if (!el || !path) return el;
@@ -10304,7 +10307,7 @@ function drShow(rv, box, root, file, text, keep) {
   if (!content && /\/$/.test(file) && root) {
     // An untracked folder is one entry to git: it opens as a folder instead.
     body = '<div class="wsp-empty">An untracked folder: git lists it as one entry, not the files in it. '
-      + '<a href="/fileview?path=' + encodeURIComponent(wsJoin(root, file.replace(/\/$/, ''))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
+      + '<a href="' + esc(FileLinks.href(wsJoin(root, file.replace(/\/$/, '')))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
   } else if (!content) {
     body = '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
   } else {
@@ -11667,7 +11670,7 @@ async function tchOpenDiff(v, file, cid) {
 function tchOpenInWorkspace(sid, root, file, line) {
   const path = drPath(root, file);
   if (!wsRoots({ kind: 'task', sid }).length) {
-    window.open('/fileview?path=' + encodeURIComponent(path) + (line ? '&line=' + line : ''), '_blank', 'noopener');
+    window.open(FileLinks.href(path, { line }), '_blank', 'noopener');
     return;
   }
   openWorkspaceTab(sid);
@@ -15841,6 +15844,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
     _refreshInFlight = false;
+    FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
   }
 }
 // A hidden tab stops polling; bring it up to date the moment it is looked at.
@@ -18606,7 +18610,7 @@ async function ideAction(btn) {
 function openWorkspaceTab(sid) {
   const row = ALL_ROWS.find(x => x.sessionId === sid);
   if (row && row.cwd && !wsRoots({ kind: 'task', sid }).length) {
-    window.open('/fileview?path=' + encodeURIComponent(row.cwd), '_blank', 'noopener');
+    window.open(FileLinks.href(row.cwd), '_blank', 'noopener');
     return;
   }
   ISSUE_TAB_SID = sid;
@@ -19292,7 +19296,7 @@ document.addEventListener('click', async (ev) => {
     const path = finderBtn.dataset.path;
     // From another computer, a file manager opening on the hub's screen is
     // nothing you can see. Show the folder here instead.
-    if (!onHubMachine()) { window.open('/fileview?path=' + encodeURIComponent(path), '_blank', 'noopener'); return; }
+    if (!onHubMachine()) { window.open(FileLinks.href(path), '_blank', 'noopener'); return; }
     finderBtn.classList.add('busy');
     try {
       const r = await api('/api/open-path', {
