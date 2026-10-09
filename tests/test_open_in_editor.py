@@ -10,6 +10,9 @@ code. Fixtures live in a throwaway state; nothing of the real hub is read.
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -198,6 +201,47 @@ class ReposForSession(unittest.TestCase):
     def test_no_folder_known(self):
         self.assertEqual(self.get("sess-none"), {"repos": [], "lookedIn": []})
         self.assertEqual(self.get("room-0000ffff"), {"repos": [], "lookedIn": []})
+
+
+NODE = shutil.which("node")
+
+SESSION_IDE_JS = r"""
+const out = [];
+const ROOM = 'room-0000b001';
+const onHubMachine = () => true, toDashboard = () => out.push('dashboard');
+const actCwd = () => '/cwd';
+const jpost = (url, body) => out.push(body.path + ' ' + body.app);
+const alert = m => out.push('alert:' + m);
+let REPLY;
+globalThis.fetch = async () => ({ json: async () => REPLY });
+const ACTS = { %s };
+(async () => {
+  for (const r of [{ repos: [{ path: '/code/app', editor: 'IntelliJ IDEA' }], lookedIn: [] },
+                   { repos: [], lookedIn: [{ path: '/gone', exists: false }] },
+                   [{ path: '/old', editor: 'code' }]]) {
+    REPLY = r; await ACTS.ide();
+  }
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+@unittest.skipUnless(NODE, "node is needed")
+class SessionPageIde(unittest.TestCase):
+    """The session page's Open in editor (session.html ACTS.ide) reads the
+    {repos, lookedIn} reply: before, it read .length on the object and always
+    opened the working folder instead."""
+
+    def test_opens_the_first_repo_of_the_reply(self):
+        src = (ROOT / "session.html").read_text(encoding="utf-8")
+        m = re.search(r"^  async ide\(\) \{.*?^  \},", src, re.M | re.S)
+        self.assertIsNotNone(m)
+        with tempfile.TemporaryDirectory() as d:
+            js = Path(d) / "ide.js"
+            js.write_text(SESSION_IDE_JS % m.group(0).strip().rstrip(","), encoding="utf-8")
+            r = subprocess.run([NODE, str(js)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), ["/code/app IntelliJ IDEA", "/cwd default", "/old code"])
 
 
 if __name__ == "__main__":

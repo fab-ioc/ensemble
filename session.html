@@ -5918,8 +5918,9 @@ const ACTS = {
     // From another computer: the task's Workspace tab, in the dashboard.
     if (!onHubMachine()) { toDashboard('workspace'); return; }
     try {
-      const repos = await fetch('/api/repos/' + encodeURIComponent(ROOM)).then(r => r.json());
-      if (repos && repos.length) jpost('/api/open-path', { path: repos[0].path, app: repos[0].editor || 'default' });
+      const r = await fetch('/api/repos/' + encodeURIComponent(ROOM)).then(r => r.json());
+      const repos = Array.isArray(r) ? r : ((r && r.repos) || []);   // {repos, lookedIn} since #194
+      if (repos.length) jpost('/api/open-path', { path: repos[0].path, app: repos[0].editor || 'default' });
       else { const cwd = actCwd(); if (cwd) jpost('/api/open-path', { path: cwd, app: 'default' }); }
     } catch (e) { alert('IDE open failed'); }
   },
