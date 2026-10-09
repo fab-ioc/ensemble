@@ -11515,7 +11515,8 @@ function tchRow(v) { return ALL_ROWS.find(x => x.sessionId === v.sid || x.roomId
 function tchMount(el, sid) {
   let v = TCH_VIEWS.get(sid);
   if (!v) {
-    v = { sid, root: '', roots: [], files: [], info: null, file: '', busy: false, again: false, closed: new Set() };
+    // turn: a checkpoint's number while the pane shows what that turn changed (#197).
+    v = { sid, root: '', roots: [], files: [], info: null, file: '', busy: false, again: false, closed: new Set(), turn: null };
     // This task's review: its comments go to its own chat and no other.
     v.rv = drReview('task:' + sid, {
       target: () => {
@@ -11530,6 +11531,7 @@ function tchMount(el, sid) {
     TCH_VIEWS.set(sid, v);
   }
   v.el = el;
+  if (TCH_TURN_WANT.has(sid)) { v.turn = TCH_TURN_WANT.get(sid); v.file = ''; TCH_TURN_WANT.delete(sid); }
   el.innerHTML = '<div class="tch-none" hidden></div><div class="tch">'
     + '<div class="tch-head"><span>loading…</span></div>'
     + '<div class="tch-files" aria-label="Changed files"></div>' + chSplitHtml()
@@ -11550,6 +11552,7 @@ function tchMount(el, sid) {
   list.onkeydown = chListKey;
   const head = el.querySelector('.tch-head');
   head.onclick = e => {
+    if (e.target.closest('.tch-back')) { tchTurn(v, null); return; }
     if (e.target.closest('.chp-refresh:not(.chp-tree)')) tchSync(v);
     else if (e.target.closest('.chp-tree')) { chSetPref('cd-ch-tree', chTreeOn() ? '0' : '1'); tchWrite(head, tchHeadHtml(v)); tchPaintList(v); }
   };
@@ -11574,7 +11577,7 @@ function tchPaintList(v, focusDir) {
   const box = v.el && v.el.querySelector('.tch-files'); if (!box) return;
   box.dataset.root = v.root || '';
   const html = v.files.length ? chFilesHtml(v.files, '', { file: v.file, sha: '' }, { tree: chTreeOn(), closed: p => v.closed.has(p) })
-    : '<div class="chf none">No changes on this branch yet.</div>';
+    : '<div class="chf none">' + (v.turn != null ? 'This turn changed no files (only commits).' : 'No changes on this branch yet.') + '</div>';
   if (box._sig === html && !focusDir) { chMarkFileDrags(box, box.dataset.root); return; }
   // A redraw (Enter opening a file, a poll) replaces the rows: the keyboard
   // stays on the list, on its current row.
@@ -11595,6 +11598,11 @@ function tchHeadHtml(v) {
     : '';
   const n = v.files.length;
   const files = n + ' file' + (n === 1 ? '' : 's');
+  // One turn's changes (a chat's checkpoint mark): which turn, and the way back.
+  if (v.turn != null) {
+    return '<span class="tch-branch">Checkpoint ' + esc(String(v.turn)) + '</span><span>changes in this turn · ' + files + '</span>'
+      + chTreeBtnHtml(chTreeOn()) + '<button type="button" class="chp-refresh tch-back" title="Back to everything on the branch">All branch changes</button>';
+  }
   // Say what the list is measured against, so a short list is never mistaken
   // for the whole story.
   const against = i.base
@@ -11623,6 +11631,19 @@ async function tchRead(v) {
     // A folder the hub does not read (too wide) has no changes to ask for: the
     // reason, as its Workspace gives it, not the hub's refusal.
     if (r.folderWide && wsLoose(r)) { v.roots = []; v.root = ''; tchEmpty(v, wsWideWhy(r, 'changes')); return; }
+    if (v.turn != null) {
+      const turn = v.turn;
+      const d = await api('/api/checkpoints/diff?room=' + encodeURIComponent(r.roomId || v.sid) + '&n=' + turn);
+      if (v.turn !== turn) return;
+      const same = (a, b) => String(a || '').replace(/\\/g, '/').toLowerCase() === String(b || '').replace(/\\/g, '/').toLowerCase();
+      if (d.root && !same(d.root, v.root)) v.root = d.root;
+      v.files = d.files || [];
+      v.info = { branch: '', base: '', ahead: 0 };
+      tchEmpty(v, '');
+      tchWrite(v.el.querySelector('.tch-head'), tchHeadHtml(v));
+      tchPaintList(v);
+      return;
+    }
     const rr = await api('/api/git/roots?path=' + encodeURIComponent(scope));
     v.roots = rr.roots || [];
     if (!v.roots.length) {
@@ -11655,12 +11676,40 @@ async function tchOpenDiff(v, file, cid) {
   barCrumbs();
   tchShowDiff(v, true);
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
+  const turn = v.turn, r = tchRow(v);
   try {
-    const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
-    if (v.file !== file || v.root !== root || !box.isConnected) return;   // another file or repository was picked meanwhile
+    const d = await api(turn != null
+      ? '/api/checkpoints/diff?room=' + encodeURIComponent((r && r.roomId) || v.sid) + '&n=' + turn + '&file=' + encodeURIComponent(file)
+      : '/api/git/diff?branch=1&path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
+    if (v.file !== file || v.root !== root || v.turn !== turn || !box.isConnected) return;   // another file, repository or turn was picked meanwhile
     const dv = drShow(v.rv, box, root, file, d.diff || '');
     if (cid) { dv.scrollTo = cid; drPaint(dv); }
   } catch (e) { if (v.file === file) box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+}
+// The pane between one turn's changes (n, a checkpoint) and the branch's (null).
+function tchTurn(v, n) {
+  v.turn = n == null ? null : +n;
+  v.file = '';
+  const box = v.el && v.el.querySelector('.tch-diff');
+  if (box) box.innerHTML = '<div class="wsp-empty">Select a changed file to review its diff.</div>';
+  tchShowDiff(v, false);
+  return tchSync(v);
+}
+// "Changes in this turn" on a chat's checkpoint mark: the task's Changes tool,
+// showing what that turn changed. A task not on this page opens in a tab of its own.
+const TCH_TURN_WANT = new Map();   // sid → checkpoint, for a pane not mounted yet
+function openTurnChanges(rid, n, here) {
+  const row = ALL_ROWS.find(x => x.roomId === rid || x.sessionId === rid);
+  if (!row) { if (!here) window.open('/?task=' + encodeURIComponent(rid) + '&turn=' + encodeURIComponent(n), '_blank', 'noopener'); return; }
+  const sid = row.sessionId;
+  const v = TCH_VIEWS.get(sid);
+  if (v) tchTurn(v, n); else TCH_TURN_WANT.set(sid, +n);
+  ISSUE_TAB_SID = sid;
+  ISSUE_TAB = 'changes';
+  if (row.roomId) pdChatUnpanel(row.roomId);
+  if (SELECTED_SID !== sid) openDetail(sid);
+  else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
+  if (pdTask()) pdReveal('changes');
 }
 // A file of the branch, in this task's Workspace tab at a line. A task whose
 // folder the Workspace cannot show opens the file in a viewer of its own.
@@ -18162,6 +18211,8 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source);
+  // "Changes in this turn" on a checkpoint mark in a chat framed here (#197).
+  if (d && d.type === 'checkpoint-diff' && d.roomId && /^\d+$/.test(String(d.n)) && ev.origin === location.origin) openTurnChanges(String(d.roomId), +d.n);
   // A file viewer in a Workspace tab, saying how the tab was left.
   if (d && (d.type === 'fv-state' || d.type === 'fv-missing' || d.type === 'fv-key') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
 });
@@ -19798,6 +19849,9 @@ window.ensUpdPlace = () => ({
     history.replaceState(null, '', location.pathname);
     if (!PROJECTS) await refreshProjects();
     openTaskLink(deepTask, deepQs.get('agent') || '', deepQs.get('project') || '');
+    // &turn=: a checkpoint's changes, from a chat opened outside the dashboard.
+    const deepTurn = deepQs.get('turn');
+    if (deepTurn && /^\d+$/.test(deepTurn) && /^room-[\w-]+$/.test(deepTask)) openTurnChanges(deepTask, +deepTurn, true);
     // &act=: an action a popped-out session window sent here (runTaskAction).
     const deepAct = deepQs.get('act');
     if (deepAct && /^room-[\w-]+$/.test(deepTask)) runTaskAction(deepTask, deepAct);
