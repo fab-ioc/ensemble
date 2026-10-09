@@ -307,6 +307,20 @@ class TheEndpoint(_World):
         led = points.load(rid)
         self.assertEqual((led["asksKeys"], list(led["asks"]["sid-1:1"])), (1, ["0"]), "left as it was, tried again later")
 
+    def test_realign_keeps_an_answer_with_its_own_line(self):
+        """Review 3: the split gives a question the next Ask: line asks too;
+        the answer stays with its own line."""
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "[rotation] You are the PO.", self.t0),
+                 turn("assistant", "Ask: Should I deploy? And should I notify?\nAsk: And should I notify?", self.t0 + 2))
+        with points._LOCK:
+            led = points.load(rid)
+            led["asks"]["sid-1:1"] = {"1": {"option": "Yes", "comment": "", "question": "And should I notify?"}}
+            led["asksKeys"] = 1
+            points._save(rid, led)
+        self.assertEqual(asks.realign(rid), 1)
+        self.assertEqual(list(points.load(rid)["asks"]["sid-1:1"]), ["2"])
+
     def test_a_wrong_answer_and_a_refused_send(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):

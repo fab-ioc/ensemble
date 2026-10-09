@@ -72,6 +72,10 @@ ASKS = {
     "asker_or": "Ask: Should I buy or lease?",
     "aux_did_or": "Ask: Did you read or review it?",
     "aux_colour": "Ask: Is it red or blue?",
+    "or_not": "Ask: Is it ready or not?",
+    "or_not_agree": "Ask: Do you agree or not?",
+    "or_not_do": "Ask: Can you do it or not?",
+    "or_not_start": "Ask: Start it now or not?",
     "aux_when": "Ask: Are we deploying now or later?",
     "yesno_list_options": "Ask: Should I deploy?\n- **Now** - tonight\n- **Friday** - after the close",
     "choose_many": "Ask: Do you want both, only one, or a different cap, for example exactly 40?",
@@ -131,7 +135,8 @@ class TheWordsGiveTheOptions(unittest.TestCase):
         self.assertEqual(a["options"][0]["detail"], "about CHF 490/yr saved")
 
     def test_a_yes_no_question_gets_yes_and_no(self):
-        for key in ("yesno_plain", "yesno_with_or", "parens_list", "short_yesno_or", "aux_did_or"):
+        for key in ("yesno_plain", "yesno_with_or", "parens_list", "short_yesno_or", "aux_did_or", "or_not", "or_not_agree",
+                    "or_not_do", "or_not_start"):
             with self.subTest(key=key):
                 a = self.one(key)
                 self.assertEqual((a["kind"], labels(a)), ("yesno", ["Yes", "No"]))

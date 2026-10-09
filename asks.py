@@ -136,6 +136,7 @@ _LEAD_LABEL = re.compile(r"^([^:?]{1,40}):[ \t]+")
 _ASKER = re.compile(r"^(?:should|shall|can|could|may|will|would|do|did)[ \t]+(?:i|we|you)[ \t]+"
                     r"(?:(?:rather|want|like|prefer)[ \t]+(?:me[ \t]+|us[ \t]+)?(?:to[ \t]+)?)?", re.I)
 _CHOOSER = re.compile(r"^(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather)\b", re.I)
+_NOT = re.compile(r"^(?:not|no|nope|otherwise|never)$", re.I)
 _PICKER = re.compile(r"^(?:(?:should|shall)[ \t]+(?:i|we)|(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather))\b", re.I)
 _INLINE_REC = re.compile(
     r"[ \t]*\([ \t]*(?:my[ \t]+|i(?:'d|[ \t]+would)?[ \t]+)?recommend(?:ed|ation)?\b[^)]*\)"
@@ -306,9 +307,13 @@ def _alternatives(core: str) -> list[dict]:
             if len(bare) != 1 or _top(core, _COMMA):
                 return []
             head, tail = core[:bare[0].start()].split(), core[bare[0].end():].split()
-            return _options([head[-1], tail[0]]) if len(head) >= 2 and len(tail) == 1 else []
+            if len(head) < 2 or len(tail) != 1 or _NOT.match(tail[0]):
+                return []       # "Is it ready or not?" asks yes or no
+            return _options([head[-1], tail[0]])
     items = _or_items(core, bool(_CHOOSER.match(core)))
-    return _options(items) if items else []
+    if not items or _NOT.match(items[-1].strip()):
+        return []           # "Start it now or not?" asks yes or no
+    return _options(items)
 
 
 def _yes_no(text: str) -> list[dict]:
@@ -805,20 +810,29 @@ def _same(a, b) -> bool:
 
 
 def _place(found: list[dict], k: str, ans, taken: dict) -> str | None:
-    """Where an answer recorded as ask ``k`` goes now: its own number when
-    that ask quotes it, else the ask that quotes it (the first part of one
-    split in two) nearest at or after ``k`` — a split only moves asks down —
-    and not taken by another answer. None when none fits."""
+    """Where an answer recorded as ask ``k`` goes now. Before #195 each
+    ``Ask:`` line was one ask, so ``k`` names the k-th ``Ask:`` line: the
+    answer goes to the ask of that line that quotes it (the first part of one
+    split in two). Asks without lines (a stored or a fallback card): the ask
+    that quotes it, its own number first. Never one taken by another answer;
+    None when none fits."""
     at = int(k) if str(k).isdigit() else -1
     q = " ".join(str((ans or {}).get("question") or "").split()).casefold()
     if not q:
         return None if str(k) in taken else str(k)
     def own(i: int) -> str:
         return " ".join(found[i]["question"].split()).casefold()
+    lines = list(dict.fromkeys(a.get("line") for a in found))
+    if any(x is not None for x in lines):
+        if not 0 <= at < len(lines):
+            return None
+        cands = [i for i, a in enumerate(found) if a.get("line") == lines[at]]
+    else:
+        cands = sorted(range(len(found)), key=lambda i: (i != at, abs(i - at)))
     for test in (lambda i: own(i) == q, lambda i: q.startswith(own(i))):
-        fits = [i for i in range(len(found)) if test(i) and str(i) not in taken]
+        fits = [i for i in cands if test(i) and str(i) not in taken]
         if fits:
-            return str(min(fits, key=lambda i: (i < at, abs(i - at))))
+            return str(fits[0])
     return None
 
 

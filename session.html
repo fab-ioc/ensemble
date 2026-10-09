@@ -2588,6 +2588,7 @@ const QI = {
   leadLabel: /^([^:?]{1,40}):[ \t]+/,
   asker: /^(?:should|shall|can|could|may|will|would|do|did)[ \t]+(?:i|we|you)[ \t]+(?:(?:rather|want|like|prefer)[ \t]+(?:me[ \t]+|us[ \t]+)?(?:to[ \t]+)?)?/i,
   chooser: /^(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather)\b/i,
+  not: /^(?:not|no|nope|otherwise|never)$/i,
   picker: /^(?:(?:should|shall)[ \t]+(?:i|we)|(?:do|would)[ \t]+you[ \t]+(?:want|prefer|rather))\b/i,
   rec: /[ \t]*\([ \t]*(?:my[ \t]+|i(?:'d|[ \t]+would)?[ \t]+)?recommend(?:ed|ation)?\b[^)]*\)|,?[ \t]+which[ \t]+i(?:'d|[ \t]+would)?[ \t]+recommend\b|[ \t]+[—–-][ \t]+(?:my[ \t]+)?recommend(?:ed|ation)\b/i,
   recNo: /\bI(?:'d|[ \t]+would)?[ \t]+(?:recommend|suggest)[ \t]+(?:no|not|against)\b/i,
@@ -2696,11 +2697,12 @@ function qiAlternatives(core) {
       const bare = qiTop(core, QI.bareOr);
       if (bare.length !== 1 || qiTop(core, QI.comma).length) return [];
       const head = core.slice(0, bare[0].index).split(' ').filter(Boolean), tail = core.slice(bare[0].index + bare[0][0].length).split(' ').filter(Boolean);
-      return head.length >= 2 && tail.length === 1 ? qiOptions([head[head.length - 1], tail[0]]) : [];
+      if (head.length < 2 || tail.length !== 1 || QI.not.test(tail[0])) return [];   // "Is it ready or not?" asks yes or no
+      return qiOptions([head[head.length - 1], tail[0]]);
     }
   }
   const items = qiOrItems(core, QI.chooser.test(core));
-  return items ? qiOptions(items) : [];
+  return items && !QI.not.test(items[items.length - 1].trim()) ? qiOptions(items) : [];   // "Start it now or not?" asks yes or no
 }
 function qiYesNo(text) {
   const rec = QI.recNo.test(text) ? 'No' : QI.recYes.test(text) ? 'Yes' : '';
