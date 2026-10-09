@@ -5543,7 +5543,7 @@ function sendAttachments() {
   return boxes.flatMap(b => b.stored());
 }
 let ROOM_IDENTS = [];   // the room's agents, for the @<identity> prefix
-// A Dock strip can slide back as soon as a press is relayed to the host. That
+// A Dock strip can slide back as soon as a press lands in this frame. That
 // moves the frame before mouseup, so click may land on the composer instead.
 // Start the action while the pressed target is still known. The following
 // browser click (when one is generated) must not submit it a second time.
@@ -6003,11 +6003,16 @@ window.addEventListener('message', (e) => {
 // Inside the dashboard, say this chat has started: a balloon link opened while
 // it was still loading is sent to it again.
 try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
-// Inside the dashboard, a click in this chat is one in its page: a tool slid
-// out beside the conversation goes back (the page's Dock sees no click inside
-// a frame). Not focus: the window coming back from another app keeps it.
+// Inside the dashboard, a press in this chat puts a tool slid out of the
+// page's Dock back. Dock (v0.14.1) sees focus move into this frame and does it
+// itself; it sees nothing when this frame already had focus (the cursor was in
+// the box when the tool opened) or the browser window was not active. Only
+// those presses are told to the page, which calls Dock's closeFly().
 if (window.parent !== window) {
   document.addEventListener('pointerdown', () => {
+    let seen = false;
+    try { const top = window.parent.document; seen = top.hasFocus() && top.activeElement !== window.frameElement; } catch (e) {}
+    if (seen) return;
     try { window.parent.postMessage({ type: 'chat-clicked', roomId: ROOM }, location.origin); } catch (e) {}
   }, true);
 }

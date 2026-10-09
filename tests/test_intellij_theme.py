@@ -1,4 +1,4 @@
-"""Dock v0.14.0 and Ensemble's IntelliJ Dark theme contract."""
+"""Dock v0.14.1 and Ensemble's IntelliJ Dark theme contract."""
 from __future__ import annotations
 
 import sys
@@ -31,7 +31,7 @@ class IntelliJDarkTheme(unittest.TestCase):
         version = (ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8")
         self.assertEqual(
             version.strip(),
-            "fab-ioc/dock v0.14.0 f96f1d23852cdbb9d695ef358e04c28ae3ca8d1a (tag v0.14.0, 2026-10-05)",
+            "fab-ioc/dock v0.14.1 9a26d6dc49cb4ccc8d678849762d297bc25b7abb (tag v0.14.1, 2026-10-09)",
         )
         theme_js = (ROOT / "static" / "dock" / "src" / "theme.js").read_text(encoding="utf-8")
         self.assertIn("['intellij-dark', 'IntelliJ Dark', 'dark', 'extra']", theme_js)

@@ -12387,8 +12387,9 @@ function pdEnsure() {
     minSize: pdMinOf,
     sizes: { head: 32, strip: 44, unpinSize: 720 },
     // A click opens a tool beside the conversation; a click or focus
-    // elsewhere in the page puts it back (Dock v0.5.1's stripAutoHide, and
-    // pdChatClicked for the conversation's frame), as do its button, its −
+    // elsewhere in the page puts it back (Dock v0.5.1's stripAutoHide; a click
+    // into a frame since v0.14.1, and pdChatClicked for the presses in a
+    // conversation's frame Dock cannot see), as do its button, its −
     // and Esc. A tool that should stay open is docked (⋯ › View Mode).
     stripHover: false,
     stripOpen: 'beside',
@@ -12740,18 +12741,15 @@ function pdToolRemember() {
   if (id) pdShown(id);
   else barCrumbs();
 }
-// A click in a conversation (a chat's frame, session.html): a tool slid out
-// goes back, as it does for a click anywhere else in the page. Dock v0.5.1
-// hears no click inside a frame, nor focus moving into one while none of the
-// tool had it (after a click on its text, or in the file view).
+// A press in a conversation's frame that Dock does not see (session.html says
+// which: the frame had focus already, or the window was not active): a tool
+// slid out goes back through Dock's closeFly(), the list's too (#137). Dock
+// v0.14.1 handles a press that moves focus into the frame, its ⋯ menu included.
 function pdChatClicked(win) {
   if (document.querySelector('.dk-menu')) return;
   const f = [...document.querySelectorAll('iframe')].find(x => x.contentWindow === win);
   if (!f || f.closest('.dk-flyout')) return;
-  // The list slid out from its strip too (#137).
-  if (LD.dock && LD.dock.flyOpen()) LD.dock.closeFly();
-  const d = PD.dock;
-  if (d && !d.narrow() && d.flyOpen()) d.closeFly();
+  for (const d of [LD.dock, PD.dock]) if (d && !d.narrow() && d.flyOpen()) d.closeFly();
 }
 // The tool the breadcrumb names: the one slid out, else the first docked one
 // on screen.

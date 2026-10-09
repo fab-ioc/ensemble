@@ -51,7 +51,7 @@ DOCK = ROOT / "static" / "dock"
 class TheLibrary(unittest.TestCase):
     def test_current_dock_is_vendored_with_draw_js(self):
         self.assertRegex((DOCK / "VERSION").read_text(encoding="utf-8"),
-                         r"^fab-ioc/dock v0\.14\.0 f96f1d23852cdbb9d695ef358e04c28ae3ca8d1a \(tag v0\.14\.0, 2026-10-05\)")
+                         r"^fab-ioc/dock v0\.14\.1 9a26d6dc49cb4ccc8d678849762d297bc25b7abb \(tag v0\.14\.1, 2026-10-09\)")
         dock_js = (DOCK / "src" / "dock.js").read_text(encoding="utf-8")
         self.assertIn("import { canDraw, drawPanel } from './draw.js';", dock_js)
         self.assertIn("screenshotMode = 'auto'", dock_js)
