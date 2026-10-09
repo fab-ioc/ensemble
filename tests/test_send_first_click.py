@@ -223,8 +223,9 @@ async function main() {
       }
     }
     // The same session page when the dashboard owns its frame, including a
-    // separate Dock chat panel. A click inside the frame also wakes the Dock's
-    // outside-click handler through chat-clicked.
+    // separate Dock chat panel. A press in the frame puts a slid-out tool back:
+    // Dock v0.14.1 when focus moves into the frame, else session.html's
+    // chat-clicked (here the frame kept focus while the tool opened).
     for (const [width,height,touch] of [[1280,800,false],[1728,1117,false],[390,844,true]]) {
       const {browserContextId}=await c.send('Target.createBrowserContext');
       const {targetId}=await c.send('Target.createTarget',{url:'about:blank',browserContextId});

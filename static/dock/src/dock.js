@@ -2933,13 +2933,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // iframe). So each same-origin iframe in the dock gets the same listener, again each time it loads a page, and
   // iframes put in later get it too. A cross-origin one cannot be reached: F6 there stays the browser's. Not the
   // iframes inside those, nor those of a panel in its own window.
-  const frames = new Map(); // iframe -> [the document its listener is on, the listener]
+  const frames = new Map(); // iframe -> [document, key listener, window blur listener]
   const watched = new WeakSet(); // iframes with a load listener
   function unhookFrame(f) {
     const had = frames.get(f);
     if (!had) return;
     frames.delete(f);
     try { had[0].removeEventListener('keydown', had[1]); } catch { /* gone */ }
+    try { had[0].defaultView.removeEventListener('blur', had[2]); } catch { /* gone */ }
   }
   function hookFrame(f) {
     if (destroyed) return;
@@ -2950,8 +2951,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     unhookFrame(f);
     if (!d) return;
     const fn = (e) => { if (root.contains(f)) onF6(e); };
+    const blur = () => checkIframeFocus();
     d.addEventListener('keydown', fn);
-    frames.set(f, [d, fn]);
+    d.defaultView.addEventListener('blur', blur);
+    frames.set(f, [d, fn, blur]);
   }
   function watchFrames(under) {
     if (under.nodeType !== 1) return;
@@ -3063,6 +3066,19 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (flyOpen && !gesture && !stays() && !menuOfFly() && !insideFly(e.target) && !inMenu(e.target) && !inModal(e.target)) closeFly(false);
     if (menu && !inMenu(e.target) && e.target !== menu._from && !(menu._from && menu._from.contains(e.target))) closeMenu(false);
   }, true);
+  function checkIframeFocus() {
+    // Entering an iframe blurs this window; moving between frames blurs the first frame's window. Neither gives the
+    // top document pointerdown or (when body/another frame had focus) focusout. Wait for the new activeElement.
+    later(() => {
+      if (gesture || !doc.hasFocus() || !doc.activeElement || doc.activeElement.tagName !== 'IFRAME') return;
+      const frame = doc.activeElement;
+      if (insideFly(frame) || inMenu(frame) || inModal(frame)) return;
+      const keepFly = menuOfFly(); // like pointerdown: the first outside click closes its menu, then the panel
+      if (flyOpen && !stays() && !keepFly) closeFly(false);
+      if (menu && menu.ownerDocument === doc) closeMenu(false);
+    }, 0);
+  }
+  if (win && win.addEventListener) on(win, 'blur', checkIframeFocus);
 
   on(doc, 'keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;

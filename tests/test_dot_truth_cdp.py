@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import agent_hooks  # noqa: E402
+import asks  # noqa: E402
 import attention  # noqa: E402
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
@@ -218,6 +219,10 @@ class TheDotsInChrome(unittest.TestCase):
             cls.addClassCleanup(cache.clear)
         cls.addClassCleanup(setattr, attention, "_result", (0.0, None))
         attention._result = (0.0, None)
+        # The open asks an earlier test's hub worked out (no asks) would stand
+        # for the first poll here, and its answer then for the page's wait.
+        asks.forget()
+        cls.addClassCleanup(asks.forget)
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         home = str(Path(proj.get("home") or proj["path"]))

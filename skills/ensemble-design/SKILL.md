@@ -903,9 +903,10 @@ lines added on a task, short: `+512`, `+1.7k`, the exact numbers in its tooltip)
 tool **beside** the conversation, which narrows (`stripOpen: 'beside'`: nothing is covered, no
 shadow); a second click, its slide-in control or Esc puts it back; one is open at a time; hovering
 opens nothing (`stripHover: false`). **A click or focus elsewhere in the page puts it back too**
-(Dock v0.5.1, IntelliJ's Dock Unpinned and Undock), a click in the conversation included: the
-chat's frame tells the page of a click (`chat-clicked`, `pdChatClicked`), since the dock hears no click inside
-a frame. It stays out while it is used: typing in it, its ⋯ menu, a dialog or context menu it
+(Dock v0.5.1, IntelliJ's Dock Unpinned and Undock), a click in the conversation included: Dock
+v0.14.1 sees focus move into a frame (its ⋯ menu open, the first click closes only the menu). A press
+Dock cannot see (the chat's frame had focus already, or the window was not active) is told to the
+page by `session.html` (`chat-clicked`), and `pdChatClicked` calls Dock's `closeFly()`. It stays out while it is used: typing in it, its ⋯ menu, a dialog or context menu it
 opened (`modalSelector`), its own frames (the file view), Your asks' arrow, and when the browser
 window loses focus. **A tool that should stay open is pinned** (⋯ › View Mode › Dock Pinned); a
 Float stays too. Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
@@ -983,7 +984,7 @@ component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's
 on a computer ("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; on a phone (the narrow dock) it keeps reading **Chat** (`PD_TITLES`), so the 390 px tab row grows no longer than it was (Board stays on screen). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,
+library; `VERSION` names its commit, v0.14.1 now) of five panels, **PO chat, Your asks, Board, Workspace,
 Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
@@ -1202,7 +1203,7 @@ self-contained component, so a later layout can host it elsewhere.
   Panels remains available for recovery. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
   it takes the room the list leaves, unpinned, floating or in its window. Slid out, the list goes
-  back on a click elsewhere, in a conversation's frame (`pdChatClicked`) or once a row is opened. In
+  back on a click elsewhere, in a conversation's frame (Dock v0.14.1, or `pdChatClicked`) or once a row is opened. In
   its own window a row still opens the conversation in the main window (the list's code stays in
   the page). The layout is kept per browser (`cd-list-dock`). Before the library loads, or where it
   cannot, `#switcher` is the fixed column (`body.sw-on` gives `main` `padding-left: var(--list-w) + 20px`).

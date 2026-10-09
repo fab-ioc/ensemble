@@ -218,6 +218,11 @@ strip. Its ⋯ menu, a dialog it opened (`modalSelector`, or an open `<dialog>`)
 browser window losing focus (alt-tab, a click in a panel's own window) keep it out. `stripAutoHide: false` gives
 v0.5.0's behaviour (see the options).
 
+Clicks into an iframe elsewhere in the page also slide the panel back and close Dock menus. If an embedded app reports
+a click that leaves the iframe without taking focus (so the browser gives Dock no focus event), the app can call the
+existing `dock.closeFly()` hook. For a cross-origin iframe, relay that click to the host with `postMessage`, check the
+message's origin in the host, then call `dock.closeFly()`.
+
 **A panel's side is kept.** A strip panel pinned docks on its strip's side, beside the strip, as deep as it slid out
 (or at its own saved size); a docked panel unpinned goes to the strip on the side it stands (the side is read from the
 layout: where it is against the middle, the `fill` panel's place); Float and back, and Window and back, return it to its
