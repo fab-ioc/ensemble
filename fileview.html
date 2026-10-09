@@ -458,12 +458,12 @@
   /* What the file is, at a glance: language, lines, size. */
   header .meta { color:var(--fg-muted); font-size:var(--fs-200); white-space:nowrap; font-variant-numeric:tabular-nums; }
   header .grow { flex:1; }
-  header .btn { display:inline-flex; align-items:center; height:24px; color:var(--fg); text-decoration:none; font:inherit;
+  header .btn, .missing .btn { display:inline-flex; align-items:center; height:24px; color:var(--fg); text-decoration:none; font:inherit;
     font-size:var(--fs-200); border:1px solid var(--border-strong); padding:0 var(--s-200); border-radius:var(--r-200);
     background:var(--surface); white-space:nowrap; }
-  header button.btn { cursor:pointer; }
-  header .btn:hover { background:var(--hover); }
-  header .btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  header button.btn, .missing button.btn { cursor:pointer; }
+  header .btn:hover, .missing .btn:hover { background:var(--hover); }
+  header .btn:focus-visible, .missing .btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* A choice between two ways of showing the same file, and the wrap switch:
      the one showing is selected. */
   header .btn[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:var(--selected-fg); }
@@ -660,7 +660,7 @@
     header a.btn, header button.btn, .cmt-composer button, #cmt-tray button {
       min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
     }
-    header a.btn, header button.btn { min-width: var(--touch-min); height: auto; }
+    header a.btn, header button.btn, .missing button.btn { min-width: var(--touch-min); min-height: var(--touch-min); height: auto; }
     #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
     .dir-row, .out-pop button { min-height: var(--touch-min); }
     #cmt-tray .cmt-item { padding-right: var(--touch-min); }

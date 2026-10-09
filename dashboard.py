@@ -5973,7 +5973,8 @@ def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
     if not (raw or "").strip():
         return None, ""
     bases, search = _file_ref_places(room_id, cwd)
-    return file_refs.resolve(raw, bases, dirs=dirs, search=search)
+    ok = _readable_check()
+    return file_refs.resolve(raw, bases, dirs=dirs, search=[x for x in search if ok(x)])
 
 
 def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
@@ -5983,11 +5984,26 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
     return resolve_file_ref_how(raw, room_id, cwd)[0]
 
 
+def _readable_check():
+    """workspace_access_ok with its roots read once: for the batched checks,
+    which ask it for every link. The cwd a page sends is the client's word, so
+    what the hub walks and answers stays inside what /api/file would serve:
+    no folder outside is walked for a name, and a file there reads as not
+    there (it would not open)."""
+    roots = [p["path"] for p in load_projects()] + [str(CS_ROOT), str(PROJECTS_ROOT)]
+    return lambda path: bool(path) and (any(_within(path, r) for r in roots) or session_folder_ok(path))
+
+
 def file_ref_suggestions(raw: str, room_id: str = "", cwd: str = "") -> dict:
     """GET /api/file/suggest: what a missing path may have become — the files
     of the same name (moved) and of a close name (renamed) under the room's
-    folders, its project's home, Documents and task folders."""
-    return file_refs.suggest(raw, _file_ref_places(room_id, cwd)[1])
+    folders, its project's home, Documents and task folders, those the hub may
+    read."""
+    ok = _readable_check()
+    out = file_refs.suggest(raw, [b for b in _file_ref_places(room_id, cwd)[1] if ok(b)])
+    out["same"] = [x for x in out["same"] if ok(x)]
+    out["close"] = [x for x in out["close"] if ok(x)]
+    return out
 
 
 FILES_CHECK_MAX = 200
@@ -6003,6 +6019,7 @@ def files_check(query: dict) -> dict:
         return {"error": "bad_query"}
     places: dict[int, tuple[list[str], list[str]]] = {}
     out: list[bool] = []
+    ok = _readable_check()
     for it in items[:FILES_CHECK_MAX]:
         path, ci = (it[0], it[1]) if isinstance(it, list) and len(it) == 2 else ("", -1)
         if not isinstance(path, str) or not path.strip():
@@ -6014,9 +6031,11 @@ def files_check(query: dict) -> dict:
             c = ctxs[ci] if ci >= 0 and isinstance(ctxs[ci], list) else []
             room = c[0] if len(c) > 0 and isinstance(c[0], str) else ""
             cwd = c[1] if len(c) > 1 and isinstance(c[1], str) else ""
-            places[ci] = _file_ref_places(room.strip(), cwd.strip())
+            bases, search = _file_ref_places(room.strip(), cwd.strip())
+            places[ci] = (bases, [x for x in search if ok(x)])
         bases, search = places[ci]
-        out.append(file_refs.resolve(path, bases, dirs=True, search=search)[0] is not None)
+        fp = file_refs.resolve(path, bases, dirs=True, search=search)[0]
+        out.append(fp is not None and ok(str(fp)))
     return {"there": out}
 
 
