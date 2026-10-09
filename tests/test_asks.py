@@ -346,6 +346,107 @@ class TheEndpoint(_World):
         self.assertNotIn("sid-1:1", points.load(rid)["asks"], "discarded: it may be answered again")
         self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [0, 1, 2])
 
+    def test_undo_of_a_read_answer_tells_the_agent_to_ignore_it(self):
+        """#198: typed into a solo agent's terminal, the answer was read; its
+        Undo is a follow-up on the answer's point, and the card says taken back."""
+        rid = self._room()
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)):
+            self.assertEqual(http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 0, "option": "30 days"})[0], 200)
+            pid = points.ask_point(rid, "ask:sid-1:1:0")
+            self.assertTrue(pid)
+            status, r = http("/api/room/ask/undo", {"roomId": rid, "mid": "sid-1:1", "n": 0})
+            self.assertEqual((status, r.get("followUp")), (200, True), r)
+            status, r2 = http("/api/room/ask/undo", {"roomId": rid, "mid": "sid-1:1", "n": 0})
+            self.assertEqual((status, r2.get("duplicate")), (200, True), "taken back once")
+            self.assertEqual(http("/api/room/ask/undo", {"roomId": rid, "mid": "sid-1:1", "n": 1})[0], 404)
+            self.assertEqual(http("/api/room/ask/undo", {"roomId": rid, "mid": "sid-1:1", "n": 0},
+                                  origin="http://elsewhere.example")[0], 403)
+        self.assertEqual(len(sent), 2)
+        text, key = sent[1]
+        self.assertEqual(key, "undo:ask:sid-1:1:0")
+        self.assertEqual(text, f"Re {pid}: Ignore my previous answer to {pid}, I clicked it by mistake.\n\n[point {pid}]",
+                         "a follow-up on the answer's own point")
+        got = points.load(rid)["asks"]["sid-1:1"]["0"]
+        self.assertEqual(got["option"], "30 days", "still answered")
+        self.assertTrue(got["undone"])
+        self.assertTrue(r["points"]["asks"]["sid-1:1"]["0"].get("undone"), "the reply carries it for the card")
+
+    def _team_answer(self, rid, mid="m-ask", n=0):
+        """A quick answer posted to a team's chat, confirmed with its message."""
+        key = f"ask:{mid}:{n}"
+        text = "Re “Ship it?”: Yes"
+        posted = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to="claude")
+        sends.accept(rid, key, text, to="claude")
+        sends.mark(rid, [key], "confirmed", mid=posted["message"]["id"])
+        with points._LOCK:
+            led = points.load(rid)
+            led["asks"].setdefault(mid, {})[str(n)] = {"option": "Yes", "comment": "", "question": "Ship it?"}
+            points._save(rid, led)
+        return key, posted["message"]["id"]
+
+    def test_undo_of_an_unread_team_answer_takes_it_back(self):
+        rid = self.team_room()
+        key, msg_id = self._team_answer(rid)
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent := [])):
+            status, r = http("/api/room/ask/undo", {"roomId": rid, "mid": "m-ask", "n": 0})
+        self.assertEqual((status, r.get("withdrawn")), (200, True), r)
+        self.assertEqual(sent, [], "nothing to tell: nobody read it")
+        self.assertNotIn(msg_id, [m["id"] for m in chatroom.get_room(rid, public=False)["messages"]])
+        self.assertIsNone(sends.get(rid, key))
+        self.assertNotIn("m-ask", points.load(rid)["asks"], "the ask is open again")
+
+    def test_a_team_answer_read_by_its_agent_is_not_withdrawn(self):
+        rid = self.team_room()
+        key, msg_id = self._team_answer(rid)
+        chatroom.read_new_for(rid, "codex")
+        # The reviewer reading the chat does not count: the answer was to claude.
+        self.assertTrue(dashboard.withdraw_send(rid, key))
+        key, msg_id = self._team_answer(rid, mid="m-two")
+        chatroom.read_new_for(rid, "claude")
+        self.assertFalse(dashboard.withdraw_send(rid, key))
+        self.assertIn(msg_id, [m["id"] for m in chatroom.get_room(rid, public=False)["messages"]])
+        self.assertEqual(sends.get(rid, key)["state"], "confirmed")
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent := [])):
+            status, r = http("/api/room/ask/undo", {"roomId": rid, "mid": "m-two", "n": 0})
+        self.assertEqual((status, r.get("followUp")), (200, True), r)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Ignore my previous answer to “Ship it?”, I clicked it by mistake.", sent[0][0],
+                      "no point made here: it quotes the question")
+        self.assertTrue(points.load(rid)["asks"]["m-two"]["0"]["undone"])
+
+    def test_an_answer_held_by_a_resume_is_taken_back(self):
+        """A stopped task's answer waits in its resume's queue: under way, or
+        failed (kept for Retry). Not typed yet, so Undo takes it back."""
+        rid = self._room()
+        self.addCleanup(dashboard._RESUMES.pop, rid, None)
+        for state in ("failed", "resuming"):
+            with self.subTest(state=state):
+                key = f"ask:sid-1:1:{0 if state == 'failed' else 1}"
+                sends.accept(rid, key, "Re “Q”: Yes")
+                res = dashboard._Resume(rid)
+                res.state = state
+                res.queue = [{"text": "Re “Q”: Yes", "key": key, "at": time.time()},
+                             {"text": "another", "key": "k-other", "at": time.time()}]
+                dashboard._RESUMES[rid] = res
+                self.assertTrue(dashboard.withdraw_send(rid, key))
+                self.assertEqual([it["key"] for it in res.queue], ["k-other"], "the others stay")
+                self.assertIsNone(sends.get(rid, key))
+                self.assertFalse(dashboard.withdraw_send(rid, key), "once")
+                # The last one taken from a failed resume ends it; one under way goes on.
+                res.queue = [{"text": "x", "key": key, "at": time.time()}]
+                sends.accept(rid, key, "x")
+                self.assertTrue(dashboard.withdraw_send(rid, key))
+                self.assertEqual(rid in dashboard._RESUMES, state == "resuming")
+                dashboard._RESUMES.pop(rid, None)
+        # Typed in already (posted): the queue no longer has it to give back.
+        res = dashboard._Resume(rid)
+        res.queue = [{"text": "x", "key": "ask:sid-1:1:2", "at": time.time(), "posted": True}]
+        dashboard._RESUMES[rid] = res
+        sends.accept(rid, "ask:sid-1:1:2", "x")
+        self.assertFalse(dashboard.withdraw_send(rid, "ask:sid-1:1:2"))
+        self.assertEqual(len(res.queue), 1)
+
     def test_words_in_the_chat_end_the_wait_and_a_quick_answer_does_not(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
@@ -573,7 +674,7 @@ class InChrome(ChromePage):
         self.assertEqual(o["after"]["done"], [True, False, False])
         self.assertTrue(o["card"]["disabled"])
         self.assertEqual(o["card"]["pressed"], ["30 days"])
-        self.assertIn("You answered: 30 days", o["card"]["text"])
+        self.assertIn("Sent: 30 days · Undo", o["card"]["text"], "sent from this page: Undo for 10 s (#198)")
         m = self.got["390"]
         self.assertEqual(m["before"]["done"], [True, False, False], "the second page sees the first answer")
         self.assertEqual(m["after"]["done"], [True, True, False])

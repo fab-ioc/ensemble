@@ -667,7 +667,8 @@ class Resumes(unittest.TestCase):
 
 class ThePage(unittest.TestCase):
     def refresh(self):
-        m = re.search(r"^async function refreshRoom\(\) \{.*?^\}", SESSION, re.S | re.M)
+        # The poll's update is drawn by refreshShow (#198: held while a press is on).
+        m = re.search(r"^function refreshShow\(.*?^\}", SESSION, re.S | re.M)
         return m.group(0)
 
     def test_the_box_stays_usable_when_not_running(self):

@@ -1404,6 +1404,28 @@ def unanswer_ask(room_id: str, mid: str, n: int) -> None:
             _save(room_id, led)
 
 
+def undo_ask(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
+    """The answer was read before its Undo (#198): it stays answered, marked
+    taken back (the card says so). False when there is no answer, or it was
+    taken back already."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        got = (led["asks"].get(mid) or {}).get(str(n))
+        if not isinstance(got, dict) or got.get("undone"):
+            return False
+        got["undone"] = now
+        _save(room_id, led)
+        return True
+
+
+def ask_point(room_id: str, key: str) -> str:
+    """The point a quick answer's send made (its key ``ask:<mid>:<n>``), or ''."""
+    led = load(room_id)
+    made = [p for p in led["points"] if p.get("key") == key]
+    return made[0]["id"] if made else ""
+
+
 def unapprove(room_id: str, mid: str) -> None:
     """The approval could not be delivered: it may be given again, and the
     points it acknowledged are as they were (unless they moved since)."""

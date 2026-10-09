@@ -855,6 +855,12 @@
   .qa-done strong { color:var(--fg); }
   .qa-dc { display:block; margin-top:var(--s-050); color:var(--fg-muted); white-space:pre-wrap; }
   .qa.busy .qa-dw { font-style:italic; }
+  /* Sent · Undo (task 198): a quiet text button, there for 10 s after an option was sent. */
+  .qa-undo { height:24px; margin-left:var(--s-100); padding:0 var(--s-200); background:transparent; border:none; border-radius:var(--r-200);
+    color:var(--fg-subtle); font:inherit; font-size:var(--fs-200); line-height:16px; cursor:pointer; }
+  .qa-undo:hover { background:var(--hover); color:var(--fg); }
+  .qa-undo:disabled { color:var(--fg-disabled); cursor:default; }
+  .qa-undo:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -1115,7 +1121,7 @@
     .ed-refs a.ref-chip { overflow: hidden; }   /* its label is cut, never past the edge */
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
-    .qa-opt, .qa-send { min-height: var(--touch-min); }
+    .qa-opt, .qa-send, .qa-undo { min-height: var(--touch-min); }
     .qa-cm textarea { min-height: var(--touch-min); font-size: var(--fs-400); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .att-chip { height: var(--touch-min); }
@@ -2908,9 +2914,14 @@ function askCardHtml(m, a, total, P) {
   }).join('');
   if (got) {
     const said = got.approved ? `Approved: ${got.approved}` : (got.option || '');
-    const words = busy ? 'Sending…' : 'You answered';
+    // Sent from this page a moment ago: Undo for a while (#198); read before
+    // it, the agent was told to ignore it.
+    const undo = !busy && !got.undone && !!got.option && askUndoLeft(key) > 0;
+    const words = busy ? 'Sending…' : undo ? 'Sent' : 'You answered';
     return `<div class="qa${busy ? ' busy' : ''} done" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts">${opts}</div>` : ''}`
       + `<div class="qa-done"><span class="qa-dw">${words}${said ? ':' : ''}</span>${said ? ` <strong>${esc(said)}</strong>` : ''}`
+      + (undo ? ` · <button type="button" class="qa-undo" data-ask="${esc(key)}" title="Take this answer back: withdrawn if the agent has not read it yet, else it is told to ignore it">Undo</button>` : '')
+      + (got.undone ? ' · taken back' : '')
       + `${got.comment ? `<span class="qa-dc">${esc(got.comment)}</span>` : ''}</div></div>`;
   }
   const open = a.kind === 'open';
@@ -3037,6 +3048,32 @@ function askKeepFocused(old, neu, keep) {
   }
   return true;
 }
+// The answers this page sent, with until when (ms) it offers to take each back.
+const ASK_UNDO = new Map(), ASK_UNDO_MS = 10000;
+const askUndoLeft = key => (ASK_UNDO.get(key) || 0) - Date.now();
+function askUndoOffer(key) {
+  ASK_UNDO.set(key, Date.now() + ASK_UNDO_MS);
+  setTimeout(() => { if (askUndoLeft(key) <= 0 && ASK_UNDO.delete(key) && LAST_ITEMS) renderBubbles(LAST_ITEMS); }, ASK_UNDO_MS + 50);
+}
+// Undo pressed: the hub withdraws the answer if it was not read yet (the ask
+// is open again), else tells the agent to ignore it.
+async function askUndo(b) {
+  const key = b.dataset.ask;
+  if (!key || askUndoLeft(key) <= 0) return;
+  ASK_UNDO.delete(key);
+  b.disabled = true;
+  const cut = key.lastIndexOf(':');
+  try {
+    const r = await postOk('/api/room/ask/undo', { roomId: ROOM, mid: key.slice(0, cut), n: +key.slice(cut + 1) });
+    if (r && r.points) pointsChanged(r.points, ptTicket());
+    pointsNote(r && r.withdrawn ? 'Taken back before it was read: the question is open again.'
+      : 'It was read already: the agent is told to ignore that answer.');
+  } catch (e) {
+    if (e && e.points) pointsChanged(e.points, ptTicket());
+    pointsNote('Not taken back: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '.');
+  }
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+}
 // A click on an option (or Send): sent once from this page, and the hub takes
 // it once from any device. The reply's points settle the card.
 async function askSend(key, option, post) {
@@ -3053,6 +3090,7 @@ async function askSend(key, option, post) {
   try {
     const r = await post('/api/room/ask', { roomId: ROOM, mid, n, option, comment, to: SOLO_MODE ? '' : m.from });
     askDraftSet(key, '');
+    if (option && r && !r.duplicate) askUndoOffer(key);
     if (r && r.points) pointsChanged(r.points, ptTicket());
     return r;
   } catch (e) {
@@ -3904,9 +3942,11 @@ function renderBubbles(items, opt = {}) {
   const _liveSel = window.getSelection();
   if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) { DRAW_HELD = true; return; }
+  // A press on the chat, or one just over: drawn after it (#198).
+  if (typeof pgHolding === 'function' && pgHolding()) { DRAW_HELD = true; return; }
   DRAW_HELD = false;
   const stick = STICK && !opt.anchor;
-  const place = stick ? null : readingPlace(box, opt.anchor);
+  const place = stick ? null : readingPlace(box, opt.anchor || (typeof pgPointed === 'function' ? pgPointed(box) : null));
   const given = items;       // as the conversation has them, point lines and all (sendsToShow)
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   // The person's words as sent: the hub's "[point P12]" lines are the agent's.
@@ -5015,6 +5055,11 @@ async function refreshRoom() {
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
   catch(e) { if (!ROOM_OBJ) setText($('#hint'), 'Cannot load the conversation yet; retrying.'); return; }
   if (!room || room.error) { setText($('#title'), '(session not found)'); if (!ROOM_OBJ) setText($('#hint'), 'Cannot send: session not found.'); return; }
+  // A press on the page: what the poll brought is shown once it is over (#198).
+  if (typeof pgDefer === 'function' && pgDefer(() => refreshShow(room, ticket, sendsGen))) return;
+  refreshShow(room, ticket, sendsGen);
+}
+function refreshShow(room, ticket, sendsGen) {
   // A task is named by its number: "#18 · title" in the tab, #18 before the title.
   const tno = room.no ? '#' + room.no : '';
   const tabTitle = tno ? `${tno} · ${room.title}` : room.title + ' — session';
@@ -5543,11 +5588,6 @@ function sendAttachments() {
   return boxes.flatMap(b => b.stored());
 }
 let ROOM_IDENTS = [];   // the room's agents, for the @<identity> prefix
-// A Dock strip can slide back as soon as a press lands in this frame. That
-// moves the frame before mouseup, so click may land on the composer instead.
-// Start the action while the pressed target is still known. The following
-// browser click (when one is generated) must not submit it a second time.
-let SEND_PRESS = null, SEND_PRESS_SEQ = 0;
 let SEND_COMPOSING = false, SEND_AFTER_COMPOSE = false;
 $('#compose').addEventListener('compositionstart', e => {
   if (e.target.matches('textarea')) SEND_COMPOSING = true;
@@ -5560,41 +5600,176 @@ $('#compose').addEventListener('compositionend', e => {
     setTimeout(sendNow, 0); // final input/model update follows compositionend
   }
 });
-document.addEventListener('pointerdown', e => {
-  if (!e.isPrimary || e.button !== 0) return;
-  const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
-  if (!b || b.disabled) return;
-  const press = { seq: ++SEND_PRESS_SEQ, pointerId: e.pointerId, target: b };
-  SEND_PRESS = press;
-  // A cancelled or dragged press may produce no click. Pointerup's timer runs
-  // after the compatibility click; this longer fallback covers a lost up.
-  setTimeout(() => { if (SEND_PRESS === press) SEND_PRESS = null; }, 700);
-  if (b.id === 'send') sendNow();
-  else if (b.classList.contains('qa-send')) askClick(e);
-  else sendAction(b);
+// ---- A click acts only on what was pressed (#198) ---------------------------
+// Measured: a strip tool sliding back at the press moved a quick answer 250 px
+// under a still pointer, and the second press of a double click sent it. So
+// every control that sends, answers, starts, stops or restores acts on a click
+// only when the press was on that same control, it did not move more than
+// PG_SLOP px between press and click, and it had not just come under a still
+// pointer (moved or appeared there within PG_SETTLE ms before the press).
+// Anything else does nothing. Keyboard activation (detail 0) is not a press.
+const PG_SEL = '#send, .qa-opt, .qa-send, .qa-undo, .send-retry, .send-discard, .send-hide, .pend-retry, .pend-discard, '
+  + '.pt-btn, .pc-opt, .pc-btn, .cmt-submit, .cu-read, .am-primary[data-act], .am-item[data-act]';
+const PG_SETTLE = 400, PG_SLOP = 4, PG_HOLD = 300;
+// at: where the pointer was last (null: not over this page); any: when a press
+// on the page began (0: none on); down: the same for a press on the
+// conversation; up: when the last of those ended; press: what it was on; click:
+// a click is being dispatched (a draw it makes is the person's own, never
+// held); later: a poll's update waiting for the press to be over; typed: when
+// the person last typed in the box; scrolled: when they last scrolled (wheel,
+// a scroll key, a touch drag). (var: renderBubbles may run before this line.)
+var PG = { els: new WeakMap(), keys: new Map(), at: null, any: 0, down: 0, up: 0, press: null, click: false, queued: false, flush: 0, later: null, typed: -Infinity, scrolled: -Infinity };
+document.addEventListener('input', e => { if (e.target.closest && e.target.closest('#compose')) PG.typed = performance.now(); }, true);
+const pgScrolled = () => { PG.scrolled = performance.now(); };
+window.addEventListener('wheel', pgScrolled, { capture: true, passive: true });
+window.addEventListener('touchmove', pgScrolled, { capture: true, passive: true });
+window.addEventListener('keydown', e => {
+  if (/^(Page(Up|Down)|Home|End|Arrow(Up|Down)| )$/.test(e.key) && !(e.target.closest && e.target.closest('textarea, input, select, [contenteditable]'))) pgScrolled();
 }, true);
-document.addEventListener('pointercancel', e => {
-  if (SEND_PRESS && SEND_PRESS.pointerId === e.pointerId) SEND_PRESS = null;
+function pgKey(b) {
+  const d = b.dataset;
+  return [PG_SEL.split(', ').find(s => b.matches(s.trim())), d.ask, d.opt, d.pt, d.ptAct, d.mid, d.send, d.i, d.k, d.act].join(String.fromCharCode(1));
+}
+// Places are taken on the whole window, not this frame: the frame itself moves
+// too (the accident: the conversation's frame widened under the pointer, the
+// card staying where it was inside it).
+function pgOff() {
+  let x = 0, y = 0;
+  try { for (let w = window; w.frameElement; w = w.parent) { const r = w.frameElement.getBoundingClientRect(); x += r.left; y += r.top; } } catch (e) {}
+  return [x, y];
+}
+function pgRect(b, off = pgOff()) { const r = b.getBoundingClientRect(); return [r.left + off[0], r.top + off[1], r.width, r.height]; }
+const pgSame = (a, b) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <= PG_SLOP);
+// Send moving as the person types (the box grows) is their own doing, and so is
+// everything moving as they scroll (a smooth or inertial scroll ends after its
+// last wheel event): the page moving things is what is guarded.
+const pgOwn = b => (b.id === 'send' && performance.now() - PG.typed < 1000) || performance.now() - PG.scrolled < 600;
+const pgUnder = r => !!PG.at && PG.at.x >= r[0] && PG.at.x <= r[0] + r[2] && PG.at.y >= r[1] && PG.at.y <= r[1] + r[3];
+// Where each control is, noted after anything that can move it. A control that
+// moves, or appears, under the pointer notes when (t): pressed soon after,
+// the press was aimed before it got there.
+function pgSample() {
+  PG.queued = false;
+  const now = performance.now(), keys = new Map(), off = pgOff();
+  let moved = false;
+  for (const b of document.querySelectorAll(PG_SEL)) {
+    const r = pgRect(b, off);
+    if (!r[2] && !r[3]) { PG.els.delete(b); continue; }
+    const k = pgKey(b);
+    let e = PG.els.get(b);
+    if (!e) {
+      // Drawn again in the same place (a redraw replaces the node): the same control.
+      const o = PG.keys.get(k);
+      e = o && pgSame(o.r, r) ? { r, t: o.t } : { r, t: pgUnder(r) && !pgOwn(b) ? now : -Infinity };
+      if (!o || !pgSame(o.r, r)) moved = true;
+      PG.els.set(b, e);
+    } else if (!pgSame(e.r, r)) {
+      e.r = r; moved = true;
+      if (pgUnder(r) && !pgOwn(b)) e.t = now;
+    }
+    keys.set(k, e);
+  }
+  PG.keys = keys;
+  if (moved) pgQueue();   // a move can go on (a transition): until it settles
+}
+function pgQueue() {
+  if (PG.queued) return;
+  PG.queued = true;
+  requestAnimationFrame(() => { if (PG.queued) pgSample(); });
+}
+// The pointer moving: what moved before it did is noted against where it was.
+const pgPos = e => {
+  if (PG.queued) pgSample();
+  const off = pgOff();
+  PG.at = { x: e.clientX + off[0], y: e.clientY + off[1], cx: e.clientX, cy: e.clientY };
+};
+window.addEventListener('pointermove', pgPos, { capture: true, passive: true });
+document.documentElement.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') PG.at = null; });
+window.addEventListener('scroll', pgQueue, { capture: true, passive: true });
+window.addEventListener('resize', pgQueue);
+window.addEventListener('load', pgQueue, true);   // an image loading grows its balloon
+new MutationObserver(pgQueue).observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(pgQueue);
+  ['#msgs', '#compose', '#points-line'].forEach(s => { const el = document.querySelector(s); if (el) ro.observe(el); });
+  ro.observe(document.body);
+}
+pgQueue();
+window.addEventListener('pointerdown', e => {
+  pgSample();   // a move not noted yet (the frame moving says nothing here) came before the press
+  pgPos(e);
+  if (!e.isPrimary) return;
+  const now = performance.now(), box = $('#msgs');
+  PG.any = now;
+  PG.down = box && box.contains(e.target) ? now : 0;   // a press on the conversation holds its draws
+  PG.press = null;
+  const b = e.target.closest && e.target.closest(PG_SEL);
+  if (!b) return;
+  const ent = PG.els.get(b);
+  PG.press = { b, k: pgKey(b), r: pgRect(b), id: e.pointerId, late: !ent || now - ent.t < PG_SETTLE };
 }, true);
-document.addEventListener('dragstart', e => {
-  const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
-  if (SEND_PRESS && SEND_PRESS.target === b) SEND_PRESS = null;
+const pgEnd = e => {
+  pgPos(e);
+  if (!e.isPrimary || !PG.any) return;
+  const chat = !!PG.down;
+  PG.any = 0; PG.down = 0;
+  if (chat) PG.up = performance.now();
+  clearTimeout(PG.flush);
+  PG.flush = setTimeout(pgRelease, chat ? PG_HOLD + 20 : 0);   // after the click either way
+};
+// The press is over: what waited for it is shown.
+function pgRelease() {
+  if (pgDeferring()) return;
+  const f = PG.later;
+  PG.later = null;
+  if (f) f();
+  flushHeldDraw();
+}
+window.addEventListener('pointerup', pgEnd, true);
+window.addEventListener('pointercancel', e => { pgEnd(e); PG.press = null; }, true);
+window.addEventListener('dragstart', () => { PG.press = null; }, true);
+window.addEventListener('click', e => {
+  const p = PG.press;
+  PG.press = null;
+  const b = e.target.closest && e.target.closest(PG_SEL);
+  if (!b || e.detail === 0) return;
+  const ok = !!p && !p.late && (p.b === b || p.k === pgKey(b)) && pgSame(p.r, pgRect(b))
+    && !('pointerId' in e && e.pointerId > 0 && e.pointerId !== p.id);
+  if (ok) {
+    PG.click = true;
+    setTimeout(() => { PG.click = false; }, 0);
+    return;
+  }
+  e.stopImmediatePropagation();
+  e.preventDefault();
 }, true);
-document.addEventListener('pointerup', e => {
-  const press = SEND_PRESS;
-  if (!press || press.pointerId !== e.pointerId) return;
-  setTimeout(() => { if (SEND_PRESS === press) SEND_PRESS = null; }, 0);
-}, true);
-document.addEventListener('click', e => {
-  const b = e.target.closest && e.target.closest('#send, .qa-send, .send-retry');
-  const pressed = SEND_PRESS;
-  // Keyboard/programmatic activation has detail 0 and is never the click
-  // paired with a pointer press. Suppress only that press's own target/id.
-  if (!b || !pressed || e.detail === 0 || b !== pressed.target) return;
-  if ('pointerId' in e && e.pointerId !== pressed.pointerId) return;
-  SEND_PRESS = null;
-  e.sendPressHandled = true;
-}, true);
+// The conversation draws nothing new while a press is on it, nor for PG_HOLD ms after
+// (flushHeldDraw then): what is under the pointer stays where it is. A draw a
+// click makes (the answer it sent showing) is not held.
+function pgHolding() {
+  if (!PG || PG.click) return false;
+  const now = performance.now();
+  if (PG.down && now - PG.down > 10000) PG.down = 0;   // a release never seen
+  return !!PG.down || (!!PG.up && now - PG.up < PG_HOLD);
+}
+function pgDeferring() {
+  if (PG.any && performance.now() - PG.any > 10000) PG.any = 0;
+  return !!PG.any || (!!PG.up && performance.now() - PG.up < PG_HOLD);
+}
+// A poll's update while a press is on (anywhere on the page: the hint under the
+// box moved Send under a pressed pointer) waits for it: the latest one only.
+function pgDefer(f) {
+  if (!PG || !pgDeferring()) return false;
+  PG.later = f;
+  return true;
+}
+// The balloon under the pointer: a draw keeps it where it is on screen.
+function pgPointed(box) {
+  if (!PG || !PG.at) return null;
+  let el = document.elementFromPoint(PG.at.cx, PG.at.cy);
+  while (el && el.parentElement !== box) el = el.parentElement;
+  return el && !el.classList.contains('catchup') ? el : null;
+}
 function setSendBusy(busy) {
   SEND_IN_FLIGHT = busy;
   const box = $('#compose'), send = $('#send');
@@ -5679,7 +5854,7 @@ async function sendNow() {
     setSendBusy(false);
   }
 }
-$('#send').onclick = e => { if (!e.sendPressHandled) sendNow(); };
+$('#send').onclick = () => sendNow();
 $('#input').addEventListener('keydown', e => {
   const act = edKeyAction(e, { part: 'head', empty: !$('#input').value.trim(), last: !ED.points.length });
   if (act === 'send') { e.preventDefault(); $('#send').click(); }
@@ -6003,18 +6178,35 @@ window.addEventListener('message', (e) => {
 // Inside the dashboard, say this chat has started: a balloon link opened while
 // it was still loading is sent to it again.
 try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
-// Inside the dashboard, a press in this chat puts a tool slid out of the
-// page's Dock back. Dock (v0.14.1) sees focus move into this frame and does it
-// itself; it sees nothing when this frame already had focus (the cursor was in
-// the box when the tool opened) or the browser window was not active. Only
-// those presses are told to the page, which calls Dock's closeFly().
+// Inside the dashboard, a click in this chat puts a tool slid out of the
+// page's Dock back, and closes a Dock menu: once the click is over, never at
+// the press. Closing it at the press moved the conversation under the pointer
+// before the click (#198: a quick answer 250 px over, sent by the next press).
+// While a press is on, the frame is marked data-pressed, which the page's Dock
+// counts as a modal (modalSelector), so focus moving into the frame closes
+// nothing; the release tells the page (chat-clicked), after the click.
 if (window.parent !== window) {
-  document.addEventListener('pointerdown', () => {
-    let seen = false;
-    try { const top = window.parent.document; seen = top.hasFocus() && top.activeElement !== window.frameElement; } catch (e) {}
-    if (seen) return;
-    try { window.parent.postMessage({ type: 'chat-clicked', roomId: ROOM }, location.origin); } catch (e) {}
+  // A Dock menu open at the press: focus leaving it closes it at the press,
+  // so the page hears it was open (the first click closes a tool's menu only).
+  let pressed = false, unmark = 0, menuAtPress = false;
+  const mark = on => {
+    clearTimeout(unmark);
+    try { const f = window.frameElement; if (f) f.toggleAttribute('data-pressed', on); } catch (e) {}
+    if (on) unmark = setTimeout(() => mark(false), 1500);   // a release never seen
+  };
+  document.addEventListener('pointerdown', e => { if (!e.isPrimary) return; pressed = true; mark(true);
+    try { menuAtPress = !!window.parent.document.querySelector('.dk-menu'); } catch (err) { menuAtPress = false; }
   }, true);
+  const release = e => {
+    if (!e.isPrimary || !pressed) return;
+    pressed = false;
+    mark(false);
+    setTimeout(() => {
+      try { window.parent.postMessage({ type: 'chat-clicked', roomId: ROOM, menu: menuAtPress }, location.origin); } catch (err) {}
+    }, 0);
+  };
+  document.addEventListener('pointerup', release, true);
+  document.addEventListener('pointercancel', release, true);
 }
 
 // ---- Session actions ---------------------------------------------------------
@@ -6548,7 +6740,8 @@ $('#msgs').addEventListener('compositionend', e => {
   setTimeout(() => { askSyncDraft(key); askSend(key, option, postOk); }, 0);
 });
 $('#msgs').addEventListener('click', e => {
-  if (e.sendPressHandled) return;
+  const undo = e.target.closest && e.target.closest('.qa-undo');
+  if (undo) { askUndo(undo); return; }
   if (askClick(e)) return;
   if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');
