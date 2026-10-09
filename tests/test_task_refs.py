@@ -248,7 +248,7 @@ class SessionChips(unittest.TestCase):
         self.assertIn("TASK_REF_PID = taskRefProject(m);", fn(SESSION, "renderBubbles"), "each balloon is drawn in its own project")
         self.assertIn("TaskCard.refsIn(text, taskRefCtx())", fn(SESSION, "edRefsHtml"), "the box preview reads the words the same way")
         self.assertIn("const h = taskChipHtml(r);", fn(SESSION, "edRefsHtml"), "the box preview shows the chips too")
-        refresh = fn(SESSION, "refreshRoom")
+        refresh = fn(SESSION, "refreshShow")
         self.assertIn("`${tno} · ${room.title}`", refresh, "the tab title")
         self.assertIn("setText($('#tno'), tno);", refresh, "the header")
 

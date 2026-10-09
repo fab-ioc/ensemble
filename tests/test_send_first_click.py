@@ -67,7 +67,7 @@ async function main() {
             const p=await ev(`(() => {const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
             await c.send('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',clickCount:1},s);
             await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1},s);
-            await sleep(80);
+            await sleep(380);   // a press on the conversation holds its draws 300 ms (#198)
           };
           // A full room refresh between the two halves of the physical click.
           await ev("document.getElementById('input').focus()");
@@ -78,6 +78,7 @@ async function main() {
           await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1},s);
           await sleep(80);
           out.push({kind:'poll',sent:await ev('window.__sent')});
+          await sleep(600);   // the refresh, held while the press was on (#198), lands after it
           await ev("edAddLast(); const ta=document.querySelector('.ed-text'); ta.value='Question one\\nQuestion two'; ta.dispatchEvent(new Event('input',{bubbles:true})); ta.focus(); 0");
           await pressClick('#send');
           out.push({kind:'points',sent:await ev('window.__sent')});
@@ -204,7 +205,7 @@ async function main() {
           await c.send('Input.insertText',{text:'Keyboard after drag cancel'},s);
           await ev("document.getElementById('send').click(); 0");
           await sleep(80);
-          out.push({kind:'drag-cancel-keyboard',sent:(await ev('window.__sent')).slice(-2),press:await ev('SEND_PRESS')});
+          out.push({kind:'drag-cancel-keyboard',sent:(await ev('window.__sent')).slice(-2),press:await ev('PG.press ? 1 : null')});
         }
         if(width===390 && kind==='task') {
           await ev("edClear(); document.getElementById('input').focus(); 0");
@@ -217,7 +218,7 @@ async function main() {
           await c.send('Input.insertText',{text:'Keyboard after touch cancel'},s);
           await ev("document.getElementById('send').click(); 0");
           await sleep(80);
-          out.push({kind:'touch-cancel-keyboard',sent:(await ev('window.__sent')).slice(-2),press:await ev('SEND_PRESS')});
+          out.push({kind:'touch-cancel-keyboard',sent:(await ev('window.__sent')).slice(-2),press:await ev('PG.press ? 1 : null')});
         }
         await c.send('Target.closeTarget',{targetId});
       }
@@ -265,7 +266,7 @@ async function main() {
       const popSend=async (id,selector,label) => {
         const r=await c.send('Runtime.evaluate',{expression:`PD.dock.popOut(${JSON.stringify(id)})`,returnByValue:true,userGesture:true},s);
         if(!r.result.value) throw Error(label+' pop-out refused');
-        await until(`!!PD.dock.popWindow(${JSON.stringify(id)})?.document.querySelector(${JSON.stringify(selector)})`);
+        await until(`!!PD.dock.popWindow(${JSON.stringify(id)})?.document.querySelector(${JSON.stringify(selector)})?.contentWindow?.eval('ROOM_OBJ')`);
         let target=null;
         for(let i=0;i<100 && !target;i++) {
           const info=await c.send('Target.getTargets');
