@@ -142,10 +142,12 @@ class FileLinksInChrome(Hub):
 
 
 class OnlyWhatTheHubMayRead(Hub):
-    """The cwd a page sends is the client's word: the checks answer and walk
-    only inside the folders /api/file serves."""
+    """The cwd a page sends is the client's word: no folder outside the ones
+    the hub may read is walked for a name. What is written is answered the
+    way /api/file answers it (it opens such a file), so a file there is
+    never drawn as not written yet."""
 
-    def test_outside_reads_as_not_there_and_is_not_walked(self):
+    def test_outside_is_not_walked(self):
         file_refs.forget_indexes(); self.addCleanup(file_refs.forget_indexes)
         outside = Path(self.tmp.name) / 'outside'
         inside = Path(dashboard.find_project(self.ed)['path']) / 'docs'
@@ -153,8 +155,9 @@ class OnlyWhatTheHubMayRead(Hub):
             d.mkdir(parents=True)
             (d / 'secret.md').write_text('x', encoding='utf-8')
         q = {'ctx': [['', str(outside)], ['', str(inside)]],
-             'items': [['secret.md', 0], [str(outside / 'secret.md'), 0], ['secret.md', 1], ['nope.md', 1]]}
-        self.assertEqual(dashboard.files_check(q), {'there': [False, False, True, False]})
+             'items': [['secret.md', 0], [str(outside / 'secret.md'), 0], ['x/secret.md', 0],
+                       ['secret.md', 1], ['docs/secret.md', 1], ['nope.md', 1]]}
+        self.assertEqual(dashboard.files_check(q), {'there': [True, True, False, True, True, False]})
         self.assertEqual(dashboard.file_ref_suggestions('a/secret.md', cwd=str(outside))['same'], [])
         self.assertEqual(dashboard.file_ref_suggestions('a/secret.md', cwd=str(inside))['same'], [str(inside / 'secret.md')])
         self.assertIsNone(dashboard.resolve_file_ref('x/secret.md', cwd=str(outside)))

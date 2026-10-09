@@ -185,8 +185,8 @@ def find_by_tail(rel: str, bases: list[str]) -> Path | None:
             cand = (depth, -mtime, full)
             if best is None or cand[:2] < best[:2]:
                 best = cand
-        if best is not None and best[0] == 0:
-            break
+        if best is not None:      # the first folder in the order that has one: the task's own
+            break                 # file before another task's under the project home
     return Path(best[2]) if best else None
 
 

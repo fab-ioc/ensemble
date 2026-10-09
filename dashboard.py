@@ -6066,8 +6066,9 @@ def files_check(query: dict) -> dict:
             bases, search = _file_ref_places(room.strip(), cwd.strip())
             places[ci] = (bases, [x for x in search if ok(x)])
         bases, search = places[ci]
-        fp = file_refs.resolve(path, bases, dirs=True, search=search)[0]
-        out.append(fp is not None and ok(str(fp)))
+        # there when /api/file would open it: what is written (absolute, or at the relative
+        # path) is served as it is, and the walk for a name only goes through readable folders
+        out.append(file_refs.resolve(path, bases, dirs=True, search=search)[0] is not None)
     return {"there": out}
 
 

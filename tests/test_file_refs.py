@@ -85,6 +85,14 @@ class Resolve(unittest.TestCase):
         self.assertEqual(self.res("common/…/tws/Conn.java"), (f, "tail"))
         self.assertEqual(self.res("other/.../tws/Conn.java"), (None, ""), "the folders before it must be on the path")
 
+    def test_the_first_folder_that_has_one(self):
+        # the task's own file, deep in its cwd, before another task's newer one under the home
+        own = write(self.cwd / "docs" / "notes.md")
+        other = write(self.home / "taskB" / "notes.md")
+        os.utime(own, (time.time() - 100, time.time() - 100))
+        self.assertEqual(self.res("notes.md"), (own, "tail"))
+        self.assertTrue(other.is_file())
+
     def test_shallowest_then_newest(self):
         write(self.code / "a" / "b" / "n.md")
         old = write(self.code / "x" / "n.md")

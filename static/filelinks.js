@@ -31,6 +31,8 @@ const FileLinks = (() => {
   const MISSING_TITLE = 'This file does not exist yet';
   const state = new Map();   // path SEP room SEP cwd -> true (there) | false (not there)
   const queue = new Map();   // the same keys, waiting for the next request
+  const asking = new Set();  // keys in the request on its way
+  const failed = new Set();  // keys a request did not answer: asked again by the next recheck
   let busy = false, off = false, lastRecheck = 0;
   function keyOf(a) {
     const h = a.getAttribute('href') || '';
@@ -59,6 +61,7 @@ const FileLinks = (() => {
     const k = keyOf(a);
     if (!k) return false;
     if (state.has(k)) { paint(a, state.get(k)); return false; }
+    if (asking.has(k)) return false;
     queue.set(k, true);
     return true;
   }
@@ -73,13 +76,15 @@ const FileLinks = (() => {
     if (now - lastRecheck < RECHECK_MS) return;
     lastRecheck = now;
     for (const [k, there] of state) if (there === false) queue.set(k, true);
+    for (const k of failed) queue.set(k, true);
+    failed.clear();
     flush();
   }
   async function flush() {
     if (busy || off || !queue.size || typeof fetch !== 'function') return;
     busy = true;
     const keys = [...queue.keys()].slice(0, BATCH);
-    keys.forEach(k => queue.delete(k));
+    keys.forEach(k => { queue.delete(k); asking.add(k); });
     const ctx = [], at = new Map();
     const items = keys.map(k => {
       const [p, room, cwd] = k.split(SEP), c = room + SEP + cwd;
@@ -90,7 +95,7 @@ const FileLinks = (() => {
     try {
       const r = await fetch('/api/files/check?q=' + encodeURIComponent(JSON.stringify({ ctx, items })), { cache: 'no-store' });
       if (r.status === 404) { off = true; return; }
-      if (!r.ok) return;
+      if (!r.ok) { keys.forEach(k => failed.add(k)); return; }
       const there = ((await r.json()) || {}).there || [];
       const changed = new Set();
       keys.forEach((k, i) => {
@@ -103,8 +108,9 @@ const FileLinks = (() => {
       }
       again = queue.size > 0;
     } catch (e) {
-      /* the hub is away: these are asked again on the next scan */
+      keys.forEach(k => failed.add(k));   // the hub is away: asked again by the next recheck
     } finally {
+      keys.forEach(k => asking.delete(k));
       busy = false;
     }
     if (again) flush();
