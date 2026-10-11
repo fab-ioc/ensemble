@@ -9,7 +9,11 @@
 // task; the page says how (TaskCard.init({ open })). Esc, a click elsewhere,
 // scrolling or leaving the window closes the card. On a computer, resting the
 // pointer on a chip opens the card after a moment; it stays while the pointer
-// is on the chip or the card, and a click keeps it.
+// is on the chip or the card, and a click keeps it. TaskCard.anchors gives
+// the same card to elements that are not chips (a left bar's task numbers,
+// #201): their click stays the page's, the card comes on a rest, on keyboard
+// focus or on a long press, and survives the page drawing them again
+// (TaskCard.refresh).
 //
 // TaskCard.chipHtml(t, o) draws the chip for a task the hub (/api/task/ref)
 // or the board described: { roomId, label, ref, title, workflowName, status,
@@ -26,6 +30,7 @@ const TaskCard = (() => {
   const TTL = 60000;        // what the hub said is kept a minute
   const DOUBLE = 500;       // the second click of a double click, within this of the first
   const HOVER_IN = 500, HOVER_OUT = 300;
+  const LONG = 500;         // a long press on a touch screen (an anchor's card)
 
   // Text's task references (#18, #ED-18, @codex@18, and ED-18 on its own with
   // its key in capitals), as task_numbers.py reads them: the agent, the key
@@ -196,15 +201,23 @@ const TaskCard = (() => {
   // o: { key: the key as written, agent: the agent it opens at, href: the link
   // (the page's own; else this page's /session), assumed: the number's
   // sentence names two projects and this one was assumed (the card says so) }.
-  function chipHtml(t, o = {}) {
+  // The card's data for a task (what a chip carries in data-card); o as
+  // chipHtml's, and `why`: a line under it saying why the task waits.
+  function cardOf(t, o = {}) {
     const id = o.agent || '';
     const href = o.href || ('/session?id=' + encodeURIComponent(t.roomId) + (id ? '&agent=' + encodeURIComponent(id) : ''));
-    const ref = t.ref || t.label || '';
     const card = { ref: word(t, o.key), title: t.title || '', state: stateText(t),
                    agents: (t.agents || []).map(a => a.identity || a.agent).filter(Boolean),
                    project: (t.inProject === false || o.assumed) ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
     if (o.assumed) card.assumed = true;
     if (o.point) { card.point = o.point; card.state = o.state || ''; }
+    if (o.why) card.why = String(o.why);
+    return card;
+  }
+  function chipHtml(t, o = {}) {
+    const id = o.agent || '';
+    const ref = t.ref || t.label || '';
+    const card = cardOf(t, o), href = card.href;
     const dot = dotOf(t);
     const label = `${o.point ? 'Point' : 'Task'} ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.assumed ? 'assumed ' : ''}${card.project})` : '');
     return `<a class="task-chip${o.point ? ' point-chip' : ''}${dot ? ' tc-' + dot : ''}" href="${esc(href)}" ${o.point ? pointAttrs(o.point) : `data-task="${esc(t.roomId || '')}"`}${id ? ` data-agent="${esc(id)}"` : ''}`
@@ -235,6 +248,13 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
 .task-card .tc-title:hover { text-decoration:underline; }
 .task-card .tc-title:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); border-radius:var(--r-100); }
 .task-card .tc-state, .task-card .tc-agents { flex:0 0 auto; color:var(--fg-muted); }
+.task-card.tc-has-why { flex-wrap:wrap; row-gap:0; }
+.task-card .tc-why { order:10; flex:1 1 100%; min-width:0; white-space:normal; color:var(--fg-muted); }
+/* Beside a list (a left bar's task): a notch pointing at the row it is for. */
+.task-card.tc-beside::before { content:''; position:absolute; top:calc(var(--tc-notch, 50%) - 5px); width:8px; height:8px; box-sizing:border-box;
+  background:var(--surface-overlay); border:1px solid var(--border); transform:rotate(45deg); }
+.task-card.tc-beside.tc-right::before { left:-5px; border-top-color:transparent; border-right-color:transparent; }
+.task-card.tc-beside.tc-left::before { right:-5px; border-bottom-color:transparent; border-left-color:transparent; }
 @media (pointer: coarse) {
   /* A chip keeps its look in the line of text and takes a finger's height with an invisible margin. */
   .msg .text.md a.task-chip, a.task-chip { overflow:visible; }
@@ -252,7 +272,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     if (!S.el) return;
     S.el.remove();
     if (S.chip) S.chip.setAttribute('aria-expanded', 'false');
-    S.el = null; S.chip = null; S.hover = false;
+    S.el = null; S.chip = null; S.hover = false; S.spec = null; S.focus = false; S.card = '';
   }
   function place(S, el, chip) {
     const w = S.doc.defaultView, r = chip.getBoundingClientRect(), m = 8, gap = 4;
@@ -263,24 +283,88 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     if (top + ch > w.innerHeight - m && r.top - gap - ch >= m) top = r.top - gap - ch;
     el.style.left = left + 'px'; el.style.top = top + 'px';
   }
-  function openCard(S, chip, hover) {
-    let c = null;
-    try { c = JSON.parse(chip.dataset.card || ''); } catch (e) { c = null; }
+  // Beside the list the anchor is in (spec.beside(a)), its notch at the
+  // anchor's middle: right of the list, else left of it, else (no room on
+  // either side: a phone's list fills the screen) under or over the anchor as
+  // a chip's. It never covers the anchor and moves nothing in the list.
+  const BESIDE_MIN = 240;
+  function placeBeside(S, el, a, list) {
+    const w = S.doc.defaultView, m = 8, gap = 8, r = a.getBoundingClientRect(), L = list.getBoundingClientRect();
+    const right = w.innerWidth - m - (L.right + gap), leftRoom = L.left - gap - m;
+    el.classList.remove('tc-beside', 'tc-right', 'tc-left');
+    el.style.maxWidth = '';
+    const side = right >= BESIDE_MIN ? 'right' : leftRoom >= BESIDE_MIN ? 'left' : '';
+    if (!side) { place(S, el, a); return; }
+    el.classList.add('tc-beside', 'tc-' + side);
+    el.style.maxWidth = Math.min(720, side === 'right' ? right : leftRoom) + 'px';
+    el.style.left = '0px'; el.style.top = '0px';
+    const cw = el.offsetWidth, ch = el.offsetHeight, mid = r.top + r.height / 2;
+    const top = Math.max(m, Math.min(mid - ch / 2, w.innerHeight - m - ch));
+    el.style.left = (side === 'right' ? L.right + gap : L.left - gap - cw) + 'px';
+    el.style.top = top + 'px';
+    el.style.setProperty('--tc-notch', Math.max(8, Math.min(ch - 8, mid - top)) + 'px');
+  }
+  // own: the anchor's spec opens the task (its title is not a page's data-task link).
+  function cardHtml(c, own) {
+    return `<span class="tc-no">${esc(c.ref)}</span>`
+      + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
+      + `<a class="tc-title" href="${esc(c.href)}" ${c.point ? pointAttrs(c.point) : own ? '' : `data-task="${esc(c.task)}"`}${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc((c.point ? 'Jump to point ' : 'Open task ') + c.ref)}">${esc(c.title)}</a>`
+      + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
+      + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '')
+      + (c.why ? `<span class="tc-why">${esc(c.why)}</span>` : '');
+  }
+  // A chip's card is in its data-card; an anchor's, what its spec says now.
+  function dataOf(chip, spec) {
+    if (spec) { try { return spec.card(chip) || null; } catch (e) { return null; } }
+    try { return JSON.parse(chip.dataset.card || ''); } catch (e) { return null; }
+  }
+  function fill(S, el, c, spec) {
+    el.setAttribute('aria-label', (c.point ? 'Point ' : 'Task ') + c.ref);
+    el.classList.toggle('tc-has-why', !!c.why);
+    el.innerHTML = cardHtml(c, !!(spec && spec.open));
+    S.card = JSON.stringify(c);
+  }
+  function openCard(S, chip, hover, spec) {
+    const c = dataOf(chip, spec);
     if (!c) return;
     closeCard(S);
     const el = S.doc.createElement('div');
     el.className = 'task-card';
     el.setAttribute('role', 'dialog');
-    el.setAttribute('aria-label', (c.point ? 'Point ' : 'Task ') + c.ref);
-    el.innerHTML = `<span class="tc-no">${esc(c.ref)}</span>`
-      + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
-      + `<a class="tc-title" href="${esc(c.href)}" ${c.point ? pointAttrs(c.point) : `data-task="${esc(c.task)}"`}${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc((c.point ? 'Jump to point ' : 'Open task ') + c.ref)}">${esc(c.title)}</a>`
-      + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
-      + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '');
+    fill(S, el, c, spec);
     S.doc.body.appendChild(el);
-    place(S, el, chip);
+    const list = spec && spec.beside ? spec.beside(chip) : null;
+    if (list) placeBeside(S, el, chip, list); else place(S, el, chip);
     chip.setAttribute('aria-expanded', 'true');
-    S.el = el; S.chip = chip; S.at = Date.now(); S.hover = !!hover;
+    S.el = el; S.chip = chip; S.at = Date.now(); S.hover = !!hover; S.spec = spec || null;
+    S.rect = rectKey(chip);
+  }
+  const rectKey = a => { const r = a.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round).join(','); };
+  // The anchor of an open card's task in the list as it is drawn now (a
+  // redraw replaced the element): the one whose spec.key is the same.
+  function sameAnchor(S, spec, a) {
+    if (a.isConnected) return a;
+    const k = spec.key(a);
+    return [...S.doc.querySelectorAll(spec.selector)].find(x => spec.key(x) === k) || null;
+  }
+  // After the page drew its list again: an anchor's card stays open, on the
+  // anchor drawn in its place, its content the task's as it is now; placed
+  // again only when the anchor moved. Gone with the anchor.
+  function refreshCard(S) {
+    if (!S.el || !S.spec) return;
+    const a = sameAnchor(S, S.spec, S.chip);
+    if (!a || !a.getClientRects().length) { closeCard(S); return; }   // gone, or its list hidden
+    if (a !== S.chip) { S.chip = a; a.setAttribute('aria-expanded', 'true'); }
+    const c = dataOf(a, S.spec);
+    if (!c) { closeCard(S); return; }
+    const changed = JSON.stringify(c) !== S.card;
+    if (changed) fill(S, S.el, c, S.spec);
+    const rk = rectKey(a);
+    if (rk !== S.rect || changed) {
+      S.rect = rk;
+      const list = S.spec.beside ? S.spec.beside(a) : null;
+      if (list) placeBeside(S, S.el, a, list); else place(S, S.el, a);
+    }
   }
 
   // o: { doc: the document (this one), open(a): open the task a chip names }.
@@ -292,16 +376,35 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     st.id = 'task-card-style';
     st.textContent = CSS;
     doc.head.appendChild(st);
-    const S = { doc, el: null, chip: null, at: 0, hover: false, timer: 0, leave: 0,
+    const S = { doc, el: null, chip: null, at: 0, hover: false, timer: 0, leave: 0, spec: null, specs: [], focus: false, card: '',
+                press: null, pressed: null, quiet: null,
                 openTask: a => a.dataset.point && o.openPoint ? o.openPoint(a) : (o.open || (a => { w.location.href = a.href; }))(a) };
     STATES.set(doc, S);
     const chipOf = ev => (ev.target && ev.target.closest) ? ev.target.closest('a.task-chip') : null;
+    // An element given to anchors(): [the element, its spec], or null.
+    const anchorOf = ev => {
+      if (!ev.target || !ev.target.closest) return null;
+      for (const sp of S.specs) { const x = ev.target.closest(sp.selector); if (x) return [x, sp]; }
+      return null;
+    };
     const inCard = ev => !!(S.el && ev.target && ev.target.closest && ev.target.closest('.task-card'));
     const fine = () => { try { return w.matchMedia('(hover: hover) and (pointer: fine)').matches; } catch (e) { return false; } };
     doc.addEventListener('click', ev => {
+      // A long press opened an anchor's card: the click it ends with is not a tap.
+      if (S.pressed) {
+        const an = anchorOf(ev), was = S.pressed;
+        S.pressed = null;
+        if (an && an[0] === was) { ev.preventDefault(); ev.stopImmediatePropagation(); return; }
+      }
       const a = chipOf(ev);
       if (!a) {
-        if (inCard(ev) && ev.target.closest('a')) closeCard(S);   // the title: the page opens the task
+        if (inCard(ev) && ev.target.closest('a')) {
+          // An anchor's card: its title opens the task as the anchor does.
+          const plain = ev.button === 0 && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey;
+          const sp = S.spec, at = S.chip;
+          if (sp && sp.open && plain) { ev.preventDefault(); ev.stopImmediatePropagation(); closeCard(S); sp.open(at); return; }
+          closeCard(S);   // the title: the page opens the task
+        }
         return;
       }
       if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;   // with a modifier it is a link
@@ -326,6 +429,30 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     }, true);
     doc.addEventListener('pointerdown', ev => {
       if (S.el && !inCard(ev) && chipOf(ev) !== S.chip) closeCard(S);
+      // A press is a click on its way, never a rest: no card comes after it.
+      clearTimeout(S.timer); S.timer = 0;
+      S.pressed = null;
+      endPress();
+      // A long press on an anchor, on a touch screen: its card, not its task.
+      const an = ev.pointerType === 'touch' ? anchorOf(ev) : null;
+      if (!an) return;
+      const [x, sp] = an;
+      S.press = { x: ev.clientX, y: ev.clientY, id: ev.pointerId, timer: setTimeout(() => {
+        S.press = null;
+        if (!x.isConnected) return;
+        openCard(S, x, false, sp);
+        if (S.el) S.pressed = x;
+      }, LONG) };
+    }, true);
+    const endPress = () => { if (S.press) { clearTimeout(S.press.timer); S.press = null; } };
+    doc.addEventListener('pointermove', ev => {
+      if (S.press && ev.pointerId === S.press.id && Math.hypot(ev.clientX - S.press.x, ev.clientY - S.press.y) > 10) endPress();
+    }, true);
+    for (const t of ['pointerup', 'pointercancel']) doc.addEventListener(t, endPress, true);
+    // Its long press is not the phone's menu for a link or a word.
+    doc.addEventListener('contextmenu', ev => {
+      const an = anchorOf(ev);
+      if (an && (S.press || S.pressed === an[0])) ev.preventDefault();
     }, true);
     doc.addEventListener('keydown', ev => {
       if (ev.key !== 'Escape' || !S.el) return;
@@ -333,7 +460,42 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
       ev.stopImmediatePropagation();
       const chip = S.chip;
       closeCard(S);
+      // The focus goes back without opening the card again.
+      S.quiet = chip;
       try { chip.focus({ preventScroll: true }); } catch (e) {}
+      S.quiet = null;
+    }, true);
+    // An anchor reached with the keyboard (Tab, the arrow keys): its card
+    // after the same moment as a rest; it goes when the focus leaves for
+    // anything but the card or the same task's anchor drawn again.
+    doc.addEventListener('focusin', ev => {
+      const an = anchorOf(ev);
+      if (!an || inCard(ev)) return;
+      const [x, sp] = an;
+      if (S.quiet === x) return;
+      if (S.el && S.spec === sp && sp.key(S.chip) === sp.key(x)) {   // the same task, drawn again
+        if (S.chip !== x) { S.chip = x; x.setAttribute('aria-expanded', 'true'); }
+        return;
+      }
+      let kb = false;
+      try { kb = x.matches(':focus-visible'); } catch (e) {}
+      if (!kb) return;
+      clearTimeout(S.timer);
+      S.timer = setTimeout(() => {
+        S.timer = 0;
+        if (doc.activeElement === x && !(S.el && !S.hover && !S.focus)) { openCard(S, x, false, sp); S.focus = !!S.el; }
+      }, HOVER_IN);
+    }, true);
+    doc.addEventListener('focusout', ev => {
+      const an = anchorOf(ev) || (inCard(ev) && S.spec ? [S.chip, S.spec] : null);
+      if (!an) return;
+      const [x, sp] = an;
+      setTimeout(() => {
+        if (!S.el || !S.focus || S.spec !== sp) return;
+        const act = doc.activeElement, now = act && act.closest ? act.closest(sp.selector) : null;
+        if ((now && sp.key(now) === sp.key(x)) || (act && S.el.contains(act))) return;
+        closeCard(S);
+      }, 0);
     }, true);
     doc.addEventListener('scroll', ev => { if (S.el && !inCard(ev)) closeCard(S); }, true);
     w.addEventListener('resize', () => closeCard(S));
@@ -341,20 +503,25 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     // Hover, on a computer: the card after a moment; it stays while the pointer is on the chip or the card.
     doc.addEventListener('pointerover', ev => {
       if (ev.pointerType === 'touch' || !fine()) return;
-      const a = chipOf(ev);
+      const an = chipOf(ev) ? [chipOf(ev), null] : anchorOf(ev);
+      const a = an && an[0], sp = an && an[1];
       // Back on the open card's chip, or on the card: it stays. (Another chip
       // does not keep it: the card would be left open with the pointer gone.)
       if ((a && S.chip === a) || inCard(ev)) { clearTimeout(S.leave); S.leave = 0; }
       if (a && !(S.el && S.chip === a) && !S.timer) {
         S.timer = setTimeout(() => {
           S.timer = 0;
-          if (a.isConnected && !(S.el && !S.hover)) openCard(S, a, true);   // never over a card that was clicked open
+          // An anchor the page drew again meanwhile: the one in its place, if the pointer is on it.
+          const cur = sp ? sameAnchor(S, sp, a) : a;
+          if (!cur || !cur.isConnected || (cur !== a && !cur.matches(':hover'))) return;
+          if (!(S.el && !S.hover && !S.focus)) openCard(S, cur, true, sp);   // never over a card that was clicked open
         }, HOVER_IN);
       }
     }, true);
     doc.addEventListener('pointerout', ev => {
       if (ev.pointerType === 'touch') return;
-      const a = chipOf(ev), to = ev.relatedTarget;
+      const an = chipOf(ev) ? [chipOf(ev)] : anchorOf(ev);
+      const a = an && an[0], to = ev.relatedTarget;
       if (a && S.timer && !(to && a.contains(to))) { clearTimeout(S.timer); S.timer = 0; }
       if (S.el && S.hover && (a === S.chip || inCard(ev))) {
         if (to && (S.el.contains(to) || (S.chip && S.chip.contains(to)))) return;
@@ -365,7 +532,27 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     return S;
   }
 
-  return { refs, chipHtml, stateText, init, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef, refsIn, replaceRefs, readProject,
+  // The card for elements that are not chips (#201: a left bar's task
+  // numbers), on a document init has set up. A click on one stays the page's
+  // (it opens the task); the card comes on a rest of the pointer, on keyboard
+  // focus after the same moment, or on a long press on a touch screen, and
+  // goes as a chip's hover card goes (Esc, a press elsewhere, scrolling, the
+  // pointer away). o: { doc, selector: what an anchor matches, key(el): which
+  // task it names (the same across redraws), card(el): its card's data
+  // (cardOf; null: no card), open(el): what its card's title does (as a click
+  // on the anchor), beside(el): the list to stand beside (else under it) }.
+  // Once per selector and document.
+  function anchors(o) {
+    const S = stateOf(o.doc);
+    if (!S) throw new Error('TaskCard.init the document first');
+    const sp = { selector: o.selector, key: o.key, card: o.card, open: o.open || null, beside: o.beside || null };
+    const i = S.specs.findIndex(x => x.selector === sp.selector);
+    if (i >= 0) S.specs[i] = sp; else S.specs.push(sp);
+    return sp;
+  }
+
+  return { refs, chipHtml, cardOf, stateText, init, anchors, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef, refsIn, replaceRefs, readProject,
+           refresh: doc => { const S = stateOf(doc); if (S) refreshCard(S); },
            open: (chip, doc) => { const S = stateOf(doc); if (S) openCard(S, chip); },
            close: doc => { const S = stateOf(doc); if (S) closeCard(S); }, el: doc => { const S = stateOf(doc); return S ? S.el : null; },
            CSS, esc };
