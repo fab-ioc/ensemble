@@ -1063,6 +1063,18 @@ function capParked(layout, max) {
   if (!layout.parked.length) delete layout.parked;
 }
 
+/** Keeps places parked in another layout (`entries`, as parked holds them) for panels this one neither shows nor parks. */
+export function adoptParked(layout, entries, opts = {}) {
+  let n = 0;
+  for (const e of entries || []) {
+    if (!e || typeof e.id !== 'string' || whereIs(layout, e.id) || parkedOf(layout).includes(e.id)) continue;
+    (layout.parked || (layout.parked = [])).push(JSON.parse(JSON.stringify(e)));
+    n++;
+  }
+  capParked(layout, finite(opts.max) ? opts.max : cfgOf(opts).keepSlots);
+  return n;
+}
+
 /** Drops the place kept for a panel (`id`), or for every one (no `id`). Returns how many it dropped. */
 export function forgetPanel(layout, id) {
   if (!layout.parked) return 0;
@@ -1200,6 +1212,11 @@ export function normalizeLayout(raw, opts = {}) {
     return size(n, splitNode(n.dir, n.kids.map((k) => norm(k, depth + 1)).filter(Boolean)));
   };
   const layout = { v: LAYOUT_VERSION, root: tidy(norm(raw.root, 0)), floats: [], auto: [], hidden: [], out: {} };
+  if (raw.zoom && typeof raw.zoom === 'object' && !Array.isArray(raw.zoom)) {
+    const values = Object.fromEntries(Object.entries(raw.zoom).filter(([id, value]) =>
+      id && finite(value) && value >= 0.5 && value <= 2 && value !== 1));
+    if (Object.keys(values).length) layout.zoom = values;
+  }
   for (const f of Array.isArray(raw.floats) ? raw.floats : []) {
     const s = f && normStack(f.stack);
     if (!s) continue;
@@ -1283,6 +1300,7 @@ export function normalizeLayout(raw, opts = {}) {
   // The default, with the parked panels' places and their depths (layout.depth then holds only theirs and today's).
   const orDefault = () => {
     const d = fallback();
+    if (layout.zoom) d.zoom = layout.zoom;
     if (parked) d.parked = parked;
     if (parked && layout.depth) {
       for (const e of parked) if (layout.depth[e.id]) (d.depth || (d.depth = {}))[e.id] = layout.depth[e.id];

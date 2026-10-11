@@ -1,12 +1,14 @@
 // A Panels menu for the app's top bar: every panel with show/hide, and Reset layout. The last panel on screen cannot be
 // hidden, nor one the dock's can(id, 'hide') keeps. A panel in a window of its own is marked so, with Show window (Open
-// window, after a reload) and Bring back.
+// window, after a reload) and Bring back. With the dock's popLostNotice: 'quiet', a panel whose window did not come back
+// after a reload is marked "window closed", and a click on its row opens that window again.
 // `button` opens it; `menu` is an empty element the app places (class "dk-menu" styles it).
 
 import { escText, TEXT } from './dock.js';
 
 export function mountPanelsMenu(dock, button, menu, list, win = typeof window !== 'undefined' ? window : null, { resetLabel = 'Reset layout',
-  outTag = TEXT.popTag, showLabel = TEXT.popShow, openLabel = TEXT.popOpen, backLabel = TEXT.popBack } = {}) {
+  outTag = TEXT.popTag, showLabel = TEXT.popShow, openLabel = TEXT.popOpen, backLabel = TEXT.popBack,
+  lostTag = TEXT.popLostTag, lostTitle = TEXT.popLostTitle } = {}) {
   const doc = button.ownerDocument;
   if (!menu.classList.contains('dk-menu')) menu.classList.add('dk-menu');
   // `panels` may be a function (() => dock.panels()): a dock whose panels come and go (addPanel) lists them as they are.
@@ -20,7 +22,11 @@ export function mountPanelsMenu(dock, button, menu, list, win = typeof window !=
       const out = !!(dock.isOut && dock.isOut(p.id));
       const id = escText(p.id);
       const title = (dock.title && dock.title(p.id)) || p.title; // its title now (setTitle)
-      let html = `<button type="button" role="menuitemcheckbox" data-panel-toggle="${id}" aria-checked="${on}"${on ? ' class="on"' : ''}`
+      const lost = out && dock.popLostNotice && dock.popLostNotice() === 'quiet' && dock.isOutLost && dock.isOutLost(p.id);
+      let html = lost
+        ? `<button type="button" role="menuitem" class="dk-out-lost" data-panel-pop="show" data-panel-id="${id}" title="${escText(lostTitle(title))}">`
+          + `${escText(title)} <span class="dk-menu-tag">${escText(lostTag)}</span></button>`
+        : `<button type="button" role="menuitemcheckbox" data-panel-toggle="${id}" aria-checked="${on}"${on ? ' class="on"' : ''}`
         + `${last ? ' disabled title="the last panel on screen stays"' : kept ? ' disabled' : ''}>${escText(title)}`
         + `${out ? ` <span class="dk-menu-tag">${escText(outTag)}</span>` : ''}</button>`;
       if (out) {

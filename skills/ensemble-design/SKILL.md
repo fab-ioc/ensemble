@@ -1026,7 +1026,7 @@ On a phone both are tabs of the one column, as everything is. **Still interim**:
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
 it recovers Tasks and tools whose closed window has no former strip button, including Spec.
-**A popped-out window outlives a reload** (#204, P170): the windows open on Ensemble's own `/static/popout.html`, which ignores Dock's close while the page is leaving and hands itself to the reloaded page (`ensPopAdopt`); the panel stays in its window with its file, scroll and place, and there is **no notice** (`.dk-outnote` is never shown). A window closed meanwhile leaves its panel out with a quiet mark: a muted ring on its strip button (`.pd-out-closed`) and on Panels, whose menu lists it first as "window closed" with one click to open it again and "Bring back here". The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
+**A popped-out window outlives a reload** (#204, P170; Dock's own since v0.22.0, #205): Dock keeps its windows while the page is leaving and the reloaded page adopts them (`popAdoptTimeout`, 10 min: a hub restart can take minutes); Ensemble only keeps each window's file and scroll (`pdPopKeep` on `pagehide`, sessionStorage `cd-pop-keep`) and puts them back on Dock's `pop-adopt` event (`pdOnAdopt`). The panel stays in its window with its file, scroll and place, and there is **no notice** (`popLostNotice: 'quiet'`). A window closed meanwhile leaves its panel out with a quiet mark: Dock's muted ring on its strip button (`.dk-out-lost`, `isOutLost`) and Ensemble's on Panels (`.pd-out-closed`), whose menu lists it first as "window closed" with one click to open it again and "Bring back here". The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
 Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
 there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Your asks ·
@@ -1037,7 +1037,7 @@ component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's
 on a computer ("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; on a phone (the narrow dock) it keeps reading **Chat** (`PD_TITLES`), so the 390 px tab row grows no longer than it was (Board stays on screen). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit, v0.14.1 now) of five panels, **PO chat, Your asks, Board, Workspace,
+library; `VERSION` names its commit, v0.22.0 now) of five panels, **PO chat, Your asks, Board, Workspace,
 Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
@@ -1069,8 +1069,12 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   `--dk-float-shadow`, …); its stylesheet is loaded first and Ensemble's rules after it do the rest
   (button sizes, hover and selected grounds, the focus ring).
 - **Chrome:** a title bar is 32px on `--surface-sunken` with a `--border` under it. A tab is
-  `--fs-200` at 600 in `--fg-subtle`, sentence case; the one in front is `--fg` on `--surface` with
-  the `--accent` underline (§1's selected tab). The bar's controls (**⋯** and **−**, the library's
+  `--fs-200` at 600 in `--fg-subtle`, `--fg` on hover (`--dk-tab-fg`, `--dk-tab-hover-fg`: Dock's own
+  hover rule, since v0.19, beats a page's plain `.dk-tab:hover`), sentence case; the one in front is
+  `--selected-fg` on `--selected-bg` with a 4px `--accent` line under it (§1's selected tab).
+  **A right-click on a tab** is Dock's tab menu (v0.21, on by default): the tab's ⋯ items, a file's
+  "Open in new window" among them, without bringing the tab to the front. Ensemble's own right-clicks
+  (a file in Files, a task card, the chat's frame) prevent the event, and Dock leaves those alone. The bar's controls (**⋯** and **−**, the library's
   default, not `headButtons: 'classic'`) are Subtle buttons, 24px, `--hover`; ⋯'s menu and its
   submenus are the library's `.dk-menu`s, styled as every menu below. A splitter is 5px of `--bg`,
   `--border-strong` on hover, `--accent` while dragged or focused (a control you are using). An edge
@@ -1112,7 +1116,7 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
 - **A popped-out window has no "Back to main window"** (the CEO's P50): `popBackButton: false`
   leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode.
   The window's ⋯ → View Mode docks it back; Panels or its retained active strip button reopens a
-  hidden window. A reload of this page keeps the window and takes it back (#204).
+  hidden window. A reload of this page keeps the window and takes it back (#204; Dock's adoption since #205).
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
@@ -1252,7 +1256,7 @@ self-contained component, so a later layout can host it elsewhere.
   ENSEMBLE-NEEDS item 10); slid out there it spans the width. Slid out, it
   leaves the middle 360px across or 200px down, and Dock lays out the flyout's room to the panel's
   own size (item 12; `ldInsets` only sets the page's insets now). Closing its window or the window's Hide hides it in Window mode;
-  Panels reopens it even when it has no former strip button. A reload keeps its window (#204), with
+  Panels reopens it even when it has no former strip button. A reload keeps its window (#204, #205), with
   no notice. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
   it takes the room the list leaves, unpinned, floating or in its window. Slid out, the list goes

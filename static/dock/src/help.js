@@ -1,6 +1,6 @@
 // A panel's help: a small circled ? in its title bar that opens a quick popover saying what the panel shows. The app
-// gives the words; createDock gets { icon, mount } through its `help` option, and mounts it again in each pop-out
-// window so the ? works there too.
+// gives the words; createDock gets { icon, mount, open } through its `help` option, and mounts it again in each pop-out
+// window so the ? and the opt-in menu Help item work there too.
 //
 //   const help = createHelp({ log: { title: 'Log', body: ['What happened, newest first.'] } });
 //   help.mount(document);
@@ -9,6 +9,7 @@
 import { escText } from './dock.js';
 
 export function createHelp(content = {}) {
+  const mounted = new WeakMap();
   const icon = (key) => {
     const h = content[key];
     if (!h) return '';
@@ -29,6 +30,7 @@ export function createHelp(content = {}) {
     pop.hidden = true;
     doc.body.appendChild(pop);
     let openFor = null;
+    const keys = new Map();
     function close() { pop.hidden = true; openFor = null; }
     function open(btn) {
       const key = btn.dataset.help;
@@ -41,6 +43,19 @@ export function createHelp(content = {}) {
       const view = doc.defaultView || { innerWidth: 1200, innerHeight: 800 };
       pop.style.top = Math.max(4, Math.min(r.bottom + 4, view.innerHeight - pop.offsetHeight - 4)) + 'px';
       pop.style.left = Math.max(4, Math.min(r.left, view.innerWidth - pop.offsetWidth - 4)) + 'px';
+    }
+    function openKey(key, anchor) {
+      if (!content[key]) return false;
+      let btn = keys.get(key);
+      if (!btn) {
+        btn = doc.createElement('button');
+        btn.dataset.help = key;
+        btn.getBoundingClientRect = () => btn._anchor?.getBoundingClientRect() || { left: 4, bottom: 4 };
+        keys.set(key, btn);
+      }
+      btn._anchor = anchor;
+      open(btn);
+      return true;
     }
     const onClick = (e) => {
       const q = e.target.closest && e.target.closest('.dk-help-q[data-help]');
@@ -55,8 +70,13 @@ export function createHelp(content = {}) {
       doc.removeEventListener('keydown', onKey);
       pop.remove();
     }
-    return { open, close, destroy, pop };
+    const instance = { open, openKey, close, destroy, pop };
+    mounted.set(doc, instance);
+    return instance;
   }
 
-  return { icon, mount, panelHtml, selector: '.dk-help-q' };
+  return { icon, mount, panelHtml, selector: '.dk-help-q', open: (key, anchor) => {
+    const doc = anchor?.ownerDocument || document;
+    return (mounted.get(doc) || mount(doc)).openKey(key, anchor);
+  } };
 }

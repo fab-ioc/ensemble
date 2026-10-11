@@ -11,9 +11,11 @@ export const POP_HTML = `<!doctype html>
 <script>
 // Dock's pop-out page: one panel of the app, popped out of it. Serve this file from the same origin as the app's page
 // (createDock's popUrl, by default "popout.html" beside the page). It has no modules of its own: the main window moves
-// the panel into #dk-pop-root, keeps drawing it, and copies its stylesheets and theme in. If the main window closes or
-// reloads, this one closes too; if the browser will not close it, it empties itself, so it never holds buttons over
-// stale state.
+// the panel into #dk-pop-root, keeps drawing it, and copies its stylesheets and theme in. If the main window reloads,
+// this one keeps what it shows, inert and "reconnecting…", and asks the page that loads next to take it back
+// (window.__dockPopAdopt); that page draws its panel here again. It closes when the main window closes, when that page
+// has no use for it, or when no page takes it back in time (the dock's popAdoptTimeout); closing, it empties itself
+// first, so it never holds buttons over stale state.
 (function () {
   try {
     var from = window.opener && window.opener.document.documentElement;
@@ -22,24 +24,70 @@ export const POP_HTML = `<!doctype html>
       if (v !== null) document.documentElement.setAttribute(a, v);
     });
   } catch (e) { /* not opened by the app */ }
-  function orphaned() {
-    try {
-      var o = window.opener;
-      if (!o || o.closed) return true;
-      return !!window.__dockPopKey && o.__dockPopKey !== window.__dockPopKey;
-    } catch (e) { return true; }
-  }
-  setInterval(function () {
-    if (!orphaned()) return;
+  window.__dockPopWaits = true; // the dock leaves this page open when its own reloads
+  var since = 0; // when this window began waiting for a page
+  function state(waiting) {
     var root = document.getElementById('dk-pop-root');
+    document.documentElement.classList.toggle('dk-pop-waiting', waiting);
+    if (root) { if (waiting) root.setAttribute('inert', ''); else root.removeAttribute('inert'); }
+    var b = document.getElementById('dk-pop-reconnecting');
+    if (waiting && !b && document.body) {
+      b = document.createElement('div');
+      b.id = 'dk-pop-reconnecting';
+      b.className = 'dk-pop-reconnecting';
+      b.setAttribute('role', 'status');
+      b.textContent = 'reconnecting…';
+      document.body.appendChild(b);
+    } else if (!waiting && b) b.remove();
+  }
+  window.__dockPopState = state;
+  // While it waits, it says so where the next page looks (localStorage, shared with it): that page treats its panel as
+  // coming back while this stamp is fresh, and as lost once it stops (this window closed) or its time ran out.
+  function alive(on) {
+    try {
+      var k = 'dock.popAlive:' + window.__dockPopDock + ':' + window.__dockPopId;
+      if (on) localStorage.setItem(k, String(Date.now())); else localStorage.removeItem(k);
+    } catch (e) { /* no storage: the next page waits its grace only */ }
+  }
+  addEventListener('pagehide', function () { if (since) alive(false); });
+  function shut() {
+    var root = document.getElementById('dk-pop-root');
+    if (since) alive(false);
+    state(false);
     if (root && !root.querySelector('.dk-pop-orphan')) {
       root.innerHTML = '<p class="dk-pop-orphan">The main window closed or reloaded, so this window shows nothing live. Close it.</p>';
     }
     window.close();
-  }, 500);
+  }
+  function check() {
+    var o = null, closed = true;
+    try { o = window.opener; closed = !o || o.closed; } catch (e) { closed = true; }
+    if (closed) { shut(); return; }
+    var mine = window.__dockPopKey;
+    if (!mine) return; // not drawn yet: the page that opened it is drawing it
+    var key = null;
+    try { key = o.__dockPopKey; } catch (e) { key = null; } // another site's page
+    if (key === mine) { if (since) { alive(false); since = 0; state(false); } return; }
+    var wait = window.__dockPopWait;
+    wait = typeof wait === 'number' && wait > 0 ? wait : 0;
+    if (!since) { since = Date.now(); state(true); }
+    alive(true);
+    var r = null;
+    try { if (typeof o.__dockPopAdopt === 'function') r = o.__dockPopAdopt(window); } catch (e) { r = null; }
+    if (r === 'yes') { alive(false); since = 0; state(false); return; }
+    if (r === 'no' || Date.now() - since >= wait) shut();
+  }
+  setInterval(check, 250);
+  // The page that loads next says so: ask it at once, however slow this window's timers are (hidden, minimised).
+  try { new BroadcastChannel('dock-pop').onmessage = check; } catch (e) { /* asked at the next tick */ }
 })();
 </script>
-<style>html, body { margin: 0; height: 100%; }</style>
+<style>
+html, body { margin: 0; height: 100%; }
+.dk-pop-reconnecting { position: fixed; z-index: 2147483647; right: 8px; bottom: 8px; padding: 2px 8px; border-radius: 3px;
+  font: 11px/1.6 system-ui, sans-serif; color: inherit; background: rgba(128, 128, 128, .2); opacity: .8; pointer-events: none; }
+.dk-pop-waiting .dk-head { opacity: .5; }
+</style>
 </head>
 <body class="dk-popwin">
 <div id="dk-pop-root" class="dk-pop-root"><p class="dk-pop-wait">Opening…</p></div>

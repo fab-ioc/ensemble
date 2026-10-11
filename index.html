@@ -3556,7 +3556,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* The chrome's type and shapes (the library's size tokens): tabs in
        sentence case on the type scale, a count as quiet words. */
     --dk-font-chrome: var(--font-sans); --dk-fs-tab: var(--fs-200);
-    --dk-tab-case: none; --dk-tab-tracking: 0; --dk-tab-weight: 600;
+    --dk-tab-case: none; --dk-tab-tracking: 0; --dk-tab-weight: 600; --dk-tab-fg: var(--fg-subtle); --dk-tab-hover-fg: var(--fg);
     --dk-badge-border: 0; --dk-badge-fg: var(--fg-muted); --dk-badge-fs: var(--fs-100); --dk-badge-pad: 0;
     --dk-fs-small: var(--fs-100); --dk-fs-menu: var(--fs-300); --dk-fs-note: var(--fs-300);
     --dk-radius: var(--r-300); --dk-float-shadow: var(--e-200);
@@ -3587,10 +3587,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-head { background: var(--surface-sunken); border-bottom-color: var(--border); }
   .dk-tab-wrap { border-right-color: var(--border); padding-right: var(--s-100); }
   .dk-tab-wrap.on { background: var(--surface); }
-  .dk-tab { padding: 0 var(--s-200) 0 var(--s-300); color: var(--fg-subtle); }
+  .dk-tab { padding: 0 var(--s-200) 0 var(--s-300); }
   .fd-tab-drag { display: inline-flex; width: 12px; height: 14px; margin-right: var(--s-100); vertical-align: -3px; cursor: grab; }
   .fd-tab-drag svg { width: 12px; height: 12px; margin: auto; fill: none; stroke: currentColor; stroke-width: 1.4; }
-  .dk-tab:hover { color: var(--fg); }
   .dk-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* A tab's count (the Points panel's) is quiet words, never a badge (the
      --dk-badge-* tokens above). */
@@ -3680,14 +3679,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .dk-textbtn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
   .dk-note { border-color: var(--c-warning-bold); background: var(--surface-overlay); box-shadow: var(--e-200); }
-  /* The library's notice of a panel whose window is not open after a reload
-     is never shown over the conversation (#204): a window still open is taken
-     back (ensPopAdopt), one closed is marked in Panels and on its strip button. */
-  .dk-outnote { display: none !important; }
-  /* A panel out whose window is closed (pdOutMarks): a small ring on its strip
-     button and on Panels, whose menu row says "window closed". */
-  .dk-strip-btn.pd-out-closed, .pd-panels.pd-out-closed { position: relative; }
-  .dk-strip-btn.pd-out-closed::after, .pd-panels.pd-out-closed::after {
+  /* A panel out whose window closed while the page reloaded has no notice over
+     the conversation (#204; Dock's popLostNotice: 'quiet'): Dock rings its strip
+     button (.dk-out-lost); Panels carries the same ring (pdOutMarks), and its
+     menu row says "window closed". */
+  .pd-panels.pd-out-closed { position: relative; }
+  .pd-panels.pd-out-closed::after {
     content: ''; position: absolute; left: 3px; bottom: 3px; width: 6px; height: 6px; box-sizing: border-box;
     border: 1.5px solid var(--fg-muted); border-radius: 50%; pointer-events: none;
   }
@@ -3887,6 +3884,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <link rel="modulepreload" href="/static/dock/src/popout-page.js">
 <link rel="modulepreload" href="/static/dock/src/screenshot.js">
 <link rel="modulepreload" href="/static/dock/src/draw.js">
+<link rel="modulepreload" href="/static/dock/src/docks.js">
+<link rel="modulepreload" href="/static/dock/src/layout-file.js">
+<link rel="modulepreload" href="/static/dock/src/menu-icons.js">
+<link rel="modulepreload" href="/static/dock/src/popadopt.js">
 <link rel="preload" as="fetch" crossorigin="anonymous" href="/static/dock/css/dock.css">
 <script>
 // The page's document-wide listeners, kept so a panel popped out into a window
@@ -12519,74 +12520,67 @@ function pdPopIconHref(id) {
   }
   return new URL('/static/icons/favicon.svg', location.href).href;
 }
-// ---- A panel's window outlives a reload (#204, the CEO's P170) -------------
-// The library closes its windows when this page goes, and its pop-out page
-// closes itself when this page reloads; after the reload it asks, over the
-// conversation, whether to open them again. The page reloads by itself after
-// every merge, so that notice came after every merge. Both docks open
-// Ensemble's own pop-out page instead (/static/popout.html): this page going
-// says so (ensPopLeaving), the window stays open, and the page that loads next
-// takes it back (ensPopAdopt, which the window calls): the library is asked to
-// pop the panel out again (popOut), and its window is the one still open
-// (ensPopOpen, the docks' openWindow), so no click is needed and nothing is
-// asked. What the window showed keeps its place: a frame's (a file viewer's
-// line and scroll, a chat's) through the frame's own update block, any other
-// scroll by the element's position in the panel. Until the library does this
-// itself (asked of the Dock project), this is the page's glue.
-const ENS_POP = { take: new Map(), boot: Date.now(), grace: 3000 };
-window.ensPopLeaving = false;
-// Before the library's pagehide (the docks are made later): its close of
-// each window is then a no-op in the window.
-window.addEventListener('pagehide', () => { window.ensPopLeaving = true; });
-window.addEventListener('pageshow', e => { if (e.persisted) window.ensPopLeaving = false; });
-function ensPopOpen(url, name, features) {
-  const w = ENS_POP.take.get(name);
-  ENS_POP.take.delete(name);
-  try { if (w && !w.closed) return w; } catch (e) {}
-  return window.open(url, name, features);
-}
-// The dock and panel a window's name says (popName + id).
-function ensPopOf(name) {
-  name = String(name || '');
-  for (const [pre, dock] of [['ensemble-panel-', () => PD.dock], ['ensemble-list-', () => LD.dock]]) {
-    if (name.startsWith(pre)) return { dock: dock(), id: name.slice(pre.length) };
-  }
-  return null;
-}
-// What the panel showed in the old window: its frames' places (each frame's
-// update block, as a reload keeps them) and its scrolled boxes.
-function ensPopKeep(w) {
-  const keep = { frames: new Map(), scrolls: [] };
-  let old = null;
-  try { old = w.document.querySelector('#dk-pop-root .dk-panel'); } catch (e) { return keep; }
-  if (!old) return keep;
-  for (const f of old.querySelectorAll('iframe')) {
+// ---- A panel's window outlives a reload (#204, P170) -----------------------
+// Dock keeps each panel's window open while this page reloads (by hand, after
+// a merge, across a hub restart) and the page that loads takes it back, with
+// no notice (Dock v0.22.0: the docks' popAdoptTimeout and popLostNotice). The
+// panel drawn there again is this page's, new, so what the window showed is
+// kept here as the page goes and put back when Dock says the window is taken
+// back (pop-adopt): a frame's place (a file viewer's line and scroll, a chat's,
+// through the frame's own update block) and any other scroll, by the
+// element's position in the panel.
+const PD_POP_KEEP = 'cd-pop-keep';
+// How long a window waits for the page: a hub restart can take minutes.
+const PD_POP_WAIT = 10 * 60000;
+const pdDocks = () => [['pd', PD.dock], ['ld', LD.dock]];
+window.addEventListener('pagehide', () => {
+  const keep = {};
+  try {
+    for (const [key, d] of pdDocks()) {
+      if (d) for (const p of d.panels()) if (d.isOpenOut(p.id)) keep[key + ':' + p.id] = pdPopKeep(p.el);
+    }
+  } catch (e) {}
+  try {
+    if (Object.keys(keep).length) sessionStorage.setItem(PD_POP_KEEP, JSON.stringify({ at: Date.now(), keep }));
+    else sessionStorage.removeItem(PD_POP_KEEP);
+  } catch (e) {}
+});
+// What a panel in its window shows: its frames' places (each frame's update
+// block, as a reload keeps them) and its scrolled boxes.
+function pdPopKeep(el) {
+  const keep = { frames: [], scrolls: [] };
+  for (const f of el.querySelectorAll('iframe')) {
     try {
       const u = f.contentWindow && f.contentWindow.ensUpd;
       const place = u && u.savePlace();
-      keep.frames.set(ensPopFrameKey(f.getAttribute('src')), place && place.url ? place.url : null);
+      if (place && place.url) keep.frames.push([pdPopFrameKey(f.getAttribute('src')), place.url]);
     } catch (e) {}
   }
-  const pathOf = el => { const p = []; for (let n = el; n && n !== old; n = n.parentElement) p.unshift([...n.parentElement.children].indexOf(n)); return p; };
-  for (const el of [old, ...old.querySelectorAll('*')]) {
-    if (el.scrollTop || el.scrollLeft) keep.scrolls.push({ at: el === old ? [] : pathOf(el), top: el.scrollTop, left: el.scrollLeft });
+  const pathOf = n0 => { const p = []; for (let n = n0; n && n !== el; n = n.parentElement) p.unshift([...n.parentElement.children].indexOf(n)); return p; };
+  for (const n of [el, ...el.querySelectorAll('*')]) {
+    if (n.scrollTop || n.scrollLeft) keep.scrolls.push({ at: n === el ? [] : pathOf(n), top: n.scrollTop, left: n.scrollLeft });
   }
   return keep;
 }
 // A frame's page and what it shows (its path or room), not its state (st=).
-function ensPopFrameKey(src) {
+function pdPopFrameKey(src) {
   try {
     const u = new URL(src || '', location.href);
     return u.pathname + '?' + (u.searchParams.get('path') || u.searchParams.get('id') || '');
   } catch (e) { return ''; }
 }
-function ensPopFrames(el, keep) {
-  for (const f of el.querySelectorAll('iframe')) {
-    const url = keep.frames.get(ensPopFrameKey(f.getAttribute('src')));
-    if (url && url !== f.getAttribute('src')) f.setAttribute('src', url);
+// What the page before this one kept, read once; each panel's taken once.
+let PD_POP_KEPT = null;
+function pdPopKept(key, id) {
+  if (!PD_POP_KEPT) {
+    try { PD_POP_KEPT = JSON.parse(sessionStorage.getItem(PD_POP_KEEP) || 'null'); sessionStorage.removeItem(PD_POP_KEEP); } catch (e) {}
+    if (!PD_POP_KEPT || !PD_POP_KEPT.keep || Date.now() - PD_POP_KEPT.at > PD_POP_WAIT) PD_POP_KEPT = { keep: {} };
   }
+  const k = PD_POP_KEPT.keep[key + ':' + id];
+  delete PD_POP_KEPT.keep[key + ':' + id];
+  return k || null;
 }
-function ensPopScrolls(el, keep) {
+function pdPopScrolls(el, keep) {
   for (const s of keep.scrolls) {
     let n = el;
     for (const i of s.at) n = n && n.children[i];
@@ -12595,63 +12589,42 @@ function ensPopScrolls(el, keep) {
     if (n.scrollLeft !== s.left) n.scrollLeft = s.left;
   }
 }
-// Asked by a window this page did not open (the page before it did): 'yes'
-// it is this page's again, 'no' it should close, 'later' while the panel's
-// dock or the panel itself (a file or chat panel, restored after the dock)
-// is still to come.
-window.ensPopAdopt = w => {
-  let k = null;
-  try { k = ensPopOf(w.name); } catch (e) { return 'no'; }
-  if (!k) return 'no';
-  const early = Date.now() - ENS_POP.boot < 15000 || !window.ensBooted;
-  const d = k.dock;
-  if (!d) return early ? 'later' : 'no';
-  if (d.narrow && d.narrow()) return 'no';
-  if (d.isOpenOut(k.id)) return d.popWindow(k.id) === w ? 'yes' : 'no';
-  if (!d.isOut(k.id)) return 'no';
-  const p = d.panels().find(x => x.id === k.id);
-  if (!p) return early ? 'later' : 'no';
-  const keep = ensPopKeep(w);
-  ensPopFrames(p.el, keep);
-  ENS_POP.take.set(w.name, w);
-  let ok = false;
-  try { ok = !!d.popOut(k.id); } catch (e) { ok = false; } finally { ENS_POP.take.delete(w.name); }
-  if (!ok) return 'no';
-  ensPopScrolls(p.el, keep);
-  for (const ms of [100, 400, 1000]) setTimeout(() => ensPopScrolls(p.el, keep), ms);
-  pdOutMarks();
-  return 'yes';
-};
-// The panels out in a window of their own whose window is not open: closed
-// before the page reloaded, or never taken back. Not in the page's first
-// seconds, while a window still open is being taken back.
+// A dock's window taken back: its panel where it was. (The list's dock is
+// made again on the same root: one listener each.)
+const PD_ADOPT_ROOTS = new WeakSet();
+function pdOnAdopt(key, root) {
+  if (PD_ADOPT_ROOTS.has(root)) return;
+  PD_ADOPT_ROOTS.add(root);
+  root.addEventListener('pop-adopt', e => {
+    const id = e.detail && e.detail.id, d = key === 'ld' ? LD.dock : PD.dock;
+    const p = d && d.panels().find(x => x.id === id), keep = p && pdPopKept(key, id);
+    if (!keep) return;
+    const urls = new Map(keep.frames);
+    for (const f of p.el.querySelectorAll('iframe')) {
+      const url = urls.get(pdPopFrameKey(f.getAttribute('src')));
+      if (url && url !== f.getAttribute('src')) f.setAttribute('src', url);
+    }
+    pdPopScrolls(p.el, keep);
+    for (const ms of [100, 400, 1000]) setTimeout(() => pdPopScrolls(p.el, keep), ms);
+  });
+}
+// The panels out in a window of their own whose window did not come back
+// after a reload (closed meanwhile, or out of time): Dock's isOutLost.
 function pdOutClosed() {
   const out = [];
   try {   // (also asked by the bar before the docks' blocks have run)
-    if (Date.now() - ENS_POP.boot < ENS_POP.grace) return out;
-    for (const [key, d] of [['ld', LD && LD.dock], ['pd', PD.dock]]) {
+    for (const [key, d] of pdDocks()) {
       if (!d || (d.narrow && d.narrow())) continue;
-      for (const p of d.panels()) if (d.isOut(p.id) && !d.isOpenOut(p.id)) out.push({ key, id: p.id, title: d.title(p.id) || p.title });
+      for (const p of d.panels()) if (d.isOutLost(p.id)) out.push({ key, id: p.id, title: d.title(p.id) || p.title });
     }
   } catch (e) {}
   return out;
 }
-setTimeout(() => pdOutMarks(), ENS_POP.grace + 50);
-// Their quiet mark: on the panel's strip button (one click there opens its
-// window) and on Panels, whose menu lists them first.
+// Their quiet mark on Panels, whose menu lists them first (Dock rings their
+// strip buttons, where one click opens the window again).
 function pdOutMarks() {
-  const closed = new Set(pdOutClosed().map(c => c.key + ':' + c.id));
-  for (const [key, root] of [['pd', PD_ROOT], ['ld', typeof LD_ROOT !== 'undefined' ? LD_ROOT : null]]) {
-    if (!root) continue;
-    root.querySelectorAll('.dk-strip-btn[data-dk-auto]').forEach(b => {
-      const on = closed.has(key + ':' + b.dataset.dkAuto);
-      if (b.classList.contains('pd-out-closed') === on) return;
-      b.classList.toggle('pd-out-closed', on);
-      if (on) b.setAttribute('aria-description', 'Its own window is closed: click to open it again');
-      else b.removeAttribute('aria-description');
-    });
-  }
-  document.querySelectorAll('.pd-panels').forEach(b => b.classList.toggle('pd-out-closed', closed.size > 0));
+  const closed = pdOutClosed().length > 0;
+  document.querySelectorAll('.pd-panels').forEach(b => b.classList.toggle('pd-out-closed', closed));
 }
 // The pop-out windows' documents and the listeners given them; one the page
 // adds later (a panel wiring itself on first use) reaches them as well.
@@ -12736,10 +12709,12 @@ function pdEnsure() {
     // The library's pop-out page as the hub serves it, not from a blob:
     // URL: installed as an app, a window on a page inside the manifest's
     // scope is an app window, where a blob: page gets Chrome's strip with
-    // the address and title over the panel (#101). Ensemble's own page, not
-    // the library's: it outlives a reload of this page (#204, ensPopAdopt).
-    popUrl: '/static/popout.html',
-    openWindow: ensPopOpen,
+    // the address and title over the panel (#101).
+    popUrl: '/static/dock/src/popout.html',
+    // Its window outlives a reload of this page, which takes it back (#204):
+    // one closed meanwhile is marked, never a notice over the conversation.
+    popAdoptTimeout: PD_POP_WAIT,
+    popLostNotice: 'quiet',
     popBackButton: false,
     themeEvent: 'cd-theme',
     // A conversation's frame while a press is on it (session.html): focus moving
@@ -12751,6 +12726,7 @@ function pdEnsure() {
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); } catch (e) {}
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); });
+  pdOnAdopt('pd', PD_ROOT);
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
@@ -17285,9 +17261,10 @@ function ldMake() {
       popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
       // No bodyAttrs: the page's body classes are copied into the PO dock's windows only (#154);
       // nothing in the list's window is keyed on them (ldInsets sets ld-own-head there).
-      // Its window outlives a reload too (#204, ensPopAdopt).
-      popUrl: '/static/popout.html',
-      openWindow: ensPopOpen,
+      // Its window outlives a reload too (#204).
+      popUrl: '/static/dock/src/popout.html',
+      popAdoptTimeout: PD_POP_WAIT,
+      popLostNotice: 'quiet',
       popBackButton: false,
       themeEvent: 'cd-theme',
       modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, iframe[data-pressed]',
@@ -17295,6 +17272,7 @@ function ldMake() {
   } finally { window.DOC_LISTENERS_PAUSED = false; }
   document.body.classList.add('ld-on');
   LD.dock.onChange(() => { ldKeepPage(); ldInsets(); pdOutMarks(); });
+  pdOnAdopt('ld', LD_ROOT);
   // A splitter's resize tells no onChange: the page's ResizeObserver notes it.
   if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
   ldKeepPage();

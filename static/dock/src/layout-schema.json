@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fab-ioc/dock/blob/main/src/layout-schema.json",
+  "title": "Dock layout file",
+  "type": "object",
+  "required": ["format", "v", "app", "savedAt", "docks"],
+  "properties": {
+    "format": { "const": "dock-layout" },
+    "v": { "const": 1 },
+    "app": { "type": "string" },
+    "savedAt": { "type": "string" },
+    "zoom": { "type": "number", "exclusiveMinimum": 0 },
+    "docks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dock" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "dock": {
+      "type": "object",
+      "required": ["id", "title", "host", "layout"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "host": { "type": "string", "pattern": "^(main|window:[A-Za-z0-9_-]+)$" },
+        "layout": { "$ref": "#/$defs/layout" },
+        "window": {
+          "type": ["object", "null"],
+          "required": ["left", "top", "width", "height"],
+          "properties": {
+            "left": { "type": "number" }, "top": { "type": "number" },
+            "width": { "type": "number", "exclusiveMinimum": 0 },
+            "height": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["t", "panels", "active"],
+          "properties": {
+            "t": { "const": "stack" },
+            "panels": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+            "active": { "type": "string" },
+            "min": { "type": "boolean" },
+            "size": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["t", "dir", "kids"],
+          "properties": {
+            "t": { "const": "split" },
+            "dir": { "enum": ["row", "col"] },
+            "kids": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } },
+            "size": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "layout": {
+      "type": "object",
+      "required": ["v", "root", "floats", "auto", "hidden", "out"],
+      "properties": {
+        "v": { "const": 1 },
+        "root": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/node" }] },
+        "floats": { "type": "array", "items": { "$ref": "#/$defs/float" } },
+        "auto": { "type": "array", "items": { "$ref": "#/$defs/auto" } },
+        "hidden": { "type": "array", "items": { "$ref": "#/$defs/hidden" } },
+        "out": { "type": "object", "additionalProperties": { "type": "object" } },
+        "pinned": { "type": "object", "additionalProperties": { "type": "object" } },
+        "depth": { "type": "object", "additionalProperties": { "type": "object" } },
+        "zoom": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0.5, "maximum": 2 } },
+        "parked": { "type": "array", "items": { "type": "object", "required": ["id", "was"], "properties": { "id": { "type": "string" }, "was": { "type": "object" } }, "additionalProperties": true } }
+      },
+      "additionalProperties": false
+    },
+    "float": {
+      "type": "object",
+      "required": ["stack", "x", "y", "w", "h"],
+      "properties": {
+        "stack": { "$ref": "#/$defs/node" },
+        "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" }, "h": { "type": "number" },
+        "home": { "type": ["object", "null"] }, "strip": { "type": "object" }, "side": { "enum": ["left", "right", "top", "bottom"] }
+      },
+      "additionalProperties": false
+    },
+    "auto": {
+      "type": "object",
+      "required": ["id", "edge", "size"],
+      "properties": {
+        "id": { "type": "string" }, "edge": { "enum": ["left", "right", "top", "bottom"] },
+        "size": { "type": "number" }, "home": { "type": ["object", "null"] }, "open": { "enum": ["beside", "over"] }
+      },
+      "additionalProperties": false
+    },
+    "hidden": {
+      "type": "object",
+      "required": ["id", "was"],
+      "properties": { "id": { "type": "string" }, "was": { "type": "object" }, "window": { "type": "object" } },
+      "additionalProperties": false
+    }
+  }
+}
