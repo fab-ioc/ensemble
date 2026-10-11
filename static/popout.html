@@ -27,7 +27,9 @@
     try { if (window.opener && !window.opener.closed && window.opener.ensPopLeaving) return; } catch (e) { /* gone */ }
     shut();
   };
-  var owner = null;   // the main page's document that draws this window
+  // The main page's document that draws this window: only one that says so (ensPopAdopt 'yes'). Not merely the
+  // first one seen, which may already be the next page when the main page reloads just after opening this window.
+  var owner = null;
   var since = 0;      // when that page went
   var WAIT_PAGE = 15000, WAIT_HUB = 10 * 60000;
   setInterval(function () {
@@ -35,7 +37,6 @@
     if (!o || o.closed) { shut(); return; }
     var d = null;
     try { d = o.document; } catch (e) { d = null; }   // an error page while the hub restarts
-    if (d && owner === null) { owner = d; return; }
     if (d && d === owner) { since = 0; return; }
     if (!since) since = Date.now();
     var r = 'later', page = false;

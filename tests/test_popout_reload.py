@@ -9,6 +9,8 @@ a PO (Motors), a document and a task:
 * the same through Ensemble's own reload after a merge (the hub's page stamps
   change), and across a hub restart (the hub stops, a new one starts on the
   same port, then the page reloads);
+* a reload just after a window opened, before its page first looked at the
+  main page: it is still taken back, not left open and unowned;
 * every kind of panel does the same: the conversation, a tool (Your asks), a
   task's chat and the task list;
 * the main tab closed: its windows close with it;
@@ -192,6 +194,18 @@ async function main() {
         out.file[how] = await keptAfter(fid, how);
         Object.assign(out.file[how], await fileTop());
       }
+      // ---- a reload right after the window opened, before its page's first look at this one (review 1)
+      await p.evalIn(`(async () => { PD.dock.popOut('points'); const t = Date.now();
+        for (;;) { const w = PD.dock.popWindow('points'); let ready = false; try { ready = !!w && w.location.pathname === '/static/popout.html' && !!w.document.getElementById('dk-pop-root'); } catch (e) {}
+          if (ready || Date.now() - t > 10000) break; await new Promise(r => setTimeout(r, 5)); }
+        window.__before = 1; location.reload(); return 0; })()`);
+      await p.until('!window.__before', 20000); await p.load();
+      out.early = { took: await p.until(`PD.dock.isOpenOut('points')`, 20000).then(() => true, () => false) };
+      await sleep(600);
+      out.early.windows = (await pops()).length;
+      out.early.notice = await p.evalIn(noteShown);
+      await p.evalIn(`PD.dock.popIn('points'); 0`);
+      await p.until('PD.dock && !PD.dock.isOut("points")', 10000);
       // ---- every other kind of panel, each in its window, through one reload
       const chatId = 'chat:' + A.task;
       await p.evalIn(`pdChatOpen(${JSON.stringify(A.task)}) && 0`);
@@ -419,6 +433,13 @@ class PopOutReload(unittest.TestCase):
                 self.assertTrue(r["menu"], "its controls answer again")
                 self.assertFalse(r["notice"], "nothing asked")
                 self.assertFalse(r["leaving"])
+
+    def test_a_reload_right_after_the_window_opened_keeps_it(self):
+        # Review 1: the window's first look found the reloaded page and took it for its own.
+        e = self.got["early"]
+        self.assertTrue(e["took"], "taken back by the reloaded page")
+        self.assertEqual(e["windows"], 2, "the file's window and this one")
+        self.assertFalse(e["notice"])
 
     def test_every_kind_of_panel_is_kept(self):
         o = self.got["others"]
