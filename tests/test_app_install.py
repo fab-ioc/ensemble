@@ -119,9 +119,9 @@ class TheManifest(unittest.TestCase):
         # #101: installed as an app, Chrome opens a window on a page inside the
         # scope as an app window; a blob: page got its address strip.
         scope = json.loads(self.hub.get("/manifest.webmanifest")[2])["scope"]
-        self.assertIn("popUrl: '/static/dock/src/popout.html',", INDEX)
-        self.assertTrue("/static/dock/src/popout.html".startswith(scope))
-        code, h, body = self.hub.get("/static/dock/src/popout.html")
+        self.assertIn("popUrl: '/static/popout.html',", INDEX)
+        self.assertTrue("/static/popout.html".startswith(scope))
+        code, h, body = self.hub.get("/static/popout.html")
         self.assertEqual((code, h["Content-Type"]), (200, "text/html; charset=utf-8"))
         self.assertIn(b'id="dk-pop-root"', body)
 

@@ -1026,7 +1026,7 @@ On a phone both are tabs of the one column, as everything is. **Still interim**:
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
 it recovers Tasks and tools whose closed window has no former strip button, including Spec.
-The list's reload notice can be dismissed because Panels still offers recovery. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
+**A popped-out window outlives a reload** (#204, P170): the windows open on Ensemble's own `/static/popout.html`, which ignores Dock's close while the page is leaving and hands itself to the reloaded page (`ensPopAdopt`); the panel stays in its window with its file, scroll and place, and there is **no notice** (`.dk-outnote` is never shown). A window closed meanwhile leaves its panel out with a quiet mark: a muted ring on its strip button (`.pd-out-closed`) and on Panels, whose menu lists it first as "window closed" with one click to open it again and "Bring back here". The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
 Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
 there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Your asks ·
@@ -1112,7 +1112,7 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
 - **A popped-out window has no "Back to main window"** (the CEO's P50): `popBackButton: false`
   leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode.
   The window's ⋯ → View Mode docks it back; Panels or its retained active strip button reopens a
-  hidden window.
+  hidden window. A reload of this page keeps the window and takes it back (#204).
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
@@ -1252,8 +1252,8 @@ self-contained component, so a later layout can host it elsewhere.
   ENSEMBLE-NEEDS item 10); slid out there it spans the width. Slid out, it
   leaves the middle 360px across or 200px down, and Dock lays out the flyout's room to the panel's
   own size (item 12; `ldInsets` only sets the page's insets now). Closing its window or the window's Hide hides it in Window mode;
-  Panels reopens it even when it has no former strip button. The reload notice has its × again:
-  Panels remains available for recovery. **The page
+  Panels reopens it even when it has no former strip button. A reload keeps its window (#204), with
+  no notice. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
   it takes the room the list leaves, unpinned, floating or in its window. Slid out, the list goes
   back on a click elsewhere, in a conversation's frame (Dock v0.14.1, or `pdChatClicked`) or once a row is opened. In
