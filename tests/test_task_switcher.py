@@ -431,7 +431,10 @@ class TaskSwitcher(unittest.TestCase):
         # Its Details stays right after the row (swDiagFit reads the row before it).
         self.assertLess(po2.index('class="sw-diag-btn"'), po2.index('class="sw-tasks"'))
         # A task past the rows opens by its room (its chat in a tab of its own).
-        self.assertIn('<button type="button" class="sw-tk" data-room="r-old" title="MO-40 · Past the newest 300 · quiet" aria-label="Open MO-40 · Past the newest 300 · quiet">MO-40</button>', po2)
+        # No tooltip on the numbers (#201): resting on one opens its task card.
+        self.assertIn('<button type="button" class="sw-tk" data-room="r-old" aria-label="Open MO-40 · Past the newest 300 · quiet" aria-haspopup="dialog" aria-expanded="false">MO-40</button>', po2)
+        for line in re.findall(r'<div class="sw-tasks".*?</div>', h, re.S):
+            self.assertNotIn(' title=', line)
         self.assertIn('<span class="sw-tk-say needs">2 need you</span>', po2)
         # A task in no project is its own row, selected when open.
         self.assertIn('class="sw-row on" data-sid="rx"', self.r["recentSel"])
