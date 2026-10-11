@@ -569,7 +569,9 @@ def _po_subject(project: dict) -> dict:
 def _owner_subject(room_id: str, identity: str = "") -> dict:
     room, part, why = _owner(room_id, identity)
     ident = part["identity"] if part else identity
-    title = (room or {}).get("title") or room_id
+    # Named by its number first (P166); the room id only for a room that is gone.
+    title = " ".join(x for x in (_d.task_label(room) if room else "", (room or {}).get("title", ""))
+                     if x) or room_id
     key = f"{room_id}/{ident}"
     return {"kind": "owner", "name": f"{title} / {ident or '?'}",
             "project": None, "room": room, "part": part, "why": why,

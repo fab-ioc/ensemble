@@ -17,8 +17,8 @@ task_numbers.py reads numbers the same way (leading zero, slash).
 
 The hub: every header it writes about a task (a report, a review verdict, a
 rotation update, a stalled or silent owner, a message not taken in, the
-reviewer's brief, the digest's facts, the board brief) names the task as #N
-and carries no room id (P166: a room id is at most a tool argument).
+reviewer's brief, the digest's facts, the board brief) names the task as #N:
+no room id, and no title on a line without its number (P166).
 
 The chips in a browser: tests/test_task_chip_page.py. Skipped without Node.
 """
@@ -163,7 +163,13 @@ class HubWrites(tnt.Hub):
         return [m.get("text", "") for m in room.get("messages", [])]
 
     def no_room_id(self, text: str):
+        """No room id in the text, and no task's title on a line without its
+        number (P166: a task is named as #N, its title after it at most)."""
         self.assertIsNone(ROOM_ID.search(text), text)
+        for title, no in (("Alpha", "#1"), ("Beta", "#2")):
+            for line in text.splitlines():
+                if title in line:
+                    self.assertRegex(line, rf"{no}(?!\d)", f"{title} named without {no}: {line}")
 
     def test_a_report(self):
         for kind in ("update", "completed", "blocked", "question"):

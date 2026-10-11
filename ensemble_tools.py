@@ -1073,7 +1073,7 @@ def _whoami(ctx, args, handler):
     if po and po.get("roomId") == room["id"]:
         reports_to = "the user — you are this project's PO"
     elif po and not po.get("missing"):
-        reports_to = f"the PO: '{po['identity']}' in task {po['roomId']} ({po['title']})"
+        reports_to = f"the PO: '{po['identity']}' in its chat *{po['title']}*"   # no room id in prose (P166)
     else:
         reports_to = "the user — this project has no PO"
     return {
