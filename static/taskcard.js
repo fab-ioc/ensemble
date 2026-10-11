@@ -35,7 +35,30 @@ const TaskCard = (() => {
   // Text's task references (#18, #ED-18, @codex@18, and ED-18 on its own with
   // its key in capitals), as task_numbers.py reads them: the agent, the key
   // after # or @, the key of the bare form, the number.
-  const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?|([A-Z][A-Z0-9]{0,5})-)(\d{1,6})(?![\w-])/g;
+  // A number never starts with 0 (S-03 is a rule, not a task). After a slash
+  // only in a list of numbers (#140/#142), never in a path (Documents/#30).
+  const TASK_REF_RE = /(?<![\w&#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?|([A-Z][A-Z0-9]{0,5})-)(?!0)(\d{1,6})(?![\w-])/g;
+  // The whole list before it must be numbers from its start: not Documents/#140/#142.
+  const LIST_ITEM_RE = /#[1-9]\d{0,5}\/$/, LIST_START_RE = /[^\w\/\\#@.&-]/;
+  function slashListOk(plain, at) {     // walks back over the whole list (task_numbers._slash_list_ok)
+    let i = at;
+    while (i && plain[i - 1] === '/') {
+      const m = LIST_ITEM_RE.exec(plain.slice(Math.max(0, i - 8), i));
+      if (!m) return false;
+      i -= m[0].length;
+    }
+    return i === 0 || LIST_START_RE.test(plain[i - 1]);
+  }
+  // "task 70" written as a word: the number is the reference (#202).
+  const TASK_WORD_RE = /(?<![\w#@-])(?:[Tt]ask|TASK)[ \t]+(?!0)(\d{1,6})(?![\w-]|[.,]\d)/g;
+  // A task's room id, not in a path, a URL's query or a file name (#202).
+  const ROOM_REF_RE = /(?<![\w\/\\=.#@&?-])room-[0-9a-f]{8}(?![\w-]|\.\w)/g;
+  // The hub writes "task #200 *its title*": the title is read with the number.
+  // A Markdown link as the pages read it (session.html's LINK_RE, one level
+  // of parentheses in the target): its words are read, its target is not.
+  const MD_LINK_RE = /(\[[^\[\]\n]+\]\()((?:[^()\n]|\([^()\n]*\))+)\)/g;
+  const TITLE_AFTER_RE = /^[ \t]+\*([^*\n]+)\*/;
+  const TASK_BEFORE_RE = /(?:^|[^\w])task[ \t]+$/i;
   // A bare #12 after one of these words is someone else's number ("PR #12",
   // "fixes #34", "[Image #3]": an agent's placeholder for a pasted image), as
   // task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
@@ -92,33 +115,64 @@ const TaskCard = (() => {
   }
   // The task references in a text, in order, each mention once: { token, who,
   // key, no, start, end, project, how, others } as task_numbers.all_text_refs
-  // gives them. Without a ctx a bare number's project is '' (the hub's default).
-  function refsIn(text, ctx) {
+  // gives them. Without a ctx a bare number's project is '' (the hub's
+  // default). For the pages only (#202; the hub reads what agents are given
+  // as before): o.words, "task 70" as the reference 70; o.rooms, room ids as
+  // { token, room, how: 'room' }; o.titles, the italic title after "task
+  // #200" as r.title { text, end }.
+  function refsIn(text, ctx, o = {}) {
     const plain = withoutCode(String(text ?? ''));
     const byKey = new Map(((ctx && ctx.projects) || []).filter(p => p.key).map(p => [String(p.key).toUpperCase(), p.id]));
     const out = [];
+    const numbered = r => {
+      if (r.key) { r.project = byKey.get(r.key) || ''; r.how = 'key'; }
+      else if (ctx) Object.assign(r, readProject(plain, r.start, r.end, ctx));
+      if (o.titles && TASK_BEFORE_RE.test(plain.slice(Math.max(0, r.start - 12), r.start))) {
+        const t = TITLE_AFTER_RE.exec(plain.slice(r.end));
+        if (t) r.title = { text: t[1], end: r.end + t[0].length };
+      }
+      out.push(r);
+    };
     for (const m of plain.matchAll(TASK_REF_RE)) {
       const who = m[1] || '', key = (m[2] || m[3] || '').toUpperCase(), no = +m[4], at = m.index;
+      if (plain[at - 1] === '/' && !(m[0][0] === '#' && slashListOk(plain, at))) continue;
       if (notTaskRef(who, key, plain, at)) continue;
       if (m[3] && ctx && !byKey.has(key)) continue;    // UTF-8, ISO-8601: a bare key no project has is not a task
-      const r = { token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', others: [] };
-      if (key) { r.project = byKey.get(key) || ''; r.how = 'key'; }
-      else if (ctx) Object.assign(r, readProject(plain, r.start, r.end, ctx));
-      out.push(r);
+      numbered({ token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', others: [] });
     }
-    return out;
+    if (o.words) for (const m of plain.matchAll(TASK_WORD_RE)) {
+      const at = m.index + m[0].length - m[1].length;
+      numbered({ token: m[1], who: '', key: '', no: +m[1], start: at, end: at + m[1].length, project: '', how: '', others: [] });
+    }
+    // A Markdown link's target ([open](room-…)) is the link's, not a mention.
+    if (o.rooms) for (const m of plain.replace(MD_LINK_RE, (m, words, target) => words + ' '.repeat(target.length) + ')').matchAll(ROOM_REF_RE)) {
+      out.push({ token: m[0], room: m[0], who: '', key: '', no: 0, start: m.index, end: m.index + m[0].length, project: '', how: 'room', others: [] });
+    }
+    return out.sort((a, b) => a.start - b.start);
+  }
+  // A code span that is a task reference and nothing else (`#201`, `ED-201`,
+  // `room-…`), read as refsIn reads it (#202); anything else in a code span
+  // stays code. A colour is not a task: `#111`, `#000000`.
+  function codeRef(body, ctx) {
+    const t = String(body ?? '').trim();
+    if (/^#(?:(\d)\1\1|(\d)\2{5}|\d{6})$/.test(t)) return null;
+    const rs = refsIn(t, ctx, { rooms: true });
+    return rs.length === 1 && rs[0].start === 0 && rs[0].end === t.length ? rs[0] : null;
   }
   // The text with each reference fn(ref) answers for replaced by its answer
   // (null: left as written); the words between go through `plain` when given
   // (a page escaping them for HTML: the references are read in the raw text).
-  function replaceRefs(text, ctx, fn, plain = s => s) {
+  // Room ids and titles are read (o, refsIn's); a title whose chip took it
+  // (chipHtml with { title: r.title }) goes with the chip.
+  function replaceRefs(text, ctx, fn, plain = s => s, o = { rooms: true, titles: true, words: true }) {
     const s = String(text ?? '');
     let out = '', at = 0;
-    for (const r of refsIn(s, ctx)) {
+    for (const r of refsIn(s, ctx, o)) {
+      if (r.start < at) continue;
       const h = fn(r);
       if (h == null) continue;
       out += plain(s.slice(at, r.start)) + h;
-      at = r.end;
+      at = r.title && r.title.taken ? r.title.end : r.end;
     }
     return out + plain(s.slice(at));
   }
@@ -151,9 +205,11 @@ const TaskCard = (() => {
       if (!c) ctxs.set(k, c = { projects: projects.projects, own: k || projects.own || '', nouns: projects.nouns || [] });
       return c;
     }
-    function info(key, no, project) {
-      const ref = key ? key.toUpperCase() + '-' + no : '#' + no;
-      const k = ref + (project && !key ? '@' + project : '');
+    // A room id is asked as it is (room-…); the hub says 404 for a deleted task.
+    function info(key, no, project, room) {
+      const ref = room || (key ? key.toUpperCase() + '-' + no : '#' + no);
+      const k = ref + (project && !key && !room ? '@' + project : '');
+      if (room) project = '';
       let r = cache.get(k);
       if (r && (r.state === 'pending' || Date.now() - r.at < TTL)) return r;
       if (r) r.at = Date.now();      // asked again once; the old answer shows meanwhile
@@ -179,6 +235,7 @@ const TaskCard = (() => {
     // such task; else in `own`. `assumed` when another project its sentence
     // names before it has the number too: the card says which was assumed.
     function resolve(r, own) {
+      if (r.room) return { t: info('', 0, '', r.room), assumed: false };
       if (r.key) return { t: info(r.key, r.no, ''), assumed: false };
       const c = ctx(own), ownId = c ? c.own : '';
       const ask = pid => info('', r.no, pid && pid !== ownId ? pid : (own || ''));
@@ -220,10 +277,26 @@ const TaskCard = (() => {
     const card = cardOf(t, o), href = card.href;
     const dot = dotOf(t);
     const label = `${o.point ? 'Point' : 'Task'} ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.assumed ? 'assumed ' : ''}${card.project})` : '');
-    return `<a class="task-chip${o.point ? ' point-chip' : ''}${dot ? ' tc-' + dot : ''}" href="${esc(href)}" ${o.point ? pointAttrs(o.point) : `data-task="${esc(t.roomId || '')}"`}${id ? ` data-agent="${esc(id)}"` : ''}`
-      + ` data-card="${esc(JSON.stringify(card))}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="false">`
+    const attrs = `href="${esc(href)}" ${o.point ? pointAttrs(o.point) : `data-task="${esc(t.roomId || '')}"`}${id ? ` data-agent="${esc(id)}"` : ''}`
+      + ` data-card="${esc(JSON.stringify(card))}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="false"`;
+    // The title the text quotes after the number (refsIn's r.title, "task #200
+    // *its title*"): a link to the same task, opening the same card (#202).
+    let title = '';
+    if (o.title && o.title.text) {
+      o.title.taken = true;
+      title = `${o.title.space || ' '}<a class="task-title-ref" ${attrs}><em>${esc(o.title.text)}</em></a>`;
+    }
+    return `<a class="task-chip${o.point ? ' point-chip' : ''}${dot ? ' tc-' + dot : ''}" ${attrs}>`
       + (dot ? '<span class="tc-dot" aria-hidden="true"></span>' : '')
-      + `<span class="ref-who">${esc((id ? '@' + id + ' ' : '') + word(t, o.key))}</span></a>`;
+      + `<span class="ref-who">${esc((id ? '@' + id + ' ' : '') + word(t, o.key))}</span></a>` + title;
+  }
+  // A room id the hub has no task for (deleted): its words as written, with a
+  // card that says so, and no link to follow (#202).
+  function goneHtml(r) {
+    const ref = r.token || r.room || '';
+    const card = { ref, title: '', state: '(deleted)', agents: [], project: '', href: '', task: '', agent: '', gone: true };
+    return `<a class="task-chip tc-gone" role="button" tabindex="0" data-card="${esc(JSON.stringify(card))}"`
+      + ` aria-label="${esc('Task ' + ref + ' (deleted)')}" aria-haspopup="dialog" aria-expanded="false"><span class="ref-who">${esc(ref)}</span></a>`;
   }
 
   const pointAttrs = p => `data-point="true" data-ref-room="${esc(p.room)}" data-ref-msg="${esc(p.msg)}" data-ref-part="${esc(p.part)}"`;
@@ -237,6 +310,13 @@ const TaskCard = (() => {
 a.task-chip:hover, a.task-chip[aria-expanded="true"] { background:var(--hover); }
 a.task-chip:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
 a.task-chip .ref-who { flex:0 0 auto; }
+/* A deleted task's room id: the words as written, a quiet underline for its card. */
+.msg .text.md a.task-chip.tc-gone, a.task-chip.tc-gone { display:inline; padding:0; background:none; border:0; border-radius:0; font:inherit; color:var(--fg-muted);
+  text-decoration:underline dotted; text-underline-offset:2px; white-space:normal; user-select:text; -webkit-user-select:text; }
+/* The title a header quotes after the number: a link to the same task, the same card. */
+.msg .text.md a.task-title-ref, a.task-title-ref { color:var(--link); text-decoration:none; cursor:pointer; }
+a.task-title-ref:hover, a.task-title-ref[aria-expanded="true"] { text-decoration:underline; }
+a.task-title-ref:focus-visible, a.task-chip.tc-gone:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); border-radius:var(--r-100); }
 a.task-chip .tc-dot { flex:0 0 auto; width:6px; height:6px; border-radius:50%; background:var(--c-success-bold, var(--fg-muted)); }
 a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted)); }
 .task-card { position:fixed; z-index:1200; display:flex; align-items:baseline; gap:var(--s-200); box-sizing:border-box;
@@ -259,6 +339,9 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
   /* A chip keeps its look in the line of text and takes a finger's height with an invisible margin. */
   .msg .text.md a.task-chip, a.task-chip { overflow:visible; }
   a.task-chip::after { content:''; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
+  /* Not a deleted id: it is words that may wrap, and the margin would cover the chips beside it. */
+  a.task-chip.tc-gone { position:static; }
+  a.task-chip.tc-gone::after { content:none; }
   /* The card wraps: the number, project and state on the first line, the full title under them. */
   .task-card { flex-wrap:wrap; white-space:normal; row-gap:0; font-size:var(--fs-300, var(--fs-200)); }
   .task-card .tc-title { order:9; flex:1 1 100%; white-space:normal; overflow:visible; min-height:var(--touch-min, 44px); display:flex; align-items:center; }
@@ -308,7 +391,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
   function cardHtml(c, own) {
     return `<span class="tc-no">${esc(c.ref)}</span>`
       + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
-      + `<a class="tc-title" href="${esc(c.href)}" ${c.point ? pointAttrs(c.point) : own ? '' : `data-task="${esc(c.task)}"`}${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc((c.point ? 'Jump to point ' : 'Open task ') + c.ref)}">${esc(c.title)}</a>`
+      + (c.gone ? '' : `<a class="tc-title" href="${esc(c.href)}" ${c.point ? pointAttrs(c.point) : own ? '' : `data-task="${esc(c.task)}"`}${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc((c.point ? 'Jump to point ' : 'Open task ') + c.ref)}">${esc(c.title)}</a>`)
       + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
       + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '')
       + (c.why ? `<span class="tc-why">${esc(c.why)}</span>` : '');
@@ -378,9 +461,9 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     doc.head.appendChild(st);
     const S = { doc, el: null, chip: null, at: 0, hover: false, timer: 0, leave: 0, spec: null, specs: [], focus: false, card: '',
                 press: null, pressed: null, quiet: null,
-                openTask: a => a.dataset.point && o.openPoint ? o.openPoint(a) : (o.open || (a => { w.location.href = a.href; }))(a) };
+                openTask: a => a.classList.contains('tc-gone') ? null : a.dataset.point && o.openPoint ? o.openPoint(a) : (o.open || (a => { w.location.href = a.href; }))(a) };
     STATES.set(doc, S);
-    const chipOf = ev => (ev.target && ev.target.closest) ? ev.target.closest('a.task-chip') : null;
+    const chipOf = ev => (ev.target && ev.target.closest) ? ev.target.closest('a.task-chip, a.task-title-ref') : null;
     // An element given to anchors(): [the element, its spec], or null.
     const anchorOf = ev => {
       if (!ev.target || !ev.target.closest) return null;
@@ -455,6 +538,9 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
       if (an && (S.press || S.pressed === an[0])) ev.preventDefault();
     }, true);
     doc.addEventListener('keydown', ev => {
+      // A deleted task's words have no link, so Enter does not click them: the card.
+      const g = ev.key === 'Enter' && ev.target && ev.target.closest ? ev.target.closest('a.tc-gone') : null;
+      if (g) { ev.preventDefault(); if (S.el && S.chip === g) closeCard(S); else openCard(S, g); return; }
       if (ev.key !== 'Escape' || !S.el) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
@@ -551,7 +637,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     return sp;
   }
 
-  return { refs, chipHtml, cardOf, stateText, init, anchors, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef, refsIn, replaceRefs, readProject,
+  return { refs, chipHtml, goneHtml, cardOf, stateText, init, anchors, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef, refsIn, codeRef, replaceRefs, readProject,
            refresh: doc => { const S = stateOf(doc); if (S) refreshCard(S); },
            open: (chip, doc) => { const S = stateOf(doc); if (S) openCard(S, chip); },
            close: doc => { const S = stateOf(doc); if (S) closeCard(S); }, el: doc => { const S = stateOf(doc); return S ? S.el : null; },

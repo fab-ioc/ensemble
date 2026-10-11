@@ -1073,7 +1073,7 @@ def _whoami(ctx, args, handler):
     if po and po.get("roomId") == room["id"]:
         reports_to = "the user — you are this project's PO"
     elif po and not po.get("missing"):
-        reports_to = f"the PO: '{po['identity']}' in task {po['roomId']} ({po['title']})"
+        reports_to = f"the PO: '{po['identity']}' in its chat *{po['title']}*"   # no room id in prose (P166)
     else:
         reports_to = "the user — this project has no PO"
     return {
@@ -1130,10 +1130,9 @@ def _report(ctx, args, handler, *, structured_asks=None):
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
-    no = _d.task_label(room)
     body = (f"**{what}**{' (its open ask is over)' if clears else ''} — "
-            f"report from task {no + ' ' if no else ''}*{title}* "
-            f"(`{room['id']}`, {me}):\n\n{text}"
+            f"report from {_d.task_named(room, title)} "
+            f"({me}):\n\n{text}"
             + (f"\n\n_Only {_d.operator_name()} can decide this: if you agree, put it to "
                f"them with a decision balloon in your chat, and answer the task when "
                f"they have._" if for_ceo else ""))
@@ -1247,8 +1246,7 @@ def _review_done(ctx, args, handler):
     rings = verdict != "changes_requested" or int(n) >= _d.VERDICT_WAKES_FROM
     po_woken = False
     if po:
-        no = _d.task_label(room)
-        body = (f"**review {n} — {label}** of task {no + ' ' if no else ''}*{title}* (`{room['id']}`, by {me}"
+        body = (f"**review {n} — {label}** of {_d.task_named(room, title)} (by {me}"
                 + (f", asked by {asker}" if asker else "") + f"):\n\n"
                 + (f"{summary}\n\n" if summary else "") + findings)
         pres = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,

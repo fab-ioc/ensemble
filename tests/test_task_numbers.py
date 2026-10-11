@@ -785,14 +785,15 @@ class WhatTheHubWrites(Addresses):
         part = chatroom.participant(room, "codex")
         with mock.patch.object(dashboard, "review_log_path", lambda r: "REVIEW-LOG.md"):
             brief = dashboard.review_brief(room, part, {"id": "m", "from": "user", "text": "look at #1"}, 1, {}, "")
-        self.assertIn(f'the reviewer on the task #2 "Beta" ({self.b})', brief)
+        self.assertIn("the reviewer on task #2 *Beta*.", brief)
+        self.assertNotIn(self.b, brief)
         self.assertIn('> [ref #1] task "Alpha"', brief)
         facts = [{"id": self.b, "label": "#2", "title": "Beta", "status": "running", "column": "inprogress",
                   "idleSeconds": 5, "attention": "", "branch": "", "reportKind": ""}]
         text = digest.plain_facts({"id": self.ed, "name": "ED"}, facts,
                                   [{"id": self.b, "label": "#2", "title": "Beta", "what": ["new commits"], "finished": False}], 0)
-        self.assertIn("- Beta (#2): new commits", text)
-        self.assertIn("- Beta (#2): running", text)
+        self.assertIn("- #2 Beta: new commits", text)
+        self.assertIn("- #2 Beta: running", text)
         self.assertNotIn(self.b, text)
         self.assertEqual(digest._task_facts(chatroom.get_room(self.a), {}, {}, time.time())["label"], "#1")
 

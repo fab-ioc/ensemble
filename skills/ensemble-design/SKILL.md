@@ -494,6 +494,20 @@ and every page loads it; no page has chip or card CSS of its own.
   **ambiguous**: the chip keeps the chat's own task and its card says so — `assumed Ensemble
   Dashboard` in the project's place (`.tc-assumed`, with a title saying why) — while the hub attaches
   no `[ref]` line for it.
+- **Other ways a text names a task** (#202), all the same chip with the same card, read by the pages
+  only (`refsIn(text, ctx, { rooms, words, titles })`; the hub's `[ref]` lines read numbers alone):
+  a **room id** (`room-1a2b3c4d`) in prose or as a whole code span is the task's chip; `task 70`
+  written as a word makes `70` the chip and leaves the word; a **code span that is exactly a
+  reference** (`` `#201` ``, `` `ED-201` ``, `` `room-…` ``) is the chip (`TaskCard.codeRef`) — a colour
+  (`#111`, `#000000`, any six digits) and a longer span stay code; `#140/#142` is a list of two,
+  while `Documents/#30` is a path and a number starting with 0 (`S-03`) is no task.
+- **A header's title:** after `task #200`, the italic title the hub writes (`task #200 *its title*`)
+  goes with the chip as `a.task-title-ref`: `--link` text, underlined on hover, the same href and
+  card as the chip.
+- **A deleted task's room id** (the hub answers 404): the words as written, `--fg-muted` with a dotted
+  underline (`.tc-gone`, no href, `role="button"`), no finger margin since it may wrap; a click or
+  Enter opens a card saying `(deleted)` with no title link. A room id the hub has not answered yet
+  stays the plain link it was.
 
 ### File link
 

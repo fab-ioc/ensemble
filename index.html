@@ -4515,6 +4515,9 @@ function mdLinkHtml(m, txt, target) {
 function codeSpanHtml(body) {
   const code = `<code class="ic">${esc(body)}</code>`;
   const t = body.trim();
+  // A task reference and nothing else is the task's chip (the page's taskCodeHtml, #202).
+  const chip = typeof taskCodeHtml === 'function' ? taskCodeHtml(t) : null;
+  if (chip) return chip;
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
   if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code, 'code');
   if (looksFilePath(t, true) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
@@ -6212,6 +6215,7 @@ function taskRefCtx(inRoom) {
 function taskRefLinkHtml(who, key, no, inRoom, ref = null) {
   const projects = (PROJECTS && PROJECTS.projects) || [];
   const home = taskRefHome(inRoom);
+  if (ref && ref.room) return roomRefHtml(ref, home);
   const has = pj => pj && (pj.sessions || []).find(x => x.roomId && x.no === no);
   let pj = key ? projects.find(p => p.key === key.toUpperCase()) : home;
   let assumed = false;
@@ -6223,9 +6227,48 @@ function taskRefLinkHtml(who, key, no, inRoom, ref = null) {
   }
   const s = has(pj);
   if (!s) return null;
+  return TaskCard.chipHtml(boardTaskRef(s, pj, home), { key, agent: who || '', href: `/?task=${s.roomId}`, assumed, title: ref && ref.title });
+}
+// What a chip shows of a task on the board: s its entry in project pj.
+function boardTaskRef(s, pj, home) {
+  const no = s.no;
   const r = ALL_ROWS.find(x => x.roomId === s.roomId) || s;
-  const t = boardTask(s.roomId, r, pj, no, !!home && pj.id === home.id);
-  return TaskCard.chipHtml(t, { key, agent: who || '', href: `/?task=${s.roomId}`, assumed });
+  return boardTask(s.roomId, r, pj, no, !!home && pj.id === home.id);
+}
+// A task named by its room id (#202): its chip, as its number would be. A
+// room the board does not list is asked of the hub once (ROOM_REFS): until it
+// answers the id stays the link it was (linkify), then those links become
+// the chip, or the words of a deleted task with a card saying so. A task
+// without a number (a PO's chat) stays that link.
+const ROOM_REFS = TaskCard.refs({ room: '', changed: () => roomRefsPatch() });
+function roomRefHtml(ref, home) {
+  const id = ref.room;
+  const pj = ((PROJECTS && PROJECTS.projects) || []).find(p => (p.sessions || []).some(x => x.roomId === id));
+  const s = pj && pj.sessions.find(x => x.roomId === id);
+  const o = { href: `/?task=${id}`, title: ref.title };
+  if (s) return s.no ? TaskCard.chipHtml(boardTaskRef(s, pj, home), o) : null;
+  const t = ROOM_REFS.info('', 0, '', id);
+  if (t.state === 'gone') return TaskCard.goneHtml(ref);
+  if (t.state !== 'ok' || !t.no) return null;
+  return TaskCard.chipHtml(Object.assign({}, t, { inProject: !!home && t.projectId === home.id }), o);
+}
+// The hub has answered for a room: its links drawn before become chips.
+function roomRefsPatch() {
+  for (const a of document.querySelectorAll('a.task-link[data-task^="room-"]')) {
+    const id = a.dataset.task;
+    if (a.textContent.trim() !== id) continue;     // a [text](/?task=…) link keeps its words
+    const h = roomRefHtml({ room: id, token: id }, taskRefHome(a.closest('[data-room]') ? a.closest('[data-room]').dataset.room : ''));
+    if (!h) continue;
+    const tpl = document.createElement('template');
+    tpl.innerHTML = h;
+    a.replaceWith(tpl.content);
+  }
+}
+// A code span that is a task reference and nothing else (`#201`, `room-…`)
+// is its chip; any other code stays code (codeSpanHtml).
+function taskCodeHtml(body) {
+  const r = TaskCard.codeRef(body, taskRefCtx(FILE_LINK_ROOM));
+  return r ? taskRefLinkHtml(r.who, r.key, r.no, FILE_LINK_ROOM, r) : null;
 }
 // A task the board holds as TaskCard draws it (its chip, its card): r its
 // row (or its project's entry), pj its project, no its number.
@@ -6239,8 +6282,18 @@ function boardTask(roomId, r, pj, no, inProject) {
            inProject };
 }
 // Plain words with the tasks they name as chips (an ask's words).
+// A code span that is exactly a reference is its chip, any other stays as
+// written; a room id the hub has not answered for yet is the task link
+// roomRefsPatch turns into its chip (or a deleted task's words) (#202).
 function taskChipsIn(text, inRoom) {
-  return TaskCard.replaceRefs(String(text || ''), taskRefCtx(inRoom), r => taskRefLinkHtml(r.who, r.key, r.no, inRoom, r), esc);
+  const ctx = taskRefCtx(inRoom);
+  const ref = r => r.room ? (roomRefHtml(r, taskRefHome(inRoom)) || taskLinkHtml(r.room, esc(r.room)))
+    : taskRefLinkHtml(r.who, r.key, r.no, inRoom, r);
+  return String(text || '').split(/(`[^`\n]+`)/).map(part => {
+    if (!/^`[^`\n]+`$/.test(part)) return TaskCard.replaceRefs(part, ctx, ref, esc);
+    const r = TaskCard.codeRef(part.slice(1, -1), ctx);
+    return (r && ref(r)) || esc(part);
+  }).join('');
 }
 // ---- Task numbers: end ------------------------------------------------------
 
@@ -6723,7 +6776,7 @@ function swDiagHtml(key, it) {
     + ` aria-label="${esc(it.lastLines ? 'Details: why, and the last lines of its screen' : 'Details: why, in full')}">`
     + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> Details</button>`
     + `<div class="sw-diag" id="${esc(id)}"${open ? '' : ' hidden'}>`
-    + (it.reason ? `<p class="sw-diag-why">${esc(it.reason)}</p>` : '')
+    + (it.reason ? `<p class="sw-diag-why">${taskChipsIn(it.reason, key)}</p>` : '')
     + (it.lastLines ? `<pre class="sw-diag-lines">${esc(it.lastLines)}</pre>` : '')
     + (it.canDismiss ? `<button type="button" class="rm-btn sw-done" data-room="${esc(key)}"`
       + ` title="It leaves Needs you on every device; a new ask comes back">Done with this</button>` : '') + '</div>';

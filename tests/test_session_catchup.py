@@ -121,6 +121,15 @@ const digestRoom = room.concat([
     text: "[digest] X: Project 'X' — changes since 10:05: - Plot (room-3333aaaa): status running → stopped — details with ensemble_list_tasks." },
 ]);
 out.digest = strip(T.catchUp(digestRoom, T.readPoint(digestRoom, null), false));
+// The same facts as the hub writes them since #202: the number first, the title after it.
+const digestRoomNew = room.concat([
+  { id: 'r4', from: 'ensemble', to: 'claude', kind: 'report', reportKind: 'digest', ts: 5,
+    text: "**Progress digest** — plain facts\n\nProject 'X' — changes since 10:00:\n- #27 Grid: new task\n"
+      + "- #26 Layout: renamed from 'CEO's old', status running → stopped\n\nTasks now:\n- #27 Grid: running; todo" },
+  { id: 'r5', from: 'user', to: '', kind: 'digest', reportKind: 'digest', ts: 6,
+    text: "[digest] X: Project 'X' — changes since 10:05: - #29 Notes: new commits - #24 Plot: status running → stopped — details with ensemble_list_tasks." },
+]);
+out.digestNew = strip(T.catchUp(digestRoomNew, T.readPoint(digestRoomNew, null), false));
 
 // Mark read: the latest message is the point, kept for the room, and the line goes.
 T.set(items, { id: 's:3', ts: 121 });
@@ -238,15 +247,20 @@ class CatchUpLine(unittest.TestCase):
         self.assertEqual(room["rest"], 1)
 
     def test_a_progress_check_names_new_and_stopped_tasks(self):
-        d = self.out["digest"]
-        self.assertEqual(d["parts"], [
-            {"text": "#27 new", "mid": "r4"},
-            {"text": "#26 stopped", "mid": "r4"},
-            {"text": "#24 stopped", "mid": "r5"},
-            {"text": "1 answer to you", "mid": "r2"},
-        ])
-        # r1 (#26 done, then stopped) and r3 are counted; r4 and r5 once each as named.
-        self.assertEqual(d["rest"], 2)
+        # The old shape ("- Title (#27): new task", "(room-…)"), still in the
+        # chats, and the hub's since #202 ("- #27 Title: new task", and the
+        # one-line [digest] form, where #29's other news is not #24's).
+        for shape in ("digest", "digestNew"):
+            with self.subTest(shape=shape):
+                d = self.out[shape]
+                self.assertEqual(d["parts"], [
+                    {"text": "#27 new", "mid": "r4"},
+                    {"text": "#26 stopped", "mid": "r4"},
+                    {"text": "#24 stopped", "mid": "r5"},
+                    {"text": "1 answer to you", "mid": "r2"},
+                ])
+                # r1 (#26 done, then stopped) and r3 are counted; r4 and r5 once each as named.
+                self.assertEqual(d["rest"], 2)
 
     def test_another_tab_read_further(self):
         o = self.out

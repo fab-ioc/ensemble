@@ -2377,6 +2377,13 @@ ASK_NOTE = (
     "A task with a PO routes its question to that PO unless forCeo is true; "
     "reviewers ask the owner.")
 
+# How a task is named in text (P166): its number, never its room id.
+TASK_NAME_NOTE = (
+    "Name a task only by its number: #18 in your project, ED-18 (its project's key) "
+    "across projects, its title after the number where it helps. Never name a task "
+    "by its title alone or by its room id (room-...) in a message, report, spec or "
+    "handover; a room id is at most a tool argument.")
+
 # The person's messages are points the hub keeps (points.py): how to answer one.
 POINTS_NOTE = (
     "A message from the product owner reaches you with a [point Pn] line under it (one "
@@ -2394,7 +2401,7 @@ DOCUMENTS_NOTE = (
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {ASK_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {ASK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -3977,6 +3984,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "own task to In review; project POs and planners also get board "
          "administration. The 'ensemble' skill explains the opt-ins and limits."),
         ASK_NOTE,
+        TASK_NAME_NOTE,
         ("A message to everyone wakes only the task's owner (the engineer); to "
          "wake another specialist, address it or @mention it. Mention a reviewer "
          "only for a commit to review or a specific question, never for a plan, an "
@@ -4244,14 +4252,13 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
         work = ("No git checkout was found for this task. Review what the request "
                 f"points at; the task's folder is `{room.get('taskDir') or room.get('cwd', '')}`.")
     verdicts = " | ".join(REVIEW_VERDICTS)
-    no = task_label(room)
-    brief = f"""You are '{ident}', the reviewer on the task {no + ' ' if no else ''}"{room.get('title', '')}" ({room.get('id', '')}). This is review {n} of this task.
+    brief = f"""You are '{ident}', the reviewer on {task_named(room)}. This is review {n} of this task.
 
 You are a fresh session started for this ONE review. You remember nothing of earlier reviews: the review log below is what they found. When you have given your verdict with review_done, this session ends.
 
 Do NOT design or implement — the engineer builds, you review. Check the work against the spec and the question, hunt for bugs, edge cases, risks and gaps, and verify claims by reading the actual code or running tests.
 
-{ASK_NOTE}
+{ASK_NOTE} {TASK_NAME_NOTE}
 
 ## What you were asked
 From {who}:
@@ -4871,7 +4878,7 @@ def made_po_charter(project: dict) -> str:
         f"you report to him. The `ensemble` skill (section \"Running a project as its PO\""
         f"{', including the paragraph on a documents project’s PO' if docs else ''}) is your "
         f"operating model: you create and start tasks with the ensemble_* tools, read their "
-        f"reports, and keep `PO-HANDOVER.md` and `ROADMAP.md` in {home} current."
+        f"reports, and keep `PO-HANDOVER.md` and `ROADMAP.md` in {home} current. {TASK_NAME_NOTE}"
         + ("" if docs else f" The project's code is in {project.get('path', '')}."))
 
 
@@ -4895,7 +4902,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
-        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {files}"
+        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {TASK_NAME_NOTE} {files}"
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) From what you already know, write {hp} (your handover: what the project is, "
@@ -4918,7 +4925,7 @@ def made_po_fresh_input(project: dict) -> str:
         f"{MADE_PO_PREFIX}{po_usage.head()} | You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
-        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} "
+        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} {TASK_NAME_NOTE} "
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) Learn the project from its folder {where}: read what is there (a README, notes, "
@@ -6225,6 +6232,31 @@ def _task_index() -> list[dict]:
 def task_label(room: dict | None) -> str:
     """#18 for a numbered task, else ""."""
     return task_numbers.label((room or {}).get("no"))
+
+
+def task_named(room: dict, title: str | None = None) -> str:
+    """How a hub header names a task: ``task #18 *its title*`` (#202) — the
+    number first, so the page draws it as the task's chip, and the title
+    after it in italics, which the chip takes with it. A task without a
+    number is named by its title alone; with neither, "a task"."""
+    no = task_label(room)
+    t = (title if title is not None else room.get("title") or "").strip()
+    if not t:
+        return f"task {no}" if no else "a task"
+    return f"task {no + ' ' if no else ''}*{t}*"
+
+
+def task_word(room: dict) -> str:
+    """A task named in prose by the hub: its number, #18 (P166: a task is
+    named by its number, never by its room id); its title in italics only
+    when it has no number."""
+    return task_label(room) or f"*{room.get('title') or 'a task'}*"
+
+
+def task_arg(room: dict) -> str:
+    """A task as a tool argument (ensemble_get_task #18): its number, else
+    its room id, which only a machine reads."""
+    return task_label(room) or room.get("id", "")
 
 
 def resolve_task_ref(ref, project_id: str = "", any_project: bool = False) -> tuple[str, str]:
@@ -13561,6 +13593,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(flat) > 700:
             flat = flat[:700] + "…"
         # The task by its number, which the PO resolves in its own project.
+        # The "(#18, reporter)" form is read back by hub_input_kind, which
+        # folds the line into a report card; keep it as it is (#202).
         name = task_label(chatroom.get_room(task_id)) or task_id
         wake = (f"[report] {kind} from task '{task_title}' ({name}, {reporter}): "
                 f"{flat} — read it in full with ensemble_get_task taskId={name} messages=0.")

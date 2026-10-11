@@ -736,11 +736,13 @@ owner too). A project that kept its reports in task folders is brought over
 once with `py tools/migrate_reports.py "<project>"` (a dry run; `--apply`
 copies, never moves).
 
-**Name tasks by number.** In reports to the product owner, in the handover
-and in specs, a task is `#18` (`ED-18` when it is another project's), with its
-title where it helps: "#18 0DTE management is merged". The product owner reads
-the number on the board; a room id means nothing to them. Reports and the digest
-reach you as `[report] completed from task '…' (#18, codex)`, and
+**Name tasks by number, only by number.** In every message, report, spec and
+handover a task is `#18` (`ED-18` when it is another project's), with its title
+after the number where it helps: "#18 0DTE management is merged". Never name a
+task by its title alone or by its room id (`room-…`): the product owner reads
+the number on the board and the page draws it as the task's chip; a room id
+means nothing to them and is at most a tool argument. Reports and the digest
+reach you as `[report] completed from task #18 '…' (codex)`, and
 `ensemble_get_task taskId=#18` reads it.
 
 **Wakes cost your whole conversation.** Reports and the `[digest]` wake you;

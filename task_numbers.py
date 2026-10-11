@@ -30,8 +30,26 @@ _REF = re.compile(r"^#?(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})$" % (KEY_MAX -
 # ED-18 on its own (its key in capitals, as the hub writes it: #156). Not in
 # a word, a path or a URL fragment (page#18), and not an HTML entity (&#18;).
 # Groups: the agent, the key after # or @, the key of the bare form, the number.
-TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)"
-                      r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?|([A-Z][A-Z0-9]{0,%d})-)(\d{1,6})(?![\w-])" % (KEY_MAX - 1, KEY_MAX - 1))
+# A number never starts with 0 (S-03 is a rule, not a task); after a slash it
+# is one only in a list of numbers (#140/#142), never in a path
+# (Documents/#30): all_text_refs checks that (#202).
+TEXT_REF = re.compile(r"(?<![\w&#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)"
+                      r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?|([A-Z][A-Z0-9]{0,%d})-)(?!0)(\d{1,6})(?![\w-])" % (KEY_MAX - 1, KEY_MAX - 1))
+# The whole list before it must be numbers from its start: not Documents/#140/#142.
+_LIST_ITEM = re.compile(r"#[1-9]\d{0,5}/\Z")
+_LIST_START = re.compile(r"[^\w/\\#@.&-]")
+
+
+def _slash_list_ok(plain: str, at: int) -> bool:
+    """The #N at ``at`` (after a "/") is in a list of numbers from its very
+    start: #140/#142, not Documents/#140/#142. Walks back over the whole list."""
+    i = at
+    while i and plain[i - 1] == "/":
+        m = _LIST_ITEM.search(plain, max(0, i - 8), i)
+        if not m:
+            return False
+        i = m.start()
+    return i == 0 or bool(_LIST_START.match(plain[i - 1]))
 # A bare #12 right after one of these words is someone else's number (a pull
 # request, an issue, a review finding), not a task: "PR #12", "fixes #34".
 # ED-12 and @codex@12 are always tasks.
@@ -328,6 +346,9 @@ def all_text_refs(text: str, ctx: dict | None = None) -> list[dict]:
     by_key = {p["key"]: p["id"] for p in (ctx or {}).get("projects") or [] if p.get("key")}
     for m in TEXT_REF.finditer(plain):
         key, no = (m.group(2) or m.group(3) or "").upper(), int(m.group(4))
+        if m.start() and plain[m.start() - 1] == "/" and not (
+                m.group(0)[0] == "#" and _slash_list_ok(plain, m.start())):
+            continue
         if not m.group(1) and not key and NOT_TASK_BEFORE.search(plain[max(0, m.start() - 40):m.start()]):
             continue
         if m.group(3) and ctx and key not in by_key:
