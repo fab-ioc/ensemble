@@ -114,6 +114,35 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
         self.assertEqual(self.choose(_snap(claude_week=94, codex_week=0), "codex"),
                          ("claude", "switch_reset"))
 
+    def test_other_reset_requires_a_dated_preferred_week(self):
+        snap = _snap()
+        snap["sources"][1]["windows"] = [_window("five_hour", 10, None)]
+        decision = dashboard.choose_agent_kind_for_seat(
+            "codex", snap, installed=lambda kind: True, pace=PACE_ON, now=NOW)
+        self.assertEqual((decision["chosenKind"], decision["decision"]),
+                         ("codex", "preferred_below_warning"))
+        self.assertNotIn("codex", decision["pace"]["capacity"])
+        # Even an older stored switch decision with incomplete pace data must
+        # produce a reason rather than crash during review or handover.
+        reason = dashboard._balance_reason({**decision, "decision": "switch_reset"})
+        self.assertIn("Codex: weighted capacity unavailable", reason)
+        self.assertIn("Claude:", reason)
+        review_reason = dashboard._review_allocation_reason(
+            {**decision, "decision": "switch_reset"}, {"agent": "claude"})
+        self.assertIn("Codex: weighted capacity unavailable", review_reason)
+
+    def test_handover_with_five_hour_only_preferred_keeps_owner(self):
+        snap = _snap()
+        snap["sources"][1]["windows"] = [_window("five_hour", 10, None)]
+        with mock.patch.object(dashboard, "pace_settings", return_value=PACE_ON), \
+                mock.patch.object(dashboard.time, "time", return_value=NOW):
+            handover = rotation.choose_owner_kind(
+                {}, {"agent": "codex", "model": ""}, snap,
+                installed=lambda kind: True)
+        self.assertEqual((handover["agent"], handover["changed"]),
+                         ("codex", False))
+        self.assertEqual(handover["usage"]["decision"], "preferred_below_warning")
+
     def test_the_warning_rule_follows_it_with_pacing_off(self):
         self.assertEqual(self.choose(_snap(), "claude", pace=PACE_OFF),
                          ("claude", "use_before_reset"))

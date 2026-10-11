@@ -102,6 +102,46 @@ class AllocationTests(unittest.TestCase):
         chatroom.update_room(room)
         return room
 
+    def test_launch_with_five_hour_only_preferred_does_not_switch_at_other_reset(self):
+        room = self.room([
+            {"agent": "codex", "model": "gpt-owner", "role": "engineer"},
+            {"agent": "claude", "model": "opus", "role": "reviewer"},
+        ])
+        snap = _snapshot(
+            [_window("seven_day", 90, resets_at=time.time() + 4 * 3600)],
+            [_window("five_hour", 10)])
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap), \
+                mock.patch.object(dashboard, "pace_settings",
+                                  return_value={"enabled": True, "margin": 15}):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertEqual(saved["allocation"]["chosen"][0]["agent"], "codex")
+        self.assertEqual(saved["allocation"]["usage"]["decision"],
+                         "preferred_below_warning")
+        self.assertNotIn("allowance check failed", saved["allocation"]["reason"])
+
+    def test_review_starts_with_five_hour_only_preferred_at_other_reset(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot(
+            [_window("seven_day", 90, resets_at=time.time() + 4 * 3600)],
+            [_window("five_hour", 10)])
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap), \
+                mock.patch.object(dashboard, "pace_settings",
+                                  return_value={"enabled": True, "margin": 15}):
+            review = _FakeHandler()._start_review(
+                room["id"], reviewer["identity"],
+                {"id": "msg-reset", "from": "claude", "text": "Please review."})
+
+        self.assertIsNotNone(review)
+        self.assertNotEqual(review["allocation"]["usage"]["decision"], "check_failed")
+        self.assertIn("no current 7-day reading", review["allocation"]["reason"])
+
     def test_unknown_review_pace_uses_owner_kind(self):
         room = self.room([
             {"agent": "claude", "model": "opus", "role": "engineer"},
@@ -377,7 +417,7 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(handler.launched[0][1], "claude")
         self.assertNotEqual(chosen["sessionId"], "owner-session")
 
-    def test_unknown_review_reading_uses_owner_kind(self):
+    def test_unknown_review_reading_keeps_current_reviewer_kind(self):
         room = self.room([
             {"agent": "claude", "model": "opus", "role": "engineer"},
             {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
@@ -394,9 +434,11 @@ class AllocationTests(unittest.TestCase):
 
         saved = chatroom.get_room(room["id"], public=False)
         chosen = chatroom.participant(saved, reviewer["identity"])
-        self.assertEqual((chosen["agent"], chosen["model"]), ("claude", ""))
-        self.assertTrue(review["allocation"]["changed"])
-        self.assertIn("no current 7-day reading", review["allocation"]["reason"])
+        self.assertEqual((chosen["agent"], chosen["model"]), ("codex", "gpt-review"))
+        self.assertFalse(review["allocation"]["changed"])
+        self.assertEqual(review["allocation"]["usage"]["decision"], "unknown")
+        self.assertIn("current allowance reading is unavailable",
+                      review["allocation"]["reason"])
 
     def test_review_keeps_cross_check_when_owner_has_more_pace_room(self):
         room = self.room([

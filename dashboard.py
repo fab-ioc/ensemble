@@ -11005,12 +11005,17 @@ def _pace_reason_phrase(kind: str, reading: dict) -> str:
 
 def _balance_weeks(decision: dict) -> str:
     """Both kinds' weighted spare capacity in words and comparable units."""
-    capacity = decision["pace"]["capacity"]
+    pace = decision.get("pace") or {}
+    capacity = pace.get("capacity") or {}
+    kinds = pace.get("kinds") or {}
     chosen = decision["chosenKind"]
     other = "codex" if chosen == "claude" else "claude"
     def week(kind):
-        reading = capacity[kind]
-        paced = decision["pace"]["kinds"][kind]
+        reading = capacity.get(kind)
+        paced = kinds.get(kind) or {}
+        if not reading or paced.get("percent") is None or paced.get("pace") is None:
+            why = paced.get("why") or "no dated 7-day reading"
+            return f"{_agent_kind_name(kind)}: weighted capacity unavailable ({why})"
         floor = "at most " if reading.get("atLeast") else ""
         return (f"{reading['label']}: {float(reading['weight']):g}x weight"
                 f" ({reading['source']}), {float(paced['percent']):g}% used against "
@@ -11218,7 +11223,8 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         if mine_pct >= warn:
             return result(preferred_kind, "use_before_reset")
         mine, theirs = paced.get(preferred_kind, {}), paced.get(other_kind, {})
-        if (pace.get("enabled") and near[other_kind] and not near[preferred_kind]
+        if (pace.get("enabled") and preferred_kind in capacity and other_kind in capacity
+                and near[other_kind] and not near[preferred_kind]
                 and warn <= theirs_pct < alarm):
             return result(other_kind, "switch_reset")
         # The spare-capacity rule only compares two known weeks below warning.
@@ -11491,6 +11497,11 @@ def _review_cross_check(decision: dict, owner_kind: str, current_kind: str,
         return {**decision, "chosenKind": opposite,
                 "decision": "cross_check" if enabled else "cross_check_pacing_off",
                 "changed": opposite != current_kind}
+    # An unknown usage reading cannot justify moving the review to the owner.
+    # Keep the current/preferred reviewer; a known reading with an unknown reset
+    # remains the separate no-known-pace case below.
+    if reading.get("state") != "known":
+        return decision
     owner_reading = decision["figures"].get(owner_kind, {})
     if (installed(owner_kind) and owner_reading.get("state") == "known"
             and float(owner_reading["percent"]) < float(decision["alarmPercent"])):
