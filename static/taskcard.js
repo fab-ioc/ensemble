@@ -305,6 +305,9 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
   /* A chip keeps its look in the line of text and takes a finger's height with an invisible margin. */
   .msg .text.md a.task-chip, a.task-chip { overflow:visible; }
   a.task-chip::after { content:''; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
+  /* Not a deleted id: it is words that may wrap, and the margin would cover the chips beside it. */
+  a.task-chip.tc-gone { position:static; }
+  a.task-chip.tc-gone::after { content:none; }
   /* The card wraps: the number, project and state on the first line, the full title under them. */
   .task-card { flex-wrap:wrap; white-space:normal; row-gap:0; font-size:var(--fs-300, var(--fs-200)); }
   .task-card .tc-title { order:9; flex:1 1 100%; white-space:normal; overflow:visible; min-height:var(--touch-min, 44px); display:flex; align-items:center; }

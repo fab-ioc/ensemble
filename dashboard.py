@@ -13361,8 +13361,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(flat) > 700:
             flat = flat[:700] + "…"
         # The task by its number, which the PO resolves in its own project.
+        # The "(#18, reporter)" form is read back by hub_input_kind, which
+        # folds the line into a report card; keep it as it is (#202).
         name = task_label(chatroom.get_room(task_id)) or task_id
-        wake = (f"[report] {kind} from task {name} '{task_title}' ({reporter}): "
+        wake = (f"[report] {kind} from task '{task_title}' ({name}, {reporter}): "
                 f"{flat} — read it in full with ensemble_get_task taskId={name} messages=0.")
         return self._ring(po_room_id, recipients, wake)
 

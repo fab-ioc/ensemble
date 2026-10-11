@@ -187,8 +187,10 @@ class SessionChips(unittest.TestCase):
             "/api/task/ref?ref=%2399&room=room-ctx"]), "one request per task, in this chat's room, and the project list once")
         self.assertGreaterEqual(self.r["redraws"], 3)
         found = chips(self.r["second"])
-        self.assertEqual(len(found), 3, self.r["second"])
-        plain, codex, reviewer = found
+        # #202: a code span that is exactly `#18` is a chip too, after the three in prose.
+        self.assertEqual(len(found), 4, self.r["second"])
+        plain, codex, reviewer, code = found
+        self.assertIn('data-task="room-b"', code)
         # The chip: the number alone, a dot while the task runs, the card's words in data-card.
         self.assertIn('class="task-chip tc-run" href="/session?id=room-b" data-task="room-b"', plain)
         self.assertIn('aria-haspopup="dialog" aria-expanded="false"', plain)
@@ -206,7 +208,7 @@ class SessionChips(unittest.TestCase):
 
     def test_what_stays_text(self):
         html_ = self.r["second"]
-        self.assertIn('<code class="ic">#18</code>', html_)
+        self.assertNotIn('<code class="ic">#18</code>', html_, "#202: a code span that is only a task reference is its chip")
         for text in ("not #99", "page#18", "x#18"):
             self.assertIn(text, html_)
         self.assertEqual(len(self.r["fetches"]), 4, "a number already asked about is not asked again")
@@ -246,7 +248,7 @@ class SessionChips(unittest.TestCase):
         self.assertIn('<script src="/static/taskcard.js"></script>', SESSION)
         self.assertIn("TaskCard.init({ open: openTaskFrom, openPoint:", SESSION)
         self.assertIn("TASK_REF_PID = taskRefProject(m);", fn(SESSION, "renderBubbles"), "each balloon is drawn in its own project")
-        self.assertIn("TaskCard.refsIn(text, taskRefCtx())", fn(SESSION, "edRefsHtml"), "the box preview reads the words the same way")
+        self.assertIn("TaskCard.refsIn(text, taskRefCtx(), { rooms: true, words: true })", fn(SESSION, "edRefsHtml"), "the box preview reads the words the same way")
         self.assertIn("const h = taskChipHtml(r);", fn(SESSION, "edRefsHtml"), "the box preview shows the chips too")
         refresh = fn(SESSION, "refreshShow")
         self.assertIn("`${tno} · ${room.title}`", refresh, "the tab title")
