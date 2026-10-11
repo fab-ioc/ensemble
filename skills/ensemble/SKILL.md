@@ -951,8 +951,8 @@ Create a draft for an autonomous pair in your own project:
 {
   "title": "Add rate limiting to the public API",
   "spec": "# Goal\n…\n# Context\n…\n# Acceptance criteria\n- …",
-  "agents": [{"agent": "claude", "role": "engineer"},
-             {"agent": "codex", "role": "reviewer"}],
+  "agents": [{"agent": "codex", "role": "engineer"},
+             {"agent": "claude", "role": "reviewer"}],
   "workspace": "worktree"
 }
 ```

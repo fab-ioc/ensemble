@@ -131,6 +131,8 @@ class AllocationTests(unittest.TestCase):
         chosen = chatroom.get_room(room["id"], public=False)["allocation"]
         self.assertEqual([s["agent"] for s in chosen["chosen"]], ["claude", "codex"])
         self.assertIn("cross-check", chosen["reason"])
+        self.assertIn("Codex 7-day window at 30%", chosen["reason"])
+        self.assertIn("Claude 7-day window at 10%", chosen["reason"])
 
     def test_swap_at_warning_uses_alternative_model_and_default(self):
         room = self.room([

@@ -10964,8 +10964,10 @@ def _balance_weeks(decision: dict) -> str:
     def week(kind):
         reading = kinds[kind]
         floor = "at least " if reading.get("atLeast") else ""
-        return (f"{_agent_kind_name(kind)} {floor}{float(reading['percent']):g}% of its week "
-                f"used against {float(reading['pace']):g}% pace")
+        usage = f"{_agent_kind_name(kind)} {floor}{float(reading['percent']):g}% of its week used"
+        if reading.get("nearReset"):
+            return usage
+        return f"{usage} against {float(reading['pace']):g}% pace"
     return f"{week(chosen)}, {week(other)}"
 
 
@@ -11232,8 +11234,12 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                     chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], opposite)
                     review_changed = True
         if review_changed:
+            owner_reading = _kind_usage(snapshot, owner_chosen,
+                                        _seat_for_kind(preferred[owner_i], "codex")["model"])
             reason += (f" Reviewer assigned to {_agent_kind_name(opposite)} to cross-check "
-                       "the owner's work.")
+                       f"owner {_agent_kind_name(owner_chosen)}: "
+                       f"{_usage_reason_phrase(opposite, reading)}; "
+                       f"{_usage_reason_phrase(owner_chosen, owner_reading)}.")
         return chosen, {
             "preferred": preferred,
             "chosen": copy.deepcopy(chosen),

@@ -152,8 +152,9 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
         chosen, alloc = dashboard.choose_first_launch_allocation(
             swapped, _snap(), installed=lambda k: True, pace=PACE_ON, now=NOW)
         self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
-        self.assertIn("Claude 90% of its week used against 112.2% pace",
+        self.assertIn("Claude 90% of its week used",
                       alloc["reason"])
+        self.assertNotIn("112.2% pace", alloc["reason"])
         self.assertIn("its week resets 14:00",
                       alloc["reason"])
 
