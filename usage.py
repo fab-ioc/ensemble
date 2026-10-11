@@ -17,10 +17,9 @@ Two sources, deliberately not symmetrical:
     age and rollover guards apply: until a hub-launched Claude agent has
     finished a turn the reading is unknown, and an old one carries its age.
 
-    Ensemble never reads, holds or sends Claude Code's sign-in token
-    (``~/.claude/.credentials.json``): Claude's terms reserve plan OAuth tokens
-    for Claude Code itself. There is deliberately no fallback that asks
-    Anthropic for the numbers (ED-179).
+    Ensemble never sends Claude Code's sign-in token. Only the local plan-tier
+    metadata in ``~/.claude/.credentials.json`` is read for seat weights;
+    there is deliberately no fallback that asks Anthropic for the numbers.
 
 ``read_codex()``
     A Codex plan has several **pools**, each an allowance of its own: the main
@@ -52,10 +51,10 @@ Thresholds are driven off ``percent`` only, never off the payload's ``severity``
 string: the investigation only ever observed ``"normal"``, so branching on the
 escalated values would be guessing.
 
-**Credential hygiene.** No reader here opens either agent's sign-in file
-(Claude's ``.credentials.json``, Codex's ``auth.json``); Codex's numbers come
-from the ``codex`` program itself and its session logs. :func:`_scrub` still
-guards every error string that reaches the cache.
+**Credential hygiene.** :mod:`plan_weights` reads local tier metadata from the
+sign-in files, returning only labels and weights; it never returns or logs
+tokens. Allowance numbers still come from the programs and session records.
+:func:`_scrub` guards every error string that reaches the cache.
 
 Decoupled from ``dashboard.py`` the same way ``backup.py`` is: this module holds
 the readers, the cache and the scheduler; the server just serves
@@ -75,6 +74,8 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+import plan_weights
 
 # Written by usage_statusline.py, the status-line command of hub-launched
 # Claude agents; read by read_claude_statusline.
@@ -176,6 +177,7 @@ _STATE: dict = {
     "state": "loading",     # loading | ready
     "checkedAt": 0.0,
     "sources": {},          # {"claude": {...}, "codex": {...}}
+    "plans": {},            # safe detected labels and relative weights only
 }
 
 
@@ -1275,8 +1277,13 @@ def refresh() -> dict:
     """Read both sources and replace the cache. Called only by the scheduler
     (and by tests) — never from a request path."""
     sources = {"claude": read_claude(), "codex": read_codex()}
+    try:
+        plans = plan_weights.detect()
+    except Exception:  # a tier read must never invalidate allowance readings
+        plans = {}
     with _LOCK:
         _STATE["sources"] = sources
+        _STATE["plans"] = plans
         _STATE["checkedAt"] = time.time()
         _STATE["state"] = "ready"
         return _snapshot_locked()
@@ -1298,6 +1305,7 @@ def _snapshot_locked() -> dict:
         "staleFraction": STALE_FRACTION,
         "warnPercent": WARN_PERCENT,
         "alarmPercent": ALARM_PERCENT,
+        "plans": copy.deepcopy(_STATE["plans"]),
         # Deep-copied: callers (the endpoint, the MCP tool) must not be able to
         # mutate the cache the poller owns.
         "sources": [copy.deepcopy(sources[k]) for k in ("claude", "codex")

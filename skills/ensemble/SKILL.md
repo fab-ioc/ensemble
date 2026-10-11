@@ -660,15 +660,18 @@ seat, plus an alternative kind/model where the model matters. On the first
 launch the hub reads the same cached allowance snapshot as the header and makes
 the final choice without a network call:
 
-- It keeps the preference unless the preferred owner kind is at or above the
-  warning (80%) while the other installed kind is below it. Then it swaps the
-  kinds between owner and reviewer, so one task still does not spend one
-  allowance twice. A changed seat uses that kind's default model unless the
-  preference names an alternative model for it.
-- Below the warning the hub paces each kind's week: a kind whose 7-day use is
-  past its pace mark (`ensemble_plan_usage` `pace`) gives new owners, reviews
-  and handovers to the other kind while that one is not. Only when the product
-  owner asks, pin a task's agents with `keepAgents: true` on
+- For owners and handovers below warning, the hub compares each plan's spare
+  capacity per hour until its own weekly reset: plan weight × capacity to
+  warning ÷ hours remaining. It changes the preferred kind only when the
+  other's value is at least 25% higher (configurable hysteresis). Plan weights
+  come from detected subscription tiers; Settings › Agent models can override
+  them. Unknown tiers without overrides use equal weights. You can name either
+  kind first. A changed seat uses that kind's default model unless the
+  preference names an alternative model.
+- The warning (80%) and alarm (95%) still govern usable seats. A reviewer runs
+  on a different kind from the owner's latest round only while that kind is
+  within its pace and below warning. Otherwise it reviews on the owner's kind
+  in a fresh session. Only when the product owner asks, pin a task's agents with `keepAgents: true` on
   `ensemble_create_task` / `ensemble_update_task`.
 - A seat that names no model runs on the one the person chose for its kind in
   Settings (Agent models; for Codex a reasoning effort too), else on the
@@ -900,7 +903,7 @@ When asked to plan (or when your role is `planner`):
    for one agent session, and ordered by dependency. Name dependencies in the
    spec ("depends on: <task title/id>") — Ensemble does not enforce them.
 4. Create each with `ensemble_create_task` as a **draft**. Name a preferred line-up:
-   - one agent (`[{"agent": "claude"}]`) for a task the product owner will
+   - one agent (`[{"agent": "codex"}]` or `[{"agent": "claude"}]`) for a task the product owner will
      drive interactively;
    - for autonomous work, one owner (`"role": "engineer"`), plus a reviewer
      of the other kind when the work merits one. Choose each preferred kind for
@@ -951,8 +954,8 @@ Create a draft for an autonomous pair in your own project:
 {
   "title": "Add rate limiting to the public API",
   "spec": "# Goal\n…\n# Context\n…\n# Acceptance criteria\n- …",
-  "agents": [{"agent": "claude", "role": "engineer"},
-             {"agent": "codex", "role": "reviewer"}],
+  "agents": [{"agent": "codex", "role": "engineer"},
+             {"agent": "claude", "role": "reviewer"}],
   "workspace": "worktree"
 }
 ```

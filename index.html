@@ -2934,6 +2934,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-nickname,
   #settings-panel #pref-stall-seconds,
   #settings-panel #pref-pace-margin,
+  #settings-panel #pref-balance-margin,
+  #settings-panel #pref-claude-weight,
+  #settings-panel #pref-codex-weight,
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate {
     width: 100%; padding: 5px 10px;
@@ -2943,12 +2946,18 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     outline: none;
   }
   #settings-panel #pref-stall-seconds,
-  #settings-panel #pref-pace-margin { width: 6em; }
+  #settings-panel #pref-pace-margin,
+  #settings-panel #pref-balance-margin,
+  #settings-panel #pref-claude-weight,
+  #settings-panel #pref-codex-weight { width: 6em; }
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
   #settings-panel #pref-stall-seconds:focus,
   #settings-panel #pref-pace-margin:focus,
+  #settings-panel #pref-balance-margin:focus,
+  #settings-panel #pref-claude-weight:focus,
+  #settings-panel #pref-codex-weight:focus,
   #settings-panel #pref-po-rotate:focus,
   #settings-panel #pref-task-rotate:focus {
     border-color: var(--focus-ring);
@@ -4095,7 +4104,19 @@ window.DOC_LISTENERS_PAUSED = false;
       <span><input type="number" id="pref-pace-margin" min="0" max="100" step="1"
              placeholder="15" autocomplete="off"> <span class="pref-label">points</span></span>
     </div>
-    <p class="cfg-hint">A kind whose 7-day use is past the share of the week gone by, plus the head start, is ahead of pace (15 points: about 15% at a reset, 43% after two days, the warning from day 4.6). A new owner, review or handover then goes to the other kind while that one is not. In a week's last 12 hours what is left would be lost at the reset, so that kind is not paced and is used up to the alarm. Pacing never stops work, and a task set to keep its agents is not paced.</p>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-balance-margin">Switch hysteresis</label>
+      <span><input type="number" id="pref-balance-margin" min="0" max="100" step="1"
+             placeholder="25" autocomplete="off"> <span class="pref-label">%</span></span>
+    </div>
+    <p class="cfg-hint">The preferred owner kind changes only when the other's weighted spare capacity per hour is at least this much higher.</p>
+    <p class="cfg-hint" id="pref-detected-plans">Detected plans: waiting for usage…</p>
+    <div class="pref-row"><label class="pref-label" for="pref-claude-weight">Claude weight override</label>
+      <span><input type="number" id="pref-claude-weight" min="1" max="1000" step="1" placeholder="Detected" autocomplete="off"> <span class="pref-label">units</span></span></div>
+    <div class="pref-row"><label class="pref-label" for="pref-codex-weight">Codex weight override</label>
+      <span><input type="number" id="pref-codex-weight" min="1" max="1000" step="1" placeholder="Detected" autocomplete="off"> <span class="pref-label">units</span></span></div>
+    <p class="cfg-hint">Empty uses the detected plan weight; unknown plans use equal weights unless overridden.</p>
+    <p class="cfg-hint">The head start puts the pace line ahead of elapsed time. Owners use plan weight × capacity to warning ÷ hours to reset; reviews cross-check only while the other kind is within pace. A task set to keep its agents is not paced.</p>
     <!-- The New session dialog's model suggestions (#im-model). -->
     <datalist id="model-presets">
       <option value="opus"></option>
@@ -7297,6 +7318,14 @@ function renderPrefs() {
   const paceMargin = document.getElementById('pref-pace-margin');
   if (paceMargin && document.activeElement !== paceMargin) {
     paceMargin.value = PREFS.paceMarginPoints ?? 15;
+  }
+  const balanceMargin = document.getElementById('pref-balance-margin');
+  if (balanceMargin && document.activeElement !== balanceMargin) {
+    balanceMargin.value = PREFS.balanceHysteresisPercent ?? 25;
+  }
+  for (const kind of ['claude', 'codex']) {
+    const input = document.getElementById(`pref-${kind}-weight`);
+    if (input && document.activeElement !== input) input.value = PREFS[`${kind}PlanWeight`] ?? '';
   }
   const rtkSeg = document.getElementById('pref-rtk-tasks');
   if (rtkSeg) {
@@ -17155,6 +17184,14 @@ async function refreshUsage() {
     // A cache read on the server: it never waits on a reading.
     USAGE = await api('/api/usage') || USAGE;
     renderUsage();
+    const detected = document.getElementById('pref-detected-plans');
+    if (detected) {
+      const plans = USAGE.plans || {};
+      detected.textContent = 'Detected: ' + ['claude', 'codex'].map(kind => {
+        const plan = plans[kind] || {};
+        return `${plan.label || kind + ' plan unknown'} (${plan.weight == null ? 'unknown weight' : plan.weight + 'x weight'})`;
+      }).join(', ');
+    }
   } catch (e) {
     // Keep the last known state. A failed poll is not "allowance unavailable",
     // and the chip is never allowed to take the rest of the page down with it.
@@ -19768,6 +19805,38 @@ window.ensUpdPlace = () => ({
     paceMarginInput.addEventListener('blur', commitPace);
     paceMarginInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); paceMarginInput.blur(); }
+    });
+  }
+  const balanceMarginInput = document.getElementById('pref-balance-margin');
+  if (balanceMarginInput) {
+    const commitBalance = async () => {
+      const v = Number(balanceMarginInput.value);
+      if (balanceMarginInput.value !== '' && Number.isFinite(v)
+          && v !== (PREFS?.balanceHysteresisPercent ?? null)) {
+        await setPref('balanceHysteresisPercent', v);
+        refreshUsage();
+      }
+    };
+    balanceMarginInput.addEventListener('blur', commitBalance);
+    balanceMarginInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); balanceMarginInput.blur(); }
+    });
+  }
+  for (const kind of ['claude', 'codex']) {
+    const input = document.getElementById(`pref-${kind}-weight`);
+    if (!input) continue;
+    const key = `${kind}PlanWeight`;
+    const commit = async () => {
+      const value = input.value === '' ? '' : Number(input.value);
+      if (value !== '' && (!Number.isFinite(value) || value < 1 || value > 1000)) return;
+      if (value !== (PREFS?.[key] ?? '')) {
+        await setPref(key, value);
+        refreshUsage();
+      }
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
     });
   }
   document.getElementById('pref-noun')?.addEventListener('click', (ev) => {

@@ -106,7 +106,42 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
         # Before ED-181 both were Codex (switch_warning / preferred_below_warning).
         self.assertEqual(self.choose(_snap(), "claude"), ("claude", "use_before_reset"))
         # Codex is ahead of its fresh week and Claude is no longer refused.
-        self.assertEqual(self.choose(_snap(), "codex"), ("claude", "switch_pace"))
+        self.assertEqual(self.choose(_snap(), "codex"), ("claude", "switch_reset"))
+
+    def test_a_nearly_spent_week_is_used_before_its_reset(self):
+        # Only one point of Claude's allowance remains below the alarm, but it
+        # expires today; the fresh Codex week has nearly the same headroom.
+        self.assertEqual(self.choose(_snap(claude_week=94, codex_week=0), "codex"),
+                         ("claude", "switch_reset"))
+
+    def test_other_reset_requires_a_dated_preferred_week(self):
+        snap = _snap()
+        snap["sources"][1]["windows"] = [_window("five_hour", 10, None)]
+        decision = dashboard.choose_agent_kind_for_seat(
+            "codex", snap, installed=lambda kind: True, pace=PACE_ON, now=NOW)
+        self.assertEqual((decision["chosenKind"], decision["decision"]),
+                         ("codex", "preferred_below_warning"))
+        self.assertNotIn("codex", decision["pace"]["capacity"])
+        # Even an older stored switch decision with incomplete pace data must
+        # produce a reason rather than crash during review or handover.
+        reason = dashboard._balance_reason({**decision, "decision": "switch_reset"})
+        self.assertIn("Codex: weighted capacity unavailable", reason)
+        self.assertIn("Claude:", reason)
+        review_reason = dashboard._review_allocation_reason(
+            {**decision, "decision": "switch_reset"}, {"agent": "claude"})
+        self.assertIn("Codex: weighted capacity unavailable", review_reason)
+
+    def test_handover_with_five_hour_only_preferred_keeps_owner(self):
+        snap = _snap()
+        snap["sources"][1]["windows"] = [_window("five_hour", 10, None)]
+        with mock.patch.object(dashboard, "pace_settings", return_value=PACE_ON), \
+                mock.patch.object(dashboard.time, "time", return_value=NOW):
+            handover = rotation.choose_owner_kind(
+                {}, {"agent": "codex", "model": ""}, snap,
+                installed=lambda kind: True)
+        self.assertEqual((handover["agent"], handover["changed"]),
+                         ("codex", False))
+        self.assertEqual(handover["usage"]["decision"], "preferred_below_warning")
 
     def test_the_warning_rule_follows_it_with_pacing_off(self):
         self.assertEqual(self.choose(_snap(), "claude", pace=PACE_OFF),
@@ -138,15 +173,15 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
                   {"agent": "codex", "model": "", "role": "reviewer"}]
         chosen, alloc = dashboard.choose_first_launch_allocation(
             lineup, _snap(), installed=lambda k: True, pace=PACE_ON, now=NOW)
-        self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
-        self.assertEqual(alloc["reason"],
-                         "Preferred line-up kept: Claude 7-day window at 90%, and its week "
-                         "resets 14:00: what is left is used up to the 95% alarm.")
+        self.assertEqual([s["agent"] for s in chosen], ["claude", "claude"])
+        self.assertIn("what is left is used up to the 95% alarm", alloc["reason"])
+        self.assertIn("fresh review session", alloc["reason"])
         swapped = [dict(lineup[1], role="engineer"), dict(lineup[0], role="reviewer")]
         chosen, alloc = dashboard.choose_first_launch_allocation(
             swapped, _snap(), installed=lambda k: True, pace=PACE_ON, now=NOW)
-        self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
-        self.assertIn("while Claude 7-day window at 90%, its week resets 14:00",
+        self.assertEqual(chosen[0]["agent"], "claude")
+        self.assertIn("95% alarm", alloc["reason"])
+        self.assertIn("its week resets 14:00",
                       alloc["reason"])
 
     def test_the_review_says_why(self):

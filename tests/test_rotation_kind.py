@@ -419,7 +419,11 @@ class RotateOwnerTests(_Base):
         rev.update(sessionId="rev-sid")
         chatroom.update_room(room)
         self.rotate(self.saved(room), _snap(86, 20))
-        with mock.patch.object(dashboard.usage, "snapshot", return_value=_snap(50, 20)):
+        review_snap = _snap(20, 20)
+        reset = time.time() + 5 * 86400
+        review_snap["sources"][0]["windows"].append({
+            **_window("seven_day", 20), "resetsAt": reset})
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=review_snap):
             _, part, alloc = dashboard.apply_review_allocation(self.saved(room), "codex")
         self.assertTrue(alloc["changed"])
         self.assertEqual(part["agent"], "claude")
