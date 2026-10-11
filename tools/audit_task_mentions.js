@@ -42,10 +42,11 @@ function count(form, linked, text, at, len) {
   f[linked ? 'linked' : 'unlinked']++;
   if (f.examples.length < EXAMPLES) f.examples.push(text.slice(Math.max(0, at - 30), at + len + 30).replace(/\s+/g, ' '));
 }
-const linkedHere = typeof TaskCard.codeSpanRef === 'function';   // #202: code spans and room ids
+const linkedHere = typeof TaskCard.codeRef === 'function';   // #202: code spans, room ids, words, header titles
 
 const CODE_SPAN_RE = /`([^`\n]+)`/g;
 const ROOM_RE = /(?<![\w-])room-[0-9a-f]{8}(?![\w-])/g;
+const ROOM_TEST = /room-[0-9a-f]{8}/;   // an old header's room id: its chip since #202
 const WORD_RE = /(?<![\w#-])([Tt]asks?|[Cc]ards?)[ \t]+(\d{1,4})(?![\w-])/g;
 const POINT_RE = /(?<![\w-])P(\d{1,4}[a-z]?)(?![\w-])/g;
 const HEADER_NO_NUMBER_RE = /report from task \*/;
@@ -108,7 +109,7 @@ for (const [rid, room] of rooms) {
       let mm;
       if ((mm = /^(?:#|([A-Z][A-Z0-9]{0,5})-)(\d{1,6})$/.exec(body))) {
         const t = taskOf(mm[1] || '', +mm[2], own);
-        if (t) count('`#N` / `KEY-N` as a whole code span', linkedHere, text, at, cm[0].length);
+        if (t) count('`#N` / `KEY-N` as a whole code span', linkedHere && !!TaskCard.codeRef(body, ctx), text, at, cm[0].length);
         continue;
       }
       if (/^room-[0-9a-f]{8}$/.test(body)) {
@@ -125,11 +126,13 @@ for (const [rid, room] of rooms) {
       count(rooms.has(rm[0]) ? 'room-… in prose, a task' : 'room-… in prose, deleted task', linkedHere, text, rm.index, rm[0].length);
     }
     // 5. "task 201" as a word.
+    const words = linkedHere ? TaskCard.refsIn(text, ctx, { words: true }).map(r => r.start) : [];
     for (const wm of prose.matchAll(WORD_RE)) {
-      if (taskOf('', +wm[2], own)) count('"task 201" written as a word', false, text, wm.index, wm[0].length);
+      const at = wm.index + wm[0].length - wm[2].length;
+      if (taskOf('', +wm[2], own)) count('"task 201" written as a word', words.includes(at), text, wm.index, wm[0].length);
     }
     // 6. Hub headers.
-    if (who === 'hub' && HEADER_NO_NUMBER_RE.test(text)) count('hub header naming a task without its number', false, text, text.search(HEADER_NO_NUMBER_RE), 30);
+    if (who === 'hub' && HEADER_NO_NUMBER_RE.test(text)) count('hub header naming a task without its number', linkedHere && ROOM_TEST.test(text), text, text.search(HEADER_NO_NUMBER_RE), 30);
     for (const hm of text.matchAll(HEADER_TITLE_RE)) count('italic title after the number in a header', linkedHere, text, hm.index, hm[0].length);
     // 7. Points (P163): pointrefs.js links the ones the hub knows.
     for (const pm of prose.matchAll(POINT_RE)) count('point P163 (pointrefs.js, not counted as a task)', true, text, pm.index, pm[0].length);
