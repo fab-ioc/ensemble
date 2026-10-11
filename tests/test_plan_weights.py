@@ -146,6 +146,40 @@ class WeightedDecision(unittest.TestCase):
         d = dashboard._review_cross_check(d, "claude", "codex", lambda kind: True, False)
         self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "review_owner_warning"))
 
+    def test_pacing_off_keeps_old_review_cross_check(self):
+        d, snap, now, pace = self.choose(50, 0, preferred="codex")
+        off = {**pace, "enabled": False}
+        d = dashboard.choose_agent_kind_for_seat(
+            "codex", snap, installed=lambda kind: True, pace=off, now=now)
+        d = dashboard._review_cross_check(d, "claude", "claude", lambda kind: True, False)
+        self.assertEqual((d["chosenKind"], d["decision"]),
+                         ("codex", "cross_check_pacing_off"))
+        self.assertIn("weekly pacing is off", dashboard._review_allocation_reason(
+            d, {"agent": "claude"}))
+
+    def test_unknown_reset_reason_names_reset_time(self):
+        d, snap, now, pace = self.choose(20, 10, preferred="codex")
+        snap["sources"][1]["windows"][0]["resetsAt"] = None
+        d = dashboard.choose_agent_kind_for_seat(
+            "codex", snap, installed=lambda kind: True, pace=pace, now=now)
+        d = dashboard._review_cross_check(d, "claude", "codex", lambda kind: True, False)
+        self.assertEqual((d["chosenKind"], d["decision"]),
+                         ("claude", "review_owner_unknown_pace"))
+        self.assertIn("Codex has reset time unknown",
+                      dashboard._review_allocation_reason(d, {"agent": "claude"}))
+
+    def test_cross_check_reason_uses_weekly_percent(self):
+        d, snap, now, pace = self.choose(20, 20, preferred="codex")
+        snap["sources"][1]["windows"].append({
+            "kind": "five_hour", "percent": 70, "trusted": True,
+            "rolledOver": False, "resetUnknown": False})
+        d = dashboard.choose_agent_kind_for_seat(
+            "codex", snap, installed=lambda kind: True, pace=pace, now=now)
+        d = dashboard._review_cross_check(d, "claude", "claude", lambda kind: True, False)
+        reason = dashboard._review_allocation_reason(d, {"agent": "claude"})
+        self.assertIn("Codex 7-day window at 20%", reason)
+        self.assertNotIn("5-hour window at 70%", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -693,7 +693,10 @@ class Allocation(_Case):
         seats[0]["model"] = ""
         chosen, record = dashboard.choose_first_launch_allocation(
             seats, snap, installed=lambda kind: True)
-        self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
+        self.assertEqual([s["agent"] for s in chosen], ["claude", "claude"])
+        self.assertEqual(record["usage"]["reviewDecision"], "review_owner_warning")
+        self.assertIn("Codex", record["reason"])
+        self.assertIn("past the 80% warning", record["reason"])
         # A Claude owner whose seat names a Codex alternative is judged by that.
         hot = self.snapshot(claude_percent=90.0)
         seats = [{"agent": "claude", "model": "", "role": "engineer",

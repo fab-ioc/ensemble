@@ -10954,14 +10954,22 @@ def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
                    and w.get("percent") is not None
                    and not w.get("rolledOver") and not w.get("resetUnknown")), None)
     if window is None:
-        return {"state": "unknown", **named}
+        undated = any(w.get("kind") == "seven_day"
+                      and not (pool and (w.get("pool") or usage.CODEX_MAIN_POOL) != pool["id"])
+                      and w.get("percent") is not None and not w.get("rolledOver")
+                      and (w.get("resetUnknown") or not w.get("resetsAt"))
+                      for w in source.get("windows") or [])
+        return {"state": "unknown", **named,
+                "why": "reset time unknown" if undated else "no current 7-day reading"}
     now = time.time() if now is None else now
     mark = usage.pace_mark(window.get("resetsAt"), now, margin, warn)
     if mark is None:
-        return {"state": "unknown", **named}
+        return {"state": "unknown", **named, "why": "reset time unknown"}
     end, how = usage._reset_epoch(window.get("resetsAt"))
     if how != "ok" or end is None or end <= now:
-        return {"state": "unknown", **named}
+        return {"state": "unknown", **named,
+                "why": "week already reset" if end is not None and end <= now
+                       else "reset time unknown"}
     hours_to_reset = (end - now) / 3600
     percent = float(window["percent"])
     return {"state": "known", **named, "percent": window["percent"],
@@ -11472,12 +11480,16 @@ def _review_cross_check(decision: dict, owner_kind: str, current_kind: str,
         return decision
     reading = decision["figures"].get(opposite, {})
     other_pace = (decision.get("pace") or {}).get("kinds", {}).get(opposite, {})
+    enabled = bool(decision["pace"]["enabled"])
+    limit = (decision["alarmPercent"] if (decision.get("nearReset") or {}).get(opposite)
+             else decision["warnPercent"])
     within = (installed(opposite) and reading.get("state") == "known"
-              and float(reading["percent"]) < float(decision["warnPercent"])
-              and decision["pace"]["enabled"] and other_pace.get("state") == "known"
-              and not other_pace["ahead"])
+              and (float(reading["percent"]) < float(decision["warnPercent"])
+                   and other_pace.get("state") == "known" and not other_pace["ahead"]
+                   if enabled else float(reading["percent"]) < float(limit)))
     if within:
-        return {**decision, "chosenKind": opposite, "decision": "cross_check",
+        return {**decision, "chosenKind": opposite,
+                "decision": "cross_check" if enabled else "cross_check_pacing_off",
                 "changed": opposite != current_kind}
     owner_reading = decision["figures"].get(owner_kind, {})
     if (installed(owner_kind) and owner_reading.get("state") == "known"
@@ -11489,6 +11501,8 @@ def _review_cross_check(decision: dict, owner_kind: str, current_kind: str,
             code = "review_owner_warning"
         elif other_pace.get("state") == "known" and other_pace.get("ahead"):
             code = "review_owner_pace"
+        elif not enabled:
+            code = "review_owner_pacing_off"
         else:
             code = "review_owner_unknown_pace"
         return {**decision, "chosenKind": owner_kind, "decision": code,
@@ -11547,10 +11561,15 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
         source = (decision.get("pace") or {}).get("planSources", {}).get(chosen_kind)
         plan_note = f" ({plan}; {source})" if plan and source else f" ({plan})" if plan else ""
         return (f"Reviewer {action} {chosen_name}, different from owner {owner_name}: "
-                f"{_usage_reason_phrase(chosen_kind, figures.get(chosen_kind, {}))}{plan_note} "
+                f"{chosen_name} 7-day window at {float(reading['percent']):g}%{plan_note} "
                 f"is within its {float(reading.get('pace') or 0):g}% pace line and below "
                 f"the {float(warn):g}% warning; a fresh review session cross-checks "
                 "the owner's work.")
+    if code == "cross_check_pacing_off":
+        return (f"Reviewer {action} {chosen_name}, different from owner {owner_name}: "
+                f"weekly pacing is off and {_usage_reason_phrase(chosen_kind, figures.get(chosen_kind, {}))} "
+                f"is below {_limit_phrase(decision, chosen_kind)}; a fresh review session "
+                "cross-checks the owner's work.")
     if code.startswith("review_owner_"):
         opposite = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
         plan = (decision.get("pace") or {}).get("planLabels", {}).get(opposite)
@@ -11564,9 +11583,15 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
             why = _pace_reason_phrase(opposite, paced.get(opposite, {}))
         elif code == "review_owner_unavailable":
             why = f"{_agent_kind_name(opposite)} is not installed"
+        elif code == "review_owner_pacing_off":
+            why = (f"{_agent_kind_name(opposite)} is not below its allowance limit"
+                   if other_reading.get("state") == "known" else
+                   f"{_agent_kind_name(opposite)} has no known allowance reading")
         else:
-            why = f"{_agent_kind_name(opposite)} has no known pace"
-        return (f"Reviewer {action} {chosen_name}, the owner's kind: {why}{plan_note}; "
+            why = (f"{_agent_kind_name(opposite)} has "
+                   f"{paced.get(opposite, {}).get('why', 'no dated weekly pace reading')}")
+        pace_note = "weekly pacing is off; " if not (decision.get("pace") or {}).get("enabled") else ""
+        return (f"Reviewer {action} {chosen_name}, the owner's kind: {pace_note}{why}{plan_note}; "
                 "a fresh review session runs on the owner's kind.")
     if code in ("switch_balance", "switch_reset", "preferred_within_margin",
                 "preferred_more_room", "preferred_reset"):

@@ -396,7 +396,7 @@ class AllocationTests(unittest.TestCase):
         chosen = chatroom.participant(saved, reviewer["identity"])
         self.assertEqual((chosen["agent"], chosen["model"]), ("claude", ""))
         self.assertTrue(review["allocation"]["changed"])
-        self.assertIn("no known pace", review["allocation"]["reason"])
+        self.assertIn("no current 7-day reading", review["allocation"]["reason"])
 
     def test_review_keeps_cross_check_when_owner_has_more_pace_room(self):
         room = self.room([
