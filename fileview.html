@@ -893,6 +893,9 @@ function mdLinkHtml(m, txt, target) {
 function codeSpanHtml(body) {
   const code = `<code class="ic">${esc(body)}</code>`;
   const t = body.trim();
+  // A task reference and nothing else is the task's chip (the page's taskCodeHtml, #202).
+  const chip = typeof taskCodeHtml === 'function' ? taskCodeHtml(t) : null;
+  if (chip) return chip;
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
   if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code, 'code');
   if (looksFilePath(t, true) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
@@ -1236,12 +1239,8 @@ function mdToHtml(src) {
   // the hub answers). A number that names no task stays text.
   // A bare number right after another project's name is that project's (#156).
   s = TaskCard.replaceRefs(s, TASK_REFS.ctx(''), r => {
-    const { t, assumed } = TASK_REFS.resolve(r, '');
-    if (t.state !== 'ok') return null;
-    const w = String(r.who || '').toLowerCase();
-    const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
-      || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
-    return ph(TaskCard.chipHtml(t, { key: r.key, agent: agent ? agent.identity : '', assumed }));
+    const h = taskChipHtml(r);
+    return h ? ph(h) : null;
   });
   s = esc(s);
 
@@ -1762,6 +1761,23 @@ document.addEventListener('click', ev => {
 // the file is drawn again when an answer comes.
 let FV_PAINT = null;
 const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => { if (FV_PAINT) FV_PAINT(); } });
+// A task named in the text: its chip once the hub has answered; a room id the
+// hub has no task for says so in its card; the title the text quotes after
+// "task #200" goes with the chip (#202).
+function taskChipHtml(r) {
+  const { t, assumed } = TASK_REFS.resolve(r, '');
+  if (r.room && t.state === 'gone') return TaskCard.goneHtml(r);
+  if (t.state !== 'ok') return null;
+  const w = String(r.who || '').toLowerCase();
+  const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
+    || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+  return TaskCard.chipHtml(t, { key: r.key, agent: agent ? agent.identity : '', assumed, title: r.title });
+}
+// A code span that is a task reference and nothing else is its chip.
+function taskCodeHtml(body) {
+  const r = TaskCard.codeRef(body, TASK_REFS.ctx(''));
+  return r ? taskChipHtml(r) : null;
+}
 TaskCard.init({ open: openTaskFrom });
 // The Workspace's Recent shortcut (Alt+R, ⌥R on a Mac: index.html's
 // wsIsRecentKey) works while reading a file there too: the Workspace hears it.

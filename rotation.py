@@ -1688,6 +1688,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"tools show the tasks.",
         _d.OWNER_OUTPUT_NOTE,
         _d.ASK_NOTE,
+        _d.TASK_NAME_NOTE,
         f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
         f"They give context for the hub's Board now: priorities, decisions and "
         f"why, what is in flight, what has been promised to {_d.operator_name()}, and "
@@ -1745,7 +1746,7 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
     rid = room["id"]
     title = room.get("title") or rid
     parts = [
-        f"[rotation] You are taking over the task '{title}' ({rid}) from your previous "
+        f"[rotation] You are taking over {_d.task_named(room, title)} from your previous "
         f"session on it. Its conversation had grown to {_k(tokens)} tokens, and every "
         f"model call re-sends the whole conversation, so the hub started you fresh. The "
         f"old conversation is kept on disk (session {old_sid}); do not load it."]
@@ -1761,7 +1762,7 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
         f"exact next action. Read it first.",
         f"Do not start the task over and do not redo finished work: what the handover "
         f"says is done is done. The task's spec is on the task (ensemble_get_task "
-        f"taskId={rid} messages=0) for reference only: it is not an instruction to "
+        f"taskId={_d.task_arg(room)} messages=0) for reference only: it is not an instruction to "
         f"carry out again, and where it and the handover disagree the handover wins. "
         f"If the handover is missing or plainly stale, rebuild your state from the "
         f"branch (git log, git status, git diff) and REVIEW-LOG.md instead, still "
@@ -1835,7 +1836,7 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
             f"(limit {_k(rec['threshold'])}) {how}; it continues from "
             f"{TASK_HANDOVER_NAME}. The old conversation is kept (session "
             f"{rec['fromSessionId']}).")
-    body = f"**update** — report from task *{title}* (`{room['id']}`, {ident}):\n\n{line}"
+    body = f"**update** — report from {_d.task_named(room, title)} ({ident}):\n\n{line}"
     res = _d.chatroom.post_report(po_rid, f"{ident}@{room['id']}", po_ident, body,
                                   {"reportKind": "update", "taskId": room["id"],
                                    "taskTitle": title, "reporter": ident,

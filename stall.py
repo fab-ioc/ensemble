@@ -223,7 +223,7 @@ def _words(room: dict, rec: dict, now: float) -> tuple[str, str, str]:
     """(label, idle since, nudged at) as the PO is told them."""
     since = time.strftime("%H:%M", time.localtime(float(rec.get("idleSince") or now)))
     nudged = time.strftime("%H:%M", time.localtime(float(rec.get("nudgedAt") or now)))
-    return _d.task_label(room) or room.get("id", ""), since, nudged
+    return _d.task_word(room), since, nudged
 
 
 def _post_po(room: dict, rec: dict, now: float) -> bool:
@@ -239,7 +239,7 @@ def _post_po(room: dict, rec: dict, now: float) -> bool:
     body = (f"**{label} stalled since {since}** — {title}\n\n"
             f"Its owner is idle with nothing open: no question, block or report "
             f"waiting, no review running. The hub nudged it at {nudged} and it did "
-            f"not carry on. Look at it (`ensemble_get_task {label}`) and steer it, "
+            f"not carry on. Look at it (`ensemble_get_task {_d.task_arg(room)}`) and steer it, "
             f"or stop it.")
     return bool(cr.post_report(po, SENDER, ident, body,
                                {"reportKind": "digest", "stalledTask": room.get("id", "")}, wake=False))
@@ -266,7 +266,7 @@ def _wake_po(room: dict, rec: dict, now: float) -> bool:
                      if (p.get("poRoomId") or "") == po), "")
         wake = (f"[digest] {proj or 'Your project'}: {label} stalled since {since} — its "
                 f"owner is idle with nothing open and did not carry on after the hub's "
-                f"nudge at {nudged}. Details with ensemble_get_task {label}.")
+                f"nudge at {nudged}. Details with ensemble_get_task {_d.task_arg(room)}.")
         return _d._type_input(sess, wake)
 
 
@@ -441,7 +441,7 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         return ""
     if max(float(rec.get("toldAt") or 0), float(rec.get("lastToldAt") or 0)) >= since:
         return ""                       # the idle nudge already told the PO
-    label = _d.task_label(room) or rid
+    label = _d.task_word(room)
     at = time.strftime("%H:%M", time.localtime(since))
     did = ""
     if not srec.get("toldAt"):
@@ -453,14 +453,14 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
                 f"Its owner has produced nothing for {int(quiet // 60)} min: no transcript "
                 f"growth, no hook event, no screen change, no commit, and nothing excuses "
                 f"it (no background run, review or open ask). Look at it "
-                f"(`ensemble_get_task {label}`) and steer it, or stop it.")
+                f"(`ensemble_get_task {_d.task_arg(room)}`) and steer it, or stop it.")
         if not cr.post_report(po, SENDER, cr.po_identity(po_room), body,
                               {"reportKind": "digest", "silentTask": rid}, wake=False):
             return ""
         srec["toldAt"] = now
         did = "PO told (silent)"
     wake = (f"[digest] {label} silent since {at}: its owner has produced nothing for "
-            f"{int(quiet // 60)} min with nothing open. Details with ensemble_get_task {label}.")
+            f"{int(quiet // 60)} min with nothing open. Details with ensemble_get_task {_d.task_arg(room)}.")
     if _type_po(room, wake):
         srec["wokeAt"] = now
         return (did + ", woken") if did else "PO woken (silent)"
@@ -545,7 +545,7 @@ def _look_limit(rid: str, now: float) -> str:
                 failed = f" Its review {rev.get('n') or ''} ended as failed.".replace("  ", " ")
             except Exception as e:          # noqa: BLE001
                 _log(f"{rid}: cannot end the review of {ident}: {str(e)[:120]}")
-        label = _d.task_label(room) or rid
+        label = _d.task_word(room)
         po = _d.room_po_id(room)
         until = float(rec.get("until") or hit.get("resetAt") or 0) or \
             float(hit["at"]) + ml.CLEAR_AFTER_S
@@ -588,7 +588,7 @@ def _look_limit(rid: str, now: float) -> str:
         else:
             news = bool(failed)
         wake = (f"[digest] {label} {ident} is {words}: its turn ended on "
-                f"“{hit.get('line', '')[:120]}”. Details with ensemble_get_task {label}.")
+                f"“{hit.get('line', '')[:120]}”. Details with ensemble_get_task {_d.task_arg(room)}.")
         if _type_po(room, wake):
             old["wokeAt"] = now
             news = True

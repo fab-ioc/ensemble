@@ -89,7 +89,7 @@ def _tasks(d, project):
                 counts[ref] = ahead
     running, done, drafts = [], [], []
     for room in rooms:
-        name = f"{d.task_label(room) or room['id']} {_short(d.ensemble_tools._title(room, labels), 100)}"
+        name = " ".join(x for x in (d.task_label(room), _short(d.ensemble_tools._title(room, labels), 100)) if x)
         if not room.get('launched', True):
             gate = room.get('after')
             if isinstance(gate, list):

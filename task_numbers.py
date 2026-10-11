@@ -30,8 +30,12 @@ _REF = re.compile(r"^#?(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})$" % (KEY_MAX -
 # ED-18 on its own (its key in capitals, as the hub writes it: #156). Not in
 # a word, a path or a URL fragment (page#18), and not an HTML entity (&#18;).
 # Groups: the agent, the key after # or @, the key of the bare form, the number.
-TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)"
-                      r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?|([A-Z][A-Z0-9]{0,%d})-)(\d{1,6})(?![\w-])" % (KEY_MAX - 1, KEY_MAX - 1))
+# A number never starts with 0 (S-03 is a rule, not a task); after a slash it
+# is one only in a list of numbers (#140/#142), never in a path
+# (Documents/#30): all_text_refs checks that (#202).
+TEXT_REF = re.compile(r"(?<![\w&#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)"
+                      r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?|([A-Z][A-Z0-9]{0,%d})-)(?!0)(\d{1,6})(?![\w-])" % (KEY_MAX - 1, KEY_MAX - 1))
+_AFTER_SLASH_OK = re.compile(r"#\d{1,6}/\Z")
 # A bare #12 right after one of these words is someone else's number (a pull
 # request, an issue, a review finding), not a task: "PR #12", "fixes #34".
 # ED-12 and @codex@12 are always tasks.
@@ -328,6 +332,9 @@ def all_text_refs(text: str, ctx: dict | None = None) -> list[dict]:
     by_key = {p["key"]: p["id"] for p in (ctx or {}).get("projects") or [] if p.get("key")}
     for m in TEXT_REF.finditer(plain):
         key, no = (m.group(2) or m.group(3) or "").upper(), int(m.group(4))
+        if m.start() and plain[m.start() - 1] == "/" and not (
+                m.group(0)[0] == "#" and _AFTER_SLASH_OK.search(plain[max(0, m.start() - 8):m.start()])):
+            continue
         if not m.group(1) and not key and NOT_TASK_BEFORE.search(plain[max(0, m.start() - 40):m.start()]):
             continue
         if m.group(3) and ctx and key not in by_key:

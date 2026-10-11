@@ -705,9 +705,8 @@ def _tell(room: dict, items: list[dict]) -> None:
     po_rid = (project or {}).get("poRoomId") or ""
     if not po_rid or po_rid == rid:
         return
-    no = room.get("no")
     first = " ".join(items[0]["text"].split())[:160]
-    text = (f"A message the person sent to {'#' + str(no) if no else room.get('title') or rid} "
+    text = (f"A message the person sent to {_d.task_named(room)} "
             f"was not taken in by its agent, even typed a second time: “{first}”"
             + (f" and {len(items) - 1} more" if len(items) > 1 else "")
             + ". It shows as not delivered there, with Retry.")

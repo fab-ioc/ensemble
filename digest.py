@@ -313,7 +313,7 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     return {
         "id": room["id"],
         # How the digest names it: its number, else its id.
-        "label": _d.task_label(room) or room["id"],
+        "label": _d.task_label(room),
         "title": et._title(room, labels),
         "status": et._status(room),
         "column": _d.workflow_of(room),
@@ -420,7 +420,7 @@ def told_baseline(before: dict, tasks: list[dict]) -> dict:
         now = t.get("attention") or ""
         if _told(old)[0] == "blocked" and now not in _PROBLEMS and t.get("ask") == "blocked":
             now = "blocked"         # still told as blocked: its end is news later
-        out[t["id"]] = {**_stable(t), "label": t.get("label") or t["id"],
+        out[t["id"]] = {**_stable(t), "label": t.get("label") or "",
                         "toldAttention": now,
                         "toldWaiting": _mark(t) if now == _WAITING else _told(old)[1]}
     return out
@@ -469,7 +469,7 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         now_ids.add(t["id"])
         old = before.get(t["id"])
         if old is None:
-            changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
+            changes.append({"id": t["id"], "label": t.get("label") or "", "title": t["title"],
                             "what": ["new task"], "finished": False, "wakes": _wakes(t)})
             continue
         what, finished, wakes = [], False, False
@@ -496,11 +496,11 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
             what.append(f"reported {t['reportKind']}")
             finished |= t["reportKind"] == "completed"
         if what:
-            changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
+            changes.append({"id": t["id"], "label": t.get("label") or "", "title": t["title"],
                             "what": what, "finished": finished, "wakes": wakes})
     for tid, old in before.items():
         if tid not in now_ids:
-            changes.append({"id": tid, "label": old.get("label") or tid, "title": old.get("title", tid),
+            changes.append({"id": tid, "label": old.get("label") or "", "title": old.get("title", ""),
                             "what": ["no longer in this project"], "finished": False, "wakes": False})
     return changes
 
@@ -525,11 +525,12 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
     when = time.strftime("%H:%M", time.localtime(since)) if since else "the start"
     lines = [f"Project '{project.get('name', project['id'])}' — changes since {when}:"]
     fin = [c for c in changes if c["finished"]]
-    name = lambda x: x.get("label") or x["id"]
+    # A task is named by its number, title after it (P166); never by its room id.
+    name = lambda x: " ".join(v for v in (x.get("label") or "", x.get("title") or "") if v)
     if fin:
-        lines.append("Finished: " + "; ".join(f"{c['title']} ({name(c)})" for c in fin))
+        lines.append("Finished: " + "; ".join(name(c) for c in fin))
     for c in changes:
-        lines.append(f"- {c['title']} ({name(c)}): " + ", ".join(c["what"]))
+        lines.append(f"- {name(c)}: " + ", ".join(c["what"]))
     changed_ids = {c["id"] for c in changes}
     quoted = changed_ids if reported is None else reported
     open_ =[t for t in tasks if t["column"] != "done" or t["id"] in changed_ids]
@@ -564,7 +565,7 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
         # An update (a rotation, a handover) is never mentioned.
         if t["reportKind"] not in ("", "update") and t["id"] in quoted:
             bits.append(f"report ({t['reportKind']}): {t['reportText']}")
-        lines.append(f"- {t['title']} ({name(t)}): " + "; ".join(bits))
+        lines.append(f"- {name(t)}: " + "; ".join(bits))
     return "\n".join(lines)
 
 
@@ -580,8 +581,8 @@ _PROMPT = (
     "the facts say its work is merged, and never write that work is awaiting a "
     "merge, a hub restart or a deploy unless the facts say so. Lead with what "
     "finished or changed since the last digest, then call out any task that "
-    "needs attention and why. Name tasks by title with their number (#18) "
-    "or id in parentheses, as the facts give it. Plain text, at most 8 short lines, no headings, no greeting, "
+    "needs attention and why. Name each task by its number as the facts give "
+    "it (#18), its title after the number; never by a room id. Plain text, at most 8 short lines, no headings, no greeting, "
     "no closing remarks.\n\nFacts:\n"
 )
 
