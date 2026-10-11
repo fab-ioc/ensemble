@@ -173,8 +173,11 @@ class ClaudeReadingTests(unittest.TestCase):
             usage.refresh()
             usage.snapshot()
         self.assertIn("claude-rate-limits.json", opened)   # the spy saw the reads
-        self.assertNotIn(".credentials.json", opened)
-        self.assertNotIn("auth.json", opened)
+        # Plan tier detection reads local credentials on refresh, but the
+        # returned cache contains labels and weights only.
+        self.assertIn(".credentials.json", opened)
+        self.assertIn("auth.json", opened)
+        self.assertNotIn("id_token", str(usage.snapshot()))
 
     def test_the_sign_in_file_and_the_endpoint_are_gone_from_the_module(self):
         for name in ("CREDENTIALS", "USAGE_URL", "read_claude_endpoint", "_access_token",

@@ -27,8 +27,10 @@ LOCAL = timezone(timedelta(hours=2))
 # A Codex week that resets on 10-07 07:04 local, so it began on 09-30 07:04.
 CODEX_RESET = datetime(2026, 10, 7, 7, 4, tzinfo=LOCAL)
 WEEK_START = (CODEX_RESET - timedelta(days=7)).timestamp()
-PACE_ON = {"enabled": True, "margin": 15}
-PACE_OFF = {"enabled": False, "margin": 15}
+PACE_ON = {"enabled": True, "margin": 15, "hysteresis": 25,
+           "weights": {"claude": 20, "codex": 5}}
+PACE_OFF = {"enabled": False, "margin": 15, "hysteresis": 25,
+            "weights": {"claude": 20, "codex": 5}}
 
 
 class _FakeAgent:
@@ -116,45 +118,43 @@ class TheSeatChoice(unittest.TestCase):
         return dashboard.choose_agent_kind_for_seat(
             preferred, snap, installed=lambda k: True, pace=pace, now=self.NOW, **kw)
 
-    def test_only_the_preferred_kind_ahead_switches(self):
+    def test_weighted_capacity_can_switch_an_ahead_preferred_kind(self):
         d = self.choose(_snap(30, 52))
-        self.assertEqual((d["chosenKind"], d["decision"], d["changed"]), ("claude", "switch_pace", True))
+        self.assertEqual((d["chosenKind"], d["decision"], d["changed"]), ("claude", "switch_balance", True))
         self.assertTrue(d["pace"]["kinds"]["codex"]["ahead"])
         self.assertEqual(dashboard._pace_reason_phrase("codex", d["pace"]["kinds"]["codex"]),
                          "Codex 7-day window at 52%, ahead of pace (43.6% by today)")
 
-    def test_only_the_other_kind_ahead_keeps_the_preferred(self):
+    def test_larger_plan_can_win_despite_being_ahead(self):
         d = self.choose(_snap(52, 30))
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_more_room"))
+        self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "switch_balance"))
 
-    def test_both_ahead_chooses_the_one_less_far_ahead(self):
+    def test_both_ahead_use_weighted_capacity(self):
         d = self.choose(_snap(50, 70))
-        self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "both_ahead_of_pace"))
+        self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "switch_balance"))
         d = self.choose(_snap(70, 50))
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "both_ahead_of_pace"))
-        # A tie keeps the preferred kind; pacing never refuses a seat.
+        self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "switch_balance"))
         d = self.choose(_snap(60, 60))
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_within_margin"))
+        self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "switch_balance"))
 
-    def test_both_behind_choose_more_room_over_the_margin(self):
-        d = self.choose(_snap(30, 5), preferred="claude")
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "switch_balance"))
-        self.assertIn("Codex 5% of its week used against 43.6% pace",
-                      dashboard._balance_reason(d))
-        self.assertIn("Claude 30% of its week used against 43.6% pace",
-                      dashboard._balance_reason(d))
+    def test_both_behind_choose_more_capacity_per_hour(self):
+        d = self.choose(_snap(30, 5), preferred="codex")
+        self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "switch_balance"))
+        self.assertIn("5x weight", dashboard._balance_reason(d))
+        self.assertIn("20x weight", dashboard._balance_reason(d))
         lineup = [{"agent": "claude", "role": "engineer"},
                   {"agent": "codex", "role": "reviewer"}]
         _, allocation = dashboard.choose_first_launch_allocation(
             lineup, _snap(30, 5), installed=lambda k: True, pace=PACE_ON, now=self.NOW)
-        self.assertIn("Codex 5% of its week used against 43.6% pace", allocation["reason"])
-        self.assertIn("Claude 30% of its week used against 43.6% pace", allocation["reason"])
+        self.assertIn("units/h", allocation["reason"])
+        self.assertIn("to warning", allocation["reason"])
 
     def test_small_difference_keeps_preferred(self):
-        d = self.choose(_snap(20, 15), preferred="claude")
+        d = self.choose(_snap(20, 15), preferred="claude",
+                        pace={**PACE_ON, "weights": {"claude": 1, "codex": 1}})
         self.assertEqual((d["chosenKind"], d["decision"]),
                          ("claude", "preferred_within_margin"))
-        self.assertIn("10-point margin", dashboard._balance_reason(d))
+        self.assertIn("25% higher", dashboard._balance_reason(d))
 
     def test_pacing_off_keeps_the_old_rule(self):
         d = self.choose(_snap(30, 52), pace=PACE_OFF)
@@ -197,12 +197,11 @@ class TheSeatChoice(unittest.TestCase):
                   {"agent": "claude", "model": "", "role": "reviewer"}]
         chosen, alloc = dashboard.choose_first_launch_allocation(
             lineup, _snap(30, 52), installed=lambda k: True, pace=PACE_ON, now=self.NOW)
-        self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
+        self.assertEqual([s["agent"] for s in chosen], ["claude", "claude"])
         self.assertTrue(alloc["changed"])
-        self.assertIn("Owner switched to Claude: Codex 7-day window at 52%, ahead of pace "
-                      "(43.6% by today), while Claude 7-day window at 30%, within pace",
-                      alloc["reason"])
-        self.assertEqual(alloc["usage"]["decision"], "switch_pace")
+        self.assertIn("Owner switched to Claude:", alloc["reason"])
+        self.assertIn("units/h", alloc["reason"])
+        self.assertEqual(alloc["usage"]["decision"], "switch_balance")
         chosen, alloc = dashboard.choose_first_launch_allocation(
             lineup, _snap(30, 52), installed=lambda k: True, pace=PACE_ON, now=self.NOW,
             keep_agents=True)
@@ -236,7 +235,7 @@ class TheSeatChoice(unittest.TestCase):
                                               {"agent": "codex", "model": ""}, snap,
                                               installed=lambda k: True)
         self.assertEqual((moved["agent"], moved["changed"]), ("claude", True))
-        self.assertIn("ahead of pace", moved["reason"])
+        self.assertIn("units/h", moved["reason"])
         self.assertEqual((kept["agent"], kept["changed"]), ("codex", False))
         self.assertIn("keeps its agents", kept["reason"])
 
@@ -267,11 +266,11 @@ class TheReplayOf0930(unittest.TestCase):
             rows.append((f"{h:02}:{m:02}", codex, on["pace"]["kinds"]["codex"]["pace"],
                          on["chosenKind"], on["decision"], off["chosenKind"]))
         self.assertEqual([(r[0], r[3], r[4]) for r in rows], [
-            ("07:04", "codex", "preferred_within_margin"),  # same room within margin
+            ("07:04", "claude", "switch_balance"),
             ("08:00", "claude", "switch_balance"),         # more room on Claude
-            ("09:00", "claude", "switch_pace"),              # 27% past 16.2%
-            ("10:00", "claude", "switch_pace"),
-            ("11:00", "claude", "switch_pace"),
+            ("09:00", "claude", "switch_balance"),
+            ("10:00", "claude", "switch_balance"),
+            ("11:00", "claude", "switch_balance"),
             ("15:00", "claude", "switch_warning"),           # the 80% rule, as before
         ])
         # Without pacing, Codex took every seat until it reached the warning.
@@ -314,15 +313,16 @@ class TheSettingsRoundTrip(unittest.TestCase):
 
     def test_defaults_then_saved_then_read_back(self):
         got = self.call("GET", "/api/settings")
-        self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceMarginPoints"]),
-                         (True, 15, 10))
+        self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceHysteresisPercent"]),
+                         (True, 15, 25))
         self.call("PUT", "/api/settings", {"paceWeek": False, "paceMarginPoints": 20,
-                                             "balanceMarginPoints": 8})
+                                             "balanceHysteresisPercent": 8})
         got = self.call("GET", "/api/settings")
-        self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceMarginPoints"]),
+        self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceHysteresisPercent"]),
                          (False, 20, 8))
-        self.assertEqual(dashboard.pace_settings(),
-                         {"enabled": False, "margin": 20.0, "balanceMargin": 8.0})
+        cfg = dashboard.pace_settings({"plans": {}})
+        self.assertEqual((cfg["enabled"], cfg["margin"], cfg["hysteresis"]),
+                         (False, 20.0, 8.0))
         saved = json.loads(dashboard.SETTINGS_FILE.read_text(encoding="utf-8"))
         self.assertEqual((saved["paceWeek"], saved["paceMarginPoints"]), (False, 20))
 
@@ -334,16 +334,26 @@ class TheSettingsRoundTrip(unittest.TestCase):
         for bad in ("lots", None, True, [3]):
             self.call("PUT", "/api/settings", {"paceMarginPoints": bad})
         self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 12.5)
-        self.call("PUT", "/api/settings", {"balanceMarginPoints": 200})
-        self.assertEqual(self.call("GET", "/api/settings")["balanceMarginPoints"], 100)
-        self.call("PUT", "/api/settings", {"balanceMarginPoints": 9})
+        self.call("PUT", "/api/settings", {"balanceHysteresisPercent": 200})
+        self.assertEqual(self.call("GET", "/api/settings")["balanceHysteresisPercent"], 100)
+        self.call("PUT", "/api/settings", {"balanceHysteresisPercent": 9})
         for bad in ("lots", None, True, [3]):
-            self.call("PUT", "/api/settings", {"balanceMarginPoints": bad})
-        self.assertEqual(self.call("GET", "/api/settings")["balanceMarginPoints"], 9)
+            self.call("PUT", "/api/settings", {"balanceHysteresisPercent": bad})
+        self.assertEqual(self.call("GET", "/api/settings")["balanceHysteresisPercent"], 9)
+
+    def test_plan_weight_override_is_optional(self):
+        self.call("PUT", "/api/settings", {"claudePlanWeight": 30, "codexPlanWeight": 5})
+        got = self.call("GET", "/api/settings")
+        self.assertEqual((got["claudePlanWeight"], got["codexPlanWeight"]), (30, 5))
+        self.call("PUT", "/api/settings", {"claudePlanWeight": ""})
+        self.assertEqual(self.call("GET", "/api/settings")["claudePlanWeight"], "")
+        self.call("PUT", "/api/settings", {"codexPlanWeight": 10000})
+        self.assertEqual(self.call("GET", "/api/settings")["codexPlanWeight"], 1000)
 
     def test_usage_carries_each_kind_s_pace_mark(self):
         snap = _snap(30, 52)
-        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap), \
+                mock.patch.object(dashboard.time, "time", return_value=WEEK_START + 2 * DAY):
             got = self.call("GET", "/api/usage")
         self.assertTrue(got["pace"]["enabled"])
         self.assertEqual(set(got["pace"]["kinds"]), {"claude", "codex"})

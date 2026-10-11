@@ -102,7 +102,7 @@ class AllocationTests(unittest.TestCase):
         chatroom.update_room(room)
         return room
 
-    def test_preference_is_kept_below_warning(self):
+    def test_unknown_review_pace_uses_owner_kind(self):
         room = self.room([
             {"agent": "claude", "model": "opus", "role": "engineer"},
             {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
@@ -114,8 +114,8 @@ class AllocationTests(unittest.TestCase):
 
         saved = chatroom.get_room(room["id"], public=False)
         self.assertEqual([p["agent"] for p in chatroom.agent_participants(saved)],
-                         ["claude", "codex"])
-        self.assertFalse(saved["allocation"]["changed"])
+                         ["claude", "claude"])
+        self.assertTrue(saved["allocation"]["changed"])
         self.assertEqual(saved["allocation"]["usage"]["kinds"]["claude"]["percent"], 55)
 
     def test_launch_reviewer_cross_checks_even_when_lineup_names_owner_kind(self):
@@ -132,7 +132,7 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual([s["agent"] for s in chosen["chosen"]], ["claude", "codex"])
         self.assertIn("cross-check", chosen["reason"])
         self.assertIn("Codex 7-day window at 30%", chosen["reason"])
-        self.assertIn("Claude 7-day window at 10%", chosen["reason"])
+        self.assertIn("within its", chosen["reason"])
 
     def test_swap_at_warning_uses_alternative_model_and_default(self):
         room = self.room([
@@ -150,12 +150,12 @@ class AllocationTests(unittest.TestCase):
         chosen = saved["allocation"]["chosen"]
         self.assertEqual([(s["agent"], s["model"], s["role"]) for s in chosen], [
             ("codex", "gpt-owner", "engineer"),
-            ("claude", "", "reviewer"),
+            ("codex", "gpt-review", "reviewer"),
         ])
         self.assertTrue(saved["allocation"]["changed"])
-        self.assertEqual(saved["allocation"]["reason"],
-                         "Owner switched to Codex: Claude 5-hour window at 80%.")
-        self.assertEqual(saved["tokens"], original_tokens)
+        self.assertIn("Owner switched to Codex: Claude 5-hour window at 80%.",
+                      saved["allocation"]["reason"])
+        self.assertEqual(len(saved["tokens"]), len(original_tokens))
         self.assertEqual(chatroom.owners(saved), ["codex"])
         reviewer = next(p for p in chatroom.agent_participants(saved)
                         if p["role"] == "reviewer")
@@ -331,7 +331,9 @@ class AllocationTests(unittest.TestCase):
         reviewer = next(p for p in chatroom.agent_participants(room)
                         if p["role"] == "reviewer")
         identity = reviewer["identity"]
-        snap = _snapshot([_window("five_hour", 25)], [_window("five_hour", 20)])
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("five_hour", 25)],
+                         [_window("five_hour", 20), _window("seven_day", 20, resets_at=reset)])
         handler = _FakeHandler()
 
         with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
@@ -355,10 +357,15 @@ class AllocationTests(unittest.TestCase):
         reviewer = next(p for p in chatroom.agent_participants(room)
                         if p["role"] == "reviewer")
         identity = reviewer["identity"]
+        owner = next(p for p in chatroom.agent_participants(room)
+                     if p["role"] == "engineer")
+        owner["sessionId"] = "owner-session"
+        chatroom.update_room(room)
         snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 82)])
 
+        handler = _FakeHandler()
         with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
-            _FakeHandler()._start_review(
+            handler._start_review(
                 room["id"], identity,
                 {"id": "msg-2", "from": "claude", "text": "Please review."})
 
@@ -367,8 +374,10 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual((chosen["identity"], chosen["agent"], chosen["model"]),
                          (identity, "claude", ""))
         self.assertIn("the owner's kind", saved["reviewAllocations"][-1]["reason"])
+        self.assertEqual(handler.launched[0][1], "claude")
+        self.assertNotEqual(chosen["sessionId"], "owner-session")
 
-    def test_unknown_review_reading_keeps_current_reviewer(self):
+    def test_unknown_review_reading_uses_owner_kind(self):
         room = self.room([
             {"agent": "claude", "model": "opus", "role": "engineer"},
             {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
@@ -385,9 +394,9 @@ class AllocationTests(unittest.TestCase):
 
         saved = chatroom.get_room(room["id"], public=False)
         chosen = chatroom.participant(saved, reviewer["identity"])
-        self.assertEqual((chosen["agent"], chosen["model"]), ("codex", "gpt-review"))
-        self.assertFalse(review["allocation"]["changed"])
-        self.assertIn("unavailable", review["allocation"]["reason"])
+        self.assertEqual((chosen["agent"], chosen["model"]), ("claude", ""))
+        self.assertTrue(review["allocation"]["changed"])
+        self.assertIn("no known pace", review["allocation"]["reason"])
 
     def test_review_keeps_cross_check_when_owner_has_more_pace_room(self):
         room = self.room([
@@ -405,8 +414,8 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual((allocation["chosen"]["agent"], allocation["usage"]["decision"]),
                          ("codex", "cross_check"))
         self.assertIn("cross-check", allocation["reason"])
-        self.assertIn("Codex 30% of its week used against", allocation["reason"])
-        self.assertIn("Claude 5% of its week used against", allocation["reason"])
+        self.assertIn("Codex 7-day window at 30%", allocation["reason"])
+        self.assertIn("within its", allocation["reason"])
 
     def test_failed_review_reading_keeps_current_reviewer_and_launches(self):
         room = self.room([
@@ -452,7 +461,9 @@ class AllocationTests(unittest.TestCase):
         ], launched=True)
         reviewer = next(p for p in chatroom.agent_participants(room)
                         if p["role"] == "reviewer")
-        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("five_hour", 20)],
+                         [_window("five_hour", 15), _window("seven_day", 15, resets_at=reset)])
 
         def installed_agent(kind):
             return _FakeAgent(kind) if kind == "claude" else None
@@ -473,7 +484,9 @@ class AllocationTests(unittest.TestCase):
         ], launched=True)
         reviewer = next(p for p in chatroom.agent_participants(room)
                         if p["role"] == "reviewer")
-        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("five_hour", 20)],
+                         [_window("five_hour", 15), _window("seven_day", 15, resets_at=reset)])
 
         with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
             for _ in range(23):
@@ -509,7 +522,9 @@ class AllocationTests(unittest.TestCase):
         ], launched=True)
         reviewer = chatroom.agent_participants(room)[0]
         identity = reviewer["identity"]
-        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("five_hour", 20)],
+                         [_window("five_hour", 15), _window("seven_day", 15, resets_at=reset)])
 
         with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
             room, reviewer, first = dashboard.apply_review_allocation(room, identity)
@@ -521,7 +536,7 @@ class AllocationTests(unittest.TestCase):
         self.assertFalse(first["changed"])
         self.assertFalse(second["changed"])
 
-    def test_both_review_kinds_at_warning_still_uses_other_kind(self):
+    def test_both_review_kinds_at_warning_uses_owner_kind(self):
         room = self.room([
             {"agent": "claude", "model": "opus", "role": "engineer"},
             {"agent": "claude", "model": "sonnet", "role": "reviewer",
@@ -535,8 +550,8 @@ class AllocationTests(unittest.TestCase):
             _room, _reviewer, allocation = dashboard.apply_review_allocation(
                 room, reviewer["identity"])
 
-        self.assertEqual(allocation["chosen"]["agent"], "codex")
-        self.assertIn("both agent kinds", allocation["reason"])
+        self.assertEqual(allocation["chosen"]["agent"], "claude")
+        self.assertIn("past the 80% warning", allocation["reason"])
 
     def test_review_never_goes_to_a_spent_kind_when_the_owners_is_not(self):
         # ED-138, 09-30: Claude 88%, Codex 100% (both past the warning); the
@@ -555,7 +570,7 @@ class AllocationTests(unittest.TestCase):
                 room, reviewer["identity"])
 
         self.assertEqual(allocation["chosen"]["agent"], "claude")
-        self.assertIn("95% alarm", allocation["reason"])
+        self.assertIn("past the 80% warning", allocation["reason"])
 
     def test_first_launch_moves_an_owner_off_a_spent_kind(self):
         room = self.room([
@@ -580,7 +595,9 @@ class AllocationTests(unittest.TestCase):
                         if p["role"] == "reviewer")
         identity = reviewer["identity"]
         use_owner = _snapshot([_window("five_hour", 20)], [_window("five_hour", 83)])
-        use_other = _snapshot([_window("five_hour", 20)], [_window("five_hour", 25)])
+        reset = time.time() + 5 * 86400
+        use_other = _snapshot([_window("five_hour", 20)],
+                              [_window("five_hour", 25), _window("seven_day", 25, resets_at=reset)])
 
         with mock.patch.object(dashboard.usage, "snapshot", return_value=use_owner):
             room, reviewer, first = dashboard.apply_review_allocation(room, identity)
@@ -596,7 +613,9 @@ class AllocationTests(unittest.TestCase):
         room = self.room(None, launched=True)
         reviewer = next(p for p in chatroom.agent_participants(room)
                         if p["role"] == "reviewer")
-        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 25)])
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("five_hour", 20)],
+                         [_window("five_hour", 25), _window("seven_day", 25, resets_at=reset)])
 
         with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
             review = _FakeHandler()._start_review(
@@ -650,9 +669,8 @@ class AllocationTests(unittest.TestCase):
             result = ensemble_tools._start_task(ctx, {"taskId": room["id"]}, _FakeHandler())
 
         self.assertEqual([(a["agent"], a["role"]) for a in result["chosenAgents"]],
-                         [("codex", "engineer"), ("claude", "reviewer")])
-        self.assertEqual(result["note"],
-                         "Owner switched to Codex: Claude 5-hour window at 82%.")
+                         [("codex", "engineer"), ("codex", "reviewer")])
+        self.assertIn("Owner switched to Codex: Claude 5-hour window at 82%.", result["note"])
 
     def test_start_tool_reports_unavailable_kind_cleanly(self):
         room = self.room([
@@ -706,9 +724,8 @@ class AllocationTests(unittest.TestCase):
             result = ensemble_tools._create_task(ctx, args, _FakeHandler())
 
         self.assertEqual([(a["agent"], a["role"]) for a in result["agents"]],
-                         [("codex", "engineer"), ("claude", "reviewer")])
-        self.assertEqual(result["note"],
-                         "Owner switched to Codex: Claude 5-hour window at 80%.")
+                         [("codex", "engineer"), ("codex", "reviewer")])
+        self.assertIn("Owner switched to Codex: Claude 5-hour window at 80%.", result["note"])
 
 
 if __name__ == "__main__":

@@ -660,15 +660,18 @@ seat, plus an alternative kind/model where the model matters. On the first
 launch the hub reads the same cached allowance snapshot as the header and makes
 the final choice without a network call:
 
-- The hub chooses the kind with more room against its weekly pace line for
-  owners, reviews and handovers. It keeps the named preference when the room
-  difference is within the switch margin (10 points by default). A kind with
-  allowance left in the last 12 hours before reset is used first. You can name
-  either kind first; the hub balances the two allowances. A changed seat uses
-  that kind's default model unless the preference names an alternative model.
+- For owners and handovers below warning, the hub compares each plan's spare
+  capacity per hour until its own weekly reset: plan weight × capacity to
+  warning ÷ hours remaining. It changes the preferred kind only when the
+  other's value is at least 25% higher (configurable hysteresis). Plan weights
+  come from detected subscription tiers; Settings › Agent models can override
+  them. Unknown tiers without overrides use equal weights. You can name either
+  kind first. A changed seat uses that kind's default model unless the
+  preference names an alternative model.
 - The warning (80%) and alarm (95%) still govern usable seats. A reviewer runs
-  on a different kind from the owner's latest round whenever that kind is
-  usable. Only when the product owner asks, pin a task's agents with `keepAgents: true` on
+  on a different kind from the owner's latest round only while that kind is
+  within its pace and below warning. Otherwise it reviews on the owner's kind
+  in a fresh session. Only when the product owner asks, pin a task's agents with `keepAgents: true` on
   `ensemble_create_task` / `ensemble_update_task`.
 - A seat that names no model runs on the one the person chose for its kind in
   Settings (Agent models; for Codex a reasoning effort too), else on the

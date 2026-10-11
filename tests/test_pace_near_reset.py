@@ -144,17 +144,14 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
                   {"agent": "codex", "model": "", "role": "reviewer"}]
         chosen, alloc = dashboard.choose_first_launch_allocation(
             lineup, _snap(), installed=lambda k: True, pace=PACE_ON, now=NOW)
-        self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
-        self.assertEqual(alloc["reason"],
-                         "Preferred line-up kept: Claude 7-day window at 90%, and its week "
-                         "resets 14:00: what is left is used up to the 95% alarm.")
+        self.assertEqual([s["agent"] for s in chosen], ["claude", "claude"])
+        self.assertIn("what is left is used up to the 95% alarm", alloc["reason"])
+        self.assertIn("fresh review session", alloc["reason"])
         swapped = [dict(lineup[1], role="engineer"), dict(lineup[0], role="reviewer")]
         chosen, alloc = dashboard.choose_first_launch_allocation(
             swapped, _snap(), installed=lambda k: True, pace=PACE_ON, now=NOW)
-        self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
-        self.assertIn("Claude 90% of its week used",
-                      alloc["reason"])
-        self.assertNotIn("112.2% pace", alloc["reason"])
+        self.assertEqual(chosen[0]["agent"], "claude")
+        self.assertIn("95% alarm", alloc["reason"])
         self.assertIn("its week resets 14:00",
                       alloc["reason"])
 
