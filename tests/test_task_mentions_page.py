@@ -187,6 +187,7 @@ class TaskMentionsInChat(unittest.TestCase):
             f"As task 18 said, see `#2` and `{cls.key}-2`, the list #140/#2, the colour `#111`, "
             f"`git log #2`, Documents/#30 and rule S-03.",
             f"[open the task]({cls.two}) and Documents/#140/#142.",
+            f"[open it](https://example.test/(foo){cls.two}) and literal ]({cls.two}).",
         ]
         for i, t in enumerate(cls.texts):
             chatroom.post_message(cls.room, "claude" if i % 2 else "user", t)
@@ -268,6 +269,12 @@ class TaskMentionsInChat(unittest.TestCase):
                 self.assertEqual([lk["text"] for lk in b["links"]], ["open the task"], "the link keeps its words")
                 self.assertIn(self.two, b["links"][0]["href"])
                 self.assertIn("Documents/#140/#142", b["text"])
+                b = self.balloon(o, 4)
+                self.assertEqual([(c["text"], c["task"]) for c in b["chips"]], [("#2", self.two)],
+                                 "a target with parentheses is the link's; '](' with no link is prose")
+                link = [lk for lk in b["links"] if lk["text"] == "open it"]
+                self.assertEqual(len(link), 1, b["links"])
+                self.assertEqual(link[0]["href"], f"https://example.test/(foo){self.two}")
 
     def test_every_chip_opens_its_tasks_card(self):
         titles = {self.two: TITLE, self.room: "Mentions in chat"}

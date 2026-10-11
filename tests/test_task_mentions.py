@@ -69,6 +69,9 @@ console.log(JSON.stringify({
   slash: toks('#140/#142 and Documents/#30 and a/#31', {}),
   slashPath: toks('Documents/#140/#142 and x/#5/#6/#7', {}),
   slashChain: toks('#140/#142/#143', {}),
+  slashLongPath: toks('Documents/' + '#123456/'.repeat(12) + '#123456', {}),
+  slashLongList: toks(Array.from({ length: 25 }, (_, i) => '#' + (i + 1)).join('/'), {}).length,
+  mdNested: toks('[open](https://example.test/(foo)room-1a2b3c4d) and literal ](room-0badf00d)', { rooms: true }),
   zero: toks('S-03 and #07 and ED-0 and ED-10', {}),
   code: ['#201', 'ED-201', 'room-1a2b3c4d', ' #9 ', '#111', '#000000', '#123456', 'git log #201', 'S-03', '#0'].map(code),
   title: TaskCard.replaceRefs('**update** — report from task #200 *Fast list* (claude): done', null, mark),
@@ -97,6 +100,8 @@ class PageReads(unittest.TestCase):
         self.assertEqual(self.r["notRooms"], [], "a path, a URL's query, a file name, a longer word")
         self.assertEqual(self.r["roomsOff"], [], "the hub's reading (no options) is as before")
         self.assertEqual(self.r["mdTarget"], ["room-0badf00d"], "a Markdown link's target is the link's, its words are read")
+        self.assertEqual(self.r["mdNested"], ["room-0badf00d"],
+                         "a target with parentheses is the link's too; '](' with no link is prose")
 
     def test_task_as_a_word(self):
         self.assertEqual(self.r["words"], ["#70", "#71", "#9"], "not 7.5, not inside a word, not 01")
@@ -107,6 +112,8 @@ class PageReads(unittest.TestCase):
         self.assertEqual(self.r["slash"], ["#140", "#142"], "Documents/#30 and a/#31 are paths")
         self.assertEqual(self.r["slashPath"], [], "a list after a path is still the path")
         self.assertEqual(self.r["slashChain"], ["#140", "#142", "#143"])
+        self.assertEqual(self.r["slashLongPath"], [], "a long list after a path is still the path")
+        self.assertEqual(self.r["slashLongList"], 25, "a long list is read whole")
         self.assertEqual(self.r["zero"], ["ED-10"])
 
     def test_code_spans(self):
@@ -163,6 +170,8 @@ class HubReads(unittest.TestCase):
         self.assertEqual(refs("#140/#142 and Documents/#30 and a/#31"), ["#140", "#142"])
         self.assertEqual(refs("Documents/#140/#142 and x/#5/#6/#7"), [])
         self.assertEqual(refs("#140/#142/#143"), ["#140", "#142", "#143"])
+        self.assertEqual(refs("Documents/" + "#123456/" * 12 + "#123456"), [])
+        self.assertEqual(len(refs("/".join(f"#{i}" for i in range(1, 26)))), 25)
         self.assertEqual(refs("S-03 and #07"), [])
         self.assertEqual(refs("task 70 and room-1a2b3c4d"), [], "words and room ids are the pages' only")
 
