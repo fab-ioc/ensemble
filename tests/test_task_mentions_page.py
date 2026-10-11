@@ -73,6 +73,7 @@ const VIEW = `(() => {
       titles: [...b.querySelectorAll('a.task-title-ref')].map(a => ({ text: a.textContent, task: a.dataset.task, href: a.getAttribute('href'), color: getComputedStyle(a).color })),
       gone: [...b.querySelectorAll('a.tc-gone')].map(a => ({ text: a.textContent, href: a.getAttribute('href'), tabindex: a.getAttribute('tabindex') })),
       code: [...b.querySelectorAll('code')].map(c => c.textContent),
+      links: [...b.querySelectorAll('a')].map(a => ({ text: a.textContent, href: a.getAttribute('href') || '' })),
       text: b.textContent })),
     scrollX: document.documentElement.scrollWidth - innerWidth };
 })()`;
@@ -185,6 +186,7 @@ class TaskMentionsInChat(unittest.TestCase):
             f"**update** — report from task #2 *{TITLE}* (claude):\n\nDone.",
             f"As task 18 said, see `#2` and `{cls.key}-2`, the list #140/#2, the colour `#111`, "
             f"`git log #2`, Documents/#30 and rule S-03.",
+            f"[open the task]({cls.two}) and Documents/#140/#142.",
         ]
         for i, t in enumerate(cls.texts):
             chatroom.post_message(cls.room, "claude" if i % 2 else "user", t)
@@ -257,6 +259,15 @@ class TaskMentionsInChat(unittest.TestCase):
                 self.assertEqual(b["code"], ["#111", "git log #2"], "a colour and a longer span stay code")
                 for plain in ("#140/", "Documents/#30", "rule S-03"):
                     self.assertIn(plain, b["text"])
+
+    def test_a_link_target_and_a_list_after_a_path(self):
+        for w, o in self._both():
+            with self.subTest(width=w):
+                b = self.balloon(o, 3)
+                self.assertEqual(b["chips"], [], "a Markdown link's target is not a mention; a path stays a path")
+                self.assertEqual([lk["text"] for lk in b["links"]], ["open the task"], "the link keeps its words")
+                self.assertIn(self.two, b["links"][0]["href"])
+                self.assertIn("Documents/#140/#142", b["text"])
 
     def test_every_chip_opens_its_tasks_card(self):
         titles = {self.two: TITLE, self.room: "Mentions in chat"}

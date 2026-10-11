@@ -35,7 +35,8 @@ _REF = re.compile(r"^#?(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})$" % (KEY_MAX -
 # (Documents/#30): all_text_refs checks that (#202).
 TEXT_REF = re.compile(r"(?<![\w&#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)"
                       r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?|([A-Z][A-Z0-9]{0,%d})-)(?!0)(\d{1,6})(?![\w-])" % (KEY_MAX - 1, KEY_MAX - 1))
-_AFTER_SLASH_OK = re.compile(r"#\d{1,6}/\Z")
+# The whole list before it must be numbers from its start: not Documents/#140/#142.
+_AFTER_SLASH_OK = re.compile(r"(?:\A|[^\w/\\#@.&-])(?:#[1-9]\d{0,5}/)+\Z")
 # A bare #12 right after one of these words is someone else's number (a pull
 # request, an issue, a review finding), not a task: "PR #12", "fixes #34".
 # ED-12 and @codex@12 are always tasks.
@@ -333,7 +334,7 @@ def all_text_refs(text: str, ctx: dict | None = None) -> list[dict]:
     for m in TEXT_REF.finditer(plain):
         key, no = (m.group(2) or m.group(3) or "").upper(), int(m.group(4))
         if m.start() and plain[m.start() - 1] == "/" and not (
-                m.group(0)[0] == "#" and _AFTER_SLASH_OK.search(plain[max(0, m.start() - 8):m.start()])):
+                m.group(0)[0] == "#" and _AFTER_SLASH_OK.search(plain[max(0, m.start() - 64):m.start()])):
             continue
         if not m.group(1) and not key and NOT_TASK_BEFORE.search(plain[max(0, m.start() - 40):m.start()]):
             continue

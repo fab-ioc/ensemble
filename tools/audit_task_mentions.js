@@ -43,6 +43,15 @@ function count(form, linked, text, at, len) {
   if (f.examples.length < EXAMPLES) f.examples.push(text.slice(Math.max(0, at - 30), at + len + 30).replace(/\s+/g, ' '));
 }
 const linkedHere = typeof TaskCard.codeRef === 'function';   // #202: code spans, room ids, words, header titles
+// A room id as the pages draw it: a task with a number → its chip; a deleted
+// room → "(deleted)"; a room with no number stays a plain link (not counted
+// as linked).
+function roomForm(what, id) {
+  const r = rooms.get(id);
+  if (!r) return [`${what}, deleted task`, true];
+  if (!r.no) return [`${what}, task with no number (stays a link)`, false];
+  return [`${what}, a task`, true];
+}
 
 const CODE_SPAN_RE = /`([^`\n]+)`/g;
 const ROOM_RE = /(?<![\w-])room-[0-9a-f]{8}(?![\w-])/g;
@@ -113,7 +122,8 @@ for (const [rid, room] of rooms) {
         continue;
       }
       if (/^room-[0-9a-f]{8}$/.test(body)) {
-        count(rooms.has(body) ? '`room-…` code span, a task' : '`room-…` code span, deleted task', linkedHere, text, at, cm[0].length);
+        const [form, ok] = roomForm('`room-…` code span', body);
+        count(form, ok && linkedHere && !!TaskCard.codeRef(body, ctx), text, at, cm[0].length);
         continue;
       }
       if (TaskCard.refsIn(body, null).length || ROOM_RE.test(body)) {
@@ -122,8 +132,11 @@ for (const [rid, room] of rooms) {
       }
     }
     // 4. Room ids in prose.
+    const roomStarts = linkedHere ? new Set(TaskCard.refsIn(text, ctx, { rooms: true }).filter(r => r.room).map(r => r.start)) : new Set();
     for (const rm of prose.matchAll(ROOM_RE)) {
-      count(rooms.has(rm[0]) ? 'room-… in prose, a task' : 'room-… in prose, deleted task', linkedHere, text, rm.index, rm[0].length);
+      if (!roomStarts.has(rm.index)) { count('room-… in prose the pages leave alone (a path, a link target)', false, text, rm.index, rm[0].length); continue; }
+      const [form, ok] = roomForm('room-… in prose', rm[0]);
+      count(form, ok, text, rm.index, rm[0].length);
     }
     // 5. "task 201" as a word.
     const words = linkedHere ? TaskCard.refsIn(text, ctx, { words: true }).map(r => r.start) : [];

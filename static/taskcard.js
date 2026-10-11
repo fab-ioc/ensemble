@@ -38,12 +38,14 @@ const TaskCard = (() => {
   // A number never starts with 0 (S-03 is a rule, not a task). After a slash
   // only in a list of numbers (#140/#142), never in a path (Documents/#30).
   const TASK_REF_RE = /(?<![\w&#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?|([A-Z][A-Z0-9]{0,5})-)(?!0)(\d{1,6})(?![\w-])/g;
-  const AFTER_SLASH_OK_RE = /#\d{1,6}\/$/;
+  // The whole list before it must be numbers from its start: not Documents/#140/#142.
+  const AFTER_SLASH_OK_RE = /(?:^|[^\w\/\\#@.&-])(?:#[1-9]\d{0,5}\/)+$/;
   // "task 70" written as a word: the number is the reference (#202).
   const TASK_WORD_RE = /(?<![\w#@-])(?:[Tt]ask|TASK)[ \t]+(?!0)(\d{1,6})(?![\w-]|[.,]\d)/g;
   // A task's room id, not in a path, a URL's query or a file name (#202).
   const ROOM_REF_RE = /(?<![\w\/\\=.#@&?-])room-[0-9a-f]{8}(?![\w-]|\.\w)/g;
   // The hub writes "task #200 *its title*": the title is read with the number.
+  const MD_TARGET_RE = /\]\([^)\s]*\)/g;
   const TITLE_AFTER_RE = /^[ \t]+\*([^*\n]+)\*/;
   const TASK_BEFORE_RE = /(?:^|[^\w])task[ \t]+$/i;
   // A bare #12 after one of these words is someone else's number ("PR #12",
@@ -122,7 +124,7 @@ const TaskCard = (() => {
     };
     for (const m of plain.matchAll(TASK_REF_RE)) {
       const who = m[1] || '', key = (m[2] || m[3] || '').toUpperCase(), no = +m[4], at = m.index;
-      if (plain[at - 1] === '/' && !(m[0][0] === '#' && AFTER_SLASH_OK_RE.test(plain.slice(Math.max(0, at - 8), at)))) continue;
+      if (plain[at - 1] === '/' && !(m[0][0] === '#' && AFTER_SLASH_OK_RE.test(plain.slice(Math.max(0, at - 64), at)))) continue;
       if (notTaskRef(who, key, plain, at)) continue;
       if (m[3] && ctx && !byKey.has(key)) continue;    // UTF-8, ISO-8601: a bare key no project has is not a task
       numbered({ token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', others: [] });
@@ -131,7 +133,8 @@ const TaskCard = (() => {
       const at = m.index + m[0].length - m[1].length;
       numbered({ token: m[1], who: '', key: '', no: +m[1], start: at, end: at + m[1].length, project: '', how: '', others: [] });
     }
-    if (o.rooms) for (const m of plain.matchAll(ROOM_REF_RE)) {
+    // A Markdown link's target ([open](room-…)) is the link's, not a mention.
+    if (o.rooms) for (const m of plain.replace(MD_TARGET_RE, t => t.replace(/[^\]()]/g, ' ')).matchAll(ROOM_REF_RE)) {
       out.push({ token: m[0], room: m[0], who: '', key: '', no: 0, start: m.index, end: m.index + m[0].length, project: '', how: 'room', others: [] });
     }
     return out.sort((a, b) => a.start - b.start);

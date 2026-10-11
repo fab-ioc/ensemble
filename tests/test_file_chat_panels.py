@@ -238,7 +238,7 @@ async function main() {
       const frameOf = r => { const e = PD.rt.get('chat:' + r); return e && e.el.querySelector('iframe.dp-session'); };
       const says = (r, text) => { try { return frameOf(r).contentDocument.body.innerText.includes(text); } catch (e) { return false; } };
       for (const r of rooms) {
-        const f = frameOf(r), d = f.contentDocument, text = 'Said in the panel of ' + r;
+        const f = frameOf(r), d = f.contentDocument, text = 'Said in panel ' + rooms.indexOf(r) + ' of three';
         d.querySelector('#input').value = text;
         res[r] = { typed: d.querySelector('#input').value === text };
         // The panel's own Send (the chat page's path: it posts to its room and empties the box).
@@ -248,7 +248,7 @@ async function main() {
         res[r].sent = sent;
       }
       for (const r of rooms) {
-        const text = 'Said in the panel of ' + r;
+        const text = 'Said in panel ' + rooms.indexOf(r) + ' of three';   // no room id: that is its chip (#202)
         const room = await fetch('/api/room?id=' + encodeURIComponent(r)).then(x => x.json());
         // (The hub adds its [point Pn] line under what the user says.)
         res[r].inRoom = (room.messages || []).some(m => String(m.text || '').startsWith(text));

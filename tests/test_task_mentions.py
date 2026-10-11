@@ -65,7 +65,10 @@ console.log(JSON.stringify({
   roomsOff: toks('room-1a2b3c4d', {}),
   words: toks('Task 70 and task 71, task 7.5, TASK 9, mytask 3, task 01', { words: true }),
   wordsOff: toks('task 70', {}),
+  mdTarget: toks('[open](room-1a2b3c4d) and [room-0badf00d](/session?id=room-0badf00d)', { rooms: true }),
   slash: toks('#140/#142 and Documents/#30 and a/#31', {}),
+  slashPath: toks('Documents/#140/#142 and x/#5/#6/#7', {}),
+  slashChain: toks('#140/#142/#143', {}),
   zero: toks('S-03 and #07 and ED-0 and ED-10', {}),
   code: ['#201', 'ED-201', 'room-1a2b3c4d', ' #9 ', '#111', '#000000', '#123456', 'git log #201', 'S-03', '#0'].map(code),
   title: TaskCard.replaceRefs('**update** — report from task #200 *Fast list* (claude): done', null, mark),
@@ -93,6 +96,7 @@ class PageReads(unittest.TestCase):
         self.assertEqual(self.r["prose"], ["room-1a2b3c4d", "room-0badf00d"])
         self.assertEqual(self.r["notRooms"], [], "a path, a URL's query, a file name, a longer word")
         self.assertEqual(self.r["roomsOff"], [], "the hub's reading (no options) is as before")
+        self.assertEqual(self.r["mdTarget"], ["room-0badf00d"], "a Markdown link's target is the link's, its words are read")
 
     def test_task_as_a_word(self):
         self.assertEqual(self.r["words"], ["#70", "#71", "#9"], "not 7.5, not inside a word, not 01")
@@ -101,6 +105,8 @@ class PageReads(unittest.TestCase):
 
     def test_lists_paths_and_leading_zeros(self):
         self.assertEqual(self.r["slash"], ["#140", "#142"], "Documents/#30 and a/#31 are paths")
+        self.assertEqual(self.r["slashPath"], [], "a list after a path is still the path")
+        self.assertEqual(self.r["slashChain"], ["#140", "#142", "#143"])
         self.assertEqual(self.r["zero"], ["ED-10"])
 
     def test_code_spans(self):
@@ -127,10 +133,36 @@ class PageReads(unittest.TestCase):
         self.assertIn('<span class="ref-who">room-0badf00d</span>', gone, "the words as written")
 
 
+SUMMARY_JS = r"""
+const taskRefCtx = () => null, taskRefHome = () => '';
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const roomRefHtml = r => r.room === 'room-1a2b3c4d' ? '[chip ' + r.room + ']' : null;
+const taskLinkHtml = (id, h) => '<a class="task-link" data-task="' + id + '">' + h + '</a>';
+const taskRefLinkHtml = (who, key, no) => '[#' + no + ']';
+console.log(JSON.stringify(taskChipsIn('See #5, `#6`, `git log #7`, room-1a2b3c4d, `room-0badf00d` <b>', '')));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class NeedsYouSummary(unittest.TestCase):
+    """index.html's taskChipsIn (the Needs-you and ask summaries) reads code
+    spans and room ids as the chat does."""
+
+    def test_code_spans_and_pending_rooms(self):
+        import test_task_refs as ttr
+        out = node(TASKCARD + "\n" + ttr.fn(ttr.INDEX, "taskChipsIn") + SUMMARY_JS)
+        self.assertEqual(out, 'See [#5], [#6], `git log #7`, [chip room-1a2b3c4d], '
+                              '<a class="task-link" data-task="room-0badf00d">room-0badf00d</a> &lt;b>',
+                         "a whole-reference code span is the chip, a longer one stays code, a room the hub "
+                         "has not answered for is the link roomRefsPatch turns into its chip")
+
+
 class HubReads(unittest.TestCase):
     def test_the_same_numbers_as_the_page(self):
         refs = lambda s: [(r.get("key") or "#") + str(r["no"]) for r in tn.all_text_refs(s)]
         self.assertEqual(refs("#140/#142 and Documents/#30 and a/#31"), ["#140", "#142"])
+        self.assertEqual(refs("Documents/#140/#142 and x/#5/#6/#7"), [])
+        self.assertEqual(refs("#140/#142/#143"), ["#140", "#142", "#143"])
         self.assertEqual(refs("S-03 and #07"), [])
         self.assertEqual(refs("task 70 and room-1a2b3c4d"), [], "words and room ids are the pages' only")
 

@@ -49,7 +49,9 @@ def render_code() -> str:
 const fetch = url => Promise.resolve(/ref=%2318/.test(url) ? { status: 200, ok: true, json: () => Promise.resolve(TASK) } : { status: 404, ok: false, json: () => Promise.resolve({}) });
 const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => {} });
 """
-    return FILELINKS + "\n" + TASKCARD + "\n" + HL + PAGE[start:end] + refs
+    # The page's chip helpers, beside its resolver (#202).
+    helpers = PAGE[PAGE.index("function taskChipHtml(r) {"):PAGE.index("TaskCard.init({ open: openTaskFrom });")]
+    return FILELINKS + "\n" + TASKCARD + "\n" + HL + PAGE[start:end] + refs + helpers
 
 
 JS = r"""
@@ -196,7 +198,7 @@ class FileViewRendering(unittest.TestCase):
             {"kind": "lang", "name": "lang_dockerfile", "text": "Dockerfile"},
             {"kind": "lang", "name": "lang_shebang", "text": "run", "body": "#!/usr/bin/env python3\nprint(1)\n"},
             {"kind": "md", "name": "escapes", "text": ESCAPES},
-            {"kind": "chips", "name": "chips", "text": "See #18 and @codex@18; not `#18` in code, not PR #18, not item #18, not #99."},
+            {"kind": "chips", "name": "chips", "text": "See #18 and @codex@18; `#18` alone, not `git log #18` in code, not PR #18, not item #18, not #99."},
         ] + [{"kind": "rows", "name": "lang:" + k, "lang": k, "text": v} for k, v in SAMPLES.items()] + [
             {"kind": "slow", "name": f"slow:{lang}:{name}", "lang": lang, "n": 50_000, **shape}
             for lang in ("yaml", "toml", "ini", "markdown", "python", "javascript", "css", "bash")
@@ -272,14 +274,15 @@ class FileViewRendering(unittest.TestCase):
         o = self.out["chips"]
         self.assertNotIn("task-chip", o["first"], "text until the hub answers")
         chips = re.findall(r'<a class="task-chip[^"]*"[^>]*>.*?</a>', o["html"])
-        self.assertEqual(len(chips), 2, o["html"])
-        self.assertEqual([re.sub(r"<[^>]+>", "", c) for c in chips], ["#18", "@codex #18"])
+        self.assertEqual(len(chips), 3, o["html"])
+        # #202: a code span that is the reference alone is its chip.
+        self.assertEqual([re.sub(r"<[^>]+>", "", c) for c in chips], ["#18", "@codex #18", "#18"])
         self.assertIn('data-task="room-b"', chips[0])
         self.assertIn('href="/session?id=room-b&amp;agent=codex"', chips[1])
         card = json.loads(html.unescape(re.search(r'data-card="([^"]*)"', chips[0]).group(1)))
         self.assertEqual((card["ref"], card["title"], card["state"], card["project"]), ("#18", "Beta <b>", "In progress · running", ""))
         rest = o["html"].split("</a>")[-1]
-        self.assertIn(">#18</code>", rest)
+        self.assertIn(">git log #18</code>", rest)
         for plain in ("PR #18", "item #18", "#99"):
             self.assertIn(plain, rest, "someone else's number, or none, stays text")
 

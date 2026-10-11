@@ -6261,8 +6261,18 @@ function boardTask(roomId, r, pj, no, inProject) {
            inProject };
 }
 // Plain words with the tasks they name as chips (an ask's words).
+// A code span that is exactly a reference is its chip, any other stays as
+// written; a room id the hub has not answered for yet is the task link
+// roomRefsPatch turns into its chip (or a deleted task's words) (#202).
 function taskChipsIn(text, inRoom) {
-  return TaskCard.replaceRefs(String(text || ''), taskRefCtx(inRoom), r => taskRefLinkHtml(r.who, r.key, r.no, inRoom, r), esc);
+  const ctx = taskRefCtx(inRoom);
+  const ref = r => r.room ? (roomRefHtml(r, taskRefHome(inRoom)) || taskLinkHtml(r.room, esc(r.room)))
+    : taskRefLinkHtml(r.who, r.key, r.no, inRoom, r);
+  return String(text || '').split(/(`[^`\n]+`)/).map(part => {
+    if (!/^`[^`\n]+`$/.test(part)) return TaskCard.replaceRefs(part, ctx, ref, esc);
+    const r = TaskCard.codeRef(part.slice(1, -1), ctx);
+    return (r && ref(r)) || esc(part);
+  }).join('');
 }
 // ---- Task numbers: end ------------------------------------------------------
 

@@ -54,6 +54,7 @@ let PROJECTS = { projects: [
   { id: 'p3', key: 'PL', name: 'Plain', registered: true, sessions: [] },                  // no PO
   { id: 'p4', key: 'GH', name: 'Unregistered', registered: false, poRoomId: 'po-4', sessions: [] },
 ] };
+let SELECTED_PROJECT = null;   // the board on screen: taskRefCtx's default project
 %s
 const T0 = 1790500000;
 const row = (rid, no, label, more) => ({ sessionId: rid, roomId: rid, headless: true, no, label, workflow: 'inprogress',
@@ -226,6 +227,8 @@ class TaskSwitcher(unittest.TestCase):
             fn(INDEX, "function actionState("), fn(INDEX, "function actionEnv("), fn(INDEX, "function actionsCell("),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function rowTitle("), fn(INDEX, "function detailTitle("),
             fn(INDEX, "function attnDot("), fn(INDEX, "function runChip("), fn(INDEX, "function swFocusNote("), fn(INDEX, "function swFocusBack("),
+            # The Task numbers block reads task mentions with static/taskcard.js (#202).
+            (ROOT / "static" / "taskcard.js").read_text(encoding="utf-8"),
             block("Cost chip"), block("Task numbers"), block("Task switcher")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "switcher.cjs"
