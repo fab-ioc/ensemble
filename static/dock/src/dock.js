@@ -13,20 +13,24 @@
 // A popped-out panel's element moves into that window's document (same origin), so it is still the one panel with the
 // one set of listeners and state: nothing is drawn twice and an action goes out once. It leaves the layout while it is
 // out (its tab goes, or its stack, and the neighbours take the room); `out` remembers where it was, and its window's
-// screen position and size, and it goes back there. The Panels menu reaches it meanwhile. After a reload a small notice
-// offers to open its window again (a browser opens one only on a click) or to bring it back.
+// screen position and size, and it goes back there. The Panels menu reaches it meanwhile. Its window outlives a reload
+// of the page (popadopt.js): the page that loads next takes it back and draws its panel there again. For a window that
+// did not come back, a small notice offers to open it again (a browser opens one only on a click) or to bring it back.
 
 import { addHostDoc, removeHostDoc, whenGone } from './host.js';
 import {
   EDGES, LAYOUT_VERSION, makeConfig, stackNode, locate, panelsUnder, contains, findStack, whereIs, isShownIn,
   moveTo, floatPanel, dockBack, unpinPanel, pinPanel, hidePanel, showPanel, activate, normalizeLayout, clampFloat,
   popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, moveStrip, stripPlaceOf, stripEntriesOf, dockFromFloat, insertPanel, parkPanel, forgetPanel,
-  parkedOf,
+  parkedOf, adoptParked,
 } from './layout.js';
 import { POP_HTML } from './popout-page.js';
+import { ADOPT_TIMEOUT, markWindow, marksOf, windowWaits, windowState, adoptHook, callWindows, writeWaiting, takeWaiting, awaitWindows } from './popadopt.js';
 import { afterPaint, canCapture, capturePanel, writePng } from './screenshot.js';
 import { canDraw, drawPanel } from './draw.js';
 import { normalizeMenuItems, menuItemsHtml, itemAt } from './menu-items.js';
+import { layoutFile, layoutText, parseLayoutFile, layoutIds, splitFractions } from './layout-file.js';
+import { MENU_BUTTON_SVGS, MENU_CARET_SVG, iconMarkup, menuIconVisual } from './menu-icons.js';
 
 export const LAYOUT_KEY = 'dock.layout';
 export const POP_URL = 'popout.html'; // beside the app's page: same origin, nothing in the URL
@@ -44,6 +48,9 @@ export const TEXT = {
   popOpen: 'Open window',
   popBack: 'Bring back',
   popWas: (t) => `${t} was in its own window before this page was reloaded.`,
+  // popLostNotice: 'quiet': the marks of a panel whose window did not come back after a reload (no notice)
+  popLostTag: 'window closed',
+  popLostTitle: (t) => `${t}: its own window closed while this page reloaded. Click to open it again.`,
   popReopen: 'Open its window again',
   popReopenTitle: 'open it in its own window where it was',
   popKeep: 'Bring it back here',
@@ -55,6 +62,10 @@ export const TEXT = {
   backToMainTitle: 'put this panel back where it was in the main window and close this one',
   // the title bar and its Options menu (IntelliJ's words)
   options: 'Options',
+  help: 'Help',
+  zoomIn: 'Zoom In',
+  zoomOut: 'Zoom Out',
+  resetZoom: (percent) => `Reset Zoom (${percent}%)`,
   hide: 'Hide',
   viewMode: 'View Mode',
   moveTo: 'Move To',
@@ -70,6 +81,13 @@ export const TEXT = {
   screenshotDismiss: 'Dismiss',
   maximise: 'Maximise',
   restore: 'Restore',
+  // the title bar's expand buttons (expandButtons): fit and full size, and what their tooltips say
+  fitExpand: 'Expand to Fit',
+  fitExpandHint: 'show all of it, over the dock (Esc restores)',
+  maximiseHint: 'fill the dock (Esc restores)',
+  maximiseWindowHint: 'fill the browser window (Esc restores)',
+  maximiseScreenHint: 'fill the screen (Esc restores)',
+  restoreHint: 'back to where it was (Esc)',
   // a closable panel's (v0.10.0): its tab's ×, its Options menu's item; and a stack's ▾ list of its tabs
   close: 'Close',
   closeTab: (t) => `Close ${t}`,
@@ -93,7 +111,6 @@ export const TEXT = {
 export const VIEW_MODES = ['pinned', 'unpinned', 'undock', 'float', 'window'];
 
 const ICON = {
-  menu: '<circle cx="3" cy="6" r="1"/><circle cx="6" cy="6" r="1"/><circle cx="9" cy="6" r="1"/>',
   min: '<path d="M2.5 9.5h7"/>',
   hide: '<path d="M2.5 6h7"/>', // IntelliJ's −
   unmin: '<path d="M2.5 7.5 6 4l3.5 3.5"/>',
@@ -107,8 +124,17 @@ const ICON = {
   back: '<path d="M5 2.5 1.5 6 5 9.5M1.5 6h9"/>', // an arrow home
   tabs: '<path d="M3 4.5 6 7.5 9 4.5"/>', // ▾: every tab of the stack
   close: '<path d="M3 3l6 6M9 3l-6 6"/>',
+  full: '<path d="M7 1.5h3.5V5M10.5 1.5 6.5 5.5M5 10.5H1.5V7M1.5 10.5l4-4"/>', // ⤢
+  unfull: '<path d="M10.5 1.5 7 5M7 2v3h3M1.5 10.5 5 7M2 7h3v3"/>',
+  fit: '<rect x="1.5" y="1.5" width="9" height="9" stroke-dasharray="1.5 1.5"/><path d="M6.5 3.5h2v2M8.5 3.5 6 6M5.5 8.5h-2v-2M3.5 8.5 6 6"/>', // a small ⤢ in its frame
+  unfit: '<rect x="1.5" y="1.5" width="9" height="9" stroke-dasharray="1.5 1.5"/><path d="M8.5 3.5 6.5 5.5M6.5 4v1.5H8M3.5 8.5l2-2M4 6.5h1.5V8"/>',
 };
-const icon = (name) => `<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">${ICON[name]}</svg>`;
+/** The expand options' defaults (one line each to change). fitPlace: 'grow' (from where the panel is) or 'center';
+ * fitDimCloses: a click on the dim restores a fit-expanded panel; maxTarget: full size fills 'dock' or 'window'. */
+export const EXPAND_DEFAULTS = { fitPlace: 'grow', fitDimCloses: true, maxTarget: 'dock' };
+const EXPAND_KINDS = ['fit', 'max'];
+const icon = (name) => name === 'menu' ? MENU_BUTTON_SVGS.dots
+  : `<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">${ICON[name]}</svg>`;
 export const escText = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const finite = (n) => typeof n === 'number' && Number.isFinite(n);
 let docks = 0;
@@ -225,11 +251,17 @@ export function panelsFrom(container) {
  *   popUrl, popName, popTitle, copyStyles, openWindow           pop-out windows
  *   popHtml, popBase                        a pop-out page without a served file, and the base of its relative URLs
  *   popBackButton                           the pop-out's "Back to main window" button (default true)
+ *   popAdoptTimeout                         ms a panel's window waits, after this page reloads, for the page that loads
+ *                                           next to take it back (default 15000); 0: it closes with this page
+ *   popLostNotice                           'banner' (default): a notice offers to open again a window that did not come
+ *                                           back after a reload; 'quiet': no notice, its strip button and Panels row
+ *                                           are marked
  *   windowClose                             'hide' (default): keep Window mode hidden; 'dock': return to the main page
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
  *   bodyAttrs                               what of the main page's <body> a panel's window copies (default none; a
  *                                           panel's own `bodyAttrs` overrides it)
- *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
+ *   help: { icon(key, panel), mount(doc), open(key, anchor)?, selector }   a panel's help control and popovers
+ *   tabExtra(panel)                         the app's own markup (HTML string or element) on every tab, after its title
  *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
  *   stripHover, stripOpen                   hovering a strip button slides its panel out (default true); a panel slid
  *                                           out lies 'over' the layout (default) or 'beside' it, the middle narrowing
@@ -241,15 +273,24 @@ export function panelsFrom(container) {
  *   stripReorder                            a strip button can be dragged along its strip, or to another edge's, and
  *                                           moved along it by Alt+Shift+arrow (default true, IntelliJ's stripe)
  *   headButtons                             'menu' (default): a title bar has ⋯ and −; 'classic': v0.4's buttons
+ *   expandButtons                           ['fit', 'max'] (any of them; default none): the title bar's fit and full
+ *                                           size buttons, before − (a panel's own `expandButtons` overrides it)
+ *   fitPlace, fitDimCloses, maxTarget        where fit grows ('grow' | 'center'), whether a click on its dim restores
+ *                                           it (true), what full size fills ('dock' | 'window')
+ *   menuButton, helpIn                      opt-in first menu button/icon/caret and Help in the menu
+ *   tabContextMenu                          a right-click (Shift+F10, the ContextMenu key) on a tab or a strip button
+ *                                           opens that panel's menu (default true); false: the browser's
+ *   zoomControls, scaleChrome              opt-in panel zoom menu/keys and application zoom of title bars
  *   outNoteDismiss                          the notice of panels out with no window has a × (default true); false: it
  *                                           stays until each is reopened or brought back (a dock with no Panels menu)
  *   modalSelector, badgeClass, text, onReset, win
  *
  * Returns the dock's handle: layout(), isShown(id), isVisible(id), isAuto(id), frontOf(id), activate(id), reveal(id),
- * setBadge(id, text, title), setTitle(id, title), title(id), onShown(fn), onChange(fn), setVisible(id, on), reset(),
+ * setBadge(id, text, title), setTitle(id, title), title(id), refreshTabExtras(), onShown(fn), onChange(fn), setVisible(id, on), reset(),
  * float(id), dockBack(id), unpin(id),
  * pin(id), toggleMin(id), toggleMax(id), restoreMax(), moveTo(id, target, side), dockEdge(id, side), popOut(id),
- * popIn(id), isOut(id), popWindow(id), openFly(id), closeFly(), flyOpen(), maximised(), viewMode(id),
+ * popIn(id), isOut(id), isOutLost(id), popWindow(id), adoptWindow(win), openFly(id), closeFly(), flyOpen(), maximised(), fitExpand(id), fitRestore(),
+ * isFitExpanded(id), viewMode(id),
  * setViewMode(id, mode), side(id), moveSide(id, side), moveStrip(id, index, side), render(), destroy().
  */
 export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage = defaultStorage(),
@@ -258,8 +299,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
+  popAdoptTimeout = ADOPT_TIMEOUT, popLostNotice = 'banner',
   stripHover = true, stripOpen = 'over', stripAutoHide = true, stripKeepsButton = true, stripReorder = true, headButtons = 'menu', outNoteDismiss = true,
+  menuButton = { place: 'end', icon: 'dots' }, tabContextMenu = true, helpIn = 'tab', zoomControls = false, scaleChrome = false, zoom: initialZoom,
   screenshot: screenshotHook = null, screenshotItem = true, screenshotMode = 'auto', menuItems: appMenuItems = null, onMenu = null, keepSlots,
+  tabExtra = null, groupBridge = null, expandButtons = [], fitPlace = EXPAND_DEFAULTS.fitPlace,
+  fitDimCloses = EXPAND_DEFAULTS.fitDimCloses, maxTarget = EXPAND_DEFAULTS.maxTarget,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -282,6 +327,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const openStyle = stripOpen === 'beside' ? 'beside' : 'over';
   const besideOf = (a) => !!a && (a.open || openStyle) === 'beside';
   const classic = headButtons === 'classic';
+  const menuPlace = menuButton?.place === 'start' ? 'start' : 'end';
+  const zoomEnabled = !!zoomControls;
+  const zoomable = (id) => zoomEnabled && !(groupBridge && id.startsWith('dock:'));
+  let storedZoom = 1;
+  try { storedZoom = Number(storage?.getItem?.(`${layoutKey}.zoom`)) || 1; } catch { /* no storage */ }
+  let appZoom = Number.isFinite(initialZoom) ? initialZoom : storedZoom;
+  if (!(appZoom > 0)) appZoom = 1;
+  let savedAt = new Date().toISOString();
+  try { savedAt = storage?.getItem?.(`${layoutKey}.savedAt`) || savedAt; } catch { /* no storage */ }
   const popPage = popHtml === true ? POP_HTML : typeof popHtml === 'string' ? popHtml : null;
   /** Whether a person may do `action` to panel `id`: move, float, unpin, pop, max, min, hide, close. Narrow allows only
    * hide and close; close, only a panel declared `closable: true`. */
@@ -292,8 +346,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     try { return can(id, action) !== false; } catch { return true; }
   }
   const helpSel = help.selector || '[data-help]';
+  // What on a tab's row is the app's own, not the tab: help's ? and tabExtra's markup. A click, a press or a double
+  // click there does not switch, drag, close or maximise the panel.
+  const ownSel = `${helpSel}, .dk-tab-extra`;
   const byId = new Map(panels.map((p) => [p.id, p]));
   const panelEls = new Set(panels.map((p) => p.el));
+  const zoomStyles = new WeakMap();
   const badges = new Map();
   const shownFns = [];
   const changeFns = [];
@@ -301,6 +359,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const menuFns = []; // api.onMenu's: told of a pick of an app item that has no run of its own
   const captureChecks = new Set(); // invalidate pending captures when their panel/frame changes
   const undo = []; // what destroy() takes off
+  const hostDocListeners = [];
   const scrolls = new Map(); // panel id -> [[element, left, top]] from before its last move
   let stackEls = new Map(); // stack node -> its element
   let nodeEls = new Map(); // split child node -> its element
@@ -308,11 +367,20 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   let flyEls = new Map(); // unpinned panel id -> its flyout
   let stripBtns = new Map(); // unpinned panel id -> its strip button
   let maxed = null; // the maximised stack node (not stored)
+  let flyMax = null; // the slid-out panel at full size (its title bar's full size button; not stored)
+  let fitted = null; // the fit-expanded panel: { id, kind, box, hole, layer, prevFocus, … } (not stored)
+  let fitSoft = false; // the next drawing keeps the fit-expanded panel so (its tab switched, its title changed)
   let flyOpen = null; // the unpinned panel slid out
   let flyByHover = false;
   let wasShown = new Set();
   const pops = new Map(); // panel id -> { win, doc, timer, started } while its own window is open (or opening)
-  let leaving = false; // the page is going away: its windows close, and stay remembered
+  let leaving = false; // the page is going away: its windows wait for the next page (or close), and stay remembered
+  // popAdoptTimeout: how long a window waits for the page that loads next; 0: it closes with this one.
+  const adoptMs = Number.isFinite(popAdoptTimeout) && popAdoptTimeout > 0 ? popAdoptTimeout : 0;
+  const quietLost = popLostNotice === 'quiet';
+  // The windows this page had before its reload that may still come back (awaitWindows): no notice (nor mark) for
+  // their panels until each is back or lost.
+  let awaiting = { has: () => false, take() {}, stop() {} };
   let destroyed = false;
   // The dock's own delayed work (hover, notes, focus): destroy() cancels it, and none runs after.
   const timers = new Set();
@@ -344,6 +412,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // Click-only: the strip lies above a panel sliding in or out, so a quick second click on its button reaches it.
   root.classList.toggle('dk-strip-click', !stripHover);
   root.classList.toggle('dk-strip-reorder', stripReorder !== false);
+  // maxTarget: 'window': a panel at full size covers the whole browser window, the app's own chrome too.
+  root.classList.toggle('dk-max-window', maxTarget === 'window');
   // A strip button being dragged: each edge without a strip shows one for the drop (a ghost), and a line where it lands.
   const dnd = doc.createElement('div');
   dnd.className = 'dk-strip-dnd';
@@ -363,7 +433,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
   putSizes(root);
 
-  function on(target, type, fn, o) { target.addEventListener(type, fn, o); undo.push(() => target.removeEventListener(type, fn, o)); }
+  function on(target, type, fn, o) {
+    const listener = target === root && groupBridge ? (e) => {
+      if (e.target && e.target.closest && e.target.closest('.dock') !== root) return;
+      fn(e);
+    } : fn;
+    target.addEventListener(type, listener, o);
+    undo.push(() => target.removeEventListener(type, listener, o));
+    if (target === doc) hostDocListeners.push({ type, listener, o });
+  }
   function viewport() { return (win && win.innerWidth) || 1600; }
   function extent() {
     const r = root.getBoundingClientRect ? root.getBoundingClientRect() : null;
@@ -382,18 +460,34 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const outOf = (id) => (layout.out ? layout.out[id] : null);
   const live = (id) => !!(pops.get(id) && pops.get(id).doc); // in its own window, and drawn there
   const outIdle = (id) => !!outOf(id) && !pops.has(id); // remembered as out, its window not open (after a reload)
+  // Out with no window, and none coming back: its window did not outlive the reload (closed, or never left waiting).
+  const outLost = (id) => outIdle(id) && !awaiting.has(id);
   // A panel is on screen when its own window shows it, or in the main window when it is not out.
   const shownNow = (id) => live(id) || (!outOf(id) && isShownIn(layout, id));
 
   function storeKey() { return narrowOn ? narrowStoreKey : layoutKey; }
+  function cleanZoom(raw) {
+    if (groupBridge && raw.zoom) {
+      for (const id of Object.keys(raw.zoom)) if (id.startsWith('dock:')) delete raw.zoom[id];
+      if (!Object.keys(raw.zoom).length) delete raw.zoom;
+    }
+    return raw;
+  }
   function load() {
     let raw = null;
     try { const s = storage && storage.getItem(storeKey()); raw = s ? JSON.parse(s) : null; } catch { raw = null; }
-    const l = normalizeLayout(raw, { cfg, viewportPx: viewport(), migrate });
+    const l = cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport(), migrate }));
     return narrowOn ? oneColumn(l) : l;
   }
-  function save() {
+  function save(changed = true) {
+    if (changed) savedAt = new Date().toISOString();
     try { if (storage) storage.setItem(storeKey(), JSON.stringify(layout)); } catch { /* not remembered; still applied */ }
+    try {
+      if (appZoom !== 1) storage?.setItem?.(`${layoutKey}.zoom`, String(appZoom));
+      else if (storage?.getItem?.(`${layoutKey}.zoom`) !== null) storage?.removeItem?.(`${layoutKey}.zoom`);
+      if (appZoom !== 1 || layout.zoom) storage?.setItem?.(`${layoutKey}.savedAt`, savedAt);
+      else if (storage?.getItem?.(`${layoutKey}.savedAt`) !== null) storage?.removeItem?.(`${layoutKey}.savedAt`);
+    } catch { /* no storage */ }
   }
   function commit() {
     if (narrowOn) oneColumn(layout);
@@ -431,7 +525,31 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }
   }
 
-  const helpHtml = (p) => (p.help && typeof help.icon === 'function' ? help.icon(p.help, p) || '' : '');
+  const helpHtml = (p) => (helpIn === 'tab' && p.help && typeof help.icon === 'function' ? help.icon(p.help, p) || '' : '');
+  // tabExtra's markup for panel `p`, asked each time its tab is drawn: a string goes in as it is; an element, after
+  // the title bar is drawn (putExtras), into a holder whose number changes when the element does, so a title bar drawn
+  // from the same markup keeps it and a new element draws it again.
+  const extraEls = new Map(); // panel id -> the element tabExtra gave last
+  const extraNo = new WeakMap();
+  let extraCount = 0;
+  function extraHtml(p) {
+    if (typeof tabExtra !== 'function') return '';
+    let x = null;
+    try { x = tabExtra(p); } catch (e) { report(e); }
+    if (x && typeof x === 'object' && x.nodeType === 1) {
+      extraEls.set(p.id, x);
+      if (!extraNo.has(x)) extraNo.set(x, ++extraCount);
+      return `<span class="dk-tab-extra" data-dk-extra="${escText(p.id)}" data-dk-extra-no="${extraNo.get(x)}"></span>`;
+    }
+    extraEls.delete(p.id);
+    return x == null || x === false || x === '' ? '' : `<span class="dk-tab-extra">${String(x)}</span>`;
+  }
+  function putExtras(head) {
+    for (const holder of head.querySelectorAll('[data-dk-extra]')) {
+      const x = extraEls.get(holder.dataset.dkExtra);
+      if (x && x.parentNode !== holder) holder.replaceChildren(x);
+    }
+  }
   const tabId = (id) => `${uid}-tab-${idPart(id)}`;
   // A stack's tabs are a tablist with a roving tabindex: the front tab is the one Tab reaches, the arrow keys, Home and
   // End move along them. Its panel's element is the tabpanel. `iconic` (a minimised stack's bar): a panel with an icon
@@ -440,12 +558,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const p = byId.get(id);
     const b = badges.get(id);
     const ic = iconic ? iconHtml(p) : '';
-    return `<span class="dk-tab-wrap${active ? ' on' : ''}" role="presentation"><button type="button" class="dk-tab${active ? ' on' : ''}${ic ? ' dk-tab-iconic' : ''}" role="tab" id="${tabId(id)}" data-dk-tab="${escText(id)}"`
+    return `<span class="dk-tab-wrap${active ? ' on' : ''}" role="presentation"><button type="button" class="dk-tab${active ? ' on' : ''}${ic ? ' dk-tab-iconic' : ''}" role="tab" id="${tabId(id)}" data-dk-tab="${escText(id)}"${groupBridge?.nativeDrag?.() && draggable && !id.startsWith('dock:') ? ' draggable="true"' : ''}`
       + ` aria-selected="${active}" tabindex="${active ? 0 : -1}"${p.el.id ? ` aria-controls="${escText(p.el.id)}"` : ''}`
       + `${ic ? ` aria-label="${escText(p.title)}"` : ''}`
       + ` title="${escText(p.title)}${draggable ? ': drag to dock it at an edge or into another panel as a tab' : ''}">`
       + `${ic ? `<span class="dk-tab-icon" aria-hidden="true">${ic}</span>` : escText(p.title)}${b ? `<span class="${badgeClass}" title="${escText(b.title || '')}">${escText(b.text)}</span>` : ''}</button>`
-      + `${helpHtml(p)}${!iconic && allowed(id, 'close') ? closeHtml(id) : ''}</span>`;
+      + `${extraHtml(p)}${helpHtml(p)}${!iconic && allowed(id, 'close') ? closeHtml(id) : ''}</span>`;
   }
   // A closable panel's × on its tab (IntelliJ's editor tabs): seen on the front tab and under the pointer. Out of the Tab
   // order (Ctrl+F4 closes the focused panel).
@@ -455,13 +573,91 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
   // A panel's icon as markup (the app's own SVG string, or an element's), '' for none.
   function iconHtml(p) {
-    if (!p.icon) return '';
-    if (typeof p.icon === 'string') return p.icon;
-    return p.icon.nodeType === 1 ? p.icon.outerHTML : '';
+    return iconMarkup(p.icon);
   }
   const ctl = (act, name, label, title) => `<button type="button" class="dk-btn" data-dk-act="${act}" aria-label="${escText(label)}" title="${escText(title)}">${icon(name)}</button>`;
+  function menuCtl(id, label, title) {
+    const p = byId.get(id);
+    const visual = menuIconVisual(p, menuButton);
+    if (menuPlace === 'end' && menuButton?.icon === 'dots' && p.menuIcon === undefined && !visual.caret)
+      return ctl('menu', 'menu', label, title);
+    const name = `${p.title} menu`;
+    const cls = visual.kind === 'panel' ? 'dk-panel-menu' : visual.caret ? 'dk-menu-with-caret' : 'dk-menu-icon-btn';
+    const visualClass = visual.kind === 'panel' ? 'dk-panel-menu-icon'
+      : `dk-menu-visual${visual.kind === 'custom' ? '' : ' dk-menu-built-in'}`;
+    const visualHtml = visual.markup ? `<span class="${visualClass}" aria-hidden="true">${visual.markup}</span>` : '';
+    return `<button type="button" class="dk-btn ${cls}" data-dk-act="menu" aria-label="${escText(name)}" title="${escText(name)}">`
+      + visualHtml + (visual.caret ? MENU_CARET_SVG : '') + '</button>';
+  }
+  const placeControls = (tabs, controls) => menuPlace === 'start' && controls.includes('data-dk-act="menu"')
+    ? `<span class="dk-ctl dk-ctl-start">${controls.match(/<button[^>]*data-dk-act="menu"[\s\S]*?<\/button>/)?.[0] || ''}</span>${tabs}<span class="dk-ctl">${controls.replace(/<button[^>]*data-dk-act="menu"[\s\S]*?<\/button>/, '')}</span>`
+    : `${tabs}<span class="dk-ctl">${controls}</span>`;
+  const panelZoom = (id) => byId.has(id) ? (groupBridge && id.startsWith('dock:') ? 1 : layout.zoom?.[id] || 1) : null;
+  const stepZoom = (value) => Math.min(2, Math.max(0.5, Math.round(value * 10) / 10));
+  const effectiveZoom = (id) => (groupBridge && id.startsWith('dock:') ? 1 : appZoom * panelZoom(id));
+  const zoomSnapshot = () => new Map(ids.map((id) => [id, effectiveZoom(id)]));
+  function emitZoomChanges(before) {
+    for (const id of ids) if (before.get(id) !== effectiveZoom(id)) {
+      applyZoom(id);
+      dockEvent(root, 'zoom', { id, zoom: panelZoom(id) });
+    }
+  }
+  function applyZoom(id) {
+    const el = byId.get(id)?.el;
+    if (!el) return;
+    if (!zoomStyles.has(el)) zoomStyles.set(el, {
+      zoom: el.style.zoom, width: el.style.width, height: el.style.height,
+      variable: el.style.getPropertyValue('--dk-zoom'),
+    });
+    const original = zoomStyles.get(el);
+    // A group's synthetic dock panel contains another Dock. Scaling it would scale that dock's title bars and
+    // multiply its real panels twice; each child dock receives application zoom directly instead.
+    const effective = effectiveZoom(id);
+    el.style.zoom = effective === 1 ? original.zoom : String(effective);
+    el.style.width = effective === 1 ? original.width : `${100 / effective}%`;
+    el.style.height = effective === 1 ? original.height : `${100 / effective}%`;
+    el.style.setProperty('--dk-zoom', String(effective));
+  }
+  function restoreZoomStyle(el) {
+    const original = zoomStyles.get(el);
+    if (!original) return;
+    el.style.zoom = original.zoom;
+    el.style.width = original.width;
+    el.style.height = original.height;
+    if (original.variable) el.style.setProperty('--dk-zoom', original.variable);
+    else el.style.removeProperty('--dk-zoom');
+    zoomStyles.delete(el);
+  }
+  function applyChromeZoom() {
+    for (const head of root.querySelectorAll('.dk-head')) if (head.closest('.dock') === root)
+      head.style.zoom = scaleChrome && appZoom !== 1 ? String(appZoom) : '';
+    for (const pop of pops.values()) if (pop.doc)
+      for (const head of pop.doc.querySelectorAll('#dk-pop-root .dk-head')) head.style.zoom = scaleChrome && appZoom !== 1 ? String(appZoom) : '';
+  }
+  function setPanelZoom(id, value) {
+    if (!byId.has(id) || (groupBridge && id.startsWith('dock:')) || !finite(value)) return false;
+    const next = stepZoom(value);
+    if (next === panelZoom(id)) return false;
+    if (next === 1) { if (layout.zoom) { delete layout.zoom[id]; if (!Object.keys(layout.zoom).length) delete layout.zoom; } }
+    else (layout.zoom || (layout.zoom = {}))[id] = next;
+    applyZoom(id);
+    save();
+    dockEvent(root, 'zoom', { id, zoom: next });
+    return true;
+  }
+  function setZoom(value) {
+    if (!finite(value) || value <= 0 || value === appZoom) return false;
+    const before = zoomSnapshot();
+    appZoom = value;
+    for (const id of ids) applyZoom(id);
+    applyChromeZoom();
+    save();
+    emitZoomChanges(before);
+    return true;
+  }
   function asTabPanel(id, front) {
     const el = byId.get(id).el;
+    applyZoom(id);
     el.classList.add('dk-panel');
     el.classList.toggle('dk-off', !front);
     if (!front) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden');
@@ -518,7 +714,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const w = whereIs(layout, id);
     // The middle (the stack holding cfg.fill) is on no side: Move To offers the four, none checked.
     const middle = w && w.kind === 'dock' && cfg.fill && w.stack.panels.includes(cfg.fill);
-    if (allowed(id, 'move')) { o.sides = EDGES.slice(); o.side = middle ? null : panelSide(layout, id, opts()); }
+    if (allowed(id, 'move')) { o.sides = EDGES.slice(); o.side = middle ? null : panelSide(layout, id, opts());
+      if (groupBridge) o.docks = groupBridge.others(); }
     if (where !== 'fly' && where !== 'window' && w && w.stack && allowed(id, 'max')) o.max = maxed === w.stack ? T.restore : T.maximise;
     if (hideOk(id, where)) o.hide = where !== 'fly' && where !== 'window' && w && w.stack && w.stack.min ? T.restore : T.hide;
     o.close = allowed(id, 'close');
@@ -529,6 +726,208 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // floating one is minimised to its title bar (which shows its icon, and a click brings it back).
   function hideOk(id, where) { return where === 'fly' || allowed(id, where === 'window' ? 'hide' : 'min'); }
 
+  // ---- the expand buttons (expandButtons): fit and full size, just before − ----
+  // Which of them panel `id` has: its own expandButtons, else the dock's.
+  function expandOf(id) {
+    const p = byId.get(id);
+    const l = p && Array.isArray(p.expandButtons) ? p.expandButtons : expandButtons;
+    return Array.isArray(l) ? EXPAND_KINDS.filter((k) => l.includes(k)) : [];
+  }
+  // Fit: not in narrow, nor for a group's dock frame (a whole dock), nor in a window of its own (which is the panel).
+  const fitOk = (id) => !narrowOn && allowed(id, 'fit') && !(groupBridge && id.startsWith('dock:'));
+  // The buttons' markup for panel `id` (its title `t`) where it is; `full`: it is at full size now. Fit's state is
+  // put on its button when it changes (markFit), not drawn, so a drawing never needs to redraw a title bar for it.
+  function expandHtml(id, t, where, full, min) {
+    const want = expandOf(id);
+    let h = '';
+    if (want.includes('fit') && where !== 'window' && !min && fitOk(id)) h += expandBtn('fit', t, false);
+    if (want.includes('max') && allowed(id, 'max')) h += expandBtn('full', t, full, where);
+    return h;
+  }
+  function expandBtn(kind, t, on, where) {
+    const hint = kind === 'fit' ? T.fitExpandHint : where === 'window' ? T.maximiseScreenHint : maxTarget === 'window' ? T.maximiseWindowHint : T.maximiseHint;
+    const label = on ? T.restore : kind === 'fit' ? T.fitExpand : T.maximise;
+    const name = on ? (kind === 'fit' ? 'unfit' : 'unfull') : kind;
+    return `<button type="button" class="dk-btn dk-expand" data-dk-act="${kind}" aria-pressed="${on}" aria-label="${escText(`${t}: ${label}`)}"`
+      + ` title="${escText(`${label}: ${on ? T.restoreHint : hint}`)}">${icon(name)}</button>`;
+  }
+  // Fit's button shows its state (pressed, Restore) while its panel is fit-expanded.
+  function markFit(f, on) {
+    const head = f.box.querySelector(':scope > .dk-head, :scope > .dk-stack > .dk-head');
+    const b = head && head.querySelector('[data-dk-act="fit"]');
+    if (!b) return;
+    const tmp = doc.createElement('div');
+    tmp.innerHTML = expandBtn('fit', byId.get(f.id).title, on);
+    const now = tmp.firstChild;
+    for (const k of ['aria-pressed', 'aria-label', 'title']) b.setAttribute(k, now.getAttribute(k));
+    b.innerHTML = now.innerHTML;
+  }
+
+  // ---- fit: a panel at its content's size, over the dimmed dock, for a moment (nothing of it is stored) ----
+  // What moves for panel `id`: a docked stack's section, a floating window, the open flyout. Not a minimised stack, nor
+  // a tab behind another.
+  function fitBoxOf(id) {
+    const w = whereIs(layout, id);
+    if (!w) return null;
+    if (w.kind === 'auto') return flyOpen === id && flyEls.get(id) ? { kind: 'fly', box: flyEls.get(id) } : null;
+    if ((w.kind !== 'dock' && w.kind !== 'float') || w.stack.min || w.stack.active !== id) return null;
+    const box = w.kind === 'float' ? floatEls.get(w.float) : stackEls.get(w.stack);
+    return box ? { kind: w.kind, box, float: w.float } : null;
+  }
+  function fitMargin() {
+    const v = parseFloat(doc.defaultView?.getComputedStyle?.(root).getPropertyValue('--dk-fit-margin'));
+    return finite(v) ? v : 16;
+  }
+  // Only one at a time: another one fit-expanded, full size, a background tab or a closed flyout give way first.
+  function fitExpandNow(id) {
+    if (destroyed || !byId.has(id) || !fitOk(id) || pops.has(id)) return false;
+    if (fitted && fitted.id === id) return true;
+    const prevFocus = doc.activeElement;
+    endFit(false);
+    const w = whereIs(layout, id);
+    // A tab behind another, or a minimised stack: bringing it forward would change the stored layout, which fit never does.
+    if (!w || (w.stack && (w.stack.min || w.stack.active !== id))) return false;
+    if (w.kind === 'auto' && flyOpen !== id) openFly(id, false);
+    let draw = false;
+    if (flyMax) { flyMax = null; draw = true; }
+    if (w.stack && maxed === w.stack) { maxed = null; draw = true; }
+    if (draw) render();
+    if (!attachFit(id, prevFocus)) return false;
+    dockEvent(root, 'fit-expand', { id });
+    return true;
+  }
+  function attachFit(id, prevFocus) {
+    const b = fitBoxOf(id);
+    if (!b) return false;
+    const { box } = b;
+    const rr = root.getBoundingClientRect();
+    const r = box.getBoundingClientRect();
+    const k = root.offsetWidth ? rr.width / root.offsetWidth : 1; // the root scaled (a transform, CSS zoom)
+    // A flyout or a float lies in the root itself: its layout box, not its rect (a flyout may still be sliding out).
+    const own = box.offsetParent === root;
+    const x = own ? box.offsetLeft : (r.left - rr.left) / k - root.clientLeft;
+    const y = own ? box.offsetTop : (r.top - rr.top) / k - root.clientTop;
+    const cw = own ? box.offsetWidth : r.width / k;
+    const ch = own ? box.offsetHeight : r.height / k;
+    // How much more its content wants: the most any of its boxes scrolls by (in the root's px, a panel zoom counted).
+    const p = byId.get(id).el;
+    let ox = 0;
+    let oy = 0;
+    for (const el of [p.parentNode, p, ...p.children]) {
+      if (!el || !el.getBoundingClientRect) continue;
+      const er = el.getBoundingClientRect();
+      const s = el.offsetWidth ? er.width / el.offsetWidth / k : 1;
+      ox = Math.max(ox, (el.scrollWidth - el.clientWidth) * s);
+      oy = Math.max(oy, (el.scrollHeight - el.clientHeight) * s);
+    }
+    const W = root.clientWidth;
+    const H = root.clientHeight;
+    const m = fitMargin();
+    const nw = Math.round(Math.max(cw, Math.min(cw + ox, W - 2 * m)));
+    const nh = Math.round(Math.max(ch, Math.min(ch + oy, H - 2 * m)));
+    // 'grow': the corner nearest the dock's edge stays, and it grows towards the free side, shifted only to stay in.
+    const at = (pos, size, n, all) => Math.round(Math.max(0, Math.min(all - n,
+      fitPlace === 'center' ? (all - n) / 2 : pos + size / 2 <= all / 2 ? pos : pos + size - n)));
+    const hole = doc.createElement('div');
+    hole.className = 'dk-fit-hole';
+    hole.setAttribute('aria-hidden', 'true');
+    if (b.kind === 'dock') hole.style.cssText = `flex: 0 0 auto; width: ${cw}px; height: ${ch}px`;
+    else hole.hidden = true;
+    box.parentNode.insertBefore(hole, box);
+    const layer = doc.createElement('div');
+    layer.className = 'dk-fit-layer';
+    const dim = doc.createElement('div');
+    dim.className = 'dk-fit-dim';
+    dim.dataset.dkFitDim = '';
+    layer.appendChild(dim);
+    root.appendChild(layer);
+    put(layer, box, null); // moved, not drawn again: its iframes do not reload (moveBefore)
+    box.classList.add('dk-fit');
+    Object.assign(box.style, { left: at(x, cw, nw, W) + 'px', top: at(y, ch, nh, H) + 'px', width: nw + 'px', height: nh + 'px', right: '', bottom: '' });
+    fitted = { id, kind: b.kind, box, hole, layer, float: b.float, prevFocus };
+    markFit(fitted, true);
+    return true;
+  }
+  // Back where it was. how: 'focus' (its button, Esc, the dim): focus goes back to where it was before; 'keep': a
+  // drawing takes it out and puts it back (no event); else focus stays where it went.
+  function endFit(how) {
+    const f = fitted;
+    if (!f) return;
+    fitted = null;
+    const { box, hole, layer } = f;
+    box.classList.remove('dk-fit');
+    for (const k of ['left', 'top', 'width', 'height']) box.style[k] = '';
+    if (hole.parentNode) put(hole.parentNode, box, hole); else put(root, box, null);
+    hole.remove();
+    layer.remove();
+    if (f.kind === 'float') placeFloat(f.float, box);
+    if (f.kind === 'fly') { const a = layout.auto.find((x) => x.id === f.id); if (a) placeFlyout(a); }
+    markFit(f, false);
+    if (how === 'keep') return;
+    if (how === 'focus') {
+      const prev = f.prevFocus;
+      const fit = box.querySelector(':scope > .dk-head [data-dk-act="fit"], :scope > .dk-stack > .dk-head [data-dk-act="fit"]');
+      focusQuiet(prev && prev !== doc.body && prev.isConnected ? prev : fit || box);
+    }
+    dockEvent(root, 'fit-restore', { id: f.id });
+  }
+  // A drawing that keeps it (its tab switched, its title changed) puts the stack's front panel back over the dim.
+  function refit(f) {
+    const w = whereIs(layout, f.id);
+    const id = w && w.stack ? w.stack.active : f.id;
+    if (!attachFit(id, f.prevFocus)) { dockEvent(root, 'fit-restore', { id: f.id }); return; }
+    // Another tab came to the front: its panel is the fit-expanded one now, and the events say so.
+    if (id !== f.id) { dockEvent(root, 'fit-restore', { id: f.id }); dockEvent(root, 'fit-expand', { id }); }
+  }
+  // Esc (in the page, or in a panel's iframe) restores it.
+  function escFit(e) {
+    if (!fitted || e.key !== 'Escape' || e.defaultPrevented) return false;
+    if (e.target && e.target.closest && e.target.closest(`${modalSelector}, .dk-menu`)) return false;
+    e.preventDefault();
+    endFit('focus');
+    return true;
+  }
+
+  // ---- full size: the dock's maximise (a stack), the dock but its strips (a flyout), the screen (a window) ----
+  function markFull() { root.classList.toggle('dk-has-full', !!(maxed || flyMax)); }
+  function flyFull(id) {
+    endFit(false);
+    flyMax = flyMax === id ? null : id;
+    const a = layout.auto.find((x) => x.id === id);
+    if (!a) return;
+    const k = focusKey(doc.activeElement);
+    claimFlyout(a);
+    placeFlyout(a);
+    besideSpace();
+    markFull();
+    fitAll();
+    if (k) focusAgain(k);
+  }
+  // The flyout at full size goes back to its own size (it slides in, another slides out, Esc).
+  function unFlyMax() {
+    if (!flyMax) return;
+    const a = layout.auto.find((x) => x.id === flyMax);
+    flyMax = null;
+    if (a) { claimFlyout(a); placeFlyout(a); }
+    markFull();
+  }
+  // In its own window (Window mode, popHtml): the window fills the screen, and goes back to where it was.
+  function windowFull(id) {
+    const pop = pops.get(id);
+    if (!pop) return;
+    try {
+      const w = pop.win;
+      if (pop.full) { const g = pop.full; pop.full = null; w.moveTo(g.x, g.y); w.resizeTo(g.w, g.h); }
+      else {
+        const sc = w.screen;
+        pop.full = { x: w.screenX, y: w.screenY, w: w.outerWidth, h: w.outerHeight };
+        w.moveTo(sc.availLeft || 0, sc.availTop || 0);
+        w.resizeTo(sc.availWidth, sc.availHeight);
+      }
+    } catch { /* the window is going */ }
+    redrawWindowHead(id);
+  }
+
   function headHtml(node, where) {
     const id = node.active;
     const t = byId.get(id).title;
@@ -536,24 +935,28 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const isMax = maxed === node;
     if (where === 'window') {
       const c = [];
-      if (optionsOf(id, where).any || hasAppItems(id, where)) c.push(ctl('menu', 'menu', t + ': ' + T.options, [T.viewMode, T.moveTo, T.hide].join(', ')));
+      if (optionsOf(id, where).any || hasAppItems(id, where) || (helpIn === 'menu' && !!byId.get(id)?.help) || zoomable(id)) c.push(menuCtl(id, t + ': ' + T.options, [T.viewMode, T.moveTo, T.hide].join(', ')));
       if (classic) {
         if (allowed(id, 'float')) c.push(ctl('float', 'float', t + ': float', 'float in the main page'));
         if (allowed(id, 'unpin')) c.push(ctl('unpin', 'pin', t + ': unpin', 'unpin to its strip'));
       }
+      c.push(expandHtml(id, t, where, !!pops.get(id)?.full, false));
       if (hideOk(id, where)) c.push(ctl('hide', 'hide', t + ': ' + T.hide, 'hide this window (the Panels menu shows it again)'));
-      return '<div class="dk-tabs" role="tablist" aria-label="' + escText(t) + '">' + tabs + '</div><span class="dk-ctl">' + c.join('') + '</span>';
+      return placeControls('<div class="dk-tabs" role="tablist" aria-label="' + escText(t) + '">' + tabs + '</div>', c.join(''));
     }
     const c = [];
     if (!classic) {
-      if (optionsOf(id, where).any || hasAppItems(id, where)) c.push(ctl('menu', 'menu', `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
+      if (optionsOf(id, where).any || hasAppItems(id, where) || (helpIn === 'menu' && !!byId.get(id)?.help) || zoomable(id)) c.push(menuCtl(id, `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
+      c.push(expandHtml(id, t, where, isMax, !!node.min));
       if (hideOk(id, where)) c.push(node.min ? ctl('hide', 'unmin', `${t}: ${T.restore}`, 'restore from its title bar')
         : ctl('hide', 'hide', `${t}: ${T.hide}`, 'hide it to its title bar (a click on it brings it back)'));
-      return `<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div><span class="dk-ctl">${c.join('')}</span>`;
+      return placeControls(`<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div>`, c.join(''));
     }
-    if (classicItems(id, where).length || hasAppItems(id, where)) c.push(ctl('menu', 'menu', `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
+    if (classicItems(id, where).length || hasAppItems(id, where) || (helpIn === 'menu' && !!byId.get(id)?.help) || zoomable(id)) c.push(menuCtl(id, `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
+    c.push(expandHtml(id, t, where, isMax, !!node.min));
     if (allowed(id, 'min')) c.push(node.min ? ctl('min', 'unmin', `${t}: restore`, 'restore from its title bar') : ctl('min', 'min', `${t}: minimise`, 'minimise to its title bar'));
-    if (allowed(id, 'max')) c.push(isMax ? ctl('max', 'restore', `${t}: restore size`, 'restore (Esc)') : ctl('max', 'max', `${t}: maximise`, 'maximise (Esc restores)'));
+    // With the full size button (before minimise), v0.4's maximise button is not drawn as well.
+    if (allowed(id, 'max') && !expandOf(id).includes('max')) c.push(isMax ? ctl('max', 'restore', `${t}: restore size`, 'restore (Esc)') : ctl('max', 'max', `${t}: maximise`, 'maximise (Esc restores)'));
     if (allowed(id, 'pop')) c.push(ctl('pop', 'pop', `${t}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)'));
     if (allowed(id, 'float')) {
       if (where === 'float' && fromStrip(id)) c.push(ctl('dock', 'dock', `${t}: back to its strip`, 'back to its strip, where it was (or double-click the title bar)'));
@@ -561,7 +964,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       else c.push(ctl('float', 'float', `${t}: float`, 'float in its own window'));
     }
     if (allowed(id, 'unpin')) c.push(ctl('unpin', 'pin', `${t}: unpin`, 'pinned: unpin to a strip on its edge (auto-hide)'));
-    return `<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div><span class="dk-ctl">${c.join('')}</span>`;
+    return placeControls(`<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div>`, c.join(''));
   }
 
   // ---- the elements kept from one drawing to the next ----
@@ -598,6 +1001,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     claimed.add(parts.sec);
     secOf.set(node, parts);
     const { sec, head } = parts;
+    head.draggable = where === 'dock' && !!groupBridge?.nativeDrag?.() &&
+      !node.active.startsWith('dock:') && allowed(node.active, 'move');
     sec.className = 'dk-stack' + (node.min ? ' dk-min' : '') + (maxed === node ? ' dk-max' : '');
     sec.setAttribute('aria-label', byId.get(node.active).title);
     for (const k of ['minWidth', 'minHeight', 'flex']) sec.style[k] = '';
@@ -610,6 +1015,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       parts.html = html;
       if (left) head.querySelector('.dk-tabs').scrollLeft = left;
     }
+    putExtras(head);
     parts.node = node;
     stackEls.set(node, sec);
     return parts;
@@ -800,6 +1206,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       }
       const badge = badges.get(a.id);
       if (badge) b.appendChild(stripBadge(badge));
+      // popLostNotice: 'quiet': a panel whose window did not come back has a ring; a click opens the window again.
+      if (quietLost && outLost(a.id)) {
+        b.classList.add('dk-out-lost');
+        b.title = T.popLostTitle(p.title);
+      }
       b.setAttribute('aria-expanded', 'false');
       b.setAttribute('aria-pressed', 'false');
       if (reorderOk(a.id)) b.setAttribute('aria-keyshortcuts', edge === 'left' || edge === 'right' ? 'Alt+Shift+ArrowUp Alt+Shift+ArrowDown' : 'Alt+Shift+ArrowLeft Alt+Shift+ArrowRight');
@@ -843,21 +1254,24 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       flyKept.set(a.id, k);
     }
     const { el, head } = k;
-    el.className = 'dk-flyout dk-fly-' + a.edge + (besideOf(a) ? ' dk-fly-beside' : '');
+    el.className = 'dk-flyout dk-fly-' + a.edge + (besideOf(a) ? ' dk-fly-beside' : '') + (flyMax === a.id ? ' dk-fly-max' : '')
+      + (flyOpen === a.id && el.classList.contains('open') ? ' open' : ''); // drawn again while out (full size): stays out
     el.dataset.dkFly = a.id;
     el.setAttribute('role', 'region');
     el.setAttribute('aria-label', p.title);
     const tabs = `<div class="dk-tabs" role="tablist" aria-label="${escText(p.title)}">${tabHtml(a.id, true, false)}</div>`;
-    const html = !classic ? tabs + '<span class="dk-ctl">'
-      + (optionsOf(a.id, 'fly').any || hasAppItems(a.id, 'fly') ? ctl('menu', 'menu', `${p.title}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.hide}`) : '')
-      + ctl('hide', 'hide', `${p.title}: ${T.hide}`, 'slide it back in (Esc)') + '</span>'
-      : tabs + '<span class="dk-ctl">'
-      + (hasAppItems(a.id, 'fly') ? ctl('menu', 'menu', `${p.title}: ${T.options}`, T.options) : '')
+    const expand = expandHtml(a.id, p.title, 'fly', flyMax === a.id, false);
+    const html = !classic ? placeControls(tabs,
+      (optionsOf(a.id, 'fly').any || hasAppItems(a.id, 'fly') || (helpIn === 'menu' && !!p.help) || zoomable(a.id) ? menuCtl(a.id, `${p.title}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.hide}`) : '')
+      + expand + ctl('hide', 'hide', `${p.title}: ${T.hide}`, 'slide it back in (Esc)'))
+      : placeControls(tabs,
+      (hasAppItems(a.id, 'fly') || (helpIn === 'menu' && !!p.help) || zoomable(a.id) ? menuCtl(a.id, `${p.title}: ${T.options}`, T.options) : '')
       + (allowed(a.id, 'pop') ? ctl('pop', 'pop', `${p.title}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)') : '')
       + (allowed(a.id, 'float') ? ctl('float', 'float', `${p.title}: float`, 'float in its own window') : '')
-      + ctl('hide-fly', 'min', `${p.title}: slide in`, 'slide it back in (Esc)')
-      + (allowed(a.id, 'unpin') ? ctl('pin', 'unpin', `${p.title}: pin`, 'unpinned: pin it back where it was') : '') + '</span>';
+      + expand + ctl('hide-fly', 'min', `${p.title}: slide in`, 'slide it back in (Esc)')
+      + (allowed(a.id, 'unpin') ? ctl('pin', 'unpin', `${p.title}: pin`, 'unpinned: pin it back where it was') : ''));
     if (k.html !== html) { head.innerHTML = html; k.html = html; }
+    putExtras(head);
     flyEls.set(a.id, el);
     return el;
   }
@@ -878,6 +1292,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const s = el.style;
     s.top = s.bottom = s.left = s.right = s.width = s.height = '';
     const off = (edge) => (has(edge) ? 'var(--dk-strip)' : '0px');
+    el.classList.toggle('dk-fly-max', flyMax === a.id);
+    // At full size (its title bar's ⤢): the whole dock but its strips.
+    if (flyMax === a.id) { for (const e of EDGES) s[e] = off(e); return; }
     if (a.edge === 'left' || a.edge === 'right') {
       s[a.edge] = off(a.edge);
       s.top = off('top'); s.bottom = off('bottom');
@@ -912,6 +1329,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   function render() {
+    // A layout change restores a fit-expanded panel first; a drawing that keeps it (fitSoft) puts it back after.
+    const keepFit = fitted && fitSoft ? fitted : null;
+    fitSoft = false;
+    endFit(keepFit ? 'keep' : false);
     for (const check of captureChecks) check();
     snapshotScrolls();
     const focused = doc.activeElement;
@@ -925,6 +1346,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     stale = [];
     if (maxed && !stillHas(maxed)) maxed = null;
     if (flyOpen && !layout.auto.some((a) => a.id === flyOpen)) flyOpen = null;
+    if (flyMax !== flyOpen) flyMax = null;
     main.className = 'dk-main';
     // Which element each thing gets, before anything moves: the kept ones are found where they are now.
     const claimed = new Set();
@@ -969,6 +1391,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     floatBoxes = new Set(floatBox);
     for (const id of [...flyKept.keys()]) if (!layout.auto.some((a) => a.id === id)) flyKept.delete(id);
     root.classList.toggle('dk-has-max', !!maxed);
+    markFull();
     markFlyouts();
     restoreScrolls();
     if (focused && focused !== doc.body && focused.isConnected && root.contains(focused)) {
@@ -976,6 +1399,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     } else if (fkey) focusAgain(fkey);
     fitAll();
     fitTabs(true);
+    applyChromeZoom();
+    if (keepFit) refit(keepFit);
     for (const check of captureChecks) check();
     announceShown();
   }
@@ -1071,7 +1496,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     // (A beside flyout has no transform, so its box is its layout's, to the fraction of a px.)
     const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
     const across = r && (a.edge === 'left' || a.edge === 'right' ? r.width : r.height);
-    const px = el ? (across > 0 ? across : el._dkSize) : 0;
+    // At full size it lies over the middle: the middle keeps the room it had beside it.
+    const px = el ? (across > 0 && flyMax !== a.id ? across : el._dkSize) : 0;
     for (const e of EDGES) main.style['margin' + e[0].toUpperCase() + e.slice(1)] = el && a.edge === e ? px + 'px' : '';
     root.classList.toggle('dk-beside-open', !!el);
     watchBeside(el);
@@ -1089,13 +1515,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   // ---- a panel in a window of its own ----
 
-  // Panels remembered as out whose windows are not open (after a reload): a small notice over the dock offers, for
-  // each, to open its window again or to bring it back. It is not a place in the layout; closing it (outNoteDismiss)
-  // leaves them to the Panels menu, reveal(id), and a strip panel's own strip button.
+  // Panels remembered as out whose windows are not open, nor coming back (after a reload): a small notice over the dock
+  // offers, for each, to open its window again or to bring it back. It is not a place in the layout; closing it
+  // (outNoteDismiss) leaves them to the Panels menu, reveal(id), and a strip panel's own strip button. popLostNotice:
+  // 'quiet' has none: those marks only (isOutLost).
   let outNoteOff = false;
   function outNote() {
-    const waiting = ids.filter((id) => outOf(id) && !pops.has(id));
-    if (!waiting.length || (outNoteOff && outNoteDismiss !== false)) return null;
+    const waiting = ids.filter(outLost);
+    if (quietLost || !waiting.length || (outNoteOff && outNoteDismiss !== false)) return null;
     const el = doc.createElement('div');
     el.className = 'dk-outnote dk-mono';
     el.setAttribute('role', 'status');
@@ -1294,6 +1721,25 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     } catch { /* the window is going */ }
   }
 
+  const hostClasses = new WeakMap();
+  function syncHostBody(cd) {
+    const from = doc.body, to = cd.body;
+    if (!from || !to) return;
+    for (const a of Array.isArray(bodyAttrs) ? bodyAttrs : []) {
+      if (a === 'class') {
+        let state = hostClasses.get(cd);
+        if (!state) { state = { own: new Set(to.classList), copied: new Set() }; hostClasses.set(cd, state); }
+        const now = new Set(from.classList);
+        for (const c of state.copied) if (!now.has(c) && !state.own.has(c)) to.classList.remove(c);
+        for (const c of now) to.classList.add(c);
+        state.copied = now;
+      } else {
+        const value = from.getAttribute(a);
+        if (value === null) to.removeAttribute(a); else to.setAttribute(a, value);
+      }
+    }
+  }
+
   // The window gets the main page's stylesheets, so the panel looks as it did (popout.html need not know them).
   function syncStyles(cd) {
     if (!copyStyles) return;
@@ -1337,6 +1783,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const w = whereIs(layout, id);
     if (!w) return false;
     const geo = popGeometry(id);
+    // Its window from before a reload may still wait (awaitWindows): found by its name with no URL, which loads
+    // nothing in it, and taken back, never a page loaded over it. One gone leaves a blank window of that name, which
+    // the open below loads.
+    if (awaiting.has(id)) {
+      let win = null;
+      try { win = openWindow('', popName + id, features(geo)); } catch { win = null; }
+      if (win && marksOf(win)?.dock === layoutKey && adopt(id, win)) { try { win.focus(); } catch { /* ignore */ } return true; }
+    }
     let child = null;
     try { child = openWindow(popPage ? popPageUrl() : popUrl, popName + id, features(geo)); } catch { child = null; }
     if (!child) {
@@ -1383,7 +1837,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     rememberWindow(id, pop);
     const p = byId.get(id);
     pop.doc = cd;
-    try { pop.win.__dockPopKey = popKey; } catch { /* ignore */ }
+    markWindow(pop.win, { key: popKey, dock: layoutKey, id, wait: adoptMs });
+    windowState(pop.win, false); // taken back after a reload: live again
     cd.title = popTitle(p);
     syncTheme(cd);
     syncBody(id, pop);
@@ -1399,6 +1854,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     windowHead(id, head);
     const body = cd.createElement('div');
     body.className = 'dk-body';
+    applyZoom(id);
     p.el.classList.add('dk-panel');
     p.el.classList.remove('dk-off');
     p.el.removeAttribute('aria-hidden');
@@ -1421,9 +1877,19 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const blur = () => { if (menu && menu.ownerDocument === cd) closeMenu(false); };
     cd.addEventListener('pointerdown', dismiss);
     // Ctrl+F4 and a middle click on its tab close it here too (a closable panel).
-    const onKey = (e) => onCtrlF4(e, id);
+    const onKey = (e) => {
+      onTabMenuKey(e); onCtrlF4(e, id); onPanelKeys(e, id);
+      // Esc: out of full size, focus on its ⤢.
+      if (e.key !== 'Escape' || e.defaultPrevented || !pop.full || (e.target.closest && e.target.closest(`${modalSelector}, .dk-menu`))) return;
+      e.preventDefault();
+      windowFull(id);
+      const full = head.querySelector('[data-dk-act="full"]');
+      if (full) focusQuiet(full);
+    };
+    const onContext = (e) => onTabContext(e, (t) => sec.contains(t));
     const onAux = (e) => { if (middleTab(e)) { e.preventDefault(); if (e.type === 'auxclick') void closeNow(id); } };
     cd.addEventListener('keydown', onKey);
+    cd.addEventListener('contextmenu', onContext);
     head.addEventListener('mousedown', onAux);
     head.addEventListener('auxclick', onAux);
     pop.win.addEventListener('blur', blur);
@@ -1440,11 +1906,13 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     rescroll();
     const later = [setTimeout(rescroll, 100), setTimeout(rescroll, 400)];
     // When the window goes (or its panel comes back), nothing of the dock's stays on it. The panel has already left
-    // `sec` for this document by then (release).
+    // `sec` for this document by then (release). Left waiting for the next page (this one going, suspendWindow), the
+    // window keeps `sec` as it is, inert, until that page draws it again.
     whenGone(cd, () => {
       blur();
       cd.removeEventListener('pointerdown', dismiss);
       cd.removeEventListener('keydown', onKey);
+      cd.removeEventListener('contextmenu', onContext);
       head.removeEventListener('mousedown', onAux);
       head.removeEventListener('auxclick', onAux);
       pop.win.removeEventListener('blur', blur);
@@ -1456,7 +1924,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       } catch { /* closed */ }
       head.removeEventListener('click', onBack);
       sec.removeEventListener('dock-reveal', onReveal);
-      sec.remove();
+      if (pop.waiting) sec.inert = true; else sec.remove();
     });
     // A window closed without its page saying so (the browser killed it), and a window moved (no event says so).
     pop.timer = setInterval(() => {
@@ -1475,11 +1943,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       ? `<button type="button" class="dk-pop-back" data-dk-pop="back" title="${escText(T.backToMainTitle)}">${icon('back')}<span>${escText(T.backToMain)}</span></button>`
       : '';
     head.innerHTML = headHtml({ active: id, panels: [id] }, 'window');
-    head.querySelector('.dk-ctl').insertAdjacentHTML('afterbegin', backBtn);
+    head.querySelector('.dk-ctl:last-child').insertAdjacentHTML('afterbegin', backBtn);
+    putExtras(head);
   }
 
   function rememberWindow(id, pop) {
-    if (pops.get(id) !== pop || !layout.out || !layout.out[id]) return;
+    if (pops.get(id) !== pop || !layout.out || !layout.out[id] || pop.full) return; // full size is for a moment
     let g = null;
     try {
       if (pop.win.closed || pop.win.document.visibilityState === 'hidden') return;
@@ -1559,6 +2028,52 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // Before a panel that is out is moved some other way (floated, unpinned, docked, hidden): its window closes.
   function closeOut(id) { const pop = pops.get(id); if (pop) release(id, pop, true); }
 
+  // ---- a window outliving a reload (popadopt.js) ----
+
+  // This page is going and the next one may take the window back: the window stays open with what it shows, inert, and
+  // nothing of this page's stays on it (its listeners, the app's onEveryWindow hooks, help). Its page (popout.html)
+  // waits, "reconnecting…".
+  function suspendWindow(id, pop) {
+    pop.waiting = true;
+    clearTimeout(pop.timer);
+    clearInterval(pop.timer);
+    windowState(pop.win, true);
+    removeHostDoc(pop.doc);
+  }
+  // Panel `id` takes window `w` back: the one its page had before a reload (or before the page went into the browser's
+  // cache). No window.open: the same window, where it is and as large. The panel's element (this page's) is drawn there,
+  // in place of what the window kept.
+  function adopt(id, w) {
+    if (destroyed || narrowOn || !byId.has(id) || !outOf(id)) return false;
+    const had = pops.get(id);
+    if (had && had.win !== w) return false;
+    if (had && !had.waiting) return true;
+    let ready = false;
+    try { ready = !w.closed && !!w.document.getElementById(POP_ROOT_ID); } catch { ready = false; }
+    if (!ready) return false;
+    if (had) { pops.delete(id); clearTimeout(had.timer); clearInterval(had.timer); }
+    awaiting.take(id);
+    const g = outOf(id);
+    const pop = { win: w, doc: null, timer: null, started: Date.now(), offset: null, adopted: true,
+      requested: { x: g.x, y: g.y, w: g.w, h: g.h } };
+    pops.set(id, pop);
+    if (flyOpen === id) flyOpen = null;
+    mountWindow(id, pop);
+    for (const fn of changeFns) fn(layout);
+    dockEvent(root, 'pop-adopt', { id, window: w });
+    return true;
+  }
+  // A window asking this page to take it back (its page's __dockPopAdopt): 'yes', 'no' (it should close), or null (not
+  // this dock's, or its panel is not here yet: it asks again until its time runs out).
+  function adoptAsked(w) {
+    if (destroyed) return null;
+    const m = marksOf(w);
+    if (!m || m.dock !== layoutKey) return null;
+    if (!byId.has(m.id)) return null;
+    if (pops.has(m.id) && pops.get(m.id).win === w && !pops.get(m.id).waiting) return 'yes';
+    return adopt(m.id, w) ? 'yes' : 'no';
+  }
+
   // ---- unpinned panels sliding out ----
 
   let hoverTimer = null;
@@ -1568,6 +2083,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (hiddenWindow(id)) { if (!byHover) showHidden(id); return; }
     if (outIdle(id)) { if (!byHover) api.reveal(id); return; } // its button after a reload: back on its strip, slid out
     if (flyOpen === id) { if (!byHover) flyByHover = false; return; }
+    endFit(false);
+    unFlyMax();
     flyOpen = id;
     flyByHover = !!byHover;
     const a = layout.auto.find((x) => x.id === id);
@@ -1578,7 +2095,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function closeFly(refocus) {
     if (!flyOpen) return;
     const id = flyOpen;
+    if (fitted && fitted.id === id) endFit(false);
     flyOpen = null;
+    unFlyMax();
     markFlyouts();
     fitAll();
     const b = stripBtns.get(id);
@@ -1853,17 +2372,32 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       try {
         pop.doc.title = popTitle(p);
         const sec = pop.doc.querySelector(`#${POP_ROOT_ID} > .dk-pop`);
-        const head = sec && sec.querySelector(':scope > .dk-head');
         if (sec) sec.setAttribute('aria-label', t);
-        if (head) {
-          const f = pop.doc.activeElement;
-          const act = f && head.contains(f) ? (f.dataset.dkAct ? `[data-dk-act="${f.dataset.dkAct}"]` : f.dataset.dkTab !== undefined ? '[data-dk-tab]' : null) : null;
-          windowHead(id, head);
-          const again = act && head.querySelector(act);
-          if (again) focusQuiet(again);
-        }
       } catch { /* the window is going */ }
     }
+    redrawWindowHead(id);
+    fitSoft = true;
+    render();
+  }
+  // A panel's own window draws its title bar again, its focus kept on the same control.
+  function redrawWindowHead(id) {
+    const pop = pops.get(id);
+    if (!pop || !pop.doc) return;
+    try {
+      const head = pop.doc.querySelector(`#${POP_ROOT_ID} > .dk-pop > .dk-head`);
+      if (!head) return;
+      const f = pop.doc.activeElement;
+      const act = f && head.contains(f) ? (f.dataset.dkAct ? `[data-dk-act="${f.dataset.dkAct}"]` : f.dataset.dkTab !== undefined ? '[data-dk-tab]' : null) : null;
+      windowHead(id, head);
+      const again = act && head.querySelector(act);
+      if (again) focusQuiet(again);
+    } catch { /* the window is going */ }
+  }
+  // tabExtra asked again for every tab (the app's state it draws from changed): in this page and in panels' windows.
+  function refreshTabExtras() {
+    if (destroyed) return;
+    for (const id of pops.keys()) redrawWindowHead(id);
+    fitSoft = true;
     render();
   }
 
@@ -1901,7 +2435,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   // Takes panel `id` out of the dock: its window closes, its menu and flyout too, its place is kept (parked) for when
   // it is added again, and its element goes back to the app, detached and without the dock's classes.
-  function removeNow(id) {
+  function removeNow(id, transferTo = null, silent = false) {
     const p = destroyed ? null : byId.get(id);
     if (!p) return null;
     const el = p.el;
@@ -1914,6 +2448,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (gesture && gesture.id === id) { gesture = null; preview.hidden = true; root.classList.remove('dk-dragging'); endStripDrag(); }
     if (maxed && before && before.stack === maxed && maxed.panels.length === 1) maxed = null;
     parkPanel(layout, id, opts());
+    if (transferTo && layout.zoom) { delete layout.zoom[id]; if (!Object.keys(layout.zoom).length) delete layout.zoom; }
     ids.splice(ids.indexOf(id), 1);
     wideCfg.drop(id);
     narrowCfg.drop(id);
@@ -1924,14 +2459,16 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     wasShown.delete(id);
     closing.delete(id);
     if (lastActive === id) lastActive = before && before.stack ? before.stack.active || null : null;
-    el.remove();
+    if (transferTo) put(transferTo, el, null);
+    else el.remove();
     el.classList.remove('dk-panel', 'dk-off');
+    restoreZoomStyle(el);
     el.removeAttribute('aria-hidden');
     if (el.dataset.dkRole !== undefined) { el.removeAttribute('role'); el.removeAttribute('aria-labelledby'); delete el.dataset.dkRole; }
     commit();
     // Focus goes to the tab that came to the front in its stack (the one on its left), when it was in the panel.
     if (hadFocus && before && before.stack && before.stack.panels.length) focusTab(before.stack.active);
-    dockEvent(root, 'dock-removed', { id, el });
+    if (!transferTo && !silent) dockEvent(root, 'dock-removed', { id, el });
     return el;
   }
 
@@ -1966,6 +2503,41 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const node = t && stackAround(t);
     return node ? node.active : null;
   }
+  function openPanelHelp(id, anchor) {
+    const p = byId.get(id);
+    if (!p?.help) return false;
+    if (typeof help.open === 'function') return help.open(p.help, anchor || p.el) !== false;
+    const targetDoc = anchor?.ownerDocument || doc;
+    const q = targetDoc.querySelector(`[data-help="${CSS_ESC(p.help)}"]`);
+    if (q) { q.click(); return true; }
+    if (typeof help.icon === 'function') {
+      const holder = targetDoc.createElement('span');
+      holder.innerHTML = help.icon(p.help, p) || '';
+      const button = holder.querySelector(helpSel);
+      if (button) {
+        const rect = anchor?.getBoundingClientRect();
+        holder.style.cssText = `position:fixed;left:${rect?.left || 4}px;top:${rect?.bottom || 4}px;z-index:-1`;
+        targetDoc.body.appendChild(holder);
+        button.click(); holder.remove();
+        return true;
+      }
+    }
+    return false;
+  }
+  function onPanelKeys(e, id) {
+    if (!id || e.defaultPrevented) return;
+    if (helpIn === 'menu' && e.key === 'F1' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const anchor = byId.get(id).el.closest('.dk-body')?.previousElementSibling?.querySelector('[data-dk-act="menu"]') || byId.get(id).el;
+      if (openPanelHelp(id, anchor)) e.preventDefault();
+      return;
+    }
+    if (!zoomable(id) || !e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey || e.getModifierState?.('AltGraph')) return;
+    let value = null;
+    if (e.key === '=' || (e.key.length !== 1 && e.code === 'Equal')) value = panelZoom(id) + 0.1;
+    else if (e.key === '-' || (e.key.length !== 1 && e.code === 'Minus')) value = panelZoom(id) - 0.1;
+    else if (e.key === '0' || (e.key.length !== 1 && e.code === 'Digit0')) value = 1;
+    if (value !== null) { e.preventDefault(); setPanelZoom(id, value); }
+  }
   // Ctrl+F4 closes the focused panel when it is closable (in an ordinary browser tab the browser keeps Ctrl+F4 for
   // itself and closes the tab: then only an installed app window, or a panel's own window, sees it).
   function onCtrlF4(e, id) {
@@ -1974,7 +2546,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     e.preventDefault();
     void closeNow(id);
   }
-  on(root, 'keydown', (e) => onCtrlF4(e, panelAt(e.target)));
+  on(root, 'keydown', (e) => { onTabMenuKey(e); const id = panelAt(e.target); onCtrlF4(e, id); onPanelKeys(e, id); });
+  // On the document, bubbling: the app's own handlers (in the page, or on the document before the dock's) go first.
+  on(doc, 'contextmenu', (e) => onTabContext(e, (t) => root.contains(t)));
   // A middle click on a closable panel's tab closes it (and its press starts no autoscroll).
   // The wheel over a tab row that overflows scrolls it sideways.
   on(root, 'wheel', (e) => {
@@ -2035,9 +2609,42 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   const api = {
+    /** Group host uses the same pop-out page, opener and theme copying as a panel window. */
+    _openHost: (name, geo) => openWindow(popPage ? popPageUrl() : popUrl, name, features(geo)),
+    /** The window named `name` with nothing loaded in it (an existing one as it is, else a blank one). */
+    _findHost: (name, geo) => openWindow('', name, features(geo)),
+    _syncHost: (childDoc, styles = true) => { syncTheme(childDoc); syncHostBody(childDoc); if (styles) syncStyles(childDoc); },
+    _attachHostDoc: (childDoc) => {
+      for (const { type, listener, o } of hostDocListeners) childDoc.addEventListener(type, listener, o);
+      addHostDoc(childDoc);
+      return () => {
+        for (const { type, listener, o } of hostDocListeners) childDoc.removeEventListener(type, listener, o);
+        removeHostDoc(childDoc);
+      };
+    },
+    _cancelDrag: () => { gesture = null; preview.hidden = true; root.classList.remove('dk-dragging'); },
     screenshot,
     copyScreenshot,
     layout: () => layout,
+    exportLayout: () => layoutText(layoutFile([{ id: 'main', title: 'Main', layout: splitFractions(layout, root) }], layoutKey, savedAt, appZoom)),
+    importLayout(text, { onUnknown } = {}) {
+      const { value, errors } = parseLayoutFile(text);
+      if (!errors.length && value.docks.length !== 1) errors.push({ path: 'docks', message: 'Expected one dock' });
+      if (errors.length) return { ok: false, errors, dropped: [], parked: [] };
+      // A panel the app has not given (yet) keeps its place, parked, for addPanel (as after a reload).
+      const next = value.docks[0].layout;
+      const parked = [...new Set(layoutIds(next, true))].filter((id) => !ids.includes(id));
+      if (onUnknown) for (const id of parked) onUnknown(id);
+      api._replaceLayout(splitFractions(next, root, true));
+      setZoom(value.zoom || 1);
+      savedAt = value.savedAt;
+      save(false);
+      return { ok: true, errors: [], dropped: [], parked };
+    },
+    panelZoom,
+    setPanelZoom,
+    zoom: () => appZoom,
+    setZoom,
     /** A panel's view mode (IntelliJ's): 'pinned', 'unpinned', 'undock', 'float', 'window' or 'hidden'. */
     viewMode: modeOf,
     /** Changes a panel's view mode; its side stays. False when nothing changed (or `can` does not allow it). */
@@ -2071,6 +2678,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     setNarrow(on) {
       on = !!on;
       if (on === narrowOn || destroyed) return;
+      const before = zoomSnapshot();
+      const zoomBefore = { ...layout.zoom };
       save();
       for (const [id, pop] of [...pops]) { rememberWindow(id, pop); release(id, pop, true); }
       closeMenu(false);
@@ -2080,12 +2689,23 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       cfg = on ? narrowCfg : wideCfg;
       root.classList.toggle('dk-narrow', on);
       layout = load();
+      if (layout.zoom) for (const id of ids) delete layout.zoom[id];
+      if (Object.keys(zoomBefore).length) layout.zoom = { ...(layout.zoom || {}), ...zoomBefore };
+      if (layout.zoom && !Object.keys(layout.zoom).length) delete layout.zoom;
       commit();
+      emitZoomChanges(before);
     },
     /** Whether a person may do `action` to panel `id` here (the `can` option, and narrow). */
     can: allowed,
     render,
-    activate(id) { if (byId.has(id)) lastActive = id; if (activate(layout, id)) commit(); },
+    activate(id) {
+      if (byId.has(id)) lastActive = id;
+      // Another tab of the fit-expanded stack comes to the front over the dim.
+      const w = fitted && byId.has(id) ? whereIs(layout, id) : null;
+      if (w && w.stack && w.stack.panels.includes(fitted.id)) fitSoft = true;
+      if (activate(layout, id)) commit();
+      fitSoft = false;
+    },
     /** Adds a panel { id, title, el, help?, icon?, closable?, unpinSize? } at runtime, active, where `where` says:
      * { kind: 'stack', stack: panelId } (a tab of that panel's stack), { beside: panelId, side } (docked beside it),
      * an edge ('left' | 'right' | 'top' | 'bottom'), or a view mode ('pinned', 'unpinned', 'undock', 'float', 'window').
@@ -2095,6 +2715,20 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     /** Takes a panel out (any panel, closable or not): its window closes, its place is kept for addPanel. Returns its
      * element, detached, and fires `dock-removed` { id, el } on the root; null when there is no such panel. */
     removePanel: (id) => removeNow(id),
+    /** Group-only transfer keeps a panel connected while its owner changes. */
+    _transferPanel: (id, to) => removeNow(id, to),
+    _removeQuiet: (id) => removeNow(id, null, true),
+    _badge: (id) => badges.get(id) || null,
+    _dropAt: dropAt,
+    _preview: showPreview,
+    _place: (id, target, side) => { if (moveTo(layout, id, target, side, opts())) commit(); },
+    _replaceLayout: (raw) => {
+      const before = zoomSnapshot();
+      layout = cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport() }));
+      commit();
+      emitZoomChanges(before);
+    },
+    _adoptParked: (entries) => { const n = adoptParked(layout, entries, opts()); if (n) save(); return n; },
     /** Closes a closable panel as its × does: the onClose hooks, then removePanel. A promise of whether it closed. */
     close: (id) => closeNow(id),
     /** `fn(id)` before a panel closes (not before removePanel): false, or a promise of false, keeps it. */
@@ -2122,6 +2756,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     /** Gives panel `id` a new title, everywhere it shows: its tab, title bar, strip button, menus and its window's
      * title. Not kept in the layout (the app owns it). Nothing for an id the dock does not have. */
     setTitle: (id, title) => setTitleNow(id, title),
+    refreshTabExtras: () => refreshTabExtras(),
     /** A panel's title now (null for an id the dock does not have). */
     title: (id) => (byId.has(id) ? byId.get(id).title : null),
     setBadge(id, txt, title) {
@@ -2195,10 +2830,28 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     isOpenOut: (id) => pops.has(id),
     /** The panel's own window while it is open; null otherwise. */
     popWindow: (id) => (pops.get(id) ? pops.get(id).win : null),
+    /** Takes back `w`, a panel's window this dock's page had before a reload (an app that keeps windows itself): its
+     * panel is drawn there again (the `pop-adopt` event). Returns the panel's id, or null (not this dock's, its panel
+     * not out, or the window closed). Windows on Dock's own pop-out page come back by themselves. */
+    adoptWindow(w) {
+      const m = w ? marksOf(w) : null;
+      return m && m.dock === layoutKey && adopt(m.id, w) ? m.id : null;
+    },
+    /** Whether panel `id` is out with its window lost: not open, and not coming back after a reload. */
+    isOutLost: (id) => outLost(id),
+    /** The popLostNotice option: 'banner' or 'quiet' (the Panels menu marks a lost window's row only for 'quiet'). */
+    popLostNotice: () => (quietLost ? 'quiet' : 'banner'),
     openFly,
     closeFly,
     flyOpen: () => flyOpen,
     maximised: () => maxed,
+    /** Fit-expands panel `id` (its content's size over the dimmed dock, for a moment; nothing is stored): false when it
+     * cannot be (not on screen in the main page, a tab behind another, minimised, narrow, or `can(id, 'fit')` says no). */
+    fitExpand: (id) => fitExpandNow(id),
+    /** Restores the fit-expanded panel, if any (false: none was). */
+    fitRestore() { if (!fitted) return false; endFit(false); return true; },
+    /** Whether panel `id` is fit-expanded now (with no id: whether any is). */
+    isFitExpanded: (id) => !!fitted && (id === undefined || fitted.id === id),
     /** Takes the dock off the page: its windows close (and stay remembered as out), its listeners go. */
     destroy() {
       if (destroyed) return;
@@ -2210,6 +2863,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       for (const [id, pop] of [...pops]) { rememberWindow(id, pop); release(id, pop, true); }
       for (const fn of undo.splice(0)) { try { fn(); } catch { /* ignore */ } }
       closeMenu(false);
+      for (const p of byId.values()) restoreZoomStyle(p.el);
       root.textContent = '';
       for (const u of popBlobUrls.values()) { try { urlEnv().URL.revokeObjectURL(u); } catch { /* ignore */ } }
       popBlobUrls.clear();
@@ -2223,6 +2877,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     else if (pops.has(id) && name === 'unpin') setViewMode(id, openStyle === 'beside' ? 'unpinned' : 'undock');
     else if (name === 'min') api.toggleMin(id);
     else if (name === 'max') api.toggleMax(id);
+    else if (name === 'fit') { if (fitted && fitted.id === id) endFit('focus'); else fitExpandNow(id); }
+    // ⤢: ⋯ → Maximise's own path for a stack; a flyout and a window of its own have theirs.
+    else if (name === 'full') { if (pops.has(id)) windowFull(id); else if (btn.closest('.dk-flyout')) flyFull(id); else api.toggleMax(id); }
     else if (name === 'float') { closeFly(false); api.float(id); }
     else if (name === 'pop') api.popOut(id);
     else if (name === 'dock' && f) { dockBack(layout, f, opts()); commit(); }
@@ -2279,33 +2936,49 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     focusQuiet(list[to]);
   }
 
-  // The Options menu (⋯): the app's items (v0.9.0), then View Mode ▸, Move To ▸, Take Screenshot, Maximise or Restore,
-  // Hide.
-  function openOptions(btn, id) {
+  // The Options menu: app items, View Mode, Move To, optional Help and zoom controls, then panel actions.
+  function openOptions(btn, id, at) {
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
-    const fly = !!btn.closest('.dk-flyout');
+    // A strip button's menu is its slid-out panel's (Hide only while it is out).
+    const strip = !!btn.dataset.dkAuto;
+    const fly = strip || !!btn.closest('.dk-flyout');
     const w = whereIs(layout, id);
     const where = pops.has(id) ? 'window' : fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock';
     const o = optionsOf(id, where);
+    if (strip && flyOpen !== id) o.hide = null;
     const arrow = '<span class="dk-menu-arrow" aria-hidden="true">▸</span>';
-    const parts = [];
-    if (o.modes.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="mode">${escText(T.viewMode)}${arrow}</button>`);
-    if (o.sides.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="side">${escText(T.moveTo)}${arrow}</button>`);
-    const tail = [];
-    if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(typeof screenshotHook !== 'function' && shotMode === 'capture' ? T.screenshotHintCapture : T.screenshotHint)}">${escText(T.screenshot)}</button>`);
-    if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
-    if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
-    if (o.close) tail.push(`<button type="button" role="menuitem" data-dk-menu="close" title="${escText(T.closeHint)}">${escText(T.close)}</button>`);
-    if (parts.length && tail.length) parts.push(MENU_SEP);
-    showMenu(btn, id, { cls: 'dk-menu dk-mono dk-options', label: `${byId.get(id).title}: ${T.options}`, own: parts.join('') + tail.join(''), where, fly, o });
+    // An app item named View Mode with a submenu of its own (a group's user dock: Dock, Window) takes Dock's view
+    // modes into its submenu, after a separator: the menu never shows two View Mode items.
+    const own = (app) => {
+      const at = o.modes.length ? app.findIndex((it) => it && it.sub && it.label === T.viewMode) : -1;
+      o.modesIn = at >= 0 ? String(at) : null;
+      const parts = [];
+      if (o.modes.length && at < 0) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="mode">${escText(T.viewMode)}${arrow}</button>`);
+      if (o.sides.length || o.docks?.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="side">${escText(T.moveTo)}${arrow}</button>`);
+      const tail = [];
+      if (helpIn === 'menu' && byId.get(id)?.help) tail.push(`<button type="button" role="menuitem" data-dk-menu="help">${escText(T.help)}</button>`);
+      if (zoomable(id)) {
+        tail.push(`<button type="button" role="menuitem" data-dk-menu="zoom-in">${escText(T.zoomIn)}</button>`);
+        tail.push(`<button type="button" role="menuitem" data-dk-menu="zoom-out">${escText(T.zoomOut)}</button>`);
+        tail.push(`<button type="button" role="menuitem" data-dk-menu="zoom-reset">${escText(T.resetZoom(Math.round(panelZoom(id) * 100)))}</button>`);
+      }
+      if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(typeof screenshotHook !== 'function' && shotMode === 'capture' ? T.screenshotHintCapture : T.screenshotHint)}">${escText(T.screenshot)}</button>`);
+      if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
+      if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
+      if (o.close) tail.push(`<button type="button" role="menuitem" data-dk-menu="close" title="${escText(T.closeHint)}">${escText(T.close)}</button>`);
+      if (parts.length && tail.length) parts.push(MENU_SEP);
+      return parts.join('') + tail.join('');
+    };
+    showMenu(btn, id, { cls: 'dk-menu dk-mono dk-options', label: `${byId.get(id).title}: ${T.options}`, own, where, fly, o, at });
   }
   const MENU_SEP = '<div class="dk-menu-sep" role="separator"></div>';
-  // Puts up a ⋯ menu under `btn`, in its window: the app's items for `where` above `own` (Dock's), a separator between.
-  // Nothing at all: no menu.
-  function showMenu(btn, id, { cls, label, own, where, fly = false, o = null, classicMenu = false }) {
+  // Puts up a ⋯ menu under `btn` (or at `at`, a tab's right-click), in its window: the app's items for `where` above
+  // `own` (Dock's, or a function of the app's items giving them), a separator between. Nothing at all: no menu.
+  function showMenu(btn, id, { cls, label, own: ownOf, where, fly = false, o = null, classicMenu = false, at = null }) {
     const menuWin = btn.ownerDocument.defaultView;
     const app = appItemsOf(id, where, menuWin);
+    const own = typeof ownOf === 'function' ? ownOf(app) : ownOf;
     if (!app.length && !own) return;
     menu = btn.ownerDocument.createElement('div');
     menu.className = cls;
@@ -2320,8 +2993,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     menu._classic = classicMenu;
     btn.ownerDocument.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
-    placeMenu(menu, r.right - menu.offsetWidth, r.bottom + 2);
-    if (r.bottom + 2 + menu.offsetHeight > ((menuWin && menuWin.innerHeight) || 900) - 4) placeMenu(menu, r.right - menu.offsetWidth, r.top - 2 - menu.offsetHeight);
+    const x = at ? at.x : menuPlace === 'start' ? r.left : r.right - menu.offsetWidth;
+    placeMenu(menu, x, at ? at.y : r.bottom + 2);
+    if (!at && r.bottom + 2 + menu.offsetHeight > ((menuWin && menuWin.innerHeight) || 900) - 4) placeMenu(menu, x, r.top - 2 - menu.offsetHeight);
     focusQuiet(menuButtons(menu)[0]);
     menu.addEventListener('click', (e) => {
       const b = e.target.closest('button');
@@ -2378,9 +3052,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     sub.setAttribute('aria-label', appSub ? appSub.label : kind === 'mode' ? T.viewMode : T.moveTo);
     const item = (k, label, on, hint) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-dk-menu="${k}"${hint ? ` title="${escText(hint)}"` : ''}>${escText(label)}</button>`;
     const hints = T.modeHints || {};
-    sub.innerHTML = appSub ? menuItemsHtml(appSub.sub, kind.slice(4) + '.')
-      : kind === 'mode' ? o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now, hints[m])).join('')
-        : o.sides.map((s) => item(`side:${s}`, T.sides[s], s === o.side)).join('');
+    const modeItems = () => o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now, hints[m])).join('');
+    sub.innerHTML = appSub ? menuItemsHtml(appSub.sub, kind.slice(4) + '.') + (o && o.modesIn === kind.slice(4) ? MENU_SEP + modeItems() : '')
+      : kind === 'mode' ? modeItems()
+        : o.sides.map((s) => item(`side:${s}`, T.sides[s], s === o.side)).join('')
+          + (o.docks?.length ? MENU_SEP + o.docks.map((d) => item(`dock:${d.id}`, d.title, false)).join('') : '');
     sub._kind = kind;
     menu._sub = sub;
     parent.setAttribute('aria-expanded', 'true');
@@ -2413,6 +3089,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const k = b.dataset.dkMenu;
     if (!k) return;
     const classicMenu = menu._classic;
+    const anchor = menu._from;
     closeMenu(false);
     if (classicMenu) {
       if (k.startsWith('edge:')) api.dockEdge(id, k.slice(5));
@@ -2422,12 +3099,21 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       else if (k === 'unpin') api.unpin(id);
       else if (k === 'hide') api.setVisible(id, false);
       else if (k === 'close') void closeNow(id);
+      else if (k === 'help') openPanelHelp(id, anchor);
+      else if (k === 'zoom-in') setPanelZoom(id, panelZoom(id) + 0.1);
+      else if (k === 'zoom-out') setPanelZoom(id, panelZoom(id) - 0.1);
+      else if (k === 'zoom-reset') setPanelZoom(id, 1);
       return;
     }
     if (k.startsWith('mode:')) setViewMode(id, k.slice(5));
     else if (k.startsWith('side:')) moveSideNow(id, k.slice(5));
+    else if (k.startsWith('dock:') && groupBridge) groupBridge.move(id, k.slice(5));
     else if (k === 'max') api.toggleMax(id);
     else if (k === 'screenshot') void copyScreenshot(id);
+    else if (k === 'help') openPanelHelp(id, anchor);
+    else if (k === 'zoom-in') setPanelZoom(id, panelZoom(id) + 0.1);
+    else if (k === 'zoom-out') setPanelZoom(id, panelZoom(id) - 0.1);
+    else if (k === 'zoom-reset') setPanelZoom(id, 1);
     else if (k === 'hide') hideNow(id, fly);
     else if (k === 'close') { void closeNow(id); return; }
     refocusAfterPick(id);
@@ -2453,17 +3139,55 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   // headButtons: 'classic': the menu of v0.4 (dock at an edge, float, pop out, unpin, hide), the app's items above it.
-  function openMenu(btn, id) {
-    if (!classic || pops.has(id)) { openOptions(btn, id); return; }
+  function openMenu(btn, id, at) {
+    if (!classic || pops.has(id)) { openOptions(btn, id, at); return; }
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
-    const fly = !!btn.closest('.dk-flyout');
+    const strip = !!btn.dataset.dkAuto;
+    const fly = strip || !!btn.closest('.dk-flyout');
     const w = whereIs(layout, id);
     const where = fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock';
-    // A slid-out panel's own buttons are on its title bar: its menu has the app's items only.
-    const items = fly ? [] : classicItems(id, where);
-    const own = items.map(([k, label]) => `<button type="button" role="menuitem" data-dk-menu="${k}">${escText(label)}</button>`).join('');
-    showMenu(btn, id, { cls: 'dk-menu dk-mono', label: `${byId.get(id).title}: move or hide`, own, where, fly, classicMenu: true });
+    // A slid-out panel's own buttons are on its title bar: its menu has the app's items only. A strip button has
+    // none: its menu moves the panel (unpinned already).
+    const items = strip ? classicItems(id, 'dock').filter(([k]) => k !== 'unpin') : fly ? [] : classicItems(id, where);
+    const own = items.map(([k, label]) => `<button type="button" role="menuitem" data-dk-menu="${k}">${escText(label)}</button>`).join('')
+      + (helpIn === 'menu' && byId.get(id)?.help ? `<button type="button" role="menuitem" data-dk-menu="help">${escText(T.help)}</button>` : '')
+      + (zoomable(id)
+        ? `<button type="button" role="menuitem" data-dk-menu="zoom-in">${escText(T.zoomIn)}</button><button type="button" role="menuitem" data-dk-menu="zoom-out">${escText(T.zoomOut)}</button><button type="button" role="menuitem" data-dk-menu="zoom-reset">${escText(T.resetZoom(Math.round(panelZoom(id) * 100)))}</button>` : '');
+    showMenu(btn, id, { cls: 'dk-menu dk-mono', label: `${byId.get(id).title}: move or hide`, own, where, fly, classicMenu: true, at });
+  }
+
+  // A right-click on a tab or a strip button (tabContextMenu): that panel's own menu at the pointer, the one its ⋯
+  // would open were it shown, as IntelliJ's tool window tabs have. Shift+F10 or the ContextMenu key on a focused one:
+  // the same, under it. No tab switches. An app's handler that took the event first, and what on a tab is the app's
+  // own (help's ?, tabExtra's markup), keep theirs.
+  function menuTabOf(t) {
+    if (!tabContextMenu || !t || !t.closest || t.closest(`${ownSel}, [data-dk-close]`)) return null;
+    const el = t.closest('[data-dk-tab], [data-dk-auto]');
+    const id = el && (el.dataset.dkTab || el.dataset.dkAuto);
+    return id && byId.has(id) ? el : null;
+  }
+  function openTabMenu(el, at) {
+    closeMenu(false);
+    if (!at) { const r = el.getBoundingClientRect(); at = { x: r.left, y: r.bottom + 2 }; }
+    openMenu(el, el.dataset.dkTab || el.dataset.dkAuto, at);
+    return !!menu;
+  }
+  // `mine`: whether the event's target is this dock's (a group's docks share a document).
+  function onTabContext(e, mine) {
+    if (!tabContextMenu || e.defaultPrevented) return;
+    if (inMenu(e.target)) { e.preventDefault(); return; } // the keyboard's own, at the menu its keydown opened
+    const el = mine(e.target) && menuTabOf(e.target);
+    if (!el) return;
+    const keyed = e.button !== 2;
+    if (keyed && menu && menu._from === el) { e.preventDefault(); return; }
+    if (openTabMenu(el, keyed ? null : { x: e.clientX, y: e.clientY })) e.preventDefault();
+  }
+  function onTabMenuKey(e) {
+    if (!tabContextMenu || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return;
+    const el = menuTabOf(e.target);
+    if (el && openTabMenu(el, null)) e.preventDefault();
   }
 
   // ---- pointer: dragging a panel, moving and sizing a float, the splitters ----
@@ -2614,7 +3338,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const rz = t.closest && t.closest('[data-dk-rz]');
     if (rz) { const f = floatAround(rz); if (f) startFloat(e, f, rz.dataset.dkRz); return; }
     const head = t.closest && t.closest('.dk-head');
-    if (!head || t.closest(`.dk-ctl, ${helpSel}, [data-dk-close], [data-dk-tabs]`)) return;
+    if (!head || t.closest(`.dk-ctl, ${ownSel}, [data-dk-close], [data-dk-tabs]`)) return;
     const f = floatAround(head);
     const floatTab = f && t.closest('[data-dk-tab]');
     // A tab is the panel itself, floating or docked: dragging it takes that one panel to an edge or into another
@@ -2693,8 +3417,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (gesture.kind === 'drag') {
       const far = Math.abs(e.clientX - gesture.x0) + Math.abs(e.clientY - gesture.y0) > 5;
       if (!gesture.on && !far) return;
-      if (!gesture.on) { gesture.on = true; root.classList.add('dk-dragging'); closeFly(false); }
-      gesture.drop = dropAt(e.clientX, e.clientY, gesture.id);
+      if (!gesture.on) { gesture.on = true; endFit(false); root.classList.add('dk-dragging'); closeFly(false); }
+      const cross = groupBridge && groupBridge.preview(gesture.id, e.clientX, e.clientY);
+      gesture.drop = cross ? null : dropAt(e.clientX, e.clientY, gesture.id);
       showPreview(gesture.drop);
       return;
     }
@@ -2707,6 +3432,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const dx = e.clientX - gesture.x0;
       const dy = e.clientY - gesture.y0;
       if (!gesture.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+      if (!gesture.moved) endFit(false);
       gesture.moved = true;
       const { f, mode, start } = gesture;
       const fm = S.floatMin;
@@ -2746,6 +3472,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (!g.on) return;
       suppressClick = true;
       later(() => { suppressClick = false; }, 0);
+      if (groupBridge) groupBridge.clearPreview();
+      if (e.type !== 'pointercancel' && groupBridge && groupBridge.drop(g.id, e.clientX, e.clientY)) return;
       const drop = e.type === 'pointercancel' ? null : dropAt(e.clientX, e.clientY, g.id);
       if (drop && moveTo(layout, g.id, drop.target, drop.side, opts())) commit();
       return;
@@ -2808,7 +3536,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }
     if (minClickRestores && restoreFromHead(e)) return;
     const tab = t.closest('[data-dk-tab]');
-    if (tab && !t.closest(helpSel)) { api.activate(tab.dataset.dkTab); return; }
+    if (tab && !t.closest(ownSel)) { api.activate(tab.dataset.dkTab); return; }
     const strip = t.closest('[data-dk-auto]');
     if (strip) {
       const id = strip.dataset.dkAuto;
@@ -2824,7 +3552,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function restoreFromHead(e) {
     const t = e.target;
     const head = t.closest('.dk-head');
-    if (!head || t.closest(`.dk-ctl, ${helpSel}, [data-dk-close], [data-dk-tabs]`) || head.closest('.dk-flyout')) return false;
+    if (!head || t.closest(`.dk-ctl, ${ownSel}, [data-dk-close], [data-dk-tabs]`) || head.closest('.dk-flyout')) return false;
     const node = stackAround(head);
     if (!node || !node.min || !allowed(node.active, 'min')) return false;
     const tab = t.closest('[data-dk-tab]');
@@ -2860,7 +3588,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   on(root, 'dblclick', (e) => {
     const head = e.target.closest('.dk-head');
-    if (!head || e.target.closest(`.dk-ctl, ${helpSel}, [data-dk-close], [data-dk-tabs]`) || head.closest('.dk-flyout')) return;
+    if (!head || e.target.closest(`.dk-ctl, ${ownSel}, [data-dk-close], [data-dk-tabs]`) || head.closest('.dk-flyout')) return;
     // By the panel's name, not its element: the first click of the two may have redrawn the title bar.
     const tabEl = e.target.closest('[data-dk-tab]');
     const node = stackAround(head);
@@ -2905,6 +3633,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
   // The places F6 goes through, in order: the docked stacks, the floating windows (back to front), the panel slid out.
   function stackStops() {
+    if (fitted) return [fitted.box.matches('.dk-float') ? fitted.box.querySelector(':scope > .dk-stack') || fitted.box : fitted.box];
     if (maxed && stackEls.get(maxed)) return [stackEls.get(maxed)];
     const docked = [...main.querySelectorAll('.dk-stack')];
     const floats = layout.floats.map((f) => stackEls.get(f.stack)).filter(Boolean);
@@ -2950,7 +3679,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (had && had[0] === d) return;
     unhookFrame(f);
     if (!d) return;
-    const fn = (e) => { if (root.contains(f)) onF6(e); };
+    const fn = (e) => { if (root.contains(f)) { onF6(e); onPanelKeys(e, panelOf(f)); if (fitted && fitted.box.contains(f)) escFit(e); } };
     const blur = () => checkIframeFocus();
     d.addEventListener('keydown', fn);
     d.defaultView.addEventListener('blur', blur);
@@ -3041,7 +3770,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (from) clearTimeout(hoverTimer);
     if (from && from.dataset.dkAuto === quietHover && !(e.relatedTarget && from.contains(e.relatedTarget))) quietHover = null;
     if (!flyOpen || !insideFly(e.target) || insideFly(e.relatedTarget)) return;
-    if (sticky()) return;
+    if (sticky() || (fitted && fitted.id === flyOpen)) return;
     clearTimeout(leaveTimer);
     leaveTimer = later(() => {
       if (!flyOpen || capturing.has(flyOpen)) return;
@@ -3062,7 +3791,23 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       closeFly(false);
     }, 0);
   });
+  // A fit-expanded panel: a press on the dim restores it (fitDimCloses) and reaches nothing under it; a press anywhere
+  // else but the panel, its menu or a modal restores it too. So does focus going elsewhere.
+  function fitDown(e) {
+    if (!fitted) return false;
+    const t = e.target;
+    if (t && t.closest && t.closest('[data-dk-fit-dim]') && root.contains(t)) {
+      e.preventDefault();
+      if (fitDimCloses) endFit('focus');
+      return true;
+    }
+    if (!fitted.box.contains(t) && !inMenu(t) && !inModal(t)) endFit(false);
+    return false;
+  }
+  const fitAway = (el) => fitted && el && el !== doc.body && !fitted.box.contains(el) && !inMenu(el) && !inModal(el);
+  on(doc, 'focusin', (e) => { if (fitAway(e.target)) endFit(false); });
   on(doc, 'pointerdown', (e) => {
+    if (fitDown(e)) { if (menu && !inMenu(e.target)) closeMenu(false); return; }
     if (flyOpen && !gesture && !stays() && !menuOfFly() && !insideFly(e.target) && !inMenu(e.target) && !inModal(e.target)) closeFly(false);
     if (menu && !inMenu(e.target) && e.target !== menu._from && !(menu._from && menu._from.contains(e.target))) closeMenu(false);
   }, true);
@@ -3072,6 +3817,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     later(() => {
       if (gesture || !doc.hasFocus() || !doc.activeElement || doc.activeElement.tagName !== 'IFRAME') return;
       const frame = doc.activeElement;
+      if (fitAway(frame)) endFit(false);
       if (insideFly(frame) || inMenu(frame) || inModal(frame)) return;
       const keepFly = menuOfFly(); // like pointerdown: the first outside click closes its menu, then the panel
       if (flyOpen && !stays() && !keepFly) closeFly(false);
@@ -3082,30 +3828,51 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   on(doc, 'keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
-    if (gesture && gesture.kind === 'drag') { gesture = null; preview.hidden = true; root.classList.remove('dk-dragging'); return; }
+    if (gesture && gesture.kind === 'drag') { gesture = null; preview.hidden = true; root.classList.remove('dk-dragging');
+      if (groupBridge) groupBridge.clearPreview(); return; }
     if (gesture && gesture.kind === 'strip' && gesture.on) { endStripDrag(); gesture = { kind: 'strip-off' }; e.preventDefault(); return; }
     if (e.target && e.target.closest && e.target.closest(`${modalSelector}, .dk-menu`)) return;
+    if (escFit(e)) return;
+    if (flyOpen && flyMax === flyOpen) { flyFull(flyOpen); return; }
     if (flyOpen) { closeFly(true); return; }
-    api.restoreMax();
+    // Out of full size, focus back on its ⤢ when it was in that panel (or nowhere).
+    const was = maxed;
+    const sec = was && stackEls.get(was);
+    const had = sec && (sec.contains(doc.activeElement) || doc.activeElement === doc.body);
+    if (!api.restoreMax() || !had) return;
+    const full = stackEls.get(was)?.querySelector(':scope > .dk-head [data-dk-act="full"]');
+    if (full) focusQuiet(full);
   });
 
   if (win && win.addEventListener) {
-    // The page going away (closed, reloaded, navigated): its windows close with it, so none is left showing stale
-    // state or holding buttons. Which panels were out, and where, stays remembered for the next load.
+    // The page going away (reloaded, navigated, closed): its windows wait for the page that loads next, inert, and
+    // that page takes them back (popAdoptTimeout; a closed tab's close with it, as its opener is gone). One that cannot
+    // wait (popAdoptTimeout 0, a pop-out page of the app's own that does not, one still opening) closes, so none is
+    // left showing stale state or holding buttons. Which panels were out, and where, stays remembered for the next load.
     on(win, 'pagehide', () => {
       leaving = true;
       for (const [id, pop] of pops) rememberWindow(id, pop);
-      for (const pop of pops.values()) { try { pop.win.close(); } catch { /* ignore */ } }
+      const kept = [];
+      for (const [id, pop] of pops) {
+        if (adoptMs && pop.doc && !pop.waiting && windowWaits(pop.win)) { suspendWindow(id, pop); kept.push(id); }
+        else if (!pop.waiting) { try { pop.win.close(); } catch { /* ignore */ } }
+      }
+      writeWaiting(win, layoutKey, kept, adoptMs);
     });
-    // Back from the browser's page cache: those windows are gone; their places offer to open them again.
+    // Back from the browser's page cache: a window still waiting is taken back; one gone (it closed, or its time ran
+    // out) leaves its place offering to open it again.
     on(win, 'pageshow', (e) => {
       if (!e || !e.persisted) return;
       leaving = false;
-      for (const [id, pop] of [...pops]) release(id, pop, true);
+      takeWaiting(win, layoutKey);
+      for (const [id, pop] of [...pops]) {
+        if (!(pop.waiting && adopt(id, pop.win))) release(id, pop, true);
+      }
       render();
     });
     if (themeEvent) on(win, themeEvent, syncThemes);
     on(win, 'resize', () => {
+      endFit(false); // its size was for the dock as it was
       const ext = extent();
       for (const f of layout.floats) { clampFloat(f, ext.w, ext.h, S.floatMin); placeFloat(f); }
       for (const a of layout.auto) placeFlyout(a);
@@ -3136,8 +3903,21 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   undo.push(() => { if (bodyMo) bodyMo.disconnect(); });
   watchBody();
 
+  // The windows this page had before it reloaded wait for it (popadopt.js): each asks, and is taken back. While one
+  // may still come back (it has had no time to ask yet, or it is still asking), its panel has no notice (nor quiet
+  // mark); one closed or out of time is lost, and its notice shows.
+  if (win) {
+    awaiting = awaitWindows(win, layoutKey, takeWaiting(win, layoutKey), {
+      done: (id) => destroyed || !outOf(id) || pops.has(id),
+      lost: () => { if (destroyed) return; render(); for (const fn of changeFns) fn(layout); },
+    });
+    undo.push(() => awaiting.stop());
+    undo.push(adoptHook(win, adoptAsked));
+    callWindows(win);
+  }
+
   render();
-  save();
+  save(false);
   return api;
 }
 

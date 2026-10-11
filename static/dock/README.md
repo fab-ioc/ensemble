@@ -21,6 +21,55 @@ and show panels from a Panels menu, resize with the splitters (double-click one 
 the default size, arrow keys move a focused one), pop a panel out into a browser window of its own, and reset the layout.
 The layout is saved and comes back on reload.
 
+## Docks the user creates
+
+`createDocks` creates a group with a `main` dock and any number of named docks. It is opt-in; `createDock` by itself keeps its existing behavior. A user dock without a `root` is a movable panel in the main dock, with its own title bar, tabs, splits, strips, sizes, and view modes. Its title bar menu includes View Mode → Window, Rename and Remove. Its View Mode ▸ is one submenu: Dock and Window first, then, after a separator, the frame panel's own view modes (Dock Pinned, Float …) when `can` allows them. An empty user dock stays open and says “Drag panels here.” Dock roots placed inside an ordinary panel are unsupported; use the group for this arrangement.
+
+```js
+import { createDocks, panelsFrom } from './dock/src/index.js';
+const group = createDocks({ root, panels: panelsFrom(root), storageKey: 'app.docks' });
+group.createDock({ id: 'algos', title: 'Algos' });
+group.movePanel('params', { dock: 'algos' });
+group.popDock('algos', { left: 120, top: 100, width: 760, height: 560 });
+group.dockBack('algos');
+group.renameDock('algos', 'Algorithms');
+group.docks(); // [{ id: 'main', title: 'Main', panels: [...], window: null }, ...]
+group.dock('algos').layout();
+group.removeDock('algos'); // panels return to main; { panelsTo: 'hide' } hides them there
+```
+
+### Moving an existing app to a group
+
+Pass the old standalone key as `migrateFrom` when first switching the app to `createDocks`:
+
+```js
+createDocks({ root, panels, storageKey: 'app.docks', migrateFrom: 'app.layout' });
+```
+
+If `app.docks` has no save, Dock reads the v0.14.0 single-dock layout under `app.layout` into `main`, writes the new group file under `app.docks`, and leaves `app.layout` untouched for rollback. Once `app.docks` exists it wins. `importLayout` also accepts a bare v0.14.0 layout JSON as `main`.
+
+`createDock({ root, ... })` and `group.createDock({ id, title, root?, where? })` return the existing Dock API. The group adds `addPanel(idOrPanel, { dock?, where? })`, `movePanel(id, { dock, where? })`, `popDock(id, { left?, top?, width?, height? })`, `dockBack(id)`, `dock(id)`, `docks()`, `layout()`, `setNarrow(on)`, `reset()`, `exportLayout()` and `importLayout(text)`. `main` cannot pop. A user dock's window has the full dock controls, including split, tabs, strips and view modes. Drag tabs and title bars between its window and the main window; Esc or a drop outside every dock cancels. A panel's ⋯ → Move To → dock also works across windows and is the keyboard route. The group root emits `dock-created`, `dock-removed`, `dock-moved`, `dock-popped`, `dock-back`, and `layout-imported`. `dock-moved` runs after the original panel element is connected in its destination document.
+
+The group option `dockWindowClose` is `'dock'` (default) or `'hide'`. Closing a dock window normally returns it to its previous main-window place. With `'hide'`, its window geometry remains saved and the dock can be reopened from the notice. A reload keeps the dock windows open and the page that loads takes each back (README "Window mode across reloads"); only one that did not come back (closed during the reload, or out of `popAdoptTimeout`) is opened again, and if Chrome blocks that without a click, the dock is available in the main window and a **Reopen windows** button opens it. When several windows are blocked, each click opens one and the notice remains until all are open. Going narrow closes the dock windows temporarily while retaining their saved geometry; leaving narrow tries to reopen them. The group uses the same `popUrl` or `popHtml`, styles, `themeAttrs` and group `bodyAttrs` copying as panel pop-outs.
+
+Every move keeps the same panel element and its JavaScript state. Chrome reloads an iframe when its element moves between browser documents, including on a whole-dock pop or cross-window panel move; `moveBefore` preserves it for moves within one document. An app can use `dock-popin` for per-panel cleanup before a panel window closes. See [the pop-out contract](#the-pop-out-contract).
+
+A panel the saved set names that the app has not given yet (one it adds later, as a chart or a second ticket) keeps its place, parked, in the dock that showed it, exactly as a standalone `createDock` parks it (`keepSlots`). This holds on load, on `migrateFrom` and on `importLayout`, for docked, floating, strip, hidden and out panels, and the saved set keeps those places until the panel comes back, over any number of reloads. `group.addPanel(panel)` (or that dock's own `addPanel`, or giving the panel to `createDocks` at a later start) puts it back in that dock, at its place; a `dock` passed to `group.addPanel` wins, and the kept place then goes. Without either, the panel's own `dock` hint, else main. A user dock that keeps only such places still restores, showing "Drag panels here". Removing a dock gives its kept places to main, beside the panels that move there.
+
+A parked panel keeps its dock assignment when that dock is popped into a window. Adding the panel later returns it to that dock in whichever window currently hosts it.
+
+Every `createDock` option passed to `createDocks` applies to user docks created now or restored later. The main dock keeps the app's `defaultLayout`; user docks start empty and grow from panels moved into them. Per-dock option overrides are not part of this API.
+
+`group.setNarrow(true)` shows all visible panels from all docks as one column of tabs. Dock membership and the wide layouts remain saved while narrow. Creating, moving, renaming, removing or hiding panels and docks in narrow mode updates that saved set; closing a panel there keeps it hidden on return to wide. Leaving narrow restores each dock's wide layout with those changes. If the group gets a `narrowKey`, Dock appends each dock id so their narrow layouts have separate keys.
+
+Try `npm run demo` and open `http://127.0.0.1:5178/demo/?docks=1`: New dock… accepts an in-page name, and the toolbar has Export layout… and Import layout….
+
+## Layout files
+
+`exportLayout()` returns a pretty-printed JSON file; `downloadLayout(group, 'app-layout.json')` downloads it through a browser Blob link. `pickLayoutFile(group)` opens a file picker and resolves with `importLayout`'s result. The demo uses both helpers and shows import errors in the page. A single Dock also supports `exportLayout()` and `importLayout(text)`.
+
+The file is the same JSON kept in the group's one localStorage key. It contains the named docks and panel ids, three-decimal split fractions, strips, view modes, optional application and panel zoom, and each user dock's optional window geometry. It stays at version `1`; a v0.15.0 file without `window` or zoom fields imports. Import validates before applying changes and returns `{ ok, errors, dropped, parked }`. `parked` lists ids the app has not given yet, retaining their places in their docks for `addPanel`, even when a dock is popped. `dropped` lists ids removed for real: a `dock:<id>` frame that names no dock in the file. An id shown by two docks stays in the first; each later one is reported in `errors` (with `ok: true`) and left out of that dock. `onUnknown(id)` is called for every id of `parked` and `dropped`. App panels the file does not mention go to main or their dock hint. A standalone Dock's `importLayout` parks unknown ids the same way. See [the field-by-field schema and example](docs/layout-file.md).
+
 ## Try it
 
 ```sh
@@ -106,10 +155,15 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `moveStrip(id, index, side?)` | a strip panel to place `index` (from 0) of its strip, or of the strip on `side` in the mode it has, as a drag of its button does; saved, `onChange` told; false when it is not on a strip, already there, or `index` is not a number (a string of digits counts as one) (v0.8.0) |
 | `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to the strip on its side and back (pinned, it docks on its strip's side) |
 | `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack |
+| `fitExpand(id)`, `fitRestore()`, `isFitExpanded(id?)` | fit-expand a panel (its content's size over the dimmed dock, for a moment; false when it cannot be: a tab behind another, a minimised stack, narrow), restore it, whether `id` (or any) is fit-expanded; the root gets `fit-expand` / `fit-restore` events (`detail.id`). See "Expand buttons" |
 | `setVisible(id, on)`, `showPanel(id)` | hide or show a panel; showing a hidden Window reopens its window |
-| `popOut(id)`, `popIn(id)`, `popWindow(id)`, `isOpenOut(id)` | a browser window of its own, and back where it was; its window; whether that window is open now (not after a reload) |
+| `popOut(id)`, `popIn(id)`, `popWindow(id)`, `isOpenOut(id)` | a browser window of its own, and back where it was; its window; whether that window is open now (after a reload: once the page took it back) |
+| `adoptWindow(win)`, `isOutLost(id)`, `popLostNotice()` | take back a window this dock drew in before a reload (the panel's id, or `null` when it is not one of this dock's, or its panel is not here); whether a panel is out with no window, past the time its window had to come back; the `popLostNotice` option. See "Window mode across reloads" |
 | `setBadge(id, text, title)` | a small badge on the panel's tab, and on its strip button while it is unpinned (`null` removes it) |
+| `refreshTabExtras()` | ask the `tabExtra` option again for every tab, in this page and in panels' windows (`group.refreshTabExtras()`: every dock of a group, dock windows included) |
 | `setTitle(id, title)`, `title(id)` | a new title for a panel, everywhere it shows: its tab and tooltip, title bar, strip button (label and tooltip), the tab's ×, the ▾ tab list, the Panels menu, the ⋯ menu's name and the screen-reader names that say it, and its window's `document.title` (through `popTitle`, which gets the new title). Text, never markup; `null` gives its id; an id the dock does not have is nothing. The app owns it: the layout does not keep it (after a reload a panel has the title it is given). It stays through moves, pop-out and back, narrow, and `removePanel` → `addPanel` with the same object. A panel given to `createDock` is that object, so its `title` changes; one added at runtime is the dock's copy (the app's object is left as it is). `title(id)`: its title now (`null` for none) |
+| `setPanelZoom(id, factor)`, `panelZoom(id)` | Set or read a panel body's zoom. Factors are clamped to `0.5`–`2` in `0.1` steps. A `zoom` event with `{ id, zoom }` fires on the dock root after the style changes. |
+| `setZoom(factor)`, `zoom()` | Set or read application zoom for panel bodies. `group.setZoom(factor)` applies it to every current and future dock. Effective zoom is application zoom times panel zoom. |
 | `onShown(fn)`, `onChange(fn)` | a panel came on screen (`fn(id)`); the layout changed (`fn(layout)`) |
 | `onPopIn(fn)` | `fn(id)` just before a popped-out panel's element moves back from its window (see "The pop-out contract") |
 | `onMenu(fn)` | `fn(id, itemId)` when an app item of a ⋯ menu that has no `run` of its own is picked, after the `onMenu` option; returns a function that takes `fn` off (see "App items in the ⋯ menu") (v0.9.0) |
@@ -164,16 +218,29 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `stripReorder` | `true` | a strip button can be dragged along its strip to reorder it, or onto another edge (see "The tool strip"), and moved by **Alt+Shift+arrow**; `false`: neither (the app's `moveStrip` still works). `can(id, 'move')` false also keeps a panel's button still |
 | `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip"). A panel's own View Mode (Dock Unpinned: beside, Undock: over) overrides it, and is saved as its strip entry's `open` |
 | `headButtons` | `'menu'` | a title bar's controls: `'menu'`, IntelliJ's ⋯ (Options) and − (Hide); `'classic'`, v0.4's buttons (menu, minimise, maximise, pop out, float or dock back, unpin; a flyout's pop out, float, slide in, pin) and its menu, exactly |
+| `expandButtons` | `[]` | any of `'fit'` and `'max'`: a title bar's fit and ⤢ full size buttons, just before − (Hide, or minimise with `'classic'`, whose own maximise button then goes). A panel's own `expandButtons` overrides it (`[]`: none for that panel). See "Expand buttons" |
+| `fitPlace` | `'grow'` | where fit puts the panel: `'grow'` from where it is, its corner nearest the dock's edge staying put; `'center'` in the middle of the dock |
+| `fitDimCloses` | `true` | a click on the dim under a fit-expanded panel restores it; `false`: only its button, Esc, or focus or a click elsewhere |
+| `maxTarget` | `'dock'` | what full size fills: `'dock'` (as ⋯ → Maximise); `'window'` the whole browser window, the app's own chrome outside the dock too |
+| `menuButton` | `{ place: 'end', icon: 'dots' }` | Start puts the active panel's menu before its name or tabs. `icon` accepts `panel`, `vdots`, `lines`, `vlines`, `dots`, `gear`, an SVG string or element, or `(panel) => SVG string \| Element \| null`. A panel's `menuIcon` of the same forms overrides it. `panel` uses that panel's `icon` plus a chevron, or the chevron alone without an icon. `caret` defaults to `true` for `panel` and `false` otherwise. An invalid icon falls back to `gear`; a function returning `null` uses `panel` for start or `dots` for end. Built-in SVGs are exported as `MENU_BUTTON_SVGS`. |
+| `tabContextMenu` | `true` | A right-click on any tab, or `Shift+F10` / the ContextMenu key on a focused one, opens that panel's own menu (the one its menu button opens when it is shown: the app's `menuItems`, View Mode, Move To, Help, Zoom, Take Screenshot, Maximise, Hide, Close), at the pointer or under the tab. It switches no tab and starts no drag; every item acts on that panel. A right-click on a strip button opens its panel's menu too. Right-clicks in `tabExtra`'s markup or help's `?`, and an event the app's own handler already `preventDefault()`ed (on the page, or on the document before the dock), are left alone. `false`: the browser's menu, as before. Passes through `createDocks`. |
+| `helpIn` | `'tab'` | `'menu'` removes each tab's `?` and adds Help to that panel's menu. `F1` opens the same help. Independent of `menuButton`. |
+| `zoomControls` | `false` | Show Zoom In, Zoom Out and Reset Zoom in the menu, and enable `Ctrl+Alt+=`, `Ctrl+Alt+-`, `Ctrl+Alt+0` for the focused panel. Independent of menu placement and `helpIn`. The zoom API and persistence work without this UI option. |
+| `scaleChrome` | `false` | With application zoom, also scale title bars. Panel zoom always scales only the body. |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
 | `copyStyles` | `true` | copy the page's `<link rel=stylesheet>` and `<style>` into a pop-out window |
 | `popBackButton` | `true` | the pop-out window's "Back to main window" button (`.dk-pop-back`); `false`: not rendered; its Options menu still changes View Mode |
+| `popAdoptTimeout` | `15000` | ms a panel's window (and a group's dock window) waits, after the main page reloads, for the page that loads next to take it back; `0`: it closes with the page, as before v0.22 |
+| `popLostNotice` | `'banner'` | a window that did not come back after a reload: `'banner'` the notice over the dock; `'quiet'` no notice, a ring on its strip button and a "window closed" row in the Panels menu (one click opens it again) |
 | `outNoteDismiss` | `true` | the after-a-reload notice of panels out with no window has a × that closes it (the panels stay out: the Panels menu, `reveal(id)` or a strip panel's own strip button brings each back); `false`: no ×, the notice stays until each is reopened or brought back, for a dock with no Panels menu |
 | `windowClose` | `'hide'` | closing a panel's window hides it and keeps Window mode; `'dock'` restores v0.5.x's return to its previous main-page place |
+| `dockWindowClose` | `'dock'` | with `createDocks`, closing a whole dock window returns it to main; `'hide'` leaves its saved window place available to reopen |
 | `themeAttrs`, `themeEvent` | `data-theme data-scheme class style`, `'dock-theme'` | what of `<html>` a pop-out window copies, and the event that says the theme changed (a MutationObserver also watches) |
 | `bodyAttrs` | `[]` | the names of the main page's `<body>` attributes copied to each panel window's `<body>` when it opens and kept in step (a MutationObserver, and `themeEvent`), as `themeAttrs` for `<html>`; one the main page takes off goes from the window too. `class` is merged: the window keeps its own classes (`dk-popwin`, and any its page put on) and drops only those it copied that the main page no longer has. A panel's own `bodyAttrs` (`panels: [{ …, bodyAttrs: ['class'] }]`, or `addPanel`'s) is used for its window instead; `[]` copies nothing for it. With `popUrl` and `popHtml` alike |
 | `help` | none | `{ icon(key, panel) → html, mount(doc) → { destroy } \| fn, selector }`; `createHelp()` makes one |
+| `tabExtra` | none | `(panel) → html \| Element \| null`: the app's own markup on **every** tab, right after its title and before help's `?` and the ×, whatever `helpIn` is and whether or not the panel has `help` (a link-colour dot, a status light). Drawn wherever a tab is: stacks, floats, slid-out panels, a panel's own window, a group's dock windows, narrow. A click, press, double click or drag in it does not switch, drag, maximise or close the tab. Asked each time the tab is drawn; after the app's own state changes, call `dock.refreshTabExtras()` (`group.refreshTabExtras()` for a group). A string goes in as markup; an element is put in as it is (return the same element to keep it, a new one to replace it). Passes through `createDocks` to every dock. `help.icon` keeps its meaning: the `?` in `helpIn: 'tab'`, nothing in `'menu'` |
 | `modalSelector` | `[role="dialog"], .dk-help-pop` | clicks and Escape inside these leave unpinned panels and maximise alone |
 | `badgeClass` | `'dk-badge'` | the class of a tab's badge |
 | `text` | `TEXT` | any of the words the dock shows (`modes` and `modeHints`: the View Mode items and their tooltips) |
@@ -188,6 +255,12 @@ shows nothing gives the default.
 `examples/opten-config.js` is opTen's configuration, the drop-in for opTen's adoption.
 
 ## Title bar and view modes
+
+For a Quantower style title bar, use `menuButton: { place: 'start', icon: 'panel' }`, `helpIn: 'menu'` with the existing `help` hook, and `zoomControls: true`. Give panels an `icon` (an SVG string or element) to display beside the chevron; an icon element is copied so its strip button keeps it. The button follows the active tab. These options also pass through `createDocks` to restored and runtime docks, including a user dock's own title bar. The default title bar keeps its current order and per-tab help button. With `zoomControls: true`, the menu has Zoom In, Zoom Out and Reset Zoom; `Ctrl+Alt+=`, `Ctrl+Alt+-` and `Ctrl+Alt+0` work while focus is inside the panel. The app can wire its own control to `setZoom`; Dock does not change browser page zoom. `?quantower=1` in the demo shows this configuration, including a menu icon picker and application zoom control, and a link-colour dot on each tab (`tabExtra`; a click on it changes the colour through `refreshTabExtras()`), and combines with `?docks=1`.
+
+For a custom menu SVG, set `menuButton: { place: 'start', icon: '<svg viewBox="0 0 12 12">…</svg>' }`. An SVG element works the same way and is copied into each title bar. To choose by panel, set `icon: (panel) => panel.id === 'chart' ? MENU_BUTTON_SVGS.vdots : null`; `null` uses the built-in default for the button's place. A panel can override the group with `panel.menuIcon = MENU_BUTTON_SVGS.vlines`. Add `caret: true` to show the chevron with any fixed or custom icon.
+
+CSS `zoom` is applied to each panel's body element, with inverse inline width and height so it still fills its frame. Those inline dimensions temporarily override width and height from the app's CSS classes while zoomed; Dock restores the element's original inline styles when zoom resets or the panel leaves the dock. The title bar stays at its usual size unless `scaleChrome: true`. In Chrome, an iframe inside that body scales visually and gets a smaller internal viewport at higher zoom; changing zoom alone does not reload it. An iframe may reload when it moves between documents for a pop-out, as before. Panel and application zoom are stored with the layout and exported in layout files.
 
 As in IntelliJ IDEA's new UI, a panel's title bar has its tab(s), **⋯** (Options) and **−** (Hide), and nothing else:
 
@@ -245,6 +318,27 @@ the panel in that mode on its side. Move To only changes its eventual side. Hide
 panel. Menus belong to that window and close when it loses focus. Classic headers also have Float and Unpin
 shortcuts; minimise, maximise and pop-out are omitted in a window. Back still restores its previous main-page mode,
 with a strip panel slid out. Float again, or Window again, opens where it was last.
+
+### Expand buttons
+
+`expandButtons: ['fit', 'max']` (both, or one) puts two buttons in every title bar, docked, floating, slid out and in a
+panel's own window, just before −: fit, then ⤢ full size. Both are tabbable; `aria-pressed` and the label ("Maximise",
+"Expand to Fit" or "Restore", `T.maximise`, `T.fitExpand`, `T.restore`, and their tooltips `T.*Hint`) say the state.
+Nothing changes for an app that does not set it.
+
+- **⤢ Full size** is ⋯ → Maximise, by the same code: the stack fills the dock (`maxTarget: 'window'`: the browser
+  window). A second click or Esc restores it, focus back on ⤢. A slid-out panel fills the dock but its strips. In a
+  panel's own window (Window mode, `popHtml`) the window fills the screen, and goes back where it was.
+- **Fit** grows the panel to what its content wants (how far its body, the panel and the panel's children scroll), at
+  least its size and at most the dock less `--dk-fit-margin` (16px) a side, over a dim (`--dk-dim-bg`) that covers the
+  rest of the dock. `fitPlace: 'grow'` keeps the corner nearest the dock's edge and grows towards the free side,
+  shifting only to stay in the dock; `'center'` centres it. The panel's element is moved there (with `moveBefore`, so
+  its iframes do not reload) and stays fully usable; its place in the layout is held meanwhile. Its button, Esc, focus
+  or a click elsewhere, or a click on the dim (`fitDimCloses`) put it back exactly where it was, focus back where it
+  was. A drag, Move To, hide, full size or any layout change restores it first, and so does a resize of the window; a
+  tab switched in its stack (its panel then the fit-expanded one: `fit-restore` for the old, `fit-expand` for the new), or a title changed, keeps it. One panel at a time; nothing of it is stored. Not in
+  narrow, a minimised stack, a panel's own window (which already is the panel), or where `can(id, 'fit')` is false.
+- A **dock window** (`createDocks`) has them per frame, as a docked stack.
 
 ## The tool strip
 
@@ -504,7 +598,8 @@ root.addEventListener('dock-removed', (e) => dispose(e.detail.id, e.detail.el));
   `parked`, drawn nowhere and no tab. Stack-mates removed one after the other come back together, whichever is added
   first. After a reload, a stored layout that names a panel the app has not added yet loads without error and without a
   hole: the panel's place is kept the same way, and `addPanel` with no `where` puts it back there (one that was in its
-  own window is offered again by the note, as after any reload: a window opens only from a click). Hidden when removed,
+  own window takes back that window if it still waits, within `popAdoptTimeout`; else the note offers it again, as
+  after any reload: a new window opens only from a click). Hidden when removed,
   it comes back shown, in the place it had. At most `keepSlots` places are kept (50 by default), the oldest dropped
   first; `slots()` lists them, `forget(id)` drops one, `forget()` all.
 - **Many tabs.** Tabs keep their width (a title longer than `--dk-tab-max`, 160 px, is cut with an ellipsis; the tooltip
@@ -556,7 +651,8 @@ person can do, not the app's own calls.
   there it works only in an installed app window or `--app` window, or in a panel's own window; the ×, a middle click on
   the tab and ⋯ → Close work everywhere. Firefox likewise closes the tab. Nothing else in the dock binds it.
 - A **middle click** on a closable panel's tab closes it; its press starts no autoscroll.
-- **Escape** restores a maximised stack and slides a slid-out panel back in; arrow keys on a focused splitter move it.
+- **Escape** restores a fit-expanded panel, then a slid-out panel at full size, slides a slid-out panel back in, and
+  restores a maximised stack; arrow keys on a focused splitter move it.
 
 Every focus the dock gives is `{ preventScroll: true }`, and `.dock` and its boxes are `overflow: clip`, not `hidden`, so
 none is a scroll container: focusing a panel that is still sliding in from the side cannot shift the dock sideways.
@@ -564,7 +660,8 @@ none is a scroll container: focusing a panel that is still sliding in from the s
 ## Layers
 
 The dock is a stacking context (`.dock { position: relative; z-index: 0 }`). Inside it: floating windows `20 + n` (n
-their order, back to front), a slid-out panel 30, a maximised stack or window 40, the after-a-reload notice 55, the drag
+their order, back to front), a slid-out panel 30, a maximised stack or window 40, a fit-expanded panel over its dim 50
+(`maxTarget: 'window'`: the dock itself at `--dk-max-window-z`, 1000, while one is at full size), the after-a-reload notice 55, the drag
 preview 60. The per-panel menu and the Panels menu (30), help popovers (40) and the dock's short notes (100) are fixed
 in the page's body. An app may set `z-index: auto` on `.dock` to put its own elements among these layers; they then
 compete with the page's own z-indexes, so give an ancestor `isolation: isolate`. With panels staying in place (above),
@@ -631,6 +728,57 @@ its fallback, so set them (on `:root` or on the dock) instead of overriding clas
         --dk-badge-border: 0; --dk-badge-fg: var(--dk-fg3); --dk-badge-fs: 11px; --dk-fs-small: 11px; --dk-radius: 6px; }
 ```
 
+**Chrome states**: every hover, active, open and focus look of the chrome, and its buttons' shapes, is a token too. Each
+defaults to the colour token it used before (in brackets: `fg3` is `var(--dk-fg3)`), so no theme looks different until
+it sets one; set them on `:root`, on one `:root[data-theme="…"]`, or on the dock:
+
+| Token | Default | Used by |
+|---|---|---|
+| `--dk-focus-ring`, `--dk-focus-offset` | `2px solid var(--dk-focus)`, `1px` | the keyboard focus ring (an `outline`), on everything in the dock, its menus and its windows |
+| `--dk-tab-fg`, `--dk-tab-hover-fg`, `--dk-tab-hover-bg` | `fg3`, `--dk-tab-fg`, `transparent` | a tab that is not the active one, and hovered |
+| `--dk-tab-on-fg`, `--dk-tab-on-bg`, `--dk-tab-on-line` | `fg`, `bg3`, `accent` | the active tab: its text, its ground, its underline |
+| `--dk-tab-x-fg`, `--dk-tab-x-hover-fg`, `--dk-tab-x-hover-bg`, `--dk-tab-x-radius` | `fg3`, `fg`, `hover`, `0` | a closable panel's × on its tab, and hovered |
+| `--dk-tabs-thumb`, `--dk-tabs-thumb-hover` | `line`, `fg3` | the thin scrollbar of a tab row that overflows, and hovered |
+| `--dk-btn-fg`, `--dk-btn-hover-fg`, `--dk-btn-hover-bg`, `--dk-btn-hover-line`, `--dk-btn-radius` | `fg3`, `fg`, `bg3`, `line`, `0` | a title bar's buttons (⋯ or the menu button, −, ▾), and hovered or focused |
+| `--dk-strip-btn-fg`, `--dk-strip-btn-bg`, `--dk-strip-btn-line`, `--dk-strip-btn-radius` | `fg2`, `bg3`, `line`, `0` | a strip button |
+| `--dk-strip-btn-hover-fg`, `--dk-strip-btn-hover-bg`, `--dk-strip-btn-hover-line` | `fg`, `sel-bg`, `accent` | a strip button hovered |
+| `--dk-strip-btn-on-fg`, `--dk-strip-btn-on-bg`, `--dk-strip-btn-on-line` | the hover ones | a strip button whose panel is open |
+| `--dk-strip-ghost-line`, `--dk-strip-ghost-bg`, `--dk-strip-ghost-opacity` | `accent` (dashed), `bg2`, `.9` | a strip button dragged: the edges with no strip it could go to |
+| `--dk-strip-target-bg`, `--dk-strip-target-line` (or all of `--dk-strip-target-shadow`) | `sel-bg`, `accent` (`inset 0 0 0 1px`) | the strip it would land on |
+| `--dk-strip-mark`, `--dk-strip-lifted-opacity` | `accent`, `.4` | the line where it would land; the button being dragged |
+| `--dk-bar-hover` | `accent` | a splitter hovered, dragged or focused |
+| `--dk-menu-hover-fg`, `--dk-menu-hover-bg` | `fg`, `hover` | a menu item hovered, or whose submenu is open (a dock window's ⋯ menu too) |
+| `--dk-menu-on-fg`, `--dk-menu-on-bg`, `--dk-menu-check` | `fg`, `sel-bg`, `accent` | the current item (Panels menu, theme picker); the ✓ of a View Mode or Move To choice, or of an app's checkbox item |
+| `--dk-menu-disabled-fg`, `--dk-menu-item-radius` | `fg3`, `0` | a disabled item; an item's corners |
+| `--dk-menu-shadow` | `0 8px 24px var(--dk-shadow)` | menus (a dock window's too), help popovers, the after-a-reload notice |
+| `--dk-note-shadow` | `0 6px 18px var(--dk-shadow)` | the dock's short notes |
+| `--dk-window-note-shadow` | `0 3px 12px var(--dk-shadow)` | "Some dock windows are closed" (`createDocks`) |
+| `--dk-dock-window-btn-hover-fg`, `--dk-dock-window-btn-hover-bg` | `fg`, `transparent` | a dock window's ⋯, hovered (unset: no change, as before) |
+| `--dk-textbtn-fg`, `--dk-textbtn-bg`, `--dk-textbtn-line`, `--dk-textbtn-radius` | `fg`, `bg3`, `line`, `3px` | `.dk-textbtn` (the radius also the pop-out window's Back button) |
+| `--dk-textbtn-hover-fg`, `--dk-textbtn-hover-bg`, `--dk-textbtn-hover-line` | `--dk-textbtn-fg`, `hover`, `accent` | `.dk-textbtn` hovered |
+| `--dk-primary-fg`, `--dk-primary-bg`, `--dk-primary-line`, `--dk-primary-hover-shadow` | `bg`, `accent`, `accent`, `0 0 0 2px var(--dk-sel-bg)` | `.dk-primary` and the Back button, and hovered |
+| `--dk-press` | `translateY(1px)` | a text button or the Back button, pressed |
+| `--dk-help-q-fg`, `--dk-help-q-hover-fg`, `--dk-help-q-radius` | `fg3`, `accent`, `50%` | the circled ? beside a tab, and hovered or focused |
+| `--dk-preview-line`, `--dk-preview-bg`, `--dk-preview-opacity` | `accent`, `sel-bg`, `.6` | where a dragged panel would land |
+| `--dk-max-shadow` | `0 0 0 1px var(--dk-line)` | a maximised stack's edge |
+| `--dk-expand-on-fg` | `accent` | the fit and ⤢ buttons (`expandButtons`), pressed |
+| `--dk-fit-margin` | `16px` | how far inside the dock a fit-expanded panel's size stops |
+| `--dk-dim-bg` | `var(--dk-shadow)` | the dim over the dock under a fit-expanded panel |
+| `--dk-fit-shadow` | `0 12px 36px var(--dk-shadow), 0 0 0 1px var(--dk-line)` | a fit-expanded panel's shadow |
+| `--dk-max-window-z` | `1000` | `maxTarget: 'window'`: the dock's z-index while a panel is at full size |
+
+```css
+/* rounded buttons, a hovered title-bar button on the hover ground, the open panel's strip button filled with the accent */
+:root { --dk-btn-radius: 4px; --dk-btn-hover-bg: var(--dk-hover); --dk-btn-hover-line: transparent;
+        --dk-strip-btn-radius: 4px; --dk-strip-btn-on-bg: var(--dk-accent); --dk-strip-btn-on-fg: var(--dk-bg); }
+```
+
+`test/chrome-tokens.test.js` keeps it so: no colour is written into `dock.css` (an allowlist names the keywords that are
+not colours, each with its reason), every hover, focus, active, open and disabled rule reads a state token, every radius
+and shadow is a token, and in every set the states' text clears 4.5:1 (7:1 in the high-contrast ones) and the focus ring
+and the state marks 3:1. A theme that sets these tokens is held to the same pairs only if it is in `theme.css`; an app's
+own values are its to measure.
+
 **Switching**: set `data-theme` on `<html>`, or use the helper:
 
 ```js
@@ -662,7 +810,7 @@ data and listeners stay where they were, so it keeps updating. What the host app
 1. **A pop-out page on the same origin** as the app's page, at `popUrl` (relative to the page). `src/popout.html` is
    that page; serve it (for example as `dock/src/popout.html`) or copy it. It needs only an element with id
    `dk-pop-root`; the dock copies the main page's stylesheets and theme attributes into it, and it closes itself when
-   the main window closes or reloads. The page has one key for its windows (`window.__dockPopKey`), shared by every dock
+   the main window closes; when it reloads, it waits to be taken back ("Window mode across reloads"). The page has one key for its windows (`window.__dockPopKey`), shared by every dock
    on it, so two docks on one page keep each other's windows open, and `destroy()` of one leaves the others'.
    **Or no page at all**: with `popHtml: true` the dock makes the same page (`POP_HTML`) a `Blob` and opens the
    window at its `blob:` URL, which is on the app's origin; `popHtml: '<!doctype html>…'` does the same with an app's
@@ -698,11 +846,46 @@ of its own, say), before it lands in the main page. It is not fired for a panel 
 **The "Back to main window" button** (or closing with `windowClose: 'dock'`) puts the panel back
 where it was: the same stack at the same index, or the same side of the same neighbour (a whole split, if that is what
 was there), its float, or its strip. If that place is gone it goes where the default layout has it, else on its edge.
-**Reloading the main window** keeps the layout, with the panel out: a small notice over the dock (not a place in the
-layout) offers "Open its window again" (one click, where it was) or "Bring it back here", and the Panels menu offers Open
+**Reloading the main window** keeps the layout, with the panel out, and keeps its window: the page that loads takes it
+back (next section). Only a window that did not come back leaves a small notice over the dock (not a place in the
+layout): "Open its window again" (one click, where it was) or "Bring it back here", and the Panels menu offers Open
 window and Bring back. It does not reopen by itself, because a browser opens windows only on a user gesture. **Reset
 layout** closes every pop-out window. A layout saved by an earlier version, with a panel out and still in its place,
 loads with that panel taken out of its place.
+
+### Window mode across reloads
+
+A reload of the main page (F5, a deploy, a crash and reload) leaves its panels' windows open, where they are and as
+large, and the page that loads next takes them back: each window shows its panel again, live, with working controls,
+usually within a fraction of a second (about 60 ms measured in Chrome). The same holds for a group's dock windows
+(`createDocks`).
+
+- **While the page reloads** the window keeps what it showed, inert (no clicks, no typing), with a small
+  "reconnecting…" badge (`#dk-pop-reconnecting`; `html.dk-pop-waiting` meanwhile).
+- **How:** going, the page marks each window with its dock (the storage key) and its panel's id, and does not close
+  it. The window's page (`popout.html`, `POP_HTML`) asks its opener every 250 ms, and at once when a page with Dock
+  starts (a `BroadcastChannel`), to take it back: `window.__dockPopAdopt(itself)`. The dock with that key and a
+  panel with that id draws its panel's element in it; no `window.open`, so no user gesture is needed. Two docks on
+  one page each take back only their own windows.
+- **The panel is the reloaded page's**: its element and state are new (an iframe in it loads again; a form is empty
+  unless the app restores it). The dock fires `pop-adopt` on its root (bubbling, `detail: { id, window }`; a dock
+  window's `id` is `dock:<id>`) for an app that wants to know.
+- **A panel the app adds later** (`addPanel`) takes its window back when it is added, if the window still waits.
+- **Closes:** when the main tab closes; when no page takes it back within `popAdoptTimeout` (a page without Dock, or
+  another site, loaded in the tab); when the page that loads has no use for it (its panel is no longer out).
+- **Lost windows** (closed by the person during the reload, or timed out): the notice offers each again
+  (`popLostNotice: 'quiet'`: marks instead of a notice). Until then the panel counts as coming back: for the first
+  2.5 s (the time a window needs to ask), and after that as long as its window still asks (it stamps the time in
+  `localStorage` each time, `dock.popAlive:<dock>:<id>`, and clears it when taken back or closed), up to
+  `popAdoptTimeout`. A dock window is opened again only once it is lost, never over a window that still waits.
+- **The browser's back-forward cache**: a page restored from it takes back the windows still waiting.
+- **`adoptWindow(win)`**: an app holding a window (`window.open('', 'dock-panel-<id>')` finds one by its name, with no
+  click, in Chrome) can take it back itself.
+- **An app's own pop-out page** (`popUrl` of its own, or `popHtml: '<!doctype html>…'`) is closed on reload, as
+  before, unless it does what `popout.html` does: set `window.__dockPopWaits = true` and run the same script (the
+  `<script>` in `src/popout.html`: it asks `opener.__dockPopAdopt(window)` while `opener.__dockPopKey` is not its own
+  `window.__dockPopKey`, and closes on `'no'` or after `window.__dockPopWait` ms).
+- `popAdoptTimeout: 0` restores the old behaviour: the windows close with the page, and the notice offers them again.
 
 ## Pop-out windows without the address bar
 
@@ -743,7 +926,8 @@ its address bar.
 
 ```sh
 npm test              # all of it
-npm run test:node     # the model, the dock in jsdom with stand-in windows, the theme, the opTen fixture, test/needs.test.js
+npm run test:node     # the model, the dock in jsdom with stand-in windows, the theme, the chrome's tokens, the opTen fixture,
+                      # test/needs.test.js
 npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (the pop-out window for real), run.js
                       # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
                       # toolstrip.js (the tool strip), stripkeeps.js (its button in every view mode), scenarios.js,
@@ -751,7 +935,9 @@ npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (th
                       # (Dock Unpinned and Undock hide when focus leaves them), stripreorder.js, runtime.js (panels added,
                       # removed and closed at runtime, and 40 tabs in one stack), menuitems.js (the app's items in ⋯),
                       # titlebody.js, screenshot.js (Take Screenshot with Region Capture and app hooks),
-                      # screenshot-draw.js (drawn, no prompt: pixel checks against Chrome's screenshot, the fall-backs)
+                      # screenshot-draw.js (drawn, no prompt: pixel checks against Chrome's screenshot, the fall-backs),
+                      # docks.js, titlebar.js, dockwindows.js, tabextra.js, tokens.js (hover and focus read the state tokens),
+                      # expand.js (the fit and full size buttons)
 npm run test:browser:check     # one Chrome: says whether it made the blank-password check (see below); run it first
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
@@ -760,7 +946,7 @@ node test/browser/screenshot-draw-demo.js <dir>   # headed: the drawn screenshot
 ```
 
 Every Chrome these start goes through `test/browser/chrome.js`, on a persistent profile per suite under
-`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `runtime`, `viewmodes`, `autohide`, `menuitems`, `titlebody`, `screenshot`, `screenshot-draw`, `screenshot-draw-demo`, `screenshots`, `check`,
+`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `runtime`, `viewmodes`, `autohide`, `menuitems`, `titlebody`, `tokens`, `screenshot`, `screenshot-draw`, `screenshot-draw-demo`, `screenshots`, `check`,
 `app-window-<browser>-<way>`; `DOCK_TEST_CHROME` moves them; a run at the same time as another gets `<suite>-2`). Why:
 Chrome on a new profile checks for a blank Windows password by signing in with an empty one, and Windows counts each
 as a failed sign-in (10 in 10 minutes lock the account). Before each launch the helper seeds the profile's
@@ -795,6 +981,9 @@ drag, `moveStrip`, reload and Dock Unpinned return; the compatibility option, ne
 click or focus elsewhere, with hover on and off and in layout A, opened by a click, the keys, hover and `reveal`, their
 strip button and stored layout unchanged; typing, their ⋯ menu, their dialog, an iframe in them and the window's blur
 keep them; Esc closes them; Float and Dock Pinned stay; `stripAutoHide: false` is v0.5.0's; and the tooltips.
+`tokens.js` proves, in the light and the dark theme, that a title-bar button hovered and focused, the focus ring on a
+tab, a tab hovered, the active tab, a splitter, a text button, the help ?, a menu item and a strip button (hovered and
+open) show their theme's colour with no state token set, and the state token's value once it is set on `:root`.
 `menuitems.js` proves the app's ⋯ items docked, floating, slid out (Dock Unpinned, Undock), in a Window, narrow and
 with classic title bars: above Dock's own with a separator, a pick runs once with its ids and closes the menu (the
 strip panel staying out), `onMenu` for items without `run`, disabled items, the submenu by pointer and keys, the hook

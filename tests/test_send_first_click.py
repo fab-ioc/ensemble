@@ -270,7 +270,7 @@ async function main() {
         let target=null;
         for(let i=0;i<100 && !target;i++) {
           const info=await c.send('Target.getTargets');
-          target=info.targetInfos.find(t=>t.url.includes('/static/popout.html'));
+          target=info.targetInfos.find(t=>t.url.includes('/static/dock/src/popout.html'));
           if(!target) await sleep(100);
         }
         if(!target) throw Error(label+' pop-out target missing');

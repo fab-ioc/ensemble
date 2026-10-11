@@ -539,7 +539,8 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/dock/src/host.js", "static/dock/src/panels-menu.js", "static/dock/src/help.js",
               "static/dock/src/theme.js", "static/dock/src/theme-picker.js", "static/dock/src/install.js",
               "static/dock/src/popout-page.js", "static/dock/src/screenshot.js", "static/dock/src/menu-items.js",
-              "static/dock/src/draw.js",
+              "static/dock/src/draw.js", "static/dock/src/docks.js", "static/dock/src/layout-file.js",
+              "static/dock/src/menu-icons.js", "static/dock/src/popadopt.js",
               "static/dock/css/dock.css",
               # xterm.js, vendored so the built app's terminals work offline.
               "static/vendor/xterm/xterm.min.js", "static/vendor/xterm/xterm-addon-fit.min.js",

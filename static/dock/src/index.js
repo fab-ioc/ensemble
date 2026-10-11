@@ -3,6 +3,9 @@
 
 export * from './layout.js';
 export { createDock, panelsFrom, escText, TEXT, VIEW_MODES, LAYOUT_KEY, POP_URL, POP_ROOT_ID, POP_HTML, THEME_ATTRS, oneColumn } from './dock.js';
+export { MENU_BUTTON_SVGS } from './menu-icons.js';
+export { createDocks } from './docks.js';
+export { downloadLayout, pickLayoutFile, validateLayoutFile } from './layout-file.js';
 export { mountPanelsMenu } from './panels-menu.js';
 export { normalizeMenuItems, menuItemsHtml } from './menu-items.js';
 export { createHelp } from './help.js';

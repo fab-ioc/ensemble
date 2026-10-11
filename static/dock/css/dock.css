@@ -20,9 +20,46 @@
      --dk-strip-icon    an icon's size (strip * .55: 12px)           --dk-strip-badge-fs  a badge's (a title's: at least
                         --dk-badge-fs; an icon's: strip * .3, at least 7px)
      --dk-strip-badge-bg  an icon's badge's ground (var(--dk-bg3))
+   State and shape tokens, each optional too (unset: the colour token in brackets, so every theme looks as before):
+     --dk-focus-ring (2px solid var(--dk-focus)), --dk-focus-offset (1px)    the keyboard focus ring, everywhere
+     --dk-tab-fg (fg3), --dk-tab-hover-fg (--dk-tab-fg), --dk-tab-hover-bg (transparent), --dk-tab-on-fg (fg),
+     --dk-tab-on-bg (bg3), --dk-tab-on-line (accent: the active tab's underline)                      tabs
+     --dk-tab-x-fg (fg3), --dk-tab-x-hover-fg (fg), --dk-tab-x-hover-bg (hover), --dk-tab-x-radius (0)  a closable tab's ×
+     --dk-tabs-thumb (line), --dk-tabs-thumb-hover (fg3)        the scrollbar of a tab row that overflows
+     --dk-btn-fg (fg3), --dk-btn-hover-fg (fg), --dk-btn-hover-bg (bg3), --dk-btn-hover-line (line),
+     --dk-btn-radius (0)                                        title-bar buttons (⋯, −, the menu button), hovered or focused
+     --dk-strip-btn-fg (fg2), --dk-strip-btn-bg (bg3), --dk-strip-btn-line (line), --dk-strip-btn-radius (0),
+     --dk-strip-btn-hover-fg (fg), -hover-bg (sel-bg), -hover-line (accent), and -on-fg, -on-bg, -on-line (its panel
+     open; the hover ones)                                                                             strip buttons
+     --dk-strip-ghost-line (accent), --dk-strip-ghost-bg (bg2), --dk-strip-ghost-opacity (.9), --dk-strip-target-bg
+     (sel-bg), --dk-strip-target-line (accent; or all of --dk-strip-target-shadow, inset 0 0 0 1px), --dk-strip-mark
+     (accent), --dk-strip-lifted-opacity (.4)
+                                                                a strip button dragged: the edges, the lit one, the line
+     --dk-bar-hover (accent)                                    a splitter hovered, dragged or focused
+     --dk-menu-hover-fg (fg), --dk-menu-hover-bg (hover: also an item whose submenu is open), --dk-menu-on-fg (fg),
+     --dk-menu-on-bg (sel-bg), --dk-menu-check (accent), --dk-menu-disabled-fg (fg3), --dk-menu-item-radius (0)
+                                                                menus (a dock window's ⋯ menu too)
+     --dk-menu-shadow (0 8px 24px var(--dk-shadow))             menus, help popovers, the after-a-reload notice
+     --dk-note-shadow (0 6px 18px var(--dk-shadow))             the dock's short notes
+     --dk-window-note-shadow (0 3px 12px var(--dk-shadow))      "Some dock windows are closed" (createDocks)
+     --dk-dock-window-btn-hover-fg (fg), --dk-dock-window-btn-hover-bg (transparent)   a dock window's ⋯, hovered
+     --dk-textbtn-fg (fg), -bg (bg3), -line (line), -hover-fg (--dk-textbtn-fg), -hover-bg (hover), -hover-line (accent),
+     --dk-textbtn-radius (3px; the pop-out window's Back button too)                                  .dk-textbtn
+     --dk-primary-fg (bg), --dk-primary-bg (accent), --dk-primary-line (accent),
+     --dk-primary-hover-shadow (0 0 0 2px var(--dk-sel-bg))    .dk-primary and the Back button
+     --dk-press (translateY(1px))                               a text button or the Back button, pressed
+     --dk-help-q-fg (fg3), --dk-help-q-hover-fg (accent), --dk-help-q-radius (50%)       the circled ? beside a tab
+     --dk-preview-line (accent), --dk-preview-bg (sel-bg), --dk-preview-opacity (.6)     where a dragged panel lands
+     --dk-max-shadow (0 0 0 1px var(--dk-line))                 a maximised stack's edge
+     --dk-expand-on-fg (accent)                                 the fit and full size buttons (expandButtons), pressed
+     --dk-fit-margin (16px)                                     a fit-expanded panel stays this far inside the dock
+     --dk-dim-bg (var(--dk-shadow))                             the dim over the dock under a fit-expanded panel
+     --dk-fit-shadow (0 12px 36px var(--dk-shadow), 0 0 0 1px var(--dk-line))   a fit-expanded panel's shadow
+     --dk-max-window-z (1000)                                   maxTarget: 'window': the dock's z-index while at full size
 
    Layers (z-index, inside the dock, which is a stacking context: position: relative; z-index: 0): floating windows 20 +
-   their order (back to front), a slid-out panel 30, a maximised stack or window 40, the reload notice 55, the drop
+   their order (back to front), a slid-out panel 30, a maximised stack or window 40, a fit-expanded panel over its dim 50,
+   the reload notice 55, the drop
    preview 60, a strip button's drop zones 61. Menus (30), help popovers (40) and the dock's short notes (100) are fixed in the page's body. An app may
    set z-index: auto on .dock; the layers then compete with the page's own, so give an ancestor isolation: isolate.
 
@@ -40,7 +77,7 @@
 .dk-bar { flex: 0 0 var(--dk-bar); background: var(--dk-bg2); touch-action: none; }
 .dk-row > .dk-bar { cursor: col-resize; border-left: 1px solid var(--dk-line); }
 .dk-col > .dk-bar { cursor: row-resize; border-top: 1px solid var(--dk-line); }
-.dk-bar:hover, .dk-bar.on, .dk-bar:focus-visible { background: var(--dk-accent); outline: none; }
+.dk-bar:hover, .dk-bar.on, .dk-bar:focus-visible { background: var(--dk-bar-hover, var(--dk-accent)); outline: none; }
 .dk-stack { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; overflow: clip; background: var(--dk-bg3); }
 .dk-head { flex: 0 0 var(--dk-head); height: var(--dk-head); display: flex; align-items: stretch; background: var(--dk-bg2); border-bottom: 1px solid var(--dk-line);
   user-select: none; -webkit-user-select: none; cursor: grab; min-width: 0; }
@@ -50,33 +87,52 @@
 .dk-tabs { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
 .dk-tabs::-webkit-scrollbar { height: 0; }
 .dk-head.dk-over .dk-tabs::-webkit-scrollbar { height: 3px; }
-.dk-tabs::-webkit-scrollbar-thumb { background: var(--dk-line); }
-.dk-tabs::-webkit-scrollbar-thumb:hover { background: var(--dk-fg3); }
+.dk-tabs::-webkit-scrollbar-thumb { background: var(--dk-tabs-thumb, var(--dk-line)); }
+.dk-tabs::-webkit-scrollbar-thumb:hover { background: var(--dk-tabs-thumb-hover, var(--dk-fg3)); }
 @supports not selector(::-webkit-scrollbar) { .dk-tabs { scrollbar-width: none; } .dk-head.dk-over .dk-tabs { scrollbar-width: thin; } }
 .dk-tab-wrap { display: flex; flex: none; align-items: center; gap: 3px; padding-right: 6px; min-width: 0; border-right: 1px solid var(--dk-line); }
 .dk-tab { padding: 0 4px 0 9px; height: 100%; font: inherit; font-size: var(--dk-fs-tab, 10px); font-weight: var(--dk-tab-weight, 400); letter-spacing: var(--dk-tab-tracking, .08em);
-  color: var(--dk-fg3); text-transform: var(--dk-tab-case, uppercase); background: none;
+  color: var(--dk-tab-fg, var(--dk-fg3)); text-transform: var(--dk-tab-case, uppercase); background: none;
   border: none; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: var(--dk-tab-max, 160px); }
+/* the app's own markup on a tab (tabExtra), after its title */
+.dk-tab-extra { display: inline-flex; flex: none; align-items: center; }
 /* a closable panel's ×: on the front tab and the one under the pointer (IntelliJ's editor tabs) */
 .dk-tab-x { width: 14px; height: 14px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; margin-left: -2px;
-  border: none; background: none; color: var(--dk-fg3); cursor: pointer; visibility: hidden; }
+  border: none; border-radius: var(--dk-tab-x-radius, 0); background: none; color: var(--dk-tab-x-fg, var(--dk-fg3)); cursor: pointer; visibility: hidden; }
 .dk-tab-x svg { width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .dk-tab-wrap.on .dk-tab-x, .dk-tab-wrap:hover .dk-tab-x, .dk-tab-x:focus-visible { visibility: visible; }
-.dk-tab-x:hover { color: var(--dk-fg); background: var(--dk-hover); }
+.dk-tab-x:hover { color: var(--dk-tab-x-hover-fg, var(--dk-fg)); background: var(--dk-tab-x-hover-bg, var(--dk-hover)); }
 /* ▾ (there only while the row overflows) */
 .dk-tabs-btn { flex: none; align-self: center; margin: 0 1px 0 2px; }
-.dk-tab-wrap.on { background: var(--dk-bg3); }
-.dk-tab.on { color: var(--dk-fg); border-bottom-color: var(--dk-accent); }
+.dk-tab-wrap:not(.on):hover { background: var(--dk-tab-hover-bg, transparent); }
+.dk-tab:not(.on):hover { color: var(--dk-tab-hover-fg, var(--dk-tab-fg, var(--dk-fg3))); }
+.dk-tab-wrap.on { background: var(--dk-tab-on-bg, var(--dk-bg3)); }
+.dk-tab.on { color: var(--dk-tab-on-fg, var(--dk-fg)); border-bottom-color: var(--dk-tab-on-line, var(--dk-accent)); }
 .dk-badge { margin-left: 4px; padding: var(--dk-badge-pad, 0 4px); border: var(--dk-badge-border, 1px solid var(--dk-warn)); border-radius: var(--dk-badge-radius, 0);
   background: var(--dk-badge-bg, transparent); color: var(--dk-badge-fg, var(--dk-warn)); font-size: var(--dk-badge-fs, 9px); font-weight: var(--dk-badge-weight, 400);
   letter-spacing: 0; text-transform: var(--dk-badge-case, none); }
 .dk-ctl { display: flex; align-items: center; gap: 1px; padding: 0 3px; flex: none; margin-left: auto; }
+.dk-ctl-start { margin-left: 0; padding-right: 0; }
 .dk-btn { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent;
-  background: none; color: var(--dk-fg3); cursor: pointer; }
-.dk-btn svg { fill: none; stroke: currentColor; stroke-width: 1.3; }
-.dk-btn svg circle { fill: currentColor; stroke: none; }
-.dk-btn:hover, .dk-btn:focus-visible { color: var(--dk-fg); border-color: var(--dk-line); background: var(--dk-bg3); }
-.dock :focus-visible, .dk-pop-root :focus-visible, .dk-menu :focus-visible { outline: 2px solid var(--dk-focus); outline-offset: 1px; }
+  border-radius: var(--dk-btn-radius, 0); background: none; color: var(--dk-btn-fg, var(--dk-fg3)); cursor: pointer; }
+.dk-btn > svg { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.dk-btn > svg circle { fill: currentColor; stroke: none; }
+.dk-menu-icon-btn { width: 20px; height: 20px; }
+.dk-menu-visual { display: flex; flex: none; width: 12px; height: 12px; pointer-events: none; }
+.dk-menu-visual > svg { width: 100%; height: 100%; }
+.dk-menu-built-in > svg { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.dk-menu-built-in > svg circle { fill: currentColor; stroke: none; }
+.dk-menu-with-caret { width: auto; min-width: var(--dk-head); height: var(--dk-head); gap: 2px; padding: 0 3px; }
+.dk-panel-menu { width: auto; min-width: var(--dk-head); height: var(--dk-head); gap: 2px; padding: 0 3px; }
+.dk-panel-menu-icon { display: flex; flex: none; pointer-events: none;
+  width: min(var(--dk-strip-icon, calc(var(--dk-strip, 22px) * .55)), calc(var(--dk-head, 24px) - 8px));
+  height: min(var(--dk-strip-icon, calc(var(--dk-strip, 22px) * .55)), calc(var(--dk-head, 24px) - 8px)); }
+.dk-panel-menu-icon > svg { width: 100%; height: 100%; }
+.dk-panel-menu-arrow { width: 9px; height: 9px; flex: none; }
+.dk-btn:hover, .dk-btn:focus-visible { color: var(--dk-btn-hover-fg, var(--dk-fg)); border-color: var(--dk-btn-hover-line, var(--dk-line));
+  background: var(--dk-btn-hover-bg, var(--dk-bg3)); }
+.dock :focus-visible, .dk-pop-root :focus-visible, .dk-menu :focus-visible { outline: var(--dk-focus-ring, 2px solid var(--dk-focus));
+  outline-offset: var(--dk-focus-offset, 1px); }
 .dk-body { flex: 1 1 0px; position: relative; min-height: 0; min-width: 0; overflow: hidden; overflow: clip; }
 .dk-body > .dk-panel { position: absolute; inset: 0; }
 .dk-panel.dk-off { visibility: hidden; }
@@ -97,13 +153,27 @@
 .dk-tab-icon > svg { width: 100%; height: 100%; }
 .dk-tab-iconic .dk-badge { margin: 0; }
 /* maximised: the whole dock (Esc restores) */
-.dk-stack.dk-max { position: absolute; inset: 0; z-index: 40; flex: none !important; min-width: 0 !important; min-height: 0 !important; box-shadow: 0 0 0 1px var(--dk-line); }
+.dk-stack.dk-max { position: absolute; inset: 0; z-index: 40; flex: none !important; min-width: 0 !important; min-height: 0 !important; box-shadow: var(--dk-max-shadow, 0 0 0 1px var(--dk-line)); }
 .dk-float { position: absolute; display: flex; flex-direction: column; background: var(--dk-bg3); border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0);
   box-shadow: var(--dk-float-shadow, 0 10px 28px var(--dk-shadow)); min-width: 0; overflow: clip; overflow-clip-margin: 4px; /* the resize handles stand out 3px */ }
 .dk-float > .dk-stack { flex: 1 1 0px; }
 .dk-float > .dk-stack > .dk-head { cursor: move; }
 .dk-float.dk-max { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; z-index: 40 !important; }
 .dk-float > .dk-stack.dk-max { position: static; }
+/* expandButtons: ⤢ pressed (full size or fit) */
+.dk-expand[aria-pressed="true"] { color: var(--dk-expand-on-fg, var(--dk-accent)); }
+/* maxTarget: 'window': full size covers the browser window, the app's own chrome outside the dock too */
+.dock.dk-max-window.dk-has-full { z-index: var(--dk-max-window-z, 1000); }
+.dock.dk-max-window .dk-main .dk-stack.dk-max, .dock.dk-max-window .dk-float.dk-max,
+.dock.dk-max-window .dk-flyout.dk-fly-max { position: fixed; inset: 0 !important; }
+/* fit: the panel at its content's size over the dimmed dock, for a moment (its button, Esc, a click elsewhere or on the
+   dim restore it); the hole keeps its place in the layout meanwhile */
+.dk-fit-layer { position: absolute; inset: 0; z-index: 50; }
+.dk-fit-dim { position: absolute; inset: 0; background: var(--dk-dim-bg, var(--dk-shadow)); }
+.dock > .dk-fit-layer > .dk-fit { position: absolute; z-index: 1; flex: none !important; min-width: 0 !important; min-height: 0 !important;
+  max-width: none !important; max-height: none !important; transform: none;
+  box-shadow: var(--dk-fit-shadow, 0 12px 36px var(--dk-shadow), 0 0 0 1px var(--dk-line)); }
+.dk-float.dk-fit .dk-rz { display: none; }
 .dk-rz { position: absolute; z-index: 2; touch-action: none; }
 .dk-rz-e { top: 0; right: -3px; bottom: 6px; width: 6px; cursor: ew-resize; }
 .dk-rz-w { top: 0; left: -3px; bottom: 6px; width: 6px; cursor: ew-resize; }
@@ -117,7 +187,8 @@
 .dk-strip-right { grid-row: 1 / -1; grid-column: 3; flex-direction: column; width: var(--dk-strip); border-left: 1px solid var(--dk-line); }
 .dk-strip-top { grid-row: 1; grid-column: 2; height: var(--dk-strip); border-bottom: 1px solid var(--dk-line); }
 .dk-strip-bottom { grid-row: 3; grid-column: 2; height: var(--dk-strip); border-top: 1px solid var(--dk-line); }
-.dk-strip-btn { border: 1px solid var(--dk-line); background: var(--dk-bg3); color: var(--dk-fg2);
+.dk-strip-btn { border: 1px solid var(--dk-strip-btn-line, var(--dk-line)); border-radius: var(--dk-strip-btn-radius, 0);
+  background: var(--dk-strip-btn-bg, var(--dk-bg3)); color: var(--dk-strip-btn-fg, var(--dk-fg2));
   font-size: var(--dk-strip-fs, max(var(--dk-fs-tab, 10px), calc(var(--dk-strip) * .3))); letter-spacing: var(--dk-tab-tracking, .06em);
   text-transform: var(--dk-tab-case, uppercase);
   cursor: pointer; padding: 0 calc(var(--dk-strip) * 4 / 11); white-space: nowrap; }
@@ -132,7 +203,11 @@
 .dk-strip-icon-btn .dk-strip-badge { position: absolute; top: 0; right: 0; margin: 0; line-height: 1.1; padding: 0 calc(var(--dk-strip) / 22 + 1px);
   font-size: var(--dk-strip-badge-fs, max(7px, calc(var(--dk-strip) * .3)));
   background: var(--dk-strip-badge-bg, var(--dk-bg3)); pointer-events: none; }
-.dk-strip-btn:hover, .dk-strip-btn.on { color: var(--dk-fg); border-color: var(--dk-accent); background: var(--dk-sel-bg); }
+.dk-strip-btn:hover { color: var(--dk-strip-btn-hover-fg, var(--dk-fg)); border-color: var(--dk-strip-btn-hover-line, var(--dk-accent));
+  background: var(--dk-strip-btn-hover-bg, var(--dk-sel-bg)); }
+.dk-strip-btn.on { color: var(--dk-strip-btn-on-fg, var(--dk-strip-btn-hover-fg, var(--dk-fg)));
+  border-color: var(--dk-strip-btn-on-line, var(--dk-strip-btn-hover-line, var(--dk-accent)));
+  background: var(--dk-strip-btn-on-bg, var(--dk-strip-btn-hover-bg, var(--dk-sel-bg))); }
 /* the strip above a panel sliding in or out (30), so its buttons always take the click, and a panel sliding in over its
    button (Esc, or its button clicked, with the pointer resting there) does not count as a new hover that slides it out */
 .dock > .dk-strip { position: relative; z-index: 31; }
@@ -157,30 +232,43 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dk-pop > .dk-head { cursor: default; }
 /* Back to main window: the window's one action, a real (primary) button */
 .dk-pop-back { align-self: center; display: inline-flex; align-items: center; gap: 5px; height: 19px; padding: 0 10px 0 8px; font: inherit; font-size: 10.5px;
-  font-weight: 600; letter-spacing: .02em; border: 1px solid var(--dk-accent); border-radius: 3px; background: var(--dk-accent); color: var(--dk-bg);
+  font-weight: 600; letter-spacing: .02em; border: 1px solid var(--dk-primary-line, var(--dk-accent)); border-radius: var(--dk-textbtn-radius, 3px);
+  background: var(--dk-primary-bg, var(--dk-accent)); color: var(--dk-primary-fg, var(--dk-bg));
   cursor: pointer; white-space: nowrap; }
 .dk-pop-back svg { fill: none; stroke: currentColor; stroke-width: 1.6; flex: none; }
-.dk-pop-back:hover { box-shadow: 0 0 0 2px var(--dk-sel-bg); }
-.dk-pop-back:active { transform: translateY(1px); }
+.dk-pop-back:hover { box-shadow: var(--dk-primary-hover-shadow, 0 0 0 2px var(--dk-sel-bg)); }
+.dk-pop-back:active { transform: var(--dk-press, translateY(1px)); }
 .dk-pop-wait, .dk-pop-orphan { margin: auto; padding: 20px; color: var(--dk-fg3); font-size: var(--dk-fs-note, 11.5px); text-align: center; }
 /* buttons: .dk-textbtn a plain one, .dk-primary the one to press */
-.dk-textbtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--dk-line); border-radius: 3px; background: var(--dk-bg3); color: var(--dk-fg);
+.dk-textbtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--dk-textbtn-line, var(--dk-line)); border-radius: var(--dk-textbtn-radius, 3px);
+  background: var(--dk-textbtn-bg, var(--dk-bg3)); color: var(--dk-textbtn-fg, var(--dk-fg));
   padding: 3px 10px; font: inherit; font-size: var(--dk-fs-menu, 11px); cursor: pointer; white-space: nowrap; }
-.dk-textbtn:hover { border-color: var(--dk-accent); background: var(--dk-hover); }
-.dk-textbtn.dk-primary { border-color: var(--dk-accent); background: var(--dk-accent); color: var(--dk-bg); font-weight: 600; }
-.dk-textbtn.dk-primary:hover { box-shadow: 0 0 0 2px var(--dk-sel-bg); }
-.dk-textbtn:active { transform: translateY(1px); }
+.dk-textbtn:hover { color: var(--dk-textbtn-hover-fg, var(--dk-textbtn-fg, var(--dk-fg))); border-color: var(--dk-textbtn-hover-line, var(--dk-accent));
+  background: var(--dk-textbtn-hover-bg, var(--dk-hover)); }
+.dk-textbtn.dk-primary { border-color: var(--dk-primary-line, var(--dk-accent)); background: var(--dk-primary-bg, var(--dk-accent));
+  color: var(--dk-primary-fg, var(--dk-bg)); font-weight: 600; }
+.dk-textbtn.dk-primary:hover { box-shadow: var(--dk-primary-hover-shadow, 0 0 0 2px var(--dk-sel-bg)); }
+.dk-textbtn:active { transform: var(--dk-press, translateY(1px)); }
 /* after a reload: the panels that were in windows of their own, and what to do with them (not a place in the layout) */
 .dk-outnote { position: absolute; z-index: 55; top: 8px; left: 50%; transform: translateX(-50%); max-width: min(620px, calc(100% - 24px));
   display: flex; flex-direction: column; gap: 6px; padding: 8px 34px 8px 12px; background: var(--dk-bg); color: var(--dk-fg); border: 1px solid var(--dk-line);
-  border-left: 3px solid var(--dk-accent); border-radius: var(--dk-radius, 0); box-shadow: 0 8px 24px var(--dk-shadow); font-size: var(--dk-fs-note, 11.5px); }
+  border-left: 3px solid var(--dk-accent); border-radius: var(--dk-radius, 0); box-shadow: var(--dk-menu-shadow, 0 8px 24px var(--dk-shadow)); font-size: var(--dk-fs-note, 11.5px); }
 .dk-outnote-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .dk-outnote-acts { display: flex; gap: 6px; margin-left: auto; }
 .dk-outnote-x { position: absolute; top: 5px; right: 5px; }
+/* popLostNotice: 'quiet': no notice; a quiet ring on the strip button of a panel whose window did not come back */
+.dk-strip-btn.dk-out-lost { position: relative; }
+.dk-strip-btn.dk-out-lost::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 6px; height: 6px; box-sizing: border-box;
+  border: 1.5px solid var(--dk-out-lost-ring, var(--dk-fg3)); border-radius: var(--dk-out-lost-ring-radius, 50%); pointer-events: none; }
+/* a panel's window left waiting for the page that loads next (after a reload): its title bar dimmed, a quiet word */
+.dk-pop-waiting .dk-head { opacity: .5; }
+.dk-pop-reconnecting { position: fixed; z-index: 2147483647; right: 8px; bottom: 8px; padding: 2px 8px; border-radius: var(--dk-radius, 0);
+  font: 11px/1.6 var(--dk-font, system-ui, sans-serif); color: var(--dk-fg3); background: var(--dk-bg2); border: 1px solid var(--dk-line); pointer-events: none; }
 .dk-note { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 100; max-width: min(560px, calc(100vw - 32px));
-  background: var(--dk-bg2); border: 1px solid var(--dk-warn); border-radius: var(--dk-radius, 0); color: var(--dk-fg); padding: 6px 12px; font-size: var(--dk-fs-note, 11.5px); box-shadow: 0 6px 18px var(--dk-shadow); }
+  background: var(--dk-bg2); border: 1px solid var(--dk-warn); border-radius: var(--dk-radius, 0); color: var(--dk-fg); padding: 6px 12px; font-size: var(--dk-fs-note, 11.5px); box-shadow: var(--dk-note-shadow, 0 6px 18px var(--dk-shadow)); }
 @media (prefers-reduced-motion: reduce) { .dk-flyout, .dk-flyout.open { transition: none; } }
-.dk-preview { position: absolute; z-index: 60; pointer-events: none; border: 2px solid var(--dk-accent); background: var(--dk-sel-bg); opacity: .6; }
+.dk-preview { position: absolute; z-index: 60; pointer-events: none; border: 2px solid var(--dk-preview-line, var(--dk-accent));
+  background: var(--dk-preview-bg, var(--dk-sel-bg)); opacity: var(--dk-preview-opacity, .6); }
 .dk-preview[hidden], .dk-parking[hidden] { display: none; }
 /* a strip button dragged (stripReorder, v0.8.0): along its strip or onto another edge's. Every edge without a strip shows
    one for the drag (a dashed ghost, over the layout); the strip it would land on is lit, and a line shows where. */
@@ -188,22 +276,24 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dock.dk-strip-dragging { user-select: none; -webkit-user-select: none; }
 .dk-strip-dnd { position: absolute; inset: 0; z-index: 61; pointer-events: none; }
 .dk-strip-dnd[hidden] { display: none; }
-.dk-strip-ghost { position: absolute; box-sizing: border-box; border: 1px dashed var(--dk-accent); background: var(--dk-bg2); opacity: .9; }
-.dk-strip-ghost.on, .dock > .dk-strip.dk-strip-target { background: var(--dk-sel-bg); box-shadow: inset 0 0 0 1px var(--dk-accent); }
-.dk-strip-mark { position: absolute; background: var(--dk-accent); }
-.dk-strip-btn.dk-strip-lifted { opacity: .4; }
+.dk-strip-ghost { position: absolute; box-sizing: border-box; border: 1px dashed var(--dk-strip-ghost-line, var(--dk-accent));
+  background: var(--dk-strip-ghost-bg, var(--dk-bg2)); opacity: var(--dk-strip-ghost-opacity, .9); }
+.dk-strip-ghost.on, .dock > .dk-strip.dk-strip-target { background: var(--dk-strip-target-bg, var(--dk-sel-bg));
+  box-shadow: var(--dk-strip-target-shadow, inset 0 0 0 1px var(--dk-strip-target-line, var(--dk-accent))); }
+.dk-strip-mark { position: absolute; background: var(--dk-strip-mark, var(--dk-accent)); }
+.dk-strip-btn.dk-strip-lifted { opacity: var(--dk-strip-lifted-opacity, .4); }
 /* what the dock says to a screen reader only (a strip button moved) */
 .dk-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* menus: a panel's own, and the Panels menu */
 .dk-menu { position: fixed; z-index: 30; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--dk-bg); color: var(--dk-fg);
-  border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0); box-shadow: 0 8px 24px var(--dk-shadow); font-size: var(--dk-fs-menu, 11px);
+  border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0); box-shadow: var(--dk-menu-shadow, 0 8px 24px var(--dk-shadow)); font-size: var(--dk-fs-menu, 11px);
   font-family: var(--dk-font-chrome, var(--dk-font-mono)); }
 .dk-menu[hidden] { display: none; }
-.dk-menu button { border: none; background: none; color: var(--dk-fg); font: inherit; text-align: left; padding: 4px 8px; cursor: pointer; }
-.dk-menu button:hover { background: var(--dk-hover); }
-.dk-menu button.on { background: var(--dk-sel-bg); font-weight: 600; }
+.dk-menu button { border: none; border-radius: var(--dk-menu-item-radius, 0); background: none; color: var(--dk-fg); font: inherit; text-align: left; padding: 4px 8px; cursor: pointer; }
+.dk-menu button:hover { color: var(--dk-menu-hover-fg, var(--dk-fg)); background: var(--dk-menu-hover-bg, var(--dk-hover)); }
+.dk-menu button.on { color: var(--dk-menu-on-fg, var(--dk-fg)); background: var(--dk-menu-on-bg, var(--dk-sel-bg)); font-weight: 600; }
 .dk-menu button.on::after { content: " \2713"; }
-.dk-menu button[disabled] { color: var(--dk-fg3); cursor: not-allowed; }
+.dk-menu button[disabled] { color: var(--dk-menu-disabled-fg, var(--dk-fg3)); cursor: not-allowed; }
 .dk-menu.dk-tablist { max-height: min(60vh, 480px); overflow-y: auto; max-width: min(90vw, 420px); }
 .dk-menu.dk-tablist button { display: flex; gap: 12px; align-items: baseline; white-space: nowrap; }
 .dk-tablist-title { overflow: hidden; text-overflow: ellipsis; }
@@ -212,26 +302,28 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 /* a title bar's Options menu (⋯): View Mode ▸ and Move To ▸ open a submenu of choices, the current one checked */
 .dk-menu.dk-options button[aria-haspopup] { display: flex; align-items: center; gap: 12px; }
 .dk-menu-arrow { margin-left: auto; color: var(--dk-fg3); }
-.dk-menu button[aria-expanded="true"] { background: var(--dk-hover); }
+.dk-menu button[aria-expanded="true"] { background: var(--dk-menu-hover-bg, var(--dk-hover)); }
 .dk-menu.dk-submenu { z-index: 31; min-width: 130px; }
 .dk-menu [role="menuitemradio"] { padding-left: 20px; position: relative; }
-.dk-menu [role="menuitemradio"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-accent); }
+.dk-menu [role="menuitemradio"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-menu-check, var(--dk-accent)); }
 .dk-menu [role="menuitemradio"][aria-checked="true"] { font-weight: 600; }
 /* the app's own items (v0.10.0): a checkbox item, a submenu, a disabled item (focusable; its title says why) */
 .dk-menu button[data-dk-app][aria-haspopup] { display: flex; align-items: center; gap: 12px; }
 .dk-menu [role="menuitemcheckbox"] { padding-left: 20px; position: relative; }
 /* a menu with a checkbox item indents all its app items alike, so the labels line up */
 .dk-menu:has(> [role="menuitemcheckbox"]) > button[data-dk-app] { padding-left: 20px; }
-.dk-menu [role="menuitemcheckbox"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-accent); }
-.dk-menu button[aria-disabled="true"] { color: var(--dk-fg3); cursor: not-allowed; }
+.dk-menu [role="menuitemcheckbox"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-menu-check, var(--dk-accent)); }
+.dk-menu button[aria-disabled="true"] { color: var(--dk-menu-disabled-fg, var(--dk-fg3)); cursor: not-allowed; }
 .dk-menu button[aria-disabled="true"]:hover { background: none; }
 /* help (help.js): a circled ? beside a tab, and its popover */
 .dk-help-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; padding: 0;
-  border: 1px solid var(--dk-fg3); border-radius: 50%; background: transparent; color: var(--dk-fg3); font: 600 9px/1 var(--dk-font-mono);
+  border: 1px solid var(--dk-help-q-fg, var(--dk-fg3)); border-radius: var(--dk-help-q-radius, 50%); background: transparent;
+  color: var(--dk-help-q-fg, var(--dk-fg3)); font: 600 9px/1 var(--dk-font-mono);
   letter-spacing: 0; text-transform: none; cursor: pointer; vertical-align: middle; }
-.dk-help-q:hover, .dk-help-q:focus-visible { border-color: var(--dk-accent); color: var(--dk-accent); }
+.dk-help-q:hover, .dk-help-q:focus-visible { border-color: var(--dk-help-q-hover-fg, var(--dk-accent)); color: var(--dk-help-q-hover-fg, var(--dk-accent)); }
 .dk-help-pop { position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 8px); padding: 8px 10px; background: var(--dk-bg);
-  color: var(--dk-fg); border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0); box-shadow: 0 8px 24px var(--dk-shadow); font-size: var(--dk-fs-note, 11.5px); line-height: 1.45; }
+  color: var(--dk-fg); border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0); box-shadow: var(--dk-menu-shadow, 0 8px 24px var(--dk-shadow));
+  font-size: var(--dk-fs-note, 11.5px); line-height: 1.45; }
 .dk-help-pop[hidden] { display: none; }
 .dk-help-pop .dk-help-t { font-weight: 600; margin-bottom: 4px; }
 .dk-help-pop p { margin: 0 0 5px; color: var(--dk-fg2); }
@@ -249,3 +341,28 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dk-swatch.dk-swatch-sys { display: inline-flex; border: none; background: none; }
 .dk-swatch-sys > .dk-swatch { width: 17px; grid-template-columns: 1fr 4px 0; }
 .dk-swatch-sys > .dk-swatch .g { background-size: 6px 2px; background-position: 3px 50%; }
+/* A user dock is a connected panel in the main Dock. */
+.dk-dock-frame, .dk-dock-region { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.dk-dock-frame { position: relative; overflow: hidden; }
+.dk-dock-region { position: relative; }
+.dk-dock-rename { position: absolute; z-index: 100; top: 3px; left: 6px; width: min(70%, 230px); }
+.dk-transfer-bin { position: fixed; width: 0; height: 0; overflow: hidden; }
+.dk-pop-root > .dk-dock-frame { flex: 1 1 0; width: 100%; min-height: 0; }
+.dk-dock-window-bar { position: relative; flex: none; height: var(--dk-head, 32px); display: flex; align-items: center;
+  justify-content: space-between; padding: 0 8px; background: var(--dk-bg2); color: var(--dk-fg); border-bottom: 1px solid var(--dk-line); }
+.dk-dock-window-bar > button { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 20px; }
+.dk-dock-window-bar > button:hover { color: var(--dk-dock-window-btn-hover-fg, var(--dk-fg));
+  background: var(--dk-dock-window-btn-hover-bg, transparent); }
+.dk-dock-window-menu { position: absolute; z-index: 100; right: 5px; top: 100%; min-width: 170px;
+  padding: 4px; background: var(--dk-bg2); color: var(--dk-fg); border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0);
+  box-shadow: var(--dk-menu-shadow, 0 8px 24px var(--dk-shadow)); }
+.dk-dock-window-menu[hidden] { display: none; }
+.dk-dock-window-menu button { display: block; width: 100%; padding: 6px 9px; border: 0; text-align: left;
+  border-radius: var(--dk-menu-item-radius, 0); background: transparent; color: inherit; cursor: pointer; }
+.dk-dock-window-menu button:hover, .dk-dock-window-menu button:focus { color: var(--dk-menu-hover-fg, var(--dk-fg));
+  background: var(--dk-menu-hover-bg, var(--dk-hover)); }
+.dk-dock-window-note { position: absolute; z-index: 90; top: 8px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 12px; align-items: center; max-width: calc(100% - 20px); padding: 5px 12px;
+  background: var(--dk-bg2); color: var(--dk-fg); border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0);
+  box-shadow: var(--dk-window-note-shadow, 0 3px 12px var(--dk-shadow)); }
+.dk-dock-window-note button { white-space: nowrap; cursor: pointer; }

@@ -1,5 +1,9 @@
 """#204 (P170): a panel popped out into its own window survives a reload of the main page.
 
+Since #205 this is Dock's own (v0.22.0: popAdoptTimeout, popLostNotice 'quiet',
+the pop-adopt event), on the library's popout.html; the page keeps only what
+the panel showed (pdPopKeep) and puts it back on pop-adopt.
+
 In headless Chrome over CDP, against a hub in a thread, with a project that has
 a PO (Motors), a document and a task:
 
@@ -176,8 +180,7 @@ async function main() {
         const r = await p.evalIn(`(() => { const d = PD.dock.panels().some(x => x.id === ${J}) ? PD.dock : LD.dock; const w = d.popWindow(${J});
           const el = d.panels().find(x => x.id === ${J}).el;
           return { took: ${took}, open: d.isOpenOut(${J}), inWindow: !!w && el.ownerDocument === w.document && w.document.contains(el),
-            notice: ${noteShown}, keptWindow: ${JSON.stringify(before)}.length === 1 && ${JSON.stringify(before)}[0] === ${JSON.stringify(after[0] || '')}, windows: ${after.length},
-            leaving: window.ensPopLeaving }; })()`);
+            notice: ${noteShown}, keptWindow: ${JSON.stringify(before)}.length === 1 && ${JSON.stringify(before)}[0] === ${JSON.stringify(after[0] || '')}, windows: ${after.length} }; })()`);
         if (check) Object.assign(r, await p.evalIn(check));
         // Its own controls answer again: the title bar's ⋯ opens its menu in the window.
         r.menu = await p.evalIn(`(async () => { const d = PD.dock.panels().some(x => x.id === ${J}) ? PD.dock : LD.dock; const w = d.popWindow(${J}); if (!w) return false;
@@ -196,7 +199,7 @@ async function main() {
       }
       // ---- a reload right after the window opened, before its page's first look at this one (review 1)
       await p.evalIn(`(async () => { PD.dock.popOut('points'); const t = Date.now();
-        for (;;) { const w = PD.dock.popWindow('points'); let ready = false; try { ready = !!w && w.location.pathname === '/static/popout.html' && !!w.document.getElementById('dk-pop-root'); } catch (e) {}
+        for (;;) { const w = PD.dock.popWindow('points'); let ready = false; try { ready = !!w && w.location.pathname === '/static/dock/src/popout.html' && !!w.document.getElementById('dk-pop-root'); } catch (e) {}
           if (ready || Date.now() - t > 10000) break; await new Promise(r => setTimeout(r, 5)); }
         window.__before = 1; location.reload(); return 0; })()`);
       await p.until('!window.__before', 20000); await p.load();
@@ -204,6 +207,20 @@ async function main() {
       await sleep(600);
       out.early.windows = (await pops()).length;
       out.early.notice = await p.evalIn(noteShown);
+      await sleep(3000);
+      out.early.lost = await p.evalIn(`PD.dock.isOutLost('points')`);
+      out.early.ring = await p.evalIn(`!!document.querySelector('.dk-strip-btn.dk-out-lost[data-dk-auto="points"]')`);
+      // How long a window is still opening (its page loaded, the panel not yet drawn there): popOut to drawn.
+      out.opening = [];
+      for (let i = 0; i < 5; i++) {
+        await p.evalIn(`PD.dock.popIn('points'); 0`);
+        await p.until('PD.dock && !PD.dock.isOut("points")', 10000);
+        out.opening.push(await p.evalIn(`(async () => { const t = Date.now(); PD.dock.popOut('points'); let ready = 0;
+          for (;;) { const w = PD.dock.popWindow('points'); let r = false, m = false;
+            try { r = !!w && w.location.pathname === '/static/dock/src/popout.html' && !!w.document.getElementById('dk-pop-root'); m = r && !!w.document.querySelector('#dk-pop-root .dk-panel'); } catch (e) {}
+            if (r && !ready) ready = Date.now() - t; if (m || Date.now() - t > 10000) return { ready, drawn: Date.now() - t };
+            await new Promise(r => setTimeout(r, 2)); } })()`));
+      }
       await p.evalIn(`PD.dock.popIn('points'); 0`);
       await p.until('PD.dock && !PD.dock.isOut("points")', 10000);
       // ---- every other kind of panel, each in its window, through one reload
@@ -233,17 +250,15 @@ async function main() {
       out.others.windowsBefore = allPops;
       out.others.windowsAfter = (await pops()).length;
       // ---- a window closed while the page reloads: no notice, a quiet mark, one click opens it again
-      const fileWin = (await pops()).find(t => /Notes/.test(t.title));
-      // Closed while the page reloads, before the next one takes it back: its
-      // window stops asking (its timers cleared), and is closed once the page is back.
-      const closeWhileAway = async (t) => {
-        if (t) { const s = await attach(t.targetId); await s.evalIn('(() => { for (let i = 0; i < 5000; i++) clearInterval(i); return 0; })()'); }
-        await p.evalIn('window.__before = 1; location.reload(); 0');
+      // Closed while the page reloads, before the next one takes it back: as
+      // the page goes, once Dock has left the window waiting (its pagehide runs first).
+      const closeWhileAway = async (id) => {
+        await p.evalIn(`(() => { const w = PD.dock.popWindow(${JSON.stringify(id)}); addEventListener('pagehide', () => { try { w.close(); } catch (e) {} });
+          window.__before = 1; location.reload(); return 0; })()`);
         await p.until('!window.__before', 20000);
         await p.load();
-        if (t) await c.send('Target.closeTarget', { targetId: t.targetId });
       };
-      await closeWhileAway(fileWin);
+      await closeWhileAway(fid);
       await sleep(3800);   // past the page's first seconds, when windows still open are taken back
       out.closed = await p.evalIn(`(() => { const id = ${JSON.stringify(fid)};
         return { out: PD.dock.isOut(id), open: PD.dock.isOpenOut(id), notice: ${noteShown}, panelsMark: !!document.querySelector('.pd-panels.pd-out-closed'),
@@ -253,16 +268,15 @@ async function main() {
       await p.evalIn('document.querySelector(".pd-panels").click(); 0');
       out.closedMenu = await p.evalIn(`[...document.querySelectorAll('.pd-menu .pd-out-row [data-pd-pop]')].map(b => b.dataset.pdPop + ':' + b.textContent.trim())`);
       await p.evalIn('document.querySelector(\'.pd-menu .pd-out-row [data-pd-pop="open"]\').click(); 0');
-      await p.until(`PD.dock.isOpenOut(${JSON.stringify(fid)})`, 10000).catch(() => null);
+      await p.until(`PD.dock.isOpenOut(${JSON.stringify(fid)}) && !!PD.dock.popWindow(${JSON.stringify(fid)}).document.querySelector('#dk-pop-root .dk-panel')`, 10000).catch(() => null);
       out.reopened = await p.evalIn(`({ open: PD.dock.isOpenOut(${JSON.stringify(fid)}), mark: !!document.querySelector('.pd-panels.pd-out-closed') })`);
       // A tool closed the same way: the ring on its strip button, whose click opens it.
-      const ptsWin = (await pops()).find(t => /Your asks/.test(t.title));
-      await closeWhileAway(ptsWin);
+      await closeWhileAway('points');
       await sleep(3800);
-      out.toolClosed = await p.evalIn(`({ out: PD.dock.isOut('points'), open: PD.dock.isOpenOut('points'), ring: !!document.querySelector('.dk-strip-btn.pd-out-closed[data-dk-auto="points"]'), notice: ${noteShown} })`);
+      out.toolClosed = await p.evalIn(`({ out: PD.dock.isOut('points'), open: PD.dock.isOpenOut('points'), ring: !!document.querySelector('.dk-strip-btn.dk-out-lost[data-dk-auto="points"]'), notice: ${noteShown} })`);
       await p.evalIn('document.querySelector(\'.dk-strip-btn[data-dk-auto="points"]\').click(); 0');
-      await p.until(`PD.dock.isOpenOut('points')`, 10000).catch(() => null);
-      out.toolReopened = await p.evalIn(`({ open: PD.dock.isOpenOut('points'), ring: !!document.querySelector('.dk-strip-btn.pd-out-closed') })`);
+      await p.until(`PD.dock.isOpenOut('points') && !!PD.dock.popWindow('points').document.querySelector('#dk-pop-root .dk-panel')`, 10000).catch(() => null);
+      out.toolReopened = await p.evalIn(`({ open: PD.dock.isOpenOut('points'), ring: !!document.querySelector('.dk-strip-btn.dk-out-lost') })`);
       // ---- no notice over the conversation at 1728x1117 and 390x844, a window closed before the reload
       out.sizes = {};
       for (const [w, h, mobile] of [[1728, 1117, false], [390, 844, true]]) {
@@ -386,6 +400,8 @@ class PopOutReload(unittest.TestCase):
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=600)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
+        if os.environ.get("ENSEMBLE_POP_PRINT") == "1":
+            print(json.dumps(cls.got), file=sys.stderr)
         if MEASURE:
             print(json.dumps(cls.got, indent=1))
 
@@ -432,14 +448,18 @@ class PopOutReload(unittest.TestCase):
                 self.assertEqual(r["top"], 600, "at the same place")
                 self.assertTrue(r["menu"], "its controls answer again")
                 self.assertFalse(r["notice"], "nothing asked")
-                self.assertFalse(r["leaving"])
 
-    def test_a_reload_right_after_the_window_opened_keeps_it(self):
-        # Review 1: the window's first look found the reloaded page and took it for its own.
+    def test_a_reload_while_a_window_is_still_opening_asks_nothing(self):
+        # #204 review 1 kept such a window. Dock v0.22.0 closes a window whose
+        # panel it has not drawn yet (reported to the Dock PO): the panel is then
+        # a quiet mark, never a notice. Either way nothing is asked.
         e = self.got["early"]
-        self.assertTrue(e["took"], "taken back by the reloaded page")
-        self.assertEqual(e["windows"], 2, "the file's window and this one")
         self.assertFalse(e["notice"])
+        if e["took"]:
+            self.assertEqual(e["windows"], 2, "the file's window and this one")
+        else:
+            self.assertEqual(e["windows"], 1, "the file's window")
+            self.assertTrue(e["lost"] and e["ring"], e)
 
     def test_every_kind_of_panel_is_kept(self):
         o = self.got["others"]
@@ -457,7 +477,7 @@ class PopOutReload(unittest.TestCase):
         c = self.got["closed"]
         self.assertTrue(c["out"] and not c["open"])
         self.assertFalse(c["notice"])
-        self.assertEqual(c["noticeEls"], ["none"], "the library's notice is never shown")
+        self.assertEqual(c["noticeEls"], [], "no notice at all (popLostNotice 'quiet')")
         self.assertTrue(c["panelsMark"], "Panels carries the mark")
         self.assertEqual(self.got["closedMenu"], ["open:#1 Notes.md window closed", "back:Bring back here"])
         self.assertEqual(self.got["reopened"], {"open": True, "mark": False}, "one click opens it again")
@@ -480,18 +500,21 @@ class PopOutReload(unittest.TestCase):
 class ThePage(unittest.TestCase):
     """The page's wiring, read from the files."""
 
-    def test_both_docks_open_ensembles_page_through_the_glue(self):
+    def test_both_docks_use_docks_own_reload_keeping(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8")
-        self.assertEqual(index.count("popUrl: '/static/popout.html',"), 2)
-        self.assertEqual(index.count("openWindow: ensPopOpen,"), 2)
-        self.assertNotIn("popUrl: '/static/dock/src/popout.html'", index)
-        self.assertIn(".dk-outnote { display: none !important; }", index)
+        self.assertEqual(index.count("popUrl: '/static/dock/src/popout.html',"), 2)
+        self.assertEqual(index.count("popAdoptTimeout: PD_POP_WAIT,"), 2)
+        self.assertEqual(index.count("popLostNotice: 'quiet',"), 2)
+        self.assertIn("pdOnAdopt('pd', PD_ROOT);", index)
+        self.assertIn("pdOnAdopt('ld', LD_ROOT);", index)
+        for gone in ("ensPopAdopt", "ensPopOpen", "ensPopLeaving", "openWindow:", ".dk-outnote { display: none"):
+            self.assertNotIn(gone, index, gone)
+        self.assertFalse((ROOT / "static" / "popout.html").exists(), "Ensemble's copy of the page is gone")
 
-    def test_the_pop_out_page_waits_for_the_next_page(self):
-        page = (ROOT / "static" / "popout.html").read_text(encoding="utf-8")
-        for tok in ('id="dk-pop-root"', 'class="dk-popwin"', "ensPopLeaving", "ensPopAdopt", "o.closed"):
+    def test_the_librarys_pop_out_page_waits_for_the_next_page(self):
+        page = (ROOT / "static" / "dock" / "src" / "popout.html").read_text(encoding="utf-8")
+        for tok in ('id="dk-pop-root"', 'class="dk-popwin"', "window.__dockPopWaits = true", "__dockPopAdopt"):
             self.assertIn(tok, page)
-        self.assertNotIn("__dockPopKey", page, "not closed by a new page's key")
 
 
 if __name__ == "__main__":
