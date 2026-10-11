@@ -393,14 +393,15 @@ async function main() {
     await h.until('!!PD.dock && !!SELECTED_SID', 15000).catch(() => null); await sleep(1500);
     out.popThenDock = await h.evalIn(`(() => { const w = LD.dock.popWindow('list'); return { pd: !!PD.dock, sid: !!SELECTED_SID, out: LD.dock.isOut('list'), open: !!w && !w.closed,
       there: SW_EL.ownerDocument !== document, sameKey: !!w && w.__dockPopKey === window.__dockPopKey }; })()`);
-    // A reload leaves it out, its window gone: the notice offering it back
-    // cannot be waved away, and brings it back.
+    // A reload keeps its window (#204): the reloaded page takes it back, the
+    // list is still in it, and no notice is shown; back in, it is here again.
     await h.evalIn('location.reload(); 0'); await sleep(1500); await h.ready();
-    await h.until('!!LD.dock && !!document.querySelector("#list-dock .dk-outnote")', 20000).catch(() => null); await sleep(400);
-    out.note = await h.evalIn(`(() => { const n = document.querySelector('#list-dock .dk-outnote'); const x = n && n.querySelector('.dk-outnote-x');
-      return { out: LD.dock.isOut('list'), note: !!n, back: !!(n && n.querySelector('[data-dk-pop="back"]')), x: !!x && getComputedStyle(x).display !== 'none' }; })()`);
-    if (out.note.back) { await h.click('#list-dock .dk-outnote [data-dk-pop="back"]'); await sleep(600); }
-    out.noteBack = await h.evalIn(GEOM);
+    await h.until('!!LD.dock && LD.dock.isOpenOut("list") && SW_EL.ownerDocument !== document && !!SW_EL.querySelector(".sw-row")', 20000).catch(() => null); await sleep(400);
+    out.kept = await h.evalIn(`(() => { const w = LD.dock.popWindow('list'); const n = document.querySelector('#list-dock .dk-outnote');
+      return { out: LD.dock.isOut('list'), open: !!w && !w.closed, there: SW_EL.ownerDocument !== document, rows: !!SW_EL.querySelector('.sw-row'),
+        note: !!n && n.getBoundingClientRect().width > 0 }; })()`);
+    await h.evalIn('LD.dock.popIn("list"); 0'); await sleep(600);
+    out.keptBack = await h.evalIn(GEOM);
     // No former strip place: a window from the default pinned list still has Panels.
     await h.evalIn('LD.dock.reset(); LD.dock.popOut("list"); 0');
     await h.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document');
@@ -674,11 +675,11 @@ class TheListDock(unittest.TestCase):
         self.assertTrue(g["out"] and g["open"] and g["there"], g)
         self.assertTrue(g["sameKey"], "the window has the page's key")
 
-    def test_the_notice_offering_the_list_back_stays(self):
-        n = self.got["note"]
-        self.assertTrue(n["out"] and n["note"] and n["back"], n)
-        self.assertTrue(n["x"], "Panels provides recovery after dismissing the notice")
-        b = self.got["noteBack"]
+    def test_a_reload_keeps_the_lists_window(self):
+        k = self.got["kept"]
+        self.assertTrue(k["out"] and k["open"] and k["there"] and k["rows"], k)
+        self.assertFalse(k["note"], "no notice: the window was taken back")
+        b = self.got["keptBack"]
         self.assertTrue(b["here"] and not b["out"], b)
         self.assertGreater(b["list"]["w"], 0)
 

@@ -34,8 +34,9 @@ pages, with one project whose PO room holds points:
 * a panel popped out into its own window (the Board, the PO chat) keeps its
   live updates, takes clicks and typing, follows the theme, and comes back
   when its window closes (it has no "Back to main window" button); the
-  window's own chat is gone before the panel is back, and the chat here was never reloaded; the window's page is the
-  library's popout.html as this hub serves it (inside the manifest's scope,
+  window's own chat is gone before the panel is back, and the chat here was never reloaded; the window's page is
+  Ensemble's static/popout.html (a copy of the library's that outlives a
+  reload of this page, #204) (inside the manifest's scope,
   so an installed app opens it as an app window, #101), and its base is this
   page's, so a relative link or frame there is this hub's;
 * a resize to a phone's width turns the same dock narrow (one column of
@@ -277,6 +278,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
+        self.assertNotIn("static/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
         self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.14\.1 9a26d6d[0-9a-f]{33}")
 
     def test_the_library_does_what_the_workarounds_did(self):
@@ -289,7 +291,7 @@ class ThePanels(unittest.TestCase):
         self.assertEqual(dock.count("new ResizeObserver"), 1)
         self.assertIn("pdToolsFit(); }).observe(PD_ROOT)", dock)
         # #101: the served page, not a blob: one, which an installed app shows under Chrome's address strip.
-        for used in ("popUrl: '/static/dock/src/popout.html',", "narrow: pdNarrow()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(pdNarrow())",
+        for used in ("popUrl: '/static/popout.html',", "narrow: pdNarrow()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(pdNarrow())",
                      "PD.dock.onPopIn(", "parent.moveBefore(el"):
             self.assertIn(used, dock, used)
         css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
