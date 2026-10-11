@@ -3570,12 +3570,13 @@ function forPerson(m, N = CHAT_NAMES) {
   return N.po && m.from === N.po && (!m.to || m.to === 'all') ? 'answer' : '';
 }
 const CU_WORD = { completed: 'done', blocked: 'blocked', question: 'asks' };
-// A progress check's plain facts name a new or stopped task by its number or id:
-// "- Title (#63): new task", "- Title (#26): status running → stopped". [[label, word]].
-const CU_DIGEST_RE = /\(((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}|room-[0-9a-f]+)\): (?:(new task)|(?:renamed from '.*?', )?status \S+ → (stopped))/g;
+// A progress check's plain facts name a new or stopped task by its number:
+// "- #63 Title: new task", "- #26 Title: status running → stopped" (#202); older
+// digests in the chats say "- Title (#63): new task" or "(room-…)". [[label, word]].
+const CU_DIGEST_RE = /(?:\(((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}|room-[0-9a-f]+)\)|(?:^|\s)- ((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6})(?: (?:(?! - (?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d)[^\n])*?)?): (?:(new task)|(?:renamed from '.*?', )?status \S+ → (stopped))/gm;
 function digestWords(m) {
   if (!isDigest(m)) return [];
-  return [...String(m.text || '').matchAll(CU_DIGEST_RE)].map(x => [x[1], x[2] ? 'new' : 'stopped']);
+  return [...String(m.text || '').matchAll(CU_DIGEST_RE)].map(x => [x[1] || x[2], x[3] ? 'new' : 'stopped']);
 }
 // What changed after the point: null when nothing did, or when fewer than three
 // balloons came and all are for the person (they are in view). Else

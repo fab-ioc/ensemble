@@ -258,9 +258,28 @@ class HubWrites(tnt.Hub):
         self.assertTrue(self.posted[-1].startswith("**#2 stalled since"), self.posted[-1])
         self.assertIn("`ensemble_get_task #2`", self.posted[-1])
         self.no_room_id(self.posted[-1])
+        self.assertIn("**#2 stalled since", self.posted[-1])
+        self.assertIn("** — Beta\n", self.posted[-1], "the title after the bold number")
         loose = chatroom.get_room(self.room("No number", self.ed), public=False)
         self.assertEqual(dashboard.task_word(loose), "*No number*", "a task without a number by its title")
         self.assertEqual(dashboard.task_arg(loose), loose["id"], "its room id only as a tool argument")
+        self.assertTrue(stall._post_po(loose, {"idleSince": now - 900, "nudgedAt": now - 300}, now))
+        head = self.posted[-1].split("\n")[0]
+        self.assertTrue(head.startswith("**No number stalled since"), head)
+        self.assertTrue(head.endswith("**"), "no italics inside the bold, no title after it again")
+
+    def test_a_task_with_no_title(self):
+        bare = chatroom.get_room(self.room("", self.ed, numbered=True), public=False)
+        bare["title"] = ""
+        self.assertEqual(dashboard.task_named(bare), "task #3", "no empty *…*")
+        loose = chatroom.get_room(self.room("x", self.ed), public=False)
+        loose["title"] = ""
+        self.assertEqual(dashboard.task_named(loose), "a task", "never its room id")
+        text = digest.plain_facts({"id": self.ed, "name": "ED"}, [],
+                                  [{"id": loose["id"], "label": "", "title": "", "what": ["no longer in this project"],
+                                    "finished": False}], 0)
+        self.assertIn("- a task with no number or title: no longer in this project", text)
+        self.no_room_id(text)
 
     def test_a_message_not_taken_in(self):
         sends._tell(chatroom.get_room(self.b, public=False), [{"text": "Please merge."}])

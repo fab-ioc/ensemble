@@ -226,6 +226,17 @@ def _words(room: dict, rec: dict, now: float) -> tuple[str, str, str]:
     return _d.task_word(room), since, nudged
 
 
+def _bold_name(room: dict) -> str:
+    """A task in a bold head line: #18, else its title (plain: italics inside
+    bold read badly), else "a task" (P166: never its room id)."""
+    return _d.task_label(room) or room.get("title") or "a task"
+
+
+def _after_bold(room: dict) -> str:
+    """What follows the bold head: " — its title" when the head is its number."""
+    return f" — {room['title']}" if _d.task_label(room) and room.get("title") else ""
+
+
 def _post_po(room: dict, rec: dict, now: float) -> bool:
     """The line in the PO's room. False when there is no PO room."""
     cr = _d.chatroom
@@ -234,9 +245,8 @@ def _post_po(room: dict, rec: dict, now: float) -> bool:
     if not po_room:
         return False
     ident = cr.po_identity(po_room)
-    label, since, nudged = _words(room, rec, now)
-    title = room.get("title", "")
-    body = (f"**{label} stalled since {since}** — {title}\n\n"
+    _, since, nudged = _words(room, rec, now)
+    body =(f"**{_bold_name(room)} stalled since {since}**{_after_bold(room)}\n\n"
             f"Its owner is idle with nothing open: no question, block or report "
             f"waiting, no review running. The hub nudged it at {nudged} and it did "
             f"not carry on. Look at it (`ensemble_get_task {_d.task_arg(room)}`) and steer it, "
@@ -449,7 +459,7 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         po_room = cr.get_room(po, public=False) if po else None
         if not po_room:
             return ""
-        body = (f"**{label} silent since {at}** — {room.get('title', '')}\n\n"
+        body = (f"**{_bold_name(room)} silent since {at}**{_after_bold(room)}\n\n"
                 f"Its owner has produced nothing for {int(quiet // 60)} min: no transcript "
                 f"growth, no hook event, no screen change, no commit, and nothing excuses "
                 f"it (no background run, review or open ask). Look at it "
@@ -555,9 +565,9 @@ def _look_limit(rid: str, now: float) -> str:
             if failed and po and not old.get("toldAt"):
                 po_room = cr.get_room(po, public=False)
                 at = time.strftime("%H:%M", time.localtime(float(hit["at"])))
-                body = (f"**{label} {ident} was stopped by a model limit "
-                        f"({_d.model_limit.title(model) or 'model'}) at {at}** — "
-                        f"{room.get('title', '')}\n\n{failed.strip()}")
+                body = (f"**{_bold_name(room)} {ident} was stopped by a model limit "
+                        f"({_d.model_limit.title(model) or 'model'}) at {at}**{_after_bold(room)}"
+                        f"\n\n{failed.strip()}")
                 if po_room and cr.post_report(po, SENDER, cr.po_identity(po_room), body,
                                               {"reportKind": "digest", "limitTask": rid}, wake=False):
                     old["toldAt"] = now
@@ -575,7 +585,7 @@ def _look_limit(rid: str, now: float) -> str:
             if not po_room:
                 continue
             at = time.strftime("%H:%M", time.localtime(float(hit["at"])))
-            body = (f"**{label} {ident} is {words}** — {room.get('title', '')}\n\n"
+            body = (f"**{_bold_name(room)} {ident} is {words}**{_after_bold(room)}\n\n"
                     f"Its turn ended at {at} on the CLI's own line: “{hit.get('line', '')}”."
                     f"{failed} The hub seats no Claude agent on this model until the limit "
                     f"clears; a seat that names it keeps it, with a warning. Switch the seat's "

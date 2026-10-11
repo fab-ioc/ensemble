@@ -526,7 +526,7 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
     lines = [f"Project '{project.get('name', project['id'])}' — changes since {when}:"]
     fin = [c for c in changes if c["finished"]]
     # A task is named by its number, title after it (P166); never by its room id.
-    name = lambda x: " ".join(v for v in (x.get("label") or "", x.get("title") or "") if v)
+    name = lambda x: " ".join(v for v in (x.get("label") or "", x.get("title") or "") if v) or "a task with no number or title"
     if fin:
         lines.append("Finished: " + "; ".join(name(c) for c in fin))
     for c in changes:

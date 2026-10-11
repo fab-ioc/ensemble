@@ -6228,9 +6228,11 @@ def task_named(room: dict, title: str | None = None) -> str:
     """How a hub header names a task: ``task #18 *its title*`` (#202) — the
     number first, so the page draws it as the task's chip, and the title
     after it in italics, which the chip takes with it. A task without a
-    number is named by its title alone."""
+    number is named by its title alone; with neither, "a task"."""
     no = task_label(room)
-    t = title if title is not None else (room.get("title") or room.get("id", ""))
+    t = (title if title is not None else room.get("title") or "").strip()
+    if not t:
+        return f"task {no}" if no else "a task"
     return f"task {no + ' ' if no else ''}*{t}*"
 
 
