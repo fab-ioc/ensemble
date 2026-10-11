@@ -783,8 +783,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
                       installed=None) -> dict:
     """The fresh owner's kind at a handover, by the first-launch rule
     (``choose_agent_kind_for_seat``): the other kind when the current one is
-    at or past the warning and the other is below it, or when the current one
-    is ahead of its week's pace and the other is not (or is less far ahead).
+    at or past the warning and the other is below it, or when the other has
+    more room against its weekly pace by the balancing margin.
     A task that keeps its agents is not paced. Unknown readings, the other
     kind not installed, or both past the alarm keep the current kind (the
     alarm is noted). Returns {agent, model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
@@ -833,7 +833,9 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
                              f"installed on this machine.")
         elif decision["chosenKind"] == other and other:
             seat, _ = _preferred_seats(room)
-            if code == "switch_pace":
+            if code in ("switch_balance", "switch_reset"):
+                why = _d._balance_reason(decision)
+            elif code == "switch_pace":
                 why = pace_why
             elif code == "both_ahead_of_pace":
                 why = (f"both kinds are ahead of pace and {name(other)} less far: "
@@ -852,6 +854,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
             out["reason"] = (f"Owner kept on {name(cur)}: both kinds are ahead of pace and "
                              f"{name(cur)} no further: " + pace_why.replace(", while ", "; ")
                              + ".")
+        elif code in ("preferred_within_margin", "preferred_more_room", "preferred_reset"):
+            out["reason"] = f"Owner kept on {name(cur)}: {_d._balance_reason(decision)}."
         elif code == "preferred_below_warning":
             out["reason"] = (f"Owner kept on {name(cur)} because "
                              f"{_d._usage_reason_phrase(cur, mine)} is below the "

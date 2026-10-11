@@ -125,7 +125,7 @@ class TheSeatChoice(unittest.TestCase):
 
     def test_only_the_other_kind_ahead_keeps_the_preferred(self):
         d = self.choose(_snap(52, 30))
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_below_warning"))
+        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_more_room"))
 
     def test_both_ahead_chooses_the_one_less_far_ahead(self):
         d = self.choose(_snap(50, 70))
@@ -134,7 +134,27 @@ class TheSeatChoice(unittest.TestCase):
         self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "both_ahead_of_pace"))
         # A tie keeps the preferred kind; pacing never refuses a seat.
         d = self.choose(_snap(60, 60))
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "both_ahead_of_pace"))
+        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_within_margin"))
+
+    def test_both_behind_choose_more_room_over_the_margin(self):
+        d = self.choose(_snap(30, 5), preferred="claude")
+        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "switch_balance"))
+        self.assertIn("Codex 5% of its week used against 43.6% pace",
+                      dashboard._balance_reason(d))
+        self.assertIn("Claude 30% of its week used against 43.6% pace",
+                      dashboard._balance_reason(d))
+        lineup = [{"agent": "claude", "role": "engineer"},
+                  {"agent": "codex", "role": "reviewer"}]
+        _, allocation = dashboard.choose_first_launch_allocation(
+            lineup, _snap(30, 5), installed=lambda k: True, pace=PACE_ON, now=self.NOW)
+        self.assertIn("Codex 5% of its week used against 43.6% pace", allocation["reason"])
+        self.assertIn("Claude 30% of its week used against 43.6% pace", allocation["reason"])
+
+    def test_small_difference_keeps_preferred(self):
+        d = self.choose(_snap(20, 15), preferred="claude")
+        self.assertEqual((d["chosenKind"], d["decision"]),
+                         ("claude", "preferred_within_margin"))
+        self.assertIn("10-point margin", dashboard._balance_reason(d))
 
     def test_pacing_off_keeps_the_old_rule(self):
         d = self.choose(_snap(30, 52), pace=PACE_OFF)
@@ -145,6 +165,9 @@ class TheSeatChoice(unittest.TestCase):
         self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_below_warning"))
         d = self.choose(_snap(30, 52, claude_reset=None))
         self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_below_warning"))
+        d = self.choose(_snap(30, 5, codex_reset=None), preferred="claude")
+        self.assertEqual((d["chosenKind"], d["decision"]),
+                         ("claude", "preferred_below_warning"))
 
     def test_the_warning_and_alarm_rules_come_first(self):
         d = self.choose(_snap(30, 85))
@@ -244,8 +267,8 @@ class TheReplayOf0930(unittest.TestCase):
             rows.append((f"{h:02}:{m:02}", codex, on["pace"]["kinds"]["codex"]["pace"],
                          on["chosenKind"], on["decision"], off["chosenKind"]))
         self.assertEqual([(r[0], r[3], r[4]) for r in rows], [
-            ("07:04", "codex", "preferred_below_warning"),   # 0% under its 15% line
-            ("08:00", "codex", "preferred_below_warning"),   # 9% under 15.6%
+            ("07:04", "codex", "preferred_within_margin"),  # same room within margin
+            ("08:00", "claude", "switch_balance"),         # more room on Claude
             ("09:00", "claude", "switch_pace"),              # 27% past 16.2%
             ("10:00", "claude", "switch_pace"),
             ("11:00", "claude", "switch_pace"),
@@ -291,11 +314,15 @@ class TheSettingsRoundTrip(unittest.TestCase):
 
     def test_defaults_then_saved_then_read_back(self):
         got = self.call("GET", "/api/settings")
-        self.assertEqual((got["paceWeek"], got["paceMarginPoints"]), (True, 15))
-        self.call("PUT", "/api/settings", {"paceWeek": False, "paceMarginPoints": 20})
+        self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceMarginPoints"]),
+                         (True, 15, 10))
+        self.call("PUT", "/api/settings", {"paceWeek": False, "paceMarginPoints": 20,
+                                             "balanceMarginPoints": 8})
         got = self.call("GET", "/api/settings")
-        self.assertEqual((got["paceWeek"], got["paceMarginPoints"]), (False, 20))
-        self.assertEqual(dashboard.pace_settings(), {"enabled": False, "margin": 20.0})
+        self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceMarginPoints"]),
+                         (False, 20, 8))
+        self.assertEqual(dashboard.pace_settings(),
+                         {"enabled": False, "margin": 20.0, "balanceMargin": 8.0})
         saved = json.loads(dashboard.SETTINGS_FILE.read_text(encoding="utf-8"))
         self.assertEqual((saved["paceWeek"], saved["paceMarginPoints"]), (False, 20))
 
@@ -307,6 +334,12 @@ class TheSettingsRoundTrip(unittest.TestCase):
         for bad in ("lots", None, True, [3]):
             self.call("PUT", "/api/settings", {"paceMarginPoints": bad})
         self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 12.5)
+        self.call("PUT", "/api/settings", {"balanceMarginPoints": 200})
+        self.assertEqual(self.call("GET", "/api/settings")["balanceMarginPoints"], 100)
+        self.call("PUT", "/api/settings", {"balanceMarginPoints": 9})
+        for bad in ("lots", None, True, [3]):
+            self.call("PUT", "/api/settings", {"balanceMarginPoints": bad})
+        self.assertEqual(self.call("GET", "/api/settings")["balanceMarginPoints"], 9)
 
     def test_usage_carries_each_kind_s_pace_mark(self):
         snap = _snap(30, 52)

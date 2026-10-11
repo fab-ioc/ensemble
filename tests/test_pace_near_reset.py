@@ -106,7 +106,13 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
         # Before ED-181 both were Codex (switch_warning / preferred_below_warning).
         self.assertEqual(self.choose(_snap(), "claude"), ("claude", "use_before_reset"))
         # Codex is ahead of its fresh week and Claude is no longer refused.
-        self.assertEqual(self.choose(_snap(), "codex"), ("claude", "switch_pace"))
+        self.assertEqual(self.choose(_snap(), "codex"), ("claude", "switch_reset"))
+
+    def test_a_nearly_spent_week_is_used_before_its_reset(self):
+        # Only one point of Claude's allowance remains below the alarm, but it
+        # expires today; the fresh Codex week has nearly the same headroom.
+        self.assertEqual(self.choose(_snap(claude_week=94, codex_week=0), "codex"),
+                         ("claude", "switch_reset"))
 
     def test_the_warning_rule_follows_it_with_pacing_off(self):
         self.assertEqual(self.choose(_snap(), "claude", pace=PACE_OFF),
@@ -146,7 +152,9 @@ class TheSeatChoiceNearTheReset(unittest.TestCase):
         chosen, alloc = dashboard.choose_first_launch_allocation(
             swapped, _snap(), installed=lambda k: True, pace=PACE_ON, now=NOW)
         self.assertEqual([s["agent"] for s in chosen], ["claude", "codex"])
-        self.assertIn("while Claude 7-day window at 90%, its week resets 14:00",
+        self.assertIn("Claude 90% of its week used against 112.2% pace",
+                      alloc["reason"])
+        self.assertIn("its week resets 14:00",
                       alloc["reason"])
 
     def test_the_review_says_why(self):

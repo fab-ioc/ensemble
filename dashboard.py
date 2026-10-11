@@ -1429,6 +1429,8 @@ def save_archived(arch: set[str]) -> None:
 CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
 # The weekly pace line's head start, in percentage points (ED-164).
 PACE_MARGIN_DEFAULT = 15
+# Minimum difference in weekly pace headroom before a preferred seat changes kind.
+BALANCE_MARGIN_DEFAULT = 10
 TASK_AGENT_TOOLS_ENSEMBLE = "ensemble"
 TASK_AGENT_TOOLS_OWN = "own"
 TASK_AGENT_TOOLS_VALUES = {TASK_AGENT_TOOLS_ENSEMBLE, TASK_AGENT_TOOLS_OWN}
@@ -1487,6 +1489,7 @@ _SETTINGS_DEFAULTS = {
     # and a new seat goes to the other kind while it is not.
     "paceWeek": True,
     "paceMarginPoints": PACE_MARGIN_DEFAULT,
+    "balanceMarginPoints": BALANCE_MARGIN_DEFAULT,
     # What hub-launched task agents (owners and reviewers, never a PO or an
     # adopted session) are allowed to keep of one tool result, since every
     # result is read again on every later call of the same conversation.
@@ -2217,7 +2220,7 @@ def _save_settings_locked(settings: dict) -> dict:
             v = 0 if v <= 0 else max(5, min(1440 if k == "pointsRemindMin" else 1440 * 7, v))
         if k in ("backupEnabled", "rtkForTasks", "paceWeek"):
             v = bool(v)
-        if k == "paceMarginPoints":
+        if k in ("paceMarginPoints", "balanceMarginPoints"):
             if isinstance(v, bool):
                 continue
             try:
@@ -10885,15 +10888,19 @@ def _kind_usage(snapshot: dict, kind: str, codex_model: str = "") -> dict:
 
 
 def pace_settings() -> dict:
-    """Whether the hub paces each kind's week, and the pace line's head start
-    in points (Settings › Agent models)."""
+    """Weekly pacing, its head start, and the seat balancing margin."""
     settings = load_settings()
     try:
         margin = float(settings.get("paceMarginPoints", PACE_MARGIN_DEFAULT))
     except (TypeError, ValueError):
         margin = float(PACE_MARGIN_DEFAULT)
+    try:
+        balance_margin = float(settings.get("balanceMarginPoints", BALANCE_MARGIN_DEFAULT))
+    except (TypeError, ValueError):
+        balance_margin = float(BALANCE_MARGIN_DEFAULT)
     return {"enabled": settings.get("paceWeek", True) is not False,
-            "margin": max(0.0, min(100.0, margin))}
+            "margin": max(0.0, min(100.0, margin)),
+            "balanceMargin": max(0.0, min(100.0, balance_margin))}
 
 
 def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
@@ -10933,6 +10940,7 @@ def pace_view(snapshot: dict, now: float | None = None) -> dict:
     the pool a seat naming no model runs on."""
     cfg = pace_settings()
     return {"enabled": cfg["enabled"], "marginPoints": cfg["margin"],
+            "balanceMarginPoints": cfg["balanceMargin"],
             "kinds": {k: _kind_pace(snapshot, k, "", cfg["margin"], now)
                       for k in ("claude", "codex")}}
 
@@ -10946,6 +10954,32 @@ def _pace_reason_phrase(kind: str, reading: dict) -> str:
     state = "ahead of pace" if reading.get("ahead") else "within pace"
     return (f"{_usage_reason_phrase(kind, reading)}, {state} "
             f"({float(reading.get('pace') or 0):g}% by today)")
+
+
+def _balance_weeks(decision: dict) -> str:
+    """A comparable, plain-language reading of both weeks."""
+    kinds = decision["pace"]["kinds"]
+    chosen = decision["chosenKind"]
+    other = "codex" if chosen == "claude" else "claude"
+    def week(kind):
+        reading = kinds[kind]
+        floor = "at least " if reading.get("atLeast") else ""
+        return (f"{_agent_kind_name(kind)} {floor}{float(reading['percent']):g}% of its week "
+                f"used against {float(reading['pace']):g}% pace")
+    return f"{week(chosen)}, {week(other)}"
+
+
+def _balance_reason(decision: dict) -> str:
+    """Explain both measured weeks and the headroom or reset that decided a seat."""
+    chosen = decision["chosenKind"]
+    detail = _balance_weeks(decision)
+    if decision["decision"] in ("switch_reset", "preferred_reset"):
+        return (f"{detail}; {_agent_kind_name(chosen)} has allowance left before its week "
+                f"resets {_week_reset_clock(decision, chosen)}")
+    if decision["decision"] == "preferred_within_margin":
+        margin = float(decision["pace"]["balanceMarginPoints"])
+        return f"{detail}; the room difference is within the {margin:g}-point margin"
+    return f"{detail}; {_agent_kind_name(chosen)} has more room against pace"
 
 
 def _agent_kind_name(kind: str) -> str:
@@ -11031,11 +11065,11 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     ``codex_model`` is the model the seat would run on as Codex ("" for the
     config's): it picks the Codex pool that is judged (see :func:`_kind_usage`).
 
-    Below the warning, each kind's week is paced (ED-164; ``pace`` is
-    :func:`pace_settings`, read when omitted): a preferred kind ahead of its
-    pace line gives way to the other kind while that one is not
-    (``switch_pace``); with both ahead, the one less far ahead is chosen
-    (``both_ahead_of_pace``). A ``keep_agents`` seat (a task told to keep its
+    Below the warning, compare each kind's headroom to its weekly pace line.
+    The preferred seat changes only when the other's headroom exceeds it by
+    the balancing margin. A kind in the last hours of its week takes priority
+    while usable because its remaining allowance will otherwise expire.
+    A ``keep_agents`` seat (a task told to keep its
     agents) ignores pacing and the warning and leaves only for a spent kind.
 
     A kind whose week resets within hours (ED-181, ``nearReset`` of its pace
@@ -11051,6 +11085,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     paced = {kind: _kind_pace(snapshot, kind, codex_model,
                               pace.get("margin", PACE_MARGIN_DEFAULT), now)
              for kind in ("claude", "codex")}
+    balance_margin = float(pace.get("balanceMargin", BALANCE_MARGIN_DEFAULT))
     near = {kind: paced[kind].get("state") == "known" and bool(paced[kind].get("nearReset"))
             for kind in ("claude", "codex")}
     limit = {kind: alarm if near[kind] else warn for kind in ("claude", "codex")}
@@ -11073,6 +11108,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
             "nearReset": near,
             "pace": {"enabled": bool(pace.get("enabled")), "keepAgents": bool(keep_agents),
                      "marginPoints": pace.get("margin", PACE_MARGIN_DEFAULT),
+                     "balanceMarginPoints": balance_margin,
                      "kinds": paced},
         }
 
@@ -11111,15 +11147,30 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         if mine_pct >= warn:
             return result(preferred_kind, "use_before_reset")
         mine, theirs = paced.get(preferred_kind, {}), paced.get(other_kind, {})
-        # Pacing only ever moves a seat to a kind below its limit, and only
-        # when both weeks can be dated: an unknown reset time is not paced.
+        # Only compare dated weeks, and never move a seat onto a kind at its
+        # effective limit (warning, or alarm in the last hours before reset).
         if (pace.get("enabled") and mine.get("state") == "known"
-                and theirs.get("state") == "known" and mine["ahead"]
+                and theirs.get("state") == "known"
                 and theirs_pct < limit[other_kind]):
-            if not theirs["ahead"]:
-                return result(other_kind, "switch_pace")
-            return result(other_kind if theirs["by"] < mine["by"] else preferred_kind,
-                          "both_ahead_of_pace")
+            if near[other_kind] and not near[preferred_kind]:
+                return result(other_kind, "switch_reset")
+            if near[preferred_kind] and not near[other_kind]:
+                return result(preferred_kind, "preferred_reset")
+            mine_room = float(mine["pace"]) - float(mine["percent"])
+            their_room = float(theirs["pace"]) - float(theirs["percent"])
+            if their_room - mine_room > balance_margin:
+                if mine["ahead"] and not theirs["ahead"]:
+                    code = "switch_pace"
+                elif mine["ahead"] and theirs["ahead"]:
+                    code = "both_ahead_of_pace"
+                else:
+                    code = "switch_balance"
+                return result(other_kind, code)
+            if abs(their_room - mine_room) <= balance_margin:
+                return result(preferred_kind, "preferred_within_margin")
+            if mine["ahead"] and theirs["ahead"]:
+                return result(preferred_kind, "both_ahead_of_pace")
+            return result(preferred_kind, "preferred_more_room")
         return result(preferred_kind, "preferred_below_warning")
     return result(preferred_kind, "both_warning")
 
@@ -11162,11 +11213,33 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     audit = {}                              # the seat decision's pace, once made
 
     def result(reason: str, changed: bool) -> tuple[list[dict], dict]:
+        # A reviewer cross-checks the owner whenever the other kind has room
+        # below its effective limit. This also covers a line-up that named the
+        # same kind for both seats before launch.
+        reviewer_i = _allocation_reviewer_index(preferred, owner_i)
+        review_changed = False
+        if reviewer_i is not None and not keep_agents:
+            owner_chosen = chosen[owner_i]["agent"]
+            opposite = {"claude": "codex", "codex": "claude"}.get(owner_chosen, "")
+            if opposite and chosen[reviewer_i]["agent"] == owner_chosen and installed(opposite):
+                review_codex_model = _seat_for_kind(preferred[reviewer_i], "codex")["model"]
+                reading = _kind_usage(snapshot, opposite, review_codex_model)
+                review_pace = _kind_pace(snapshot, opposite, review_codex_model,
+                                         pace.get("margin", PACE_MARGIN_DEFAULT), now)
+                review_limit = alarm if review_pace.get("nearReset") else warn
+                if (reading.get("state") == "known"
+                        and float(reading["percent"]) < review_limit):
+                    chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], opposite)
+                    review_changed = True
+        if review_changed:
+            reason += (f" Reviewer assigned to {_agent_kind_name(opposite)} to cross-check "
+                       "the owner's work.")
         return chosen, {
             "preferred": preferred,
             "chosen": copy.deepcopy(chosen),
             "reason": _with_model_note(reason, chosen),
-            "changed": changed,
+            "changed": changed or any(chosen[i]["agent"] != preferred[i].get("agent")
+                                      for i in range(len(preferred))),
             "at": time.time(),
             "usage": {"snapshotState": snapshot.get("state"),
                       "checkedAt": snapshot.get("checkedAt"),
@@ -11208,7 +11281,9 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
         reviewer_i = _allocation_reviewer_index(preferred, owner_i)
         if reviewer_i is not None:
             chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], old_owner_kind)
-        if decision["decision"] == "switch_pace":
+        if decision["decision"] in ("switch_balance", "switch_reset"):
+            why = _balance_reason(decision)
+        elif decision["decision"] == "switch_pace":
             why = (f"{_pace_reason_phrase(old_owner_kind, paced[old_owner_kind])}, while "
                    f"{_pace_reason_phrase(other_kind, paced[other_kind])}")
         elif decision["decision"] == "both_ahead_of_pace":
@@ -11229,6 +11304,9 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                   f"{_agent_kind_name(owner_kind)} no further: "
                   f"{_pace_reason_phrase(owner_kind, paced[owner_kind])}; "
                   f"{_pace_reason_phrase(other_kind, paced[other_kind])}.")
+    elif decision["decision"] in ("preferred_within_margin", "preferred_more_room",
+                                   "preferred_reset"):
+        reason = f"Owner kept on {_agent_kind_name(owner_kind)}: {_balance_reason(decision)}."
     elif decision["decision"] == "preferred_below_warning":
         reason = (f"Preferred line-up kept because {_usage_reason_phrase(owner_kind, owner_usage)} "
                   f"is below the {float(warn):g}% warning.")
@@ -11334,6 +11412,22 @@ def _participant_seat_preference(room_full: dict, identity: str, part: dict) -> 
             "role": part.get("role", "")}
 
 
+def _review_cross_check(decision: dict, owner_kind: str, current_kind: str,
+                        installed, keep_agents: bool) -> dict:
+    """Keep a review off its owner's kind while the other kind is usable."""
+    if keep_agents or decision["chosenKind"] != owner_kind:
+        return decision
+    opposite = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
+    reading = decision["figures"].get(opposite, {})
+    limit = (decision["alarmPercent"] if decision["nearReset"].get(opposite)
+             else decision["warnPercent"])
+    if (opposite and installed(opposite) and reading.get("state") == "known"
+            and float(reading["percent"]) < limit):
+        return {**decision, "chosenKind": opposite, "decision": "cross_check",
+                "changed": opposite != current_kind}
+    return decision
+
+
 def _review_allocation_reason(decision: dict, owner: dict) -> str:
     chosen_kind = decision["chosenKind"]
     preferred_kind = decision["preferredKind"]
@@ -11379,6 +11473,19 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
     if code == "keep_agents":
         return (f"Reviewer {action} {chosen_name}: this task keeps its agents, "
                 f"{_keep_agents_why(chosen_kind, figures.get(chosen_kind, {}), warn)}.")
+    if code == "cross_check":
+        if all(((decision.get("pace") or {}).get("kinds") or {}).get(k, {}).get("state")
+               == "known" for k in ("claude", "codex")):
+            readings = _balance_weeks(decision)
+        else:
+            readings = (f"{_usage_reason_phrase(chosen_kind, figures.get(chosen_kind, {}))}, "
+                        f"{_usage_reason_phrase(owner_kind, figures.get(owner_kind, {}))}")
+        return (f"Reviewer {action} {chosen_name}, different from owner {owner_name}: "
+                f"{readings}; {chosen_name} is available to cross-check "
+                "the owner's work.")
+    if code in ("switch_balance", "switch_reset", "preferred_within_margin",
+                "preferred_more_room", "preferred_reset"):
+        return f"Reviewer {action} {chosen_name}: {_balance_reason(decision)}."
     if code == "switch_pace":
         return (f"Reviewer {action} {chosen_name}: "
                 f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}, "
@@ -11439,6 +11546,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
         decision = choose_agent_kind_for_seat(
             preferred_kind, snapshot, installed=installed, current_kind=current_kind,
             codex_model=codex_model, keep_agents=keep_agents)
+        decision = _review_cross_check(decision, owner_kind, current_kind,
+                                       installed, keep_agents)
     except StartRoomError:
         raise
     except Exception as exc:                              # noqa: BLE001

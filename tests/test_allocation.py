@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -52,9 +53,10 @@ class _FakeHandler:
 
 
 def _window(kind: str, percent, *, trusted=True, rolled_over=False,
-            reset_unknown=False):
+            reset_unknown=False, resets_at=None):
     return {"kind": kind, "percent": percent, "trusted": trusted,
-            "rolledOver": rolled_over, "resetUnknown": reset_unknown}
+            "rolledOver": rolled_over, "resetUnknown": reset_unknown,
+            "resetsAt": resets_at}
 
 
 def _snapshot(claude_windows, codex_windows):
@@ -115,6 +117,20 @@ class AllocationTests(unittest.TestCase):
                          ["claude", "codex"])
         self.assertFalse(saved["allocation"]["changed"])
         self.assertEqual(saved["allocation"]["usage"]["kinds"]["claude"]["percent"], 55)
+
+    def test_launch_reviewer_cross_checks_even_when_lineup_names_owner_kind(self):
+        room = self.room([
+            {"agent": "claude", "role": "engineer"},
+            {"agent": "claude", "role": "reviewer", "alt": {"agent": "codex"}},
+        ])
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("seven_day", 10, resets_at=reset)],
+                         [_window("seven_day", 30, resets_at=reset)])
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _FakeHandler()._start_room(room)
+        chosen = chatroom.get_room(room["id"], public=False)["allocation"]
+        self.assertEqual([s["agent"] for s in chosen["chosen"]], ["claude", "codex"])
+        self.assertIn("cross-check", chosen["reason"])
 
     def test_swap_at_warning_uses_alternative_model_and_default(self):
         room = self.room([
@@ -370,6 +386,25 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual((chosen["agent"], chosen["model"]), ("codex", "gpt-review"))
         self.assertFalse(review["allocation"]["changed"])
         self.assertIn("unavailable", review["allocation"]["reason"])
+
+    def test_review_keeps_cross_check_when_owner_has_more_pace_room(self):
+        room = self.room([
+            {"agent": "claude", "role": "engineer"},
+            {"agent": "codex", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        reset = time.time() + 5 * 86400
+        snap = _snapshot([_window("seven_day", 5, resets_at=reset)],
+                         [_window("seven_day", 30, resets_at=reset)])
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _room, _part, allocation = dashboard.apply_review_allocation(
+                room, reviewer["identity"])
+        self.assertEqual((allocation["chosen"]["agent"], allocation["usage"]["decision"]),
+                         ("codex", "cross_check"))
+        self.assertIn("cross-check", allocation["reason"])
+        self.assertIn("Codex 30% of its week used against", allocation["reason"])
+        self.assertIn("Claude 5% of its week used against", allocation["reason"])
 
     def test_failed_review_reading_keeps_current_reviewer_and_launches(self):
         room = self.room([

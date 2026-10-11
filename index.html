@@ -2934,6 +2934,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-nickname,
   #settings-panel #pref-stall-seconds,
   #settings-panel #pref-pace-margin,
+  #settings-panel #pref-balance-margin,
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate {
     width: 100%; padding: 5px 10px;
@@ -2943,12 +2944,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     outline: none;
   }
   #settings-panel #pref-stall-seconds,
-  #settings-panel #pref-pace-margin { width: 6em; }
+  #settings-panel #pref-pace-margin,
+  #settings-panel #pref-balance-margin { width: 6em; }
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
   #settings-panel #pref-stall-seconds:focus,
   #settings-panel #pref-pace-margin:focus,
+  #settings-panel #pref-balance-margin:focus,
   #settings-panel #pref-po-rotate:focus,
   #settings-panel #pref-task-rotate:focus {
     border-color: var(--focus-ring);
@@ -4095,7 +4098,13 @@ window.DOC_LISTENERS_PAUSED = false;
       <span><input type="number" id="pref-pace-margin" min="0" max="100" step="1"
              placeholder="15" autocomplete="off"> <span class="pref-label">points</span></span>
     </div>
-    <p class="cfg-hint">A kind whose 7-day use is past the share of the week gone by, plus the head start, is ahead of pace (15 points: about 15% at a reset, 43% after two days, the warning from day 4.6). A new owner, review or handover then goes to the other kind while that one is not. In a week's last 12 hours what is left would be lost at the reset, so that kind is not paced and is used up to the alarm. Pacing never stops work, and a task set to keep its agents is not paced.</p>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-balance-margin">Switch margin</label>
+      <span><input type="number" id="pref-balance-margin" min="0" max="100" step="1"
+             placeholder="10" autocomplete="off"> <span class="pref-label">points</span></span>
+    </div>
+    <p class="cfg-hint">The preferred kind keeps a seat unless the other has more room against weekly pace by over this many points.</p>
+    <p class="cfg-hint">The head start puts the pace line ahead of elapsed time (15 points: about 15% at a reset, 43% after two days). Owners, reviews and handovers balance against both kinds' lines. In a week's last 12 hours, remaining allowance is used first up to the alarm. A task set to keep its agents is not paced.</p>
     <!-- The New session dialog's model suggestions (#im-model). -->
     <datalist id="model-presets">
       <option value="opus"></option>
@@ -7272,6 +7281,10 @@ function renderPrefs() {
   const paceMargin = document.getElementById('pref-pace-margin');
   if (paceMargin && document.activeElement !== paceMargin) {
     paceMargin.value = PREFS.paceMarginPoints ?? 15;
+  }
+  const balanceMargin = document.getElementById('pref-balance-margin');
+  if (balanceMargin && document.activeElement !== balanceMargin) {
+    balanceMargin.value = PREFS.balanceMarginPoints ?? 10;
   }
   const rtkSeg = document.getElementById('pref-rtk-tasks');
   if (rtkSeg) {
@@ -19733,6 +19746,21 @@ window.ensUpdPlace = () => ({
     paceMarginInput.addEventListener('blur', commitPace);
     paceMarginInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); paceMarginInput.blur(); }
+    });
+  }
+  const balanceMarginInput = document.getElementById('pref-balance-margin');
+  if (balanceMarginInput) {
+    const commitBalance = async () => {
+      const v = Number(balanceMarginInput.value);
+      if (balanceMarginInput.value !== '' && Number.isFinite(v)
+          && v !== (PREFS?.balanceMarginPoints ?? null)) {
+        await setPref('balanceMarginPoints', v);
+        refreshUsage();
+      }
+    };
+    balanceMarginInput.addEventListener('blur', commitBalance);
+    balanceMarginInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); balanceMarginInput.blur(); }
     });
   }
   document.getElementById('pref-noun')?.addEventListener('click', (ev) => {
