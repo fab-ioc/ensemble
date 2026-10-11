@@ -6224,13 +6224,19 @@ function taskRefLinkHtml(who, key, no, inRoom, ref = null) {
   const s = has(pj);
   if (!s) return null;
   const r = ALL_ROWS.find(x => x.roomId === s.roomId) || s;
-  const status = r.draft ? 'draft' : r.isLive ? (r.status === 'busy' ? 'running' : 'idle') : 'not running';
-  const t = { roomId: s.roomId, no, label: `#${no}`, ref: `${pj.key || ''}-${no}`.replace(/^-/, '#'), key: pj.key || '',
-              projectId: pj.id, project: pj.name || r.projectName || '', title: r.label || r.title || '', status,
-              workflowName: (WORKFLOW_COLS.find(c => c.k === workflowOf(r)) || {}).name || '',
-              agents: (r.members || []).map(m => ({ identity: m.identity || m.agent, agent: m.agent, role: m.role || '' })),
-              inProject: !!home && pj.id === home.id };
+  const t = boardTask(s.roomId, r, pj, no, !!home && pj.id === home.id);
   return TaskCard.chipHtml(t, { key, agent: who || '', href: `/?task=${s.roomId}`, assumed });
+}
+// A task the board holds as TaskCard draws it (its chip, its card): r its
+// row (or its project's entry), pj its project, no its number.
+function boardTask(roomId, r, pj, no, inProject) {
+  const status = r.draft ? 'draft' : r.isLive ? (r.status === 'busy' ? 'running' : 'idle') : 'not running';
+  const key = (pj && pj.key) || '';
+  return { roomId, no, label: no ? `#${no}` : '', ref: no ? `${key}-${no}`.replace(/^-/, '#') : '', key,
+           projectId: pj ? pj.id : '', project: (pj && pj.name) || r.projectName || '', title: r.label || r.title || '', status,
+           workflowName: (WORKFLOW_COLS.find(c => c.k === workflowOf(r)) || {}).name || '',
+           agents: (r.members || []).map(m => ({ identity: m.identity || m.agent, agent: m.agent, role: m.role || '' })),
+           inProject };
 }
 // Plain words with the tasks they name as chips (an ask's words).
 function taskChipsIn(text, inRoom) {
@@ -6675,7 +6681,8 @@ function swSigHtml(e) {
     const label = no ? esc(no) : `<span class="sw-tk-name">${esc(name || '(task)')}</span>`;
     // A task past the page's rows has no sid: it opens its chat in a tab of its own.
     const sid = t.row ? ` data-sid="${esc(t.row.sessionId)}"` : '';
-    return `<button type="button" class="sw-tk${no ? '' : ' named'}"${sid} data-room="${esc(t.key)}" title="${esc(tip)}" aria-label="${esc('Open ' + tip)}">${label}</button>`;
+    // No tooltip (#201): resting on it opens its task card (swTkCard).
+    return `<button type="button" class="sw-tk${no ? '' : ' named'}"${sid} data-room="${esc(t.key)}" aria-label="${esc('Open ' + tip)}" aria-haspopup="dialog" aria-expanded="false">${label}</button>`;
   }).join('') + (list.length > SW_SIG_NOS ? `<span class="sw-tk-more">+${list.length - SW_SIG_NOS}</span>` : '');
   const parts = [];
   if (s.needs.length) parts.push(`<span class="sw-tk-say needs">${s.needs.length} need${s.needs.length === 1 ? 's' : ''} you</span>${nos(s.needs)}`);
@@ -6685,6 +6692,24 @@ function swSigHtml(e) {
   if (!parts.length) return '';
   return `<div class="sw-tasks" role="group" aria-label="${esc(nounText('Its tasks in the {project}'))}">`
     + parts.map(p => `<span class="sw-tk-grp">${p}</span>`).join('') + '</div>';
+}
+// The task card of a task number on a PO's row (#201), from what the board
+// holds now (its row, its ask), asked again at every redraw while it is open:
+// its number, title, column and state, agents, and why it needs you.
+function swTkCard(el, rows, attn) {
+  const rid = el.dataset.room;
+  const r = (rows || ALL_ROWS).find(x => x && x.roomId === rid) || null;
+  const it = (attn || ATTENTION_BY_ROOM).get(rid) || null;
+  const why = it && it.reason ? `${ATTN_LABEL[it.state] || it.state}: ${it.reason}` : '';
+  if (r) {
+    const t = boardTask(rid, r, null, r.no || 0, true);
+    t.title = rowTitle(r);
+    return TaskCard.cardOf(t, { href: `/?task=${rid}`, why });
+  }
+  // A task past the page's rows: what its ask says.
+  if (!it) return null;
+  return TaskCard.cardOf({ roomId: rid, ref: it.ref || '', title: it.title || '(task)' },
+                         { href: '/session?room=' + encodeURIComponent(rid), why });
 }
 // The rooms whose Details are open; kept across redraws.
 const SW_DIAG = new Set();
@@ -12356,7 +12381,7 @@ function pdLoad() {
         // A chip in the window gets its card in that document (TaskCard's
         // listeners are not mirrored: they are each document's own); init is a
         // no-op on a document done, and the window closing takes it with it.
-        try { TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } catch (e) {}
+        try { TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); swCardsOn(d); } catch (e) {}
         const relay = e => {
           if (e.origin !== location.origin) return;
           try { window.dispatchEvent(new MessageEvent('message', { data: e.data, origin: e.origin, source: e.source })); } catch (err) {}
@@ -16807,7 +16832,7 @@ function swRender() {
   el.hidden = !on;
   document.body.classList.toggle('sw-on', on);
   document.body.classList.toggle('ph-list', on && phone);
-  if (!on) { swExpandHide(); SW_SHOWN = null; return; }
+  if (!on) { swExpandHide(); SW_SHOWN = null; TaskCard.refresh(el.ownerDocument); return; }
   const box = $('#sw-list'), pick = $('#sw-proj');
   const projects = registeredProjects(), chosen = swProject(), view = swView();
   writeSlot(pick, swFilterHtml(projects, chosen));
@@ -16848,6 +16873,8 @@ function swRender() {
     if (back) back.focus(); else restoreFocus(box, key);
   }
   if (back && phone) box.scrollTop = PH_BACK.top;
+  // An open task card stays on the number drawn again, its task as it is now (#201).
+  TaskCard.refresh(box.ownerDocument);
 }
 // The list control that had the focus, noted before a redraw: its task, its
 // group and what it is (a row, its Details, or a task number on a PO's row,
@@ -16915,12 +16942,7 @@ $('#sw-list').addEventListener('click', (ev) => {
   if (ev.target.closest('.sw-more[data-more="unassigned"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }
   // A task a PO's row names (#189): it opens as its own row would.
   const tk = ev.target.closest('.sw-tk[data-room]');
-  if (tk) {
-    if (!tk.dataset.sid) swOpenRoomTab(tk.dataset.room);
-    else if (!((ev.ctrlKey || ev.metaKey) && pdRowPanel(tk.dataset.sid))) openDetail(tk.dataset.sid);
-    if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
-    return;
-  }
+  if (tk) { swOpenTk(tk, ev); return; }
   const done = ev.target.closest('.sw-done');
   if (done) { swDone(done); return; }
   const more = ev.target.closest('.sw-diag-btn');
@@ -16942,6 +16964,19 @@ $('#sw-list').addEventListener('click', (ev) => {
   // Slid out from its strip, the list goes back once a row is opened.
   if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
 });
+function swOpenTk(tk, ev) {
+  if (!tk.dataset.sid) swOpenRoomTab(tk.dataset.room);
+  else if (!(ev && (ev.ctrlKey || ev.metaKey) && pdRowPanel(tk.dataset.sid))) openDetail(tk.dataset.sid);
+  if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
+}
+// Resting on a task number of a PO's row, focusing it with the keyboard, or
+// a long press on a touch screen: its task card beside the list (#201). A
+// click opens the task, as it did; so does the card's title.
+function swCardsOn(doc) {
+  TaskCard.anchors({ doc, selector: '#sw-list .sw-tk[data-room]', key: el => el.dataset.room,
+                     card: el => swTkCard(el), open: el => swOpenTk(el, null),
+                     beside: el => el.closest('#switcher') || el.closest('#sw-list') });
+}
 // A middle click on a task's row: its chat as a panel of its own (#150), as
 // a browser opens a link in a new tab (Ctrl/⌘ and a click do the same). A
 // session with no room has no chat to panel: it opens as a click does.
@@ -18342,7 +18377,7 @@ document.addEventListener('click', (ev) => {
 // this window. Each pop-out document gets its own init where the window is
 // set up (onEveryWindow in pdLoad).
 window.DOC_LISTENERS_PAUSED = true;
-try { TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } finally { window.DOC_LISTENERS_PAUSED = false; }
+try { TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); swCardsOn(document); } finally { window.DOC_LISTENERS_PAUSED = false; }
 document.addEventListener('keydown', (ev) => {
   // Esc closes Create's menu wherever the focus went (a click on its padding
   // leaves it on the page), not the open task under it.
