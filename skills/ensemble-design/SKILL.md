@@ -472,6 +472,15 @@ and every page loads it; no page has chip or card CSS of its own.
 - **Hover, on a computer only** (`(hover: hover) and (pointer: fine)`): the card after 500ms of
   rest, kept while the pointer is on the chip or the card, gone 300ms after it leaves; a click on
   the chip keeps it. Never over a card that was clicked open, so nothing flickers.
+- **Left-bar task rows use the card on rest** (`TaskCard.anchors`, #201): a task number under a PO
+  in the list has no tooltip; resting on it 500ms, or reaching it with the keyboard, opens the same
+  card, and on a touch screen a long press (500ms) does. A click there stays navigation: it opens the
+  task, never the card, and so does the card's title. The card stands **beside the list**, 8px off
+  its edge with a notch at the row's middle (`.tc-beside`), never over the row and moving nothing in
+  the list; where neither side has 240px (a phone's list) it goes under or over the number as a
+  chip's. It is drawn from what the board holds, why the task needs you on a line of its own
+  (`.tc-why`), and the list's redraw keeps it open, in place, on the number drawn again
+  (`TaskCard.refresh`) while that task is still listed.
 - **Which task:** a bare `#27` is read in the project of the chat it is in — or of the task a spec
   belongs to — and under a message from another project's PO (`pomsg`) in that project; `D-27` in
   any. A bare number **right after** a project's name — `Dock #27`, `Dock's #27`, `the Dock project's
