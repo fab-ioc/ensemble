@@ -108,6 +108,8 @@ import peer_process
 # The person's points: every point they raise is kept until they acknowledge its answer.
 import points
 import asks
+# A PO chat's threads (#210): derived from its transcripts and points ledger.
+import threads
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
 # The person's sends: each kept by its key until the agent's conversation shows it.
@@ -160,6 +162,7 @@ po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
+threads.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
