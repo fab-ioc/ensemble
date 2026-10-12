@@ -2407,6 +2407,8 @@ def start_scheduler() -> None:
     def loop():
         while True:
             time.sleep(TICK_S)
+            if _d.restart_drain.holding():
+                continue                    # no handover while a restart drains
             try:
                 _tick()
             except Exception as e:          # keep the loop alive

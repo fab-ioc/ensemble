@@ -5098,7 +5098,9 @@ function sendHtml(s, md) {
       + `<button type="button" class="send-retry" data-send="${esc(s.key)}">Retry</button>`
       + `<button type="button" class="send-discard" data-send="${esc(s.key)}">Discard</button></div>`
     : s.state === 'queued'
-      ? `<div class="pend-state ok" role="status">${sent}Queued: it goes in once the session is up.</div>`
+      ? `<div class="pend-state ok" role="status">${sent}${s.afterRestart
+          ? 'Queued: it will be delivered after the restart.'
+          : 'Queued: it goes in once the session is up.'}</div>`
       : s.read
         ? `<div class="pend-state ok" role="status">${sent}Read by the agent.</div>`
       : `<div class="pend-state ok" role="status">${sent}${again && s.state === 'delivered'
