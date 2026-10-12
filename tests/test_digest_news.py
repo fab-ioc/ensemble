@@ -349,6 +349,18 @@ class MergeAndHubStart(unittest.TestCase):
         self.assertNotIn("Not merged", facts)
         self.assertNotIn("please confirm", facts)
 
+    def test_unknown_merge_time_is_not_recorded_as_a_new_merge(self):
+        # A branch can predate the hub but have no usable base reflog. The
+        # first check must not invent a post-start merge time from the clock.
+        task = _task(merged=True, commits=0, column="done")
+        room = {"id": task["id"], "cwd": "repo", "workflowAt": 50}
+        with (mock.patch.object(digest._d.chatroom, "get_room", return_value=room),
+              mock.patch.object(digest._d.chatroom, "patch_room", return_value={}) as patch,
+              mock.patch.object(digest, "_merged_at", return_value=0),
+              mock.patch.object(digest.time, "time", return_value=300)):
+            digest._settle_merges([task])
+        self.assertEqual(patch.call_args.kwargs["mergedAt"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

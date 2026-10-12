@@ -283,9 +283,12 @@ def _settle_merges(tasks: list[dict]) -> list[str]:
         if room is None or room.get("mergedHead") == t["sha"]:
             continue                        # this merge was already dealt with
         now = time.time()
-        at = _merged_at(room.get("cwd", ""), t["base"], t["sha"]) or now
-        fields = {"mergedHead": t["sha"], "mergedAt": at}
-        move = t["column"] != "done" and float(room.get("workflowAt") or 0) <= at
+        merged_at = _merged_at(room.get("cwd", ""), t["base"], t["sha"])
+        # An unknown merge time may be old. Use now only to settle the card;
+        # never store it as evidence that this hub still needs a restart.
+        fields = {"mergedHead": t["sha"], "mergedAt": merged_at}
+        move = (t["column"] != "done" and
+                float(room.get("workflowAt") or 0) <= (merged_at or now))
         if move:
             fields.update(workflow="done", workflowAt=now)
         if _d.chatroom.patch_room(t["id"], **fields) is None:
