@@ -354,7 +354,7 @@ const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 createDock({
   root,
   panels: [
-    { id: 'asks', title: 'Your asks', el: asksEl, icon: ICON, unpinSize: 360 },
+    { id: 'asks', title: 'Needs you', el: asksEl, icon: ICON, unpinSize: 360 },
     { id: 'changes', title: 'Changes', el: changesEl, icon: changesSvgElement, unpinSize: 760 },
     …
   ],

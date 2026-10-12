@@ -878,7 +878,7 @@ class Endpoints(_World):
         self.assertTrue(dashboard.discard_pending(rid))
         self.assertEqual(self.state(rid), {"P1": "open"})
         self.assertEqual(self.point(rid, "P1").get("follows"), [])
-        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0})
+        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0, "decisions": 0, "totry": 0, "news": 0})
 
     def hold(self, rid, *items):
         res = dashboard._Resume()
@@ -965,7 +965,7 @@ class Endpoints(_World):
         self.send(rid, "Q?")
         room = dashboard._annotate_room_liveness(chatroom.get_room(rid), with_points=True)
         self.assertEqual((room["points"]["open"], [i["id"] for i in room["points"]["items"]]), (1, ["P1"]))
-        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0})
+        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0, "decisions": 0, "totry": 0, "news": 0})
 
 
 class Stages(_World):
@@ -992,7 +992,7 @@ class Stages(_World):
         self.assertEqual(self.state(rid), {"P1": "planned"})
         p = self.point(rid, "P1")
         self.assertEqual((p["task"], [a.get("kind") for a in p["answers"]]), ("#104", ["plan"]))
-        self.assertEqual(points.counts(rid), {"open": 0, "planned": 1, "delivered": 0})
+        self.assertEqual(points.counts(rid), {"open": 0, "planned": 1, "delivered": 0, "decisions": 0, "totry": 0, "news": 0})
         # Neither a click nor a thumbs up nor a "thanks" acks a plan.
         self.assertIsNone(points.act(rid, "P1", "ack"))
         self.assertTrue(points.approve(rid, "sid-1:1"))
@@ -1129,7 +1129,7 @@ class FollowUps(_World):
         p1, p2 = self.point(rid, "P1"), self.point(rid, "P2")
         self.assertEqual((p1["followedBy"], p2["replyTo"]), ("P2", "P1"))
         self.assertEqual(p1["followedAt"], self.t0 + 10)
-        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0})
+        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0, "decisions": 0, "totry": 0, "news": 0})
         v = points.view(rid)
         items = {i["id"]: i for i in v["items"]}
         self.assertEqual((items["P1"]["followedBy"], items["P2"]["replyTo"]), ("P2", "P1"))

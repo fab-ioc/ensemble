@@ -75,6 +75,7 @@ function node(id) {
 const box = { clientHeight: 400, scrollTop: 0,
               querySelectorAll: sel => sel === '.msg[data-mid]' ? drawn.map(node) : [] };
 const $ = s => s === '#msgs' ? box : null;
+function seenLink() {}
 function renderBubbles(items) { LAST_ITEMS = items; drawn = items.filter(m => !m.divider).map(m => m.id); markLanded(); landPending(); }
 const turns = n => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'turn ' + i }));
 let TURNS = {};

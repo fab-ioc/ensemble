@@ -16044,6 +16044,30 @@ class Handler(BaseHTTPRequestHandler):
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
             return
+        if p == "/api/room/points/seen":
+            # Needs you (#209): the person saw these answers, on screen or
+            # opened from a link: {roomId, mids: [balloon ids], ids: [P12],
+            # how: screen | link}. Kept on each point, so the answer closes by
+            # itself once they write again. Types nothing into any agent.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            if chatroom.get_room(rid) is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            mids, ids = data.get("mids") or [], data.get("ids") or []
+            if not isinstance(mids, list) or not isinstance(ids, list):
+                self._send_json(400, {"error": "bad_request", "message": "mids and ids are lists"})
+                return
+            try:
+                got = points.mark_seen(rid, [str(m) for m in mids], [str(i) for i in ids],
+                                       str(data.get("how") or "screen"))
+            except Exception as e:  # noqa: BLE001 — said, not a dropped connection
+                print(f"[points] {rid}: seen not saved: {e!r}", flush=True)
+                self._send_json(500, {"error": "not_saved", "message": "The hub could not save that."})
+                return
+            self._send_json(200, {"ok": True, "seen": got, **({"points": _points_view(rid)} if got else {})})
+            return
         if p == "/api/room/points":
             # The person acknowledges, drops or reopens one of their points:
             # {roomId, id, action: ack | drop | reopen}. Types nothing into
@@ -16718,6 +16742,9 @@ def main():
     # Answers recorded before an ask of two questions became two asks (#195)
     # move to the ask they answer, before any answer can come in.
     asks.realign_all()
+    # Needs you (#209): answers older than three days, and than the person's
+    # latest message, close once (the backlog of ticks the old list held).
+    points.migrate_all()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)

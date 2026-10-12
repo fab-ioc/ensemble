@@ -107,6 +107,13 @@ _SAID_MAX = 600                 # of an answer, the words a list shows: its "Re 
 _SAID_PLAIN = 300               # … or, for a first reply, its first words
 _FOLLOW_SCAN = 60               # answers looked at (newest first) for a new point's quote
 DERIVED = 1                     # the follow-up links of an older ledger are derived once (led["derived"])
+# Needs you (#209): an answered point closes by itself, acknowledged with one
+# of these reasons (``ackedBy``): its answer was seen and the person wrote
+# again; a later point of theirs on the same task; the one-off migration.
+AUTO = ("seen", "superseded", "migrated")
+MIGRATE_AFTER_S = 3 * 86400     # the migration closes answers older than this …
+MIGRATED = 1                    # … once per ledger (led["migrated"])
+CLOSED_MAX = 100                # the closed-by-themselves points a page is sent, newest first
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, tuple] = {}   # room id -> (mtime, ledger): what is on disk
@@ -402,7 +409,7 @@ def _path(room_id: str) -> Path:
 def _empty(room_id: str) -> dict:
     return {"version": 1, "roomId": room_id, "next": 1, "points": [],
             "approvals": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED,
-            "asksKeys": ASKS_KEYS}
+            "asksKeys": ASKS_KEYS, "migrated": MIGRATED}
 
 
 def _valid(d) -> bool:
@@ -419,6 +426,7 @@ def _clean(led: dict, room_id: str) -> dict:
     if isinstance(led.get("asks"), dict):
         out["asks"] = led["asks"]
     out["asksKeys"] = led["asksKeys"] if isinstance(led.get("asksKeys"), int) else 1
+    out["migrated"] = led["migrated"] if isinstance(led.get("migrated"), int) else 0
     try:
         out["asksSettledAt"] = float(led.get("asksSettledAt") or 0)
     except (TypeError, ValueError):
@@ -497,6 +505,9 @@ def load(room_id: str) -> dict:
         return json.loads(json.dumps(led))
 
 
+SAVES: dict[str, int] = {}     # room id → ledger saves by this hub (two in one clock tick share an mtime)
+
+
 def _save(room_id: str, led: dict) -> None:
     p = _path(room_id)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -523,6 +534,7 @@ def _save(room_id: str, led: dict) -> None:
             tmp.unlink()
         except OSError:
             pass
+    SAVES[room_id] = SAVES.get(room_id, 0) + 1
     try:
         _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(json.dumps(led)))
     except OSError:
@@ -947,6 +959,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                 p.setdefault("follows", []).append({"text": words, "at": now, "key": key})
                 u["stateAt2"] = p.get("stateAt")
                 p["undo"] = (p.get("undo") if isinstance(p.get("undo"), list) else [])[-(_UNDO_KEEP - 1):] + [u]
+            _close_seen(led, now, key)
             led["lastPersonAt"] = now
             _save(rid, led)
             return _deliverable(text, follow), follow
@@ -957,6 +970,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                                                      for a in p["answers"]):
                     _set_state(p, "acked", now)
                     p["ackedBy"] = "reply"
+            _close_seen(led, now, key)
             led["lastPersonAt"] = now
             _save(rid, led)
             return text, []
@@ -974,6 +988,13 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         # A comment on an answer, or a message linking or quoting one, follows
         # up the point it answered: that point is handled, no thumbs up owed.
         _follow_new(led, made, rid, now)
+        # Needs you (#209): what they saw closes now they write again, and an
+        # answer about a task this message names is superseded by it.
+        _close_seen(led, now, key)
+        try:
+            _supersede(led, made, rid, now, key)
+        except Exception as e:  # noqa: BLE001 — the point is made anyway
+            _log(f"{rid}: superseded points not read: {e!r}")
         led["lastPersonAt"] = now
         _save(rid, led)
         ids = [p["id"] for p in made]
@@ -992,8 +1013,9 @@ def discard(room_id: str, ids: list[str], key: str = "") -> None:
     text is still in the person's box, its next attempt makes it again;
     numbers are not reused); a point it followed up is as it was before,
     unless it moved since. ``key`` names the send (without one, the last
-    send to each point). Several sends are taken back newest first."""
-    if not ids:
+    send to each point). Several sends are taken back newest first. What
+    it closed by itself (Needs you's seen and superseded) is open again."""
+    if not ids and not key:
         return
     with _LOCK:
         led = load(room_id)
@@ -1033,6 +1055,8 @@ def discard(room_id: str, ids: list[str], key: str = "") -> None:
             for p in gone:
                 if p.get("replyTo"):
                     _unlink_follow(led, p)
+        changed |= _undo_auto(led, key)
+        if changed:
             _save(room_id, led)
 
 
@@ -1297,6 +1321,11 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
             led["derived"] = DERIVED
             changed = True
         if changed:
+            # A point planned on a task supersedes the older answers about it (#209).
+            try:
+                _supersede_by_plans(led, room_id, now)
+            except Exception as e:  # noqa: BLE001 — they stay until the next change
+                _log(f"{room_id}: superseded points not read: {e!r}")
             _save(room_id, led)
         return led
 
@@ -1327,6 +1356,12 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
             p["ackedBy"] = "click"
         elif action == "drop" and st in LIVE:
             _set_state(p, "dropped", now)
+        elif action == "reopen" and st == "acked" and p.get("ackedBy") in AUTO and last_answer(p):
+            # Closed by itself (Needs you's Closed fold): its answer is new again.
+            _set_state(p, "delivered", now)
+            p["reopenedAt"] = now
+            for k in ("ackedBy", "seenKey", "seenAt", "seenHow", "autoKey", "autoAt", "autoFrom", "supersededBy"):
+                p.pop(k, None)
         elif action == "reopen" and st in ("acked", "dropped", "followed"):
             _set_state(p, "open", now)
             p["reopenedAt"] = now
@@ -1449,6 +1484,274 @@ def unapprove(room_id: str, mid: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Needs you (#209): an answer closes by itself once it was seen
+# ---------------------------------------------------------------------------
+#
+# The CEO's P176 and #207: a list of every answer waiting for a thumbs up only
+# grows (173 in the trading PO chat, the oldest 11 days old). So an answered
+# point closes by itself, acknowledged with a reason (``ackedBy``):
+#
+# * ``seen``: its answer was on screen (the page in front, for a second) or
+#   opened from a link, and the person then wrote again in the chat. The page
+#   says what was seen (:func:`mark_seen`), kept on the point for the answer
+#   it saw (``seenKey``), so it holds across devices and reloads; a newer
+#   answer is unseen again. One never seen never closes this way.
+# * ``superseded``: a later point of theirs names its task (or is planned on
+#   it), seen or not.
+# * ``migrated``: once per ledger, at the hub's start, an answer older than
+#   three days and than their latest message (:func:`migrate`).
+#
+# The thumbs up still closes one at once. A send that is taken back
+# (:func:`discard`) takes back what it closed.
+
+def last_answer(p: dict) -> dict | None:
+    """A point's current answer: its newest that is not a plan, with a
+    balloon or not (an answer given by doing after one in the chat is the one
+    to see; the page's curAnswer)."""
+    got = [a for a in p.get("answers") or [] if a.get("kind") != "plan"]
+    return got[-1] if got else None
+
+
+def answer_balloon(p: dict) -> dict | None:
+    """The newest of a point's answers with a balloon: where a link to its
+    answer goes (the page's lastAnswer)."""
+    for a in reversed(p.get("answers") or []):
+        if a.get("kind") != "plan" and a.get("mid"):
+            return a
+    return None
+
+
+def _answer_key(a: dict | None) -> str:
+    return str((a or {}).get("mid") or (a or {}).get("key") or "")
+
+
+def is_seen(p: dict) -> bool:
+    """The person has seen the point's current answer."""
+    k = _answer_key(last_answer(p))
+    return bool(k) and p.get("seenKey") == k
+
+
+def _auto_close(p: dict, reason: str, now: float, key: str = "", by: str = "") -> None:
+    p["autoFrom"] = p.get("stateAt") or 0     # put back if the send is taken back
+    _set_state(p, "acked", now)
+    p["ackedBy"] = reason
+    p["autoAt"] = p["stateAt"]
+    if key:
+        p["autoKey"] = key
+    if by:
+        p["supersededBy"] = by
+
+
+def mark_seen(room_id: str, mids=(), ids=(), how: str = "screen", now: float | None = None) -> list[str]:
+    """The person saw these answer balloons (``mids``), or these points'
+    answers (``ids``: an answer given by doing has no balloon): each answered
+    point whose current answer it is keeps that it was seen. Returns the
+    points that changed."""
+    now = time.time() if now is None else now
+    mids = {str(m) for m in list(mids or [])[:200] if m}
+    ids = {_norm_id(str(i)) for i in list(ids or [])[:200] if i}
+    if not mids and not ids:
+        return []
+    how = how if how in ("screen", "link") else "screen"
+    with _LOCK:
+        led = load(room_id)
+        out = []
+        for p in led["points"]:
+            if p["state"] != "delivered":
+                continue
+            a = last_answer(p)
+            k = _answer_key(a)
+            if not k or p.get("seenKey") == k:
+                continue
+            if (a.get("mid") and a["mid"] in mids) or p["id"] in ids:
+                p["seenKey"], p["seenAt"], p["seenHow"] = k, now, how
+                out.append(p["id"])
+        if out:
+            _save(room_id, led)
+        return out
+
+
+def _close_seen(led: dict, now: float, key: str) -> list[dict]:
+    """The person writes again: every answer they have seen closes."""
+    out = []
+    for p in led["points"]:
+        if p["state"] == "delivered" and is_seen(p) and float(p.get("seenAt") or 0) <= now:
+            _auto_close(p, "seen", now, key)
+            out.append(p)
+    return out
+
+
+# "#241", "ED-241" in a point's own words (not in what it quotes).
+_TASK_IN = re.compile(r"(?<![\w#/-])(?:#(\d{1,6})|([A-Z][A-Z0-9]{0,5})-(\d{1,6}))(?![\w-])")
+
+
+def task_refs(text: str) -> list[str]:
+    """The tasks a point's words name, as plans name them ("#241", "ED-241"):
+    not in its quotes or code."""
+    out = []
+    for m in _TASK_IN.finditer(_prose(strip_point_lines(text or ""))):
+        r = task_ref(m.group(0))
+        if r and r not in out:
+            out.append(r)
+    return out
+
+
+def _point_task(p: dict) -> str:
+    """The task an answered point is about: the one its plan named, else the
+    only one its words name."""
+    if p.get("task"):
+        return p["task"]
+    refs = task_refs(p.get("text") or "")
+    return refs[0] if len(refs) == 1 else ""
+
+
+def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str = "",
+               lookup=None) -> list[dict]:
+    """Points just made (or just planned on a task) close each older answered
+    point about the same task: the later point supersedes it."""
+    if not made:
+        return []
+    cands = [p for p in led["points"] if p["state"] == "delivered" and p not in made and _point_task(p)]
+    if not cands:
+        return []
+    named: dict[str, dict] = {}
+    for q in sorted(made, key=lambda q: (q["createdAt"], q["id"])):
+        for r in ([q["task"]] if q.get("task") else []) + task_refs(q.get("text") or ""):
+            named.setdefault(r, q)
+    if not named:
+        return []
+    if lookup is None:
+        lookup = task_lookup(room_id)
+
+    def task_id(ref: str) -> str:
+        try:
+            info = lookup(ref)
+        except Exception:       # noqa: BLE001 — not a task it can find
+            info = None
+        return (info or {}).get("roomId") or ""
+    by_task: dict[str, dict] = {}
+    for r, q in named.items():
+        t = task_id(r)
+        if t:
+            by_task.setdefault(t, q)
+    out = []
+    for p in cands:
+        q = by_task.get(task_id(_point_task(p)))
+        # Only an answer from before the later point (made, or planned on the
+        # task) is superseded: one given after it is still to be seen.
+        at = float((last_answer(p) or {}).get("at") or 0)
+        if q is not None and (p["createdAt"], p["id"]) < (q["createdAt"], q["id"]) \
+                and at < max(float(q["createdAt"]), _last_at(q, True)):
+            _auto_close(p, "superseded", now, key, by=q["id"])
+            out.append(p)
+    return out
+
+
+def _supersede_by_plans(led: dict, room_id: str, now: float) -> bool:
+    """A point planned on a task since (its plan names it) supersedes the
+    older answered points about that task."""
+    planned = [q for q in led["points"] if q.get("task") and q["state"] in LIVE + ("acked", "followed")]
+    if not planned or not any(p["state"] == "delivered" and _point_task(p) for p in led["points"]):
+        return False
+    tasks = {q["task"] for q in planned}
+    if not any(p["state"] == "delivered" and _point_task(p) in tasks for p in led["points"]):
+        return False
+    lookup = task_lookup(room_id)
+    done = []
+    for q in planned:
+        done += _supersede(led, [q], room_id, now, lookup=lookup)
+    return bool(done)
+
+
+def _undo_auto(led: dict, key: str) -> bool:
+    """What a send closed by itself (seen, superseded) is as it was, unless
+    it moved since."""
+    changed = False
+    for p in led["points"]:
+        if key and p.get("autoKey") == key and p["state"] == "acked" and p.get("ackedBy") in ("seen", "superseded") \
+                and p.get("stateAt") == p.get("autoAt"):
+            p["state"] = "delivered"
+            if p.get("autoFrom"):
+                p["stateAt"] = p["autoFrom"]
+            for k in ("ackedBy", "autoKey", "autoAt", "autoFrom", "supersededBy"):
+                p.pop(k, None)
+            changed = True
+    return changed
+
+
+def migrate(room_id: str, now: float | None = None) -> int:
+    """Once per ledger: an answer older than :data:`MIGRATE_AFTER_S` and than
+    the person's latest message closes (``migrated``). Nothing is deleted:
+    Needs you's Closed fold lists them, each can be reopened. How many closed."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        if int(led.get("migrated") or 0) >= MIGRATED:
+            return 0
+        last = max([float(led.get("lastPersonAt") or 0)] + [float(p.get("createdAt") or 0) for p in led["points"]])
+        # The hub's read mark (#188) says up to where they read the chat: an
+        # answer at or above it was on their screen before seen marks
+        # existed, so it counts as seen (``read``) and closes when they next
+        # write, instead of every recent answer reading as new at once.
+        try:
+            read = _d.attention.seen_at(_d.chatroom.get_room(room_id))
+        except Exception:       # noqa: BLE001 — no read mark: nothing seeded
+            read = 0.0
+        n = 0
+        for p in led["points"]:
+            if p["state"] != "delivered":
+                continue
+            a = last_answer(p)
+            at = float((a or {}).get("at") or p.get("stateAt") or 0)
+            if at and at < now - MIGRATE_AFTER_S and at < last:
+                _auto_close(p, "migrated", now)
+                n += 1
+            elif at and at <= read and not is_seen(p) and _answer_key(a):
+                p["seenKey"], p["seenAt"], p["seenHow"] = _answer_key(a), now, "read"
+        led["migrated"] = MIGRATED
+        _save(room_id, led)
+        return n
+
+
+def migrate_all() -> None:
+    """:func:`migrate` every ledger on disk (once, at the hub's start)."""
+    for f in sorted(_dir().glob("room-*.json")):
+        try:
+            n = migrate(f.stem)
+            if n:
+                print(f"[points] {f.stem}: {n} answered point(s) older than 3 days closed (migrated)", flush=True)
+        except Exception as e:      # noqa: BLE001 — one room never stops the others
+            print(f"[points] {f.stem}: not migrated: {e!r}", flush=True)
+
+
+# An answer that asks the person to do something: "try it", "please check",
+# "reload and open …", "ready for your check".
+_TRY_START = re.compile(r"(?:^|[.!?;:]\s+|\n\s*(?:[-*+]\s+|\d+[.)]\s+)?)(?:\*\*)?(?:now\s+)?"
+                        r"(?:try|reload|refresh|re-?open|open|restart|click|tap)\b(?!\s*(?:ing|ed)\b)", re.I)
+_TRY_ASK = re.compile(r"\b(?:please|you\s+can(?:\s+now)?|you\s+could|could\s+you|can\s+you)\s+"
+                      r"(?:try|check|test|look\s+at|have\s+a\s+look|take\s+a\s+look|verify|confirm|open|reload|refresh)\b"
+                      r"|\b(?:for\s+you\s+to\s+(?:try|check|test)|ready\s+for\s+your\s+(?:check|test|try)|give\s+it\s+a\s+try|to\s+try\s+it)\b",
+                      re.I)
+
+
+def asks_action(text: str) -> bool:
+    """An answer's words ask the person to try or check something."""
+    t = _prose(text or "")
+    return bool(_TRY_START.search(t) or _TRY_ASK.search(t))
+
+
+def needs_you(p: dict) -> str:
+    """Where an answered point stands in Needs you: "try" (its answer asks
+    them to try something), "new" (an answer not seen yet), or ""."""
+    if p.get("state") != "delivered":
+        return ""
+    a = last_answer(p)
+    if a and asks_action(a.get("said") or a.get("summary") or ""):
+        return "try"
+    return "" if is_seen(p) else "new"
+
+
+# ---------------------------------------------------------------------------
 # What an agent does (ensemble_points)
 # ---------------------------------------------------------------------------
 
@@ -1502,7 +1805,13 @@ def counts(room_id: str) -> dict | None:
     that). None when the room has no ledger or nothing in it waits."""
     if not exists(room_id):
         return None
-    c = _counts(load(room_id))
+    led = load(room_id)
+    c = _counts(led)
+    # Needs you (#209): what the counter shows. Decisions as the chat's last
+    # view worked them out (reading cards here would cost a listing seconds).
+    kinds = [needs_you(p) for p in led["points"]]
+    c.update(decisions=len((_LAST_DECISIONS.get(room_id) or ([], []))[0]),
+             totry=kinds.count("try"), news=kinds.count("new"))
     return c if any(c.values()) else None
 
 
@@ -1566,6 +1875,16 @@ def _item(p: dict, task=None) -> dict:
         out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
     out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task", "said") if a.get(k)}
                       for a in p["answers"]]
+    if p["state"] == "delivered":
+        # Needs you (#209): "try" (the answer asks them to try something),
+        # "new" (not seen yet), "" (seen: it closes when they write again).
+        out["needs"] = needs_you(p)
+        if is_seen(p):
+            out["seen"] = True
+    elif p["state"] == "acked" and p.get("ackedBy"):
+        out["reason"] = p["ackedBy"]
+        if p.get("supersededBy"):
+            out["supersededBy"] = p["supersededBy"]
     if p.get("task"):
         info = task(p["task"]) if task and p["state"] in LIVE else None
         out["task"] = {k: v for k, v in (info or {"ref": p["task"]}).items() if v not in (None, "")}
@@ -1600,7 +1919,51 @@ def view(room_id: str, room: dict | None = None) -> dict:
     task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
     return {"items": [_item(p, task) for p in pts], **_counts(led),
             "approvals": sorted(led.get("approvals") or {}),
-            "asks": led.get("asks") or {}, "asksSettledAt": float(led.get("asksSettledAt") or 0)}
+            "asks": led.get("asks") or {}, "asksSettledAt": float(led.get("asksSettledAt") or 0),
+            "needs": _needs_view(room_id, room, led)}
+
+
+def _closed_item(p: dict) -> dict:
+    a = answer_balloon(p)
+    return {"id": p["id"], "reason": p.get("ackedBy", ""), "at": p.get("stateAt") or 0,
+            "createdAt": p.get("createdAt") or 0, "text": _first_words(strip_point_lines(p.get("text") or ""), 100),
+            **({"mid": p["mid"]} if p.get("mid") else {}),
+            **({"answer": a["mid"]} if a and a.get("mid") else {}),
+            **({"supersededBy": p["supersededBy"]} if p.get("supersededBy") else {})}
+
+
+def _needs_view(room_id: str, room: dict | None, led: dict) -> dict:
+    """What Needs you lists besides the answered points (#209): the question
+    cards still waiting on the person (asks.open_cards), how many answers
+    are new or ask them to try something, and the points that closed by
+    themselves (newest first, up to :data:`CLOSED_MAX`), for its Closed fold."""
+    pending = False
+    try:
+        if room is None:
+            room = _d.chatroom.get_room(room_id)
+        if room and not _d.asks.cards_ready(room):
+            # The first read of a chat's cards can take seconds (every
+            # rotated session): read in the background, show the last list,
+            # which may be out of date until the read ends (pending).
+            _d.asks.warm_cards(room)
+            decisions, older = _LAST_DECISIONS.get(room_id) or ([], [])
+            pending = True
+        else:
+            decisions, older = _d.asks.decisions(room, led) if room else ([], [])
+            _LAST_DECISIONS[room_id] = (decisions, older)
+    except Exception as e:      # noqa: BLE001 — the answers still show
+        _log(f"{room_id}: open cards not read: {e!r}")
+        decisions, older = [], []
+    kinds = [needs_you(p) for p in led["points"]]
+    shut = sorted((p for p in led["points"] if p["state"] == "acked" and p.get("ackedBy") in AUTO),
+                  key=lambda p: (p.get("stateAt") or 0, p["createdAt"], p["id"]), reverse=True)
+    return {"decisions": decisions, "older": older[:CLOSED_MAX], "olderCount": len(older),
+            **({"pending": True} if pending else {}),
+            "news": kinds.count("new"), "totry": kinds.count("try"),
+            "closed": [_closed_item(p) for p in shut[:CLOSED_MAX]], "closedCount": len(shut)}
+
+
+_LAST_DECISIONS: dict[str, tuple] = {}   # room id → the last (decisions, older) worked out
 
 
 def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:

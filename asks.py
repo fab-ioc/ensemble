@@ -777,8 +777,8 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     return out
 
 
-def _approved_settles(room_id: str, mid: str, n: int) -> bool:
-    found = balloon_asks(room_id, mid)
+def _approved_settles(room_id: str, mid: str, n: int, room: dict | None = None) -> bool:
+    found = balloon_asks(room_id, mid, room)
     return n < len(found) and found[n]["recommended"] >= 0
 
 
@@ -795,6 +795,15 @@ _RE_POINT = re.compile(r"^(?:[ \t]*[-*+][ \t]+|[ ]{0,3})(?:[-*+][ \t]+|#{1,6}[ \
 _POINT_ID = re.compile(r"P\d{1,5}[a-z]?", re.I)
 _CARDS: dict[str, tuple] = {}   # room id → (signature, {mid: (ts, [questions], {pid: [n]})})
 _SID_CARDS: dict[str, tuple] = {}   # sid → (stat, [(mid, ts, [questions], {pid: [n]})])
+_OPEN: dict[str, tuple] = {}    # room id → (key, open_cards' list)
+
+
+def _room_of(summary: dict | None) -> dict | None:
+    """The room a summary is of: the summary itself when it is a whole room
+    (the chat's poll has just read it), else read."""
+    if summary and "messages" in summary and "participants" in summary:
+        return summary
+    return _d.chatroom.get_room((summary or {}).get("id", ""))
 
 
 def _heads(text: str) -> list[tuple[int, list[str]]]:
@@ -861,17 +870,11 @@ def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
     return found
 
 
-def _room_cards(summary: dict) -> tuple[dict, set]:
-    """A room's question cards with the points they say ``Re`` to:
-    ``{mid: (ts, [questions], {pid: [ask n]})}``, its asks of every session
-    (also those the chat has rotated out of), and the sessions read. Read
-    once per room and kept while the room and its current transcripts are
-    unchanged (a rotated-out one never changes): a chat full of point chips
-    asks for each point, and every one reads this."""
-    rid = summary.get("id", "")
-    room = _d.chatroom.get_room(rid)
+def _cards_sig(room: dict | None) -> tuple[list, list, tuple]:
+    """The sessions a room's cards are read from (``[(sid, identity)]``), its
+    current ones, and the signature its cards are kept under."""
     if room is None:
-        return {}, set()
+        return [], [], ()
     sids, current = [], []
     if (room.get("mode") or "") == "solo":
         for p in _d.chatroom.agent_participants(room):
@@ -883,6 +886,21 @@ def _room_cards(summary: dict) -> tuple[dict, set]:
                     sids.append((sid, p.get("identity") or ""))
     sig = (room.get("updatedAt"), len(room.get("messages") or []), tuple(s for s, _w in sids),
            tuple(tuple(_d.points._session_stat(sid) or ()) for sid in current if sid))
+    return sids, current, sig
+
+
+def _room_cards(summary: dict) -> tuple[dict, set]:
+    """A room's question cards with the points they say ``Re`` to:
+    ``{mid: (ts, [questions], {pid: [ask n]})}``, its asks of every session
+    (also those the chat has rotated out of), and the sessions read. Read
+    once per room and kept while the room and its current transcripts are
+    unchanged (a rotated-out one never changes): a chat full of point chips
+    asks for each point, and every one reads this."""
+    rid = summary.get("id", "")
+    room = _room_of(summary)
+    if room is None:
+        return {}, set()
+    sids, _current, sig = _cards_sig(room)
     hit = _CARDS.get(rid)
     if hit is not None and hit[0] == sig:
         return hit[1]
@@ -952,8 +970,156 @@ def point_card(summary: dict, point: dict) -> dict | None:
     return best
 
 
-def balloon_asks(room_id: str, mid: str) -> list[dict]:
-    room = _d.chatroom.get_room(room_id)
+def open_cards(summary: dict, led: dict | None = None) -> list[dict]:
+    """Needs you's Decisions (#209, the CEO's P518 "bring the questions
+    here"): every ask of the room's question cards, in every session of the
+    chat, still waiting on the person, newest first:
+    ``[{mid, n, question, ts, task?, points?}]``. An ask waits until it is
+    answered on its card, its message approved (with a recommendation), or
+    answered by a typed message the hub links to the card: a later point
+    that links to it, or follows up an answer it is (a comment on a passage,
+    a quote). Writing about something else does not answer it (unlike
+    :func:`open_in`'s ``asksSettledAt``, which only says it no longer rings).
+    A Done task's cards wait for nobody.
+
+    Worked out once per room while its cards (:func:`_cards_sig`) and its
+    ledger file are unchanged: the chat polls every few seconds, and the
+    approved cards each read their balloon again. ``led`` is the ledger as
+    saved (a caller's unsaved change is not seen until it is saved)."""
+    rid = (summary or {}).get("id", "")
+    if not rid or _d.normalize_workflow(summary.get("workflow")) == "done":
+        return []
+    room = _room_of(summary)
+    if room is None:
+        return []
+    sig = _cards_sig(room)[2]
+    try:
+        key = (sig, _d.points._path(rid).stat().st_mtime_ns, _d.points.SAVES.get(rid, 0))
+    except OSError:
+        key = None
+    hit = _OPEN.get(rid)
+    if hit is not None and key is not None and hit[0] == key and _CARDS.get(rid, (None,))[0] == sig:
+        return [dict(c) for c in hit[1]]
+    out = _open_cards(rid, room, led)
+    if key is not None:
+        _OPEN[rid] = (key, out)
+    return [dict(c) for c in out]
+
+
+def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
+    cards, _read = _room_cards(room)
+    if not cards:
+        return []
+    if led is None:
+        led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    done, approved = led.get("asks") or {}, led.get("approvals") or {}
+    pts = led.get("points") or []
+    by_id = {p.get("id"): p for p in pts}
+    typed: dict[str, float] = {}        # a card's balloon → when a point last answered it in words
+    for q in pts:
+        mids = set(_d.points.balloon_refs(q.get("text") or "", rid))
+        up = by_id.get(q.get("replyTo") or "")
+        if up:
+            mids |= {a["mid"] for a in up.get("answers") or [] if a.get("mid")}
+        for m in mids:
+            typed[m] = max(typed.get(m, 0.0), float(q.get("createdAt") or 0))
+    out = []
+    for mid, (ts, qs, by_point) in cards.items():
+        if mid in typed and typed[mid] >= float(ts or 0):
+            continue
+        got = done.get(mid) or {}
+        for n, q in enumerate(qs):
+            if str(n) in got or (mid in approved and _approved_settles(rid, mid, n, room)):
+                continue
+            pids = sorted(pid for pid, ns in (by_point or {}).items() if n in ns)
+            refs = _d.points.task_refs(q)
+            task = refs[0] if refs else next((by_id[p]["task"] for p in pids if (by_id.get(p) or {}).get("task")), "")
+            out.append({"mid": mid, "n": n, "question": q, "ts": float(ts or 0),
+                        **({"task": task} if task else {}), **({"points": pids} if pids else {})})
+    out.sort(key=lambda c: (c["ts"], c["mid"], -c["n"]), reverse=True)
+    return out
+
+
+DECISION_KEEP_S = 3 * 86400     # an unanswered question this old, written past, is an older one
+_SAME_WORDS = 0.6               # two questions sharing this much of their words ask the same
+_WORD = re.compile(r"[\w'’-]+")
+_PREF = re.compile(r"(?<![\w#])P(\d{1,5}[a-z]?)\b")
+
+
+def _same_ask(a: str, b: str) -> bool:
+    """Two questions ask the same: they name the same points (P131) and the
+    same task, or share most of their words ("Still waiting on you: P131 …"
+    asked three times, "Item 9: …" asked again in other words)."""
+    pa, pb = set(_PREF.findall(a)), set(_PREF.findall(b))
+    if pa and pa == pb and _d.points.task_refs(a) == _d.points.task_refs(b):
+        return True
+    wa, wb = ({w.lower() for w in _WORD.findall(x)} for x in (a, b))
+    return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= _SAME_WORDS
+
+
+def decisions(summary: dict, led: dict | None = None, now: float | None = None) -> tuple[list, list]:
+    """Needs you's Decisions, split: ``(waiting, older)``. Of the open asks
+    (:func:`open_cards`, newest first) one asked again later (:func:`_same_ask`)
+    keeps only its newest card, and one older than :data:`DECISION_KEEP_S`
+    that the person has written past (they moved on without answering it) is
+    an older question: listed under its own fold, not on top. Measured on the
+    trading PO chat (#209): 43 open asks, most of them "Shall I set it up?"
+    weeks old or the same question asked twice."""
+    now = time.time() if now is None else now
+    if led is None:
+        rid = (summary or {}).get("id", "")
+        led = _d.points.load(rid) if rid and _d.points.exists(rid) else {}
+    last = max([float(led.get("lastPersonAt") or 0)]
+               + [float(p.get("createdAt") or 0) for p in led.get("points") or []])
+    waiting, older, kept = [], [], []
+    for c in open_cards(summary, led):
+        if any(_same_ask(c["question"], k["question"]) for k in kept):
+            older.append({**c, "why": "repeat"})
+            continue
+        kept.append(c)
+        if c["ts"] < now - DECISION_KEEP_S and c["ts"] < last:
+            older.append({**c, "why": "old"})
+        else:
+            waiting.append(c)
+    return waiting, older
+
+
+def cards_ready(summary: dict) -> bool:
+    """The room's cards are read and still current (:func:`_room_cards` would
+    not read a transcript)."""
+    rid = (summary or {}).get("id", "")
+    hit = _CARDS.get(rid)
+    return hit is not None and hit[0] == _cards_sig(_room_of(summary))[2]
+
+
+_WARMING: set = set()
+_WARM_LOCK = threading.Lock()
+
+
+def warm_cards(summary: dict) -> None:
+    """Read the room's cards in the background (the first read of a chat with
+    many rotated sessions takes seconds: 43 s for the trading PO chat), so a
+    poll never waits on it."""
+    rid = (summary or {}).get("id", "")
+    with _WARM_LOCK:
+        if not rid or rid in _WARMING:
+            return
+        _WARMING.add(rid)
+
+    def run():
+        try:
+            _room_cards(summary)
+        except Exception as e:      # noqa: BLE001 — the next poll tries again
+            print(f"[asks] {rid}: cards not read: {e!r}", flush=True)
+        finally:
+            with _WARM_LOCK:
+                _WARMING.discard(rid)
+    threading.Thread(target=run, name=f"cards-{rid}", daemon=True).start()
+
+
+def balloon_asks(room_id: str, mid: str, room: dict | None = None) -> list[dict]:
+    if room is None:
+        room = _d.chatroom.get_room(room_id)
     if room is None:
         return []
     has_po = bool(_d.room_po_id(room))

@@ -688,7 +688,7 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("po-choose", o["poChoose"])
         self.assertNotRegex(o["poDialog"], r"has a PO|Choosing a PO|stays a code project")
         self.assertNotIn("disabled", o["poDialog"], "a project with a PO may become a documents project")
-        self.assertIn("Its Overview is the PO screen: the PO chat, your asks and the board as panels.", o["poDialog"], "the code option describes the PO screen")
+        self.assertIn("Its Overview is the PO screen: the PO chat, Needs you and the board as panels.", o["poDialog"], "the code option describes the PO screen")
 
     def test_a_documents_project_with_a_po_shows_the_po_screen(self):
         o = self.out

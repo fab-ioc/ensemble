@@ -1019,7 +1019,7 @@ class ThePage(unittest.TestCase):
     # ---- a desktop
 
     def test_the_task_has_the_tool_strip_with_files(self):
-        self.assertEqual(self.got["before"], {"strip": ["Your asks", "Changes", "Files", "Board", "Spec"], "docked": True})
+        self.assertEqual(self.got["before"], {"strip": ["Needs you", "Changes", "Files", "Board", "Spec"], "docked": True})
 
     def test_files_shows_the_folder_it_runs_in(self):
         g = self.got["tree"]
@@ -1132,7 +1132,7 @@ class ThePage(unittest.TestCase):
         for w in self.PHONES:
             with self.subTest(w=w):
                 o = self.got[f"phone{w}"]
-                self.assertEqual(o["tabs"], ["Chat", "Your asks", "Changes", "Files", "Board", "Spec"])
+                self.assertEqual(o["tabs"], ["Chat", "Needs you", "Changes", "Files", "Board", "Spec"])
                 g = o["tree"]
                 self.assertEqual(g["roots"], [["This task", "task", str(self.cwd)]])
                 for name in ("README.md", "tool.py", "page.html"):
