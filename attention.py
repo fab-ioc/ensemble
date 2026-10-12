@@ -282,9 +282,14 @@ def _tail_lines(tail: str) -> list[str]:
 # "<Verb>ed for <time> · done H:MM · N shells[, M monitors] still"; codex's,
 # "· N background terminals running · /ps" (after its "• Working (…)" while
 # the turn runs). The same words in prose or a typed line are someone talking.
+# The hub's ptyrun.tail() drops cursor movements rather than replaying them.
+# On #211 at 20:14 it read "1 shel still running" (the second l was overdrawn);
+# other captured redraws start at "hell" or lose one l in "shells". Keep that
+# tolerance on the noun inside the anchored footer, never on arbitrary prose.
 _OWN_SHELLS = re.compile(_phrase(
     r"^[^\w\n●⏺❯➤▶›>]{0,6}\w+ for [\dhms ]*· ?done? \d{1,2}:\d{2} ?(?:[AP]M)? ?· ?(\d*) ?"
-    r"(?:shells?|background tasks?|monitors?)(?:, ?(\d+) ?(?:shells?|monitors?))? still"
+    r"(?:s?hel{1,2}s?|background tasks?|monitors?)"
+    r"(?:, ?(\d+) ?(?:s?hel{1,2}s?|background tasks?|monitors?))? still"
     ).pattern, re.I | re.M)
 _OWN_STALE = _phrase(r"\bdone? \d{1,2}:\d{2}|[●⏺] ?background (?:command|task|shell)")
 _CODEX_OWN = re.compile(_phrase(

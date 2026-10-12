@@ -51,6 +51,7 @@ def _fixture(name: str) -> str:
 
 
 ONE_SHELL = _fixture("own_work_one_shell_211.txt")
+LIVE_211 = _fixture("own_work_live_211_2014.txt")
 TWO_SHELLS = _fixture("own_work_two_shells.txt")
 TWO_SHELLS_RELAY = _fixture("own_work_two_shells_relay.txt")
 SHELL_ENDED = _fixture("own_work_shell_ended.txt")
@@ -59,6 +60,10 @@ CAP = attention.OWN_WORK_CAP_S
 
 class ReadingTheScreen(unittest.TestCase):
     def test_the_real_screens(self):
+        # Captured through /api/pty/stream for #211's live pty and reduced with
+        # the same clean_text/split/strip path as PtySession.tail(). The newest
+        # footer lost the second l in "shell" to a cursor-positioned redraw.
+        self.assertEqual(attention.own_work(LIVE_211), 1)
         self.assertEqual(attention.own_work(ONE_SHELL), 1)
         self.assertEqual(attention.own_work(TWO_SHELLS), 2)
         self.assertEqual(attention.own_work(TWO_SHELLS_RELAY), 2)
@@ -78,6 +83,8 @@ class ReadingTheScreen(unittest.TestCase):
             "✻ Worked for 2m 3s · done 5:16 PM · 2 shells, 1 monitor still running\n>"), 3)
         self.assertEqual(attention.own_work(
             "✻ Worked for 9s · done 5:16 PM · 1 monitor still running\n>"), 1)
+        self.assertEqual(attention.own_work(
+            "✻ Worked for 9s · done 5:16 PM · 2 background tasks, 1 monitor still running\n>"), 3)
 
     def test_prose_about_shells_is_not_a_footer(self):
         self.assertEqual(attention.own_work("● Ran 2 shell commands\n● The suite is still running.\n>"), 0)
@@ -90,6 +97,14 @@ class ReadingTheScreen(unittest.TestCase):
                      "❯ done 3:45 PM · 1 shell still running",
                      "• It printed 1 background terminal running.\n› ",
                      "› · 1 background terminal running · /ps to view"):
+            with self.subTest(tail=tail):
+                self.assertEqual(attention.own_work(tail), 0)
+        # The exact damaged footer from the live screen, quoted by Claude in
+        # its conversation body or typed at the prompt, is still only prose.
+        quoted = "✻ Cogitated for 5s · done 8:14 PM· 1 shel still running"
+        for tail in ("● The footer reads `" + quoted + "`\n>",
+                     "> " + quoted + "\n>",
+                     "● Quoted from the screen:\n  > " + quoted + "\n>"):
             with self.subTest(tail=tail):
                 self.assertEqual(attention.own_work(tail), 0)
         # Review 2: footer-shaped prose, mid-line.
@@ -115,6 +130,21 @@ class _OwnWork(_Stall):
 
 
 class NoNudgeWhileItWaitsOnItsOwnCommand(_OwnWork):
+    def test_211_stall_episode_replay(self):
+        # Three independent copies of the pre-nudge state, using the captured
+        # two-shell screen for 18:40 and #211's one-shell screen for the later
+        # looks. The 19:20 PTY died at restart; its shape is represented by the
+        # captured one-shell redraw from the same task at 20:14.
+        for when, screen in (("18:40", TWO_SHELLS),
+                             ("19:20", LIVE_211),
+                             ("20:14", LIVE_211)):
+            with self.subTest(when=when):
+                self.show(screen, 11 * 60.0)
+                self.assertEqual(stall.tick(time.time()), {})
+                self.show(screen, 22 * 60.0)
+                self.assertEqual(stall.tick(time.time() + stall.GRACE_S + 1), {})
+                self.assertEqual((self.typed, self.told()), ([], []))
+
     def test_211_and_the_two_shell_screen(self):
         for screen in (ONE_SHELL, TWO_SHELLS, TWO_SHELLS_RELAY):
             with self.subTest(screen=screen[-60:]):
