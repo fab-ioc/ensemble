@@ -2392,12 +2392,18 @@ POINTS_NOTE = (
     "(one reply may answer several), or say why not the same way; ensemble_points lists "
     "the open ones.")
 
+# Documents stay on the hub, never on claude.ai (P171): for POs and tasks alike.
+NO_WEB_ARTIFACT_NOTE = (
+    "Never publish anything as a claude.ai artifact, page or doc (the Artifact or Claude Docs "
+    "tools) unless the CEO asks for that publication in so many words: every document, "
+    "page or visual you make is a file in the project's Documents folder.")
+
 # Where a task's knowledge goes (project_docs): the project's Documents folder.
 DOCUMENTS_NOTE = (
     "Your deliverable reports and design-decision notes go in the project's Documents folder "
     "(`project.documentsDir` in ensemble_get_task) as `#<task no> <short title>.md`, or a folder "
     "`#<task no> <title>/` for several files; link them in ensemble_report. TASK-HANDOVER.md and "
-    "other working notes stay in your task folder.")
+    "other working notes stay in your task folder. " + NO_WEB_ARTIFACT_NOTE)
 
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
@@ -4879,7 +4885,8 @@ def made_po_charter(project: dict) -> str:
         f"you report to him. The `ensemble` skill (section \"Running a project as its PO\""
         f"{', including the paragraph on a documents project’s PO' if docs else ''}) is your "
         f"operating model: you create and start tasks with the ensemble_* tools, read their "
-        f"reports, and keep `PO-HANDOVER.md` and `ROADMAP.md` in {home} current. {TASK_NAME_NOTE}"
+        f"reports, and keep `PO-HANDOVER.md` and `ROADMAP.md` in {home} current. {TASK_NAME_NOTE} "
+        f"{NO_WEB_ARTIFACT_NOTE}"
         + ("" if docs else f" The project's code is in {project.get('path', '')}."))
 
 

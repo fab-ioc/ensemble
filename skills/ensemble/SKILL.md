@@ -162,6 +162,12 @@ there. Link it in your `ensemble_report` text. Working notes stay in your task
 folder: `TASK-HANDOVER.md`, `REVIEW-LOG.md`, scratch files, evidence nobody
 will read again.
 
+**Never publish to claude.ai** (the CEO's rule, P171, for tasks and POs alike):
+no claude.ai artifact, page or doc (the `Artifact` or Claude Docs tools), even
+when a tool's own guidance says to publish, unless the CEO asks for that
+publication in so many words. Every document, page, diagram or visual is a file
+in the project's Documents folder, where the Workspace shows it.
+
 **If you are the PO**, the hub also checks your project's tasks on a timer
 (every 5 minutes by default) and wakes you with a `[digest]` only for news: a
 task's status or board column changed, new commits on its branch or its work
@@ -732,7 +738,8 @@ project's Documents folder (`project.documentsDir` from `ensemble_get_task` or
 `ensemble_whoami`'s project), as `PO <short title>.md`, or `#<no> …` when it
 belongs to a task; `PO-HANDOVER.md` and `ROADMAP.md` stay where they are. Say
 in each spec that the task's report goes there (the launch prompt tells the
-owner too). A project that kept its reports in task folders is brought over
+owner too). Never publish one as a claude.ai artifact, page or doc unless the
+CEO asks for that in so many words (P171; see "Never publish to claude.ai"). A project that kept its reports in task folders is brought over
 once with `py tools/migrate_reports.py "<project>"` (a dry run; `--apply`
 copies, never moves).
 
