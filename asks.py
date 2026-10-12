@@ -952,6 +952,53 @@ def point_card(summary: dict, point: dict) -> dict | None:
     return best
 
 
+def open_cards(summary: dict, led: dict | None = None) -> list[dict]:
+    """Needs you's Decisions (#209, the CEO's P518 "bring the questions
+    here"): every ask of the room's question cards, in every session of the
+    chat, still waiting on the person, newest first:
+    ``[{mid, n, question, ts, task?, points?}]``. An ask waits until it is
+    answered on its card, its message approved (with a recommendation), or
+    answered by a typed message the hub links to the card: a later point
+    that links to it, or follows up an answer it is (a comment on a passage,
+    a quote). Writing about something else does not answer it (unlike
+    :func:`open_in`'s ``asksSettledAt``, which only says it no longer rings).
+    A Done task's cards wait for nobody."""
+    rid = (summary or {}).get("id", "")
+    if not rid or _d.normalize_workflow(summary.get("workflow")) == "done":
+        return []
+    cards, _read = _room_cards(summary)
+    if not cards:
+        return []
+    if led is None:
+        led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    done, approved = led.get("asks") or {}, led.get("approvals") or {}
+    pts = led.get("points") or []
+    by_id = {p.get("id"): p for p in pts}
+    typed: dict[str, float] = {}        # a card's balloon → when a point last answered it in words
+    for q in pts:
+        mids = set(_d.points.balloon_refs(q.get("text") or "", rid))
+        up = by_id.get(q.get("replyTo") or "")
+        if up:
+            mids |= {a["mid"] for a in up.get("answers") or [] if a.get("mid")}
+        for m in mids:
+            typed[m] = max(typed.get(m, 0.0), float(q.get("createdAt") or 0))
+    out = []
+    for mid, (ts, qs, by_point) in cards.items():
+        if mid in typed and typed[mid] >= float(ts or 0):
+            continue
+        got = done.get(mid) or {}
+        for n, q in enumerate(qs):
+            if str(n) in got or (mid in approved and _approved_settles(rid, mid, n)):
+                continue
+            pids = sorted(pid for pid, ns in (by_point or {}).items() if n in ns)
+            refs = _d.points.task_refs(q)
+            task = refs[0] if refs else next((by_id[p]["task"] for p in pids if (by_id.get(p) or {}).get("task")), "")
+            out.append({"mid": mid, "n": n, "question": q, "ts": float(ts or 0),
+                        **({"task": task} if task else {}), **({"points": pids} if pids else {})})
+    out.sort(key=lambda c: (c["ts"], c["mid"], -c["n"]), reverse=True)
+    return out
+
+
 def balloon_asks(room_id: str, mid: str) -> list[dict]:
     room = _d.chatroom.get_room(room_id)
     if room is None:

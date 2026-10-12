@@ -304,7 +304,9 @@ _ALL_TOOLS = [
             "`Re P12 (planned #104):`, linked to that task) → delivered (live, "
             "or answered for real: a later `Re P12:`) → acknowledged by them. "
             "Never ask them to acknowledge a planned point. action \"list\" "
-            "(default): the open, planned and delivered points. action "
+            "(default): the open, planned and delivered points, and those "
+            "closed in the last week with the reason (click, reply, ask, "
+            "approval; or by itself: seen, superseded, migrated). action "
             "\"plan\": a point you started work on (task: #104, summary: one "
             "line). action \"answer\": a point delivered by doing rather than by "
             "saying (\"#104 is live\"), with a one-line summary. action "
@@ -1854,11 +1856,25 @@ def _points(ctx, args, handler):
             return {"task": p["task"]} if p.get("task") else {}
         return {"task": p["task"], "taskStatus": info.get("workflowName") or info.get("workflow") or "",
                 **({"note": "merged, awaiting go-live: say 'Re Pn:' once it is live"} if info.get("done") and p["state"] == "planned" else {})}
+    # Closed lately (#209): what closed it, the "reason" — click, reply,
+    # ask, approval (the product owner), or by itself: seen (they saw the
+    # answer and wrote again), superseded (a later point on the same task),
+    # migrated (answered more than three days before Needs you came).
+    week = time.time() - 7 * 86400
+    shut = sorted((p for p in led["points"] if p["state"] in ("acked", "followed", "dropped")
+                   and float(p.get("stateAt") or 0) >= week), key=lambda p: p.get("stateAt") or 0, reverse=True)[:50]
     return {"note": ("open: no reply yet; planned: you said what will happen, the work is not "
-                     "live; delivered: waiting for the product owner to acknowledge. Answer an "
-                     "open one with 'Re Pn:' (or 'Re Pn (planned #N):' when you start work on it); "
-                     "a planned one with 'Re Pn:' once it is live."),
+                     "live; delivered: waiting for the product owner to see it (it closes by itself "
+                     "once they have seen it and write again, or a later point names its task). "
+                     "Answer an open one with 'Re Pn:' (or 'Re Pn (planned #N):' when you start "
+                     "work on it); a planned one with 'Re Pn:' once it is live."),
+            "closed": [{"id": p["id"], "state": p["state"],
+                        "reason": p.get("ackedBy") or ("followed" if p["state"] == "followed" else p["state"]),
+                        **({"supersededBy": p["supersededBy"]} if p.get("supersededBy") else {}),
+                        "at": time.strftime("%m-%d %H:%M", time.localtime(p.get("stateAt") or 0))}
+                       for p in shut],
             "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""), **where(p),
+                        **({"seen": True} if p["state"] == "delivered" and pts.is_seen(p) else {}),
                         "since": time.strftime("%m-%d %H:%M", time.localtime(p.get("openedAt") or p["createdAt"])),
                         "text": pts.strip_point_lines(p["text"])[:1000],
                         **({"followUps": [f[:1000] for f in pts.follow_ups(p)]} if pts.follow_ups(p) else {})}
