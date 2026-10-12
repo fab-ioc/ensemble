@@ -31,7 +31,7 @@ class IntelliJDarkTheme(unittest.TestCase):
         version = (ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8")
         self.assertEqual(
             version.strip(),
-            "fab-ioc/dock v0.22.0 9ab6f0cf94a441c8ea0809568ebcc277091fbffd (tag v0.22.0, 2026-10-11)",
+            "fab-ioc/dock v0.22.1 af542642de8cbc837d420bf7f1962a0ff2518c78 (tag v0.22.1, 2026-10-12)",
         )
         theme_js = (ROOT / "static" / "dock" / "src" / "theme.js").read_text(encoding="utf-8")
         self.assertIn("['intellij-dark', 'IntelliJ Dark', 'dark', 'extra']", theme_js)

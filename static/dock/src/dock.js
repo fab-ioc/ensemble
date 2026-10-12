@@ -3564,15 +3564,19 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
   // The second click of a double click that restored a stack. Restoring can move the title bar away from the pointer (a
   // stack at the bottom grows upwards), leaving its body or a neighbour there: that click is still the title bar's. It
-  // reaches nothing else, and its dblclick maximises or docks back as one on the title bar does. On the title bar
-  // itself it goes on as any click there (the stack is restored: a tab switches, nothing minimises again).
+  // reaches nothing else, and its dblclick maximises or docks back as one on the title bar does. So does one that lands
+  // on a control of the restored title bar (− at the end of a bar that moved, the menu, an expand button, a tab's ×,
+  // ▾): it minimises, closes and opens nothing. On the rest of the title bar it goes on as any click there (a tab
+  // switches). After the double click's 500 ms, or 6 px away, every control works as before.
   const DBL_MS = 500;
   const DBL_PX = 6;
   function secondClick(e) {
     const r = restored;
     if (!r || e.button !== 0 || e.timeStamp - r.t > DBL_MS || Math.abs(e.clientX - r.x) > DBL_PX || Math.abs(e.clientY - r.y) > DBL_PX) return false;
-    const head = e.target.closest && e.target.closest('.dk-head');
-    return !(head && head.querySelector(`[data-dk-tab="${CSS_ESC(r.id)}"]`));
+    const t = e.target;
+    const head = t.closest && t.closest('.dk-head');
+    if (!head || !head.querySelector(`[data-dk-tab="${CSS_ESC(r.id)}"]`)) return true;
+    return !!t.closest(`.dk-ctl, [data-dk-act], ${ownSel}, [data-dk-close], [data-dk-tabs]`);
   }
   for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
     on(root, type, (e) => { if (secondClick(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
