@@ -55,6 +55,7 @@ COMPARE = """<!doctype html>
 <a href="a.html"><img src="a.png" alt="A"></a>
 <img src="shots/b.png" alt="B">
 <p><a href="a.html#top">The A page</a> and <a href="a.png">the A picture</a>.</p>
+<p><a href="//example.invalid/page">Elsewhere</a></p>
 <div style="height:2400px"></div></body></html>
 """
 A_PAGE = """<!doctype html>
@@ -135,9 +136,10 @@ CDP_JS = TASK_CDP.split('// The chips in the conversation')[0] + r'''
 async function main() {
   const {ch, ws} = await launch(), c = new Cdp(ws); await c.open();
   const out = {};
-  const tabs = [];
+  const tabs = [], away = new Set();
   c.ws.addEventListener('message', e => { const m = JSON.parse(e.data);
-    if (m.method === 'Target.targetCreated' && m.params.targetInfo.type === 'page') tabs.push(m.params.targetInfo.url); });
+    if (m.method === 'Target.targetCreated' && m.params.targetInfo.type === 'page') tabs.push(m.params.targetInfo.url);
+    if (m.method === 'Target.targetInfoChanged' && /example\.invalid/.test(m.params.targetInfo.url) && !away.has(m.params.targetInfo.targetId)) away.add(m.params.targetInfo.targetId) && c.send('Target.closeTarget', {targetId: m.params.targetInfo.targetId}).catch(() => {}); });
   await c.send('Target.setDiscoverTargets', {discover: true});
   try {
     for (const [width, height, mob] of [[1440, 900, false], [390, 844, true]]) {
@@ -184,6 +186,10 @@ async function main() {
         } else await c.send('Page.navigate', {url: A.base + url}, s);
         await ready(); await sleep(300);
         row.start = await state();
+        // a link to another site ("//host/x"): a tab of its own, this viewer stays
+        { const here = await ev(`${FV}.location.href`), t0 = tabs.length, a0 = away.size, p = await pointOf(link(`a.getAttribute('href').startsWith('//')`));
+          await clickAt(p.x, p.y); await sleep(1000);
+          row.external = {tabs: tabs.length - t0, away: away.size - a0, same: await ev(`${FV}.location.href`) === here}; }
         const tabsAtStart = tabs.length;
         await click(link(`a.querySelector('img')`));
         const hostAtA = mode === 'panel' ? await ev('HOST.length') : 0;
@@ -275,6 +281,8 @@ class HtmlPageInChrome(Hub):
                 self.assertTrue(row['afterBack2']['backBtn'])
                 self.assertEqual(row['afterPng'].get('image'), 40, row['afterPng'])
                 self.assertEqual(row['newTabs'], 0, 'no new tab opened')
+                self.assertTrue(row['external']['same'], row['external'])
+                self.assertEqual((row['external']['tabs'], row['external']['away']), (1, 1), row['external'])
                 if 'hostWhileA' in row:
                     self.assertEqual(row['hostWhileA'], [], 'a page opened from a link says nothing to the panel host')
 

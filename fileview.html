@@ -1920,7 +1920,9 @@ function wireFrameLinks(ifr) {
       const t = urlTarget(href);
       if (t.dead) { toast(`${t.dead} is an address on the hub machine itself, so it cannot open here.`); return; }
       url = t.file != null ? fileHref(t.file, t.line) : t.href;
-    } else if (!/^mailto:/i.test(href)) {
+    } else if (!/^(?:\/\/|[A-Za-z][A-Za-z0-9+.\-]+:)/.test(href)) {
+      // Not "//host/x" nor another scheme (mailto:, tel:, ...): those open as
+      // they are, in a tab; a drive's "C:" is one letter, so stays a file.
       url = fileHref(frameLinkPath(href));
       // A page, picture or file beside this one opens here, in place of this
       // page, as it would in a browser; Back returns. Ctrl/⌘/Shift still
