@@ -3734,6 +3734,9 @@ function ptLatest(p, plan) {
 }
 // The answer a link goes to is the delivery; the plan is a link of its own.
 const lastAnswer = p => ptLatest(p, false);
+// The answer that counts (seen, its words, the thumbs up): the newest, with a
+// balloon or not; an answer by doing after a balloon is new again (points.last_answer).
+const curAnswer = p => { const a = ((p && p.answers) || []).filter(x => !isPlan(x)); return a.length ? a[a.length - 1] : null; };
 const lastPlan = p => ptLatest(p, true);
 // Where a planned point's work is: "#104 · in progress", "#104 merged, awaiting go-live".
 function ptTaskWords(p) {
@@ -3760,7 +3763,11 @@ function pointMaps(pv) {
     (p.answers || []).forEach(a => add(P.byAnswer, a.mid, p));
     if (p.state === 'open' || p.state === 'planned') own.forEach(k => P.keep.add(k));
     if (p.state === 'planned') { const a = lastPlan(p); if (a && a.mid) P.keep.add(a.mid); }
-    if (p.state === 'delivered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); if (ptNeeds(p)) P.unacked.add(a.mid); } }
+    if (p.state === 'delivered') {
+      const a = lastAnswer(p), c = curAnswer(p);
+      if (a && a.mid) P.keep.add(a.mid);
+      if (c && c.mid && ptNeeds(p)) P.unacked.add(c.mid);
+    }
   }
   return P;
 }
@@ -3854,7 +3861,7 @@ function ptAskRow(c, href, now) {
 // An answered point's row: its words, the answer's, both ends linked, the
 // thumbs up (it still closes one at once) and Comment.
 function ptAnswerRow(p, P, href, now, word) {
-  const a = lastAnswer(p), plan = lastPlan(p), said = ptSaid(a);
+  const a = lastAnswer(p), plan = lastPlan(p), said = ptSaid(curAnswer(p));
   return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
     + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
     + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
@@ -3958,7 +3965,7 @@ function pointBarHtml(m, P, href, pick) {
     const plans = here.length && here.every(isPlan);
     const verb = plans ? 'plans ' : 'answers ';
     bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
-    const a = lastAnswer(p);
+    const a = curAnswer(p);
     if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
     else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id) + commentBtn(p.id));
     else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
@@ -4352,16 +4359,28 @@ function seenWanted() {
   const w = new Map();
   for (const p of POINTS.items) {
     if (p.state !== 'delivered' || p.seen) continue;
-    const a = lastAnswer(p);
+    const a = curAnswer(p);
     if (a && a.mid && !SEEN_SENT.has(a.mid)) w.set(a.mid, p.id);
   }
   return w;
 }
 function pageInFront() {
   if (document.visibilityState !== 'visible') return false;
+  // Framed: a panel parked or behind another tab (the host's classes), or a
+  // frame hidden some other way, keeps its layout but is not on screen.
+  if (chatOffScreen() || frameHidden()) return false;
   try { if (document.hasFocus()) return true; } catch (e) {}
   // Framed (a PO screen): the screen around it is in front.
   try { return window.top !== window && window.top.document.visibilityState === 'visible' && window.top.document.hasFocus(); } catch (e) { return false; }
+}
+function frameHidden() {
+  try {
+    const f = window.frameElement;
+    if (!f) return false;
+    if (!f.getClientRects().length || f.closest('[hidden]')) return true;
+    const s = f.ownerDocument.defaultView.getComputedStyle(f);
+    return s.visibility !== 'visible' || +s.opacity === 0;
+  } catch (e) { return false; }
 }
 function seenSend(mids, ids, how) {
   mids = mids.filter(m => m && !SEEN_SENT.has(m));
@@ -7083,7 +7102,7 @@ $('#points-line').addEventListener('click', e => {
   if (fold) { const k = fold.dataset.fold; if (PT_FOLDS.has(k)) PT_FOLDS.delete(k); else PT_FOLDS.add(k); showPointsLine(); return; }
   // An answer given by doing has no balloon: its row, opened, is where it is read.
   const row = e.target.closest && e.target.closest('.pt-row[data-pt]');
-  const p = row && POINTS.byId.get(row.dataset.pt), a = p && p.state === 'delivered' && lastAnswer(p);
+  const p = row && POINTS.byId.get(row.dataset.pt), a = p && p.state === 'delivered' && curAnswer(p);
   if (a && !a.mid && !p.seen) seenSend([], [p.id], 'link');
 });
 $('#msgs').addEventListener('input', e => {

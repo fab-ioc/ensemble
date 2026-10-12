@@ -1501,13 +1501,20 @@ def unapprove(room_id: str, mid: str) -> None:
 # (:func:`discard`) takes back what it closed.
 
 def last_answer(p: dict) -> dict | None:
-    """A point's latest answer that is not a plan: the newest with a balloon,
-    else the newest (the page's lastAnswer)."""
+    """A point's current answer: its newest that is not a plan, with a
+    balloon or not (an answer given by doing after one in the chat is the one
+    to see; the page's curAnswer)."""
     got = [a for a in p.get("answers") or [] if a.get("kind") != "plan"]
-    for a in reversed(got):
-        if a.get("mid"):
-            return a
     return got[-1] if got else None
+
+
+def answer_balloon(p: dict) -> dict | None:
+    """The newest of a point's answers with a balloon: where a link to its
+    answer goes (the page's lastAnswer)."""
+    for a in reversed(p.get("answers") or []):
+        if a.get("kind") != "plan" and a.get("mid"):
+            return a
+    return None
 
 
 def _answer_key(a: dict | None) -> str:
@@ -1906,7 +1913,7 @@ def view(room_id: str, room: dict | None = None) -> dict:
 
 
 def _closed_item(p: dict) -> dict:
-    a = last_answer(p)
+    a = answer_balloon(p)
     return {"id": p["id"], "reason": p.get("ackedBy", ""), "at": p.get("stateAt") or 0,
             "createdAt": p.get("createdAt") or 0, "text": _first_words(strip_point_lines(p.get("text") or ""), 100),
             **({"mid": p["mid"]} if p.get("mid") else {}),
@@ -1925,10 +1932,11 @@ def _needs_view(room_id: str, room: dict | None, led: dict) -> dict:
             room = _d.chatroom.get_room(room_id)
         if room and not _d.asks.cards_ready(room):
             # The first read of a chat's cards can take seconds (every
-            # rotated session): read in the background, show the last list.
+            # rotated session): read in the background, show the last list,
+            # which may be out of date until the read ends (pending).
             _d.asks.warm_cards(room)
             decisions, older = _LAST_DECISIONS.get(room_id) or ([], [])
-            pending = room_id not in _LAST_DECISIONS
+            pending = True
         else:
             decisions, older = _d.asks.decisions(room, led) if room else ([], [])
             _LAST_DECISIONS[room_id] = (decisions, older)

@@ -306,7 +306,8 @@ _ALL_TOOLS = [
             "Never ask them to acknowledge a planned point. action \"list\" "
             "(default): the open, planned and delivered points, and those "
             "closed in the last week with the reason (click, reply, ask, "
-            "approval; or by itself: seen, superseded, migrated). action "
+            "approval; or by itself: seen, superseded, migrated); with all: "
+            "true every closed point, 200 at a time (offset). action "
             "\"plan\": a point you started work on (task: #104, summary: one "
             "line). action \"answer\": a point delivered by doing rather than by "
             "saying (\"#104 is live\"), with a one-line summary. action "
@@ -326,6 +327,12 @@ _ALL_TOOLS = [
                                            "\"#104 is live\")."},
                 "parts": {"type": "array", "items": {"type": "string"},
                           "description": "With split: the points the message holds, one text each."},
+                "all": {"type": "boolean",
+                        "description": "With list: every closed point, not only the last week's "
+                                       "(the ledger keeps them all), newest first, 200 at a time."},
+                "offset": {"type": "integer",
+                           "description": "With list and all: how many closed points to skip "
+                                          "(the previous result's next)."},
             },
         },
     },
@@ -1860,18 +1867,35 @@ def _points(ctx, args, handler):
     # ask, approval (the product owner), or by itself: seen (they saw the
     # answer and wrote again), superseded (a later point on the same task),
     # migrated (answered more than three days before Needs you came).
+    # With all: every one the ledger keeps, a page at a time.
+    every = bool(args.get("all"))
     week = time.time() - 7 * 86400
-    shut = sorted((p for p in led["points"] if p["state"] in ("acked", "followed", "dropped")
-                   and float(p.get("stateAt") or 0) >= week), key=lambda p: p.get("stateAt") or 0, reverse=True)[:50]
+    shut = sorted((p for p in led["points"] if p["state"] in ("acked", "followed", "dropped")),
+                  key=lambda p: (p.get("stateAt") or 0, p["createdAt"]), reverse=True)
+    total = len(shut)
+    try:
+        start = max(0, int(args.get("offset") or 0)) if every else 0
+    except (TypeError, ValueError):
+        start = 0
+    if every:
+        shut = shut[start:start + 200]
+    else:
+        shut = [p for p in shut if float(p.get("stateAt") or 0) >= week][:50]
+    more = start + len(shut) < total
     return {"note": ("open: no reply yet; planned: you said what will happen, the work is not "
                      "live; delivered: waiting for the product owner to see it (it closes by itself "
                      "once they have seen it and write again, or a later point names its task). "
                      "Answer an open one with 'Re Pn:' (or 'Re Pn (planned #N):' when you start "
                      "work on it); a planned one with 'Re Pn:' once it is live."),
+            "closedTotal": total,
+            **({"closedNext": start + len(shut)} if every and more else {}),
+            **({"closedNote": "older closed points: list with all: true"}
+               if more and not every else {}),
             "closed": [{"id": p["id"], "state": p["state"],
                         "reason": p.get("ackedBy") or ("followed" if p["state"] == "followed" else p["state"]),
                         **({"supersededBy": p["supersededBy"]} if p.get("supersededBy") else {}),
-                        "at": time.strftime("%m-%d %H:%M", time.localtime(p.get("stateAt") or 0))}
+                        "at": time.strftime("%m-%d %H:%M", time.localtime(p.get("stateAt") or 0)),
+                        **({"text": pts.strip_point_lines(p["text"])[:200]} if every else {})}
                        for p in shut],
             "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""), **where(p),
                         **({"seen": True} if p["state"] == "delivered" and pts.is_seen(p) else {}),

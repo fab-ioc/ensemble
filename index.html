@@ -12258,6 +12258,8 @@ function pdLatest(p, plan) {
   return a.length ? a[a.length - 1] : null;
 }
 const pdLastAnswer = p => pdLatest(p, false);
+// The answer that counts (seen, its words): the newest, with a balloon or not (session.html curAnswer).
+const pdCurAnswer = p => { const a = ((p && p.answers) || []).filter(x => x.kind !== 'plan'); return a.length ? a[a.length - 1] : null; };
 const pdLastPlan = p => pdLatest(p, true);
 // "#104 · in progress", "#104 merged, awaiting go-live".
 function pdTaskWords(p) {
@@ -12321,7 +12323,7 @@ function pdPointsHtml(told, now) {
     const a = st === 'delivered' ? pdLastAnswer(p) : null;
     const plan = st !== 'open' ? pdLastPlan(p) : null;
     // The answer's own words under the ask; a plan's summary for one in progress.
-    const said = pdSaid(a) || (st === 'planned' ? pdSaid(plan) : '');
+    const said = pdSaid(st === 'delivered' ? pdCurAnswer(p) : null) || (st === 'planned' ? pdSaid(plan) : '');
     const task = st === 'planned' ? pdTaskWords(p) : '';
     const w = words[p.id] || '';
     return `<li class="pdp-row" data-pt="${esc(p.id)}"><div class="pdp-top"><span class="pdp-id">${esc(p.id)}</span>`
@@ -13485,7 +13487,7 @@ PD.els.points.addEventListener('click', e => {
   // An answer given by doing has no balloon: its row, clicked here, is where it is read (session.html seenSend).
   const r = e.target.closest && e.target.closest('.pdp-row[data-pt]');
   const told = pdTold(), p = r && told && ((told.points && told.points.items) || []).find(x => x.id === r.dataset.pt);
-  const ans = p && pdPtState(p.state) === 'delivered' && !p.seen ? pdLastAnswer(p) : null;
+  const ans = p && pdPtState(p.state) === 'delivered' && !p.seen ? pdCurAnswer(p) : null;
   if (ans && !ans.mid) { const f = pdChatFrame(); try { if (f && f.contentWindow && f.contentWindow.seenSend) f.contentWindow.seenSend([], [p.id], 'link'); } catch (err) {} }
 });
 setInterval(() => { if (PD.dock && document.body.classList.contains('po-dock') && !document.hidden) pdPaintPoints(); }, 30000);

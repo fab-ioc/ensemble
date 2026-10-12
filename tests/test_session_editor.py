@@ -188,7 +188,7 @@ class Editor(unittest.TestCase):
         code = "\n".join([ATTACH, MODEL, ITEMS, js_const("REF_BLOCK_RE"), js_function("stripRefBlocks"), js_function("mdToHtml"),
                           js_function("itemsHtml"), js_function("foldLine"), js_function("pointBarHtml"), js_function("ptOwn"),
                           js_function("pointItemsHtml"), js_const("PT_WORD"), js_const("ptNeeds"), js_const("ptItem"), js_const("isPlan"),
-                          js_function("ptLatest"), js_const("lastAnswer"), js_const("lastPlan"), js_const("ptAnswerOf"), js_const("ptSaid"),
+                          js_function("ptLatest"), js_const("lastAnswer"), js_const("curAnswer"), js_const("lastPlan"), js_const("ptAnswerOf"), js_const("ptSaid"),
                           js_const("commentBtn"), js_function("ptThreadHtml"),
                           js_function("ptTaskWords"), js_function("pointMaps"), js_const("headWords")])
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True, text=True,

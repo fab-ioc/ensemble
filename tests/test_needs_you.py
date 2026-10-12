@@ -8,6 +8,7 @@ question, and a chat's cards are read in the background."""
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 import unittest
@@ -66,6 +67,43 @@ class Closing(_World):
         self.add("sid-1", turn("assistant", f"Re {p1}: more on it", self.t0 + 5))
         points.sync(rid, force=True)
         self.assertFalse(points.is_seen(self.point(rid, p1)))
+
+    def test_an_answer_by_tool_after_a_seen_balloon_is_new_again(self):
+        rid = self.solo_room()
+        p1, m1 = self.answered(rid, "One?", "one")
+        points.mark_seen(rid, mids=[m1], now=self.t0 + 5)
+        points.answer_by_tool(rid, p1, "it is live", "claude")
+        p = self.point(rid, p1)
+        self.assertFalse(points.is_seen(p), "the answer by doing is the one to see")
+        self.assertEqual(points.needs_you(p), "new")
+        self.assertEqual(points.answer_balloon(p)["mid"], m1, "links still go to the balloon")
+        self.assertEqual(points.mark_seen(rid, mids=[m1], now=self.t0 + 6), [], "the old balloon does not see it")
+        self.send(rid, "Something else now", at=time.time() + 1)
+        self.assertEqual(self.point(rid, p1)["state"], "delivered", "unseen: not closed")
+        self.assertEqual(points.mark_seen(rid, ids=[p1]), [p1])
+
+    def test_the_tool_lists_every_closed_point_with_all(self):
+        import dashboard
+        import ensemble_tools
+        rid = self.solo_room()
+        p1, _ = self.answered(rid, "One?", "one")
+        p2, _ = self.answered(rid, "Two?", "two", at=self.t0 + 10)
+        points.act(rid, p1, "ack")
+        points.act(rid, p2, "ack")
+        led = points.load(rid)
+        next(p for p in led["points"] if p["id"] == p1)["stateAt"] = time.time() - 30 * 86400
+        points._save(rid, led)
+        ctx = {"room": chatroom.get_room(rid, public=False), "identity": "claude"}
+        with mock.patch.object(ensemble_tools, "_d", dashboard):
+            week = ensemble_tools._points(ctx, {"action": "list"}, None)
+            every = ensemble_tools._points(ctx, {"action": "list", "all": True}, None)
+            past = ensemble_tools._points(ctx, {"action": "list", "all": True, "offset": 1}, None)
+        self.assertEqual(([c["id"] for c in week["closed"]], week["closedTotal"]), ([p2], 2))
+        self.assertIn("all: true", week["closedNote"])
+        self.assertEqual([(c["id"], c["reason"]) for c in every["closed"]], [(p2, "click"), (p1, "click")])
+        self.assertEqual(every["closed"][1]["text"], "One?")
+        self.assertNotIn("closedNext", every)
+        self.assertEqual([c["id"] for c in past["closed"]], [p1])
 
     def test_an_answer_by_tool_is_seen_by_id_and_thumbs_up_still_closes(self):
         rid = self.solo_room()
@@ -205,6 +243,12 @@ class Decisions(point_cards.Resolver):
         self.assertEqual([c['mid'] for c in needs['decisions']], ['c1'])
         self.assertNotIn('pending', needs)
         json.dumps(needs)
+        # A new card: the last list shows while the cards are read again, and says so.
+        self.say('c2', time.time(), 'Ask: And which colour?\n- Red\n- Blue')
+        with mock.patch.object(asks, 'warm_cards'):
+            needs = points.view(self.rid)['needs']
+        self.assertFalse(asks.cards_ready(self.summary()))
+        self.assertEqual(([c['mid'] for c in needs['decisions']], needs.get('pending')), (['c1'], True))
 
     def test_seen_endpoint(self):
         led = points.load(self.rid)
@@ -218,6 +262,34 @@ class Decisions(point_cards.Resolver):
 for _name in dir(point_cards.Resolver):
     if _name.startswith('test_') and _name not in vars(Decisions):
         setattr(Decisions, _name, None)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class SeenOnlyOnScreen(unittest.TestCase):
+    """The chat's seen timing counts only while it is on screen: a Dock panel
+    parked or behind another tab keeps its layout (visibility:hidden), so its
+    frame says so, not the geometry inside it."""
+
+    def test_parked_or_hidden_frame_is_not_in_front(self):
+        from tests.test_session_landing import js_function, run_node
+        script = r"""
+const frame = { parked: false, rects: 1, vis: 'visible', opacity: '1', hidden: false };
+const window = { top: null, frameElement: {
+  closest: sel => (sel === '[hidden]' ? frame.hidden : frame.parked) ? {} : null,
+  getClientRects: () => ({ length: frame.rects }),
+  ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: frame.vis, opacity: frame.opacity }) } } } };
+window.top = { document: { visibilityState: 'visible', hasFocus: () => true } };
+const document = { visibilityState: 'visible', hidden: false, hasFocus: () => true };
+""" + "\n".join(js_function(n) for n in ("pageInFront", "chatOffScreen", "frameHidden")) + r"""
+const out = { shown: pageInFront() };
+frame.parked = true; out.parked = pageInFront(); frame.parked = false;
+frame.vis = 'hidden'; out.invisible = pageInFront(); frame.vis = 'visible';
+frame.rects = 0; out.noBox = pageInFront(); frame.rects = 1;
+frame.hidden = true; out.hiddenAttr = pageInFront(); frame.hidden = false;
+console.log(JSON.stringify(out));
+"""
+        self.assertEqual(run_node(script), {"shown": True, "parked": False, "invisible": False,
+                                            "noBox": False, "hiddenAttr": False})
 
 
 if __name__ == '__main__':

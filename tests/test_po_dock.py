@@ -159,7 +159,7 @@ const taskChipsIn = (t) => esc(String(t || ''));
 """
 
 PURE_FNS = ["esc", "PD_IDS", "PD_TOOLS", "pdDefaultLayout", "PD_PT_WORD", "PD_PT_REASON", "PD_PT_FOLDS", "pdPtState", "pdPtNeeds",
-            "pdLatest", "pdLastAnswer", "pdLastPlan", "pdTaskWords", "pdPtAge", "pdNeedsCounts", "pdPointsSummary", "pdSaid",
+            "pdLatest", "pdLastAnswer", "pdCurAnswer", "pdLastPlan", "pdTaskWords", "pdPtAge", "pdNeedsCounts", "pdPointsSummary", "pdSaid",
             "pdPointsHtml"]
 
 
