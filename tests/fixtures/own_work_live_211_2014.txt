@@ -1,0 +1,40 @@
+58 +`..\suite7.log` (started ~20:05). NEXT: check it, then
+59  ensemble_report completed.
+60
+61  ## Next action (exact)
+●The full test suite was stopped when the hub restarted,soI'vestarteditagain;ittakesabout31minutesandshould
+finisharound20:36.WhenitpassesI'llreport#211completedwiththetestcounts.
+✻ Crunched for 12s · done 8:03 PM · 1 shell still running
+> [stalled] You are idle and nothing of yours is open. Carry on from TASK-HANDOVER.md; if you are blocked or need a
+decision, report it with ensemble_report; if you are finished, report completed.
+Ran 1 shell command
+●The rerun of thefulltestsuiteisstillgoing,withnofailuressofar.Itshouldfinisharound20:36.Nothingis
+blocked; I'll report #211 completed with the test counts as soon asitpasses.
+61
+Sublimating…running Stop hook · 5s · ↓261 tokens)
+Sublimating…84
+●Thehubrestartstoppedthesuitebeforeitfinished.Startingitagain.
+Ran 1 shell command
+● Update(~\EnsemblePojects\EnsembleDashboard\a_hub_restart_or_update_waits_for_a_safe_point_agents_…\TASK-HANDOVER.md)
+⎿  Added 2 lines, removed 1 line
+4PO ruling 19:40: last round, fix both + tests, merge main, fullsuite, repot completed, NO rview 4.
+55Don: `119c0b9` (end() returns all pending; `_INFLIGHT` dedupe; `_deliver` returns why; 3 tries / 30 s,
+then
+56faid` + log + PO told once; 4 new tests → 29 drain tests), design note updated, merged main `007bf01
+` (clean),
+57 -merged hub started OK on 8798 and stopped. Full suite → `..\suite6.log` running. NEXT: check it, then
+7merged hub started OK on8798 andstopped. suite6was killedbyahubrestartat~20:03;rerun→
+58 +`..\suite7.log` (started ~20:05). NEXT: check it, then
+59ensemble_report completed.
+0
+61  ## Next action (exact)
+●The full testsuite was stopped when thehub estarted, so I've saredit again; ittakesabout31minutesandshould
+finisharound20:36.WhenitpassesI'llreport#211completedwiththetestcounts.
+✻Crunched for 12s · done 8:03 PM · 1 shell still running
+> [stalled]You are idle and nothing of yours is open.Carry on fom TASK-HANDOVER.md; if you are blocked or need a
+decision, report it with ensemble_report; if you are finished, report completed.
+Ran 1 shell command
+●The rrun of th full test suit isstill going, with nofailures o far. It shouldfinisharound20:36.Nothingis
+blocked;I'llreport#211completedwiththetestcountsassoonasitpasses.
+✻ Cogitated for 5s · done 8:14 PM· 1 shel still running
+>
