@@ -1,4 +1,4 @@
-// Point mentions share TaskCard's appearance and interaction, and Your asks' jumps.
+// Point mentions share TaskCard's appearance and interaction, and Needs you's jumps.
 const PointRefs = (() => {
   const blank = s => s.replace(/[^\n]/g, ' ');
   function readable(text) {
