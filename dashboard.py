@@ -16600,6 +16600,14 @@ def set_project_noun_cli(one: str, many: str) -> int:
     return 0
 
 
+class HubServer(ThreadingHTTPServer):
+    """The hub's listener. The stdlib queues only 5 connections not yet
+    accepted; while a busy moment holds the accept loop back, Windows refuses
+    every one past those 5, so a page's pictures and scripts failed at random
+    (ERR_CONNECTION_REFUSED) — a rendered page with ten pictures lost some."""
+    request_queue_size = 128
+
+
 def main():
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
     args = sys.argv[1:]
@@ -16721,11 +16729,11 @@ def main():
     servers = []
     remote_bound = False
     if wildcard:
-        servers.append(ThreadingHTTPServer((remote_host, port), Handler))
+        servers.append(HubServer((remote_host, port), Handler))
         _announce_remote(remote_host)
         remote_bound = True
     else:
-        servers.append(ThreadingHTTPServer(("127.0.0.1", port), Handler))
+        servers.append(HubServer(("127.0.0.1", port), Handler))
         print(f"ensemble [{BACKEND.os_name}]: http://127.0.0.1:{port}", flush=True)
         if remote_host:
             # The remote (tailnet) bind must NEVER kill the hub. Right after a
@@ -16733,7 +16741,7 @@ def main():
             # interface, so bind() raises WinError 10049 — serve loopback now and
             # attach the remote listener in the background once it's bindable.
             try:
-                servers.append(ThreadingHTTPServer((remote_host, port), Handler))
+                servers.append(HubServer((remote_host, port), Handler))
                 _announce_remote(remote_host)
                 remote_bound = True
             except OSError as e:
@@ -16750,7 +16758,7 @@ def main():
                 if not ip:
                     continue
                 try:
-                    s = ThreadingHTTPServer((ip, port), Handler)
+                    s = HubServer((ip, port), Handler)
                 except OSError:
                     continue   # IP not bindable yet — keep waiting, don't give up
                 _announce_remote(ip)

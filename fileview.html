@@ -691,6 +691,7 @@
 </head>
 <body>
 <header>
+  <a class="btn" id="back" hidden>‹&nbsp;Back</a>
   <span class="name" id="name">file</span>
   <span class="meta" id="meta"></span>
   <span class="grow"></span>
@@ -1038,7 +1039,20 @@ function withPathAbbrevs(text, fn) {
 // A bare name ("NOTES.md") has none: the hub resolves it in the task instead —
 // taking the name itself as the folder sent every link to "NOTES.md/x.md".
 const PATH_Q = new URLSearchParams(location.search).get('path') || '';
-const FILE_BASE = /[\\\/]/.test(PATH_Q) ? PATH_Q.replace(/[\\\/][^\\\/]*$/, '') : '';
+// A path written relative (an agent's "Documents\#9 x\page.html") is made the
+// hub's absolute one once the file is read (fvFound), so a rendered page's
+// pictures and its links resolve from the folder it is really in.
+let FILE_BASE = /[\\\/]/.test(PATH_Q) ? PATH_Q.replace(/[\\\/][^\\\/]*$/, '') : '';
+function fvFound(at) {
+  if (!at || !ABS_PATH_RE.test(at)) return;
+  FILE_BASE = at.replace(/[\\\/][^\\\/]*$/, '');
+}
+// A page opened from a link in the rendered page before it, in this viewer:
+// the viewer's address to go back to (?back=), its own back included.
+const BACK = (() => {
+  const b = new URLSearchParams(location.search).get('back') || '';
+  return /^\/fileview\?/.test(b) ? b : '';
+})();
 const CWD = new URLSearchParams(location.search).get('cwd') || '';
 const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' + encodeURIComponent(CWD) : '');
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
@@ -1097,7 +1111,15 @@ function fileAtBase(folder) {
   } else {
     return '';   // a UNC share or something this scheme does not cover — the page renders without a base, as before
   }
-  return '/api/file-at/' + parts.map(encodeURIComponent).join('/') + '/';
+  // A folder reached by a page's "../other/x.html" link: its dot segments
+  // folded here, since the hub refuses any it is sent.
+  const segs = [];
+  parts.forEach(s => {
+    if (s === '.') return;
+    if (s === '..') { if (segs.length > (parts[0] === 'w' ? 2 : 1)) segs.pop(); return; }
+    segs.push(s);
+  });
+  return '/api/file-at/' + segs.map(encodeURIComponent).join('/') + '/';
 }
 
 
@@ -1898,12 +1920,56 @@ function wireFrameLinks(ifr) {
       const t = urlTarget(href);
       if (t.dead) { toast(`${t.dead} is an address on the hub machine itself, so it cannot open here.`); return; }
       url = t.file != null ? fileHref(t.file, t.line) : t.href;
-    } else if (!/^mailto:/i.test(href)) {
-      let p = href.replace(/[?#].*$/, '');
-      try { p = decodeURIComponent(p); } catch (e) {}
-      url = fileHref(p);
+    } else if (!/^(?:\/\/|[A-Za-z][A-Za-z0-9+.\-]+:)/.test(href)) {
+      // Not "//host/x" nor another scheme (mailto:, tel:, ...): those open as
+      // they are, in a tab; a drive's "C:" is one letter, so stays a file.
+      url = fileHref(frameLinkPath(href));
+      // A page, picture or file beside this one opens here, in place of this
+      // page, as it would in a browser; Back returns. Ctrl/⌘/Shift still
+      // opens it in a tab of its own.
+      if (!(ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey)) { fvGo(url); return; }
     }
     window.open(url, '_blank', 'noopener');
+  });
+}
+// The file a page's relative link names: the address without its ?query and
+// #fragment, %-decoded ("%23" is a "#" in a folder's name), resolved by
+// fileHref against the page's own folder.
+function frameLinkPath(href) {
+  let p = href.replace(/[?#].*$/, '');
+  try { p = decodeURIComponent(p); } catch (e) {}
+  return p;
+}
+// Open a viewer address in this viewer, carrying the way back to this one.
+// The way back holds this page's own (its ?back=): Back, then Back again,
+// walks the pages in the order they were opened.
+function fvGo(url) {
+  const here = location.pathname + location.search;
+  location.assign(url + (here.length < 8000 ? '&back=' + encodeURIComponent(here) : ''));
+}
+// Back to the page this one was opened from: the browser's own Back when that
+// is the page just before (a viewer in a tab of its own), else that page in
+// this one's place (a viewer in a panel, whose frame's history the browser
+// shares with the whole dashboard).
+function fvBack() {
+  let prev = '';
+  try { const r = new URL(document.referrer); if (r.origin === location.origin) prev = r.pathname + r.search; } catch (e) {}
+  if (window.parent === window && prev === BACK && history.length > 1) history.back();
+  else location.replace(BACK);
+}
+function fvBackButton() {
+  const b = document.getElementById('back');
+  if (!b || !BACK) return;
+  const from = new URLSearchParams(BACK.slice(BACK.indexOf('?'))).get('path') || '';
+  const name = from.replace(/[\\\/]+$/, '').split(/[\\\/]/).pop() || from;
+  b.href = BACK;
+  b.title = 'Back to ' + name;
+  b.setAttribute('aria-label', 'Back to ' + name);
+  b.hidden = false;
+  b.addEventListener('click', e => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    fvBack();
   });
 }
 (async function () {
@@ -1921,6 +1987,7 @@ function wireFrameLinks(ifr) {
   // The comment facility is wired before anything is loaded, so it is present
   // for every file — including the ones with no text to select in.
   document.getElementById('cmt-file').onclick = () => openComposer({ start: -1, end: -1, quote: '' });
+  fvBackButton();
   if (!path) { main.innerHTML = '<div class="err">No path given.</div>'; return; }
   outButtons(path);
   const ext = (base.match(/\.(\w+)$/) || [, ''])[1].toLowerCase();
@@ -1937,9 +2004,11 @@ function wireFrameLinks(ifr) {
   FileDrag.mark(nameEl, path, { kind: 'file-title', room: ROOM, cwd: CWD });
 
   // Not on the hub: said here, and to the Workspace tab this viewer is in.
+  // A page opened from a link in another (BACK) is not the Workspace tab's file:
+  // the tab hears nothing of it.
   const notFound = () => {
     showMissing(path, main);
-    const host = hostPage();
+    const host = !BACK && hostPage();
     if (host) host.postMessage({ type: 'fv-missing' }, location.origin);
   };
   // Opened in place of a link whose file had moved (showMissing): said once, above the file.
@@ -1956,7 +2025,7 @@ function wireFrameLinks(ifr) {
     return { url: u.pathname + u.search + u.hash };
   };
   function report() {
-    const host = reporting && hostPage();
+    const host = reporting && !BACK && hostPage();
     if (host) host.postMessage({ type: 'fv-state', st: { ...stateOf(), top: scrolledTop() } }, location.origin);
   }
   function putBack() { const s = fvScrollOwner(main); if (pendingTop && s) s.scrollTop = pendingTop; pendingTop = 0; }
@@ -1986,6 +2055,7 @@ function wireFrameLinks(ifr) {
   }
 
   const res = await loadText(path, src);
+  if (res.ok) fvFound(res.at);
   // Found by its name, not where the link put it: the link's folders were wrong.
   if (res.ok && res.found === 'tail' && res.at && /[\\/]/.test(path.replace(/^\.[\\/]/, '')) && !MOVED_FROM) movedNote(path, res.at, main);
   if (!res.ok) {
