@@ -33,6 +33,7 @@ import re
 import time
 from pathlib import Path
 
+import agent_hooks
 from backends.shared import PERMISSION_MODE
 
 _d = None  # the dashboard module, set by bind()
@@ -320,22 +321,28 @@ def problem(part: dict, hook: dict | None = None, tail: str = "",
                 "why": (f"was stopped by Claude's own safety check: it blocked "
                         f"{action_words(den.get('tool') or '')}{reason}{bypass}. "
                         f"A person has to do this step.")}
+    detail = hook.get("detail") or ""
     if hook.get("state") == "waiting" and hook.get("event") == "PermissionRequest" \
+            and detail and detail != "permission_prompt" and detail not in agent_hooks.ASKING_TOOLS \
             and LAUNCH_MODE == "bypassPermissions" and mode in ("", LAUNCH_MODE):
-        what = action_words(hook.get("detail") or "")
+        what = action_words(detail)
         return {"cause": "prompt", "key": f"prompt:{hook.get('at')}", "at": float(hook.get("at") or 0),
-                "why": (f"is waiting for a person to approve {what}: Claude asks even in bypass "
-                        f"mode when its own safety check cannot run. A person has to answer it "
+                "why": (f"is waiting for a person to approve {what} even in bypass mode. "
+                        f"A person has to answer it "
                         f"in the agent's terminal.")}
     return None
 
 
 def settled(perm: dict | None, room: dict, identity: str) -> bool:
-    """Whether a denial has since been taken up by the agent itself: it
-    reported (ensemble_report) or put something to a person or its PO after
-    it. Its own words are then the item."""
-    if not perm or perm.get("cause") != "denied":
+    """Whether the agent's own report or open ask already speaks for a denial
+    or prompt. Its own words take precedence over this inferred problem."""
+    if not perm or perm.get("cause") not in ("denied", "prompt"):
         return False
+    put = (room or {}).get("openToHuman")
+    if perm["cause"] == "prompt" and isinstance(put, dict) \
+            and (put.get("from") or put.get("identity")) == identity \
+            and put.get("kind") in ("blocked", "question", "message"):
+        return True
     at = 0.0
     for key in ("openToHuman", "lastReport"):
         rec = (room or {}).get(key)
@@ -344,7 +351,8 @@ def settled(perm: dict | None, room: dict, identity: str) -> bool:
                 at = max(at, float(rec.get("ts") or 0))
             except (TypeError, ValueError):
                 pass
-    return at >= float(perm.get("at") or 0)
+    event_at = float(perm.get("at") or 0)
+    return bool(event_at) and at >= event_at
 
 
 # What the PO can do about each cause (stall.py's line).

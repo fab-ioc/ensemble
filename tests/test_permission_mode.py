@@ -330,6 +330,13 @@ class WhatItAmountsTo(unittest.TestCase):
         self.assertIn("waiting for a person to approve a browser action", got["why"])
         self.assertIsNone(self.problem(hook={**hook, "event": "PreToolUse"}))
 
+    def test_an_agents_question_is_not_a_permission_problem(self):
+        hook = {"state": "waiting", "event": "PermissionRequest", "at": 123.0,
+                "mode": "bypassPermissions"}
+        for detail in ("AskUserQuestion", "ExitPlanMode", "permission_prompt", ""):
+            with self.subTest(detail=detail):
+                self.assertIsNone(self.problem(hook={**hook, "detail": detail}))
+
     def test_settled_by_its_own_report(self):
         perm = {"cause": "denied", "at": 100.0}
         room = {"lastReport": {"identity": "claude", "ts": 101.0}}
@@ -337,6 +344,11 @@ class WhatItAmountsTo(unittest.TestCase):
         self.assertFalse(permission_mode.settled(perm, room, "claude-2"))
         self.assertFalse(permission_mode.settled({**perm, "at": 102.0}, room, "claude"))
         self.assertFalse(permission_mode.settled({"cause": "mode"}, room, "claude"))
+
+    def test_an_open_ask_takes_precedence_over_a_prompt(self):
+        room = {"openToHuman": {"from": "claude", "kind": "question", "ts": 90.0}}
+        self.assertTrue(permission_mode.settled({"cause": "prompt", "at": 100.0}, room, "claude"))
+        self.assertFalse(permission_mode.settled({"cause": "prompt", "at": 100.0}, room, "codex"))
 
     def test_action_words(self):
         self.assertEqual(permission_mode.action_words("mcp__claude-in-chrome__navigate"),
@@ -367,6 +379,15 @@ class TheHooks(unittest.TestCase):
         self.assertEqual((st["state"], res["changed"]), ("working", False))   # news, not a state
         self.assertEqual({k: st["denied"][k] for k in ("tool", "reason", "toolUseId")},
                          {"tool": CLICK, "reason": "Real-World Transactions", "toolUseId": "tu1"})
+
+    def test_ask_user_question_in_bypass_is_not_a_permission_problem(self):
+        self.post(hook_event_name="PreToolUse", tool_name="AskUserQuestion", tool_use_id="tuq",
+                  permission_mode="bypassPermissions")
+        self.post(hook_event_name="PermissionRequest", tool_name="AskUserQuestion",
+                  permission_mode="bypassPermissions")
+        got = permission_mode.problem({"agent": "claude"}, agent_hooks.state_for("p"), "",
+                                      {"mode": "bypassPermissions", "denial": None})
+        self.assertIsNone(got)
 
     def test_a_subagent_does_not_name_the_mode(self):
         self.post(hook_event_name="UserPromptSubmit", session_id="s", permission_mode="bypassPermissions")
@@ -434,7 +455,8 @@ class TheBell(_Bell, _Transcript):
         self.assertIn("runs in auto mode", it["reason"])
 
     def test_an_approval_prompt_waits_for_a_person(self):
-        prompt = {"cause": "prompt", "key": "prompt:123", "why": "is waiting for approval"}
+        prompt = {"cause": "prompt", "key": "prompt:123", "at": 123.0,
+                  "why": "is waiting for approval"}
         with mock.patch.object(permission_mode, "problem", return_value=prompt):
             it = self.item()
         self.assertEqual((it["state"], it["cause"], it["permission"]),
