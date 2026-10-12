@@ -322,5 +322,33 @@ class OldBaselines(unittest.TestCase):
         self.assertEqual(digest.diff({"room-4": old}, [_task(attention="blocked")]), [])
 
 
+class MergeAndHubStart(unittest.TestCase):
+    def facts(self, merged_at, report=""):
+        t = _task(merged=True, mergedAt=merged_at, commits=0,
+                  report=10, reportKind="completed", reportText=report)
+        with mock.patch.object(digest, "_STARTED", 200):
+            return digest.plain_facts(PROJECT, [t],
+                                      [{"id": t["id"], "label": t["label"],
+                                        "title": t["title"], "what": ["its work merged into main"],
+                                        "finished": True}], 0)
+
+    def test_merge_before_hub_start_is_live(self):
+        facts = self.facts(100, "Needs a hub restart")
+        self.assertIn("this hub process started after the merge, so the work is live", facts)
+        self.assertNotIn("Needs a hub restart", facts)
+        self.assertNotIn("restart is needed", facts)
+
+    def test_merge_after_hub_start_needs_restart(self):
+        facts = self.facts(300)
+        self.assertIn("merge is newer than this hub process, so a restart is needed", facts)
+        self.assertNotIn("so the work is live", facts)
+
+    def test_git_merge_supersedes_old_not_merged_report(self):
+        facts = self.facts(100, "Commits are on main. Not merged.")
+        self.assertIn("work merged into main", facts)
+        self.assertNotIn("Not merged", facts)
+        self.assertNotIn("please confirm", facts)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -306,6 +306,14 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     # here, and never hides the question or completion it followed.
     rep = _d.chatroom.last_real_report(room)
     g = _git_facts(room)
+    merged_at = 0.0
+    if g.get("merged"):
+        # The room records when this exact head reached the base. On the first
+        # check after a merge, _settle_merges has not recorded it yet.
+        if room.get("mergedHead") == g.get("sha"):
+            merged_at = float(room.get("mergedAt") or 0)
+        if not merged_at:
+            merged_at = _merged_at(room.get("cwd", ""), g["base"], g["sha"])
     try:
         ask = _d.attention.open_ask(room) or {}
     except Exception:
@@ -324,6 +332,7 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
         "base": g.get("base", ""),
         "commits": g.get("commits", 0),
         "merged": g.get("merged", False),
+        "mergedAt": merged_at,
         "sha": g.get("sha", ""),
         "lastCommit": g.get("lastCommit", ""),
         "head": g.get("head", ""),
@@ -555,6 +564,12 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             # both "merged" and "not started", and must not be left to guess.
             if t["merged"]:
                 c = f"work merged into {t['base']} (branch {t['branch']}, nothing left to merge)"
+                merged_at = float(t.get("mergedAt") or 0)
+                if _STARTED and merged_at:
+                    if merged_at > _STARTED:
+                        c += "; merge is newer than this hub process, so a restart is needed to load it"
+                    else:
+                        c += "; this hub process started after the merge, so the work is live"
             elif t["commits"]:
                 c = f"{t['commits']} commit(s) on {t['branch']} not yet in {t['base']}"
             else:
@@ -564,7 +579,13 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             bits.append(c)
         # An update (a rotation, a handover) is never mentioned.
         if t["reportKind"] not in ("", "update") and t["id"] in quoted:
-            bits.append(f"report ({t['reportKind']}): {t['reportText']}")
+            # Reports are historical. Once Git says merged, the report's old
+            # merge/deployment wording must not contradict the current facts.
+            if t["merged"] and any(s in t["reportText"].lower() for s in
+                                   ("not merged", "restart", "goes live")):
+                bits.append(f"report ({t['reportKind']}) sent; its old status wording is superseded by current facts")
+            else:
+                bits.append(f"report ({t['reportKind']}): {t['reportText']}")
         lines.append(f"- {name(t)}: " + "; ".join(bits))
     return "\n".join(lines)
 
@@ -579,7 +600,10 @@ _PROMPT = (
     "work. Use ONLY the facts given; never guess or add anything. State only "
     "what the facts say about branches and merges: a task is merged only when "
     "the facts say its work is merged, and never write that work is awaiting a "
-    "merge, a hub restart or a deploy unless the facts say so. Lead with what "
+    "merge, a hub restart or a deploy unless the facts say so. Git's merged "
+    "state and the hub's start relative to that merge override any old report "
+    "wording; never ask to reconcile a report with Git. A merged task is live "
+    "after this hub has started since its merge. Lead with what "
     "finished or changed since the last digest, then call out any task that "
     "needs attention and why. Name each task by its number as the facts give "
     "it (#18), its title after the number; never by a room id. Plain text, at most 8 short lines, no headings, no greeting, "
