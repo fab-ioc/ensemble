@@ -146,6 +146,7 @@ function node(id) {
 const box = { clientHeight: 400, scrollTop: 0,
               querySelectorAll: sel => sel === '.msg[data-mid]' ? drawn.map(node) : [] };
 const $ = s => s === '#msgs' ? box : null;
+function seenLink() {}
 """ + "\n".join([js_function(n) for n in ("openGroupOf", "partOf", "unwrapMarks", "landPending", "markLanded")]) + r"""
 const out = {};
 GOTO = 'm1';

@@ -838,7 +838,7 @@
   .pt-state.delivered, .pt-chip.delivered { color:var(--fg); font-weight:600; }
   #points-list .pt-group { padding:var(--s-200) 0 var(--s-050); color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
   .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
-  /* Needs you (#209): a question card's row is its first line as the link; a
+  /* Needs you (ED-209): a question card's row is its first line as the link; a
      fold's head (Older questions, With the PO, Closed) is a disclosure button
      in the group head's look; "Nothing waits on you" in --fg-muted. */
   .pt-ask .pt-words a.pt-link { white-space:nowrap; }
@@ -3802,7 +3802,9 @@ function pointsSummary(P) {
   if (c.news) bits.push(plural(c.news, 'new answer', 'new answers'));
   if (bits.length) return 'Needs you: ' + bits.join(' · ');
   const folds = (n.olderCount || 0) + (n.closedCount || 0) + P.open + P.planned + P.items.filter(p => p.state === 'delivered').length;
-  return folds || n.pending ? 'Nothing waits on you' : '';
+  // Still reading the question cards with nothing else to fold: no line yet
+  // (it would show "Nothing waits on you" and then go, the chat jumping).
+  return folds ? 'Nothing waits on you' : '';
 }
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 // part: the passage to land on ("re:P12" the answer's paragraph, "pt:P12"
