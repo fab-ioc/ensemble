@@ -138,6 +138,12 @@ def _posix_processes() -> dict[int, tuple[int, str]]:
     return procs
 
 
+def processes() -> dict[int, tuple[int, str]]:
+    """{pid: (parent pid, program name without .exe)} for every process;
+    raises Unknown when the list cannot be read."""
+    return _win_processes() if sys.platform == "win32" else _posix_processes()
+
+
 # ---- the question ----------------------------------------------------------------
 
 def owner(client: tuple[str, int], server: tuple[str, int]) -> int | None:

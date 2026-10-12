@@ -111,6 +111,7 @@ import asks
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
 # The person's sends: each kept by its key until the agent's conversation shows it.
+import restart_drain
 import sends
 # A project's Documents folder: its tasks' reports, newest first.
 import project_docs
@@ -161,6 +162,7 @@ rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
+restart_drain.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
 attention.install()
@@ -1485,6 +1487,9 @@ _SETTINGS_DEFAULTS = {
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
+    # A restart at a safe point (restart_drain.py): how long the hub waits for
+    # every working agent to reach one before it restarts anyway.
+    "restartDrainMinutes": restart_drain.DEFAULT_DEADLINE_MIN,
     # Pace each agent kind's 7-day allowance and compare weighted spare
     # capacity per hour until each kind's own reset (ED-203).
     "paceWeek": True,
@@ -2196,6 +2201,12 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(5, min(1440, v))
+        if k == "restartDrainMinutes":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(restart_drain.MIN_DEADLINE_MIN, min(restart_drain.MAX_DEADLINE_MIN, v))
         if k == "attentionStallSeconds":
             try:
                 v = int(v)
@@ -2749,6 +2760,8 @@ RESTART_NOTE_SPEC = (
     "read it again with ensemble_get_task taskId={label} spec=true, then carry on from "
     "where you were: do not start over, act only on what changed, and do not report "
     "the restart.")
+DRAIN_SPEC_NOTE = ("Your spec was amended since you last read it: read it again with "
+                   "ensemble_get_task taskId={label} spec=true first and act only on what changed.")
 SPEC_UNSEEN_NOTE = (
     "[spec] Your spec was amended while your session was not running, and you have "
     "not seen it. Read it again with ensemble_get_task taskId={label} spec=true and "
@@ -3783,6 +3796,7 @@ HUB_INPUT_KINDS = (
     ("[resumed] ", "resumed"),          # RESUME_NOTE
     ("[spec] ", "spec"),                # spec_change_line: the spec was amended under it
     ("[hub restarted] ", "restart"),    # RESTART_NOTE: it was mid-turn at a hub restart
+    ("[hub restart] ", "drain"),        # restart_drain.DRAIN_LINE: reach a safe point
     ("[handover] ", "handover"),        # rotation.py: write your handover now
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
     ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
@@ -14028,14 +14042,14 @@ class Handler(BaseHTTPRequestHandler):
         return launched
 
     def _start_or_resume_room(self, room_full: dict, restart: dict | None = None,
-                              keep_state: bool = False) -> list[dict]:
+                              keep_state: bool = False, notes: dict | None = None) -> list[dict]:
         """``_start_or_resume_room_now`` under the room's launch lock, from the
         room's seats as they are on disk (``_launch_guarded``)."""
         return self._launch_guarded(room_full, self._start_or_resume_room_now, room_full,
-                                    restart=restart, keep_state=keep_state)
+                                    restart=restart, keep_state=keep_state, notes=notes)
 
     def _start_or_resume_room_now(self, room_full: dict, restart: dict | None = None,
-                                  keep_state: bool = False) -> list[dict]:
+                                  keep_state: bool = False, notes: dict | None = None) -> list[dict]:
         """Bring a not-running task up: a draft (never launched) starts fresh,
         anything else relaunches its agents resuming their prior conversations.
         Returns [{identity, ptyId}].
@@ -14044,7 +14058,9 @@ class Handler(BaseHTTPRequestHandler):
         (``_restore_after_restart``), or quietly on request. It maps each agent
         to what it was doing when the hub stopped; one that was mid-turn is
         typed RESTART_NOTE, everyone else — idle, unknown, not listed — is
-        typed nothing at all, the PO and the owner alike. ``{}`` is "nobody"."""
+        typed nothing at all, the PO and the owner alike. ``{}`` is "nobody".
+        ``notes`` (with ``restart``): identity -> its own line after a restart
+        that drained (restart_drain.py), in place of RESTART_NOTE or nothing."""
         agents_in = [pp for pp in room_full.get("participants", [])
                      if pp.get("kind") == "agent"]
         solo = room_full.get("mode") == "solo" or len(agents_in) < 2
@@ -14107,7 +14123,15 @@ class Handler(BaseHTTPRequestHandler):
                     st = restart.get(part["identity"])
                     label = task_label(room_full) or room_full["id"]
                     owner = part["identity"] in own and not is_po
-                    if owner and spec_unseen(room_full, part, st or ""):
+                    own_line = (notes or {}).get(part["identity"], "")
+                    if own_line:
+                        # Its own line: where it said it would carry on, or
+                        # what its screen showed when the restart cut it off.
+                        if owner and spec_unseen(room_full, part, st or ""):
+                            own_line += " " + DRAIN_SPEC_NOTE.format(label=label)
+                            spec_told.append(part["identity"])
+                        notify[part["identity"]] = own_line
+                    elif owner and spec_unseen(room_full, part, st or ""):
                         # Back quietly, but its spec changed under it: told so,
                         # or the amendment reaches no one (#182).
                         notify[part["identity"]] = (
