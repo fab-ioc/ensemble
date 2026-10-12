@@ -452,7 +452,7 @@ class Drain(_Hub):
                 return real(h, it)
             calls.append(1)
             return "no terminal yet" if len(calls) == 1 else real(h, it)
-        with mock.patch.object(rd, "_deliver", flaky), mock.patch.object(rd, "RETRY_S", 0):
+        with mock.patch.object(rd, "_deliver", flaky), mock.patch.object(rd, "HANDOVER_RETRY_S", 0):
             rd.cancel_drain("the dashboard")
             self.join_release()
         self.assertEqual(len(calls), 2)
@@ -474,7 +474,7 @@ class Drain(_Hub):
                 return real(h, it)
             calls.append(1)
             return "the task is gone"
-        with mock.patch.object(rd, "_deliver", gone), mock.patch.object(rd, "RETRY_S", 0):
+        with mock.patch.object(rd, "_deliver", gone), mock.patch.object(rd, "HANDOVER_RETRY_S", 0):
             rd.cancel_drain("the dashboard")
             self.join_release()
         self.assertEqual(len(calls), 3)
@@ -486,6 +486,88 @@ class Drain(_Hub):
         told = [t for t in self.ptys[po_pty].typed if "could not be let go after 3 tries" in t]
         self.assertEqual(len(told), 1)
         self.assertEqual(sends.get(busy, "send:1")["state"], "failed")
+
+    def test_a_restart_nothing_carries_out_is_called_off_after_the_cap(self):
+        # A macOS checkout update: no lease to watch, and nothing stopped the hub.
+        busy = self.room(title="busy")
+        busy_pty = self.running(busy, "claude", "idle")
+        self.lease_id = ""
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        self.assertEqual(rd.current()["state"], "restarting")
+        self.hold_a_send(busy, "send:1", "held while restarting")
+        rd.drain_tick()
+        self.assertTrue(rd.holding())                     # within the cap: still holding
+        st = rd.current()
+        st["restartAt"] = time.time() - rd.restart_cap_s(st) - 1
+        rd.save(st)
+        rd.drain_tick()
+        self.join_release()
+        self.assertEqual(rd.current()["state"], "failed")
+        self.assertIn("still running 300 s after the restart started", rd.current()["outcome"])
+        self.assertFalse(rd.holding())
+        self.assertIn("held while restarting", self.ptys[busy_pty].typed[-1])
+
+    def test_restart_now_while_restarting_is_a_plain_restart_the_drain_follows(self):
+        import ensemble_tools
+        busy = self.room(title="busy")
+        self.running(busy, "claude", "idle")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        self.assertEqual(len(self.restarts), 1)
+        self.assertEqual(rd.force_drain("the dashboard")["ok"], False)     # not draining
+        self.lease_id = "lease-d2"
+        out = ensemble_tools._restart_hub({"room": {"id": self.po}, "identity": "claude"},
+                                          {"when": "now"}, self.handler_obj)
+        self.assertTrue(out["started"])
+        self.assertEqual(self.restarts, [(self.po, True), (self.po, True)])
+        st = rd.current()
+        self.assertEqual((st["state"], st["lease"]), ("restarting", "lease-d2"))
+
+    def test_the_deadline_and_force_hold_when_looking_at_the_agents_fails(self):
+        busy = self.room(title="busy")
+        self.running(busy, "claude", "working")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        with mock.patch.object(rd, "observe_hub", side_effect=RuntimeError("no list")):
+            rd.drain_tick()
+            self.assertEqual(rd.current()["state"], "draining")
+            st = rd.current()
+            st["deadline"] = time.time() - 1
+            rd.save(st)
+            rd.drain_tick()
+        self.assertEqual(rd.current()["state"], "restarting")
+        self.assertEqual(len(self.restarts), 1)
+        self.assertEqual(self.log().count("could not look at the agents"), 1)
+        # Force, the same way.
+        rd.reset()
+        (self.dir / rd.FILE_NAME).unlink()
+        self.restarts.clear()
+        rd.request_restart("y", self.po_by())
+        with mock.patch.object(rd, "observe_hub", side_effect=RuntimeError("no list")):
+            rd.force_drain("the dashboard")
+            rd.drain_tick()
+        self.assertEqual(len(self.restarts), 1)
+
+    def test_an_agent_waiting_for_an_answer_is_ready_and_told_after_the_restart(self):
+        asking = self.room(title="asking")
+        asking_pty = self.running(asking, "claude", "waiting")
+        rd.request_restart("merged #206", self.po_by())
+        rd.drain_tick()
+        self.assertEqual(self.ptys[asking_pty].typed, [])        # nothing typed into its prompt
+        self.assertEqual(rd.current()["state"], "restarting")
+        self.assertEqual(rd.current()["outcome"], "every agent reached a safe point")
+        dashboard.take_restart_snapshot(self.lease_id, wake_room=self.po)
+        path = self.dir / "restart-snapshot.json"
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        snap["hubPid"] = os.getpid() + 1
+        path.write_text(json.dumps(snap), encoding="utf-8")
+        self.hub_stops()
+        self.handler_obj._restore_after_restart(self.lease_id)
+        self.join()
+        self.join_release()
+        self.assertEqual(self.typed(asking)["claude"],
+                         [rd.WAITING_LINE.format(reason="merged #206")])
 
     def test_a_running_review_is_started_again_with_where_it_said_it_would_carry_on(self):
         team = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"], title="team")

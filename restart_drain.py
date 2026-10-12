@@ -61,8 +61,9 @@ TICK_S = 2.0
 # started (its helper preflights, waits, stops the hub). Both hold.
 HOLDING = ("draining", "restarting")
 # ready: it called the tool; idle: idle when looked at, never told, typed
-# nothing; stopped: its terminal ended.
-READY_STATES = ("ready", "idle", "stopped")
+# nothing; stopped: its terminal ended; waiting: a question or prompt of its
+# is up (it asked the CEO or its PO): a clean step, and its answer is held.
+READY_STATES = ("ready", "idle", "stopped", "waiting")
 
 DRAIN_PREFIX = "[hub restart] "
 DRAIN_LINE = (
@@ -73,6 +74,9 @@ DRAIN_LINE = (
     "you can rerun.")
 RESUME_LINE = ("[hub restarted] The hub restarted for {reason}. You said you would next: "
                "{next}. Carry on from there.")
+WAITING_LINE = ("[hub restarted] The hub restarted for {reason} while you were waiting for an "
+                "answer, and the question or prompt on your screen is gone. An answer that came "
+                "meanwhile follows this line; if none does, ask again.")
 CANCEL_READY_LINE = (DRAIN_PREFIX + "The restart was called off ({why}): nothing was "
                      "restarted. Carry on with what you said you would do next: {next}.")
 CANCEL_TOLD_LINE = (DRAIN_PREFIX + "The restart was called off ({why}): nothing was "
@@ -358,6 +362,30 @@ def holding() -> bool:
     return bool(st and st.get("state") in HOLDING)
 
 
+def draining() -> bool:
+    """A drain is waiting for agents: Restart now forces it."""
+    st = current()
+    return bool(st and st.get("state") == "draining")
+
+
+def restart_now(room_id: str = "") -> dict:
+    """``when: "now"`` after the drain went to restart (its helper hung, or
+    there is none to watch): a plain restart. When it starts, the drain
+    follows its lease, so the hub that comes back closes it and types each
+    agent its line."""
+    res = _d.trigger_restart(room_id, drain=True)
+    if res.get("started") and res.get("leaseId"):
+        with LOCK:
+            st = current()
+            if st and st.get("state") == "restarting":
+                now = time.time()
+                st.update(lease=res["leaseId"], startedAt=now, restartAt=now, retryAt=0.0,
+                          error="", hubPid=os.getpid(), hubPort=_d.HUB_PORT)
+                save(st)
+        _log("a restart now took over the one under way")
+    return res
+
+
 def try_hold(item: dict, ready_only: tuple[str, str] | None = None) -> bool:
     """Hold ``item`` for after the restart when a drain is under way (under
     the lock, so a drain that just ended takes nothing more). ``ready_only``
@@ -405,7 +433,9 @@ LEASE_GONE_S = 5                # the lease gone this long after the start: the 
 RESTORE_WAIT_S = 600            # a hub back on the port waits this long for the helper's restore
 CANCEL_RELEASE_S = 60           # a hub that died mid-drain lets go this long after it is back
 MAX_TRIES = 3                   # a held item not handed over: tried this often, then failed
-RETRY_S = 30                    # between those tries
+HANDOVER_RETRY_S = 30           # between those tries
+UPDATE_CAP_S = 1800             # the app updater (it downloads first) gets this long to stop the hub
+_OBSERVE_ERROR = ""              # the last error looking at the agents (logged once)
 
 
 def _log(msg: str) -> None:
@@ -644,13 +674,24 @@ def drain_tick() -> None:
 
 
 def _tick_draining() -> None:
-    seen = observe_hub()
+    global _OBSERVE_ERROR
+    try:
+        seen = observe_hub()
+    except Exception as e:      # noqa: BLE001 — the deadline and a force still count
+        seen = None
+        if repr(e) != _OBSERVE_ERROR:
+            _log(f"could not look at the agents: {e!r}; the deadline and Restart now still hold")
+        _OBSERVE_ERROR = repr(e)
+    else:
+        _OBSERVE_ERROR = ""
+    tell = []
     with LOCK:
         st = current()
         if not st or st.get("state") != "draining":
             return
-        tell = observe(st, seen, time.time())
-        save(st)
+        if seen is not None:
+            tell = observe(st, seen, time.time())
+            save(st)
     for k in tell:
         ob = seen[k]
         if _type(ob["roomId"], ob["identity"], DRAIN_LINE):
@@ -750,11 +791,25 @@ def _launch() -> None:
     end_drain("failed", res.get("error") or "the restart did not start")
 
 
+def restart_cap_s(st: dict) -> float:
+    """How long the hub that drained waits, after the drain went to restart,
+    for something to stop it; then nothing will (no lease to watch: a macOS
+    checkout update; a helper hung or gone with its lease) and the drain is
+    called off rather than holding everything for good."""
+    return (UPDATE_CAP_S if st.get("action") == "update" and _d.app_version.packaged()
+            else _d.RESTART_BUSY_S + 120)
+
+
 def _tick_restarting() -> None:
     st = current()
     if not st or os.getpid() != st.get("hubPid"):
         return
     now = time.time()
+    cap = restart_cap_s(st)
+    if now - (st.get("restartAt") or now) > cap:
+        end_drain("failed", f"the hub was still running {int(cap)} s after the restart started "
+                            f"(see restart.log)")
+        return
     if not st.get("startedAt"):
         if st.get("retryAt") and now >= st["retryAt"]:
             _launch()
@@ -860,7 +915,7 @@ def _resuming(room_id: str) -> bool:
 
 def _release_one(h, it: dict) -> None:
     """Let go of one item. It leaves the file only once it was handed over;
-    a failed try is retried ``RETRY_S`` later, ``MAX_TRIES`` times in all
+    a failed try is retried ``HANDOVER_RETRY_S`` later, ``MAX_TRIES`` times in all
     (the count is on file, so a hub that stops in between goes on counting);
     then it is moved to ``failed``, logged, and the PO told once."""
     hid = it.get("hid")
@@ -897,10 +952,10 @@ def _release_one(h, it: dict) -> None:
         _give_up(h, st or {}, it, why)
         return
     _log(f"could not let go of a {it.get('kind')} for {it.get('roomId')} "
-         f"(try {tries} of {MAX_TRIES}): {why}; again in {RETRY_S} s")
+         f"(try {tries} of {MAX_TRIES}): {why}; again in {HANDOVER_RETRY_S} s")
 
     def again():
-        time.sleep(RETRY_S)
+        time.sleep(HANDOVER_RETRY_S)
         _release_one(h, it)
     threading.Thread(target=again, daemon=True, name="restart-drain-retry").start()
 
@@ -1004,6 +1059,9 @@ def restore_notes(lease: str) -> tuple[dict | None, dict]:
             continue
         if a["state"] == "ready":
             notes.setdefault(a["roomId"], {})[a["identity"]] = resume_line(st, a)
+        elif a["state"] == "waiting":
+            notes.setdefault(a["roomId"], {})[a["identity"]] = WAITING_LINE.format(
+                reason=reason_text(st))
         elif a.get("interrupted"):
             line = _d.RESTART_NOTE
             if a.get("screen"):

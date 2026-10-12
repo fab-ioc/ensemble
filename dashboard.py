@@ -15809,8 +15809,15 @@ class Handler(BaseHTTPRequestHandler):
             if refusal:
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
-            result = restart_drain.force_drain(self._drain_requester()["label"])
-            self._send_json(202 if result["ok"] else 409, {"started": result["ok"], **result})
+            if restart_drain.draining():
+                result = restart_drain.force_drain(self._drain_requester()["label"])
+                self._send_json(202 if result["ok"] else 409, {"started": result["ok"], **result})
+                return
+            # The drain went to restart and nothing stopped the hub yet: a
+            # plain restart now, which the drain follows.
+            resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
+            result = restart_drain.restart_now(resolved[0] if resolved else "")
+            self._send_json(result.pop("status"), result)
             return
         if p == "/api/restart/drain":
             # Restart now / Cancel for a drain under way: the page, or a PO

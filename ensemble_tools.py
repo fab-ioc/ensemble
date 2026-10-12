@@ -1994,13 +1994,15 @@ def _restart_hub(ctx, args, handler):
     when = str(args.get("when") or "safe").lower()
     if when not in ("safe", "now"):
         raise ToolError('when is "safe" or "now"')
-    if when == "now" and _d.restart_drain.holding():
+    if when == "now" and _d.restart_drain.draining():
         res = _d.restart_drain.force_drain(by["label"])
         if not res["ok"]:
             raise ToolError(res.get("error") or "the restart is already under way")
         return {"ok": True, "forced": True, "drain": res["drain"]}
     if when == "safe":
         res = _d.restart_drain.request_restart(str(args.get("reason") or ""), by, "restart")
+    elif _d.restart_drain.holding():
+        res = _d.restart_drain.restart_now(ctx["room"]["id"])
     else:
         res = _d.trigger_restart(ctx["room"]["id"])
     res.pop("status", None)
