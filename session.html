@@ -761,7 +761,7 @@
   body.thread #chatbar, body.thread #points-line, body.thread #ask-line { display:none; }
   #thr-also-l { display:inline-flex; align-items:center; gap:var(--s-100); color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; white-space:nowrap; }
   #thr-back { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }
-  @media (pointer: coarse) {
+  @media (pointer:coarse) {
     .thr-open, .thr-more-btn, #whole-chat, #thr-back, #thr-also-l { min-height:var(--touch-min); }
     #thr-also-l input { width:20px; height:20px; }
     .msg .from .thr-reply { clip-path:none; min-height:var(--touch-min); }
@@ -4889,6 +4889,13 @@ function landPending() {
       renderBubbles(LAST_ITEMS, { anchor: row });
       el = find('.msg[data-mid]');
     }
+    if (!el && threadedView() && !THREAD_MODE && THR_DRAWN) {
+      // A reply the channel does not show (#210): the whole chat, for this visit, then land.
+      WHOLE_FOR_LINK = true;
+      showWholeBtn();
+      renderSolo(SOLO_SID, SOLO_AGENT, true);
+      return;
+    }
     if (!el) {
       // A turn of a solo transcript older than the chat shows: draw back to it.
       // A line read while the agent was busy (":q<n>") has no place in the
@@ -4938,8 +4945,10 @@ function markLanded(el) {
   const box = $('#msgs');
   if (!el) {
     const msg = box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid);
-    if (msg && LANDED.part && !msg.querySelector('.landed')) el = partOf(msg, LANDED.part) || msg;
-    else el = msg;
+    if (msg && LANDED.part) {
+      if (msg.querySelector('.landed')) return;   // its passage still carries the mark
+      el = partOf(msg, LANDED.part) || msg;
+    } else el = msg;
   }
   if (!el || el.classList.contains('landed')) return;
   el.style.animationDelay = age ? -age + 'ms' : '';
@@ -5637,7 +5646,8 @@ function replyInThreadHtml(m) {
   return `<button type="button" class="thr-reply" data-mid="${esc(m.id)}" title="Reply to this message in a thread of its own">Reply in thread</button>`;
 }
 function toggleWhole() {
-  WHOLE = !WHOLE;
+  // Shown for a link only: the switch goes back to the threads.
+  if (!(WHOLE_FOR_LINK && !WHOLE)) WHOLE = !WHOLE;
   WHOLE_FOR_LINK = false;
   try { localStorage.setItem('cd-chat-whole', WHOLE ? '1' : '0'); } catch (e) {}
   THR_SIG = ''; SOLO_TURN_COUNT = -1; _soloStatKey = '';
