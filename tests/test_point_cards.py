@@ -26,6 +26,8 @@ class Resolver(Hub):
         self.addCleanup(points._CACHE.clear)
         asks._ROOM_CACHE.clear()
         self.addCleanup(asks._ROOM_CACHE.clear)
+        for kept in (asks._CARDS, asks._SID_CARDS):
+            kept.clear(); self.addCleanup(kept.clear)
         self.rid = self.room('PO', self.ed)
         p = mock.patch.object(points, 'sync', side_effect=lambda rid, **k: points.load(rid))
         p.start(); self.addCleanup(p.stop)
@@ -100,6 +102,45 @@ class Resolver(Hub):
         full['workflow'] = 'done'
         chatroom.update_room(full)
         self.assertFalse(self.card()['open'])
+
+    def test_each_point_gets_its_own_question_of_one_card(self):
+        self.say('both', 120, 'Re P5: the legs.\n\nAsk: First?\n- A\n- B\n\nRe P6: the stops.\n\nAsk: Second?\n- C\n- D')
+        with mock.patch.object(asks, 'message_asks', wraps=asks.message_asks) as read:
+            self.assertEqual(self.card('P5'), {'mid': 'both', 'n': 0, 'question': 'First?', 'open': True})
+            self.assertEqual(self.card('P6'), {'mid': 'both', 'n': 1, 'question': 'Second?', 'open': True})
+        self.assertEqual(read.call_count, 1, 'the room is read once for both chips')
+        self.answer('both', 1)
+        self.assertTrue(self.card('P5')['open'])
+        self.assertEqual(self.card('P6'), {'mid': 'both', 'n': 1, 'question': 'Second?', 'open': False})
+
+    def test_stored_card_pairs_heads_and_asks_in_order(self):
+        two = ASK_A + [{**ASK_A[0], 'n': 1, 'question': 'And then?'}]
+        self.say('pair', 120, 'Re P5 (legs).\n\nRe P6 (stops).', two)
+        self.assertEqual(self.card('P5')['n'], 0)
+        self.assertEqual(self.card('P6'), {'mid': 'pair', 'n': 1, 'question': 'And then?', 'open': True})
+
+    def test_one_head_for_several_points_and_code_is_no_head(self):
+        self.say('list', 120, 'Re P5, P6 (both legs).', ASK_A)
+        self.assertEqual(self.card('P6')['mid'], 'list')
+        self.say('code', 130, 'An example:\n\n    Re P5 (in code)\n', ASK_A)
+        self.say('fence', 131, '```\nRe P5 (in code)\n```', ASK_A)
+        self.assertEqual(self.card()['mid'], 'list')
+
+    def test_card_in_a_session_the_chat_rotated_out_of(self):
+        full = chatroom.get_room(self.rid, public=False)
+        full['mode'] = 'solo'
+        for p in full['participants']:
+            if p.get('identity') == 'claude':
+                p['rotations'] = [{'fromSessionId': 'old', 'toSessionId': ''}]
+        chatroom.update_room(full)
+        text = 'Re P5 (the legs).\n\nAsk: Which one?\n- A\n- B'
+        turns = {'old:3': {'role': 'assistant', 'text': text, 'timestamp': '1970-01-01T00:02:10Z'}}
+        for target, fake in ((dashboard, {'solo_turns': lambda room, sid: turns if sid == 'old' else {}}),
+                             (points, {'_session_stat': lambda sid: [1, 1]})):
+            for name, f in fake.items():
+                p = mock.patch.object(target, name, side_effect=f)
+                p.start(); self.addCleanup(p.stop)
+        self.assertEqual(self.card(), {'mid': 'old:3', 'n': 0, 'question': 'Which one?', 'open': True})
 
     def test_endpoint_carries_the_card(self):
         self.say('later', 120, 'Re P5 (legs).', ASK_A)

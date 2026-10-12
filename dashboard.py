@@ -3561,6 +3561,21 @@ def _session_input_context(sid: str) -> tuple[str, str]:
     return "", ""
 
 
+def note_session_owners(room: dict) -> None:
+    """Remember the room and seat of each of a room's agent conversations, as
+    _session_input_context would find them: a pass over a chat's old
+    sessions (#206) then reads each transcript without listing every room."""
+    rid = str(room.get("id") or "")
+    with _SESSION_INPUT_CONTEXT_LOCK:
+        for part in chatroom.agent_participants(room):
+            for sid in chatroom.agent_conversations(part):
+                key = str(chatroom.ROOMS_DIR), sid
+                if key not in _SESSION_INPUT_CONTEXT_CACHE:
+                    _SESSION_INPUT_CONTEXT_CACHE[key] = rid, str(part.get("identity") or "")
+        while len(_SESSION_INPUT_CONTEXT_CACHE) > _SESSION_INPUT_CONTEXT_MAX:
+            _SESSION_INPUT_CONTEXT_CACHE.pop(next(iter(_SESSION_INPUT_CONTEXT_CACHE)))
+
+
 def _linked_input_context(pid: int) -> tuple[str, str, str]:
     """Room, seat and session for a visible terminal adopted by a room."""
     for room in chatroom.list_rooms():

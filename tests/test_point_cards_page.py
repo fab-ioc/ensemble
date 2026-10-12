@@ -35,6 +35,7 @@ async function main() {
         const r = await send('Runtime.evaluate', {expression, returnByValue:true, awaitPromise:true});
         if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value;
       };
+      const chip = "#msgs .msg[data-mid='"+A.status+"'] .point-chip";
       const until = async expr => { for (let i=0;i<160;i++) { if(await ev(expr)) return; await sleep(150); } throw Error('timeout '+expr+' '+await ev('document.body.innerText.slice(-1600)')); };
       const press = async sel => {
         const p = await ev(`(() => {const a=document.querySelector(${JSON.stringify(sel)}); if(!a.closest('.task-card')) a.scrollIntoView({block:'center'}); const b=a.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2};})()`);
@@ -42,17 +43,26 @@ async function main() {
         else for (const type of ['mousePressed','mouseReleased']) await send('Input.dispatchMouseEvent', {type,...p,button:'left',clickCount:1});
         await sleep(150);
       };
+      // A click on a control that just moved is not taken: wait
+      // for the chip to settle, and press again if its card did not open.
+      const openCard = async () => {
+        for (let k = 0; k < 4; k++) {
+          await ev(`document.querySelector(${JSON.stringify(chip)}).scrollIntoView({block:'center'})`);
+          await sleep(700);
+          await press(chip);
+          for (let i = 0; i < 20; i++) { if (await ev("!!document.querySelector('.task-card .tc-link')")) return; await sleep(150); }
+        }
+        throw Error('the chip never opened its card');
+      };
       const shot = async name => {if(A.shots) { const r=await send('Page.captureScreenshot',{format:'png'}); fs.writeFileSync(path.join(A.shots,`pointcard-${width}-${name}.png`),Buffer.from(r.data,'base64')); }};
       // Where the landed mark is, against the chat's middle.
       const landed = () => ev(`(() => {const box=document.querySelector('#msgs'), el=document.querySelector('#msgs .landed'); if(!el) return null;
         const b=box.getBoundingClientRect(), r=el.getBoundingClientRect();
         return {mid:LANDED.mid, part:LANDED.part, qa:el.matches('.qa'), ask:el.dataset.ask||'', off:Math.round((r.top+r.height/2)-(b.top+b.height/2)), seen:r.top>=b.top-1 && r.bottom<=b.bottom+1};})()`);
       await send('Page.navigate', {url:A.base+'/session?room='+A.room});
-      const chip = "#msgs .msg[data-mid='"+A.status+"'] .point-chip";
       await until(`typeof CHAT_DRAWN !== 'undefined' && CHAT_DRAWN && document.querySelectorAll(${JSON.stringify(chip)}).length >= 2`);
       const chips = await ev(`[...document.querySelectorAll(${JSON.stringify(chip)})].map(a => ({msg:a.dataset.refMsg, part:a.dataset.refPart}))`);
-      await press(chip);
-      await until("!!document.querySelector('.task-card .tc-link')");
+      await openCard();
       await shot('card');
       const card = await ev(`(() => {const c=document.querySelector('.task-card'),r=c.getBoundingClientRect();
         return {links:[...c.querySelectorAll('.tc-link')].map(a => ({text:a.textContent, msg:a.dataset.refMsg, part:a.dataset.refPart, h:Math.round(a.getBoundingClientRect().height)})),
@@ -62,8 +72,7 @@ async function main() {
       await shot('question');
       const toCard = await landed();
       await sleep(2700);
-      await press(chip);
-      await until("!!document.querySelector('.task-card .tc-link')");
+      await openCard();
       await press('.task-card .tc-link:nth-child(2)');
       await until(`LANDED && LANDED.mid === '${A.his}' && document.querySelector('#msgs .landed')`);
       await shot('his');

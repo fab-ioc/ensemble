@@ -787,9 +787,119 @@ def _approved_settles(room_id: str, mid: str, n: int) -> bool:
 # ---------------------------------------------------------------------------
 
 # A paragraph that starts "Re P499", whatever follows: "Re P499:", "Re P499
-# (the leg limit in #240).", "**Re P511 item 8**". An ensemble_ask message is
-# often only that line over its card.
-_RE_POINT = re.compile(r"^[ \t]*(?:[-*+][ \t]+)*(?:\*\*|__)?[ \t]*re[ \t]+(P\d{1,5}[a-z]?)(?![\w])", re.I | re.M)
+# (the leg limit in #240).", "**Re P511 item 8**", "Re P5, P6", "### Re P7".
+# An ensemble_ask message is often only that line over its card. Four spaces
+# without a list mark are an indented code block, an example.
+_RE_POINT = re.compile(r"^(?:[ \t]*[-*+][ \t]+|[ ]{0,3})(?:[-*+][ \t]+|#{1,6}[ \t]+)*(?:(?:\*\*|__)[ \t]*)?re[ \t]+"
+                       r"(P\d{1,5}[a-z]?(?:[ \t]*(?:,|&|/|and)[ \t]*P\d{1,5}[a-z]?)*)(?![\w])", re.I)
+_POINT_ID = re.compile(r"P\d{1,5}[a-z]?", re.I)
+_CARDS: dict[str, tuple] = {}   # room id → (signature, {mid: (ts, [questions], {pid: [n]})})
+_SID_CARDS: dict[str, tuple] = {}   # sid → (stat, [(mid, ts, [questions], {pid: [n]})])
+
+
+def _heads(text: str) -> list[tuple[int, list[str]]]:
+    """The ``Re Pn`` paragraph heads of a balloon: ``[(line, [pid])]``, in
+    prose only (not quoted, not in code)."""
+    out = []
+    for i, ln in enumerate(_d.points._prose(text).split("\n")):
+        m = _RE_POINT.match(ln)
+        if m:
+            out.append((i, [p.upper() for p in _POINT_ID.findall(m.group(1))]))
+    return out
+
+
+def _asks_by_point(text: str, qs: list) -> dict[str, list[int]]:
+    """Which of a card's asks each ``Re Pn`` head of it holds: the asks
+    written under that head, up to the next one. A card whose asks are not
+    in its words (an ensemble_ask card) pairs its heads and asks in order
+    when they are as many; otherwise each head holds every ask."""
+    heads = _heads(text)
+    every = list(range(len(qs)))
+    if not heads:
+        return {}
+    lines = text.split("\n")
+    cuts = [h[0] for h in heads] + [len(lines)]
+    counts = [len(parse("\n".join(lines[:cuts[0]])))]
+    counts += [len(parse("\n".join(lines[cuts[k]:cuts[k + 1]]))) for k in range(len(heads))]
+    out: dict[str, list[int]] = {}
+    if sum(counts) == len(qs) and sum(counts[1:]):
+        at = counts[0]
+        for k, (_line, pids) in enumerate(heads):
+            mine = list(range(at, at + counts[k + 1]))
+            at += counts[k + 1]
+            for pid in pids:
+                out.setdefault(pid, []).extend(mine)
+    elif len(heads) == len(qs):
+        for k, (_line, pids) in enumerate(heads):
+            for pid in pids:
+                out.setdefault(pid, []).append(k)
+    else:
+        for _line, pids in heads:
+            for pid in pids:
+                out[pid] = every
+    return {pid: sorted(set(ns)) or every for pid, ns in out.items()}
+
+
+def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
+    """A solo chat session's cards, as :func:`_session_asks` finds them, with
+    the points they say ``Re`` to; one read of the transcript, kept while it
+    is unchanged (a rotated-out session never changes)."""
+    if _d.room_po_id(room):
+        return []
+    st = _d.points._session_stat(sid)
+    hit = _SID_CARDS.get(sid)
+    if hit is not None and st is not None and hit[0] == st:
+        return hit[1]
+    found = []
+    for mid, t in (_d.solo_turns(room, sid) or {}).items():
+        if t.get("role") == "user":
+            continue
+        text = t.get("text") or ""
+        x = _marked(mid, _d._turn_epoch(t.get("timestamp")), text, who)
+        if x:
+            found.append((mid, x[1], x[2], _asks_by_point(text, x[2])))
+    if st is not None:
+        _SID_CARDS[sid] = (st, found)
+    return found
+
+
+def _room_cards(summary: dict) -> tuple[dict, set]:
+    """A room's question cards with the points they say ``Re`` to:
+    ``{mid: (ts, [questions], {pid: [ask n]})}``, its asks of every session
+    (also those the chat has rotated out of), and the sessions read. Read
+    once per room and kept while the room and its current transcripts are
+    unchanged (a rotated-out one never changes): a chat full of point chips
+    asks for each point, and every one reads this."""
+    rid = summary.get("id", "")
+    room = _d.chatroom.get_room(rid)
+    if room is None:
+        return {}, set()
+    sids, current = [], []
+    if (room.get("mode") or "") == "solo":
+        for p in _d.chatroom.agent_participants(room):
+            current.append((p.get("sessionId") or "").strip())
+            for sid in [p.get("sessionId")] + [r.get(k) for r in p.get("rotations") or []
+                                               for k in ("fromSessionId", "toSessionId")]:
+                sid = (sid or "").strip()
+                if sid and sid not in [s for s, _w in sids]:
+                    sids.append((sid, p.get("identity") or ""))
+    sig = (room.get("updatedAt"), len(room.get("messages") or []), tuple(s for s, _w in sids),
+           tuple(tuple(_d.points._session_stat(sid) or ()) for sid in current if sid))
+    hit = _CARDS.get(rid)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    if sids:
+        _d.note_session_owners(room)
+    texts = {m.get("id"): m.get("text") or "" for m in room.get("messages") or []}
+    cards = {}
+    for mid, ts, qs, _who in message_asks(room):
+        cards.setdefault(mid, (ts, qs, _asks_by_point(texts.get(mid) or "", qs)))
+    for sid, who in sids:
+        for mid, ts, qs, by_point in _session_cards(room, sid, who):
+            cards.setdefault(mid, (ts, qs, by_point))
+    out = (cards, set(texts) | {s for s, _w in sids})
+    _CARDS[rid] = (sig, out)
+    return out
 
 
 def point_card(summary: dict, point: dict) -> dict | None:
@@ -797,49 +907,44 @@ def point_card(summary: dict, point: dict) -> dict | None:
     message with asks that answers it (one of its answers, as the points
     ledger keeps them) or that says ``Re Pn`` at the head of a paragraph,
     sent after it. ``{mid, n, question, ts, open}``: the newest one still
-    waiting (``open``: an ask of it has no answer and no approval in the
-    ledger; ``n`` the first such ask), else the newest answered one, else
-    None. Nothing is recorded: the tie is read from the ledger's answers and
-    the card's own words, which the hub already keeps. A Done task's card
-    waits for nobody, as in :func:`open_by_room`."""
-    rid, pid = summary.get("id", ""), point.get("id", "")
+    waiting (``open``: an ask of it for this point has no answer and no
+    approval in the ledger; ``n`` the first such ask), else the newest
+    answered one, else None. A card that holds several points' questions
+    under their ``Re`` heads waits on each for its own. Nothing is recorded:
+    the tie is read from the ledger's answers and the card's own words, which
+    the hub already keeps. A Done task's card waits for nobody, as in
+    :func:`open_by_room`."""
+    rid, pid = summary.get("id", ""), (point.get("id") or "").upper()
     if not pid:
         return None
-    marked = list(_room_asks(summary))
+    cards, read = _room_cards(summary)
     answers = {a["mid"]: float(a.get("at") or 0) for a in point.get("answers") or [] if a.get("mid")}
-    # An answer in a session the chat has rotated out of is not among the
-    # room's asks (those are its current sessions'): read it on its own.
-    seen = {m[0] for m in marked}
-    for mid, at in answers.items():
-        if mid not in seen:
-            found = balloon_asks(rid, mid)
-            if found:
-                marked.append((mid, at, [a["question"] for a in found], ""))
-    if not marked:
-        return None
     since = float(point.get("createdAt") or 0)
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     over = _d.normalize_workflow(summary.get("workflow")) == "done"
-    cache: dict = {}
     best = None
-    for mid, ts, qs, _who in marked:
-        if mid not in answers:
-            if not ts or ts < since:
+    for mid in set(answers) | {m for m, c in cards.items() if pid in c[2]}:
+        if mid in cards:
+            ts, qs, by_point = cards[mid]
+        elif mid in read or mid.rpartition(":")[0] in read:
+            continue    # read with the room: it asks nothing
+        else:
+            # In none of the room's sessions as it lists them: read it on its own.
+            found = balloon_asks(rid, mid)
+            if not found:
                 continue
-            try:
-                text = _d.points._balloon_text(rid, mid, cache) or ""
-            except Exception:       # noqa: BLE001 — a balloon that cannot be read follows nothing
-                continue
-            if pid.lower() not in {m.lower() for m in _RE_POINT.findall(_d.points._prose(text))}:
-                continue
+            ts, qs, by_point = answers[mid], [a["question"] for a in found], {}
+        if mid not in answers and (not ts or ts < since):
+            continue
+        mine = by_point.get(pid) or list(range(len(qs)))
         got = done.get(mid) or {}
-        waiting = [n for n in range(len(qs)) if str(n) not in got
+        waiting = [n for n in mine if str(n) not in got
                    and not (mid in approved and _approved_settles(rid, mid, n))]
-        n = waiting[0] if waiting else 0
+        n = waiting[0] if waiting else mine[0]
         card = {"mid": mid, "n": n, "question": qs[n] if n < len(qs) else "", "ts": ts,
                 "open": bool(waiting) and not over}
-        if best is None or (card["open"], ts) >= (best["open"], best["ts"]):
+        if best is None or (card["open"], ts, mid) >= (best["open"], best["ts"], best["mid"]):
             best = card
     return best
 
