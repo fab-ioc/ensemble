@@ -90,6 +90,7 @@ import re
 import subprocess
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import due
@@ -251,9 +252,12 @@ def _git_facts(room: dict) -> dict:
     return out
 
 
+@lru_cache(maxsize=4096)
 def _merged_at(cwd: str, base: str, sha: str) -> float:
     """When ``base`` first held ``sha``, from the base's reflog; 0 when it
-    cannot tell (no reflog, or the merge is older than what it keeps)."""
+    cannot tell (no reflog, or the merge is older than what it keeps). Cache
+    both answers for this hub process: old merged heads are checked on every
+    digest, but their reflog answer cannot change during that process."""
     later = set(_d._git_out(cwd, "rev-list", "--ancestry-path", f"{sha}..{base}").split())
     later.add(sha)
     at = 0.0

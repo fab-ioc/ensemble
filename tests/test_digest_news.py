@@ -388,6 +388,26 @@ class MergeAndHubStart(unittest.TestCase):
         self.assertIn("Useful detail", digest._report_context(facts))
         self.assertNotIn("Needs a hub restart", digest._report_context(facts))
 
+    def test_second_pass_for_unknown_merge_time_runs_no_git(self):
+        room = {"id": "room-4", "cwd": "repo"}  # no recorded merge time
+        git = {"merged": True, "sha": "abc1234567", "base": "main",
+               "branch": "sess/motor", "commits": 0, "head": "abc1234"}
+        digest._merged_at.cache_clear()
+        self.addCleanup(digest._merged_at.cache_clear)
+        with (mock.patch.object(digest, "_git_facts", return_value=git),
+              mock.patch.object(digest._d, "_git_out", return_value="") as git_out,
+              mock.patch.object(digest._d.chatroom, "last_real_report", return_value={}),
+              mock.patch.object(digest._d.attention, "open_ask", return_value={}),
+              mock.patch.object(digest._d.ensemble_tools, "_title", return_value="Motor spec"),
+              mock.patch.object(digest._d.ensemble_tools, "_status", return_value="stopped"),
+              mock.patch.object(digest._d, "workflow_of", return_value="done"),
+              mock.patch.object(digest._d, "task_label", return_value="#4"),
+              mock.patch.object(digest, "_idle_seconds", return_value=0)):
+            self.assertEqual(digest._task_facts(room, {}, {}, 200)["mergedAt"], 0)
+            self.assertEqual(git_out.call_count, 2)
+            self.assertEqual(digest._task_facts(room, {}, {}, 201)["mergedAt"], 0)
+            self.assertEqual(git_out.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
