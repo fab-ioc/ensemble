@@ -128,14 +128,39 @@ class Closing(_World):
         with mock.patch.object(points, "task_lookup", return_value=lookup):
             p1, _ = self.answered(rid, "Is #26 merged?", "yes")
             p2, _ = self.answered(rid, "Is #27 merged?", "yes", at=self.t0 + 10)
+            answered_at = self.point(rid, p1)["stateAt"]
             _out, ids = self.send(rid, "Now #26 breaks on start", key="k9", at=self.t0 + 20)
             self.assertEqual(self.point(rid, p1)["ackedBy"], "superseded")
             self.assertEqual(self.point(rid, p1)["supersededBy"], ids[0])
             self.assertEqual(self.point(rid, p2)["state"], "delivered")
-            # The send taken back: what it closed is answered again.
+            # The send taken back: what it closed is answered again, since when it was.
             points.discard(rid, ids, key="k9")
             self.assertEqual(self.point(rid, p1)["state"], "delivered")
             self.assertNotIn("ackedBy", self.point(rid, p1))
+            self.assertEqual(self.point(rid, p1)["stateAt"], answered_at)
+
+    def test_an_answer_after_the_later_point_on_its_task_is_not_superseded(self):
+        # P1 asks for a fix on #104; P2, later, is planned on #104; then P1 is
+        # answered. The sync that records the answer must not close it as
+        # superseded: P2 came before the answer, the answer still waits.
+        rid = self.solo_room()
+        lookup = lambda ref: {"roomId": "room-104"} if ref == "#104" else None
+        with mock.patch.object(points, "task_lookup", return_value=lookup):
+            out1, ids1 = self.send(rid, "Fix X in #104", at=self.t0)
+            self.add("sid-1", turn("user", out1, self.t0 + 1))
+            out2, ids2 = self.send(rid, "And Y on #104", key="k2", at=self.t0 + 10)
+            self.add("sid-1", turn("user", out2, self.t0 + 11),
+                     turn("assistant", f"Re {ids2[0]} (planned #104): starting on it", self.t0 + 12))
+            points.sync(rid, force=True)
+            self.assertEqual(self.point(rid, ids2[0])["state"], "planned")
+            self.add("sid-1", turn("assistant", f"Re {ids1[0]}: done, please try it now in the panel", self.t0 + 20))
+            points.sync(rid, force=True)
+            p1 = self.point(rid, ids1[0])
+            self.assertEqual(p1["state"], "delivered", p1.get("ackedBy"))
+            self.assertEqual(points.needs_you(p1), "try")
+            # A point on #104 made after the answer still supersedes it.
+            self.send(rid, "Now #104 breaks on start", key="k3", at=self.t0 + 30)
+            self.assertEqual(self.point(rid, ids1[0])["ackedBy"], "superseded")
 
     def test_reopen_an_auto_closed_point(self):
         rid = self.solo_room()

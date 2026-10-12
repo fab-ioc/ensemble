@@ -1356,7 +1356,7 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
             # Closed by itself (Needs you's Closed fold): its answer is new again.
             _set_state(p, "delivered", now)
             p["reopenedAt"] = now
-            for k in ("ackedBy", "seenKey", "seenAt", "seenHow", "autoKey", "autoAt", "supersededBy"):
+            for k in ("ackedBy", "seenKey", "seenAt", "seenHow", "autoKey", "autoAt", "autoFrom", "supersededBy"):
                 p.pop(k, None)
         elif action == "reopen" and st in ("acked", "dropped", "followed"):
             _set_state(p, "open", now)
@@ -1528,6 +1528,7 @@ def is_seen(p: dict) -> bool:
 
 
 def _auto_close(p: dict, reason: str, now: float, key: str = "", by: str = "") -> None:
+    p["autoFrom"] = p.get("stateAt") or 0     # put back if the send is taken back
     _set_state(p, "acked", now)
     p["ackedBy"] = reason
     p["autoAt"] = p["stateAt"]
@@ -1632,7 +1633,11 @@ def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str =
     out = []
     for p in cands:
         q = by_task.get(task_id(_point_task(p)))
-        if q is not None and (p["createdAt"], p["id"]) < (q["createdAt"], q["id"]):
+        # Only an answer from before the later point (made, or planned on the
+        # task) is superseded: one given after it is still to be seen.
+        at = float((last_answer(p) or {}).get("at") or 0)
+        if q is not None and (p["createdAt"], p["id"]) < (q["createdAt"], q["id"]) \
+                and at < max(float(q["createdAt"]), _last_at(q, True)):
             _auto_close(p, "superseded", now, key, by=q["id"])
             out.append(p)
     return out
@@ -1662,7 +1667,9 @@ def _undo_auto(led: dict, key: str) -> bool:
         if key and p.get("autoKey") == key and p["state"] == "acked" and p.get("ackedBy") in ("seen", "superseded") \
                 and p.get("stateAt") == p.get("autoAt"):
             p["state"] = "delivered"
-            for k in ("ackedBy", "autoKey", "autoAt", "supersededBy"):
+            if p.get("autoFrom"):
+                p["stateAt"] = p["autoFrom"]
+            for k in ("ackedBy", "autoKey", "autoAt", "autoFrom", "supersededBy"):
                 p.pop(k, None)
             changed = True
     return changed
