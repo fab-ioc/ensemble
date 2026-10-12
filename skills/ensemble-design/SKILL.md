@@ -1226,7 +1226,12 @@ agent." (with **Hide**), or "Not delivered: *reason*." with **Retry** and **Disc
 
 ### Run chip
 
-`● working` · `● idle` · `not started` · `not running`.
+`● working` · `● idle` · `◯ running a command since 15:45` · `not started` · `not running`.
+
+`running a command` (ED-212) is a task whose turn ended waiting on a command of its own (the row's
+`runState: "command"`, since `runSince`): the `--run-idle` ring, because nothing is thinking, but
+its own words, because it is not idle — it carries on by itself when the command ends. The list
+row's dot and the switcher's dot say the same in their tooltip.
 
 **`not running` must read as calm, never as an error** — grey text, grey dot, no red, no border, no
 icon, same weight as every other card. It is the state the whole board sits in for a minute after

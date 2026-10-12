@@ -6120,7 +6120,7 @@ function renderRow(r, parsed, now) {
 function renderHeadlessRow(r, parsed, now) {
   const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
   const statusDot = r.isLive
-    ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.status || 'live')}"></span>` : '';
+    ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.runState === 'command' && r.status !== 'busy' ? commandTip(r) : r.status || 'live')}"></span>` : '';
   const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
     : (r.draft ? '<span class="badge-draft" title="Created but not started yet">draft</span>' : '');
   const actions = r.orphan
@@ -6156,6 +6156,16 @@ function renderHeadlessRow(r, parsed, now) {
 // board groups them, and never sorts them: ordering happens in exactly one
 // place (refresh's freeze) and a second sort here would defeat it.
 // ---------------------------------------------------------------------------
+// Its turn ended waiting on a command of its own, which wakes it when it ends
+// (ED-212, the row's runState "command"): not idle, and not working either —
+// the idle ring, its own words.
+function commandWords(r) {
+  const at = r.runSince ? new Date(r.runSince * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  return `running a command${at ? ` since ${at}` : ''}`;
+}
+function commandTip(r) {
+  return `${commandWords(r)}: its turn is over and it carries on when the command ends`;
+}
 function runChip(r, compact = false) {
   if (r.draft) return `<span class="run"><span class="dot off"></span>not started</span>`;
   // What needs you colours the dot (its words stay the run state's): yellow
@@ -6163,6 +6173,7 @@ function runChip(r, compact = false) {
   const a = attnDot(r);
   const dot = (cls, tip) => `<span class="dot ${a ? a.tone : cls}" title="${esc(a ? a.tip : tip)}"></span>`;
   if (r.isLive && r.status === 'busy') return `<span class="run">${dot('working', 'working')}working</span>`;
+  if (r.isLive && r.runState === 'command') return `<span class="run" title="${esc(commandTip(r))}">${dot('idle', commandTip(r))}${esc(commandWords(r))}</span>`;
   if (r.isLive) return `<span class="run">${dot('idle', 'idle: running, not working')}idle</span>`;
   // Calm on purpose: this is the whole board for a minute after every hub
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
@@ -6680,6 +6691,7 @@ function swState(e, group) {
   const live = r.isLive && !r.draft;
   if (live && r.status === 'busy') return { cls: 'working', tip: 'working' };
   if (sg && sg.working) return { cls: 'working', tip: `working: ${sg.working} of its tasks` };
+  if (live && r.runState === 'command') return { cls: 'idle', tip: commandWords(r) };
   if (live) return { cls: 'idle', tip: 'idle: running, not working' };
   if (sg && sg.running) return { cls: 'idle', tip: `idle: ${sg.running} of its tasks running, none working` };
   if (e.row && isUnread(r)) return { cls: 'new', tip: 'New messages since you last read this chat' };
@@ -7810,7 +7822,7 @@ function projectSessionState(sn) {
   return 'off';
 }
 const SDOT_TIP = { work: 'working', wait: 'waiting for you', danger: 'needs you', idle: 'idle: running, not working', off: 'stopped' };
-const sdotTip = (sn, st) => (attnDot(sn) || {}).tip || SDOT_TIP[st];
+const sdotTip = (sn, st) => (attnDot(sn) || {}).tip || (st === 'idle' && sn.runState === 'command' ? commandWords(sn) : SDOT_TIP[st]);
 function projectsLandingHtml() {
   if (!PROJECTS) return `<p class="empty">${esc(nounText('Loading {projects}…'))}</p>`;
   const cards = PROJECTS.projects.map(p => {
@@ -13212,14 +13224,43 @@ function pdFits(w) {
 // time the dock's iframes let clicks through to their panel.
 const PD_DBL_MS = 500;
 let pdDblT = 0;
+// The panel a click just restored, where and when: { id, x, y, t }.
+let pdRestored = null;
 function pdDblGuard(e) {
   const head = e.detail === 1 && e.target.closest && e.target.closest('.dk-head');
-  if (!head || e.target.closest('.dk-ctl') || !head.closest('.dk-min')) return;
+  if (!head || e.target.closest('.dk-ctl, [data-dk-act]') || !head.closest('.dk-min')) return;
+  const tab = e.target.closest('[data-dk-tab]') || head.querySelector('.dk-tab.on');
+  pdRestored = tab ? { id: tab.dataset.dkTab, x: e.clientX, y: e.clientY, t: e.timeStamp } : null;
   PD_ROOT.classList.add('pd-dbl');
   clearTimeout(pdDblT);
   pdDblT = setTimeout(() => PD_ROOT.classList.remove('pd-dbl'), PD_DBL_MS);
 }
 PD_ROOT.addEventListener('click', pdDblGuard, true);
+// Temporary (ED-213): removed when Ensemble takes Dock v0.22.1, whose
+// secondClick fixes it (the Dock PO's D-39). The restored
+// panel's title bar can bring one of its own controls under the pointer (a
+// side panel's minimise, when its tab has no count), and Dock lets the second
+// click of the double click reach it, so the panel minimises again. That
+// click is swallowed here, and its double click maximises, as one on the
+// title bar does.
+function pdRestoredCtl(e) {
+  const r = pdRestored;
+  if (!r || e.button !== 0 || e.timeStamp - r.t > PD_DBL_MS || Math.abs(e.clientX - r.x) > 6 || Math.abs(e.clientY - r.y) > 6) return false;
+  const ctl = e.target.closest && e.target.closest('.dk-ctl, [data-dk-act]');
+  const head = ctl && ctl.closest('.dk-head');
+  return !!head && !head.closest('.dk-min') && !!head.querySelector(`[data-dk-tab="${CSS.escape(r.id)}"]`);
+}
+for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick']) {
+  PD_ROOT.addEventListener(type, e => {
+    if (!pdRestoredCtl(e)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (type !== 'dblclick') return;
+    const id = pdRestored.id;
+    pdRestored = null;
+    if (PD.dock && PD.dock.can(id, 'max')) PD.dock.toggleMax(id);
+  }, true);
+}
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
   const rt = PD.rt.get(id);
