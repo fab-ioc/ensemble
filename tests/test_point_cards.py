@@ -122,11 +122,26 @@ class Resolver(Hub):
         self.assertIsNone(self.card('P5'))
         self.assertEqual(self.card('P6'), {'mid': 'split', 'n': 0, 'question': 'First?', 'open': False})
 
-    def test_stored_card_pairs_heads_and_asks_in_order(self):
+    def test_stored_card_with_several_heads_is_no_points_card(self):
+        # Whose stored ask is whose is not written down: the chips keep his message.
         two = ASK_A + [{**ASK_A[0], 'n': 1, 'question': 'And then?'}]
-        self.say('pair', 120, 'Re P5 (legs).\n\nRe P6 (stops).', two)
-        self.assertEqual(self.card('P5')['n'], 0)
-        self.assertEqual(self.card('P6'), {'mid': 'pair', 'n': 1, 'question': 'And then?', 'open': True})
+        self.say('pair', 120, 'Re P5: answered in prose.\n\nRe P6: decisions.', two)
+        self.assertIsNone(self.card('P5'))
+        self.assertIsNone(self.card('P6'))
+        self.say('three', 130, 'Re P5 (legs).\n\nRe P6 (stops).', ASK_A)
+        self.assertIsNone(self.card('P6'))
+        self.assertEqual(dashboard.point_ref('P6', self.ed)['mid'], 'his-P6')
+
+    def test_answer_that_says_re_another_point_lends_it_nothing(self):
+        # The reply after P5 is its answer in the ledger, but it asks Re P6.
+        self.say('ans', 110, 'We finished P5 in prose.\n\nRe P6: decisions.\n\nAsk: Which one?\n- A\n- B')
+        self.assertIsNone(self.card('P5'))
+        self.assertEqual(dashboard.point_ref('P5', self.ed)['mid'], 'his-P5')
+        self.assertEqual(self.card('P6'), {'mid': 'ans', 'n': 0, 'question': 'Which one?', 'open': True})
+
+    def test_answer_without_heads_holds_its_asks(self):
+        self.say('ans', 110, 'Here is why.\n\nAsk: Which one?\n- A\n- B')
+        self.assertEqual(self.card(), {'mid': 'ans', 'n': 0, 'question': 'Which one?', 'open': True})
 
     def test_one_head_for_several_points_and_code_is_no_head(self):
         self.say('list', 120, 'Re P5, P6 (both legs).', ASK_A)

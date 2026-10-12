@@ -811,9 +811,10 @@ def _heads(text: str) -> list[tuple[int, list[str]]]:
 def _asks_by_point(text: str, qs: list) -> dict[str, list[int]]:
     """Which of a card's asks each ``Re Pn`` head of it holds: the asks
     written under that head, up to the next one (none: the card asks nothing
-    about that point). A card whose asks are not
-    in its words (an ensemble_ask card) pairs its heads and asks in order
-    when they are as many; otherwise each head holds every ask."""
+    about that point). A card with one head holds every ask for it. Several
+    heads over asks that are not in the words (an ensemble_ask card) say
+    nothing of whose ask is whose: no head holds one, and the card is no
+    point's (the chip keeps the person's message rather than guess)."""
     heads = _heads(text)
     every = list(range(len(qs)))
     if not heads:
@@ -830,14 +831,10 @@ def _asks_by_point(text: str, qs: list) -> dict[str, list[int]]:
             at += counts[k + 1]
             for pid in pids:
                 out.setdefault(pid, []).extend(mine)
-    elif len(heads) == len(qs):
-        for k, (_line, pids) in enumerate(heads):
-            for pid in pids:
-                out.setdefault(pid, []).append(k)
     else:
         for _line, pids in heads:
             for pid in pids:
-                out[pid] = every
+                out[pid] = every if len(heads) == 1 else []
     return {pid: sorted(set(ns)) for pid, ns in out.items()}
 
 
@@ -938,9 +935,12 @@ def point_card(summary: dict, point: dict) -> dict | None:
             ts, qs, by_point = answers[mid], [a["question"] for a in found], {}
         if mid not in answers and (not ts or ts < since):
             continue
-        mine = by_point[pid] if pid in by_point else list(range(len(qs)))
+        # A card that says whose its asks are (Re Pn heads) holds none for a
+        # point it does not name, even one it answers in the ledger (the
+        # reply that follows a point is its answer, whatever it says Re).
+        mine = by_point.get(pid, []) if by_point else list(range(len(qs)))
         if not mine:
-            continue    # its Re Pn part asks nothing: the questions are another point's
+            continue
         got = done.get(mid) or {}
         waiting = [n for n in mine if str(n) not in got
                    and not (mid in approved and _approved_settles(rid, mid, n))]
