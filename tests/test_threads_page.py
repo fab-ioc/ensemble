@@ -98,8 +98,38 @@ async function main() {
         await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);
         await sleep(400);
       };
-      // The channel, as first opened.
-      await go('room=' + room);
+      // A deliberately slow first build: the fixed notice appears, gives the
+      // current phase, then leaves without shifting the chat.
+      await c.send('Page.navigate', { url: A.base + '/session?room=' + room }, sessionId);
+      await until('document.getElementById("ens-progress") && !document.getElementById("ens-progress").hidden', 15000);
+      const progressShownAt = Date.now();
+      o.progressDuring = await evalIn(`(() => {
+        const e = document.getElementById('ens-progress');
+        const r = e.getBoundingClientRect();
+        return { text: e.textContent, width: r.width, right: r.right, scrollX: document.documentElement.scrollWidth - innerWidth,
+          mode: e.classList.contains('indeterminate') ? 'indeterminate' : 'determinate' };
+      })()`);
+      o.progressThemes = await evalIn(`(() => {
+        const root = document.documentElement, before = root.dataset.theme, e = document.getElementById('ens-progress');
+        const out = {};
+        for (const t of ['light','dark','dim','paper','contrast','fjord','intellij-dark']) {
+          root.dataset.theme = t;
+          const s = getComputedStyle(e);
+          out[t] = { foreground: s.color, background: s.backgroundColor };
+        }
+        root.dataset.theme = before;
+        return out;
+      })()`);
+      await shot('0-progress-during');
+      await until('!document.getElementById("ens-progress").hidden && document.getElementById("ens-progress").textContent.includes("Sorting messages into threads") && !document.getElementById("ens-progress").classList.contains("indeterminate")', 15000);
+      o.progressCount = await evalIn('document.getElementById("ens-progress").textContent');
+      await shot('0-progress-count');
+      await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);
+      await until('document.getElementById("ens-progress").hidden', 15000);
+      o.progressVisibleMs = Date.now() - progressShownAt;
+      o.progressAfter = await evalIn('document.getElementById("ens-progress").hidden');
+      await shot('0-progress-after');
+      await sleep(400);
       o.channel = await evalIn(VIEW);
       await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
       await until('!!document.querySelector("#points-list .pt-thr")', 10000);
@@ -121,6 +151,14 @@ async function main() {
       o.also = await evalIn('(e => e && !e.hidden && e.getBoundingClientRect().width > 0)(document.getElementById("thr-also-l"))');
       await shot('2-thread');
       await evalIn('document.getElementById("input").value = "A bit wider still, please."; document.getElementById("input").dispatchEvent(new Event("input")); document.getElementById("thr-also").checked = true; document.getElementById("send").click(); 0');
+      o.warmProgress = await evalIn(`(async () => {
+        let shown = 0;
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 150));
+          if (!document.getElementById('ens-progress').hidden) shown++;
+        }
+        return {shown, text: document.getElementById('ens-progress').textContent};
+      })()`);
       await until(`[...document.querySelectorAll('#msgs .msg[data-mid]')].length >= ${o.thread.mids.length + 2}`, 20000);
       await sleep(400);
       o.threadAfter = await evalIn(VIEW);
@@ -233,6 +271,35 @@ class ThreadsPage(unittest.TestCase):
         cls.rooms = {}
         for w, _h, _m in SIZES:
             cls.rooms[str(w)] = cls._po_room(f"Motors {w}", f"po{w}")
+        original_balloons = threads.balloons
+        slowed_rooms = set()
+        def slow_balloons(*args, **kwargs):
+            rid = args[0].get("id", "")
+            if rid not in slowed_rooms:
+                slowed_rooms.add(rid)
+                time.sleep(2.2)
+            return original_balloons(*args, **kwargs)
+        slow_patch = mock.patch.object(threads, "balloons", side_effect=slow_balloons)
+        slow_patch.start()
+        cls.addClassCleanup(slow_patch.stop)
+        original_assign = threads.assign
+        slowed_assigns = set()
+        def slow_assign(*args, **kwargs):
+            rid = threading.current_thread().name
+            if rid in slowed_assigns:
+                return original_assign(*args, **kwargs)
+            slowed_assigns.add(rid)
+            callback = args[4]
+            waited = [False]
+            def report(done, total):
+                callback(done, total)
+                if not waited[0]:
+                    waited[0] = True
+                    time.sleep(2.2)
+            return original_assign(*args[:4], report, **kwargs)
+        assign_patch = mock.patch.object(threads, "assign", side_effect=slow_assign)
+        assign_patch.start()
+        cls.addClassCleanup(assign_patch.stop)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None
@@ -297,6 +364,33 @@ class ThreadsPage(unittest.TestCase):
 
     def _each(self):
         return [(str(w), self.got[str(w)]) for w, _h, _m in SIZES]
+
+    def test_progress_notice_during_and_after_build_at_desktop_and_phone(self):
+        def luminance(rgb):
+            parts = [int(x) / 255 for x in __import__('re').findall(r"\d+", rgb)[:3]]
+            linear = [c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in parts]
+            return sum(a * b for a, b in zip(linear, (.2126, .7152, .0722)))
+        for width in ("1728", "390"):
+            with self.subTest(width=width):
+                got = self.got[width]
+                bar = got["progressDuring"]
+                self.assertIn("Reading conversations", bar["text"])
+                self.assertIn("Sorting messages into threads", got["progressCount"])
+                self.assertIn("done", got["progressCount"])
+                self.assertEqual(bar["scrollX"], 0)
+                self.assertLessEqual(bar["right"], int(width))
+                self.assertTrue(got["progressAfter"])
+                self.assertGreater(got["progressVisibleMs"], 0)
+                for theme, colors in got["progressThemes"].items():
+                    with self.subTest(theme=theme):
+                        a, b = luminance(colors["foreground"]), luminance(colors["background"])
+                        self.assertGreaterEqual((max(a, b) + .05) / (min(a, b) + .05), 4.5)
+
+    def test_warm_po_chat_shows_no_notice_as_transcript_grows(self):
+        for width in ("1728", "390"):
+            with self.subTest(width=width):
+                self.assertEqual(self.got[width]["warmProgress"]["shown"], 0,
+                                 self.got[width]["warmProgress"])
 
     def test_the_channel_shows_each_thread_once_with_its_line(self):
         for w, o in self._each():

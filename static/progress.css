@@ -1,0 +1,25 @@
+/* Shared, non-interactive progress notice. Fixed geometry keeps targets in place. */
+#ens-progress {
+  position: fixed; z-index: 110;
+  top: calc(var(--top-h, var(--header-h, 49px)) + 6px); right: 12px;
+  width: min(440px, calc(100vw - 24px)); box-sizing: border-box;
+  padding: 8px 10px 7px; border: 1px solid var(--border);
+  border-radius: 5px; background: var(--c-progress-bg);
+  color: var(--c-progress-fg);
+  font-size: 12px; line-height: 1.35; pointer-events: none;
+  opacity: 1; transition: opacity .3s ease;
+}
+#ens-progress[hidden] { display: none; }
+#ens-progress.ens-progress-leaving { opacity: 0; }
+#ens-progress-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ens-progress-track { display: block; height: 3px; margin-top: 6px;
+  background: color-mix(in srgb, var(--c-progress-bold) 20%, transparent); overflow: hidden;
+  border-radius: 2px; }
+#ens-progress-fill { display: block; height: 100%; width: 0; background: var(--c-progress-bold);
+  border-radius: inherit; transition: width .25s ease; }
+#ens-progress.indeterminate #ens-progress-fill { width: 35%; animation: ens-progress-slide 1.5s ease-in-out infinite; }
+@keyframes ens-progress-slide { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) {
+  #ens-progress, #ens-progress-fill { transition: none; }
+  #ens-progress.indeterminate #ens-progress-fill { animation: none; width: 100%; opacity: .6; }
+}

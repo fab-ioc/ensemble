@@ -400,7 +400,7 @@ def _chunks(files: list[list[str]], n: int) -> list[list[list[str]]]:
 
 
 def scan_files(files: list[list[str]], groups: list[list[str]], workers: int = 0,
-               deadline: float = DEADLINE_S) -> dict:
+               deadline: float = DEADLINE_S, on_chunk=None) -> dict:
     """Every transcript in ``files`` ([path, agent]) that satisfies the query,
     most matching messages first. Workers are processes: matching bytes holds
     the interpreter, so threads would take turns."""
@@ -410,13 +410,19 @@ def scan_files(files: list[list[str]], groups: list[list[str]], workers: int = 0
     piles = _chunks(files, n * 2)
     found: list[dict] = []
     if n <= 1 or len(piles) <= 1:
+        done = 0
         for p in piles:
             found += _scan_chunk((p, groups, until))
+            done += len(p)
+            if on_chunk: on_chunk(done)
     else:
         from concurrent.futures import ProcessPoolExecutor
         with ProcessPoolExecutor(max_workers=n) as ex:
-            for part in ex.map(_scan_chunk, [(p, groups, until) for p in piles]):
+            done = 0
+            for p, part in zip(piles, ex.map(_scan_chunk, [(p, groups, until) for p in piles])):
                 found += part
+                done += len(p)
+                if on_chunk: on_chunk(done)
     found.sort(key=lambda r: (-r["hits"], -r["updatedAt"]))
     return {"found": found, "files": len(files), "timedOut": time.time() > until,
             "seconds": round(time.time() - t0, 2)}
@@ -435,8 +441,13 @@ def main() -> None:
     try:
         req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         groups = parse_query(req.get("q") or "")
+        progress_file = req.get("progressFile") or ""
+        def report(done):
+            if progress_file:
+                with open(progress_file, "w", encoding="utf-8") as f:
+                    json.dump({"done": done}, f)
         res = scan_files(req.get("files") or [], groups, workers or int(req.get("workers") or 0),
-                         float(req.get("deadline") or DEADLINE_S))
+                         float(req.get("deadline") or DEADLINE_S), report)
     except Exception as e:  # noqa: BLE001 — the hub reads the error
         res = {"error": "search_failed", "detail": repr(e)}
     sys.stdout.buffer.write(json.dumps(res).encode("utf-8"))

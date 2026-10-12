@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -320,6 +321,29 @@ class Endpoints(tp._World):
         fresh = threads.ready(self.rid, room)
         self.assertIsNot(fresh, first)
         self.assertIn("sid-1:4", fresh["by_mid"])
+
+    def test_warm_rebuild_reply_has_no_progress(self):
+        self.add("sid-1", tp.turn("assistant", "One more thing.", time.time()))
+        entered, release = threading.Event(), threading.Event()
+        original = threads.balloons
+
+        def slow_balloons(*args, **kwargs):
+            entered.set()
+            release.wait(5)
+            return original(*args, **kwargs)
+
+        try:
+            with mock.patch.object(threads, "balloons", side_effect=slow_balloons):
+                status, reply = http_get(f"/api/room/channel?id={self.rid}")
+                self.assertEqual(status, 200)
+                self.assertTrue(entered.wait(2))
+                self.assertIsNone(reply.get("progress"), reply)
+                status, same = http_get(f"/api/room/channel?id={self.rid}&sig={reply['sig']}")
+                self.assertEqual(status, 200)
+                self.assertIsNone(same.get("progress"), same)
+        finally:
+            release.set()
+            self.settle()
 
     def test_a_reply_from_a_thread_keeps_what_it_means(self):
         for text in ("ok", "thanks!", "/compact", "[digest] all quiet"):
