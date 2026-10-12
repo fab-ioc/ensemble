@@ -1051,14 +1051,20 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
         said = (said, 0.0)
     # A turn that ended on a model's own limit (ED-159): the hook's Stop says
     # only that the turn ended, the transcript's last entry says why.
-    limit = None
+    limit = perm = None
     if alive and (part.get("agent") or "") != "codex" and _d is not None:
         limit = (hook or {}).get("limit") or _d.stall.limit_hit(part)
+        # Not the mode it was launched in, or Claude's own safety check
+        # refused a tool call (ED-216).
+        try:
+            perm = _d.permission_mode.problem(part, hook, tail)
+        except Exception:
+            perm = None
     return {
         "ptyId": pty_id, "alive": alive, "tail": tail, "idleSeconds": idle,
         "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
         "claudeStatus": said[0], "claudeStatusAt": said[1],
-        "hook": hook, "lastOutput": printed, "limit": limit,
+        "hook": hook, "lastOutput": printed, "limit": limit, "permission": perm,
     }
 
 
@@ -1226,6 +1232,20 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     return float(last.get("ts") or 0), "message"
 
 
+def _reported_at(room: dict, identity: str) -> float:
+    """When this agent last reported (ensemble_report) or put something to a
+    person or its PO; 0 when never."""
+    at = 0.0
+    for key in ("openToHuman", "lastReport"):
+        rec = room.get(key)
+        if isinstance(rec, dict) and (rec.get("from") or rec.get("identity")) == identity:
+            try:
+                at = max(at, float(rec.get("ts") or 0))
+            except (TypeError, ValueError):
+                pass
+    return at
+
+
 _ASK_NAMES = {"blocked": "its blocked report", "question": "its question",
               "message": "its message to you"}
 
@@ -1311,6 +1331,16 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         why, cause, line = block
         return ("blocked", f"{who} {why}: “{line}”{still}",
                 {"quote": line, **still_extra, "cause": cause, **limit_extra})
+
+    perm = ev.get("permission")
+    if perm and perm["cause"] == "denied" and _reported_at(room, identity) >= perm["at"]:
+        perm = None             # it reported since: its own words are the item
+    if perm:
+        # Not the hub's mode, or Claude's own safety check (ED-216): a person
+        # has to step in, and the agent cannot tell from inside.
+        return ("blocked", f"{who} {perm['why']}{still}",
+                {**still_extra, "cause": "permission", "permission": perm["cause"],
+                 "permissionKey": perm["key"]})
 
     if status == "waiting":
         return ("waiting_for_you", f"{who} is waiting on your answer to a prompt{still}", still_extra)
@@ -1686,7 +1716,7 @@ def _items() -> list[dict]:
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
                   "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds",
-                  "openAsks"):
+                  "openAsks", "permission", "permissionKey"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         if extra.get("dismiss"):

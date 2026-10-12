@@ -227,14 +227,14 @@ def _look(rid: str, state: dict, now: float) -> str:
             # not the agent's, closes it: the cap starts again.
             echo_end = float(rec["nudgedAt"]) + _NUDGE_ECHO_S
             if not own or (now - idle > echo_end and not _wrote_since(tpath, echo_end)):
-                state[rid] = {k: rec[k] for k in ("silent", "lastToldAt") if rec.get(k)}
+                state[rid] = {k: rec[k] for k in ("silent", "lastToldAt", "permission") if rec.get(k)}
                 return ""
         elif own and idle < _d.attention.OWN_WORK_CAP_S:
             return ""
         if rec.get("episode") != ep:
             # The silent look's record, and when the PO last heard of it,
             # outlive an episode: they are about a different clock.
-            rec = {"episode": ep, **{k: rec[k] for k in ("silent", "lastToldAt") if rec.get(k)}}
+            rec = {"episode": ep, **{k: rec[k] for k in ("silent", "lastToldAt", "permission") if rec.get(k)}}
         rec["current"] = True           # stopped right now (record())
         state[rid] = rec
         if not rec.get("nudgedAt"):
@@ -670,6 +670,64 @@ def _look_limit(rid: str, now: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Not the launch's permission mode, or Claude's safety check (ED-216)
+# ---------------------------------------------------------------------------
+
+def _look_permission(rid: str, state: dict, now: float, statuses: dict) -> str:
+    """Each running Claude agent of a task with a PO whose session is not in
+    the mode the hub launched it in, or whose tool call Claude's own safety
+    check refused (``permission_mode.problem``): the PO hears of it once per
+    problem — a line in its room, and typed when it is idle. Without a PO the
+    attention item is the CEO's bell."""
+    cr = _d.chatroom
+    room = cr.get_room(rid, public=False)
+    if not room or not room.get("launched", True) or not _d._room_is_live(room):
+        return ""
+    po = _d.room_po_id(room)
+    if not po:
+        return ""
+    rec = state.get(rid) or {}
+    told = rec.get("permission") if isinstance(rec.get("permission"), dict) else {}
+    done = []
+    for part in cr.agent_participants(room):
+        ident = part.get("identity", "")
+        if (part.get("agent") or "claude") != "claude" or _d.rotation._pty(part) is None:
+            continue
+        perm = _d.attention._evidence(part, statuses).get("permission")
+        if not perm:
+            continue
+        old = told.get(ident) if isinstance(told.get(ident), dict) else {}
+        if old.get("key") != perm["key"]:
+            old = {"key": perm["key"]}
+        if old.get("wokeAt"):
+            continue
+        if not old.get("toldAt"):
+            po_room = cr.get_room(po, public=False)
+            if not po_room:
+                continue
+            body = (f"**{_bold_name(room)} {ident}: Claude's permission check stopped it**"
+                    f"{_after_bold(room)}\n\n{ident} {perm['why']} This is Claude's own check, "
+                    f"not the hub's launch mode: restarting the agent does not change it. "
+                    f"Look at it (`ensemble_get_task {_d.task_arg(room)}`), then do the step "
+                    f"yourself or ask the person to.")
+            if not cr.post_report(po, SENDER, cr.po_identity(po_room), body,
+                                  {"reportKind": "digest", "permissionTask": rid}, wake=False):
+                continue
+            old["toldAt"] = now
+            done.append(f"{ident}: PO told ({perm['cause']})")
+        wake = (f"[digest] {_d.task_word(room)} {ident} {perm['why']} "
+                f"Details with ensemble_get_task {_d.task_arg(room)}.")
+        if _type_po(room, wake):
+            old["wokeAt"] = now
+            done.append(f"{ident}: PO woken ({perm['cause']})")
+        told[ident] = old
+    if told:
+        rec["permission"] = told
+        state[rid] = rec
+    return "; ".join(done)
+
+
+# ---------------------------------------------------------------------------
 # Looking
 # ---------------------------------------------------------------------------
 
@@ -693,7 +751,8 @@ def tick(now: float | None = None) -> dict[str, str]:
                 state[rid]["current"] = False   # until this look finds it stopped again
             dids = []
             for look in (lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
-                         lambda: _look_silent(rid, state, now, statuses)):
+                         lambda: _look_silent(rid, state, now, statuses),
+                         lambda: _look_permission(rid, state, now, statuses)):
                 try:
                     did = look()
                 except Exception as e:      # one task must not stop the others
