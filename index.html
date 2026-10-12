@@ -2933,6 +2933,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
   #settings-panel #pref-nickname,
   #settings-panel #pref-stall-seconds,
+  #settings-panel #pref-drain-minutes,
   #settings-panel #pref-pace-margin,
   #settings-panel #pref-balance-margin,
   #settings-panel #pref-claude-weight,
@@ -2946,6 +2947,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     outline: none;
   }
   #settings-panel #pref-stall-seconds,
+  #settings-panel #pref-drain-minutes,
   #settings-panel #pref-pace-margin,
   #settings-panel #pref-balance-margin,
   #settings-panel #pref-claude-weight,
@@ -3029,6 +3031,30 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     cursor: pointer; border-radius: 3px;
   }
   #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
+  /* A restart waiting for agents to reach a safe point (restart_drain.py):
+     it needs the person only eventually, so the warning wash. */
+  #drain-banner {
+    display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-100) var(--s-300);
+    padding: var(--s-100) var(--s-400);
+    background: var(--c-warning-bg); color: var(--c-warning-fg);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-200); line-height: 16px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  #drain-banner[hidden] { display: none; }
+  #drain-text { flex: 1 1 320px; min-width: 0; }
+  #drain-text b { font-weight: 600; }
+  #drain-agents { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--s-050) var(--s-300); }
+  #drain-agents[hidden] { display: none; }
+  #drain-agents span { min-width: 0; overflow-wrap: anywhere; }
+  #drain-banner button {
+    height: 24px; padding: 0 var(--s-200); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong);
+    font: inherit; font-weight: 500; cursor: pointer;
+  }
+  #drain-banner button:hover { background: var(--hover); }
+  #drain-banner button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #drain-banner button[hidden] { display: none; }
   /* First run: a coding agent missing or signed out (/api/app/agents). A
      warning when none is ready, else news. */
   #agents-banner {
@@ -3928,6 +3954,14 @@ window.DOC_LISTENERS_PAUSED = false;
   <button id="update-banner-go">Update now</button>
   <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
 </div>
+<div id="drain-banner" role="status" hidden>
+  <span id="drain-text"></span>
+  <button id="drain-details" type="button" aria-expanded="false" aria-controls="drain-agents">Agents ▸</button>
+  <button id="drain-force" type="button" title="Restart now: an agent not at a safe point yet is cut off and told where it was">Restart now</button>
+  <button id="drain-cancel" type="button" title="Call the restart off: nothing restarts, held messages go in now">Cancel</button>
+  <button id="drain-dismiss" type="button" aria-label="Dismiss" title="Dismiss" hidden>×</button>
+  <div id="drain-agents" hidden></div>
+</div>
 <div id="agents-banner" role="status" hidden>
   <span id="agents-banner-text"></span>
   <button id="agents-banner-dismiss" type="button" title="Hide until something changes" aria-label="Hide">×</button>
@@ -4162,6 +4196,12 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="900" autocomplete="off"> <span class="pref-label">seconds</span>
     </div>
     <p class="cfg-hint">🔔 An agent that was asked to do something, isn't working, and hasn't reported back for this long is listed as needing you. Both CLIs redraw a working indicator while they think, so an agent busy for hours is never counted.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Restart anyway after</span>
+      <input type="number" id="pref-drain-minutes" min="1" max="240" step="1"
+             placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span>
+    </div>
+    <p class="cfg-hint">A restart or an update first asks every working agent to reach a safe point and waits for all of them, at most this long.</p>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Start the PO afresh past</span>
       <input type="number" id="pref-po-rotate" min="0" max="5000000" step="10000"
@@ -7374,6 +7414,10 @@ function renderPrefs() {
   if (stallInput && document.activeElement !== stallInput) {
     stallInput.value = PREFS.attentionStallSeconds || 900;
   }
+  const drainInput = document.getElementById('pref-drain-minutes');
+  if (drainInput && document.activeElement !== drainInput) {
+    drainInput.value = PREFS.restartDrainMinutes || 20;
+  }
   const rotInput = document.getElementById('pref-po-rotate');
   if (rotInput && document.activeElement !== rotInput) {
     rotInput.value = PREFS.poRotateTokens ?? 200000;
@@ -7588,6 +7632,86 @@ async function initAutostart() {
     } catch (e) { box.checked = !box.checked; toast('Not changed: ' + e.message, 5000, 'err'); }
   });
 }
+// A restart at a safe point (restart_drain.py): while the hub drains, the
+// banner says why, whom it waits for, and offers Restart now and Cancel. It
+// reloads the page once the hub that comes back answers with a new pid.
+const DRAIN = { inflight: false, pid: null, open: false, dismissed: '', timer: 0 };
+const DRAIN_STATE_WORDS = { working: 'working', waiting: 'at a prompt', ready: 'ready',
+  idle: 'idle', stopped: 'stopped', settled: 'stopped at a safe point' };
+async function drainPoll() {
+  if (DRAIN.inflight) return;
+  DRAIN.inflight = true;
+  let v = null;
+  try { const r = await fetch('/api/restart/drain'); v = r.ok ? await r.json() : null; }
+  catch { v = null; }   // the hub is restarting
+  finally { DRAIN.inflight = false; }
+  if (DRAIN.pid && v && v.pid && v.pid !== DRAIN.pid && DRAIN.wasHolding) {
+    ensUpd.reload();
+    return;
+  }
+  if (v && v.pid) DRAIN.pid = v.pid;
+  drainPaint(v);
+  clearTimeout(DRAIN.timer);
+  DRAIN.timer = setTimeout(drainPoll, DRAIN.wasHolding ? 3000 : 20000);
+}
+function drainPaint(v) {
+  const banner = document.getElementById('drain-banner');
+  if (!banner) return;
+  if (!v) {   // no answer: a restart under way keeps its banner, saying so
+    if (DRAIN.wasHolding) document.getElementById('drain-text').textContent = 'Restarting… the page reloads when the hub is back.';
+    return;
+  }
+  const holding = v.state === 'draining' || v.state === 'restarting';
+  const recent = !holding && ['cancelled', 'failed'].includes(v.state)
+    && Date.now() / 1000 - (v.endedAt || 0) < 120 && DRAIN.dismissed !== v.id;
+  DRAIN.wasHolding = holding;
+  banner.hidden = !(holding || recent);
+  if (banner.hidden) return;
+  const text = document.getElementById('drain-text');
+  const waiting = v.waitingFor || [];
+  const mins = Math.max(1, Math.ceil((v.secondsLeft || 0) / 60));
+  let words;
+  if (v.state === 'draining') {
+    words = waiting.length
+      ? `waiting for ${waiting.length} agent${waiting.length === 1 ? '' : 's'} (${waiting.map(a => a.label).join(', ')}) · restarts anyway in ${mins} min`
+      : 'every agent is at a safe point · restarting';
+  } else if (v.state === 'restarting') {
+    words = 'restarting now: the page reloads when the hub is back' + (v.error ? ` (${v.error})` : '');
+  } else {
+    words = `the restart did not happen: ${v.outcome || v.state}. Nothing was restarted.`;
+  }
+  text.replaceChildren();
+  const b = document.createElement('b');
+  b.textContent = (v.action === 'update' ? 'Updating for: ' : 'Restarting for: ') + (v.reason || 'a restart');
+  text.append(b, ' · ' + words + (v.held ? ` · ${v.held} held for after it` : ''));
+  const draining = v.state === 'draining';
+  document.getElementById('drain-force').hidden = !draining;
+  document.getElementById('drain-cancel').hidden = !draining;
+  document.getElementById('drain-details').hidden = !holding || !(v.agents || []).length;
+  document.getElementById('drain-dismiss').hidden = holding;
+  DRAIN.id = v.id;
+  const list = document.getElementById('drain-agents');
+  list.hidden = !(DRAIN.open && holding);
+  const sig = JSON.stringify(v.agents || []);
+  if (list.dataset.sig !== sig) {
+    list.dataset.sig = sig;
+    list.replaceChildren(...(v.agents || []).map(a => {
+      const s = document.createElement('span');
+      s.textContent = `${a.label}: ${DRAIN_STATE_WORDS[a.state] || a.state || 'looking'}` + (a.next ? `, next: ${a.next}` : '');
+      s.title = s.textContent;
+      return s;
+    }));
+  }
+}
+async function drainAction(action) {
+  try {
+    const r = await fetch('/api/restart/drain', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ action }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) toast(body.message || body.error || `HTTP ${r.status}`, 6000, 'err');
+  } catch (e) { toast('the hub did not answer: ' + e.message, 6000, 'err'); }
+  drainPoll();
+}
 function setUpdateStage(text) {
   const el = document.getElementById('update-stage');
   if (el) el.textContent = text;
@@ -7613,9 +7737,19 @@ async function triggerUpdate() {
   let refused = '';
   let logPath = (RUNTIME_CFG && RUNTIME_CFG.logFile) || '';
   try {
-    const r = await fetch('/api/update', { method: 'POST' });
+    const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                           body: JSON.stringify({ when: 'safe', reason: 'an update' }) });
     const body = await r.json().catch(() => ({}));
     if (body.log) logPath = body.log;
+    if (body.draining) {
+      // The hub waits for every agent to reach a safe point first: the
+      // drain banner takes over, and reloads the page once it is back.
+      UPDATE_IN_PROGRESS = false;
+      ensUpd.hold = false;
+      if (overlay) overlay.hidden = true;
+      drainPoll();
+      return;
+    }
     if (r.status === 403) {
       refused = body.message || 'the hub refused the update';
     } else if (!r.ok && r.status !== 202) {
@@ -18370,7 +18504,7 @@ queueMicrotask(renderThemeLists);
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'dock-banner'];
+  const ids = ['update-banner', 'drain-banner', 'dock-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -20257,6 +20391,14 @@ window.ensUpdPlace = () => ({
       if (ev.key === 'Enter') { ev.preventDefault(); stallInput.blur(); }
     });
   }
+  // How long a restart waits for agents to reach a safe point (1–240 min).
+  const drainInput = document.getElementById('pref-drain-minutes');
+  if (drainInput) {
+    drainInput.addEventListener('change', () => {
+      const v = parseInt(drainInput.value, 10);
+      if (!Number.isNaN(v)) setPref('restartDrainMinutes', Math.max(1, Math.min(240, v)));
+    });
+  }
   // When the PO is rotated to a fresh session (the server clamps; 0 = never).
   const rotInput = document.getElementById('pref-po-rotate');
   if (rotInput) {
@@ -20314,6 +20456,19 @@ window.ensUpdPlace = () => ({
   // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
   // before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  document.getElementById('drain-force')?.addEventListener('click', () => drainAction('force'));
+  document.getElementById('drain-cancel')?.addEventListener('click', () => drainAction('cancel'));
+  document.getElementById('drain-dismiss')?.addEventListener('click', () => {
+    DRAIN.dismissed = DRAIN.id || '';
+    document.getElementById('drain-banner').hidden = true;
+  });
+  document.getElementById('drain-details')?.addEventListener('click', (ev) => {
+    DRAIN.open = !DRAIN.open;
+    ev.currentTarget.setAttribute('aria-expanded', String(DRAIN.open));
+    ev.currentTarget.textContent = DRAIN.open ? 'Agents ▾' : 'Agents ▸';
+    document.getElementById('drain-agents').hidden = !DRAIN.open;
+  });
+  drainPoll();
   document.getElementById('dock-banner-go')?.addEventListener('click', () => ensUpd.reload());
   document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
     UPDATE_DISMISSED = true;

@@ -114,6 +114,7 @@ import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
 # The person's sends: each kept by its key until the agent's conversation shows it.
+import restart_drain
 import sends
 # A project's Documents folder: its tasks' reports, newest first.
 import project_docs
@@ -165,6 +166,7 @@ points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
+restart_drain.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
 attention.install()
@@ -1501,6 +1503,9 @@ _SETTINGS_DEFAULTS = {
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
+    # A restart at a safe point (restart_drain.py): how long the hub waits for
+    # every working agent to reach one before it restarts anyway.
+    "restartDrainMinutes": restart_drain.DEFAULT_DEADLINE_MIN,
     # Pace each agent kind's 7-day allowance and compare weighted spare
     # capacity per hour until each kind's own reset (ED-203).
     "paceWeek": True,
@@ -1950,7 +1955,8 @@ def _checkpoint_tell(room_id: str, line: str, wait_s: float = 900) -> None:
             if sess is None:
                 return
             ident = part.get("identity", "")
-            if not (rotation.is_rotating(room_id, ident) or rotation.awaiting_handover(room_id, ident)):
+            if not (rotation.is_rotating(room_id, ident) or rotation.awaiting_handover(room_id, ident)
+                    or restart_drain.holding()):
                 tpath, reader = rotation._transcript_of(part)
                 if rotation._idle(part, reader(tpath)) and not rotation._submitted_lately(sess):
                     _type_input(sess, line)
@@ -2212,6 +2218,12 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(5, min(1440, v))
+        if k == "restartDrainMinutes":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(restart_drain.MIN_DEADLINE_MIN, min(restart_drain.MAX_DEADLINE_MIN, v))
         if k == "attentionStallSeconds":
             try:
                 v = int(v)
@@ -2765,6 +2777,8 @@ RESTART_NOTE_SPEC = (
     "read it again with ensemble_get_task taskId={label} spec=true, then carry on from "
     "where you were: do not start over, act only on what changed, and do not report "
     "the restart.")
+DRAIN_SPEC_NOTE = ("Your spec was amended since you last read it: read it again with "
+                   "ensemble_get_task taskId={label} spec=true first and act only on what changed.")
 SPEC_UNSEEN_NOTE = (
     "[spec] Your spec was amended while your session was not running, and you have "
     "not seen it. Read it again with ensemble_get_task taskId={label} spec=true and "
@@ -2956,7 +2970,7 @@ def _send_left_behind(room_id: str, key: str) -> str:
     s = sends.get(room_id, key)
     if s is not None and s["state"] == "failed":
         return s.get("error") or "it was not delivered"     # already said, kept for Retry
-    if s is None or s["state"] != "queued" or rotation.holds_send(room_id, key):
+    if s is None or s["state"] != "queued" or rotation.holds_send(room_id, key)             or restart_drain.holds_send(restart_drain.current(), room_id, key):
         return ""
     with _RESUMES_LOCK:
         res = _RESUMES.get(room_id)
@@ -3799,6 +3813,7 @@ HUB_INPUT_KINDS = (
     ("[resumed] ", "resumed"),          # RESUME_NOTE
     ("[spec] ", "spec"),                # spec_change_line: the spec was amended under it
     ("[hub restarted] ", "restart"),    # RESTART_NOTE: it was mid-turn at a hub restart
+    ("[hub restart] ", "drain"),        # restart_drain.DRAIN_LINE: reach a safe point
     ("[handover] ", "handover"),        # rotation.py: write your handover now
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
     ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
@@ -10341,6 +10356,27 @@ def trigger_update() -> dict:
     return result
 
 
+def pull_checkout() -> str:
+    """Update a checkout in place (git fetch, then reset to its upstream), for
+    an update that a drain restarts with the plain restart (restart_drain.py):
+    its helper preflights the new code and restores every room. Returns why
+    it could not, or ""."""
+    try:
+        r = _run(["git", "-C", str(STATIC_DIR), "fetch", "--quiet"], capture_output=True,
+                 text=True, encoding="utf-8", errors="replace", timeout=120)
+        if r.returncode != 0:
+            return "git fetch failed: " + (r.stderr or "").strip()[:200]
+        r = _run(["git", "-C", str(STATIC_DIR), "reset", "--hard", "--quiet", "@{u}"],
+                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        if r.returncode != 0:
+            return "git reset failed: " + (r.stderr or "").strip()[:200]
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"{e.__class__.__name__}: {e}"
+    global _UPDATE_CHECK_CACHE
+    _UPDATE_CHECK_CACHE = None
+    return ""
+
+
 # --- Update now in the built app ---------------------------------------------
 # From GitHub Releases (app_update.py): download, check, unpack here, then a
 # helper outside the hub preflights the new version, swaps it in, restarts the
@@ -10501,7 +10537,7 @@ def start_app_update() -> dict:
         return {"started": False,
                 "error": f"a restart or an update began {int(since)}s ago and is still under way"}
     threading.Thread(target=_run_app_update, args=(rel, lease), daemon=True).start()
-    return {"started": True, "version": rel["version"], "pid": os.getpid(),
+    return {"started": True, "leaseId": lease, "version": rel["version"], "pid": os.getpid(),
             "log": str(DASHBOARD_DIR / "logs" / "update.log")}
 
 
@@ -10680,7 +10716,7 @@ def _snapshot_summary(snap: dict) -> str:
         for r in rooms)
 
 
-def restart_plan(room_id: str = "") -> dict:
+def restart_plan(room_id: str = "", drain: bool = False) -> dict:
     """What the helper needs: how this hub was started (to start it again the
     same way), where to preflight, whom to resume and what to tell them.
     ``room_id`` is the calling PO's room; without one (the dashboard page) the
@@ -10706,6 +10742,11 @@ def restart_plan(room_id: str = "") -> dict:
                 "Every room that was running was brought back by the restart itself "
                 "(restart.log lists them): do not resume or wake them. Do not restart the "
                 "hub again.")
+        st = restart_drain.current() if drain else None
+        if st:
+            wake += (f" It restarted for {restart_drain.reason_text(st)} after a drain "
+                     f"({st.get('outcome') or 'done'}); "
+                     f"{restart_drain.po_summary(st)}: each was told where it stopped.")
     try:
         grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
     except ValueError:
@@ -10734,8 +10775,10 @@ def restart_plan(room_id: str = "") -> dict:
     }
 
 
-def trigger_restart(room_id: str = "") -> dict:
+def trigger_restart(room_id: str = "", drain: bool = False) -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
+    ``drain``: the restart a drain led to (restart_drain.py): its PO's note
+    says why, and who paused.
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -10745,7 +10788,7 @@ def trigger_restart(room_id: str = "") -> dict:
                          f"finished — see {DASHBOARD_DIR / 'logs' / 'restart.log'}. "
                          f"Try again after {int(RESTART_BUSY_S - since) + 1}s."}
     try:
-        plan = restart_plan(room_id)
+        plan = restart_plan(room_id, drain=drain)
         plan["leasePath"] = str(_restart_lease_path())
         plan["leaseId"] = lease
         if os.environ.get("ENSEMBLE_RESTART_DRY_RUN"):
@@ -10765,7 +10808,7 @@ def trigger_restart(room_id: str = "") -> dict:
     if not result.get("started"):
         _drop_restart_lease(lease)
         return {**result, "status": 500}
-    return {**result, "status": 202, "graceSeconds": plan["graceSeconds"],
+    return {**result, "status": 202, "leaseId": lease, "graceSeconds": plan["graceSeconds"],
             "preflightPort": plan["preflightPort"], "resumeRooms": plan["resumeRooms"],
             "log": plan["log"],
             "message": (f"Restart started. In about {plan['graceSeconds']}s, once the code "
@@ -12439,6 +12482,19 @@ class Handler(BaseHTTPRequestHandler):
             return RESTART_REFUSED
         return ""
 
+    def _drain_requester(self) -> dict:
+        """Who asks for a restart (``_restart_refusal`` passed): the PO of the
+        bearer token, else the dashboard page."""
+        token = self._bearer_token()
+        resolved = chatroom.resolve_token(token) if token else None
+        if resolved:
+            room = chatroom.get_room(resolved[0], public=False) or {}
+            proj = next((pr for pr in load_projects()
+                         if (pr.get("poRoomId") or "") == resolved[0]), None)
+            label = f"the {proj.get('name')} PO" if proj else (room.get("title") or "a PO")
+            return {"roomId": resolved[0], "identity": resolved[1], "label": label}
+        return {"label": "the dashboard"}
+
     def _po_switch_refusal(self, data: dict) -> str:
         """Empty when this request may switch a PO's agent kind: the dashboard
         page, or a PO that may restart the hub switching another project's PO
@@ -13158,6 +13214,11 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/version":
             self._send_json(200, app_version.describe())
             return
+        if p == "/api/restart/drain":
+            # A restart at a safe point (restart_drain.py): the page's banner.
+            self._send_json(200, {**restart_drain.view(restart_drain.current(), time.time()),
+                                  "pid": os.getpid()})
+            return
         if p == "/api/update-status":
             self._send_json(200, update_status())
             return
@@ -13606,7 +13667,7 @@ class Handler(BaseHTTPRequestHandler):
         rung = self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")))
         return [ident for ident in rest if ident not in rung]
 
-    def _start_review(self, room_id: str, ident: str, msg: dict) -> dict | None:
+    def _start_review(self, room_id: str, ident: str, msg: dict, note: str = "") -> dict | None:
         """Start a fresh reviewer session for one request: its first prompt is
         the review brief (the question, the branch and its diff, the spec and
         REVIEW-LOG.md), it runs in the checkout under review, and it ends when
@@ -13617,7 +13678,13 @@ class Handler(BaseHTTPRequestHandler):
         switch in the same room may be starting its replacement): under the
         room's launch lock, refused while a live terminal of this seat is
         recorded nowhere, and ending the terminal it started when recording it
-        fails."""
+        fails. While a restart drains the review is held for after it
+        (restart_drain.py): ``{"held": True}``. ``note``: a line added to the
+        brief (a review a restart cut short: where it said it would carry on)."""
+        if restart_drain.try_hold({"kind": "review", "roomId": room_id, "identity": ident,
+                                   "messageId": msg.get("id", "")}):
+            print(f"[drain] {room_id}: the review by {ident} held for after the restart", flush=True)
+            return {"held": True, "n": 0}
         with rotation.launch_lock(room_id), _REVIEW_LAUNCH_LOCK:
             room_full = chatroom.get_room(room_id, public=False)
             part = chatroom.participant(room_full or {}, ident)
@@ -13634,6 +13701,8 @@ class Handler(BaseHTTPRequestHandler):
             root = review_repo(room_full)
             git = review_git_context(root, since=previous_review(part))
             brief = review_brief(room_full, part, msg, n, git, log_text)
+            if note:
+                brief += "\n\n" + note
             try:
                 info = self._launch_room_agent_pty(room_full, part, "", collab=True,
                                                    prompt=brief, cwd=root or None)
@@ -13673,6 +13742,13 @@ class Handler(BaseHTTPRequestHandler):
             return []
         rung = []
         for ident in idents:
+            # An agent at its safe point while a restart drains is not woken:
+            # the wake waits for after the restart (restart_drain.py).
+            if restart_drain.holding() and restart_drain.try_hold(
+                    {"kind": "wake", "roomId": room_id, "identity": ident, "text": wake},
+                    ready_only=(room_id, ident)):
+                rung.append(ident)
+                continue
             # Resolve under the rotation gate: a wake for an agent whose old
             # session is being ended is held for its fresh one. Release the
             # gate before the terminal's ingestion/Enter pause so a person's
@@ -14052,7 +14128,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _start_room(self, room_full: dict) -> list[dict]:
         """``_start_room_now`` under the room's launch lock (see
-        ``_start_or_resume_room``)."""
+        ``_start_or_resume_room``). While a restart drains, held for after
+        it (restart_drain.py): nothing started, []."""
+        if restart_drain.try_hold({"kind": "start", "roomId": room_full["id"], "fresh": True}):
+            print(f"[drain] {room_full['id']}: its start held for after the restart", flush=True)
+            return []
         return self._launch_guarded(room_full, self._start_room_now, room_full)
 
     def _launch_guarded(self, room_full: dict, fn, *args, **kw) -> list[dict]:
@@ -14128,14 +14208,14 @@ class Handler(BaseHTTPRequestHandler):
         return launched
 
     def _start_or_resume_room(self, room_full: dict, restart: dict | None = None,
-                              keep_state: bool = False) -> list[dict]:
+                              keep_state: bool = False, notes: dict | None = None) -> list[dict]:
         """``_start_or_resume_room_now`` under the room's launch lock, from the
         room's seats as they are on disk (``_launch_guarded``)."""
         return self._launch_guarded(room_full, self._start_or_resume_room_now, room_full,
-                                    restart=restart, keep_state=keep_state)
+                                    restart=restart, keep_state=keep_state, notes=notes)
 
     def _start_or_resume_room_now(self, room_full: dict, restart: dict | None = None,
-                                  keep_state: bool = False) -> list[dict]:
+                                  keep_state: bool = False, notes: dict | None = None) -> list[dict]:
         """Bring a not-running task up: a draft (never launched) starts fresh,
         anything else relaunches its agents resuming their prior conversations.
         Returns [{identity, ptyId}].
@@ -14144,7 +14224,9 @@ class Handler(BaseHTTPRequestHandler):
         (``_restore_after_restart``), or quietly on request. It maps each agent
         to what it was doing when the hub stopped; one that was mid-turn is
         typed RESTART_NOTE, everyone else — idle, unknown, not listed — is
-        typed nothing at all, the PO and the owner alike. ``{}`` is "nobody"."""
+        typed nothing at all, the PO and the owner alike. ``{}`` is "nobody".
+        ``notes`` (with ``restart``): identity -> its own line after a restart
+        that drained (restart_drain.py), in place of RESTART_NOTE or nothing."""
         agents_in = [pp for pp in room_full.get("participants", [])
                      if pp.get("kind") == "agent"]
         solo = room_full.get("mode") == "solo" or len(agents_in) < 2
@@ -14207,7 +14289,15 @@ class Handler(BaseHTTPRequestHandler):
                     st = restart.get(part["identity"])
                     label = task_label(room_full) or room_full["id"]
                     owner = part["identity"] in own and not is_po
-                    if owner and spec_unseen(room_full, part, st or ""):
+                    own_line = (notes or {}).get(part["identity"], "")
+                    if own_line:
+                        # Its own line: where it said it would carry on, or
+                        # what its screen showed when the restart cut it off.
+                        if owner and spec_unseen(room_full, part, st or ""):
+                            own_line += " " + DRAIN_SPEC_NOTE.format(label=label)
+                            spec_told.append(part["identity"])
+                        notify[part["identity"]] = own_line
+                    elif owner and spec_unseen(room_full, part, st or ""):
                         # Back quietly, but its spec changed under it: told so,
                         # or the amendment reaches no one (#182).
                         notify[part["identity"]] = (
@@ -14286,6 +14376,12 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         items = [send_item(text, to, now, key, project, origin)] if text else []
         start = direct = carried = False
+        if restart_drain.holding():
+            # A restart is draining: nothing starts and nothing is typed in;
+            # it goes in after the restart, behind the agent's resume line.
+            held = self._hold_for_restart(rid, text, to, key, quiet, project, origin)
+            if held is not None:
+                return held
         if items and _solo_room(room_full) and rotation.room_rotating(rid):
             # Its agent is being handed to a fresh session: the message waits
             # for that session (#192), unless a failed resume holds earlier
@@ -14347,6 +14443,23 @@ class Handler(BaseHTTPRequestHandler):
         return {"resumed": list(res.resumed), "queued": len(items), "delivered": 0,
                 "inFlight": True}
 
+    def _hold_for_restart(self, rid: str, text: str, to: str, key: str, quiet: bool,
+                          project: str, origin: str) -> dict | None:
+        """``_resume_room`` while a restart drains (restart_drain.py): its
+        send, or its start, is held for after the restart. None when the
+        drain ended meanwhile (the caller goes on as usual)."""
+        item = ({"kind": "send", "roomId": rid, "text": text, "to": to, "key": key,
+                 "quiet": quiet, "project": project, "origin": origin or "human"} if text
+                else {"kind": "start", "roomId": rid, "quiet": quiet})
+        if not restart_drain.try_hold(item):
+            return None
+        if text and key:
+            sends.hold_for_restart(rid, [key])
+        print(f"[drain] {rid}: {'a send' if text else 'a start'} held for after the restart",
+              flush=True)
+        return {"resumed": [], "queued": 1 if text else 0, "delivered": 0, "held": True,
+                "afterRestart": True}
+
     def _restore_after_restart(self, lease: str) -> dict:
         """Bring back every room the snapshot of this restart lists, each under
         the rule of ``_start_or_resume_room(restart=…)``: nothing typed into an
@@ -14365,6 +14478,7 @@ class Handler(BaseHTTPRequestHandler):
         if snap.get("hubPid") == os.getpid():
             note = "this hub process took the snapshot: it did not restart"
             _restart_log(f"restore: {note}; nothing done")
+            restart_drain.not_restarted(lease)
             return {"ok": True, "rooms": [], "note": note}
         path = _restart_snapshot_path()
         with contextlib.suppress(OSError):
@@ -14373,6 +14487,13 @@ class Handler(BaseHTTPRequestHandler):
         fresh = 0 <= age <= RESTART_SNAPSHOT_MAX_AGE_S
         wake_room = snap.get("wakeRoom") or ""
         po_rooms = {(pr.get("poRoomId") or "") for pr in load_projects()}
+        # A restart that drained first (restart_drain.py): each agent that
+        # paused gets where it said it would carry on, one cut off what its
+        # screen last showed; held messages go in after those lines.
+        drained, drain_notes = restart_drain.restore_notes(lease)
+        drain_held = restart_drain.close_restore(drained) if drained else None
+        if drain_held is None:
+            drained, drain_notes = None, {}
         _restart_log(f"restore: snapshot {int(age)}s old"
                      + ("" if fresh else f" (over {RESTART_SNAPSHOT_MAX_AGE_S}s: who was mid-turn "
                                          f"is unknown, everyone comes back quiet)")
@@ -14398,7 +14519,8 @@ class Handler(BaseHTTPRequestHandler):
                           if not a.get("onMention")
                           and (a.get("state") == "stopped"
                                or (fresh and rid != wake_room))}
-                lined = sorted(i for i, st in states.items() if st in MID_TURN_STATES)
+                notes = {} if rid == wake_room else drain_notes.get(rid, {})
+                lined = sorted({i for i, st in states.items() if st in MID_TURN_STATES} | set(notes))
                 with _RESUMES_LOCK:
                     busy = _RESUMES.get(rid) is not None
                     res = None if busy else _RESUMES.setdefault(rid, _Resume(rid))
@@ -14408,7 +14530,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         self._spec_told = []
                         resumed = self._start_or_resume_room(room_full, restart=states,
-                                                             keep_state=True)
+                                                             keep_state=True, notes=notes)
                         lined = sorted(set(lined) | set(self._spec_told))
                         with _RESUMES_LOCK:
                             res.resumed = resumed
@@ -14429,7 +14551,7 @@ class Handler(BaseHTTPRequestHandler):
                                     _RESUMES.pop(rid, None)
                         outcome = f"NOT brought back: {exc!r}"
                     else:
-                        if rid in po_rooms and rid != wake_room and not lined:
+                        if rid in po_rooms and rid != wake_room and not lined and not drained:
                             chatroom.post_notice(
                                 rid, digest.SENDER,
                                 f"The hub was restarted at {time.strftime('%H:%M')}.",
@@ -14440,7 +14562,9 @@ class Handler(BaseHTTPRequestHandler):
                             msg = next((m for m in room_full.get("messages") or []
                                         if m.get("id") == a.get("reviewMessageId")), None)
                             try:
-                                started = msg and self._start_review(rid, a.get("identity"), msg)
+                                started = msg and self._start_review(
+                                    rid, a.get("identity"), msg,
+                                    note=drain_notes.get(rid, {}).get(a.get("identity"), ""))
                             except Exception as exc:    # noqa: BLE001
                                 started = None
                                 outcome += f"; the review by {a.get('identity')} NOT started again: {exc!r}"
@@ -14452,6 +14576,8 @@ class Handler(BaseHTTPRequestHandler):
                                             f"is lost (its request was not found)")
             _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}' (was: {was}): {outcome}")
             out.append({"roomId": rid, "outcome": outcome})
+        if drained:
+            restart_drain.finish_restore(drained, drain_held, wake_room)
         return {"ok": True, "rooms": out, "note": ""}
 
     def _resume_after_all(self, room_full: dict, items: list[dict]) -> dict:
@@ -15686,6 +15812,57 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/pty/kill":
             self._send_json(200, {"ok": ptyrun.kill((data.get("id") or "").strip())})
+            return
+        if p in ("/api/update", "/api/restart") and str(data.get("when") or "safe").lower() != "now":
+            # A restart or an update at a safe point, the default: the hub
+            # drains first (restart_drain.py). ``when: "now"`` is the
+            # restart as it was, or Restart now for a drain under way.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            if p == "/api/update" and app_version.packaged() and not restart_drain.holding():
+                info = check_for_update(force=True)
+                if not info.get("available") or not info.get("release"):
+                    self._send_json(500, {"started": False, "error": "no newer release for this platform"})
+                    return
+            result = restart_drain.request_restart(
+                str(data.get("reason") or ""), self._drain_requester(),
+                "update" if p == "/api/update" else "restart")
+            self._send_json(result.pop("status"), result)
+            return
+        if p in ("/api/update", "/api/restart") and restart_drain.holding():
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            if restart_drain.draining():
+                result = restart_drain.force_drain(self._drain_requester()["label"])
+                self._send_json(202 if result["ok"] else 409, {"started": result["ok"], **result})
+                return
+            # The drain went to restart and nothing stopped the hub yet: a
+            # plain restart now, which the drain follows.
+            resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
+            result = restart_drain.restart_now(resolved[0] if resolved else "")
+            self._send_json(result.pop("status"), result)
+            return
+        if p == "/api/restart/drain":
+            # Restart now / Cancel for a drain under way: the page, or a PO
+            # that may restart the hub.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            action = str(data.get("action") or "")
+            who = self._drain_requester()["label"]
+            if action == "force":
+                result = restart_drain.force_drain(who)
+            elif action == "cancel":
+                result = restart_drain.cancel_drain(who)
+            else:
+                self._send_json(400, {"error": "action is force or cancel"})
+                return
+            self._send_json(200 if result["ok"] else 409, result)
             return
         if p == "/api/update":
             # Only the Ensemble Dashboard PO or the dashboard page — even from
@@ -16947,6 +17124,12 @@ def main():
     # A message typed into an agent that never took it in: typed again once
     # it is idle, then shown as not delivered (sends.py).
     sends.start_redeliverer()
+
+    # A restart at a safe point (restart_drain.py): a drain on file from the
+    # hub before this one is closed or waits for its restore; the monitor
+    # tells working agents, watches them and restarts when all are ready.
+    restart_drain.on_startup()
+    restart_drain.start_monitor(restart_drain.drain_tick)
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:

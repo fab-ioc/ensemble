@@ -111,6 +111,7 @@ class _Hub(unittest.TestCase):
         self.states: dict[str, tuple] = {}
         self.starts = 0
         self.reviews: list[tuple] = []
+        self.review_notes: list[str] = []
         for p in (mock.patch.object(dashboard, "DASHBOARD_DIR", self.dir),
                   mock.patch.object(dashboard.ptyrun, "get", lambda pid: self.ptys.get(pid)),
                   mock.patch.object(dashboard.ptyrun, "list_sessions", lambda: list(self.listed)),
@@ -176,8 +177,9 @@ class _Hub(unittest.TestCase):
             def _launch_room_agent_pty(self, *a, **k):
                 raise AssertionError("a room coming back is not launched fresh")
 
-            def _start_review(self, room_id, ident, msg):
+            def _start_review(self, room_id, ident, msg, note=""):
                 test.reviews.append((room_id, ident, msg.get("id")))
+                test.review_notes.append(note)
                 return {"n": 2}
 
         return H()
