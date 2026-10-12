@@ -1787,7 +1787,13 @@ def counts(room_id: str) -> dict | None:
     that). None when the room has no ledger or nothing in it waits."""
     if not exists(room_id):
         return None
-    c = _counts(load(room_id))
+    led = load(room_id)
+    c = _counts(led)
+    # Needs you (#209): what the counter shows. Decisions as the chat's last
+    # view worked them out (reading cards here would cost a listing seconds).
+    kinds = [needs_you(p) for p in led["points"]]
+    c.update(decisions=len((_LAST_DECISIONS.get(room_id) or ([], []))[0]),
+             totry=kinds.count("try"), news=kinds.count("new"))
     return c if any(c.values()) else None
 
 

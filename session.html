@@ -838,6 +838,16 @@
   .pt-state.delivered, .pt-chip.delivered { color:var(--fg); font-weight:600; }
   #points-list .pt-group { padding:var(--s-200) 0 var(--s-050); color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
   .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
+  /* Needs you (#209): a question card's row is its first line as the link; a
+     fold's head (Older questions, With the PO, Closed) is a disclosure button
+     in the group head's look; "Nothing waits on you" in --fg-muted. */
+  .pt-ask .pt-words a.pt-link { white-space:nowrap; }
+  #points-list .pt-fold { padding:var(--s-100) 0 0; }
+  #points-list .pt-fold-sum { display:flex; align-items:center; gap:var(--s-200); width:100%; min-height:24px; padding:0;
+    background:transparent; border:none; border-radius:var(--r-100); color:var(--fg-subtle); font:inherit; font-weight:600; text-align:left; cursor:pointer; }
+  #points-list .pt-fold-sum:hover { color:var(--fg); }
+  #points-list .pt-fold-sum:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #points-list .pt-note { color:var(--fg-muted); }
   a.pt-link { color:var(--link); white-space:nowrap; }
   /* A PO message's id written in a balloon, as its name (pmLinkHtml). */
   .msg .text.md a.pm-link { color:var(--link); }
@@ -1164,8 +1174,9 @@
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
-    /* Your asks: every link in the list and under a balloon is a tap target. */
+    /* Needs you: every link in the list and under a balloon is a tap target, and each fold's head. */
     #points-list a.pt-link, .pt-bar a.pt-link, .pt-bar .pt-chip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
+    #points-list .pt-fold-sum { min-height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     .cp-line .cp-btn, #cp-dlg .cp-acts button { min-height: var(--touch-min); }   /* a checkpoint's buttons (#197) */
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
@@ -3586,7 +3597,7 @@ function digestWords(m) {
 // count with the others, as hidden.
 // unacked: the balloons answering the person's points that they have not
 // acknowledged (pointMaps). They come first, and are counted once.
-function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null) {
+function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null, askMids = null) {
   if (!point) return null;
   const after = [];
   let lastPersons = -1;
@@ -3603,14 +3614,14 @@ function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null) {
     if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
     digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
     if (unacked && m.id && unacked.has(m.id)) acks.push(i);
-    else if (f === 'decision' && i > lastPersons) decisions.push(i);
+    else if (f === 'decision' && (askMids ? askMids.has(m.id) : i > lastPersons)) decisions.push(i);
     else if (f) answers.push(i);
   }
   if (after.length < 3 && acks.length + decisions.length + answers.length === after.length) return null;
   const named = [...words].filter(([, w]) => w.word && !acks.includes(w.i)).sort((a, b) => a[1].i - b[1].i);
   const s = n => n === 1 ? '' : 's';
   const parts = [];
-  if (acks.length) parts.push({ text: `${acks.length} answer${s(acks.length)} to your asks to acknowledge`, mid: items[acks[0]].id || '' });
+  if (acks.length) parts.push({ text: `${acks.length} new answer${s(acks.length)} to your asks`, mid: items[acks[0]].id || '' });
   if (decisions.length) parts.push({ text: `${decisions.length} decision${s(decisions.length)} waiting`, mid: items[decisions[0]].id || '' });
   if (!justUs) named.forEach(([name, w]) => parts.push({ text: name + ' ' + w.word, mid: items[w.i].id || '' }));
   if (answers.length) parts.push({ text: `${answers.length} answer${s(answers.length)} to you`, mid: items[answers[0]].id || '' });
@@ -3711,7 +3722,7 @@ const stripImagePlaceholders = t => {
 // acknowledged by the person. Only a delivered one takes the thumbs up.
 // A point followed up (a comment on its answer, a message linking or quoting
 // it: points.py) is handled: "followed up by P105", no thumbs up owed.
-const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts', followed: 'followed up' };
+const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts', followed: 'followed up' };
 // A hub from before the stages says "answered" for delivered.
 const ptItem = p => p && p.state === 'answered' ? Object.assign({}, p, { state: 'delivered' }) : p;
 const isPlan = a => !!a && a.kind === 'plan';
@@ -3738,7 +3749,9 @@ function ptTaskWords(p) {
 function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
     unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
-    planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0 };
+    planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0,
+    needs: (pv && pv.needs) || null };
+  P.askMids = P.needs ? new Set((P.needs.decisions || []).map(c => c.mid)) : null;
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
     P.byId.set(p.id, p);
@@ -3747,7 +3760,7 @@ function pointMaps(pv) {
     (p.answers || []).forEach(a => add(P.byAnswer, a.mid, p));
     if (p.state === 'open' || p.state === 'planned') own.forEach(k => P.keep.add(k));
     if (p.state === 'planned') { const a = lastPlan(p); if (a && a.mid) P.keep.add(a.mid); }
-    if (p.state === 'delivered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); P.unacked.add(a.mid); } }
+    if (p.state === 'delivered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); if (ptNeeds(p)) P.unacked.add(a.mid); } }
   }
   return P;
 }
@@ -3764,13 +3777,32 @@ function ptAge(ts, now) {
   if (s < 48 * 3600) return Math.round(s / 3600) + 'h';
   return Math.round(s / 86400) + 'd';
 }
-// "Your asks: 2 waiting for an answer · 1 in progress · 3 ready for your check".
+// Needs you (#209): only what waits on the person. Decisions: the question
+// cards still open (the hub's needs.decisions); To try: answers that ask them
+// to try or check something; New answers: answers they have not seen. An
+// answer they saw closes by itself when they write again (points.py), so
+// nothing waits for a tick. Each delivered item says which (needs: "try",
+// "new", "": seen); a hub from before Needs you sends none: every answer is new.
+const ptNeeds = p => p.state !== 'delivered' ? '' : (p.needs != null ? p.needs : 'new');
+function needsCounts(P) {
+  const n = P.needs || {};
+  const count = k => P.items.filter(p => ptNeeds(p) === k).length;
+  // A hub from before Needs you sends only counts (and at most 200 points): its delivered ones are new.
+  return { decisions: (n.decisions || []).length, totry: n.totry != null ? n.totry : count('try'),
+    news: n.news != null ? n.news : P.needs ? count('new') : Math.max(P.delivered, count('new')) };
+}
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// "Needs you: 2 decisions · 1 to try · 3 new answers"; "Nothing waits on you"
+// with only folds under it; '' with nothing at all.
 function pointsSummary(P) {
+  const c = needsCounts(P), n = P.needs || {};
   const bits = [];
-  if (P.open) bits.push(`${P.open} waiting for an answer`);
-  if (P.planned) bits.push(`${P.planned} in progress`);
-  if (P.delivered) bits.push(`${P.delivered} ready for your check`);
-  return bits.length ? 'Your asks: ' + bits.join(' · ') : '';
+  if (c.decisions) bits.push(plural(c.decisions, 'decision', 'decisions'));
+  if (c.totry) bits.push(`${c.totry} to try`);
+  if (c.news) bits.push(plural(c.news, 'new answer', 'new answers'));
+  if (bits.length) return 'Needs you: ' + bits.join(' · ');
+  const folds = (n.olderCount || 0) + (n.closedCount || 0) + P.open + P.planned + P.items.filter(p => p.state === 'delivered').length;
+  return folds || n.pending ? 'Nothing waits on you' : '';
 }
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 // part: the passage to land on ("re:P12" the answer's paragraph, "pt:P12"
@@ -3800,35 +3832,84 @@ function ptThreadHtml(p, P, href) {
   if (down) bits.push(`<span class="pt-chip pt-thread">followed up by ${down.mid ? ptLink(down.mid, down.id + ' ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
   return bits.join('');
 }
-// The list's groups, in this order, each oldest first.
-const PT_GROUPS = [['open', () => CHAT_NAMES.po ? 'Waiting for the PO' : 'Waiting for an answer'],
-  ['planned', () => 'In progress'], ['delivered', () => 'Ready for your check']];
-// The compact list under the line, by stage: what waits for an answer, what
-// is in progress (with its task and where it is), what is ready for their
-// check; both ends linked (and the plan), and the one click that closes it.
+// The list's groups, in this order, newest first: Decisions, To try, New
+// answers; then folds, closed until opened (PT_FOLDS): the older questions
+// (asked again since, or old and written past), what waits on the PO (open,
+// in progress), what closed by itself (reopenable). A later group (Threads)
+// is one more entry.
+const PT_GROUPS = [['decisions', () => 'Decisions'], ['try', () => 'To try'], ['new', () => 'New answers']];
+const PT_FOLDS = new Set();
+const PT_REASON = { seen: 'seen', superseded: 'superseded', migrated: 'closed as old' };
+// A question card's row: its first line, linked to the card (landing on the ask), its task, since when.
+function ptAskRow(c, href, now) {
+  const q = foldLine(String(c.question || '')).replace(/\*\*|__/g, '');
+  const words = q.length > 120 ? q.slice(0, 119) + '…' : q;
+  return `<li class="pt-row pt-ask" data-mid="${esc(c.mid)}" data-n="${esc(String(c.n || 0))}">`
+    + `<span class="pt-words" title="${esc(q)}">${ptLink(c.mid, words || 'the question', href, 'Go to the question card', 'ask:' + (c.n || 0))}</span>`
+    + (c.task ? `<span class="pt-chip">${esc(c.task)}</span>` : '')
+    + `<span class="pt-age" data-at="${esc(String(c.ts || 0))}">${esc(ptAge(c.ts, now))}</span></li>`;
+}
+// An answered point's row: its words, the answer's, both ends linked, the
+// thumbs up (it still closes one at once) and Comment.
+function ptAnswerRow(p, P, href, now, word) {
+  const a = lastAnswer(p), plan = lastPlan(p), said = ptSaid(a);
+  return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
+    + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
+    + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
+    + `<span class="pt-state delivered">${esc(word)}</span>`
+    + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
+    + ptThreadHtml(p, P, href)
+    + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
+    + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
+    + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
+    + ackBtn(p.id) + commentBtn(p.id) + '</li>';
+}
+// What waits on the PO: an open point, or one in progress with its task.
+function ptWaitRow(p, P, href, now) {
+  const plan = p.state === 'planned' ? lastPlan(p) : null, said = plan ? ptSaid(plan) : '', task = p.state === 'planned' ? ptTaskWords(p) : '';
+  return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
+    + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
+    + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
+    + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
+    + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
+    + ptThreadHtml(p, P, href)
+    + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
+    + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
+    + ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`) + '</li>';
+}
+// A point that closed by itself: why, linked to its answer, Reopen.
+function ptClosedRow(c, href, now) {
+  const why = PT_REASON[c.reason] || c.reason || 'closed';
+  return `<li class="pt-row" data-pt="${esc(c.id)}"><span class="pt-id">${esc(c.id)}</span>`
+    + `<span class="pt-words" title="${esc(c.text || '')}">${esc(ptWords(c.text))}</span>`
+    + `<span class="pt-age" data-at="${esc(String(c.at || 0))}">${esc(ptAge(c.at, now))}</span>`
+    + `<span class="pt-state acked">${esc(why + (c.supersededBy ? ' by ' + c.supersededBy : ''))}</span>`
+    + (c.answer ? ptLink(c.answer, 'answer ↓', href, 'Go to the answer', 're:' + c.id) : '')
+    + ptBtn(c.id, 'reopen', 'Reopen', `Reopen ${c.id}: it is back under New answers`) + '</li>';
+}
+// A fold: its head a button (open or closed per page, like the line itself).
+function ptFoldHtml(key, title, rows) {
+  if (!rows.length) return '';
+  const open = PT_FOLDS.has(key);
+  return `<li class="pt-group pt-fold"><button type="button" class="pt-fold-sum" data-fold="${esc(key)}" aria-expanded="${open}">`
+    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(title)}</button></li>` + (open ? rows.join('') : '');
+}
 function pointsListHtml(P, href, now) {
-  return PT_GROUPS.map(([st, head]) => {
-    const rows = P.items.filter(p => p.state === st).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    if (!rows.length) return '';
-    return `<li class="pt-group">${esc(head())}</li>` + rows.map(p => {
-      const a = st === 'delivered' ? lastAnswer(p) : null;
-      const plan = st !== 'open' ? lastPlan(p) : null;
-      // The answer's own words under the ask (the hub's `said`), a plan's summary for one in progress.
-      const said = ptSaid(a) || (st === 'planned' ? ptSaid(plan) : '');
-      const task = st === 'planned' ? ptTaskWords(p) : '';
-      return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
-        + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
-        + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
-        + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
-        + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
-        + ptThreadHtml(p, P, href)
-        + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
-        + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
-        + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
-        + (st === 'delivered' ? ackBtn(p.id) + commentBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
-        + '</li>';
-    }).join('');
-  }).join('');
+  const n = P.needs || {}, newest = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
+  const by = k => P.items.filter(p => ptNeeds(p) === k).sort(newest);
+  const groups = {
+    decisions: (n.decisions || []).map(c => ptAskRow(c, href, now)),
+    try: by('try').map(p => ptAnswerRow(p, P, href, now, 'to try')),
+    new: by('new').map(p => ptAnswerRow(p, P, href, now, 'new answer')),
+  };
+  if (n.pending && !groups.decisions.length) groups.decisions.push('<li class="pt-row pt-note">Reading the question cards…</li>');
+  let html = PT_GROUPS.map(([k, head]) => groups[k].length ? `<li class="pt-group">${esc(head())}</li>` + groups[k].join('') : '').join('');
+  if (!html) html = '<li class="pt-row pt-note">Nothing waits on you</li>';
+  const waits = P.items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
+  html += ptFoldHtml('older', `Older questions (${n.olderCount || (n.older || []).length})`, (n.older || []).map(c => ptAskRow(c, href, now)));
+  html += ptFoldHtml('po', `${CHAT_NAMES.po ? 'With the PO' : 'Waiting for an answer'} (${waits.length})`, waits.map(p => ptWaitRow(p, P, href, now)));
+  html += ptFoldHtml('closed', `Closed (${n.closedCount || (n.closed || []).length})`, (n.closed || []).map(c => ptClosedRow(c, href, now)));
+  return html;
 }
 function pointsLineHtml(P, open, href, now) {
   const sum = pointsSummary(P);
@@ -4101,8 +4182,8 @@ function renderBubbles(items, opt = {}) {
   const body = m => { if (m.from !== 'user') return askBodyHtml(m, POINTS, md, ptBar); const it = m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
   // The catch-up line goes above what is drawn first for the first message after the read point.
-  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked) : null;
-  const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',');
+  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked, POINTS.askMids) : null;
+  const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',') + '|' + [...(POINTS.askMids || [])].join(',');
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
   CU_SHOWN = !!cu;
@@ -4243,7 +4324,7 @@ function showPointsLine() {
   if (sig === POINTS_LINE_SIG) { if (el.hidden !== (!html || away)) el.hidden = !html || away; pointsAges(); return; }
   POINTS_LINE_SIG = sig;
   const hadFocus = el.contains(document.activeElement) ? document.activeElement : null;
-  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
+  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.fold ? `.pt-fold-sum[data-fold="${hadFocus.dataset.fold}"]` : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
   el.hidden = !html || away;
   el.innerHTML = html;
   if (focusKey) { const f = el.querySelector(focusKey) || el.querySelector('.pt-sum'); if (f) f.focus(); }
@@ -4257,6 +4338,63 @@ function pointsAges() {
   });
 }
 function pointsNote(text) { setText($('#hint'), text); }
+// ---- Seen answers (#209): the hub keeps which answers the person has seen
+// (points.mark_seen), and closes those once they write again. Seen = the
+// answer balloon on screen (at least 120 px of it, or half of a short one)
+// for a second with the page in front, or opened from a link or a chip
+// (landPending), or a row of an answer given by doing (no balloon) opened in
+// the list. Told once per answer and page; the hub keeps it across devices.
+const SEEN_SENT = new Set(), SEEN_SINCE = new Map();
+const SEEN_MS = 1000;
+function seenWanted() {
+  const w = new Map();
+  for (const p of POINTS.items) {
+    if (p.state !== 'delivered' || p.seen) continue;
+    const a = lastAnswer(p);
+    if (a && a.mid && !SEEN_SENT.has(a.mid)) w.set(a.mid, p.id);
+  }
+  return w;
+}
+function pageInFront() {
+  if (document.visibilityState !== 'visible') return false;
+  try { if (document.hasFocus()) return true; } catch (e) {}
+  // Framed (a PO screen): the screen around it is in front.
+  try { return window.top !== window && window.top.document.visibilityState === 'visible' && window.top.document.hasFocus(); } catch (e) { return false; }
+}
+function seenSend(mids, ids, how) {
+  mids = mids.filter(m => m && !SEEN_SENT.has(m));
+  ids = ids.filter(i => i && !SEEN_SENT.has('id:' + i));
+  if (!ROOM || (!mids.length && !ids.length)) return null;
+  mids.forEach(m => SEEN_SENT.add(m));
+  ids.forEach(i => SEEN_SENT.add('id:' + i));
+  return postOk('/api/room/points/seen', { roomId: ROOM, mids, ids, how })
+    .then(r => { if (r && r.points) pointsChanged(r.points, ptTicket()); return r; })
+    .catch(() => { mids.forEach(m => SEEN_SENT.delete(m)); ids.forEach(i => SEEN_SENT.delete('id:' + i)); return null; });
+}
+function seenTick(now = Date.now()) {
+  const box = $('#msgs');
+  const want = seenWanted();
+  if (!want.size || !box || !box.clientHeight || !pageInFront()) { SEEN_SINCE.clear(); return; }
+  const r = box.getBoundingClientRect(), done = [];
+  for (const el of box.querySelectorAll('.msg[data-mid]')) {
+    const mid = el.dataset.mid;
+    if (!want.has(mid)) continue;
+    const e = el.getBoundingClientRect();
+    const shown = Math.min(e.bottom, r.bottom) - Math.max(e.top, r.top);
+    if (e.height > 0 && shown >= Math.min(120, e.height / 2)) {
+      if (!SEEN_SINCE.has(mid)) SEEN_SINCE.set(mid, now);
+      else if (now - SEEN_SINCE.get(mid) >= SEEN_MS) done.push(mid);
+    } else SEEN_SINCE.delete(mid);
+  }
+  for (const mid of [...SEEN_SINCE.keys()]) if (!want.has(mid)) SEEN_SINCE.delete(mid);
+  if (done.length) { done.forEach(m => SEEN_SINCE.delete(m)); seenSend(done, [], 'screen'); }
+}
+// Opened from a link: the landing balloon, if it answers a point. Told once
+// the landing mark has faded: the hub's answer redraws the chat.
+function seenLink(mid) {
+  if (seenWanted().has(mid)) setTimeout(() => { if (seenWanted().has(mid)) seenSend([mid], [], 'link'); }, 2700);
+}
+setInterval(() => { try { seenTick(); } catch (e) {} }, 500);
 // ---- The catch-up line: when it shows, and what advances the read point ----
 const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.search);
 function loadRead() {
@@ -4694,6 +4832,7 @@ function landPending() {
     at.style.animationDelay = '';
     void at.offsetWidth;          // start the fade again on a second landing
     LANDED = { mid, part, at: Date.now() };
+    seenLink(mid);
     markLanded(at);
   } finally { _landing = false; }
 }
@@ -6937,7 +7076,13 @@ function pointClick(e) {
 }
 $('#points-line').addEventListener('click', e => {
   if (pointClick(e)) return;
-  if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); }
+  if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); return; }
+  const fold = e.target.closest && e.target.closest('.pt-fold-sum');
+  if (fold) { const k = fold.dataset.fold; if (PT_FOLDS.has(k)) PT_FOLDS.delete(k); else PT_FOLDS.add(k); showPointsLine(); return; }
+  // An answer given by doing has no balloon: its row, opened, is where it is read.
+  const row = e.target.closest && e.target.closest('.pt-row[data-pt]');
+  const p = row && POINTS.byId.get(row.dataset.pt), a = p && p.state === 'delivered' && lastAnswer(p);
+  if (a && !a.mid && !p.seen) seenSend([], [p.id], 'link');
 });
 $('#msgs').addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
