@@ -114,6 +114,8 @@ def denial_of(text: str) -> str | None:
     """The reason a denied tool call's result gives, "" when it gives none,
     None when the text is not a denial."""
     text = (text or "").lstrip()
+    if text.startswith("Error: "):
+        text = text[len("Error: "):]
     if not text.startswith(DENIAL_PREFIXES):
         return None
     m = _REASON.search(text[:400])
@@ -138,11 +140,16 @@ def _prompt_kind(text: str) -> str:
 
 
 def parse(lines: list[str]) -> dict:
-    """``{mode, denial}`` from transcript lines, oldest first. ``mode`` is the
-    newest mode recorded; ``denial`` the newest denied tool call that no later
-    prompt of a person (or a PO) has settled — ``{tool, reason, at,
-    toolUseId}`` — or None."""
-    mode, denial = "", None
+    """``{mode, denial, denials, settledAt}`` from transcript lines, oldest
+    first. ``mode`` is the newest mode recorded; ``denial`` the newest denied
+    tool call that no later prompt of a person (or a PO) has settled —
+    ``{tool, reason, at, toolUseId}`` — or None; ``denials`` the ids of every
+    denied call read, ``settledAt`` when a person or the PO last typed to it.
+
+    A denial is a tool result Claude marked as an error (``is_error``) that
+    starts with its denial words: a tool that succeeded and returned the same
+    words (a file quoting them) is not one."""
+    mode, denial, denials, settled = "", None, [], 0.0
     tools: dict[str, str] = {}
     for ln in lines:
         if "permission" not in ln.lower() and '"tool_use"' not in ln and '"user"' not in ln:
@@ -171,17 +178,21 @@ def parse(lines: list[str]) -> dict:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "tool_result":
-                reason = denial_of(_result_text(b))
+                reason = denial_of(_result_text(b)) if b.get("is_error") is True else None
                 if reason is not None:
                     tid = b.get("tool_use_id") or ""
                     denial = {"tool": tools.get(tid, ""), "reason": reason, "at": at,
                               "toolUseId": tid}
-            elif b.get("type") == "text" and denial and not d.get("isMeta") \
+                    if tid:
+                        denials.append(tid)
+            elif b.get("type") == "text" and not d.get("isMeta") \
                     and _prompt_kind(str(b.get("text") or "")) in _SETTLING_KINDS:
                 denial = None           # a person (or the PO) took it from there
-    return {"mode": mode, "denial": denial}
+                settled = max(settled, at)
+    return {"mode": mode, "denial": denial, "denials": denials[-50:], "settledAt": settled}
 
 
+_NOTHING = {"mode": "", "denial": None, "denials": [], "settledAt": 0.0}
 _SEEN: dict[str, tuple[tuple, dict]] = {}    # path -> ((mtime, size), parsed)
 _HEAD: dict[str, str] = {}                   # path -> the mode its start recorded
 
@@ -190,13 +201,13 @@ def from_transcript(path) -> dict:
     """:func:`parse` of a conversation's newest part (its start too, when the
     newest part records no mode). Read again only when the file changed."""
     if not path:
-        return {"mode": "", "denial": None}
+        return dict(_NOTHING)
     p = Path(path)
     try:
         st = p.stat()
         key = (st.st_mtime, st.st_size)
     except OSError:
-        return {"mode": "", "denial": None}
+        return dict(_NOTHING)
     seen = _SEEN.get(str(p))
     if seen and seen[0] == key:
         return dict(seen[1])
@@ -255,10 +266,16 @@ def problem(part: dict, hook: dict | None = None, tail: str = "",
             transcript: dict | None = None) -> dict | None:
     """What stops a Claude agent from running as the hub launched it, or None:
     ``{cause, why, key, ...}``. ``cause`` is ``consent`` (the bypass warning
-    waits on its screen), ``mode`` (it runs in another mode) or ``denied``
-    (Claude's safety check refused a tool call that nobody has taken up since).
-    ``why`` completes "<agent> …"; ``key`` names this one problem, so it is
-    told once. ``hook`` is ``agent_hooks.state_for``, ``tail`` its screen."""
+    waits on its screen), ``mode`` (it runs in another mode), ``denied``
+    (Claude's safety check refused a tool call that nobody has taken up since)
+    or ``prompt`` (Claude asks for approval in bypass mode: its safety check
+    could not run). ``why`` completes "<agent> …"; ``key`` names this one
+    problem, so it is told once. ``hook`` is ``agent_hooks.state_for``,
+    ``tail`` its screen.
+
+    The mode is the newest one seen: the footer when it names one (it is the
+    screen now), else the transcript's newest record (Claude writes one the
+    moment the mode changes, Shift+Tab too), else the agent's last hook."""
     if (part.get("agent") or "claude") != "claude":
         return None
     screen = from_screen(tail) if tail else {"mode": "", "consent": False}
@@ -270,10 +287,11 @@ def problem(part: dict, hook: dict | None = None, tail: str = "",
     if transcript is None:
         try:
             transcript = from_transcript(_d.rotation._transcript_of(part)[0]) if _d is not None \
-                else {"mode": "", "denial": None}
+                else dict(_NOTHING)
         except Exception:
-            transcript = {"mode": "", "denial": None}
-    mode = (hook or {}).get("mode") or transcript.get("mode") or screen["mode"]
+            transcript = dict(_NOTHING)
+    hook = hook or {}
+    mode = screen["mode"] or transcript.get("mode") or hook.get("mode") or ""
     if LAUNCH_MODE and mode and mode != LAUNCH_MODE and mode not in _OWN_MODES:
         launched = mode_name(LAUNCH_MODE)
         if mode == "default":
@@ -286,6 +304,11 @@ def problem(part: dict, hook: dict | None = None, tail: str = "",
                    f"someone switched it. Claude's safety check may stop it.")
         return {"cause": "mode", "key": f"mode:{mode}", "mode": mode, "why": why}
     den = transcript.get("denial")
+    hden = hook.get("denied")
+    if hden and hden.get("toolUseId") not in (transcript.get("denials") or []) \
+            and float(hden.get("at") or 0) > float(transcript.get("settledAt") or 0) \
+            and (not den or float(hden.get("at") or 0) > float(den.get("at") or 0)):
+        den = hden              # its hook said so before the transcript did
     if den and den.get("at") and time.time() - float(den["at"]) > DENIAL_MAX_AGE:
         den = None
     if den:
@@ -297,4 +320,41 @@ def problem(part: dict, hook: dict | None = None, tail: str = "",
                 "why": (f"was stopped by Claude's own safety check: it blocked "
                         f"{action_words(den.get('tool') or '')}{reason}{bypass}. "
                         f"A person has to do this step.")}
+    if hook.get("state") == "waiting" and hook.get("event") == "PermissionRequest" \
+            and LAUNCH_MODE == "bypassPermissions" and mode in ("", LAUNCH_MODE):
+        what = action_words(hook.get("detail") or "")
+        return {"cause": "prompt", "key": f"prompt:{hook.get('at')}", "at": float(hook.get("at") or 0),
+                "why": (f"is waiting for a person to approve {what}: Claude asks even in bypass "
+                        f"mode when its own safety check cannot run. A person has to answer it "
+                        f"in the agent's terminal.")}
     return None
+
+
+def settled(perm: dict | None, room: dict, identity: str) -> bool:
+    """Whether a denial has since been taken up by the agent itself: it
+    reported (ensemble_report) or put something to a person or its PO after
+    it. Its own words are then the item."""
+    if not perm or perm.get("cause") != "denied":
+        return False
+    at = 0.0
+    for key in ("openToHuman", "lastReport"):
+        rec = (room or {}).get(key)
+        if isinstance(rec, dict) and (rec.get("from") or rec.get("identity")) == identity:
+            try:
+                at = max(at, float(rec.get("ts") or 0))
+            except (TypeError, ValueError):
+                pass
+    return at >= float(perm.get("at") or 0)
+
+
+# What the PO can do about each cause (stall.py's line).
+REMEDY = {
+    "denied": ("This is Claude's own check, not the hub's launch mode: restarting the agent "
+               "does not change it. Do the step yourself or ask the person to."),
+    "prompt": ("This is Claude's own check, not the hub's launch mode. A person answers the "
+               "prompt in the agent's terminal."),
+    "mode": ("A restart from the hub launches it in bypass mode again, unless Claude's settings "
+             "on this machine turn bypass mode off; then a person changes those settings."),
+    "consent": ("A person answers the warning once in the agent's terminal; the hub does not "
+                "accept it on their behalf."),
+}

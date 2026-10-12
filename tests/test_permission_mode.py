@@ -100,11 +100,41 @@ class EveryLaunchPath(_LaunchSeats):
                 with self.subTest(seat=seat):
                     self.assertIsNone(_mode_of(argv))
 
+    def test_either_tools_setting_keeps_the_mode(self):
+        """Settings > "Ensemble + my own tools" only decides --strict-mcp-config."""
+        for tools, strict in ((dashboard.TASK_AGENT_TOOLS_ENSEMBLE, True),
+                              (dashboard.TASK_AGENT_TOOLS_OWN, False)):
+            with mock.patch.object(dashboard.Handler, "_task_agent_tools", return_value=tools):
+                for seat, argv in self.seats("claude").items():
+                    with self.subTest(tools=tools, seat=seat):
+                        self.assertEqual(_mode_of(argv), "bypassPermissions")
+                        self.assertEqual("--strict-mcp-config" in argv, strict)
+
     def test_the_agent_registry_builds_the_same(self):
         from agents.claude import ClaudeAgent
         a = ClaudeAgent()
         self.assertEqual(_mode_of(a.launch_argv("/w", "hi", ["--mcp-config", "x"])), "bypassPermissions")
         self.assertEqual(_mode_of(a.resume_argv("sid", ["--mcp-config", "x"])), "bypassPermissions")
+
+
+class TheReleaseApp(unittest.TestCase):
+    """The built app (Ensemble.exe, Ensemble.app) starts the hub and nothing
+    else: no mode of its own, so a hub it starts launches in bypass mode."""
+
+    def test_the_app_sets_no_mode_and_the_hub_defaults_to_bypass(self):
+        import subprocess
+        import sys
+        root = Path(__file__).resolve().parent.parent
+        for name in ("ensemble_app.py", "app_launch.py"):
+            text = (root / name).read_text(encoding="utf-8")
+            self.assertNotIn("ENSEMBLE_PERMISSION_MODE", text, name)
+            self.assertNotIn("--permission-mode", text, name)
+        env = {k: v for k, v in os.environ.items() if k != "ENSEMBLE_PERMISSION_MODE"}
+        out = subprocess.run([sys.executable, "-c", "from backends.shared import claude_cmd_args;"
+                              "print(' '.join(claude_cmd_args('--resume', 's')))"],
+                             cwd=root, env=env, capture_output=True, text=True, encoding="utf-8",
+                             timeout=60)
+        self.assertEqual(out.stdout.strip(), "claude --resume s --permission-mode bypassPermissions")
 
 
 class TerminalWindows(unittest.TestCase):
@@ -160,7 +190,8 @@ class TheTranscript(unittest.TestCase):
     def test_the_newest_mode_counts(self):
         t = time.time()
         got = permission_mode.parse(_lines(_mode("bypassPermissions"), _prompt("go", t)))
-        self.assertEqual(got, {"mode": "bypassPermissions", "denial": None})
+        self.assertEqual({k: got[k] for k in ("mode", "denial")},
+                         {"mode": "bypassPermissions", "denial": None})
         got = permission_mode.parse(_lines(_mode("bypassPermissions"), _prompt("go", t, "auto")))
         self.assertEqual(got["mode"], "auto")
         self.assertEqual(permission_mode.parse(_lines(_mode("default")))["mode"], "default")
@@ -189,6 +220,17 @@ class TheTranscript(unittest.TestCase):
         got = permission_mode.parse(_lines(_call("tu1", "Read", t - 2), _result("tu1", quoted, t - 1)))
         self.assertIsNone(got["denial"])
 
+    def test_a_tool_that_succeeded_with_those_words_is_not_a_denial(self):
+        t = time.time()
+        ok = _result("tu1", DENIAL, t - 1)
+        ok["message"]["content"][0]["is_error"] = False
+        got = permission_mode.parse(_lines(_call("tu1", "Read", t - 2), ok))
+        self.assertIsNone(got["denial"])
+        # Claude's own wording with its "Error: " head is one.
+        err = _result("tu2", "Error: " + DENIAL, t)
+        self.assertEqual(permission_mode.parse(_lines(_call("tu2", CLICK, t - 1), err))["denial"]["tool"],
+                         CLICK)
+
     def test_read_from_a_file_and_cached(self):
         import tempfile
         d = tempfile.TemporaryDirectory()
@@ -199,7 +241,8 @@ class TheTranscript(unittest.TestCase):
         self.assertEqual(permission_mode.from_transcript(p)["mode"], "auto")
         with mock.patch.object(permission_mode, "parse", side_effect=AssertionError("read again")):
             self.assertEqual(permission_mode.from_transcript(p)["mode"], "auto")
-        self.assertEqual(permission_mode.from_transcript(None), {"mode": "", "denial": None})
+        self.assertEqual(permission_mode.from_transcript(None)["mode"], "")
+        self.assertIsNone(permission_mode.from_transcript(None)["denial"])
 
 
 class TheScreen(unittest.TestCase):
@@ -238,7 +281,7 @@ class WhatItAmountsTo(unittest.TestCase):
         self.assertIn("runs in Manual mode", got["why"])
         self.assertIn("stops for approval", got["why"])
         # The agent's own hooks name the mode as it is now.
-        self.assertEqual(self.problem(hook={"mode": "acceptEdits"})["key"], "mode:acceptEdits")
+        self.assertEqual(self.problem(mode="", hook={"mode": "acceptEdits"})["key"], "mode:acceptEdits")
 
     def test_a_denial_in_plain_words(self):
         den = {"tool": CLICK, "reason": "Real-World Transactions", "at": time.time() - 60,
@@ -251,6 +294,49 @@ class WhatItAmountsTo(unittest.TestCase):
                                      "do this step.")
         self.assertNotIn("auto mode", got["why"])
         self.assertIsNone(self.problem(denial={**den, "at": time.time() - 2 * 86400}))
+
+    def test_the_newest_mode_wins_over_an_older_hook(self):
+        """Shift+Tab writes a mode record (and redraws the footer) before any
+        hook names the new mode."""
+        got = self.problem(mode="auto", hook={"mode": "bypassPermissions"})
+        self.assertEqual(got["key"], "mode:auto")
+        got = permission_mode.problem({"agent": "claude"}, {"mode": "bypassPermissions"},
+                                      "> \n⏵⏵ auto mode on (shift+tab to cycle)\n",
+                                      {"mode": "bypassPermissions", "denial": None})
+        self.assertEqual(got["key"], "mode:auto")
+        # Back in bypass on screen: whatever an older record said.
+        self.assertIsNone(permission_mode.problem(
+            {"agent": "claude"}, {"mode": "auto"}, "> \n⏵⏵ bypass permissions on\n",
+            {"mode": "auto", "denial": None}))
+
+    def test_a_denial_only_the_hook_has_seen(self):
+        t = time.time()
+        hden = {"tool": CLICK, "reason": "Real-World Transactions", "toolUseId": "tu9", "at": t - 5}
+        got = self.problem(hook={"mode": "bypassPermissions", "denied": hden})
+        self.assertEqual((got["cause"], got["key"]), ("denied", "denied:tu9"))
+        # Settled in the transcript since (a person typed), or already read there.
+        settled = {"mode": "bypassPermissions", "denial": None, "denials": [], "settledAt": t - 1}
+        self.assertIsNone(permission_mode.problem({"agent": "claude"}, {"denied": hden}, "", settled))
+        seen = {"mode": "bypassPermissions", "denial": None, "denials": ["tu9"], "settledAt": 0.0}
+        self.assertIsNone(permission_mode.problem({"agent": "claude"}, {"denied": hden}, "", seen))
+        old = {**hden, "at": t - 2 * 86400}
+        self.assertIsNone(self.problem(hook={"denied": old}))
+
+    def test_an_approval_prompt_in_bypass_mode(self):
+        hook = {"state": "waiting", "event": "PermissionRequest", "detail": CLICK, "at": 123.0,
+                "mode": "bypassPermissions"}
+        got = self.problem(hook=hook)
+        self.assertEqual((got["cause"], got["key"]), ("prompt", "prompt:123.0"))
+        self.assertIn("waiting for a person to approve a browser action", got["why"])
+        self.assertIsNone(self.problem(hook={**hook, "event": "PreToolUse"}))
+
+    def test_settled_by_its_own_report(self):
+        perm = {"cause": "denied", "at": 100.0}
+        room = {"lastReport": {"identity": "claude", "ts": 101.0}}
+        self.assertTrue(permission_mode.settled(perm, room, "claude"))
+        self.assertFalse(permission_mode.settled(perm, room, "claude-2"))
+        self.assertFalse(permission_mode.settled({**perm, "at": 102.0}, room, "claude"))
+        self.assertFalse(permission_mode.settled({"cause": "mode"}, room, "claude"))
 
     def test_action_words(self):
         self.assertEqual(permission_mode.action_words("mcp__claude-in-chrome__navigate"),
@@ -347,6 +433,13 @@ class TheBell(_Bell, _Transcript):
         self.assertEqual((it["state"], it["permission"]), ("blocked", "mode"))
         self.assertIn("runs in auto mode", it["reason"])
 
+    def test_an_approval_prompt_waits_for_a_person(self):
+        prompt = {"cause": "prompt", "key": "prompt:123", "why": "is waiting for approval"}
+        with mock.patch.object(permission_mode, "problem", return_value=prompt):
+            it = self.item()
+        self.assertEqual((it["state"], it["cause"], it["permission"]),
+                         ("waiting_for_you", "permission", "prompt"))
+
     def test_bypass_and_nothing_denied_is_quiet(self):
         self.write(_mode("bypassPermissions"), _prompt("go", time.time() - 5))
         self.assertIsNone(self.item())
@@ -381,6 +474,22 @@ class ThePoIsToldOnce(_Stall, _Transcript):
                    _result("tu2", DENIAL, t + 62))
         self.assertIn("PO told (denied)", stall.tick(t + 120)[self.rid])
         self.assertEqual(len(self.told()), 2)
+
+    def test_not_after_its_own_report(self):
+        t = time.time()
+        self.write(_call("tu1", CLICK, t - 5), _result("tu1", DENIAL, t - 4))
+        time.sleep(0.002)
+        self.ask_po("blocked", "Claude's safety check blocked the purchase click.")
+        self.assertNotIn("PO told", stall.tick(t).get(self.rid, ""))
+        self.assertEqual(self.told(), [])
+
+    def test_another_mode_says_a_restart_helps(self):
+        self.write(_mode("auto"), _prompt("go", time.time() - 5, "auto"))
+        self.assertIn("PO told (mode)", stall.tick()[self.rid])
+        text = self.told()[0]["text"]
+        self.assertIn("runs in auto mode", text)
+        self.assertIn("A restart from the hub launches it in bypass mode again", text)
+        self.assertNotIn("restarting the agent does not change it", text)
 
     def test_nothing_without_a_problem(self):
         self.write(_mode("bypassPermissions"), _prompt("go", time.time() - 5))

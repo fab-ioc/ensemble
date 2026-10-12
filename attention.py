@@ -1232,20 +1232,6 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     return float(last.get("ts") or 0), "message"
 
 
-def _reported_at(room: dict, identity: str) -> float:
-    """When this agent last reported (ensemble_report) or put something to a
-    person or its PO; 0 when never."""
-    at = 0.0
-    for key in ("openToHuman", "lastReport"):
-        rec = room.get(key)
-        if isinstance(rec, dict) and (rec.get("from") or rec.get("identity")) == identity:
-            try:
-                at = max(at, float(rec.get("ts") or 0))
-            except (TypeError, ValueError):
-                pass
-    return at
-
-
 _ASK_NAMES = {"blocked": "its blocked report", "question": "its question",
               "message": "its message to you"}
 
@@ -1333,12 +1319,13 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
                 {"quote": line, **still_extra, "cause": cause, **limit_extra})
 
     perm = ev.get("permission")
-    if perm and perm["cause"] == "denied" and _reported_at(room, identity) >= perm["at"]:
+    if _d.permission_mode.settled(perm, room, identity):
         perm = None             # it reported since: its own words are the item
     if perm:
         # Not the hub's mode, or Claude's own safety check (ED-216): a person
         # has to step in, and the agent cannot tell from inside.
-        return ("blocked", f"{who} {perm['why']}{still}",
+        state = "waiting_for_you" if perm["cause"] == "prompt" else "blocked"
+        return (state, f"{who} {perm['why']}{still}",
                 {**still_extra, "cause": "permission", "permission": perm["cause"],
                  "permissionKey": perm["key"]})
 

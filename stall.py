@@ -694,8 +694,8 @@ def _look_permission(rid: str, state: dict, now: float, statuses: dict) -> str:
         if (part.get("agent") or "claude") != "claude" or _d.rotation._pty(part) is None:
             continue
         perm = _d.attention._evidence(part, statuses).get("permission")
-        if not perm:
-            continue
+        if not perm or _d.permission_mode.settled(perm, room, ident):
+            continue                    # nothing, or its own report already says so
         old = told.get(ident) if isinstance(told.get(ident), dict) else {}
         if old.get("key") != perm["key"]:
             old = {"key": perm["key"]}
@@ -706,10 +706,9 @@ def _look_permission(rid: str, state: dict, now: float, statuses: dict) -> str:
             if not po_room:
                 continue
             body = (f"**{_bold_name(room)} {ident}: Claude's permission check stopped it**"
-                    f"{_after_bold(room)}\n\n{ident} {perm['why']} This is Claude's own check, "
-                    f"not the hub's launch mode: restarting the agent does not change it. "
-                    f"Look at it (`ensemble_get_task {_d.task_arg(room)}`), then do the step "
-                    f"yourself or ask the person to.")
+                    f"{_after_bold(room)}\n\n{ident} {perm['why']} "
+                    f"{_d.permission_mode.REMEDY.get(perm['cause'], '')} "
+                    f"Details with `ensemble_get_task {_d.task_arg(room)}`.")
             if not cr.post_report(po, SENDER, cr.po_identity(po_room), body,
                                   {"reportKind": "digest", "permissionTask": rid}, wake=False):
                 continue

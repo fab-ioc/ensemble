@@ -180,7 +180,7 @@ def _effective(held: dict | None) -> dict | None:
     # The permission mode its own events last named, and Claude's safety
     # check's last refusal (ED-216): facts about the session, whatever it does.
     if held.get("mode"):
-        who["mode"] = held["mode"]
+        who["mode"], who["modeAt"] = held["mode"], held.get("modeAt", 0.0)
     if held.get("denied"):
         who["denied"] = dict(held["denied"])
     if held["waits"]:
