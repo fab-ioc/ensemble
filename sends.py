@@ -214,6 +214,43 @@ def mark(room_id: str, keys, state: str, error: str = "", mid: str = "",
         _log(f"{room_id}: sends not marked {state}: {e!r}")
 
 
+def hold_for_restart(room_id: str, keys, now: float | None = None) -> None:
+    """These queued sends wait for a hub restart (restart_drain.py): the
+    restart's file holds them, not this hub's memory, so the hub that comes
+    back does not fail them; the page says they go in after the restart."""
+    _flag_restart(room_id, keys, True, now)
+
+
+def release_after_restart(room_id: str, keys, now: float | None = None) -> None:
+    """The restart is over: these sends are this hub's to deliver now."""
+    _flag_restart(room_id, keys, False, now)
+
+
+def _flag_restart(room_id: str, keys, on: bool, now: float | None) -> None:
+    keys = set(k for k in (keys or []) if k)
+    if not keys or not _ROOM_ID.fullmatch(room_id or ""):
+        return
+    now = time.time() if now is None else now
+    try:
+        with _LOCK:
+            items = _load(room_id)
+            changed = False
+            for s in items:
+                if s["key"] not in keys or s["state"] != "queued":
+                    continue
+                if on:
+                    s["afterRestart"] = True
+                elif s.pop("afterRestart", None):
+                    _set(s, "queued", now)      # this hub's queue from here on
+                else:
+                    continue
+                changed = True
+            if changed:
+                _save(room_id, items)
+    except (OSError, ValueError) as e:
+        _log(f"{room_id}: sends not flagged for the restart: {e!r}")
+
+
 def drop(room_id: str, keys) -> list[dict]:
     """Take these sends away (Discard). Returns what was dropped."""
     keys = set(k for k in (keys or []) if k)
@@ -235,7 +272,7 @@ def orphans(room_id: str, after_s: float, now: float | None = None) -> list[str]
         return []
     with _LOCK:
         return [s["key"] for s in _load(room_id) if s["state"] == "queued" and s.get("boot") == BOOT
-                and now - float(s.get("stateAt") or s["at"]) > after_s]
+                and not s.get("afterRestart") and now - float(s.get("stateAt") or s["at"]) > after_s]
 
 
 def typed_confirms(text: str) -> bool:
@@ -554,7 +591,7 @@ def reconcile(room_id: str, now: float | None = None) -> list[dict]:
         items = _load(room_id)
         changed = False
         for s in items:
-            if s["state"] == "queued" and s.get("boot") != BOOT:
+            if s["state"] == "queued" and s.get("boot") != BOOT and not s.get("afterRestart"):
                 _set(s, "failed", now, "the hub restarted before it was delivered")
                 changed = True
         if changed:
@@ -579,7 +616,8 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
         if s["state"] == "confirmed" and not s.get("read") and (not s.get("mid") or now - float(
                 s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
             continue        # in the conversation (or never to be: a /command)
-        row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read")
+        row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read",
+                                     "afterRestart")
                if s.get(k) not in (None, "")}
         if s.get("redeliveries"):
             row["redeliveredAt"] = s["redeliveries"][-1]["at"]     # "typed in again at …"
@@ -784,7 +822,8 @@ def start_redeliverer() -> None:
     def loop():
         while True:
             time.sleep(REDELIVER_EVERY_S)
-            redeliver_tick()
+            if not _d.restart_drain.holding():      # nothing typed while a restart drains
+                redeliver_tick()
     threading.Thread(target=loop, daemon=True, name="sends-redeliver").start()
 
 

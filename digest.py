@@ -766,6 +766,12 @@ def start_scheduler() -> None:
 
     def loop():
         while True:
+            # A restart draining (restart_drain.py) starts nothing new: no
+            # digest, board, due, issue, stall, PO-message or point wakes.
+            # Each keeps its state on disk and fires after the restart.
+            if _d.restart_drain.holding():
+                time.sleep(TICK_S)
+                continue
             try:
                 _tick()
             except Exception as e:          # keep the loop alive

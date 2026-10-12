@@ -256,11 +256,38 @@ sitting in (the on-mention reviewer between its reviews, a stopped or a new
 seat) can be reassigned under a live task; a running agent's own seat (its
 kind, model or role) cannot: stop the task, reassign, start it again.
 
-**A hub restart is not a start.** A planned restart (`ensemble_restart_hub`,
-the dashboard's button) brings every room that was running back by itself; the
-PO resumes nothing by hand. An agent that was idle when the hub stopped is
-typed nothing: it is back at an empty prompt with its conversation, as it was.
-One that was in the middle of a turn gets one line:
+**A restart waits for a safe point.** Before a planned restart (the PO's
+`ensemble_restart_hub`, the dashboard's Update now) the hub drains: it starts
+nothing new (no task launches, reviews, rotations or scheduled wakes), holds
+the messages sent meanwhile for after the restart, and types every working
+agent, in every project, once:
+
+> [hub restart] The hub restarts for an update. Reach a safe point: finish or
+> stop your current step, commit work in progress, do not start long commands;
+> then call `ensemble_ready_for_restart` with one line saying exactly what you
+> will do next …
+
+If you get it: finish or stop the step you are on, commit what is in
+progress, start nothing long, then call `ensemble_ready_for_restart` with
+`next` = what you will do next, in one line (e.g. "rerun the full suite, then
+ask for review 1"), and end your turn. Do not wait for background commands you
+can rerun: say you will rerun them. Do not report the restart. An idle agent is
+typed nothing and counts as ready. The hub restarts once every agent is ready,
+or at the deadline (20 min by default, in Settings), or when the CEO or the PO
+forces it. After the restart you are typed:
+
+> [hub restarted] The hub restarted for <reason>. You said you would next:
+> <your line>. Carry on from there.
+
+Do exactly that; what was sent to you during the drain arrives after it. If
+the restart is called off you are told so, and carry on with what you said.
+
+**A hub restart is not a start.** A planned restart brings every room that was
+running back by itself; the PO resumes nothing by hand. An agent that was idle
+when the hub stopped is typed nothing: it is back at an empty prompt with its
+conversation, as it was. One that was still mid-turn when the restart went
+ahead (the deadline, or forced) gets one line, with the last thing its screen
+showed it doing after it:
 
 > [hub restarted] The hub restarted while you were in the middle of a turn, and
 > your session was brought back. Carry on from where you were: do not start
@@ -892,12 +919,20 @@ by the machine, so it rests on you keeping it.
 
 **The Ensemble Dashboard PO restarts the hub with `ensemble_restart_hub`**, a
 tool offered to it alone. It is a plain restart on the code already on disk:
-nothing is fetched, reset or pulled, so a merge not yet pushed survives. The
-hub first starts that code on a spare port and gives up if it does not serve;
-about 45 seconds later it stops and starts, resumes the PO and types it a note.
-Every other room stops with the hub: the PO resumes those. Progress is in
+nothing is fetched, reset or pulled, so a merge not yet pushed survives.
+**Request it and move on:** call it with `reason` (e.g. "merged #206 #208",
+shown to the CEO in the dashboard's banner) and the default `when: "safe"`.
+Do not poll `/api/ptys` or screens for a quiet moment and do not resume rooms:
+the hub drains (see *A restart waits for a safe point*), restarts when every
+agent is ready or at the deadline, brings every room back and tells each
+agent where it stopped. A second request during a drain joins it (its reason
+is added). Before the stop the hub starts the code on a spare port and calls
+the restart off if it does not serve; you are told either way, and the other
+POs get one line in their chat saying which tasks paused and resumed.
+`when: "now"` restarts at once (agents mid-turn are cut off) or forces a drain
+under way; `cancel: true` calls a drain off. Progress is in
 `~/.ensemble/logs/restart.log`. The Update now button (pull the pushed code,
-then restart) stays the CEO's.
+then restart, through the same drain) stays the CEO's.
 
 ## Planning work for a project
 
