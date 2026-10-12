@@ -4582,7 +4582,7 @@ function showGotoNote(text) {
 // Land on a balloon: open it if it is folded, bring it to the middle of the
 // chat and mark it for a moment. It waits until the conversation is drawn and
 // the chat has a height (a hidden frame has none). With a part ("re:P12",
-// "pt:P12", "q:<quote>"), only that passage is marked (#146, issue #3: "highlight
+// "pt:P12", "q:<quote>", "ask:0"), only that passage is marked (#146, issue #3: "highlight
 // just the relevant answer or point, rather than the full balloon").
 let GOTO_AT = 0;   // when a link last asked for a balloon: a `shown` in the same gesture defers to it
 function gotoMsg(mid, part) {
@@ -4598,8 +4598,10 @@ function gotoMsg(mid, part) {
 // the item of a numbered message holding P12's chip; "q:<text>" the quoted
 // words, wrapped in a mark of their own (unwrapped when the mark fades).
 function partOf(el, part) {
-  const m = String(part || '').match(/^(re|pt|q):([\s\S]+)$/);
+  const m = String(part || '').match(/^(re|pt|q|ask):([\s\S]+)$/);
   if (!m || !el) return null;
+  // "ask:0": that ask's card, its question and quick answers (#206: a point chip lands on it).
+  if (m[1] === 'ask') return [...el.querySelectorAll('.qa[data-ask]')].find(x => x.dataset.ask === el.dataset.mid + ':' + m[2]) || null;
   const text = el.querySelector('.text.md');
   if (m[1] === 'pt') {
     const chip = [...el.querySelectorAll('.pt-chip[data-pt-id]')].find(x => x.dataset.ptId === m[2]);
