@@ -563,6 +563,21 @@ async function main() {
       await p.evalIn('PD.dock.toggleMin("points"); PD.dock.dockBack("points"); 0'); await sleep(300);
       await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
     }
+    // #213: a double click on a minimised side panel's tab, with a count (Needs you) and without (Board, Files):
+    // the first click restores it, the second (on its own minimise control, without a count) does not minimise it again.
+    out.minDbl = {};
+    for (const id of ['board', 'workspace', 'points']) {
+      const st = `PD.els[${JSON.stringify(id)}].closest(".dk-stack")`;
+      await p.evalIn(`PD.dock.pin(${JSON.stringify(id)}); PD.dock.toggleMin(${JSON.stringify(id)}); 0`); await sleep(400);
+      const [x, y, badge] = await p.evalIn(`(() => { const t = ${st}.querySelector('.dk-head [data-dk-tab=${JSON.stringify(id)}]'), r = t.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, !!t.querySelector('.dk-badge')]; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(100);
+      const under = await p.evalIn(`(() => { const e = document.elementFromPoint(${x}, ${y}), c = e && e.closest('[data-dk-act]'); return c && c.closest('.dk-stack') === ${st} ? c.dataset.dkAct : ''; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
+      await sleep(700);
+      out.minDbl[id] = { badge, under, min: await p.evalIn(`${st}.classList.contains("dk-min")`), maxed: await p.evalIn(`!!PD.els[${JSON.stringify(id)}].closest(".dk-max")`) };
+      await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
+    }
 
     // Layout changes keep every iframe's page: the PO chat's and an open file's.
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
@@ -1141,6 +1156,14 @@ class InChrome(unittest.TestCase):
 
     def test_a_slow_double_click_on_a_minimised_panel_maximises_it(self):
         self.assertEqual(self.got["slowDbl"], {"maxed": True, "min": False})
+
+    def test_a_double_click_on_a_minimised_tab_with_or_without_a_count_maximises_it(self):
+        # #213: without a count the restored panel's minimise control lands under the pointer (Dock's
+        # secondClick lets that click through); the page swallows it until a Dock release fixes it.
+        self.assertEqual(self.got["minDbl"], {
+            "board": {"badge": False, "under": "hide", "min": False, "maxed": True},
+            "workspace": {"badge": False, "under": "hide", "min": False, "maxed": True},
+            "points": {"badge": True, "under": "", "min": False, "maxed": True}})
 
     def test_the_top_bar_shows_the_new_icon(self):
         self.assertTrue(self.got["first"]["logo"].endswith("/static/icons/favicon.svg"), self.got["first"]["logo"])
