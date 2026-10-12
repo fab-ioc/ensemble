@@ -102,6 +102,7 @@ async function main() {
       // current phase, then leaves without shifting the chat.
       await c.send('Page.navigate', { url: A.base + '/session?room=' + room }, sessionId);
       await until('document.getElementById("ens-progress") && !document.getElementById("ens-progress").hidden', 15000);
+      const progressShownAt = Date.now();
       o.progressDuring = await evalIn(`(() => {
         const e = document.getElementById('ens-progress');
         const r = e.getBoundingClientRect();
@@ -125,6 +126,7 @@ async function main() {
       await shot('0-progress-count');
       await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);
       await until('document.getElementById("ens-progress").hidden', 15000);
+      o.progressVisibleMs = Date.now() - progressShownAt;
       o.progressAfter = await evalIn('document.getElementById("ens-progress").hidden');
       await shot('0-progress-after');
       await sleep(400);
@@ -149,6 +151,14 @@ async function main() {
       o.also = await evalIn('(e => e && !e.hidden && e.getBoundingClientRect().width > 0)(document.getElementById("thr-also-l"))');
       await shot('2-thread');
       await evalIn('document.getElementById("input").value = "A bit wider still, please."; document.getElementById("input").dispatchEvent(new Event("input")); document.getElementById("thr-also").checked = true; document.getElementById("send").click(); 0');
+      o.warmProgress = await evalIn(`(async () => {
+        let shown = 0;
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 150));
+          if (!document.getElementById('ens-progress').hidden) shown++;
+        }
+        return {shown, text: document.getElementById('ens-progress').textContent};
+      })()`);
       await until(`[...document.querySelectorAll('#msgs .msg[data-mid]')].length >= ${o.thread.mids.length + 2}`, 20000);
       await sleep(400);
       o.threadAfter = await evalIn(VIEW);
@@ -370,10 +380,17 @@ class ThreadsPage(unittest.TestCase):
                 self.assertEqual(bar["scrollX"], 0)
                 self.assertLessEqual(bar["right"], int(width))
                 self.assertTrue(got["progressAfter"])
+                self.assertGreater(got["progressVisibleMs"], 0)
                 for theme, colors in got["progressThemes"].items():
                     with self.subTest(theme=theme):
                         a, b = luminance(colors["foreground"]), luminance(colors["background"])
                         self.assertGreaterEqual((max(a, b) + .05) / (min(a, b) + .05), 4.5)
+
+    def test_warm_po_chat_shows_no_notice_as_transcript_grows(self):
+        for width in ("1728", "390"):
+            with self.subTest(width=width):
+                self.assertEqual(self.got[width]["warmProgress"]["shown"], 0,
+                                 self.got[width]["warmProgress"])
 
     def test_the_channel_shows_each_thread_once_with_its_line(self):
         for w, o in self._each():

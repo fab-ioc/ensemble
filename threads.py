@@ -606,7 +606,7 @@ def _who(r: dict) -> str:
     return "hub"
 
 
-def build(room_id: str, room: dict | None = None) -> dict | None:
+def build(room_id: str, room: dict | None = None, *, show_progress: bool = True) -> dict | None:
     """The chat's threads, worked out again only when one of its transcripts,
     its ledger or its record changed. None for a chat that is not threaded."""
     if room is None:
@@ -626,15 +626,19 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
     led = points.load(room_id)
     side = load_side(room_id)
     key = "thread:" + room_id
+    def announce(phase, done=0, total=0):
+        if show_progress:
+            progress.set_progress(key, phase, done, total)
+
     recs = balloons(room, led, lambda done, total:
-                    progress.set_progress(key, "Reading conversations", done, total),
+                    announce("Reading conversations", done, total),
                     lambda session, sessions, done, total:
-                    progress.set_progress(key, f"Reading conversation {session} of {sessions}", done, total))
+                    announce(f"Reading conversation {session} of {sessions}", done, total))
     task_of = points.task_lookup(room_id, room)
-    progress.set_progress(key, "Sorting messages into threads", 0, len(recs))
+    announce("Sorting messages into threads", 0, len(recs))
     out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",
-                 lambda done, total: progress.set_progress(key, "Sorting messages into threads", done, total))
-    progress.set_progress(key, "Finishing threads", 0, 0)
+                 lambda done, total: announce("Sorting messages into threads", done, total))
+    announce("Finishing threads")
     by_mid = {r["mid"]: r for r in recs}
     try:
         waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
@@ -694,11 +698,12 @@ def ready(room_id: str, room: dict) -> dict | None:
         if room_id in _BUILDING:
             return hit[1] if hit is not None else None
         _BUILDING.add(room_id)
-        progress.set_progress("thread:" + room_id, "Reading conversations")
+        if hit is None:
+            progress.set_progress("thread:" + room_id, "Reading conversations")
 
     def run():
         try:
-            build(room_id, room)
+            build(room_id, room, show_progress=hit is None)
         except Exception as e:      # noqa: BLE001 — the next poll tries again
             _log(f"{room_id}: not threaded: {e!r}")
         finally:
