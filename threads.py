@@ -470,14 +470,52 @@ def _also_mark(r: dict, tids: list[str], side: dict, also: dict) -> None:
 # A chat's index, kept while nothing it is made of changed
 # ---------------------------------------------------------------------------
 
-def _signature(room_id: str, room: dict, led_sig: tuple) -> tuple:
+OLD_STAT_S = 30                 # a session the chat's agent left: its transcript looked at this often
+_SIDS: dict[str, tuple] = {}        # room id -> (what it depends on, the chat's sessions)
+_OLD: dict[str, tuple] = {}         # room id -> (when, the sessions its agent left, their stats)
+
+
+def _room_sessions(room_id: str, room: dict, led_sig: tuple) -> list[str]:
+    """The chat's sessions, worked out again only when its ledger or its
+    agents (a rotation) changed: a poll does not read the ledger for them."""
+    parts = repr([(p.get("identity"), p.get("sessionId"),
+                   [(r.get("fromSessionId"), r.get("toSessionId")) for r in p.get("rotations") or []])
+                  for p in room.get("participants") or []])
+    key = (led_sig, parts)
+    with _LOCK:
+        hit = _SIDS.get(room_id)
+    if hit is not None and hit[0] == key:
+        return hit[1]
     try:
         led = points.load(room_id)
     except Exception:       # noqa: BLE001
         led = {"points": []}
-    stats = tuple((s, tuple(points._session_stat(s) or ())) for s in _sessions(room, led))
+    sids = _sessions(room, led)
+    with _LOCK:
+        _SIDS[room_id] = (key, sids)
+    return sids
+
+
+def _signature(room_id: str, room: dict, led_sig: tuple) -> tuple:
+    """What the chat's threads are made of: its transcripts (the running
+    session's on every call, those its agent left every OLD_STAT_S), its
+    ledger, its record and its room's own rows."""
+    sids = _room_sessions(room_id, room, led_sig)
+    live = {p.get("sessionId") for p in room.get("participants") or [] if p.get("sessionId")}
+    stat = lambda s: (s, tuple(points._session_stat(s) or ()))
+    old = [s for s in sids if s not in live]
+    now = time.time()
+    with _LOCK:
+        hit = _OLD.get(room_id)
+    if hit is not None and hit[1] == old and now - hit[0] < OLD_STAT_S:
+        old_stats = hit[2]
+    else:
+        old_stats = tuple(stat(s) for s in old)
+        with _LOCK:
+            _OLD[room_id] = (now, old, old_stats)
+    cur = tuple(stat(s) for s in sids if s in live)
     msgs = room.get("messages") or []
-    return (stats, led_sig, _side_sig(room_id), len(msgs))
+    return (old_stats, cur, led_sig, _side_sig(room_id), len(msgs))
 
 
 def _led_sig(room_id: str) -> tuple:
@@ -765,6 +803,8 @@ def forget(room_id: str | None = None) -> None:
             _BAL.clear()
             _INDEX.clear()
             _SIDE.clear()
+            _SIDS.clear()
+            _OLD.clear()
         else:
-            _INDEX.pop(room_id, None)
-            _SIDE.pop(room_id, None)
+            for d in (_INDEX, _SIDE, _SIDS, _OLD):
+                d.pop(room_id, None)

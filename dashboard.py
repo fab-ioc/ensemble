@@ -495,10 +495,12 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
         # absent while the chat is first read.
         try:
             if threads.is_threaded(room.get("id", "")):
-                full = chatroom.get_room(room.get("id", ""), public=False) or room
-                unread = threads.unread_threads(room.get("id", ""), full)
+                room["threaded"] = True
+                unread = threads.unread_threads(room.get("id", ""), room)
                 if unread is not None:
                     room["threadsUnread"] = unread
+                    if isinstance(room.get("points"), dict):
+                        room["points"]["threads"] = unread     # Needs you's Threads group
         except Exception as e:      # noqa: BLE001 — the chat still shows
             print(f"[threads] {room.get('id')}: not listed: {e!r}", flush=True)
     return room

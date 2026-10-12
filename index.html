@@ -3753,6 +3753,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pdp-fold { display: inline-flex; align-items: center; gap: var(--s-100); padding: 0; border: 0; border-radius: var(--r-100); background: transparent;
     color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
   .pdp-fold:hover { color: var(--fg); }
+  /* A thread's title in Needs you's Threads (#210): a link-look button that opens it. */
+  .pdp-thr { padding: 0; border: 0; border-radius: var(--r-100); background: transparent; color: var(--link); font: inherit; text-align: left; cursor: pointer; }
+  .pdp-thr:hover { text-decoration: underline; }
+  .pdp-thr:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .pdp-fold:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* The dock's own controls sit in the top bar (#bar-here): the Panels menu
      (show or hide each panel, Reset layout). */
@@ -3768,7 +3772,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     body.dp-docked main { padding-top: 0; }
     body.dp-docked #po-dock-host { border-top: 0; }
     .pd-pane { padding: var(--s-200) var(--s-300); }
-    .pdp-btn, a.pdp-link, .pdp-fold { min-height: var(--touch-min); display: inline-flex; align-items: center; }
+    .pdp-btn, a.pdp-link, .pdp-fold, .pdp-thr { min-height: var(--touch-min); display: inline-flex; align-items: center; }
     .pd-ctl .po-btn { min-height: var(--touch-min); }
     /* An open task covers the panels; openPoOf opens the PO over it, as the
        drawer it is on every other page. */
@@ -12281,13 +12285,14 @@ function pdNeedsCounts(pv) {
   const count = k => items.filter(p => pdPtNeeds(Object.assign({}, p, { state: pdPtState(p.state) })) === k).length;
   const d = (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0;
   return { decisions: n ? (n.decisions || []).length : 0, totry: n && n.totry != null ? n.totry : count('try'),
-    news: n && n.news != null ? n.news : Math.max(d, count('new')) };
+    news: n && n.news != null ? n.news : Math.max(d, count('new')), threads: ((pv && pv.threads) || []).length };
 }
 function pdPointsSummary(pv) {
   const c = pdNeedsCounts(pv), bits = [];
   if (c.decisions) bits.push(`${c.decisions} decision${c.decisions === 1 ? '' : 's'}`);
   if (c.totry) bits.push(`${c.totry} to try`);
   if (c.news) bits.push(`${c.news} new answer${c.news === 1 ? '' : 's'}`);
+  if (c.threads) bits.push(`${c.threads} thread${c.threads === 1 ? '' : 's'} with new replies`);
   return bits.join(' · ');
 }
 // `told` is what the chat said ({ room, points, words }), null before it has.
@@ -12366,8 +12371,14 @@ function pdPointsHtml(told, now) {
   };
   const decisions = (needs.decisions || []).map(askRow);
   if (needs.pending && !decisions.length) decisions.push('<li class="pdp-row"><p class="pdp-note">Reading the question cards…</p></li>');
+  // A PO chat's threads with replies not seen yet (#210), newest first: the title opens the thread.
+  const thrRow = t => `<li class="pdp-row" data-thr="${esc(t.id)}"><div class="pdp-top">`
+    + `<span class="pdp-words" title="${esc(t.title || '')}"><button type="button" class="pdp-thr" data-thr="${esc(t.id)}" title="Open the thread beside the chat">${esc(t.title || 'Thread')}</button></span></div>`
+    + `<div class="pdp-meta"><span class="pdp-state">${esc(`${+t.unread || 0} new repl${+t.unread === 1 ? 'y' : 'ies'}`)}</span>`
+    + `<span class="pdp-age" data-at="${esc(String(t.lastAt || 0))}">${esc(pdPtAge(t.lastAt, now))}</span></div></li>`;
   const top = group('decisions', 'Decisions', decisions) + group('try', 'To try', by('try').map(p => row(p, 'to try')))
-    + group('new', 'New answers', by('new').map(p => row(p, 'new answer')));
+    + group('new', 'New answers', by('new').map(p => row(p, 'new answer')))
+    + group('threads', 'Threads', (pv.threads || []).map(thrRow));
   const waits = items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
   const folds = fold('older', 'Older questions', needs.olderCount || (needs.older || []).length, (needs.older || []).map(askRow))
     + fold('po', 'With the PO', waits.length, waits.map(p => row(p)))
@@ -12792,7 +12803,7 @@ function pdEnsure() {
 // the conversation's; a file panel a reading width.
 function pdMinOf(id) {
   if (PD_MIN[id]) return PD_MIN[id];
-  return String(id).startsWith('chat:') ? PD_MIN['po-chat'] : { w: 280, h: 160 };
+  return /^(chat|thread):/.test(String(id)) ? PD_MIN['po-chat'] : { w: 280, h: 160 };
 }
 // A file panel's tab says the file's path when hovered (Dock's tooltip is the
 // title, the name alone; the path would not fit a tab). Cheap and idempotent,
@@ -12804,6 +12815,7 @@ function pdPanelName(k) {
   const e = PD.rt.get(k);
   if (!e) return k;
   if (e.kind === 'file') return wsTabName(e.path);
+  if (e.kind === 'thread') return e.title || 'Thread';
   const r = ALL_ROWS.find(x => x.roomId === e.room);
   return r ? pdRowTitle(r) : 'Chat';
 }
@@ -12912,12 +12924,53 @@ function pdChatRemoved(id) {
   if (PD.rtLast.chat === id) PD.rtLast.chat = '';
   pdChatsRemember();
 }
+// A thread of a PO chat (#210): one panel per chat, beside it ("thread:<room>"),
+// showing the thread last opened from it; another thread opened replaces it,
+// as Slack's thread pane does. Its page is session.html on that thread
+// (?thread=), with its own reply box. On a phone it is a tab, and its
+// "‹ Chat" brings the chat back (thread-back).
+const pdThreadId = roomId => 'thread:' + roomId;
+function pdThreadOpen(roomId, thread, mid, source) {
+  const d = PD.dock;
+  if (!d || !roomId || !pdPanelsOn()) return false;
+  const id = pdThreadId(roomId);
+  const q = thread ? '&thread=' + encodeURIComponent(thread) : '&thread=&tmid=' + encodeURIComponent(mid || '');
+  const src = `/session?id=${encodeURIComponent(roomId)}&embed=1${q}`;
+  const had = PD.rt.get(id);
+  if (had) {
+    const f = had.el.querySelector('iframe');
+    if (f && f.getAttribute('src') !== src) f.setAttribute('src', src);
+    try { d.reveal(id); } catch (e) {}
+    return true;
+  }
+  const el = document.createElement('div');
+  el.className = 'pd-chat pd-thread';
+  el.dataset.room = roomId;
+  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-thread src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write"></iframe>`;
+  PD.rt.set(id, { kind: 'thread', room: roomId, el, title: 'Thread' });
+  // Beside the chat it came from (the conversation, or that chat's panel).
+  const from = PD.rt.has(pdChatId(roomId)) ? pdChatId(roomId) : 'po-chat';
+  const where = pdFits(pdMinOf(id).w) ? { beside: from, side: 'right' } : { kind: 'stack', stack: from };
+  let res = null;
+  try { res = d.addPanel({ id, title: 'Thread', el, closable: true }, where); } catch (e) { res = null; }
+  if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
+  pdToolsFit();
+  return true;
+}
+// The thread's page names its thread: the panel's tab follows.
+function pdThreadTitle(roomId, title) {
+  const e = PD.rt.get(pdThreadId(roomId));
+  if (!e || !title || e.title === title) return;
+  e.title = title;
+  try { PD.dock.setTitle(pdThreadId(roomId), title); } catch (err) {}
+}
 // A panel added at runtime was taken out of the dock (its ×, ⋯ › Close, a
 // middle click, Ctrl+F4, or removePanel): disposed here.
 function pdRuntimeRemoved(id) {
   const e = PD.rt.get(id);
   if (!e) return;
-  if (e.kind === 'file') wsPanelRemoved(id); else pdChatRemoved(id);
+  if (e.kind === 'thread') { PD.rt.delete(id); e.el.innerHTML = ''; }
+  else if (e.kind === 'file') wsPanelRemoved(id); else pdChatRemoved(id);
   pdToolsFit();
 }
 PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail && e.detail.id); } catch (err) {} });
@@ -13477,6 +13530,8 @@ async function pdPointAct(id, act, btn) {
   finally { PD_PT_BUSY.delete(k); if (btn && btn.isConnected) btn.disabled = false; }
 }
 PD.els.points.addEventListener('click', e => {
+  const th = e.target.closest && e.target.closest('.pdp-thr[data-thr]');
+  if (th) { const told = PD.told || window.EMBED_POINTS; if (told && told.room) pdThreadOpen(told.room, th.dataset.thr, ''); return; }
   const a = e.target.closest && e.target.closest('a.pdp-link[data-mid]');
   if (a) { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); pdGoto(a.dataset.mid, a.dataset.part || ''); return; }
   const fold = e.target.closest && e.target.closest('.pdp-fold[data-fold]');
@@ -18562,6 +18617,16 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
+  // A PO chat's thread (#210): opened beside it; its page names it; its ‹ Chat.
+  if (d && d.type === 'open-thread' && d.roomId && ev.origin === location.origin) {
+    const ok = pdThreadOpen(String(d.roomId), String(d.thread || ''), String(d.mid || ''), ev.source);
+    if (!ok) window.open('/session?id=' + encodeURIComponent(String(d.roomId)) + (d.thread ? '&thread=' + encodeURIComponent(String(d.thread)) : '&thread=&tmid=' + encodeURIComponent(String(d.mid || ''))), '_blank', 'noopener');
+  }
+  if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''));
+  if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {
+    const cid = pdChatId(String(d.roomId));
+    try { PD.dock.reveal(PD.rt.has(cid) ? cid : 'po-chat'); } catch (e) {}
+  }
   // "Changes in this turn" on a checkpoint mark in a chat framed here (#197).
   if (d && d.type === 'checkpoint-diff' && d.roomId && /^\d+$/.test(String(d.n)) && ev.origin === location.origin) openTurnChanges(String(d.roomId), +d.n);
   // A file viewer in a Workspace tab, saying how the tab was left.
