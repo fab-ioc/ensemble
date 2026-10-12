@@ -1671,6 +1671,14 @@ def migrate(room_id: str, now: float | None = None) -> int:
         if int(led.get("migrated") or 0) >= MIGRATED:
             return 0
         last = max([float(led.get("lastPersonAt") or 0)] + [float(p.get("createdAt") or 0) for p in led["points"]])
+        # The hub's read mark (#188) says up to where they read the chat: an
+        # answer at or above it was on their screen before seen marks
+        # existed, so it counts as seen (``read``) and closes when they next
+        # write, instead of every recent answer reading as new at once.
+        try:
+            read = _d.attention.seen_at(_d.chatroom.get_room(room_id))
+        except Exception:       # noqa: BLE001 — no read mark: nothing seeded
+            read = 0.0
         n = 0
         for p in led["points"]:
             if p["state"] != "delivered":
@@ -1680,6 +1688,8 @@ def migrate(room_id: str, now: float | None = None) -> int:
             if at and at < now - MIGRATE_AFTER_S and at < last:
                 _auto_close(p, "migrated", now)
                 n += 1
+            elif at and at <= read and not is_seen(p) and _answer_key(a):
+                p["seenKey"], p["seenAt"], p["seenHow"] = _answer_key(a), now, "read"
         led["migrated"] = MIGRATED
         _save(room_id, led)
         return n
@@ -1903,18 +1913,32 @@ def _needs_view(room_id: str, room: dict | None, led: dict) -> dict:
     cards still waiting on the person (asks.open_cards), how many answers
     are new or ask them to try something, and the points that closed by
     themselves (newest first, up to :data:`CLOSED_MAX`), for its Closed fold."""
+    pending = False
     try:
         if room is None:
             room = _d.chatroom.get_room(room_id)
-        decisions = _d.asks.open_cards(room, led) if room else []
+        if room and not _d.asks.cards_ready(room):
+            # The first read of a chat's cards can take seconds (every
+            # rotated session): read in the background, show the last list.
+            _d.asks.warm_cards(room)
+            decisions, older = _LAST_DECISIONS.get(room_id) or ([], [])
+            pending = room_id not in _LAST_DECISIONS
+        else:
+            decisions, older = _d.asks.decisions(room, led) if room else ([], [])
+            _LAST_DECISIONS[room_id] = (decisions, older)
     except Exception as e:      # noqa: BLE001 — the answers still show
         _log(f"{room_id}: open cards not read: {e!r}")
-        decisions = []
+        decisions, older = [], []
     kinds = [needs_you(p) for p in led["points"]]
     shut = sorted((p for p in led["points"] if p["state"] == "acked" and p.get("ackedBy") in AUTO),
                   key=lambda p: (p.get("stateAt") or 0, p["createdAt"], p["id"]), reverse=True)
-    return {"decisions": decisions, "news": kinds.count("new"), "totry": kinds.count("try"),
+    return {"decisions": decisions, "older": older[:CLOSED_MAX], "olderCount": len(older),
+            **({"pending": True} if pending else {}),
+            "news": kinds.count("new"), "totry": kinds.count("try"),
             "closed": [_closed_item(p) for p in shut[:CLOSED_MAX]], "closedCount": len(shut)}
+
+
+_LAST_DECISIONS: dict[str, tuple] = {}   # room id → the last (decisions, older) worked out
 
 
 def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:
