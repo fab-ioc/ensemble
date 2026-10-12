@@ -129,6 +129,18 @@ async function main() {
       await go('room=' + room);
       o.channelAfter = await evalIn(VIEW);
       await shot('4-channel-after');
+      // A thread drawn while it is not on screen (a Dock tab behind another) is not
+      // read; shown again, the next poll reads it even when the hub has nothing new
+      // to send ("the same", review 1).
+      await go('id=' + room + '&thread=P2');
+      o.hiddenSeen = await evalIn(`(async () => { const f = pageInFront; pageInFront = () => false; THR_SEEN_TS = 0;
+        await renderThreaded(true); const ts = THR_SEEN_TS; pageInFront = f; return ts; })()`);
+      o.shownSeen = await evalIn(`(async () => { let same = false; const f0 = window.fetch;
+        window.fetch = async (u, ...a) => { const r = await f0(u, ...a); if (String(u).includes('/api/room/thread?')) same = !!(await r.clone().json()).same; return r; };
+        await renderThreaded(false); window.fetch = f0; return { same, ts: THR_SEEN_TS }; })()`);
+      await sleep(500);
+      await go('room=' + room);
+      o.channelLast = await evalIn(VIEW);
       out[w] = o;
       await c.send('Target.closeTarget', { targetId });
     }
@@ -320,6 +332,15 @@ class ThreadsPage(unittest.TestCase):
                 self.assertTrue(lines["P1"]["text"].startswith("4 replies"), lines["P1"])
                 self.assertFalse(lines["P1"]["unread"], "opened: read")
                 self.assertTrue(lines["P2"]["unread"], "never opened: still unread")
+
+    def test_a_thread_drawn_off_screen_is_read_once_it_shows(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                self.assertEqual(o["hiddenSeen"], 0, "not on screen: not read")
+                self.assertEqual(o["shownSeen"]["same"], True, "the hub had nothing new")
+                self.assertGreater(o["shownSeen"]["ts"], 0, "on screen: read by that poll")
+                lines = {x["thr"]: x for x in o["channelLast"]["lines"]}
+                self.assertFalse(lines["P2"]["unread"])
 
 
 if __name__ == "__main__":

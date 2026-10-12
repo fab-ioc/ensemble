@@ -87,6 +87,12 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(out["parent"]["s:0"], ["P2", "P3"])
         self.assertEqual(out["of"]["s:1"], ["P2", "P3"])
         self.assertEqual(out["threads"]["P2"]["title"], "one")
+        # Shown once in the channel, under the newest of its threads (review 1).
+        self.assertEqual(out["also"], {"s:1": "P3"})
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
+        self.assertEqual(threads._channel(idx), ["s:0", "s:1"])
+        self.assertEqual((threads._turn(idx, "s:1")["inThr"], threads._turn(idx, "s:1")["alsoIn"]), ("P3", ["P2"]))
+        self.assertEqual(threads._turn(idx, "s:1", "P2")["alsoIn"], ["P3"])
 
     def test_a_follow_up_point_and_a_re_message_are_in_the_thread_they_follow(self):
         recs = [human("s:0", 0, "a"), po("s:1", 5, "answer"),
@@ -138,6 +144,12 @@ class AssignTest(unittest.TestCase):
         out = self.run_(recs, [point("P1", "s:0", "how is #12 going?")])
         self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1"])
         self.assertEqual(out["threads"]["P1"]["task"], "#12")
+
+    def test_a_point_naming_two_tasks_claims_the_reports_of_both(self):
+        recs = [human("s:0", 0, "Status of #12 and #13?"), report("s:1", 50, "#12"), report("s:2", 60, "#13")]
+        out = self.run_(recs, [point("P1", "s:0", "Status of #12 and #13?")])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2"])
+        self.assertEqual(list(out["threads"]), ["P1"])
 
     def test_a_message_with_no_point_is_a_thread_of_its_own(self):
         out = self.run_([human("s:0", 0, "hello there"), po("s:1", 2, "hi")], [])

@@ -363,7 +363,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None) -> dict:
     def claim_tasks(pid: str, tid: str) -> None:
         p = pts.get(pid) or {}
         refs = points.task_refs(points.strip_point_lines(p.get("text") or ""))
-        for ref in ([p["task"]] if p.get("task") else []) + (refs if len(refs) == 1 else []):
+        for ref in ([p["task"]] if p.get("task") else []) + list(refs):
             task_thread[ref] = tid
             if threads[tid].get("task") in ("", None):
                 threads[tid]["task"] = ref
@@ -444,8 +444,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None) -> dict:
             tids = [last]
         for t in tids:
             join(t, r)
-        if tids and (r.get("ask") or r.get("live")):
-            # Never hidden in a thread: under the newest of its threads.
+        if tids and (len(tids) > 1 or r.get("ask") or r.get("live")):
+            # Never hidden in a thread (an ask, "is live"), and an answer to
+            # several points shown once: under the newest of its threads.
             also[mid] = max(tids, key=lambda t: (threads[t]["rootTs"], order.index(t)))
     return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
 
@@ -668,8 +669,9 @@ def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     if mid in idx["also"]:
         out["inThr"] = idx["also"][mid]
     tids = idx["of"].get(mid) or []
-    if tid and len(tids) > 1:
-        out["alsoIn"] = [t for t in tids if t != tid]
+    here = tid or idx["also"].get(mid) or ""
+    if here and len(tids) > 1:
+        out["alsoIn"] = [t for t in tids if t != here]
     return out
 
 
@@ -684,7 +686,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
     n = max(1, min(int(n or CHANNEL_MAX), CHANNEL_LIMIT))
     ch = idx["channel"]
     shown = ch[-n:]
-    tids = {t for m in shown for t in (idx["parent"].get(m) or []) + ([idx["also"][m]] if m in idx["also"] else [])}
+    tids = {t for m in shown for t in (idx["parent"].get(m) or [])
+            + ((idx["of"].get(m) or []) if m in idx["also"] else [])}
     return {"sig": _sig_text(idx), "items": [_turn(idx, m) for m in shown],
             "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
             "before": max(0, len(ch) - n), "balloons": len(idx["recs"]), "channel": len(ch)}

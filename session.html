@@ -5523,6 +5523,11 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 let THR_DRAWN = false;    // the channel or thread is what is drawn
 let THR_INFO = null;       // the thread shown (thread mode)
 let THR_SEEN_TS = 0;       // its newest message told as seen
+let THR_ITEMS = null;      // the thread's messages as drawn (told as seen once on screen)
+// A thread drawn while its panel was hidden is read when the panel shows.
+['visibilitychange', 'focus'].forEach(ev => (ev === 'focus' ? window : document).addEventListener(ev, () => {
+  if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS);
+}));
 const threadedView = () => THREADED && (THREAD_MODE || (!WHOLE && !WHOLE_FOR_LINK));
 function thrUrl(sig) {
   const base = THREAD_MODE
@@ -5537,7 +5542,8 @@ async function renderThreaded(force) {
   try {
     const r = await fetch(thrUrl(force ? '' : THR_SIG));
     const d = await r.json();
-    if (d.same) return;
+    // Unchanged, but perhaps only now on screen (a Dock tab shown again): read now.
+    if (d.same) { if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS); return; }
     if (d.pending) {
       // The hub reads a long chat once, in the background: the whole chat meanwhile.
       if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
@@ -5571,7 +5577,7 @@ async function renderThreaded(force) {
     CHAT_DRAWN = THR_DRAWN = true;
     DRAWN_ROOM_TS = roomTs;
     renderBubbles(items);
-    if (THREAD_MODE) threadSeen(items);
+    if (THREAD_MODE) { THR_ITEMS = items; threadSeen(items); }
   } catch (e) {
     if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
   } finally {
@@ -5628,7 +5634,9 @@ function threadMarkHtml(m) {
   }
   if (!m.inThr) return '';
   const t = THR_META[m.inThr];
-  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}">Replied in <button type="button" class="thr-open" data-thr="${esc(m.inThr)}">${esc(t ? t.title || 'a thread' : 'a thread')}</button></div>`;
+  // An answer to several points: shown once, under the newest of its threads.
+  const also = (m.alsoIn || []).map(x => `<button type="button" class="thr-open" data-thr="${esc(x)}">${esc(/^P\d/.test(x) ? x : (THR_META[x] || {}).title || 'another thread')}</button>`);
+  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc((m.alsoIn || []).join(','))}">Replied in <button type="button" class="thr-open" data-thr="${esc(m.inThr)}">${esc(t ? t.title || 'a thread' : 'a thread')}</button>${also.length ? ', also in ' + also.join(', ') : ''}</div>`;
 }
 // A thread opens beside the chat (the dashboard's panel), or in this window.
 function openThread(tid, mid) {
