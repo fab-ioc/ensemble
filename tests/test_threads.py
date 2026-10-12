@@ -168,6 +168,22 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(out["also"], {"s:2": "P1"})
 
 
+class PoRoomsTest(unittest.TestCase):
+    def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):
+        threads.forget()
+        self.addCleanup(threads.forget)
+        reads = []
+        projects = [{"id": "p1", "poRoomId": "room-1"}]
+        with mock.patch.object(dashboard, "load_projects", lambda: reads.append(1) or projects):
+            self.assertTrue(threads.is_threaded("room-1"))
+            self.assertFalse(threads.is_threaded("room-2"))
+            self.assertEqual(len(reads), 1, "one read for many polls")
+            projects.append({"id": "p2", "poRoomId": "room-2"})
+            threads.po_rooms_changed()
+            self.assertTrue(threads.is_threaded("room-2"))
+            self.assertEqual(len(reads), 2)
+
+
 class WordsTest(unittest.TestCase):
     def test_a_title_skips_the_comment_number_and_the_quote(self):
         self.assertEqual(threads._words("**1.** > New limits: up to 4 legs.\n\nwhy up to 4?"), "why up to 4?")
@@ -195,13 +211,14 @@ class SideTest(unittest.TestCase):
 
     def test_seen_anchors_and_also_are_kept(self):
         rid = "room-abc123"
-        self.assertTrue(threads.mark_seen(rid, "P1", T0))
-        self.assertFalse(threads.mark_seen(rid, "P1", T0 - 1))
+        past = 1_700_000_000.0          # seen times are never ahead of the hub's clock
+        self.assertTrue(threads.mark_seen(rid, "P1", past))
+        self.assertFalse(threads.mark_seen(rid, "P1", past - 1))
         threads.note_send(rid, "task:#12", "k1", ["P7"], True, "Re P3: ship it")
         threads.note_send(rid, "P3", "k2", ["P3"], False, "x")
         threads.forget()
         sd = threads.load_side(rid)
-        self.assertEqual(sd["seen"], {"P1": T0})
+        self.assertEqual(sd["seen"], {"P1": past})
         self.assertEqual(sd["anchors"], {"P7": "task:#12"})
         self.assertEqual([a["words"] for a in sd["also"]], ["ship it"])
 
@@ -268,14 +285,53 @@ class Endpoints(tp._World):
         self.assertEqual(threads.load_side(self.rid)["also"][0]["thread"], "P1")
         now = time.time()
         self.add("sid-1", tp.turn("user", sent[0], now + 5), tp.turn("assistant", "Re P1: wider still.", now + 6))
-        room = dashboard._annotate_room_liveness(chatroom.get_room(self.rid), with_points=True)
+        room = self.poll()
         self.assertEqual([(t["id"], t["unread"]) for t in room["threadsUnread"]], [("P1", 1)])
         status, ch = http_get(f"/api/room/channel?id={self.rid}")
         self.assertIn(("sid-1:4", "P1"), [(i["mid"], i.get("inThr")) for i in ch["items"]],
                       "a reply sent to the chat too shows in it")
         self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": now + 6})[0], 200)
-        room = dashboard._annotate_room_liveness(chatroom.get_room(self.rid), with_points=True)
-        self.assertEqual(room["threadsUnread"], [])
+        self.assertEqual(self.poll()["threadsUnread"], [])
+        for bad in ("nan", "inf", now + 10 * 86400):
+            self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": bad})[0], 400, bad)
+
+    def settle(self):
+        """The background build a poll started, done."""
+        for _ in range(500):
+            with threads._LOCK:
+                if self.rid not in threads._BUILDING:
+                    return
+            time.sleep(0.01)
+        self.fail("the build did not end")
+
+    def poll(self):
+        """A poll once the chat's threads are current (the first serves the last ones)."""
+        dashboard._annotate_room_liveness(chatroom.get_room(self.rid), with_points=True)
+        self.settle()
+        return dashboard._annotate_room_liveness(chatroom.get_room(self.rid), with_points=True)
+
+    def test_while_the_po_writes_the_last_threads_are_served(self):
+        room = chatroom.get_room(self.rid)
+        first = threads.ready(self.rid, room)
+        self.add("sid-1", tp.turn("assistant", "One more thing.", time.time()))
+        stale = threads.ready(self.rid, room)
+        self.assertIs(stale, first, "a poll never waits on a build, nor gets nothing")
+        self.settle()
+        fresh = threads.ready(self.rid, room)
+        self.assertIsNot(fresh, first)
+        self.assertIn("sid-1:4", fresh["by_mid"])
+
+    def test_a_reply_from_a_thread_keeps_what_it_means(self):
+        for text in ("ok", "thanks!", "/compact", "[digest] all quiet"):
+            self.assertEqual(threads.reply_text(self.rid, chatroom.get_room(self.rid), "P1", text), text)
+        self.assertEqual(threads.reply_text(self.rid, chatroom.get_room(self.rid), "P1", "and the axis?"), "Re P1: and the axis?")
+
+    def test_a_bad_seen_time_is_skipped(self):
+        sd = threads.load_side(self.rid)
+        sd["seen"] = {"P1": "soon", "P2": None}
+        threads._save_side(self.rid, sd)
+        threads.forget(self.rid)
+        self.assertIsNotNone(threads.build(self.rid))
 
 
 if __name__ == "__main__":

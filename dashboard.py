@@ -4862,7 +4862,9 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
     rid = (room_id or "").strip()
     if rid and chatroom.get_room(rid) is None:
         return False, "no_such_room"
-    return _set_project_meta(project_id, "poRoomId", rid or None)
+    out = _set_project_meta(project_id, "poRoomId", rid or None)
+    threads.po_rooms_changed()      # a threaded chat now, or no longer
+    return out
 
 
 # ---- A past session made a project's PO (/api/projects/po-from-session) ----

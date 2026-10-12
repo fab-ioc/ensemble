@@ -46,6 +46,7 @@ Bound to the dashboard module like ``points``: nothing reads ``_d`` at import.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -81,6 +82,18 @@ _INDEX: dict[str, tuple] = {}       # room id -> (signature, index)
 _BUILDING: set = set()
 
 
+SEEN_AHEAD_S = 600.0     # a page's clock ahead of the hub's, at most
+
+
+def _num(v) -> float:
+    """A time kept in the record, 0 for one that is not (a hand edit)."""
+    try:
+        f = float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return f if math.isfinite(f) else 0.0
+
+
 def _log(msg: str) -> None:
     try:
         print(f"[{time.strftime('%H:%M:%S')}] threads: {msg}", flush=True)
@@ -92,12 +105,37 @@ def _log(msg: str) -> None:
 # Which chats are threaded
 # ---------------------------------------------------------------------------
 
+PO_ROOMS_TTL_S = 10.0
+_PO_ROOMS: list = [None, 0.0, frozenset()]     # [where projects are read, when, PO room ids]
+
+
+def _po_rooms() -> frozenset:
+    """The projects' PO chats, read again at most every PO_ROOMS_TTL_S (every
+    /api/room poll asks; load_projects reads every project.json)."""
+    where = (str(_d.PROJECTS_FILE), str(_d.PROJECTS_ROOT))
+    now = time.monotonic()
+    with _LOCK:
+        if _PO_ROOMS[0] == where and now - _PO_ROOMS[1] < PO_ROOMS_TTL_S:
+            return _PO_ROOMS[2]
+    rooms = frozenset((p.get("poRoomId") or "") for p in _d.load_projects() or []) - {""}
+    with _LOCK:
+        _PO_ROOMS[:] = [where, now, rooms]
+    return rooms
+
+
+def po_rooms_changed() -> None:
+    """A project's PO was set or cleared: read the PO chats again."""
+    with _LOCK:
+        _PO_ROOMS[:] = [None, 0.0, frozenset()]
+
+
 def is_threaded(room_id: str, projects: list | None = None) -> bool:
     """A project's PO chat is threaded; a task's chat is not."""
     if not room_id:
         return False
     try:
-        projects = _d.load_projects() if projects is None else projects
+        if projects is None:
+            return room_id in _po_rooms()
     except Exception:       # noqa: BLE001 — not known: not threaded
         return False
     return any((p.get("poRoomId") or "") == room_id for p in projects or [])
@@ -563,6 +601,9 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
         room = _d.chatroom.get_room(room_id)
     if room is None:
         return None
+    # The first build saves the record (``since``) first: the signature then
+    # holds it, and the next poll does not build it again.
+    _ensure_since(room_id)
     lsig = _led_sig(room_id)
     sig = _signature(room_id, room, lsig)
     with _LOCK:
@@ -570,7 +611,6 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
         if hit is not None and hit[0] == sig:
             return hit[1]
     t0 = time.time()
-    _ensure_since(room_id)
     led = points.load(room_id)
     side = load_side(room_id)
     recs = balloons(room, led)
@@ -589,7 +629,7 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
         rs = [by_mid[m] for m in th["members"] if m in by_mid]
         replies = rs[1:]
         mine = max([r["ts"] for r in rs if _who(r) == "you"] + [0.0])
-        mark = max(since, float(seen.get(tid) or 0), mine)
+        mark = max(since, _num(seen.get(tid)), mine)
         news = [r for r in replies if _who(r) != "you" and r["ts"] > mark]
         lastr = replies[-1] if replies else None
         th.update({
@@ -617,9 +657,10 @@ def _channel(idx: dict) -> list[str]:
 
 
 def ready(room_id: str, room: dict) -> dict | None:
-    """The chat's index if it is current, else None, with a build started in
-    the background (the first read of a chat with many sessions takes
-    seconds; a poll never waits on it)."""
+    """The chat's index, with a build started in the background when it is
+    not current: until it is done the last one is served (a poll never waits
+    on a build, and what the page shows does not blink while the PO writes).
+    None only for a chat never read yet (its first read takes seconds)."""
     lsig = _led_sig(room_id)
     try:
         sig = _signature(room_id, room, lsig)
@@ -631,7 +672,7 @@ def ready(room_id: str, room: dict) -> dict | None:
         if hit is not None and hit[0] == sig:
             return hit[1]
         if room_id in _BUILDING:
-            return None
+            return hit[1] if hit is not None else None
         _BUILDING.add(room_id)
 
     def run():
@@ -642,14 +683,8 @@ def ready(room_id: str, room: dict) -> dict | None:
         finally:
             with _LOCK:
                 _BUILDING.discard(room_id)
-    # A chat already read once (one transcript grew) is quick: done in line.
-    if hit is not None:
-        run()
-        with _LOCK:
-            h2 = _INDEX.get(room_id)
-        return h2[1] if h2 else None
     threading.Thread(target=run, name=f"threads-{room_id}", daemon=True).start()
-    return None
+    return hit[1] if hit is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -742,10 +777,13 @@ def mark_seen(room_id: str, tid: str, ts: float | None = None) -> bool:
     """The person opened a thread: its replies up to ``ts`` (now) are read."""
     if not tid or len(tid) > 300:
         return False
-    ts = time.time() if ts is None else float(ts)
+    now = time.time()
+    ts = now if ts is None else float(ts)
+    if not math.isfinite(ts) or ts > now + SEEN_AHEAD_S:
+        raise ValueError(f"not a time it could have been seen: {ts!r}")
     with _LOCK:
         side = load_side(room_id)
-        if float(side["seen"].get(tid) or 0) >= ts:
+        if _num(side["seen"].get(tid)) >= ts:
             return False
         side["seen"][tid] = ts
         _save_side(room_id, side)
@@ -767,9 +805,14 @@ def reply_text(room_id: str, room: dict, tid: str, text: str) -> str:
     before it, Pn the thread's latest point, so the PO knows the thread and
     the hub links the answer to it. A thread without a point (a task's, or one
     started on a balloon) is sent as it is: the page writes the parent's link
-    above it. A text that already says ``Re`` is left as it is."""
+    above it. A text that already says ``Re`` is left as it is, and so is one
+    a prefix would change the meaning of: a bare acknowledgement ("ok",
+    "thanks" acknowledge the answer; with ``Re Pn`` they would reopen the
+    point), a slash command, a hub-prefixed line."""
     body = (text or "").strip()
-    if not body or points.re_ids(body):
+    if not body or points.re_ids(body) or points.is_bare_ack(body) or body.startswith("/"):
+        return text
+    if _d.hub_input_kind(body).get("kind") not in (None, "human"):
         return text
     pids = thread_points(room_id, room, tid)
     return f"Re {pids[-1]}: {body}" if pids else text
@@ -802,6 +845,7 @@ def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, tex
 def forget(room_id: str | None = None) -> None:
     """Drop what is kept in memory (tests)."""
     with _LOCK:
+        _PO_ROOMS[:] = [None, 0.0, frozenset()]
         if room_id is None:
             _BAL.clear()
             _INDEX.clear()
