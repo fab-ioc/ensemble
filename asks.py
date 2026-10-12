@@ -810,7 +810,8 @@ def _heads(text: str) -> list[tuple[int, list[str]]]:
 
 def _asks_by_point(text: str, qs: list) -> dict[str, list[int]]:
     """Which of a card's asks each ``Re Pn`` head of it holds: the asks
-    written under that head, up to the next one. A card whose asks are not
+    written under that head, up to the next one (none: the card asks nothing
+    about that point). A card whose asks are not
     in its words (an ensemble_ask card) pairs its heads and asks in order
     when they are as many; otherwise each head holds every ask."""
     heads = _heads(text)
@@ -837,7 +838,7 @@ def _asks_by_point(text: str, qs: list) -> dict[str, list[int]]:
         for _line, pids in heads:
             for pid in pids:
                 out[pid] = every
-    return {pid: sorted(set(ns)) or every for pid, ns in out.items()}
+    return {pid: sorted(set(ns)) for pid, ns in out.items()}
 
 
 def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
@@ -937,7 +938,9 @@ def point_card(summary: dict, point: dict) -> dict | None:
             ts, qs, by_point = answers[mid], [a["question"] for a in found], {}
         if mid not in answers and (not ts or ts < since):
             continue
-        mine = by_point.get(pid) or list(range(len(qs)))
+        mine = by_point[pid] if pid in by_point else list(range(len(qs)))
+        if not mine:
+            continue    # its Re Pn part asks nothing: the questions are another point's
         got = done.get(mid) or {}
         waiting = [n for n in mine if str(n) not in got
                    and not (mid in approved and _approved_settles(rid, mid, n))]

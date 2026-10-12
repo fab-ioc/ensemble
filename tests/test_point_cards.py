@@ -113,6 +113,15 @@ class Resolver(Hub):
         self.assertTrue(self.card('P5')['open'])
         self.assertEqual(self.card('P6'), {'mid': 'both', 'n': 1, 'question': 'Second?', 'open': False})
 
+    def test_a_point_whose_part_asks_nothing_has_no_card_there(self):
+        self.say('split', 120, 'Re P5: answered in prose.\n\nRe P6: decisions.\n\nAsk: First?\n- A\n- B\n\nAsk: Second?\n- C\n- D')
+        self.assertIsNone(self.card('P5'))
+        self.assertEqual(self.card('P6'), {'mid': 'split', 'n': 0, 'question': 'First?', 'open': True})
+        self.answer('split', 0)
+        self.answer('split', 1)
+        self.assertIsNone(self.card('P5'))
+        self.assertEqual(self.card('P6'), {'mid': 'split', 'n': 0, 'question': 'First?', 'open': False})
+
     def test_stored_card_pairs_heads_and_asks_in_order(self):
         two = ASK_A + [{**ASK_A[0], 'n': 1, 'question': 'And then?'}]
         self.say('pair', 120, 'Re P5 (legs).\n\nRe P6 (stops).', two)
