@@ -207,10 +207,13 @@ def _look(rid: str, state: dict, now: float) -> str:
         # command ends, so a nudge is noise, until the screen has been still
         # for OWN_WORK_CAP_S. Then the command is why it stalled.
         own = own_work(sess)
-        if own and idle < _d.attention.OWN_WORK_CAP_S:
-            return ""
         rec = state.get(rid) or {}
         ep = episode(room, owner, last_submit, float(rec.get("nudgedAt") or 0))
+        # The nudge at the cap resets the screen's idle clock: once nudged,
+        # the episode carries on to the PO line (review 1).
+        capped = rec.get("episode") == ep and rec.get("command") and rec.get("nudgedAt")
+        if own and idle < _d.attention.OWN_WORK_CAP_S and not capped:
+            return ""
         if rec.get("episode") != ep:
             # The silent look's record, and when the PO last heard of it,
             # outlive an episode: they are about a different clock.

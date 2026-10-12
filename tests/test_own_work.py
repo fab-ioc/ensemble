@@ -12,7 +12,8 @@ The fixtures are real screens, as ``ptyrun.tail`` reads them:
 * ``own_work_two_shells.txt``: the same shape with two shells (a task's
   dying screen kept on its room, 10:52), the hub's nudge typed into it and the
   agent going back to waiting. #209's own screen of 13:47 had already left
-  the hub's buffer when this was built.
+  the hub's buffer when this was built, and no room or hub log kept it
+  (searched after review 1): this is the closest real case, in its place.
 * ``own_work_two_shells_relay.txt``: two shells, a relay line typed under the
   footer, and the agent waiting again with letters lost in the repaint.
 * ``own_work_shell_ended.txt``: the footer without a count, then
@@ -72,6 +73,19 @@ class ReadingTheScreen(unittest.TestCase):
     def test_prose_about_shells_is_not_a_footer(self):
         self.assertEqual(attention.own_work("● Ran 2 shell commands\n● The suite is still running.\n>"), 0)
 
+    def test_the_full_phrase_in_prose_or_a_typed_line_is_not_a_footer(self):
+        # Review 1: the count phrase anywhere in the bottom lines faked a command.
+        for tail in ("The docs quote 2 shells still running.\n> ",
+                     "● Claude says done 3:45 PM · 2 shells still running.\n> ",
+                     "> why does it say done 3:45 PM · 1 shell still running",
+                     "❯ done 3:45 PM · 1 shell still running",
+                     "• It printed 1 background terminal running.\n› ",
+                     "› · 1 background terminal running · /ps to view"):
+            with self.subTest(tail=tail):
+                self.assertEqual(attention.own_work(tail), 0)
+        # The footer below a typed line still counts.
+        self.assertEqual(attention.own_work("> 2 shells still running\n" + ONE_SHELL), 1)
+
     def test_codex_counts_its_background_terminals(self):
         tail = "• Ran the focused tests\n  · 2 background terminals running · /ps to view · /stop to close\n› "
         self.assertEqual(attention.own_work(tail), 2)
@@ -111,6 +125,23 @@ class NoNudgeWhileItWaitsOnItsOwnCommand(_OwnWork):
         self.assertNotIn("idle with nothing open", told[0]["text"])
         view = ensemble_tools._po_wait_view(self.room())["stalled"]
         self.assertEqual(view["reason"], "background command running for 2 h")
+
+    def test_the_nudge_resetting_the_idle_clock_still_reaches_the_po(self):
+        # Review 1: the typed nudge makes the screen new again under the
+        # still-shown footer; the capped episode must carry on to the PO line.
+        t = time.time()
+        self.show(ONE_SHELL, CAP + 1)
+        self.assertEqual(stall.tick(t), {self.rid: "nudged"})
+        nudged = ONE_SHELL + "> " + stall.NUDGE_COMMAND[:60] + "\n"
+        self.assertEqual(attention.own_work(nudged), 1)
+        self.show(nudged, 5.0)
+        self.assertEqual(stall.tick(t + 60), {})
+        self.show(nudged, stall.GRACE_S - 30)            # still under the grace
+        self.assertEqual(stall.tick(t + stall.GRACE_S - 20), {})
+        self.show(nudged, stall.GRACE_S + 2)              # far under the cap
+        self.assertIn("PO told", stall.tick(t + stall.GRACE_S + 3)[self.rid])
+        self.assertIn(self.rid, stall.records())
+        self.assertIn("Background command running for 2 h", self.told()[0]["text"])
 
     def test_a_plain_idle_owner_is_nudged_and_reported_as_today(self):
         t = time.time()

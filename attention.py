@@ -278,9 +278,13 @@ def _tail_lines(tail: str) -> list[str]:
 # footer without the count, or a "● Background command … completed" notice
 # (a shell ending), makes the count stale. Codex counts its own in its status
 # line, "· 1 background terminal running · /ps to view".
-_OWN_SHELLS = _phrase(r"(\d*) ?(?:shells?|background tasks?) still")
+# Only the footer counts (review 1): Claude's count follows its "done H:MM"
+# time and a "·", codex's a "·"; a prose line (●, ⏺) or a typed one (❯, ›, >)
+# holding the same words is someone talking about shells.
+_OWN_SHELLS = _phrase(r"\bdone? \d{1,2}:\d{2} ?(?:[AP]M)? ?· ?(\d*) ?(?:shells?|background tasks?) still")
 _OWN_STALE = _phrase(r"\bdone? \d{1,2}:\d{2}|[●⏺] ?background (?:command|task|shell)")
-_CODEX_OWN = _phrase(r"(\d+) background terminals? \w*ing")
+_CODEX_OWN = _phrase(r"· ?(\d+) background terminals? \w*ing")
+_NOT_FOOTER = re.compile(r"^\s*[●⏺❯➤▶›>]")
 # Waiting on its own command is not a stall, until the screen has not changed
 # for this long: then the command is reported as the reason it stalled.
 OWN_WORK_CAP_S = 2 * 3600
@@ -292,8 +296,9 @@ def own_work(tail: str) -> int:
     text = "\n".join(_tail_lines(tail)[-10:])
     for pat in (_OWN_SHELLS, _CODEX_OWN):
         m = None
-        for m in pat.finditer(text):
-            pass
+        for found in pat.finditer(text):
+            if not _NOT_FOOTER.match(_screen_line(text, found.start(), found.start())):
+                m = found
         if m is not None:
             if _OWN_STALE.search(text[m.end():]):
                 return 0
