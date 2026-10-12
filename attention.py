@@ -278,13 +278,17 @@ def _tail_lines(tail: str) -> list[str]:
 # footer without the count, or a "● Background command … completed" notice
 # (a shell ending), makes the count stale. Codex counts its own in its status
 # line, "· 1 background terminal running · /ps to view".
-# Only the footer counts (review 1): Claude's count follows its "done H:MM"
-# time and a "·", codex's a "·"; a prose line (●, ⏺) or a typed one (❯, ›, >)
-# holding the same words is someone talking about shells.
-_OWN_SHELLS = _phrase(r"\bdone? \d{1,2}:\d{2} ?(?:[AP]M)? ?· ?(\d*) ?(?:shells?|background tasks?) still")
+# Only the whole footer line counts (reviews 1, 2): from its start, a glyph,
+# "<Verb>ed for <time> · done H:MM · N shells still"; codex's from its start,
+# "· N background terminals running · /ps" (after its "• Working (…)" while
+# the turn runs). The same words in prose or a typed line are someone talking.
+_OWN_SHELLS = re.compile(_phrase(
+    r"^[^\w\n●⏺❯➤▶›>]{0,6}\w+ for [\dhms ]*· ?done? \d{1,2}:\d{2} ?(?:[AP]M)? ?· ?(\d*) ?"
+    r"(?:shells?|background tasks?) still").pattern, re.I | re.M)
 _OWN_STALE = _phrase(r"\bdone? \d{1,2}:\d{2}|[●⏺] ?background (?:command|task|shell)")
-_CODEX_OWN = _phrase(r"· ?(\d+) background terminals? \w*ing")
-_NOT_FOOTER = re.compile(r"^\s*[●⏺❯➤▶›>]")
+_CODEX_OWN = re.compile(_phrase(
+    r"^[^\w\n●⏺❯➤▶›>]{0,6}(?:•\s*Working\s*\([^)\n]*\))? ?· ?(\d+) background terminals? \w*ing ?· ?/ps"
+    ).pattern, re.I | re.M)
 # Waiting on its own command is not a stall, until the screen has not changed
 # for this long: then the command is reported as the reason it stalled.
 OWN_WORK_CAP_S = 2 * 3600
@@ -296,9 +300,8 @@ def own_work(tail: str) -> int:
     text = "\n".join(_tail_lines(tail)[-10:])
     for pat in (_OWN_SHELLS, _CODEX_OWN):
         m = None
-        for found in pat.finditer(text):
-            if not _NOT_FOOTER.match(_screen_line(text, found.start(), found.start())):
-                m = found
+        for m in pat.finditer(text):
+            pass
         if m is not None:
             if _OWN_STALE.search(text[m.end():]):
                 return 0

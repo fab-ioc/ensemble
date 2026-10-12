@@ -83,6 +83,14 @@ class ReadingTheScreen(unittest.TestCase):
                      "› · 1 background terminal running · /ps to view"):
             with self.subTest(tail=tail):
                 self.assertEqual(attention.own_work(tail), 0)
+        # Review 2: footer-shaped prose, mid-line.
+        for tail in ("The docs quote done 3:45 PM · 2 shells still running.",
+                     "• It printed · 1 background terminal running · /ps to view",
+                     "It said: ✻ Worked for 5s · done 3:45 PM · 2 shells still running"):
+            with self.subTest(tail=tail):
+                self.assertEqual(attention.own_work(tail), 0)
+        self.assertEqual(attention.own_work(
+            "• Working (12s • esc to interrupt) · 1 background terminal running · /ps to view\n› "), 1)
         # The footer below a typed line still counts.
         self.assertEqual(attention.own_work("> 2 shells still running\n" + ONE_SHELL), 1)
 
@@ -142,6 +150,29 @@ class NoNudgeWhileItWaitsOnItsOwnCommand(_OwnWork):
         self.assertIn("PO told", stall.tick(t + stall.GRACE_S + 3)[self.rid])
         self.assertIn(self.rid, stall.records())
         self.assertIn("Background command running for 2 h", self.told()[0]["text"])
+
+    def _after_the_cap_nudge(self, later: str) -> float:
+        # Review 2: the capped record must not outlive the command it names.
+        # The screen last changed at t + GRACE_S + 1, long after the echo.
+        t = time.time()
+        self.show(ONE_SHELL, CAP + 1)
+        self.assertEqual(stall.tick(t), {self.rid: "nudged"})
+        self.show(later, stall.GRACE_S + 2)
+        self.assertEqual(stall.tick(t + 2 * stall.GRACE_S + 3), {})
+        self.assertEqual(self.told(), [])
+        self.assertNotIn(self.rid, stall.records())
+        return t
+
+    def test_a_command_that_ended_after_the_cap_nudge_is_plain_idle(self):
+        t = self._after_the_cap_nudge(SHELL_ENDED)
+        self.assertEqual(stall.tick(t + 2 * stall.GRACE_S + 4), {self.rid: "nudged"})
+        self.assertEqual(self.typed[-1], stall.NUDGE)
+
+    def test_a_command_that_printed_after_the_cap_nudge_is_waited_on_again(self):
+        nudged = ONE_SHELL + "> " + stall.NUDGE_COMMAND[:60] + "\n"
+        t = self._after_the_cap_nudge(nudged + "  ⎿ 412 passed\n")
+        self.assertEqual(stall.tick(t + 2 * stall.GRACE_S + 4), {})
+        self.assertEqual(self.typed, [stall.NUDGE_COMMAND])
 
     def test_a_plain_idle_owner_is_nudged_and_reported_as_today(self):
         t = time.time()

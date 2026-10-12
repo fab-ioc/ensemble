@@ -60,6 +60,7 @@ def bind(dashboard_module) -> None:
 
 TICK_S = 60                 # how often the tasks are looked at
 GRACE_S = 600               # idle this long before a nudge, and again before the PO hears
+_NUDGE_ECHO_S = 60          # a screen change this soon after a nudge is the nudge's own echo
 SENDER = "ensemble"         # who the line in the PO's room is from
 PREFIX = "[stalled] "       # how the typed line starts (HUB_INPUT_KINDS)
 NUDGE = (PREFIX + "You are idle and nothing of yours is open. Carry on from "
@@ -209,10 +210,15 @@ def _look(rid: str, state: dict, now: float) -> str:
         own = own_work(sess)
         rec = state.get(rid) or {}
         ep = episode(room, owner, last_submit, float(rec.get("nudgedAt") or 0))
-        # The nudge at the cap resets the screen's idle clock: once nudged,
-        # the episode carries on to the PO line (review 1).
-        capped = rec.get("episode") == ep and rec.get("command") and rec.get("nudgedAt")
-        if own and idle < _d.attention.OWN_WORK_CAP_S and not capped:
+        if rec.get("episode") == ep and rec.get("command") and rec.get("nudgedAt"):
+            # Nudged at the cap (reviews 1, 2). The nudge's own echo resets the
+            # screen's idle clock: the episode carries on to the PO line. But
+            # a command that ended, or output after the echo, closes it.
+            changed = now - idle
+            if not own or changed > float(rec["nudgedAt"]) + _NUDGE_ECHO_S:
+                state[rid] = {k: rec[k] for k in ("silent", "lastToldAt") if rec.get(k)}
+                return ""
+        elif own and idle < _d.attention.OWN_WORK_CAP_S:
             return ""
         if rec.get("episode") != ep:
             # The silent look's record, and when the PO last heard of it,
