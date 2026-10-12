@@ -782,6 +782,68 @@ def _approved_settles(room_id: str, mid: str, n: int) -> bool:
     return n < len(found) and found[n]["recommended"] >= 0
 
 
+# ---------------------------------------------------------------------------
+# The card that follows a point (#206, the CEO's P173/P175): "the P515 card"
+# ---------------------------------------------------------------------------
+
+# A paragraph that starts "Re P499", whatever follows: "Re P499:", "Re P499
+# (the leg limit in #240).", "**Re P511 item 8**". An ensemble_ask message is
+# often only that line over its card.
+_RE_POINT = re.compile(r"^[ \t]*(?:[-*+][ \t]+)*(?:\*\*|__)?[ \t]*re[ \t]+(P\d{1,5}[a-z]?)(?![\w])", re.I | re.M)
+
+
+def point_card(summary: dict, point: dict) -> dict | None:
+    """The question card of the room's agent that follows ``point``: a
+    message with asks that answers it (one of its answers, as the points
+    ledger keeps them) or that says ``Re Pn`` at the head of a paragraph,
+    sent after it. ``{mid, n, question, ts, open}``: the newest one still
+    waiting (``open``: an ask of it has no answer and no approval in the
+    ledger; ``n`` the first such ask), else the newest answered one, else
+    None. Nothing is recorded: the tie is read from the ledger's answers and
+    the card's own words, which the hub already keeps. A Done task's card
+    waits for nobody, as in :func:`open_by_room`."""
+    rid, pid = summary.get("id", ""), point.get("id", "")
+    if not pid:
+        return None
+    marked = list(_room_asks(summary))
+    answers = {a["mid"]: float(a.get("at") or 0) for a in point.get("answers") or [] if a.get("mid")}
+    # An answer in a session the chat has rotated out of is not among the
+    # room's asks (those are its current sessions'): read it on its own.
+    seen = {m[0] for m in marked}
+    for mid, at in answers.items():
+        if mid not in seen:
+            found = balloon_asks(rid, mid)
+            if found:
+                marked.append((mid, at, [a["question"] for a in found], ""))
+    if not marked:
+        return None
+    since = float(point.get("createdAt") or 0)
+    led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    done, approved = led.get("asks") or {}, led.get("approvals") or {}
+    over = _d.normalize_workflow(summary.get("workflow")) == "done"
+    cache: dict = {}
+    best = None
+    for mid, ts, qs, _who in marked:
+        if mid not in answers:
+            if not ts or ts < since:
+                continue
+            try:
+                text = _d.points._balloon_text(rid, mid, cache) or ""
+            except Exception:       # noqa: BLE001 — a balloon that cannot be read follows nothing
+                continue
+            if pid.lower() not in {m.lower() for m in _RE_POINT.findall(_d.points._prose(text))}:
+                continue
+        got = done.get(mid) or {}
+        waiting = [n for n in range(len(qs)) if str(n) not in got
+                   and not (mid in approved and _approved_settles(rid, mid, n))]
+        n = waiting[0] if waiting else 0
+        card = {"mid": mid, "n": n, "question": qs[n] if n < len(qs) else "", "ts": ts,
+                "open": bool(waiting) and not over}
+        if best is None or (card["open"], ts) >= (best["open"], best["ts"]):
+            best = card
+    return best
+
+
 def balloon_asks(room_id: str, mid: str) -> list[dict]:
     room = _d.chatroom.get_room(room_id)
     if room is None:

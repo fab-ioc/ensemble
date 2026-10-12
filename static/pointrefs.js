@@ -47,7 +47,9 @@ const PointRefs = (() => {
         Object.assign(r, { project: projects[0].id, how: 'key', others: [] });
       }
       if (r.project === '!ambiguous' || r.others.includes('!ambiguous')) continue;
-      out.push({ id: m[2], start, end, ...r });
+      // "the P515 card", "P515 card", "card P515": the question card (#206).
+      const card = /^[ \t]*card\b/i.test(context.slice(end)) || /\bcard[ \t]+$/i.test(context.slice(Math.max(0, start - 12), start));
+      out.push({ id: m[2], start, end, ...r, ...(card ? { card: true } : {}) });
     }
     return out;
   }
@@ -75,9 +77,16 @@ const PointRefs = (() => {
       const title = text.length > 140 ? text.slice(0, 139) + '…' : text;
       const stage = { open: 'open', planned: 'in progress', delivered: 'ready for check', answered: 'ready for check', acked: 'acknowledged' }[p.stage] || p.stage;
       const when = p.createdAt ? new Date(p.createdAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
-      const href = '/session?room=' + encodeURIComponent(p.roomId) + '&msg=' + encodeURIComponent(p.mid) + '&part=pt:' + p.id;
+      const his = { room: p.roomId, msg: p.mid, part: 'pt:' + p.id };
+      // The question card waiting on the person for this point, or named as
+      // "the Pn card": the chip lands on it, and its card offers both (#206).
+      const c = p.card && (p.card.open || r.card) ? { room: p.roomId, msg: p.card.mid, part: 'ask:' + p.card.n } : null;
+      const at = c || his;
+      const href = '/session?room=' + encodeURIComponent(at.room) + '&msg=' + encodeURIComponent(at.msg) + '&part=' + at.part;
+      const links = c ? [{ text: p.card.open ? 'Answer the question ↓' : 'The question ↓', title: p.card.question || '', point: c },
+                         { text: 'His message', title: 'The message that raised ' + p.id, point: his }] : null;
       return TaskCard.chipHtml({ roomId: p.roomId, ref: p.id, label: p.id, title, project: p.project,
-        inProject: p.projectId === ctx.own, agents: [] }, { href, point: { room: p.roomId, msg: p.mid, part: 'pt:' + p.id }, state: [stage, when].filter(Boolean).join(' · ') });
+        inProject: p.projectId === ctx.own, agents: [] }, { href, point: at, links, state: [stage, when].filter(Boolean).join(' · ') });
     }
     function replace(text, ctx, plain = s => s, park = s => s) {
       let out = '', at = 0;

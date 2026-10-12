@@ -268,6 +268,8 @@ const TaskCard = (() => {
                    project: (t.inProject === false || o.assumed) ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
     if (o.assumed) card.assumed = true;
     if (o.point) { card.point = o.point; card.state = o.state || ''; }
+    // A point's ways in, in order (#206): its question card, then the message that raised it.
+    if (o.point && o.links && o.links.length) card.links = o.links.map(l => ({ text: String(l.text || ''), title: String(l.title || ''), point: l.point }));
     if (o.why) card.why = String(o.why);
     return card;
   }
@@ -299,6 +301,7 @@ const TaskCard = (() => {
       + ` aria-label="${esc('Task ' + ref + ' (deleted)')}" aria-haspopup="dialog" aria-expanded="false"><span class="ref-who">${esc(ref)}</span></a>`;
   }
 
+  const pointHref = p => '/session?room=' + encodeURIComponent(p.room) + '&msg=' + encodeURIComponent(p.msg) + (p.part ? '&part=' + encodeURIComponent(p.part) : '');
   const pointAttrs = p => `data-point="true" data-ref-room="${esc(p.room)}" data-ref-msg="${esc(p.msg)}" data-ref-part="${esc(p.part)}"`;
 
   // ---- The card ---------------------------------------------------------------
@@ -328,6 +331,10 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
 .task-card .tc-title:hover { text-decoration:underline; }
 .task-card .tc-title:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); border-radius:var(--r-100); }
 .task-card .tc-state, .task-card .tc-agents { flex:0 0 auto; color:var(--fg-muted); }
+.task-card .tc-links { flex:0 0 auto; display:inline-flex; gap:var(--s-200); }
+.task-card .tc-link { color:var(--link); text-decoration:none; }
+.task-card .tc-link:hover { text-decoration:underline; }
+.task-card .tc-link:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); border-radius:var(--r-100); }
 .task-card.tc-has-why { flex-wrap:wrap; row-gap:0; }
 .task-card .tc-why { order:10; flex:1 1 100%; min-width:0; white-space:normal; color:var(--fg-muted); }
 /* Beside a list (a left bar's task): a notch pointing at the row it is for. */
@@ -345,6 +352,8 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
   /* The card wraps: the number, project and state on the first line, the full title under them. */
   .task-card { flex-wrap:wrap; white-space:normal; row-gap:0; font-size:var(--fs-300, var(--fs-200)); }
   .task-card .tc-title { order:9; flex:1 1 100%; white-space:normal; overflow:visible; min-height:var(--touch-min, 44px); display:flex; align-items:center; }
+  .task-card .tc-links { order:10; flex:1 1 100%; flex-wrap:wrap; }
+  .task-card .tc-link { min-height:var(--touch-min, 44px); display:inline-flex; align-items:center; }
 }`;
 
   const STATES = new WeakMap();   // document → its card's state
@@ -392,6 +401,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     return `<span class="tc-no">${esc(c.ref)}</span>`
       + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
       + (c.gone ? '' : `<a class="tc-title" href="${esc(c.href)}" ${c.point ? pointAttrs(c.point) : own ? '' : `data-task="${esc(c.task)}"`}${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc((c.point ? 'Jump to point ' : 'Open task ') + c.ref)}">${esc(c.title)}</a>`)
+      + (c.links ? `<span class="tc-links">${c.links.map(l => `<a class="tc-link" href="${esc(pointHref(l.point))}" ${pointAttrs(l.point)}${l.title ? ` title="${esc(l.title)}"` : ''}>${esc(l.text)}</a>`).join('')}</span>` : '')
       + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
       + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '')
       + (c.why ? `<span class="tc-why">${esc(c.why)}</span>` : '');

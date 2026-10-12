@@ -6358,20 +6358,31 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
             continue
         matches = [p for p in points.load(rid)["points"] if p["id"] == point_id]
         for point in matches:
-            found.append((rid, point))
+            found.append((room, point))
         if len(found) > 1:
             return None
     if not found:
         return None
-    rid, point = found[0]
+    room, point = found[0]
+    rid = room["id"]
     # Read current replies only for the matching ledger, never all transcripts.
     point = next((p for p in points.sync(rid)["points"] if p["id"] == point_id), point)
     if not point.get("mid"):
         return None
-    return {"id": point_id, "roomId": rid, "mid": point["mid"],
-            "text": points.strip_point_lines(point.get("text") or "")[:400],
-            "stage": point["state"], "createdAt": point.get("createdAt"),
-            "projectId": project_id, "project": project.get("name") or ""}
+    out = {"id": point_id, "roomId": rid, "mid": point["mid"],
+           "text": points.strip_point_lines(point.get("text") or "")[:400],
+           "stage": point["state"], "createdAt": point.get("createdAt"),
+           "projectId": project_id, "project": project.get("name") or ""}
+    # The question card that follows it (#206): a chip lands there while it
+    # waits, and "the Pn card" always does.
+    try:
+        card = asks.point_card(room, point)
+    except Exception as e:      # noqa: BLE001 — the point is found without its card
+        print(f"[points] {rid}: card of {point_id} not read: {e!r}", flush=True)
+        card = None
+    if card:
+        out["card"] = {k: card[k] for k in ("mid", "n", "question", "open")}
+    return out
 
 
 def room_project(room_id: str) -> str:
