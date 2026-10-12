@@ -4889,7 +4889,7 @@ function landPending() {
       renderBubbles(LAST_ITEMS, { anchor: row });
       el = find('.msg[data-mid]');
     }
-    if (!el && threadedView() && !THREAD_MODE && THR_DRAWN) {
+    if (!el && typeof threadedView === 'function' && threadedView() && !THREAD_MODE && THR_DRAWN) {
       // A reply the channel does not show (#210): the whole chat, for this visit, then land.
       WHOLE_FOR_LINK = true;
       showWholeBtn();
