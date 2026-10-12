@@ -281,6 +281,15 @@ async function main() {
     for (const [w, h, mob] of [[1280, 800, false], [390, 844, true]]) {
       const p = await page(w, h, mob);
       const o = {};
+      // A PO chat opens as threads (#210): one line per thread. The flat chat these
+      // checks are about is "Whole chat"; the link checks below start from the threads.
+      o.channel = await view(p);
+      // The line under a parent: the row after its balloon.
+      o.threadLines = await p.evalIn(`[...document.querySelectorAll('#msgs > .thr-line')].map(l => { let e = l.previousElementSibling; while (e && !e.dataset.mid) e = e.previousElementSibling; return e ? e.dataset.mid : ''; })`);
+      const wholeOn = on => p.evalIn(`(() => { const b = document.getElementById('whole-chat'); if (b.getAttribute('aria-pressed') !== '${on}') b.click(); return 0; })()`);
+      await wholeOn(true);
+      await p.until('document.querySelectorAll("#msgs .msg[data-mid]").length > ' + o.channel.shown.filter(s => s.startsWith('msg:')).length);
+      await sleep(300);
       o.clean = await view(p);
       // A gap names the person's asks its folded messages mention (#160), inside its row.
       o.gasks = await p.evalIn(`[...document.querySelectorAll('#msgs .msg-fold.gap')].map(g => { const a = g.querySelector('.gasks'); if (!a) return null;
@@ -288,6 +297,9 @@ async function main() {
         return { text: a.textContent, title: g.title, w: Math.round(r.width), inRow: r.left >= rr.left - 1 && r.right <= rr.right + 1, fg: getComputedStyle(a).fontWeight }; })`);
       o.bars = await p.evalIn(`[...document.querySelectorAll('#msgs .msg .pt-bar')].map(b => [b.closest('.msg').dataset.mid, b.textContent])`);
       await p.shot(`po-chat-${w}-clean`);
+      await wholeOn(false);
+      await p.until('THR_DRAWN && document.querySelectorAll("#msgs .thr-line").length > 0');
+      await sleep(300);
       // The asks line: P2 with its answer's words, its thread, 👍 and Comment.
       await p.evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
       await sleep(200);
@@ -488,6 +500,14 @@ class InChrome(unittest.TestCase):
                 self.assertIn("follow-up to P1", bars["po-sid:11"])
                 self.assertIn("Ack", bars["po-sid:12"])
                 self.assertIn("Comment", bars["po-sid:12"])
+
+    def test_the_chat_opens_as_threads(self):
+        for w, o in self._both():
+            with self.subTest(width=w):
+                msgs = [s.split(":", 1)[1] for s in o["channel"]["shown"] if s.startswith("msg:")]
+                # P1's thread holds the interim line, its answer, the follow-up P2 and P2's answer.
+                self.assertEqual(msgs, ["po-sid:2", "po-sid:10"], o["channel"]["shown"])
+                self.assertEqual(o["threadLines"], ["po-sid:2"])
 
     def test_a_gap_names_the_asks_its_folded_messages_mention(self):
         for w, o in self._both():

@@ -86,6 +86,9 @@ async function main() {
       const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
       await c.send('Page.enable', {}, sessionId);
       await c.send('Network.enable', {}, sessionId);
+      // The flat chat (#210's "Whole chat"): the answers on screen are what this is about;
+      // in the threads view they are in their threads (tests/test_threads_page.py).
+      await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'try { localStorage.setItem("cd-chat-whole", "1"); } catch (e) {}' }, sessionId);
       // The page is in front, as the person's window is.
       await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
       await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: mob }, sessionId);
