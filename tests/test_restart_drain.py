@@ -69,22 +69,27 @@ class StateMachine(unittest.TestCase):
         self.assertEqual(self.obs(st, 1.0, a=("idle", True)), ["r/a"])
         rd.mark_told(st, "r/a", 1.0)
         self.obs(st, 2.0, a=("idle", True))
-        self.assertEqual(st["agents"]["r/a"]["state"], "working")     # told: settles in time
-        self.obs(st, 2.0 + rd.SETTLED_S, a=("idle", True))
-        self.assertEqual(st["agents"]["r/a"]["state"], "settled")
-        self.assertEqual(rd.outcome(st, 40.0), "ready")
+        self.assertEqual(st["agents"]["r/a"]["state"], "working")
+        self.assertEqual(self.obs(st, 2.0 + rd.RETELL_S, a=("idle", True)), ["r/a"])   # told again
+        self.assertEqual(st["agents"]["r/a"]["state"], "working")
+        self.assertEqual(rd.outcome(st, 40.0), "")                   # still waited for
+        self.assertEqual(rd.outcome(st, 600.0), "deadline")
 
-    def test_told_then_idle_without_the_tool_settles_and_working_again_resets(self):
+    def test_told_then_idle_without_the_tool_is_told_once_more_and_waited_for(self):
         st = rd.new_state("x", PO, "restart", 0.0, 600)
         self.obs(st, 1.0, a="working")
         rd.mark_told(st, "r/a", 1.0)
         self.obs(st, 5.0, a="idle")
         self.obs(st, 10.0, a="working")
         self.obs(st, 11.0, a="idle")
-        self.obs(st, 11.0 + rd.SETTLED_S - 1, a="idle")
+        self.assertEqual(self.obs(st, 11.0 + rd.RETELL_S - 1, a="idle"), [])
         self.assertEqual(st["agents"]["r/a"]["state"], "working")
-        self.obs(st, 11.0 + rd.SETTLED_S, a="idle")
-        self.assertEqual(st["agents"]["r/a"]["state"], "settled")
+        self.assertEqual(self.obs(st, 11.0 + rd.RETELL_S, a="idle"), ["r/a"])
+        self.assertEqual(self.obs(st, 300.0, a="idle"), [])           # once more, not again
+        self.assertEqual(st["agents"]["r/a"]["state"], "working")
+        self.assertEqual(rd.outcome(st, 300.0), "")
+        rd.ready(st, "r", "a", "push", 301.0)
+        self.assertEqual(rd.outcome(st, 302.0), "ready")
 
     def test_ready_holds_and_lets_the_restart_go(self):
         st = rd.new_state("merged #1", PO, "restart", 0.0, 600)
@@ -129,6 +134,12 @@ class StateMachine(unittest.TestCase):
         self.assertEqual([h["key"] for h in held], ["k1"])
         self.assertEqual((st["state"], st["held"]), ("cancelled", []))
         self.assertEqual(rd.outcome(st, 3.0), "")
+        # On file until let go; a new drain carries what is still pending.
+        self.assertEqual([h["key"] for h in st["pending"]], ["k1"])
+        st2, _ = rd.request(st, "y", PO, "restart", 4.0, 600)
+        self.assertEqual([h["key"] for h in st2["pending"]], ["k1"])
+        rd.settle(st, held[0])
+        self.assertEqual(st["pending"], [])
 
     def test_the_lines(self):
         self.assertEqual(dashboard.hub_input_kind(rd.DRAIN_LINE), {"kind": "drain"})
@@ -368,6 +379,36 @@ class Drain(_Hub):
         self.assertIn("paused at a safe point and resumed: ready", rd.current()["outcome"])
         self.assertIn("cut off and resumed: cut", rd.current()["outcome"])
 
+    def test_a_running_review_is_started_again_with_where_it_said_it_would_carry_on(self):
+        team = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"], title="team")
+        full = chatroom.get_room(team, public=False)
+        full["messages"].append({"id": "m7", "from": "claude", "to": "codex", "text": "@codex review abc",
+                                 "ts": time.time()})
+        chatroom.update_room(full)
+        self.running(team, "claude", "idle")
+        codex_pty = self.running(team, "codex", "working", "screen")
+        chatroom.patch_participant(team, "codex", {"review": {"n": 2, "messageId": "m7"}})
+        rd.request_restart("merged #206", self.po_by())
+        rd.drain_tick()
+        self.assertEqual(self.ptys[codex_pty].typed, [rd.DRAIN_LINE])
+        rd.agent_ready(team, "codex", "check finding 3, then call review_done")
+        rd.drain_tick()
+        self.assertEqual(rd.current()["state"], "restarting")
+        dashboard.take_restart_snapshot(self.lease_id, wake_room=self.po)
+        path = self.dir / "restart-snapshot.json"
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        snap["hubPid"] = os.getpid() + 1
+        path.write_text(json.dumps(snap), encoding="utf-8")
+        self.hub_stops()
+        self.handler_obj._restore_after_restart(self.lease_id)
+        self.join()
+        self.join_release()
+        self.assertEqual(self.reviews, [(team, "codex", "m7")])
+        self.assertEqual(self.review_notes, [
+            "[hub restarted] The hub restarted for merged #206. You said you would next: "
+            "check finding 3, then call review_done. Carry on from there."])
+        self.assertEqual(self.typed(team).get("claude"), [])
+
     def test_a_hub_that_could_not_be_stopped_calls_it_off(self):
         busy = self.room(title="busy")
         busy_pty = self.running(busy, "claude", "working")
@@ -386,17 +427,46 @@ class Drain(_Hub):
         self.assertIn("could not be stopped", rd.current()["outcome"])
         self.assertIn("after", self.ptys[busy_pty].typed[-1])        # the held send, let go
 
-    def test_a_hub_that_died_mid_drain_calls_it_off(self):
-        rd.request_restart("x", {"label": "the dashboard"})
-        with mock.patch.object(rd, "CANCEL_RELEASE_S", 0), mock.patch.object(dashboard, "HUB_PORT", 8765):
+    def test_a_hub_that_died_mid_drain_calls_it_off_at_once(self):
+        busy = self.room(title="busy")
+        self.running(busy, "claude", "working")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        self.assertEqual(rd.current()["state"], "draining")
+        # The hub dies; the new process sees none of the old terminals, so a
+        # tick would read every agent as stopped, i.e. ready, and restart.
+        self.hub_stops()
+        rd.reset()
+        with mock.patch.object(dashboard, "HUB_PORT", 8765):
             rd.on_startup()
-            for _ in range(50):
-                if not rd.holding():
-                    break
-                time.sleep(0.05)
+            self.assertFalse(rd.holding())    # ended before any tick
+            rd.drain_tick()
+        self.assertEqual(self.restarts, [])
         self.assertEqual(rd.current()["state"], "cancelled")
         self.assertEqual(rd.current()["outcome"], "the hub stopped during the drain")
 
+    def test_held_work_stays_on_file_until_let_go(self):
+        busy = self.room(title="busy")
+        busy_pty = self.running(busy, "claude", "working")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        sends.accept(busy, "send:1", "after", "")
+        self.handler_obj._resume_room(chatroom.get_room(busy, public=False), text="after", key="send:1")
+        # The hub stops between ending the drain and letting go of the send.
+        with mock.patch.object(rd, "release", lambda *a, **k: None):
+            rd.cancel_drain("the dashboard")
+        on_file = json.loads((self.dir / rd.FILE_NAME).read_text(encoding="utf-8"))
+        self.assertEqual([it["key"] for it in on_file["pending"]], ["send:1"])
+        rd.reset()                            # a new hub process reads the file
+        with mock.patch.object(rd, "CANCEL_RELEASE_S", 0), mock.patch.object(dashboard, "HUB_PORT", 8765):
+            rd.on_startup()
+            for _ in range(100):
+                if not (rd.current() or {}).get("pending"):
+                    break
+                time.sleep(0.05)
+        self.join_release()
+        self.assertEqual(rd.current()["pending"], [])
+        self.assertIn("after", self.ptys[busy_pty].typed[-1])
 
 class Tool(unittest.TestCase):
     def test_every_agent_has_the_ready_tool(self):

@@ -52,17 +52,17 @@ def bind(dashboard_module) -> None:
 FILE_NAME = "restart-drain.json"
 DEFAULT_DEADLINE_MIN = 20
 MIN_DEADLINE_MIN, MAX_DEADLINE_MIN = 1, 240
-# Told, then idle this long without calling the tool: it stopped at a safe
-# point all the same (an agent whose turn ended on the line it was typed).
-SETTLED_S = 30
+# Told, then idle this long without calling the tool: told once more (the
+# line may have gone in as its turn ended); then waited for until the deadline.
+RETELL_S = 30
 TICK_S = 2.0
 
 # draining: telling agents and waiting for them; restarting: the restart was
 # started (its helper preflights, waits, stops the hub). Both hold.
 HOLDING = ("draining", "restarting")
-# ready: it called the tool; idle: idle when looked at, typed nothing;
-# stopped: its terminal ended; settled: told, then idle without calling.
-READY_STATES = ("ready", "idle", "stopped", "settled")
+# ready: it called the tool; idle: idle when looked at, never told, typed
+# nothing; stopped: its terminal ended.
+READY_STATES = ("ready", "idle", "stopped")
 
 DRAIN_PREFIX = "[hub restart] "
 DRAIN_LINE = (
@@ -113,7 +113,10 @@ def request(st: dict | None, reason: str, by: dict, action: str, now: float,
         if not any(_same_requester(r, by) for r in st["requestedBy"]):
             st["requestedBy"].append(dict(by))
         return st, True
-    return new_state(reason, by, action, now, deadline_s), False
+    new = new_state(reason, by, action, now, deadline_s)
+    if st and st.get("pending"):
+        new["pending"] = list(st["pending"])     # the last drain's, still being let go
+    return new, False
 
 
 def _same_requester(a: dict, b: dict) -> bool:
@@ -164,8 +167,14 @@ def observe(st: dict, seen: dict, now: float) -> list[str]:
             _set(a, "stopped", now)
         elif state == "idle":
             if a["toldAt"]:
+                # Told, and idle without calling the tool: where it stands is
+                # not known (a command of its may still run). Told once more,
+                # then waited for: the deadline or a force cuts it off.
                 a["idleSince"] = a["idleSince"] or now
-                _set(a, "settled" if now - a["idleSince"] >= SETTLED_S else "working", now)
+                _set(a, "working", now)
+                if now - a["idleSince"] >= RETELL_S and not a.get("retold"):
+                    a["retold"] = True
+                    tell.append(k)
             elif a["state"] in ("", "idle", "stopped", "waiting", "working"):
                 _set(a, "idle", now)
         elif state == "waiting":
@@ -231,16 +240,25 @@ def force(st: dict | None, by: str) -> bool:
 
 def end(st: dict, state: str, why: str, now: float) -> list[dict]:
     """End a drain (cancelled | failed | done). Returns what it held, for the
-    caller to let go of, and empties it."""
+    caller to let go of; each item stays on file under ``pending`` until it
+    is let go (``settle``), so a hub that dies in between replays it."""
     st["state"] = state
     st["outcome"] = why
     st["endedAt"] = now
     held, st["held"] = list(st.get("held") or []), []
+    st.setdefault("pending", []).extend(held)
     return held
 
 
+def settle(st: dict, item: dict) -> None:
+    """One pending item let go: off the file."""
+    hid = item.get("hid")
+    st["pending"] = [it for it in st.get("pending") or []
+                     if not (it.get("hid") == hid if hid else it == item)]
+
+
 def hold(st: dict, item: dict, now: float) -> None:
-    st.setdefault("held", []).append({**item, "heldAt": now})
+    st.setdefault("held", []).append({**item, "heldAt": now, "hid": uuid.uuid4().hex[:12]})
 
 
 def holds_send(st: dict | None, room_id: str, send_key: str) -> bool:
@@ -752,10 +770,11 @@ def _preflight_why() -> str:
     return "the code on disk did not serve on the spare port (see restart.log)"
 
 
-def end_drain(state: str, why: str, tell: bool = True) -> None:
+def end_drain(state: str, why: str, tell: bool = True, after_s: float = 0.0) -> None:
     """Call a drain off (cancelled | failed) or close it (done) when nothing
     restarted: let go of what it held, tell the agents it told, tell the PO
-    that asked."""
+    that asked. The drain ends at once; ``after_s``: the lines and what was
+    held wait that long (a hub just back, its rooms still coming up)."""
     with LOCK:
         st = current()
         if not st or st.get("state") not in HOLDING:
@@ -763,6 +782,16 @@ def end_drain(state: str, why: str, tell: bool = True) -> None:
         held = end(st, state, why, time.time())
         save(st)
     _log(f"{state}: {why}; {len(held)} held item(s) let go")
+    if after_s:
+        def later():
+            time.sleep(after_s)
+            _after_end(st, held, why, tell)
+        threading.Thread(target=later, daemon=True, name="restart-drain-end").start()
+    else:
+        _after_end(st, held, why, tell)
+
+
+def _after_end(st: dict, held: list, why: str, tell: bool) -> None:
     if tell:
         for a in st["agents"].values():
             if a.get("requester"):
@@ -818,6 +847,17 @@ def _resuming(room_id: str) -> bool:
 
 
 def _release_one(h, it: dict) -> None:
+    try:
+        _deliver(h, it)
+    finally:
+        with LOCK:
+            st = current()
+            if st and st.get("pending"):
+                settle(st, it)
+                save(st)
+
+
+def _deliver(h, it: dict) -> None:
     rid = it.get("roomId") or ""
     kind = it.get("kind")
     try:
@@ -932,15 +972,25 @@ def on_startup() -> None:
     the helper's restore and closes itself if that never comes. A preflight
     hub (another port) leaves it alone."""
     st = current()
-    if not st or st.get("state") not in HOLDING:
+    if not st or (st.get("hubPort") and st.get("hubPort") != _d.HUB_PORT):
         return
-    if st.get("hubPort") and st.get("hubPort") != _d.HUB_PORT:
+    if st.get("state") not in HOLDING:
+        # A hub that stopped while it let go of what a drain held: the rest
+        # goes in once the rooms are back.
+        if st.get("pending"):
+            items = list(st["pending"])
+            _log(f"{len(items)} held item(s) not let go before the hub stopped: "
+                 f"let go in {CANCEL_RELEASE_S} s")
+
+            def later():
+                time.sleep(CANCEL_RELEASE_S)
+                release(items)
+            threading.Thread(target=later, daemon=True, name="restart-drain-end").start()
         return
     if st.get("state") == "draining":
-        def later():
-            time.sleep(CANCEL_RELEASE_S)
-            end_drain("cancelled", "the hub stopped during the drain")
-        threading.Thread(target=later, daemon=True).start()
+        # Ended now, before this hub's monitor ticks: it sees none of the old
+        # terminals and would read every agent as ready and restart again.
+        end_drain("cancelled", "the hub stopped during the drain", after_s=CANCEL_RELEASE_S)
         return
     if st.get("hubPid") == os.getpid():
         return

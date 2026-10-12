@@ -13567,7 +13567,7 @@ class Handler(BaseHTTPRequestHandler):
         rung = self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")))
         return [ident for ident in rest if ident not in rung]
 
-    def _start_review(self, room_id: str, ident: str, msg: dict) -> dict | None:
+    def _start_review(self, room_id: str, ident: str, msg: dict, note: str = "") -> dict | None:
         """Start a fresh reviewer session for one request: its first prompt is
         the review brief (the question, the branch and its diff, the spec and
         REVIEW-LOG.md), it runs in the checkout under review, and it ends when
@@ -13579,7 +13579,8 @@ class Handler(BaseHTTPRequestHandler):
         room's launch lock, refused while a live terminal of this seat is
         recorded nowhere, and ending the terminal it started when recording it
         fails. While a restart drains the review is held for after it
-        (restart_drain.py): ``{"held": True}``."""
+        (restart_drain.py): ``{"held": True}``. ``note``: a line added to the
+        brief (a review a restart cut short: where it said it would carry on)."""
         if restart_drain.try_hold({"kind": "review", "roomId": room_id, "identity": ident,
                                    "messageId": msg.get("id", "")}):
             print(f"[drain] {room_id}: the review by {ident} held for after the restart", flush=True)
@@ -13600,6 +13601,8 @@ class Handler(BaseHTTPRequestHandler):
             root = review_repo(room_full)
             git = review_git_context(root, since=previous_review(part))
             brief = review_brief(room_full, part, msg, n, git, log_text)
+            if note:
+                brief += "\n\n" + note
             try:
                 info = self._launch_room_agent_pty(room_full, part, "", collab=True,
                                                    prompt=brief, cwd=root or None)
@@ -14459,7 +14462,9 @@ class Handler(BaseHTTPRequestHandler):
                             msg = next((m for m in room_full.get("messages") or []
                                         if m.get("id") == a.get("reviewMessageId")), None)
                             try:
-                                started = msg and self._start_review(rid, a.get("identity"), msg)
+                                started = msg and self._start_review(
+                                    rid, a.get("identity"), msg,
+                                    note=drain_notes.get(rid, {}).get(a.get("identity"), ""))
                             except Exception as exc:    # noqa: BLE001
                                 started = None
                                 outcome += f"; the review by {a.get('identity')} NOT started again: {exc!r}"
