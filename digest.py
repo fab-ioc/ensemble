@@ -86,9 +86,11 @@ import time.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import due
@@ -250,9 +252,12 @@ def _git_facts(room: dict) -> dict:
     return out
 
 
+@lru_cache(maxsize=4096)
 def _merged_at(cwd: str, base: str, sha: str) -> float:
     """When ``base`` first held ``sha``, from the base's reflog; 0 when it
-    cannot tell (no reflog, or the merge is older than what it keeps)."""
+    cannot tell (no reflog, or the merge is older than what it keeps). Cache
+    both answers for this hub process: old merged heads are checked on every
+    digest, but their reflog answer cannot change during that process."""
     later = set(_d._git_out(cwd, "rev-list", "--ancestry-path", f"{sha}..{base}").split())
     later.add(sha)
     at = 0.0
@@ -283,9 +288,12 @@ def _settle_merges(tasks: list[dict]) -> list[str]:
         if room is None or room.get("mergedHead") == t["sha"]:
             continue                        # this merge was already dealt with
         now = time.time()
-        at = _merged_at(room.get("cwd", ""), t["base"], t["sha"]) or now
-        fields = {"mergedHead": t["sha"], "mergedAt": at}
-        move = t["column"] != "done" and float(room.get("workflowAt") or 0) <= at
+        merged_at = _merged_at(room.get("cwd", ""), t["base"], t["sha"])
+        # An unknown merge time may be old. Use now only to settle the card;
+        # never store it as evidence that this hub still needs a restart.
+        fields = {"mergedHead": t["sha"], "mergedAt": merged_at}
+        move = (t["column"] != "done" and
+                float(room.get("workflowAt") or 0) <= (merged_at or now))
         if move:
             fields.update(workflow="done", workflowAt=now)
         if _d.chatroom.patch_room(t["id"], **fields) is None:
@@ -306,6 +314,14 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     # here, and never hides the question or completion it followed.
     rep = _d.chatroom.last_real_report(room)
     g = _git_facts(room)
+    merged_at = 0.0
+    if g.get("merged"):
+        # The room records when this exact head reached the base. On the first
+        # check after a merge, _settle_merges has not recorded it yet.
+        if room.get("mergedHead") == g.get("sha"):
+            merged_at = float(room.get("mergedAt") or 0)
+        if not merged_at:
+            merged_at = _merged_at(room.get("cwd", ""), g["base"], g["sha"])
     try:
         ask = _d.attention.open_ask(room) or {}
     except Exception:
@@ -324,13 +340,16 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
         "base": g.get("base", ""),
         "commits": g.get("commits", 0),
         "merged": g.get("merged", False),
+        "mergedAt": merged_at,
         "sha": g.get("sha", ""),
         "lastCommit": g.get("lastCommit", ""),
         "head": g.get("head", ""),
         # A report is identified by when it was made; its kind and gist are facts.
         "report": float(rep.get("ts") or 0),
         "reportKind": rep.get("kind", ""),
-        "reportText": " ".join((rep.get("text") or "").split())[:300],
+        # Keep enough source text to fill the 300-character gist after old
+        # merge/restart status sentences have been removed.
+        "reportText": " ".join((rep.get("text") or "").split())[:900],
         # What it put to the CEO that is still open ("" when nothing is): a
         # blocked or a question stays open until answered, not until the agent
         # goes busy.
@@ -516,6 +535,23 @@ def _ago(s: float) -> str:
     return f"{s // 86400} d"
 
 
+_STALE_REPORT_STATUS = re.compile(
+    r"\bnot (?:yet )?merged\b|\bneeds? (?:a |the )?(?:hub )?restart\b|"
+    r"\b(?:go|goes|going) live\b.{0,80}\b(?:restart|deploy)\b|"
+    r"\b(?:not live|not deployed|to deploy)\b.{0,80}\brestart\b",
+    re.IGNORECASE,
+)
+
+
+def _report_context(t: dict) -> str:
+    """Keep a merged task's report content, minus obsolete status sentences."""
+    text = t.get("reportText") or ""
+    if not t.get("merged"):
+        return text[:300]
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(s for s in sentences if not _STALE_REPORT_STATUS.search(s)).strip()[:300]
+
+
 def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: float,
                 reported: set | None = None) -> str:
     """The facts as text: what the model is given, and what is sent when it
@@ -555,6 +591,12 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             # both "merged" and "not started", and must not be left to guess.
             if t["merged"]:
                 c = f"work merged into {t['base']} (branch {t['branch']}, nothing left to merge)"
+                merged_at = float(t.get("mergedAt") or 0)
+                if _STARTED and merged_at:
+                    if merged_at > _STARTED:
+                        c += "; merge is newer than this hub process, so a restart is needed to load it"
+                    else:
+                        c += "; this hub process started after the merge, so the work is live"
             elif t["commits"]:
                 c = f"{t['commits']} commit(s) on {t['branch']} not yet in {t['base']}"
             else:
@@ -564,7 +606,9 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             bits.append(c)
         # An update (a rotation, a handover) is never mentioned.
         if t["reportKind"] not in ("", "update") and t["id"] in quoted:
-            bits.append(f"report ({t['reportKind']}): {t['reportText']}")
+            report = _report_context(t)
+            if report:
+                bits.append(f"report ({t['reportKind']}): {report}")
         lines.append(f"- {name(t)}: " + "; ".join(bits))
     return "\n".join(lines)
 
@@ -579,7 +623,10 @@ _PROMPT = (
     "work. Use ONLY the facts given; never guess or add anything. State only "
     "what the facts say about branches and merges: a task is merged only when "
     "the facts say its work is merged, and never write that work is awaiting a "
-    "merge, a hub restart or a deploy unless the facts say so. Lead with what "
+    "merge, a hub restart or a deploy unless the facts say so. Git's merged "
+    "state and the hub's start relative to that merge override any old report "
+    "wording; never ask to reconcile a report with Git. A merged task is live "
+    "after this hub has started since its merge. Lead with what "
     "finished or changed since the last digest, then call out any task that "
     "needs attention and why. Name each task by its number as the facts give "
     "it (#18), its title after the number; never by a room id. Plain text, at most 8 short lines, no headings, no greeting, "
