@@ -9999,7 +9999,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         reported = {}
     try:
         run_state = attention.run_by_room()
-        run_since = attention.run_since_by_room()
+        run_since = attention.run_since_by_room() if "command" in run_state.values() else {}
     except Exception:
         run_state, run_since = {}, {}
     try:
