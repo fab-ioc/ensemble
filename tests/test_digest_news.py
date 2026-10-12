@@ -344,10 +344,16 @@ class MergeAndHubStart(unittest.TestCase):
         self.assertNotIn("so the work is live", facts)
 
     def test_git_merge_supersedes_old_not_merged_report(self):
-        facts = self.facts(100, "Commits are on main. Not merged.")
+        facts = self.facts(100, "Commits are on main. Not merged. UI ready.")
         self.assertIn("work merged into main", facts)
         self.assertNotIn("Not merged", facts)
+        self.assertIn("report (completed): Commits are on main. UI ready.", facts)
         self.assertNotIn("please confirm", facts)
+
+    def test_report_keeps_content_around_obsolete_restart_sentence(self):
+        facts = self.facts(100, "Feature works. Needs a hub restart. Tests passed.")
+        self.assertIn("report (completed): Feature works. Tests passed.", facts)
+        self.assertNotIn("Needs a hub restart", facts)
 
     def test_unknown_merge_time_is_not_recorded_as_a_new_merge(self):
         # A branch can predate the hub but have no usable base reflog. The
@@ -360,6 +366,23 @@ class MergeAndHubStart(unittest.TestCase):
               mock.patch.object(digest.time, "time", return_value=300)):
             digest._settle_merges([task])
         self.assertEqual(patch.call_args.kwargs["mergedAt"], 0)
+
+    def test_first_check_after_merge_reads_base_reflog(self):
+        room = {"id": "room-4", "cwd": "repo"}  # no mergedHead yet
+        git = {"merged": True, "sha": "abc1234567", "base": "main",
+               "branch": "sess/motor", "commits": 0, "head": "abc1234"}
+        with (mock.patch.object(digest, "_git_facts", return_value=git),
+              mock.patch.object(digest, "_merged_at", return_value=100) as merged_at,
+              mock.patch.object(digest._d.chatroom, "last_real_report", return_value={}),
+              mock.patch.object(digest._d.attention, "open_ask", return_value={}),
+              mock.patch.object(digest._d.ensemble_tools, "_title", return_value="Motor spec"),
+              mock.patch.object(digest._d.ensemble_tools, "_status", return_value="stopped"),
+              mock.patch.object(digest._d, "workflow_of", return_value="done"),
+              mock.patch.object(digest._d, "task_label", return_value="#4"),
+              mock.patch.object(digest, "_idle_seconds", return_value=0)):
+            facts = digest._task_facts(room, {}, {}, 200)
+        self.assertEqual(facts["mergedAt"], 100)
+        merged_at.assert_called_once_with("repo", "main", "abc1234567")
 
 
 if __name__ == "__main__":

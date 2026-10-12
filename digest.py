@@ -86,6 +86,7 @@ import time.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import threading
 import time
@@ -528,6 +529,23 @@ def _ago(s: float) -> str:
     return f"{s // 86400} d"
 
 
+_STALE_REPORT_STATUS = re.compile(
+    r"\bnot (?:yet )?merged\b|\bneeds? (?:a |the )?(?:hub )?restart\b|"
+    r"\b(?:go|goes|going) live\b.{0,80}\b(?:restart|deploy)\b|"
+    r"\b(?:not live|not deployed|to deploy)\b.{0,80}\brestart\b",
+    re.IGNORECASE,
+)
+
+
+def _report_context(t: dict) -> str:
+    """Keep a merged task's report content, minus obsolete status sentences."""
+    text = t.get("reportText") or ""
+    if not t.get("merged"):
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(s for s in sentences if not _STALE_REPORT_STATUS.search(s)).strip()
+
+
 def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: float,
                 reported: set | None = None) -> str:
     """The facts as text: what the model is given, and what is sent when it
@@ -582,13 +600,9 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             bits.append(c)
         # An update (a rotation, a handover) is never mentioned.
         if t["reportKind"] not in ("", "update") and t["id"] in quoted:
-            # Reports are historical. Once Git says merged, the report's old
-            # merge/deployment wording must not contradict the current facts.
-            if t["merged"] and any(s in t["reportText"].lower() for s in
-                                   ("not merged", "restart", "goes live")):
-                bits.append(f"report ({t['reportKind']}) sent; its old status wording is superseded by current facts")
-            else:
-                bits.append(f"report ({t['reportKind']}): {t['reportText']}")
+            report = _report_context(t)
+            if report:
+                bits.append(f"report ({t['reportKind']}): {report}")
         lines.append(f"- {name(t)}: " + "; ".join(bits))
     return "\n".join(lines)
 
