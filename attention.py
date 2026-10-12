@@ -269,6 +269,38 @@ def _tail_lines(tail: str) -> list[str]:
     return [ln for ln in (tail or "").split("\n") if ln.strip()]
 
 
+# Work of its own still running after its turn ended (ED-212). Claude ends a
+# turn with a footer that counts the background shells it left running, and
+# wakes the agent itself when one ends; seen 2026-10-12:
+#   "✻ Crunched for 5m 35s · done 3:45 PM · 1 shell still running"
+# (repaints lose spaces and letters: "done 3:48 PM· 1shell still running",
+# "·don 3:13PM ·2 shells still running", "·2 shells stillunning"). A later
+# footer without the count, or a "● Background command … completed" notice
+# (a shell ending), makes the count stale. Codex counts its own in its status
+# line, "· 1 background terminal running · /ps to view".
+_OWN_SHELLS = _phrase(r"(\d*) ?(?:shells?|background tasks?) still")
+_OWN_STALE = _phrase(r"\bdone? \d{1,2}:\d{2}|[●⏺] ?background (?:command|task|shell)")
+_CODEX_OWN = _phrase(r"(\d+) background terminals? \w*ing")
+# Waiting on its own command is not a stall, until the screen has not changed
+# for this long: then the command is reported as the reason it stalled.
+OWN_WORK_CAP_S = 2 * 3600
+
+
+def own_work(tail: str) -> int:
+    """How many commands of its own the agent's screen says still run, read
+    off the bottom of the screen; 0 when none, or the screen does not say."""
+    text = "\n".join(_tail_lines(tail)[-10:])
+    for pat in (_OWN_SHELLS, _CODEX_OWN):
+        m = None
+        for m in pat.finditer(text):
+            pass
+        if m is not None:
+            if _OWN_STALE.search(text[m.end():]):
+                return 0
+            return int(m.group(1) or 1)
+    return 0
+
+
 # Where a quote must stop: the TUI chrome that surrounds a message (an input
 # box, a bullet, the next widget) is not part of what the agent said.
 _CHROME = re.compile(r"[›❯➤▶■⏺]|\s{3,}")
@@ -576,7 +608,7 @@ _ANALYSIS_LOCK = threading.Lock()
 
 def analyse(tail: str) -> dict:
     return {"block": find_block(tail), "busy": looks_busy(tail),
-            "prompt": looks_like_prompt(tail)}
+            "prompt": looks_like_prompt(tail), "ownWork": own_work(tail)}
 
 
 def _analyse_live(sess) -> tuple[str, dict]:
@@ -1320,6 +1352,16 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if status == "busy" or (ev["scan"]["busy"] and (idle is None or idle < _MIN_QUIET)):
         return None                # thinking is not a problem, however long
 
+    if ev["scan"].get("ownWork"):
+        # Its turn ended waiting on a command of its own, and Claude wakes it
+        # when that ends (ED-212). A screen still for OWN_WORK_CAP_S is the
+        # command hanging; with a PO, stall.py tells the PO that.
+        if room.get("po") or room.get("status") != "active" or idle is None \
+                or idle < OWN_WORK_CAP_S:
+            return None
+        return ("stalled", f"{who}: background command running for {_ago(idle)} with no "
+                f"change on its screen", {"cause": "command", "idleSeconds": idle})
+
     if room.get("po"):
         # A task that reports to a PO stalls to its PO, never to the CEO: the
         # hub nudges its owner and then tells the PO (stall.py).
@@ -1502,6 +1544,7 @@ def _items() -> list[dict]:
     now = time.time()
     _REPORTED.clear()
     _RUN.clear()
+    _RUN_SINCE.clear()
     rooms = _room_summaries()
     statuses = _claude_status_by_session()
     stall = _stall_seconds()
@@ -1544,8 +1587,14 @@ def _items() -> list[dict]:
                     turn = _turn(ev)[0]
                 except (KeyError, TypeError):     # evidence without a turn: no colour
                     turn = ""
+                if turn == "idle" and (ev.get("scan") or {}).get("ownWork"):
+                    turn = "command"
                 if _RUN_RANK.get(turn, 0) > _RUN_RANK.get(_RUN.get(room["id"], ""), 0):
                     _RUN[room["id"]] = turn
+                    if turn == "command":
+                        # Since its screen last changed: when its turn ended.
+                        _RUN_SINCE[room["id"]] = float(ev.get("lastOutput") or 0) or \
+                            now - float(ev.get("idleSeconds") or 0)
             hit = _classify_agent(room, part, ev, stall, now)
             if hit:
                 found.append((*hit, part))
@@ -1654,12 +1703,15 @@ _REPORTED: dict[str, dict] = {}
 
 # What each task with a live terminal is doing, by room: ``working`` while
 # one of its agents is in a turn (its hooks, Claude's status file, else the
-# screen: :func:`turn_state`), else ``waiting`` (a prompt is up) or ``idle``.
+# screen: :func:`turn_state`), else ``waiting`` (a prompt is up), ``command``
+# (its turn is over, a command of its own still runs: ``own_work``, ED-212;
+# since when in ``_RUN_SINCE``) or ``idle``.
 # The rows' ``status`` and so every run dot read it: green is an agent
 # working, never a terminal merely alive (GitHub issue 13, point P157).
 # Filled by ``_items`` like ``_REPORTED``.
 _RUN: dict[str, str] = {}
-_RUN_RANK = {"idle": 1, "waiting": 2, "working": 3}
+_RUN_SINCE: dict[str, float] = {}
+_RUN_RANK = {"idle": 1, "command": 2, "waiting": 3, "working": 4}
 
 
 # A short result cache so the page can poll every couple of seconds for free.
@@ -1690,7 +1742,8 @@ def snapshot(max_age: float = _RESULT_TTL) -> dict:
         # ``reported``: finished reports waiting for a look, by room — the
         # list's "Ready for your check", never Needs you (``_reported``).
         payload = {"items": items, "count": len(items), "byState": by_state,
-                   "reported": dict(_REPORTED), "run": dict(_RUN), "generatedAt": time.time()}
+                   "reported": dict(_REPORTED), "run": dict(_RUN), "runSince": dict(_RUN_SINCE),
+                   "generatedAt": time.time()}
         with _RESULT_LOCK:
             _result = (payload["generatedAt"], payload)
         return payload
@@ -1704,8 +1757,13 @@ def reported_by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:
 
 def run_by_room(max_age: float = _RESULT_TTL) -> dict[str, str]:
     """What each task with a live terminal is doing (``_RUN``): ``working`` |
-    ``waiting`` | ``idle``; a room missing has no live terminal."""
+    ``waiting`` | ``command`` | ``idle``; a room missing has no live terminal."""
     return snapshot(max_age).get("run") or {}
+
+
+def run_since_by_room(max_age: float = _RESULT_TTL) -> dict[str, float]:
+    """Since when each task in ``command`` has been waiting on it (``_RUN_SINCE``)."""
+    return snapshot(max_age).get("runSince") or {}
 
 
 def by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:

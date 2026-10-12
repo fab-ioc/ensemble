@@ -880,7 +880,9 @@ def _po_wait_view(room: dict, po_waits: tuple | None = None) -> dict:
     st = stalls.get(room["id"])
     if st and st.get("nudgedAt"):
         out["stalled"] = {"since": st.get("idleSince", 0), "nudgedAt": st["nudgedAt"],
-                          "toldAt": st.get("toldAt", 0)}
+                          "toldAt": st.get("toldAt", 0),
+                          **({"reason": f"background command running for {_d.stall._cap_words()}"}
+                             if st.get("command") else {})}
     return out
 
 
