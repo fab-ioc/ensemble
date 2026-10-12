@@ -20,6 +20,11 @@ The fixtures are real screens, as ``ptyrun.tail`` reads them:
 """
 from __future__ import annotations
 
+import json
+import re
+import shutil
+import subprocess
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -30,9 +35,12 @@ import dashboard
 import ensemble_tools
 import stall
 from test_ask_to_po import _Stall
+from test_needs_you_real import _js_fn
 from test_open_ask import _Bell, IDLE_SCREEN
 
 FIX = Path(__file__).parent / "fixtures"
+INDEX = (Path(__file__).parent.parent / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+NODE = shutil.which("node")
 
 
 def _fixture(name: str) -> str:
@@ -173,6 +181,40 @@ class TheRowSaysRunningACommand(_Bell):
         it = self.item()
         self.assertEqual((it["state"], it["cause"]), ("stalled", "command"))
         self.assertIn("background command running for 2h", it["reason"].replace(" h", "h"))
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class ThePageSaysIt(unittest.TestCase):
+    def test_the_run_chip_and_the_switcher_dot(self):
+        since = time.mktime((2026, 10, 12, 15, 45, 0, 0, 0, -1))
+        src = "\n".join([
+            "const esc = s => String(s);",
+            "const ATTN_LABEL = {};",
+            "const attnDot = () => null;",
+            "const isUnread = () => false;",
+            _js_fn(INDEX, "function commandWords("),
+            _js_fn(INDEX, "function commandTip("),
+            _js_fn(INDEX, "function runChip("),
+            _js_fn(INDEX, "function swState("),
+            f"const cmd = {{isLive: true, status: 'idle', runState: 'command', runSince: {since}}};",
+            "const idle = {isLive: true, status: 'idle'};",
+            "console.log(JSON.stringify({chip: runChip(cmd), idle: runChip(idle),"
+            " dot: swState({row: cmd}, 'recent'), busy: runChip({...cmd, status: 'busy'})}));",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "own.cjs"
+            script.write_text(src, encoding="utf-8")
+            proc = subprocess.run([NODE, str(script)], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        got = json.loads(proc.stdout)
+        at = re.search(r"running a command since (\d\d:\d\d)", got["chip"])     # the page's locale
+        self.assertTrue(at and at.group(1) in ("15:45", "03:45"), got["chip"])
+        self.assertIn('class="dot idle"', got["chip"])               # the idle ring, not green
+        self.assertNotIn(">idle<", got["chip"])
+        self.assertTrue(got["idle"].endswith("idle</span>"))
+        self.assertEqual(got["dot"]["cls"], "idle")
+        self.assertTrue(got["dot"]["tip"].startswith("running a command since " + at.group(1)))
+        self.assertIn("working</span>", got["busy"])
 
 
 if __name__ == "__main__":
