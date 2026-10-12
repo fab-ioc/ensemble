@@ -50,6 +50,7 @@ import math
 import os
 import re
 import threading
+import progress
 import time
 from pathlib import Path
 
@@ -289,15 +290,18 @@ def _sessions(room: dict, led: dict) -> list[str]:
     return [s for s in points._session_ids(room, led) if _d._solo_owner(room, s) is not None]
 
 
-def balloons(room: dict, led: dict) -> list[dict]:
+def balloons(room: dict, led: dict, on_session=None) -> list[dict]:
     """Every balloon of the chat, oldest first: each session's in order, the
     sessions by their first balloon's time."""
     per = []
-    for sid in _sessions(room, led):
+    sids = _sessions(room, led)
+    for number, sid in enumerate(sids, 1):
         recs = _session_balloons(sid)
         if recs:
             first = next((r["ts"] for r in recs if r["ts"]), 0.0)
             per.append((first, sid, recs))
+        if on_session:
+            on_session(number, len(sids))
     per.sort(key=lambda x: (x[0], x[1]))
     return [r for _f, _s, recs in per for r in recs]
 
@@ -317,7 +321,7 @@ def _words(text: str, n: int = TITLE_WORDS) -> str:
     return out + ("…" if len(words) > n else "")
 
 
-def assign(recs: list[dict], led: dict, side: dict, task_title=None) -> dict:
+def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=None) -> dict:
     """The threads of a chat, from its balloons (oldest first), its points
     ledger and its record (:func:`load_side`). Pure: the same input gives the
     same threads. Returns ``{threads: {tid: thread}, of: {mid: [tid, …]},
@@ -407,7 +411,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None) -> dict:
                 threads[tid]["task"] = ref
 
     last: str | None = None         # the thread of the last input: what a PO message answers
-    for r in recs:
+    for number, r in enumerate(recs, 1):
+        if on_message and (number == 1 or number % 50 == 0 or number == len(recs)):
+            on_message(number, len(recs))
         mid = r["mid"]
         if mid in done:
             continue
@@ -613,9 +619,14 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
     t0 = time.time()
     led = points.load(room_id)
     side = load_side(room_id)
-    recs = balloons(room, led)
+    key = "thread:" + room_id
+    recs = balloons(room, led, lambda done, total:
+                    progress.set_progress(key, "Reading conversations", done, total))
     task_of = points.task_lookup(room_id, room)
-    out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "")
+    progress.set_progress(key, "Sorting messages into threads", 0, len(recs))
+    out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",
+                 lambda done, total: progress.set_progress(key, "Sorting messages into threads", done, total))
+    progress.set_progress(key, "Finishing threads", 0, 0)
     by_mid = {r["mid"]: r for r in recs}
     try:
         waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
@@ -645,6 +656,7 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
     idx["channel"] = _channel(idx)
     with _LOCK:
         _INDEX[room_id] = (sig, idx)
+    progress.clear(key)
     return idx
 
 
@@ -674,6 +686,7 @@ def ready(room_id: str, room: dict) -> dict | None:
         if room_id in _BUILDING:
             return hit[1] if hit is not None else None
         _BUILDING.add(room_id)
+        progress.set_progress("thread:" + room_id, "Reading conversations")
 
     def run():
         try:
@@ -681,6 +694,7 @@ def ready(room_id: str, room: dict) -> dict | None:
         except Exception as e:      # noqa: BLE001 — the next poll tries again
             _log(f"{room_id}: not threaded: {e!r}")
         finally:
+            progress.clear("thread:" + room_id)
             with _LOCK:
                 _BUILDING.discard(room_id)
     threading.Thread(target=run, name=f"threads-{room_id}", daemon=True).start()
@@ -717,13 +731,14 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
     ``{pending: true}`` while the chat is first read."""
     idx = ready(room_id, room)
     if idx is None:
-        return {"pending": True}
+        return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     n = max(1, min(int(n or CHANNEL_MAX), CHANNEL_LIMIT))
     ch = idx["channel"]
     shown = ch[-n:]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])
             + ((idx["of"].get(m) or []) if m in idx["also"] else [])}
-    return {"sig": _sig_text(idx), "items": [_turn(idx, m) for m in shown],
+    return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+            "items": [_turn(idx, m) for m in shown],
             "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
             "before": max(0, len(ch) - n), "balloons": len(idx["recs"]), "channel": len(ch)}
 
@@ -736,7 +751,7 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:
     ``{error}`` for a thread it does not have."""
     idx = ready(room_id, room)
     if idx is None:
-        return {"pending": True}
+        return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     if not tid and mid:
         tids = idx["of"].get(mid) or []
         tid = tids[-1] if tids else ("m:" + mid if mid in idx["by_mid"] else "")
@@ -747,10 +762,12 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:
         meta = {"id": tid, "root": r["mid"], "title": _words(r["turn"].get("text") or "") or "Thread",
                 "points": [], "task": "", "replies": 0, "who": [], "lastAt": r["ts"], "lastWho": "",
                 "unread": 0, "state": "", "new": True}
-        return {"sig": _sig_text(idx), "thread": meta, "items": [_turn(idx, r["mid"], tid)]}
+        return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+                "thread": meta, "items": [_turn(idx, r["mid"], tid)]}
     if th is None:
         return {"error": "no_such_thread"}
-    return {"sig": _sig_text(idx), "thread": _meta(th),
+    return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+            "thread": _meta(th),
             "items": [_turn(idx, m, tid) for m in th["members"] if m in idx["by_mid"]]}
 
 

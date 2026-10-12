@@ -3867,6 +3867,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
 <script src="/static/hl.js"></script>
+<link rel="stylesheet" href="/static/progress.css">
+<script src="/static/progress.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
@@ -7445,11 +7447,12 @@ function wireBackupPrefs() {
   if (be) be.onchange = () => setPref('backupEnabled', be.checked);
   if (bn) bn.onclick = async () => {
     bn.disabled = true; setBackupStatus('backing up…');
+    globalThis.EnsembleProgress?.set('backup', {phase: 'Backing up projects'});
     try {
       const r = await api('/api/backup/now', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       toast('backup: ' + r.msg, 3500, 'ok');
     } catch (e) { toast('backup failed: ' + e.message, 6000, 'err'); }
-    finally { bn.disabled = false; refreshBackupStatus(); }
+    finally { globalThis.EnsembleProgress?.clear('backup'); bn.disabled = false; refreshBackupStatus(); }
   };
 }
 function setBackupStatus(t) { const el = document.getElementById('backup-status'); if (el) el.textContent = t; }
@@ -9655,12 +9658,13 @@ function wsVisibleDirs(v) {
   return [...new Set([...roots.filter(r => v.open.has(r)), ...[...v.open].filter(visible)])];
 }
 async function wsFetchDir(v, dir) {
+  globalThis.EnsembleProgress?.set('workspace:' + dir, {phase: 'Reading workspace folder'});
   try {
     const d = await api('/api/dir?path=' + encodeURIComponent(dir));
     v.dirs.set(dir, { entries: d.entries || [], error: '', gen: ++WS_DIR_GEN });
   } catch (e) {
     v.dirs.set(dir, { entries: [], error: e.message || 'failed', gen: ++WS_DIR_GEN });
-  }
+  } finally { globalThis.EnsembleProgress?.clear('workspace:' + dir); }
 }
 // Re-read what is on screen and repaint if it changed. This is what picks up a
 // file an agent just wrote, without collapsing anything the person opened.
@@ -11328,12 +11332,16 @@ function chPickRepo(root) {
 }
 async function chLoadStatus() {
   const box = pdById('chp-files'); if (!box) return;
+  globalThis.EnsembleProgress?.set('changes-list', {phase: 'Reading changes'});
   const gen = ++CH_LOAD, stale = () => gen !== CH_LOAD || !box.isConnected;
   // A documents project has no repository: in its own folder, its changes
   // are those since the file history's last snapshot.
   const dpj = projectById(box.dataset.project);
   box.dataset.history = '';
-  if (dpj && dpj.kind === 'documents' && wsSame(box.dataset.scope, dpj.path)) return chLoadHistory(box, dpj, stale);
+  if (dpj && dpj.kind === 'documents' && wsSame(box.dataset.scope, dpj.path)) {
+    try { return await chLoadHistory(box, dpj, stale); }
+    finally { globalThis.EnsembleProgress?.clear('changes-list'); }
+  }
   try {
     // Find the repo(s) in scope first: the folder itself may be a repo, or a
     // task may hold clones a few levels down (e.g. <task>/claude/<name>/).
@@ -11367,6 +11375,7 @@ async function chLoadStatus() {
     CH_LIST = { pid, repoSel, files: st.files || [], log };
     chPaintList(box);
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
+  finally { globalThis.EnsembleProgress?.clear('changes-list'); }
 }
 // The list from what the hub last said: the uncommitted changes on top, only
 // when there are any, then what landed. Drawn again, without the hub, for a
@@ -11430,6 +11439,7 @@ async function chOpenDiff(file, cid, sha) {
   });
   rowExpandRefresh(files);
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
+  globalThis.EnsembleProgress?.set('changes-diff', {phase: 'Reading file changes'});
   try {
     const d = files.dataset.history
       ? await api('/api/history/diff?project=' + encodeURIComponent(files.dataset.project) + '&path=' + encodeURIComponent(file))
@@ -11438,6 +11448,7 @@ async function chOpenDiff(file, cid, sha) {
     const v = drShow(rv, box, root, file, d.diff || '');
     if (cid) { v.scrollTo = cid; drPaint(v); }
   } catch (e) { if (seq === CH_DIFF && box.isConnected) box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+  finally { if (seq === CH_DIFF) globalThis.EnsembleProgress?.clear('changes-diff'); }
 }
 // A file of the diff, in the project's Workspace tab at a line.
 function chOpenInWorkspace(pid, root, file, line) {
@@ -13729,12 +13740,13 @@ async function makePoSend(r, target) {
   const key = r.roomId || r.sessionId;
   if (MAKING_PO.has(key)) { toast('already making this one a PO…', 2000); return null; }
   MAKING_PO.add(key);
+  globalThis.EnsembleProgress?.set('make-po:' + key, {phase: target && target.bringFiles ? 'Copying files and making project PO' : 'Making project PO'});
   toast(target && target.bringFiles ? 'copying its files and making it the PO…' : 'making it the PO…', 0, 'busy');
   try {
     const resp = await api('/api/projects/po-from-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                                              body: JSON.stringify(makePoBody(r, target)) });
     return resp;
-  } finally { MAKING_PO.delete(key); }
+  } finally { globalThis.EnsembleProgress?.clear('make-po:' + key); MAKING_PO.delete(key); }
 }
 // The new PO's project, with its conversation: leading the Overview, or as the
 // drawer where the board has the page.
@@ -14531,6 +14543,7 @@ async function histRecentLoad(el, pid, force) {
   if (st.inFlight && force) st.again = true;
   if (st.inFlight || (!force && st.at && Date.now() - st.at < 15000)) { histPaintRecent(el, pid); return; }
   st.inFlight = true;
+  globalThis.EnsembleProgress?.set('history:' + pid, {phase: 'Reading file history'});
   try {
     const q = encodeURIComponent(pid), cursor = st.delCursor;
     // Once older deleted files are shown, every one down to the last shown is
@@ -14544,7 +14557,7 @@ async function histRecentLoad(el, pid, force) {
       if (!through) st.delCursor = histDelPlace(st.deleted);
     }
   } catch (e) { st.err = e.message || 'failed'; }
-  finally { st.inFlight = false; st.at = Date.now(); }
+  finally { globalThis.EnsembleProgress?.clear('history:' + pid); st.inFlight = false; st.at = Date.now(); }
   histPaintRecent(el, pid);
   if (st.again) { st.again = false; await histRecentLoad(el, pid, true); }
 }
@@ -14690,6 +14703,7 @@ async function histLoadFile(v, older) {
   if (!h || h.loading) return;
   const have = older ? (h.entries || []) : [];
   h.loading = true;
+  globalThis.EnsembleProgress?.set('file-history', {phase: 'Reading file versions'});
   if (older) histPaint(v);
   try {
     const d = await api(`/api/history/log?project=${encodeURIComponent(h.pid)}&path=${encodeURIComponent(h.rel)}&limit=100&skip=${have.length}`);
@@ -14700,7 +14714,7 @@ async function histLoadFile(v, older) {
     if (v.hist !== h) return;
     if (older) toast('older versions could not be read: ' + histErr(e), 5000, 'err');
     else h.err = e.message || 'failed';
-  } finally { h.loading = false; }
+  } finally { globalThis.EnsembleProgress?.clear('file-history'); h.loading = false; }
   histPaint(v);
   if (h.sel && !older) histShow(v);
 }
@@ -16233,6 +16247,7 @@ async function refresh({ now = false, until = 0 } = {}) {
   // in a background tab must not sit empty until someone looks at it.
   else if (selectInteracting() || _refreshInFlight || (document.hidden && ALL_ROWS.length)) return;
   _refreshInFlight = true;
+  globalThis.EnsembleProgress?.set('task-list', {phase: 'Loading task list'});
   try {
     const data = await api('/api/sessions?n=300',
       until ? { signal: AbortSignal.timeout(Math.max(1, until - Date.now())) } : undefined);
@@ -16284,6 +16299,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden) || document.body.classList.contains('po-dock')) toast('refresh failed: ' + e.message, 4000, 'err');
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
+    globalThis.EnsembleProgress?.clear('task-list');
     _refreshInFlight = false;
     FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
   }
@@ -16378,6 +16394,7 @@ async function findRun() {
     const quick = await findAsk(q, false, seq);
     if (stale()) return;
     FIND.res = quick; FIND.resQ = q; FIND.phase = 'deep';
+    globalThis.EnsembleProgress?.set('deep-search', {phase: 'Searching conversations'});
     if (findActive().i < 0) { const first = findItems(quick)[0]; FIND.key = first ? findKey(first) : ''; }
     findPaint();
     if (FIND.enter && findItems(quick).length) { findGoActive(); return; }
@@ -16390,6 +16407,7 @@ async function findRun() {
     if (e.name === 'AbortError' || stale()) return;
     FIND.phase = 'error';
   } finally {
+    globalThis.EnsembleProgress?.clear('deep-search');
     FIND.busy = false;
     FIND.ctl = null;
     if (stale() || FIND.again) { FIND.again = false; findRun(); }
@@ -17030,6 +17048,7 @@ async function updateRoomsBadge() {
   try {
     const snap = await api('/api/attention');
     ATTENTION = snap || { items: [], count: 0 };
+    globalThis.EnsembleProgress?.sync('hub:', ATTENTION.progress || {});
     ATTENTION_BY_ROOM = new Map((ATTENTION.items || []).map(i => [i.roomId, i]));
     renderAttention();
   } catch (e) {
