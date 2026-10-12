@@ -3561,6 +3561,21 @@ def _session_input_context(sid: str) -> tuple[str, str]:
     return "", ""
 
 
+def note_session_owners(room: dict) -> None:
+    """Remember the room and seat of each of a room's agent conversations, as
+    _session_input_context would find them: a pass over a chat's old
+    sessions (#206) then reads each transcript without listing every room."""
+    rid = str(room.get("id") or "")
+    with _SESSION_INPUT_CONTEXT_LOCK:
+        for part in chatroom.agent_participants(room):
+            for sid in chatroom.agent_conversations(part):
+                key = str(chatroom.ROOMS_DIR), sid
+                if key not in _SESSION_INPUT_CONTEXT_CACHE:
+                    _SESSION_INPUT_CONTEXT_CACHE[key] = rid, str(part.get("identity") or "")
+        while len(_SESSION_INPUT_CONTEXT_CACHE) > _SESSION_INPUT_CONTEXT_MAX:
+            _SESSION_INPUT_CONTEXT_CACHE.pop(next(iter(_SESSION_INPUT_CONTEXT_CACHE)))
+
+
 def _linked_input_context(pid: int) -> tuple[str, str, str]:
     """Room, seat and session for a visible terminal adopted by a room."""
     for room in chatroom.list_rooms():
@@ -6358,20 +6373,31 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
             continue
         matches = [p for p in points.load(rid)["points"] if p["id"] == point_id]
         for point in matches:
-            found.append((rid, point))
+            found.append((room, point))
         if len(found) > 1:
             return None
     if not found:
         return None
-    rid, point = found[0]
+    room, point = found[0]
+    rid = room["id"]
     # Read current replies only for the matching ledger, never all transcripts.
     point = next((p for p in points.sync(rid)["points"] if p["id"] == point_id), point)
     if not point.get("mid"):
         return None
-    return {"id": point_id, "roomId": rid, "mid": point["mid"],
-            "text": points.strip_point_lines(point.get("text") or "")[:400],
-            "stage": point["state"], "createdAt": point.get("createdAt"),
-            "projectId": project_id, "project": project.get("name") or ""}
+    out = {"id": point_id, "roomId": rid, "mid": point["mid"],
+           "text": points.strip_point_lines(point.get("text") or "")[:400],
+           "stage": point["state"], "createdAt": point.get("createdAt"),
+           "projectId": project_id, "project": project.get("name") or ""}
+    # The question card that follows it (#206): a chip lands there while it
+    # waits, and "the Pn card" always does.
+    try:
+        card = asks.point_card(room, point)
+    except Exception as e:      # noqa: BLE001 — the point is found without its card
+        print(f"[points] {rid}: card of {point_id} not read: {e!r}", flush=True)
+        card = None
+    if card:
+        out["card"] = {k: card[k] for k in ("mid", "n", "question", "open")}
+    return out
 
 
 def room_project(room_id: str) -> str:
