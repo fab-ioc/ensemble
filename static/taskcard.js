@@ -605,6 +605,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
       // does not keep it: the card would be left open with the pointer gone.)
       if ((a && S.chip === a) || inCard(ev)) { clearTimeout(S.leave); S.leave = 0; }
       if (a && !(S.el && S.chip === a) && !S.timer) {
+        S.timerFor = a;
         S.timer = setTimeout(() => {
           S.timer = 0;
           // An anchor the page drew again meanwhile: the one in its place, if the pointer is on it.
@@ -618,7 +619,9 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
       if (ev.pointerType === 'touch') return;
       const an = chipOf(ev) ? [chipOf(ev)] : anchorOf(ev);
       const a = an && an[0], to = ev.relatedTarget;
-      if (a && S.timer && !(to && a.contains(to))) { clearTimeout(S.timer); S.timer = 0; }
+      // Only leaving the anchor that is waiting cancels it: Chrome's boundary
+      // events after a redraw can report leaving another one (the last clicked).
+      if (a && S.timer && a === S.timerFor && !(to && a.contains(to))) { clearTimeout(S.timer); S.timer = 0; }
       if (S.el && S.hover && (a === S.chip || inCard(ev))) {
         if (to && (S.el.contains(to) || (S.chip && S.chip.contains(to)))) return;
         clearTimeout(S.leave);

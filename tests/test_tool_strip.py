@@ -102,6 +102,9 @@ async function main() {
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
     await c.send('Runtime.enable', {}, sessionId);
+    // P1's answer is the row these checks follow: the chat seeing it (#209) would take it out of Needs you.
+    await c.send('Network.enable', {}, sessionId);
+    await c.send('Network.setBlockedURLs', { urls: ['*/api/room/points/seen*'] }, sessionId);
     await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 3 : 1, mobile: !!mobile }, sessionId);
     if (mobile) await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sessionId);
     const evalIn = async (expr, userGesture = false) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
@@ -502,8 +505,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_22_0(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.22\.0 9ab6f0c")
+    def test_the_vendored_library_is_v0_22_1(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.22\.1 af54264")
         self.assertNotIn("stripKeepsButton", INDEX, "keep v0.14.0's retained strip-button default")
 
     def test_the_title_bar_is_dock_s_default(self):
@@ -612,7 +615,7 @@ class TheStrip(unittest.TestCase):
             g = self.got[f"po{w}"]
             with self.subTest(w=w):
                 self.assertEqual([b["id"] for b in g["btns"]], TOOLS)
-                self.assertEqual([b["label"] for b in g["btns"]], ["Your asks", "Changes", "Files", "Board", "Spec"])
+                self.assertEqual([b["label"] for b in g["btns"]], ["Needs you", "Changes", "Files", "Board", "Spec"])
                 self.assertEqual([b["title"] for b in g["btns"]], [b["label"] for b in g["btns"]], "the name is the tooltip")
                 self.assertTrue(all(b["svg"] for b in g["btns"]), "every button is an icon")
                 self.assertEqual((g["strip"]["w"], g["strip"]["r"]), (44, g["vw"]), "44px at the right edge")

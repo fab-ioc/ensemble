@@ -1,0 +1,40 @@
+9toowith the new default `safe` →it wrote a real `~/.enembe/restart-drain.json` (dleted 15:45) whi
+ch then ld
+10sends n test_snd_* tess; fixed thetes (`whn:now` + a mocked `safe` test) adtest_page_update's
+ount (5).
+1Full suite 3 runing→ `..\sut3.log`; check the real drain fil does not reappear. Then commit → revi
+ew 1 → wait.
+12
+13  ## Status (2026-10-12 15:04)
+4Everything is built and committed as WIP **`e3ace0a`** on branch
+●The full suite is running again (~30 min); I'll commit and request reviewwhenitreports.
+Cultivating…running Stop hook · 5m 35s · ↓6.8k tokens)
+✻Cultivating… 221
+222
+Ran 5 shell commands
+●Al pass now (oneChrometimingtestfailedonceunderloadandpassedonrerun).Runningthefullsuiteagainfora
+cleanresult.
+Ran 1 shell command
+● Update(~\EnsemblePojects\EnsembleDashboard\a_hub_restart_or_update_waits_for_a_safe_point_agents_…\TASK-HANDOVER.md)
+⎿  Added 4 lines, removed 1 line
+5Documents/#211 Coordinated hub restart.md`; raw log `..\acceptance-restart.log`. Scratch hub stopped,
+`%TEMP%\e211`
+6deleted. Fixed (uncommitted until the suite is green): `restart_drain.not_restarted` (hub not stopped →
+drain failed,
+7held let go), cut-off note reads whole buffer + ⎿ line, banner agent list wraps at 390 px. 22 drain tes
+ts OK.
+8 -Full suite: `..\suite2.log`. Next: suite green → commit → review 1 request to codex → wait.
+8Ful suit2(`..\suite2.log`):46failures,allfrom`test_plain_restart.Lock.test_the_po_starts_it`c
+alling e
+9tool wit thenewdefault`safe`→itwroteareal`~/.ensemble/restart-drain.json`(deleted15:45)whi
+ch then held
+10sendsin test_send_*tests;fixedthetest(`when:now`+amocked`safe`test)andtest_page_update's
+count (5).
+11Fullsuite 3running→`..\suite3.log`;checktherealdrainfiledoesnotreappear.Thencommit→revi
++ew 1 → wait.
+2
+3## Status (2026-10-12 15:04)
+14  Everything is built and committed as WIP **`e3ace0a`** on branch
+●Thefullsuiteisrunningagain(~30min);I'llcommitandrequestreviewwhenitreports.
+✻ Crunched for 5m 35s ·done 3:45 PM · 1 shell still running
+>

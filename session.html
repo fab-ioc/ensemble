@@ -733,6 +733,40 @@
   .msg .from .copy-link:hover { background:var(--hover); color:var(--fg); }
   .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path:inset(50%); }
   .copy-link:focus-visible, .ref-chip:focus-visible, .goto-x:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* Threads in a PO chat (#210). Reply in thread sits beside Copy link, in its look. */
+  .msg .from .thr-reply { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
+    color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
+  .msg .from .thr-reply:hover { background:var(--hover); color:var(--fg); }
+  .msg:not(:hover) .from .thr-reply:not(:focus-visible) { clip-path:inset(50%); }
+  /* The line under a thread's first message: its replies (the way in), who
+     wrote, when, and where it stands. Unread: the "new" dot, the count at 600. */
+  .thr-line, .thr-in { display:flex; align-items:center; flex-wrap:wrap; gap:var(--s-100) var(--s-200);
+    margin:calc(-1 * var(--s-200)) 0 var(--s-300); padding:0 var(--s-200); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  .thr-line.mine, .thr-in.mine { align-self:flex-end; }
+  .thr-open { padding:0; background:transparent; border:none; border-radius:var(--r-100); color:var(--link); font:inherit; font-weight:500; cursor:pointer; }
+  .thr-open:hover { text-decoration:underline; }
+  .thr-open:focus-visible, .thr-reply:focus-visible, .thr-more-btn:focus-visible, #whole-chat:focus-visible, #thr-back:focus-visible {
+    outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .thr-line.unread .thr-open { font-weight:600; }
+  .thr-dot { flex:0 0 auto; width:8px; height:8px; border-radius:var(--r-full); background:var(--c-discovery-bold); }
+  .thr-state { display:inline-block; height:16px; padding:0 6px; border-radius:var(--r-100); font-size:var(--fs-100); font-weight:600;
+    line-height:16px; text-transform:uppercase; letter-spacing:.05em; background:var(--c-neutral-bg); color:var(--c-neutral-fg); }
+  .thr-state.st-needs { background:var(--c-warning-bg); color:var(--c-warning-fg); }
+  .thr-state.st-task { background:var(--c-progress-bg); color:var(--c-progress-fg); }
+  .thr-more-btn { height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }
+  #whole-chat { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); line-height:16px; }
+  #whole-chat[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
+  #whole-chat[hidden], #thr-also-l[hidden], #thr-back[hidden] { display:none; }
+  /* A thread: its own messages, all of them; the chat's own bars are not its. */
+  body.thread #chatbar, body.thread #points-line, body.thread #ask-line { display:none; }
+  #thr-also-l { display:inline-flex; align-items:center; gap:var(--s-100); color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; white-space:nowrap; }
+  #thr-back { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }
+  @media (pointer:coarse) {
+    .thr-open, .thr-more-btn, #whole-chat, #thr-back, #thr-also-l { min-height:var(--touch-min); }
+    #thr-also-l input { width:20px; height:20px; }
+    .msg .from .thr-reply { clip-path:none; min-height:var(--touch-min); }
+  }
+  @media (pointer: fine) { #thr-back { display:none; } }
   /* No clipboard here (plain http, or the browser refused): the link, selected, to copy by hand. */
   .msg .copy-field { display:flex; align-items:center; gap:var(--s-200); margin:var(--s-100) 0; color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
   .msg .copy-field input { flex:1 1 auto; min-width:0; height:24px; padding:0 var(--s-100); background:var(--surface); color:var(--fg);
@@ -838,6 +872,16 @@
   .pt-state.delivered, .pt-chip.delivered { color:var(--fg); font-weight:600; }
   #points-list .pt-group { padding:var(--s-200) 0 var(--s-050); color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
   .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
+  /* Needs you (ED-209): a question card's row is its first line as the link; a
+     fold's head (Older questions, With the PO, Closed) is a disclosure button
+     in the group head's look; "Nothing waits on you" in --fg-muted. */
+  .pt-ask .pt-words a.pt-link { white-space:nowrap; }
+  #points-list .pt-fold { padding:var(--s-100) 0 0; }
+  #points-list .pt-fold-sum { display:flex; align-items:center; gap:var(--s-200); width:100%; min-height:24px; padding:0;
+    background:transparent; border:none; border-radius:var(--r-100); color:var(--fg-subtle); font:inherit; font-weight:600; text-align:left; cursor:pointer; }
+  #points-list .pt-fold-sum:hover { color:var(--fg); }
+  #points-list .pt-fold-sum:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #points-list .pt-note { color:var(--fg-muted); }
   a.pt-link { color:var(--link); white-space:nowrap; }
   /* A PO message's id written in a balloon, as its name (pmLinkHtml). */
   .msg .text.md a.pm-link { color:var(--link); }
@@ -1164,8 +1208,9 @@
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
-    /* Your asks: every link in the list and under a balloon is a tap target. */
+    /* Needs you: every link in the list and under a balloon is a tap target, and each fold's head. */
     #points-list a.pt-link, .pt-bar a.pt-link, .pt-bar .pt-chip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
+    #points-list .pt-fold-sum { min-height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     .cp-line .cp-btn, #cp-dlg .cp-acts button { min-height: var(--touch-min); }   /* a checkpoint's buttons (#197) */
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
@@ -1349,6 +1394,7 @@
 </head>
 <body>
 <header>
+  <button type="button" id="thr-back" hidden title="Back to the chat">‹ Chat</button>
   <h1><span id="tno" class="tno" hidden></span><span id="title">session</span></h1>
   <span id="status" class="status"></span>
   <span id="hop" class="dim"></span>
@@ -1365,7 +1411,7 @@
       <div id="ask-line" role="status" hidden></div>
       <div id="chat-controls">
         <div id="points-line" hidden></div>
-        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button></div>
+        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="whole-chat" aria-pressed="false" hidden title="Show the whole chat in order, every reply in place. Off, each thread shows once, with its replies one click away">Whole chat</button></div>
       </div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
@@ -1388,12 +1434,14 @@
           <button type="button" data-phone-action="attach">Attach image</button>
           <button type="button" data-phone-action="add-point">Add an ask</button>
           <button type="button" data-phone-action="team-all">Team activity</button>
+          <button type="button" data-phone-action="whole-chat" hidden>Whole chat</button>
         </div></details>
         <button type="button" id="add-point" title="Add a numbered ask (Ctrl+Shift+Enter)">+ Add an ask</button>
         <!-- Pasting or dropping a screenshot still works; this is the way you can see. -->
         <button type="button" id="attach" title="Attach screenshots or images (you can also paste or drop them)">Attach</button>
         <input type="file" id="attach-input" accept="image/*" multiple hidden>
         <span class="grow"></span>
+        <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
         <button id="send" disabled>Send</button>
       </div>
     </div>
@@ -1405,6 +1453,12 @@
 const qs = new URLSearchParams(location.search);
 // ?id= from the dashboard; ?room= (with &msg=) from a link to one of its balloons.
 const ROOM = qs.get('id') || qs.get('room');
+// One thread of a PO chat (#210): ?thread=<id>, or ?thread=&tmid=<balloon> for
+// a thread started on that balloon. Its own messages and its own reply box.
+const THREAD_MODE = qs.has('thread');
+let THREAD = (qs.get('thread') || '').trim();
+const THREAD_MID = (qs.get('tmid') || '').trim();
+if (THREAD_MODE) document.body.classList.add('thread');
 let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git name
 fetch('/api/settings').then(r => r.json()).then(s => {
   OPERATOR = s.operatorName || s.operatorNickname || 'you';
@@ -3586,7 +3640,7 @@ function digestWords(m) {
 // count with the others, as hidden.
 // unacked: the balloons answering the person's points that they have not
 // acknowledged (pointMaps). They come first, and are counted once.
-function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null) {
+function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null, askMids = null) {
   if (!point) return null;
   const after = [];
   let lastPersons = -1;
@@ -3603,14 +3657,14 @@ function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null) {
     if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
     digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
     if (unacked && m.id && unacked.has(m.id)) acks.push(i);
-    else if (f === 'decision' && i > lastPersons) decisions.push(i);
+    else if (f === 'decision' && (askMids ? askMids.has(m.id) : i > lastPersons)) decisions.push(i);
     else if (f) answers.push(i);
   }
   if (after.length < 3 && acks.length + decisions.length + answers.length === after.length) return null;
   const named = [...words].filter(([, w]) => w.word && !acks.includes(w.i)).sort((a, b) => a[1].i - b[1].i);
   const s = n => n === 1 ? '' : 's';
   const parts = [];
-  if (acks.length) parts.push({ text: `${acks.length} answer${s(acks.length)} to your asks to acknowledge`, mid: items[acks[0]].id || '' });
+  if (acks.length) parts.push({ text: `${acks.length} new answer${s(acks.length)} to your asks`, mid: items[acks[0]].id || '' });
   if (decisions.length) parts.push({ text: `${decisions.length} decision${s(decisions.length)} waiting`, mid: items[decisions[0]].id || '' });
   if (!justUs) named.forEach(([name, w]) => parts.push({ text: name + ' ' + w.word, mid: items[w.i].id || '' }));
   if (answers.length) parts.push({ text: `${answers.length} answer${s(answers.length)} to you`, mid: items[answers[0]].id || '' });
@@ -3711,7 +3765,7 @@ const stripImagePlaceholders = t => {
 // acknowledged by the person. Only a delivered one takes the thumbs up.
 // A point followed up (a comment on its answer, a message linking or quoting
 // it: points.py) is handled: "followed up by P105", no thumbs up owed.
-const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts', followed: 'followed up' };
+const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts', followed: 'followed up' };
 // A hub from before the stages says "answered" for delivered.
 const ptItem = p => p && p.state === 'answered' ? Object.assign({}, p, { state: 'delivered' }) : p;
 const isPlan = a => !!a && a.kind === 'plan';
@@ -3723,6 +3777,9 @@ function ptLatest(p, plan) {
 }
 // The answer a link goes to is the delivery; the plan is a link of its own.
 const lastAnswer = p => ptLatest(p, false);
+// The answer that counts (seen, its words, the thumbs up): the newest, with a
+// balloon or not; an answer by doing after a balloon is new again (points.last_answer).
+const curAnswer = p => { const a = ((p && p.answers) || []).filter(x => !isPlan(x)); return a.length ? a[a.length - 1] : null; };
 const lastPlan = p => ptLatest(p, true);
 // Where a planned point's work is: "#104 · in progress", "#104 merged, awaiting go-live".
 function ptTaskWords(p) {
@@ -3738,7 +3795,9 @@ function ptTaskWords(p) {
 function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
     unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
-    planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0 };
+    planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0,
+    needs: (pv && pv.needs) || null, threads: (pv && pv.threads) || [] };
+  P.askMids = P.needs ? new Set((P.needs.decisions || []).map(c => c.mid)) : null;
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
     P.byId.set(p.id, p);
@@ -3747,7 +3806,11 @@ function pointMaps(pv) {
     (p.answers || []).forEach(a => add(P.byAnswer, a.mid, p));
     if (p.state === 'open' || p.state === 'planned') own.forEach(k => P.keep.add(k));
     if (p.state === 'planned') { const a = lastPlan(p); if (a && a.mid) P.keep.add(a.mid); }
-    if (p.state === 'delivered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); P.unacked.add(a.mid); } }
+    if (p.state === 'delivered') {
+      const a = lastAnswer(p), c = curAnswer(p);
+      if (a && a.mid) P.keep.add(a.mid);
+      if (c && c.mid && ptNeeds(p)) P.unacked.add(c.mid);
+    }
   }
   return P;
 }
@@ -3764,13 +3827,36 @@ function ptAge(ts, now) {
   if (s < 48 * 3600) return Math.round(s / 3600) + 'h';
   return Math.round(s / 86400) + 'd';
 }
-// "Your asks: 2 waiting for an answer · 1 in progress · 3 ready for your check".
+// Needs you (#209): only what waits on the person. Decisions: the question
+// cards still open (the hub's needs.decisions); To try: answers that ask them
+// to try or check something; New answers: answers they have not seen. An
+// answer they saw closes by itself when they write again (points.py), so
+// nothing waits for a tick. Each delivered item says which (needs: "try",
+// "new", "": seen); a hub from before Needs you sends none: every answer is new.
+const ptNeeds = p => p.state !== 'delivered' ? '' : (p.needs != null ? p.needs : 'new');
+function needsCounts(P) {
+  const n = P.needs || {};
+  const count = k => P.items.filter(p => ptNeeds(p) === k).length;
+  // A hub from before Needs you sends only counts (and at most 200 points): its delivered ones are new.
+  return { decisions: (n.decisions || []).length, totry: n.totry != null ? n.totry : count('try'),
+    news: n.news != null ? n.news : P.needs ? count('new') : Math.max(P.delivered, count('new')),
+    threads: (P.threads || []).length };
+}
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// "Needs you: 2 decisions · 1 to try · 3 new answers"; "Nothing waits on you"
+// with only folds under it; '' with nothing at all.
 function pointsSummary(P) {
+  const c = needsCounts(P), n = P.needs || {};
   const bits = [];
-  if (P.open) bits.push(`${P.open} waiting for an answer`);
-  if (P.planned) bits.push(`${P.planned} in progress`);
-  if (P.delivered) bits.push(`${P.delivered} ready for your check`);
-  return bits.length ? 'Your asks: ' + bits.join(' · ') : '';
+  if (c.decisions) bits.push(plural(c.decisions, 'decision', 'decisions'));
+  if (c.totry) bits.push(`${c.totry} to try`);
+  if (c.news) bits.push(plural(c.news, 'new answer', 'new answers'));
+  if (c.threads) bits.push(plural(c.threads, 'thread with new replies', 'threads with new replies'));
+  if (bits.length) return 'Needs you: ' + bits.join(' · ');
+  const folds = (n.olderCount || 0) + (n.closedCount || 0) + P.open + P.planned + P.items.filter(p => p.state === 'delivered').length;
+  // Still reading the question cards with nothing else to fold: no line yet
+  // (it would show "Nothing waits on you" and then go, the chat jumping).
+  return folds ? 'Nothing waits on you' : '';
 }
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 // part: the passage to land on ("re:P12" the answer's paragraph, "pt:P12"
@@ -3800,35 +3886,93 @@ function ptThreadHtml(p, P, href) {
   if (down) bits.push(`<span class="pt-chip pt-thread">followed up by ${down.mid ? ptLink(down.mid, down.id + ' ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
   return bits.join('');
 }
-// The list's groups, in this order, each oldest first.
-const PT_GROUPS = [['open', () => CHAT_NAMES.po ? 'Waiting for the PO' : 'Waiting for an answer'],
-  ['planned', () => 'In progress'], ['delivered', () => 'Ready for your check']];
-// The compact list under the line, by stage: what waits for an answer, what
-// is in progress (with its task and where it is), what is ready for their
-// check; both ends linked (and the plan), and the one click that closes it.
+// The list's groups, in this order, newest first: Decisions, To try, New
+// answers; then folds, closed until opened (PT_FOLDS): the older questions
+// (asked again since, or old and written past), what waits on the PO (open,
+// in progress), what closed by itself (reopenable). A later group (Threads)
+// is one more entry.
+const PT_GROUPS = [['decisions', () => 'Decisions'], ['try', () => 'To try'], ['new', () => 'New answers'], ['threads', () => 'Threads']];
+const PT_FOLDS = new Set();
+const PT_REASON = { seen: 'seen', superseded: 'superseded', migrated: 'closed as old' };
+// A question card's row: its first line, linked to the card (landing on the ask), its task, since when.
+function ptAskRow(c, href, now) {
+  const q = foldLine(String(c.question || '')).replace(/\*\*|__/g, '');
+  const words = q.length > 120 ? q.slice(0, 119) + '…' : q;
+  return `<li class="pt-row pt-ask" data-mid="${esc(c.mid)}" data-n="${esc(String(c.n || 0))}">`
+    + `<span class="pt-words" title="${esc(q)}">${ptLink(c.mid, words || 'the question', href, 'Go to the question card', 'ask:' + (c.n || 0))}</span>`
+    + (c.task ? `<span class="pt-chip">${esc(c.task)}</span>` : '')
+    + `<span class="pt-age" data-at="${esc(String(c.ts || 0))}">${esc(ptAge(c.ts, now))}</span></li>`;
+}
+// An answered point's row: its words, the answer's, both ends linked, the
+// thumbs up (it still closes one at once) and Comment.
+function ptAnswerRow(p, P, href, now, word) {
+  const a = lastAnswer(p), plan = lastPlan(p), said = ptSaid(curAnswer(p));
+  return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
+    + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
+    + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
+    + `<span class="pt-state delivered">${esc(word)}</span>`
+    + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
+    + ptThreadHtml(p, P, href)
+    + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
+    + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
+    + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
+    + ackBtn(p.id) + commentBtn(p.id) + '</li>';
+}
+// What waits on the PO: an open point, or one in progress with its task.
+function ptWaitRow(p, P, href, now) {
+  const plan = p.state === 'planned' ? lastPlan(p) : null, said = plan ? ptSaid(plan) : '', task = p.state === 'planned' ? ptTaskWords(p) : '';
+  return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
+    + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
+    + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
+    + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
+    + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
+    + ptThreadHtml(p, P, href)
+    + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
+    + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
+    + ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`) + '</li>';
+}
+// A point that closed by itself: why, linked to its answer, Reopen.
+function ptClosedRow(c, href, now) {
+  const why = PT_REASON[c.reason] || c.reason || 'closed';
+  return `<li class="pt-row" data-pt="${esc(c.id)}"><span class="pt-id">${esc(c.id)}</span>`
+    + `<span class="pt-words" title="${esc(c.text || '')}">${esc(ptWords(c.text))}</span>`
+    + `<span class="pt-age" data-at="${esc(String(c.at || 0))}">${esc(ptAge(c.at, now))}</span>`
+    + `<span class="pt-state acked">${esc(why + (c.supersededBy ? ' by ' + c.supersededBy : ''))}</span>`
+    + (c.answer ? ptLink(c.answer, 'answer ↓', href, 'Go to the answer', 're:' + c.id) : '')
+    + ptBtn(c.id, 'reopen', 'Reopen', `Reopen ${c.id}: it is back under New answers`) + '</li>';
+}
+// A PO chat's thread with replies not seen yet (#210): its title opens it.
+function ptThreadRow(t, now) {
+  const n = +t.unread || 0;
+  return `<li class="pt-row pt-thr" data-thr="${esc(t.id)}">`
+    + `<span class="pt-words" title="${esc(t.title || '')}"><button type="button" class="thr-open pt-link" data-thr="${esc(t.id)}" title="Open the thread">${esc(t.title || 'Thread')}</button></span>`
+    + `<span class="pt-age" data-at="${esc(String(t.lastAt || 0))}">${esc(ptAge(t.lastAt, now))}</span>`
+    + `<span class="pt-state delivered">${esc(plural(n, 'new reply', 'new replies'))}</span></li>`;
+}
+// A fold: its head a button (open or closed per page, like the line itself).
+function ptFoldHtml(key, title, rows) {
+  if (!rows.length) return '';
+  const open = PT_FOLDS.has(key);
+  return `<li class="pt-group pt-fold"><button type="button" class="pt-fold-sum" data-fold="${esc(key)}" aria-expanded="${open}">`
+    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(title)}</button></li>` + (open ? rows.join('') : '');
+}
 function pointsListHtml(P, href, now) {
-  return PT_GROUPS.map(([st, head]) => {
-    const rows = P.items.filter(p => p.state === st).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    if (!rows.length) return '';
-    return `<li class="pt-group">${esc(head())}</li>` + rows.map(p => {
-      const a = st === 'delivered' ? lastAnswer(p) : null;
-      const plan = st !== 'open' ? lastPlan(p) : null;
-      // The answer's own words under the ask (the hub's `said`), a plan's summary for one in progress.
-      const said = ptSaid(a) || (st === 'planned' ? ptSaid(plan) : '');
-      const task = st === 'planned' ? ptTaskWords(p) : '';
-      return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
-        + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
-        + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
-        + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
-        + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
-        + ptThreadHtml(p, P, href)
-        + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
-        + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
-        + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
-        + (st === 'delivered' ? ackBtn(p.id) + commentBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
-        + '</li>';
-    }).join('');
-  }).join('');
+  const n = P.needs || {}, newest = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
+  const by = k => P.items.filter(p => ptNeeds(p) === k).sort(newest);
+  const groups = {
+    decisions: (n.decisions || []).map(c => ptAskRow(c, href, now)),
+    try: by('try').map(p => ptAnswerRow(p, P, href, now, 'to try')),
+    new: by('new').map(p => ptAnswerRow(p, P, href, now, 'new answer')),
+    threads: (P.threads || []).map(t => ptThreadRow(t, now)),
+  };
+  if (n.pending && !groups.decisions.length) groups.decisions.push('<li class="pt-row pt-note">Reading the question cards…</li>');
+  let html = PT_GROUPS.map(([k, head]) => groups[k].length ? `<li class="pt-group">${esc(head())}</li>` + groups[k].join('') : '').join('');
+  if (!html) html = '<li class="pt-row pt-note">Nothing waits on you</li>';
+  const waits = P.items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
+  html += ptFoldHtml('older', `Older questions (${n.olderCount || (n.older || []).length})`, (n.older || []).map(c => ptAskRow(c, href, now)));
+  html += ptFoldHtml('po', `${CHAT_NAMES.po ? 'With the PO' : 'Waiting for an answer'} (${waits.length})`, waits.map(p => ptWaitRow(p, P, href, now)));
+  html += ptFoldHtml('closed', `Closed (${n.closedCount || (n.closed || []).length})`, (n.closed || []).map(c => ptClosedRow(c, href, now)));
+  return html;
 }
 function pointsLineHtml(P, open, href, now) {
   const sum = pointsSummary(P);
@@ -3875,7 +4019,7 @@ function pointBarHtml(m, P, href, pick) {
     const plans = here.length && here.every(isPlan);
     const verb = plans ? 'plans ' : 'answers ';
     bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
-    const a = lastAnswer(p);
+    const a = curAnswer(p);
     if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
     else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id) + commentBtn(p.id));
     else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
@@ -3974,6 +4118,8 @@ let SOLO_IDLE = false;     // the solo agent is not working: its silence is an a
 // its own: ~600 rows between ~105 balloons over three days.)
 let TEAM_ALL = false;
 try { TEAM_ALL = localStorage.getItem('cd-chat-team') === '1'; } catch (e) {}
+// A thread (#210) shows all its messages: it is one topic, nothing to fold away.
+if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE) TEAM_ALL = true;
 let GAP_OF_MID = new Map();     // a message in a closed gap → the gap's key, to land on it
 let GAP_N = 0, GAP_MSGS = 0;    // the gaps drawn, and the messages in them
 let MD_CACHE = new Map(), MD_CTX = '';
@@ -4024,11 +4170,16 @@ function renderBubbles(items, opt = {}) {
   const heldKeys = foldHeld(items, COMMENTS);
   // A balloon with an ask still to answer never folds either (#163).
   const heldPts = heldBy(heldKeys, POINTS.keep);
-  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0;
+  // A thread's first message, and a reply also sent to the chat, stand for
+  // their thread in a PO chat's channel (#210): never folded away.
+  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0 || !!(m.thr || m.inThr);
   const quiet = (m, i) => quietItem(m, false);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
-  const unanswered = foldUnanswered(items);
+  // A PO chat's channel (#210) shows a thread's first message without its
+  // replies: whether it was answered is its thread line's to say.
+  const channel = typeof threadedView === 'function' && threadedView() && !THREAD_MODE;
+  const unanswered = channel ? new Map() : foldUnanswered(items);
   // The person's view (#146): over a transcript the hub types into, and
   // unless Team activity is on, each run of what is not theirs is one gap
   // row; opened, its messages draw as the full view draws them.
@@ -4091,18 +4242,21 @@ function renderBubbles(items, opt = {}) {
     TASK_REF_PID = taskRefProject(m);
     try {
       return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-        act: copyLinkHtml, plain: t => pmPlain(refPlain(t)), lineHtml: foldedPointHtml, superseded: sup.has(i), pts: ptBar, body });
+        act: actHtml, plain: t => pmPlain(refPlain(t)), lineHtml: foldedPointHtml, superseded: sup.has(i), pts: ptBar, body });
     } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
   const ptBar = m => pointBarHtml(m, POINTS, href);
+  // A balloon's own controls: Copy link, and in a PO chat's channel Reply in thread.
+  const thr = typeof threadedView === 'function' && threadedView();
+  const actHtml = m => copyLinkHtml(m) + (thr ? replyInThreadHtml(m) : '');
   // The person's numbered points: a chip per item (pointItemsHtml).
   // An agent's asks: a card of quick answers in each one's place (askBodyHtml).
   const body = m => { if (m.from !== 'user') return askBodyHtml(m, POINTS, md, ptBar); const it = m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
   // The catch-up line goes above what is drawn first for the first message after the read point.
-  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked) : null;
-  const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',');
+  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked, POINTS.askMids) : null;
+  const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',') + '|' + [...(POINTS.askMids || [])].join(',');
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
   CU_SHOWN = !!cu;
@@ -4147,7 +4301,14 @@ function renderBubbles(items, opt = {}) {
       else if (firstFull < 0 || i < firstFull) folded++;
     }
     rows.push(balloon(m, i));
+    if (thr) {
+      const mark = threadMarkHtml(m);
+      if (mark) rows.push(mark);
+      if (!THREAD_MODE) (m.thr || []).forEach(t => { const l = threadLineHtml(t, m.from === 'user'); if (l) rows.push(l); });
+    }
   });
+  // A channel shows its latest entries: the way to those before.
+  if (thr && !THREAD_MODE && THR_BEFORE) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
@@ -4243,7 +4404,7 @@ function showPointsLine() {
   if (sig === POINTS_LINE_SIG) { if (el.hidden !== (!html || away)) el.hidden = !html || away; pointsAges(); return; }
   POINTS_LINE_SIG = sig;
   const hadFocus = el.contains(document.activeElement) ? document.activeElement : null;
-  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
+  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.fold ? `.pt-fold-sum[data-fold="${hadFocus.dataset.fold}"]` : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
   el.hidden = !html || away;
   el.innerHTML = html;
   if (focusKey) { const f = el.querySelector(focusKey) || el.querySelector('.pt-sum'); if (f) f.focus(); }
@@ -4257,6 +4418,75 @@ function pointsAges() {
   });
 }
 function pointsNote(text) { setText($('#hint'), text); }
+// ---- Seen answers (#209): the hub keeps which answers the person has seen
+// (points.mark_seen), and closes those once they write again. Seen = the
+// answer balloon on screen (at least 120 px of it, or half of a short one)
+// for a second with the page in front, or opened from a link or a chip
+// (landPending), or a row of an answer given by doing (no balloon) opened in
+// the list. Told once per answer and page; the hub keeps it across devices.
+const SEEN_SENT = new Set(), SEEN_SINCE = new Map();
+const SEEN_MS = 1000;
+function seenWanted() {
+  const w = new Map();
+  for (const p of POINTS.items) {
+    if (p.state !== 'delivered' || p.seen) continue;
+    const a = curAnswer(p);
+    if (a && a.mid && !SEEN_SENT.has(a.mid)) w.set(a.mid, p.id);
+  }
+  return w;
+}
+function pageInFront() {
+  if (document.visibilityState !== 'visible') return false;
+  // Framed: a panel parked or behind another tab (the host's classes), or a
+  // frame hidden some other way, keeps its layout but is not on screen.
+  if (chatOffScreen() || frameHidden()) return false;
+  try { if (document.hasFocus()) return true; } catch (e) {}
+  // Framed (a PO screen): the screen around it is in front.
+  try { return window.top !== window && window.top.document.visibilityState === 'visible' && window.top.document.hasFocus(); } catch (e) { return false; }
+}
+function frameHidden() {
+  try {
+    const f = window.frameElement;
+    if (!f) return false;
+    if (!f.getClientRects().length || f.closest('[hidden]')) return true;
+    const s = f.ownerDocument.defaultView.getComputedStyle(f);
+    return s.visibility !== 'visible' || +s.opacity === 0;
+  } catch (e) { return false; }
+}
+function seenSend(mids, ids, how) {
+  mids = mids.filter(m => m && !SEEN_SENT.has(m));
+  ids = ids.filter(i => i && !SEEN_SENT.has('id:' + i));
+  if (!ROOM || (!mids.length && !ids.length)) return null;
+  mids.forEach(m => SEEN_SENT.add(m));
+  ids.forEach(i => SEEN_SENT.add('id:' + i));
+  return postOk('/api/room/points/seen', { roomId: ROOM, mids, ids, how })
+    .then(r => { if (r && r.points) pointsChanged(r.points, ptTicket()); return r; })
+    .catch(() => { mids.forEach(m => SEEN_SENT.delete(m)); ids.forEach(i => SEEN_SENT.delete('id:' + i)); return null; });
+}
+function seenTick(now = Date.now()) {
+  const box = $('#msgs');
+  const want = seenWanted();
+  if (!want.size || !box || !box.clientHeight || !pageInFront()) { SEEN_SINCE.clear(); return; }
+  const r = box.getBoundingClientRect(), done = [];
+  for (const el of box.querySelectorAll('.msg[data-mid]')) {
+    const mid = el.dataset.mid;
+    if (!want.has(mid)) continue;
+    const e = el.getBoundingClientRect();
+    const shown = Math.min(e.bottom, r.bottom) - Math.max(e.top, r.top);
+    if (e.height > 0 && shown >= Math.min(120, e.height / 2)) {
+      if (!SEEN_SINCE.has(mid)) SEEN_SINCE.set(mid, now);
+      else if (now - SEEN_SINCE.get(mid) >= SEEN_MS) done.push(mid);
+    } else SEEN_SINCE.delete(mid);
+  }
+  for (const mid of [...SEEN_SINCE.keys()]) if (!want.has(mid)) SEEN_SINCE.delete(mid);
+  if (done.length) { done.forEach(m => SEEN_SINCE.delete(m)); seenSend(done, [], 'screen'); }
+}
+// Opened from a link: the landing balloon, if it answers a point. Told once
+// the landing mark has faded: the hub's answer redraws the chat.
+function seenLink(mid) {
+  if (seenWanted().has(mid)) setTimeout(() => { if (seenWanted().has(mid)) seenSend([mid], [], 'link'); }, 2700);
+}
+setInterval(() => { try { seenTick(); } catch (e) {} }, 500);
 // ---- The catch-up line: when it shows, and what advances the read point ----
 const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.search);
 function loadRead() {
@@ -4659,6 +4889,13 @@ function landPending() {
       renderBubbles(LAST_ITEMS, { anchor: row });
       el = find('.msg[data-mid]');
     }
+    if (!el && typeof threadedView === 'function' && threadedView() && !THREAD_MODE && THR_DRAWN) {
+      // A reply the channel does not show (#210): the whole chat, for this visit, then land.
+      WHOLE_FOR_LINK = true;
+      showWholeBtn();
+      renderSolo(SOLO_SID, SOLO_AGENT, true);
+      return;
+    }
     if (!el) {
       // A turn of a solo transcript older than the chat shows: draw back to it.
       // A line read while the agent was busy (":q<n>") has no place in the
@@ -4694,6 +4931,7 @@ function landPending() {
     at.style.animationDelay = '';
     void at.offsetWidth;          // start the fade again on a second landing
     LANDED = { mid, part, at: Date.now() };
+    seenLink(mid);
     markLanded(at);
   } finally { _landing = false; }
 }
@@ -4707,8 +4945,10 @@ function markLanded(el) {
   const box = $('#msgs');
   if (!el) {
     const msg = box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid);
-    if (msg && LANDED.part && !msg.querySelector('.landed')) el = partOf(msg, LANDED.part) || msg;
-    else el = msg;
+    if (msg && LANDED.part) {
+      if (msg.querySelector('.landed')) return;   // its passage still carries the mark
+      el = partOf(msg, LANDED.part) || msg;
+    } else el = msg;
   }
   if (!el || el.classList.contains('landed')) return;
   el.style.animationDelay = age ? -age + 'ms' : '';
@@ -4819,7 +5059,9 @@ function sendsBySize(list) {
 // turn). One the hub confirmed stays until this page's copy of the
 // conversation has its turn, so it is replaced, never gone and back.
 function sendsToShow(items) {
-  const all = ROOM_SENDS.slice();
+  const thr = typeof threadedView === 'function' && threadedView();
+  // A thread (#210) shows only what was sent from it, on this page.
+  const all = thr && THREAD_MODE ? [] : ROOM_SENDS.slice();
   for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k)) all.push(v.s);
   all.sort((a, b) => (a.at || 0) - (b.at || 0));
   const turns = new Map(), gone = new Set();
@@ -4827,7 +5069,9 @@ function sendsToShow(items) {
   const open = [];
   for (const { s, ev } of sendsBySize(all)) {
     const own = s.mid && items.find(m => m.id === s.mid);
-    if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid && !s.read) gone.add(s); else open.push({ s, ev });
+    if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid && !s.read) gone.add(s);
+    else if (thr && s.state === 'confirmed' && s.mid) gone.add(s);   // in the chat, in a thread this view does not show
+    else open.push({ s, ev });
   }
   for (const { s, ev } of open) {
     if (s.read) continue;     // read, and the chat draws no turn for it: its balloon is the message
@@ -5212,6 +5456,8 @@ let HUB_ROWS_N = 0;       // the hub's rows in the room, as last drawn into a so
 let SOLO_FIRST_TRIES = 0; // failed first loads of a chat opened on a link
 async function renderSolo(sid, agentId, force) {
   if (!sid) return;
+  // A PO chat drawn as threads: its channel or thread, not the transcript.
+  if (typeof threadedView === 'function' && threadedView() && THR_DRAWN) { renderThreaded(force); return; }
   if (SOLO_FETCHING) { if (force) SOLO_AGAIN = true; return; }
   SOLO_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
@@ -5263,6 +5509,178 @@ async function renderSolo(sid, agentId, force) {
     if (SOLO_AGAIN) { SOLO_AGAIN = false; renderSolo(SOLO_SID, SOLO_AGENT, true); }
   }
 }
+// ---- Threads in a PO chat (#210): begin -------------------------------------
+// A PO chat is a channel, as in Slack: each thread once, as its first message
+// with a line under it (replies, who, when, where it stands), and the messages
+// in no thread as before. The hub works the threads out (threads.py): the page
+// asks for the channel, or for one thread (?thread=<id>, or &tmid=<balloon>
+// for one started on a balloon), and draws them as it draws the transcript.
+// "Whole chat" is the old flat chat, per browser.
+let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
+let WHOLE = false;         // the person asked for the whole chat
+try { WHOLE = localStorage.getItem('cd-chat-whole') === '1'; } catch (e) {}
+let WHOLE_FOR_LINK = false;   // opened on a link to a reply: the whole chat, for this visit
+let THR_META = {};         // thread id → its line's facts, as the hub sent them
+let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;
+let THR_DRAWN = false;    // the channel or thread is what is drawn
+let THR_INFO = null;       // the thread shown (thread mode)
+let THR_SEEN_TS = 0;       // its newest message told as seen
+let THR_ITEMS = null;      // the thread's messages as drawn (told as seen once on screen)
+// A thread drawn while its panel was hidden is read when the panel shows.
+['visibilitychange', 'focus'].forEach(ev => (ev === 'focus' ? window : document).addEventListener(ev, () => {
+  if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS);
+}));
+const threadedView = () => THREADED && (THREAD_MODE || (!WHOLE && !WHOLE_FOR_LINK));
+function thrUrl(sig) {
+  const base = THREAD_MODE
+    ? '/api/room/thread?id=' + encodeURIComponent(ROOM) + (THREAD ? '&t=' + encodeURIComponent(THREAD) : '&mid=' + encodeURIComponent(THREAD_MID))
+    : '/api/room/channel?id=' + encodeURIComponent(ROOM) + '&n=' + THR_N;
+  return base + (sig ? '&sig=' + encodeURIComponent(sig) : '');
+}
+async function renderThreaded(force) {
+  if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
+  THR_FETCHING = true;
+  const roomTs = roomLatestTs(ROOM_OBJ);
+  try {
+    const r = await fetch(thrUrl(force ? '' : THR_SIG));
+    const d = await r.json();
+    // Unchanged, but perhaps only now on screen (a Dock tab shown again): read now.
+    if (d.same) { if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS); return; }
+    if (d.pending) {
+      // The hub reads a long chat once, in the background: the whole chat meanwhile.
+      if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
+      if (THREAD_MODE) setText($('#hint'), 'Reading the chat’s threads…');
+      clearTimeout(THR_WAIT);
+      THR_WAIT = setTimeout(() => renderThreaded(true), 1500);
+      return;
+    }
+    if (!r.ok || d.error) {
+      if (THREAD_MODE) { setText($('#title'), 'This thread is not in the chat any more'); renderBubbles([]); }
+      return;
+    }
+    THR_SIG = d.sig || '';
+    THR_META = Object.assign({}, d.threads || {});
+    if (THREAD_MODE) {
+      THR_INFO = d.thread || null;
+      if (THR_INFO) { THR_META[THR_INFO.id] = THR_INFO; if (!THREAD) THREAD = THR_INFO.id; }
+      threadHead();
+    }
+    THR_BEFORE = d.before || 0;
+    let items = (d.items || []).map(t => Object.assign(soloItems([t], 's', SOLO_AGENT, 1)[0], { id: t.mid },
+      t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {}));
+    items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
+    // A link to a reply that the channel does not show: the whole chat, this time.
+    if (!THREAD_MODE && GOTO && !CHAT_DRAWN && !items.some(m => m.id === GOTO)) {
+      WHOLE_FOR_LINK = true;
+      renderSolo(SOLO_SID, SOLO_AGENT, true);
+      return;
+    }
+    if (!THREAD_MODE) items = withHubRows(items, ROOM_OBJ);
+    CHAT_DRAWN = THR_DRAWN = true;
+    DRAWN_ROOM_TS = roomTs;
+    renderBubbles(items);
+    if (THREAD_MODE) { THR_ITEMS = items; threadSeen(items); }
+  } catch (e) {
+    if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
+  } finally {
+    THR_FETCHING = false;
+    if (THR_AGAIN) { THR_AGAIN = false; renderThreaded(true); }
+  }
+}
+// The thread's title over its messages, and the way back on a phone.
+function threadHead() {
+  $('#thr-also-l').hidden = false;
+  $('#thr-back').hidden = !embedHost();
+  const t = THR_INFO;
+  const title = t ? (t.title || 'Thread') : 'Thread';
+  setText($('#title'), title);
+  setText($('#tno'), '');
+  $('#tno').hidden = true;
+  const tab = 'Thread · ' + title;
+  if (document.title !== tab) document.title = tab;
+  const host = embedHost();
+  if (host) host.postMessage({ type: 'thread-title', roomId: ROOM, title }, location.origin);
+}
+// Opened: its replies up to the newest shown are read (the hub keeps it).
+function threadSeen(items) {
+  if (!THREAD || !pageInFront()) return;
+  const ts = items.reduce((t, m) => Math.max(t, +m.ts || 0), 0);
+  if (!(ts > THR_SEEN_TS)) return;
+  THR_SEEN_TS = ts;
+  postOk('/api/room/thread/seen', { roomId: ROOM, thread: THREAD, ts }).catch(() => { THR_SEEN_TS = 0; });
+}
+// "5 replies · you, PO · last reply 12:14 · answered": the line under a parent.
+const THR_STATE = { needs: 'needs you', po: 'with the PO', task: 'task working', answered: 'answered', done: 'done' };
+const THR_WHO = { you: 'you', po: 'PO', task: 'task', hub: 'hub' };
+function threadLineHtml(tid, mine) {
+  const t = THR_META[tid];
+  if (!t) return '';
+  const n = +t.replies || 0, unread = +t.unread || 0;
+  const who = (t.who || []).map(w => THR_WHO[w] || w).join(', ');
+  const when = n ? 'last reply ' + sendWhen(t.lastAt) : '';
+  const st = THR_STATE[t.state] || '';
+  const label = n ? `${n} repl${n === 1 ? 'y' : 'ies'}` : 'Open thread';
+  const parts = [who, when].filter(Boolean).map(esc).join(' · ');
+  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}">`
+    + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')
+    + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread “${esc(t.title || '')}”">${label}</button>`
+    + (parts ? `<span class="thr-meta">${parts}</span>` : '')
+    + (st ? `<span class="thr-state st-${esc(t.state)}">${esc(st)}</span>` : '')
+    + '</div>';
+}
+// A reply also shown in the chat: which thread it is in.
+function threadMarkHtml(m) {
+  if (THREAD_MODE) {
+    const also = (m.alsoIn || []).filter(t => THR_META[t] || t);
+    return also.length ? `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(also.join(','))}">Also in ${also.map(t => `<button type="button" class="thr-open" data-thr="${esc(t)}">${esc(/^P\d/.test(t) ? t : 'another thread')}</button>`).join(', ')}</div>` : '';
+  }
+  if (!m.inThr) return '';
+  const t = THR_META[m.inThr];
+  // An answer to several points: shown once, under the newest of its threads.
+  const also = (m.alsoIn || []).map(x => `<button type="button" class="thr-open" data-thr="${esc(x)}">${esc(/^P\d/.test(x) ? x : (THR_META[x] || {}).title || 'another thread')}</button>`);
+  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc((m.alsoIn || []).join(','))}">Replied in <button type="button" class="thr-open" data-thr="${esc(m.inThr)}">${esc(t ? t.title || 'a thread' : 'a thread')}</button>${also.length ? ', also in ' + also.join(', ') : ''}</div>`;
+}
+// A thread opens beside the chat (the dashboard's panel), or in this window.
+function openThread(tid, mid) {
+  if (!tid && !mid) return;
+  const host = embedHost();
+  if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '' }, location.origin); return; }
+  const u = '/session?id=' + encodeURIComponent(ROOM) + (tid ? '&thread=' + encodeURIComponent(tid) : '&thread=&tmid=' + encodeURIComponent(mid));
+  window.open(u, '_blank', 'noopener');
+}
+function embedHost() {
+  try { return window.parent !== window && window.parent.location.origin === location.origin ? window.parent : null; } catch (e) { return null; }
+}
+function replyInThreadHtml(m) {
+  if (!threadedView() || THREAD_MODE || !m || !m.id || m.id === 'task' || !/:/.test(m.id)) return '';
+  return `<button type="button" class="thr-reply" data-mid="${esc(m.id)}" title="Reply to this message in a thread of its own">Reply in thread</button>`;
+}
+function toggleWhole() {
+  // Shown for a link only: the switch goes back to the threads.
+  if (!(WHOLE_FOR_LINK && !WHOLE)) WHOLE = !WHOLE;
+  WHOLE_FOR_LINK = false;
+  try { localStorage.setItem('cd-chat-whole', WHOLE ? '1' : '0'); } catch (e) {}
+  THR_SIG = ''; SOLO_TURN_COUNT = -1; _soloStatKey = '';
+  foldUnkeep(FOLD);
+  if (threadedView()) renderThreaded(true); else renderSolo(SOLO_SID, SOLO_AGENT, true);
+  showWholeBtn();
+}
+function showWholeBtn() {
+  const b = $('#whole-chat');
+  if (!b) return;
+  const on = THREADED && !THREAD_MODE;
+  if (b.hidden !== !on) b.hidden = !on;
+  const pressed = String(!threadedView());
+  if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
+  // The composer's menu has it too (a phone has no bar over the chat).
+  const m = document.querySelector('[data-phone-action="whole-chat"]');
+  if (m) {
+    if (m.hidden !== !on) m.hidden = !on;
+    m.setAttribute('aria-pressed', pressed);
+    setText(m, pressed === 'true' ? 'Whole chat: shown' : 'Whole chat: threads');
+  }
+}
+// ---- Threads in a PO chat (#210): end -----------------------------------------
 
 // The room poll: one request at a time. A refresh asked for while one is
 // under way (after a click) runs once it is done, not beside it.
@@ -5364,7 +5782,13 @@ function refreshShow(room, ticket, sendsGen) {
     HUB_ROWS_N = hubRows;
     const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;
     CP_SIG = cpNow;
-    if ((pendChanged || rowsChanged) && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
+    THREADED = !!room.threaded;
+    showWholeBtn();
+    if (threadedView()) {
+      // A PO chat's channel or thread: the hub answers "the same" while nothing changed.
+      if ((sendsChanged || cpChanged) && LAST_ITEMS) renderBubbles(LAST_ITEMS);
+      renderThreaded(pendChanged || rowsChanged);
+    } else if ((pendChanged || rowsChanged) && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
     else {
       if ((sendsChanged || cpChanged) && LAST_ITEMS) renderBubbles(LAST_ITEMS);   // a send moved on
       checkSolo();   // stat-driven: first load + every new turn
@@ -5724,6 +6148,15 @@ function hidePromptCard() {
 // hub, not the last poll, decides whether the team is running.
 async function sendResuming(text, to, key, attachments) {
   const body = { roomId: ROOM, text, to: to || '', key: key || '' };
+  // From a thread's box (#210): the hub tells the PO which thread. A thread
+  // with no point of its own (a task's, or one started on a balloon) goes
+  // with its first message's link, so the PO knows what it answers.
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && THREADED) {
+    body.thread = THREAD || ('m:' + THREAD_MID);
+    body.also = !!($('#thr-also') && $('#thr-also').checked);
+    const t = THR_INFO;
+    if (t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
+  }
   if (attachments && attachments.length) body.attachments = attachments;
   return postOk('/api/room/resume', body);
 }
@@ -6059,6 +6492,7 @@ async function sendNow() {
       // Shown now as the hub keeps it (its words, points and images as they
       // go in), until the transcript has it.
       edClear();
+      if ($('#thr-also')) $('#thr-also').checked = false;
       noteSent(d && d.send);
       setTimeout(checkSolo, 1200);
       setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
@@ -6190,7 +6624,8 @@ function edFromDraft(d) {
 // ---- The editor on the page ----
 let ED = edNew();
 const ED_BOX = new Map();      // a point's id → its images (attBox)
-const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search);
+const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search)
+  + (typeof THREAD_MODE !== 'undefined' && THREAD_MODE ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid')) : '');
 let _edSave = 0;
 function edSave() {
   clearTimeout(_edSave);
@@ -6938,8 +7373,16 @@ function pointClick(e) {
   return true;
 }
 $('#points-line').addEventListener('click', e => {
+  const to = e.target.closest && e.target.closest('.thr-open');
+  if (to) { openThread(to.dataset.thr, ''); return; }
   if (pointClick(e)) return;
-  if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); }
+  if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); return; }
+  const fold = e.target.closest && e.target.closest('.pt-fold-sum');
+  if (fold) { const k = fold.dataset.fold; if (PT_FOLDS.has(k)) PT_FOLDS.delete(k); else PT_FOLDS.add(k); showPointsLine(); return; }
+  // An answer given by doing has no balloon: its row, opened, is where it is read.
+  const row = e.target.closest && e.target.closest('.pt-row[data-pt]');
+  const p = row && POINTS.byId.get(row.dataset.pt), a = p && p.state === 'delivered' && curAnswer(p);
+  if (a && !a.mid && !p.seen) seenSend([], [p.id], 'link');
 });
 $('#msgs').addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
@@ -6977,6 +7420,11 @@ $('#msgs').addEventListener('click', e => {
   if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');
   if (cl) { copyLink(cl); return; }
+  const to = e.target.closest && e.target.closest('.thr-open');
+  if (to) { openThread(to.dataset.thr, ''); return; }
+  const tr = e.target.closest && e.target.closest('.thr-reply');
+  if (tr) { const t = THR_META && Object.values(THR_META).find(x => x.root === tr.dataset.mid); openThread(t ? t.id : '', t ? '' : tr.dataset.mid); return; }
+  if (e.target.closest && e.target.closest('.thr-more-btn')) { THR_N += 150; STICK = false; renderThreaded(true); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
@@ -7001,6 +7449,8 @@ $('#msgs').addEventListener('click', e => {
 });
 $('#to-latest').addEventListener('click', toLatest);
 $('#team-all').addEventListener('click', toggleTeam);
+$('#whole-chat').addEventListener('click', toggleWhole);
+$('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h.postMessage({ type: 'thread-back', roomId: ROOM }, location.origin); });
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and
 // says nothing about the reader, so it is not counted.

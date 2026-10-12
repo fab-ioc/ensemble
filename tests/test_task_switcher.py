@@ -297,11 +297,11 @@ class TaskSwitcher(unittest.TestCase):
         team = row_of(self.r["teamRow"], 'data-sid="r2"')
         self.assertIn('<span class="sw-sub">Ensemble Dashboard · claude, codex</span>', team)
 
-    def test_a_po_row_names_its_project_and_your_asks(self):
+    def test_a_po_row_names_its_project_and_what_needs_you(self):
         h = self.r["html"]
         po1 = row_of(h, 'data-po="p1"')
         self.assertIn(">Ensemble Dashboard · PO</span>", po1)
-        self.assertIn('<span class="sw-sub">8 answers to check · 3 asks open</span>', po1)
+        self.assertIn('<span class="sw-sub">8 new</span>', po1)
         self.assertIn('class="sw-row unread"', po1)
         self.assertIn('class="sw-st working"', po1)                       # its own agent works: beats unread
         self.assertNotIn('class="sw-row on', po1)

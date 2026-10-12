@@ -43,7 +43,7 @@ vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, pointsSummary, pointsListHtml, pointsLineHtml, heldBy, foldPlan,
     chatGroups, quietItem, catchUp, canApprove, approveDecision, pointAct, stripPointLines, hasPointLines, stripImagePlaceholders, hasImagePlaceholders, refPreview, lastAnswer,
-    setPoints: v => { POINTS = v; }, points: () => POINTS };`, ctx);
+    setPoints: v => { POINTS = v; }, points: () => POINTS, PT_FOLDS };`, ctx);
 const T = ctx.t;
 const out = {};
 const href = mid => '/session?room=room-po&msg=' + mid;
@@ -79,6 +79,12 @@ out.listPo = T.pointsListHtml(P, href, 2000);
 T.CHAT_NAMES.po = '';
 out.list = T.pointsListHtml(P, href, 2000);
 out.lineClosed = T.pointsLineHtml(P, false, href, 2000);
+out.listFolded = T.pointsListHtml(P, href, 2000);
+T.PT_FOLDS.add('po');
+out.list = T.pointsListHtml(P, href, 2000);
+T.CHAT_NAMES.po = 'claude';
+out.listPo = T.pointsListHtml(P, href, 2000);
+T.CHAT_NAMES.po = '';
 out.keep = [...P.keep].sort(); out.unacked = [...P.unacked].sort();
 out.images = [T.stripImagePlaceholders('[Image #2] [Image #3]\n\n## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png'),
   T.stripImagePlaceholders('[Image #3] a picture of my own'), T.stripImagePlaceholders('look at [Image #1] this one'),
@@ -162,7 +168,7 @@ class Points(unittest.TestCase):
         self.assertIn("P3 · waiting for an answer", r["his"])
         self.assertIn('data-pt="P3" data-pt-act="drop"', r["his"])
         self.assertIn('class="pt-link" href="/session?room=room-po&amp;msg=s:2&amp;part=re:P2" data-ref-msg="s:2" data-ref-part="re:P2"', r["hisAnswered"])
-        self.assertIn("P2 · ready for your check ↓", r["hisAnswered"], "answered, from a hub before the stages, is delivered")
+        self.assertIn("P2 · answered ↓", r["hisAnswered"], "answered, from a hub before the stages, is delivered")
         self.assertIn("P1 · acknowledged ↓", r["hisAcked"])
         # Read again after the thumbs up, the question still leads to its answer.
         self.assertIn('data-ref-msg="s:10"', r["hisAcked"])
@@ -181,14 +187,18 @@ class Points(unittest.TestCase):
 
     def test_the_line_counts_and_lists_both_ends(self):
         r = self.r
-        self.assertEqual(r["summary"], ["Your asks: 1 waiting for an answer · 2 in progress · 2 ready for your check",
-                                        "Your asks: 2 ready for your check", ""])
+        # Needs you (#209): only what waits on them; a hub from before it sends
+        # no "needs": every answer is new.
+        self.assertEqual(r["summary"], ["Needs you: 3 new answers", "Needs you: 2 new answers", ""])
         rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
-        self.assertEqual([re.search(r'data-pt="(P\w+)"', x).group(1) for x in rows], ["P3", "P5", "P7", "P2", "P4", "P6"],
-                         "waiting, in progress, ready for their check; oldest first in each; not the acknowledged one")
+        self.assertEqual([re.search(r'data-pt="(P\w+)"', x).group(1) for x in rows], ["P6", "P4", "P2", "P7", "P5", "P3"],
+                         "new answers, then what waits on the PO (its fold open); newest first in each; not the acknowledged one")
         heads = re.findall(r'<li class="pt-group">([^<]*)</li>', r["list"])
-        self.assertEqual(heads, ["Waiting for an answer", "In progress", "Ready for your check"])
-        self.assertIn('<li class="pt-group">Waiting for the PO</li>', r["listPo"], "in the PO's chat it says who")
+        self.assertEqual(heads, ["New answers"])
+        self.assertIn('data-fold="po" aria-expanded="true"><span class="pt-caret" aria-hidden="true">▾</span>Waiting for an answer (3)</button>', r["list"])
+        self.assertIn('With the PO (3)</button>', r["listPo"], "in the PO's chat it says who")
+        self.assertIn('data-fold="po" aria-expanded="false"', r["listFolded"])
+        self.assertNotIn('data-pt="P3"', r["listFolded"], "a fold is closed until opened")
         p2 = next(x for x in rows if 'data-pt="P2"' in x)
         self.assertIn("your message ↑", p2)
         self.assertIn("answer ↓", p2)
@@ -228,7 +238,7 @@ class Points(unittest.TestCase):
         self.assertIn('data-ref-msg="s:15" data-ref-part="re:P6" title="Go to the answer">answer ↓</a>', p6)
         self.assertIn('data-pt="P6" data-pt-act="ack"', p6)
         self.assertIn('data-ref-msg="s:15"', r["hisDelivered"], "the person's balloon leads to the delivery, not the plan")
-        self.assertIn("P6 · ready for your check ↓", r["hisDelivered"])
+        self.assertIn("P6 · answered ↓", r["hisDelivered"])
         self.assertIn("plans P6 ↑", r["oldPlan"])
         self.assertNotIn('data-pt-act="ack"', r["oldPlan"])
         self.assertIn("answers P6 ↑", r["delivery"])
@@ -267,7 +277,7 @@ class Points(unittest.TestCase):
         self.assertTrue(all(2 not in g for g in r["groupsWith"]), "the answer stays out of its task's row")
 
     def test_the_catch_up_line_counts_unacknowledged_answers_first(self):
-        self.assertEqual(self.r["cu"][0], "1 answer to your asks to acknowledge")
+        self.assertEqual(self.r["cu"][0], "1 new answer to your asks")
         self.assertEqual(self.r["cu"][1], "1 decision waiting")
         self.assertNotIn("1 answer to your asks to acknowledge", self.r["cuPlain"])
 

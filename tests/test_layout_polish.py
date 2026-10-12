@@ -102,7 +102,7 @@ class ThePoHeader(unittest.TestCase):
     def setUpClass(cls):
         src = "\n".join([
             NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
-            fn(INDEX, "function workflowOf("), fn(INDEX, "function pointsCountText("),
+            fn(INDEX, "function workflowOf("), fn(INDEX, "function pointsNeeds("), fn(INDEX, "function pointsCountText("),
             fn(INDEX, "function pointsCountTip("), fn(INDEX, "function attnDot("), fn(INDEX, "function runChip("), fn(INDEX, "function shortModel("),
             fn(INDEX, "function poAgent("), fn(INDEX, "function poOpenCount("), fn(INDEX, "function poMenuItems("),
             re.search(r"^const DOCK_MENU_INTERIM = .*$", INDEX, re.M).group(0), fn(INDEX, "function poHeadHtml(")])

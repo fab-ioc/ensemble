@@ -21,6 +21,12 @@ of its own, a spec amendment, an answer typed into it, a rotation. Anything
 new starts a new episode; nothing new, nothing is said again. The records are
 kept in ``DASHBOARD_DIR/stalls.json``, so a hub restart does not repeat them.
 
+An owner whose turn ended with a command of its own still running ("done
+3:45 PM · 1 shell still running", ``attention.own_work``) is **waiting on its
+own work**, not stalled: Claude wakes it when the command ends (ED-212). No
+nudge, no line to the PO, until its screen has been still for
+``attention.OWN_WORK_CAP_S`` (2 h); then the command is the reason it stalled.
+
 Tasks with no PO are the attention detector's (the CEO's bell), as before.
 
 Two more ways a task stops without saying so (ED-159):
@@ -54,11 +60,16 @@ def bind(dashboard_module) -> None:
 
 TICK_S = 60                 # how often the tasks are looked at
 GRACE_S = 600               # idle this long before a nudge, and again before the PO hears
+_NUDGE_ECHO_S = 10          # a screen change this soon after a nudge is the nudge's own echo
 SENDER = "ensemble"         # who the line in the PO's room is from
 PREFIX = "[stalled] "       # how the typed line starts (HUB_INPUT_KINDS)
 NUDGE = (PREFIX + "You are idle and nothing of yours is open. Carry on from "
          "TASK-HANDOVER.md; if you are blocked or need a decision, report it with "
          "ensemble_report; if you are finished, report completed.")
+# The same at the cap on waiting for a command of its own (ED-212).
+NUDGE_COMMAND = (PREFIX + "Your background command has run for 2 h and your screen has not "
+                 "changed since. Check it and stop it if it hangs, then carry on from "
+                 "TASK-HANDOVER.md; if you are blocked, report it with ensemble_report.")
 _OWN_SUBMIT_S = 60          # a submit this close after the nudge is the nudge itself
 _QUIET = ("inreview", "done")
 
@@ -145,6 +156,23 @@ def why_not(room: dict, owner: str) -> str:
     return ""
 
 
+def own_work(sess) -> int:
+    """How many commands of its own the agent's screen says still run."""
+    try:
+        return int(_d.attention._analyse_live(sess)[1].get("ownWork") or 0)
+    except Exception:
+        return 0
+
+
+def _wrote_since(tpath, ts: float) -> bool:
+    """Whether the agent's transcript was written after ``ts``: the agent
+    took a turn, so a screen change then was its own."""
+    try:
+        return bool(tpath) and Path(tpath).stat().st_mtime > ts
+    except OSError:
+        return False
+
+
 def _busy(part: dict) -> bool:
     rot = _d.rotation
     if rot._pty(part) is None:
@@ -185,8 +213,24 @@ def _look(rid: str, state: dict, now: float) -> str:
             return ""
         if idle < GRACE_S:
             return ""
+        # Waiting on a command of its own (ED-212): Claude wakes it when the
+        # command ends, so a nudge is noise, until the screen has been still
+        # for OWN_WORK_CAP_S. Then the command is why it stalled.
+        own = own_work(sess)
         rec = state.get(rid) or {}
         ep = episode(room, owner, last_submit, float(rec.get("nudgedAt") or 0))
+        if rec.get("episode") == ep and rec.get("command") and rec.get("nudgedAt"):
+            # Nudged at the cap (reviews 1, 2, 4). The nudge's own echo resets
+            # the screen's idle clock: the episode carries on to the PO line,
+            # as it does when the agent only answers the nudge (its transcript
+            # moved). A command that ended, or output after the echo that is
+            # not the agent's, closes it: the cap starts again.
+            echo_end = float(rec["nudgedAt"]) + _NUDGE_ECHO_S
+            if not own or (now - idle > echo_end and not _wrote_since(tpath, echo_end)):
+                state[rid] = {k: rec[k] for k in ("silent", "lastToldAt") if rec.get(k)}
+                return ""
+        elif own and idle < _d.attention.OWN_WORK_CAP_S:
+            return ""
         if rec.get("episode") != ep:
             # The silent look's record, and when the PO last heard of it,
             # outlive an episode: they are about a different clock.
@@ -194,9 +238,11 @@ def _look(rid: str, state: dict, now: float) -> str:
         rec["current"] = True           # stopped right now (record())
         state[rid] = rec
         if not rec.get("nudgedAt"):
-            if not _d._type_input(sess, NUDGE):
+            if not _d._type_input(sess, NUDGE_COMMAND if own else NUDGE):
                 return ""
             rec.update(nudgedAt=now, owner=owner, idleSince=now - idle)
+            if own:
+                rec["command"] = own
             state[rid] = rec
             return "nudged"
         if now - float(rec["nudgedAt"]) < GRACE_S or rec.get("wokeAt"):
@@ -226,6 +272,12 @@ def _words(room: dict, rec: dict, now: float) -> tuple[str, str, str]:
     return _d.task_word(room), since, nudged
 
 
+def _cap_words() -> str:
+    """The cap on waiting for its own command, as the PO is told it: "2 h"."""
+    cap = _d.attention.OWN_WORK_CAP_S
+    return f"{cap / 3600:g} h" if cap >= 3600 else f"{cap // 60:.0f} min"
+
+
 def _bold_name(room: dict) -> str:
     """A task in a bold head line: #18, else its title (plain: italics inside
     bold read badly), else "a task" (P166: never its room id)."""
@@ -246,9 +298,13 @@ def _post_po(room: dict, rec: dict, now: float) -> bool:
         return False
     ident = cr.po_identity(po_room)
     _, since, nudged = _words(room, rec, now)
+    why = (f"Background command running for {_cap_words()}: its owner's turn ended "
+           f"waiting on a command of its own, and its screen has not changed since. "
+           if rec.get("command") else
+           "Its owner is idle with nothing open: no question, block or report "
+           "waiting, no review running. ")
     body =(f"**{_bold_name(room)} stalled since {since}**{_after_bold(room)}\n\n"
-            f"Its owner is idle with nothing open: no question, block or report "
-            f"waiting, no review running. The hub nudged it at {nudged} and it did "
+            f"{why}The hub nudged it at {nudged} and it did "
             f"not carry on. Look at it (`ensemble_get_task {_d.task_arg(room)}`) and steer it, "
             f"or stop it.")
     return bool(cr.post_report(po, SENDER, ident, body,
@@ -274,8 +330,10 @@ def _wake_po(room: dict, rec: dict, now: float) -> bool:
             return False
         proj = next((p.get("name", "") for p in _d.load_projects()
                      if (p.get("poRoomId") or "") == po), "")
-        wake = (f"[digest] {proj or 'Your project'}: {label} stalled since {since} — its "
-                f"owner is idle with nothing open and did not carry on after the hub's "
+        why = (f"background command running for {_cap_words()}; its owner"
+               if rec.get("command") else "its owner is idle with nothing open and")
+        wake = (f"[digest] {proj or 'Your project'}: {label} stalled since {since} — {why} "
+                f"did not carry on after the hub's "
                 f"nudge at {nudged}. Details with ensemble_get_task {_d.task_arg(room)}.")
         return _d._type_input(sess, wake)
 
@@ -377,7 +435,9 @@ def silence_excuse(room: dict, part: dict, ev: dict) -> str:
         return "not the owner"
     if not ev.get("alive"):
         return "not running"
-    if ev.get("claudeStatus") == "shell":
+    if ev.get("claudeStatus") == "shell" or (ev.get("scan") or {}).get("ownWork"):
+        # A command of its own still runs (ED-212); past the cap ``_look``
+        # reports it, with the command as the reason.
         return "a background run"
     if _open_ask(room):
         return "an ask is open"
