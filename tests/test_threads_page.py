@@ -133,11 +133,28 @@ async function main() {
       // read; shown again, the next poll reads it even when the hub has nothing new
       // to send ("the same", review 1).
       await go('id=' + room + '&thread=P2');
-      o.hiddenSeen = await evalIn(`(async () => { const f = pageInFront; pageInFront = () => false; THR_SEEN_TS = 0;
-        await renderThreaded(true); const ts = THR_SEEN_TS; pageInFront = f; return ts; })()`);
-      o.shownSeen = await evalIn(`(async () => { let same = false; const f0 = window.fetch;
+      // The reply above starts a rebuild in the background, and until it lands the
+      // hub serves the last threads, "the same" too. So: wait for three polls in a
+      // row that are the same (off screen, so waiting reads nothing), draw the
+      // thread off screen, then poll on screen; again if that poll was not the same.
+      o.offScreen = await evalIn(`(async () => {
+        const f0 = window.fetch, pf = pageInFront, nap = ms => new Promise(r => setTimeout(r, ms));
+        let same = false, res = null;
         window.fetch = async (u, ...a) => { const r = await f0(u, ...a); if (String(u).includes('/api/room/thread?')) same = !!(await r.clone().json()).same; return r; };
-        await renderThreaded(false); window.fetch = f0; return { same, ts: THR_SEEN_TS }; })()`);
+        const poll = async force => { same = false; while (THR_FETCHING) await nap(20); await renderThreaded(force); return same; };
+        try {
+          for (let tries = 1; tries <= 5 && !(res && res.same); tries++) {
+            pageInFront = () => false;
+            const end = Date.now() + 15000;
+            for (let run = 0; run < 3 && Date.now() < end; await nap(400)) run = (await poll(false)) ? run + 1 : 0;
+            THR_SEEN_TS = 0;
+            await poll(true);
+            const hidden = THR_SEEN_TS;
+            pageInFront = pf;
+            res = { tries, hidden, same: await poll(false), ts: THR_SEEN_TS };
+          }
+        } finally { window.fetch = f0; pageInFront = pf; }
+        return res; })()`);
       await sleep(500);
       await go('room=' + room);
       o.channelLast = await evalIn(VIEW);
@@ -336,9 +353,10 @@ class ThreadsPage(unittest.TestCase):
     def test_a_thread_drawn_off_screen_is_read_once_it_shows(self):
         for w, o in self._each():
             with self.subTest(width=w):
-                self.assertEqual(o["hiddenSeen"], 0, "not on screen: not read")
-                self.assertEqual(o["shownSeen"]["same"], True, "the hub had nothing new")
-                self.assertGreater(o["shownSeen"]["ts"], 0, "on screen: read by that poll")
+                seen = o["offScreen"]
+                self.assertEqual(seen["hidden"], 0, "not on screen: not read")
+                self.assertEqual(seen["same"], True, f"the hub had nothing new ({seen['tries']} tries)")
+                self.assertGreater(seen["ts"], 0, "on screen: read by that poll")
                 lines = {x["thr"]: x for x in o["channelLast"]["lines"]}
                 self.assertFalse(lines["P2"]["unread"])
 
