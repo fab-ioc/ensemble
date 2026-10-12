@@ -123,6 +123,32 @@ console.log(JSON.stringify(out));
         self.assertEqual(self.out["atAfter"], "/api/file-at/w/C%3A/P/Documents/%239%20Some%20page/")
 
 
+class ConnectionsWhileBusy(unittest.TestCase):
+    """A page's ten pictures, while the hub has not accepted yet: the stdlib's
+    queue of 5 refused the rest (measured on the live hub as
+    ERR_CONNECTION_REFUSED on pictures and scripts); the hub's queue holds them."""
+
+    def test_forty_connections_wait_for_a_busy_hub(self):
+        import socket
+        from http.server import BaseHTTPRequestHandler
+        srv = dashboard.HubServer(('127.0.0.1', 0), BaseHTTPRequestHandler)   # listening, nothing accepted
+        self.addCleanup(srv.server_close)
+        socks = []
+        try:
+            for _ in range(40):
+                socks.append(socket.create_connection(('127.0.0.1', srv.server_address[1]), timeout=3))
+        finally:
+            for s in socks:
+                s.close()
+        self.assertEqual(len(socks), 40)
+
+    def test_main_serves_with_the_hub_server(self):
+        src = Path(dashboard.__file__).read_text(encoding='utf-8')
+        main = src[src.index('\ndef main():'):]
+        self.assertNotIn('ThreadingHTTPServer(', main)
+        self.assertEqual(main.count('HubServer(('), 4)
+
+
 class FolderWithAHash(Hub):
     def test_resolve_file_at_serves_a_picture_in_a_hash_folder(self):
         folder = Path(dashboard.find_project(self.ed)["path"]) / "Documents" / "#9 Some page"
@@ -136,10 +162,10 @@ CDP_JS = TASK_CDP.split('// The chips in the conversation')[0] + r'''
 async function main() {
   const {ch, ws} = await launch(), c = new Cdp(ws); await c.open();
   const out = {};
-  const tabs = [], away = new Set();
+  const tabs = [], urls = new Map();   // every page target opened, and where each is
   c.ws.addEventListener('message', e => { const m = JSON.parse(e.data);
-    if (m.method === 'Target.targetCreated' && m.params.targetInfo.type === 'page') tabs.push(m.params.targetInfo.url);
-    if (m.method === 'Target.targetInfoChanged' && /example\.invalid/.test(m.params.targetInfo.url) && !away.has(m.params.targetInfo.targetId)) away.add(m.params.targetInfo.targetId) && c.send('Target.closeTarget', {targetId: m.params.targetInfo.targetId}).catch(() => {}); });
+    if (m.method === 'Target.targetCreated' && m.params.targetInfo.type === 'page') tabs.push(m.params.targetInfo.targetId);
+    if (/^Target\.target(?:Created|InfoChanged)$/.test(m.method) && m.params.targetInfo.type === 'page') urls.set(m.params.targetInfo.targetId, m.params.targetInfo.url); });
   await c.send('Target.setDiscoverTargets', {discover: true});
   try {
     for (const [width, height, mob] of [[1440, 900, false], [390, 844, true]]) {
@@ -187,9 +213,13 @@ async function main() {
         await ready(); await sleep(300);
         row.start = await state();
         // a link to another site ("//host/x"): a tab of its own, this viewer stays
-        { const here = await ev(`${FV}.location.href`), t0 = tabs.length, a0 = away.size, p = await pointOf(link(`a.getAttribute('href').startsWith('//')`));
-          await clickAt(p.x, p.y); await sleep(1000);
-          row.external = {tabs: tabs.length - t0, away: away.size - a0, same: await ev(`${FV}.location.href`) === here}; }
+        { const here = await ev(`${FV}.location.href`), t0 = tabs.length, p = await pointOf(link(`a.getAttribute('href').startsWith('//')`));
+          await clickAt(p.x, p.y);
+          let opened = [];
+          for (let i = 0; i < 60; i++) { opened = tabs.slice(t0); if (opened.length && opened.every(id => /^https?:/.test(urls.get(id) || ''))) break; await sleep(100); }
+          row.external = {opened: opened.map(id => urls.get(id)), want: await ev(`new URL('//example.invalid/page', ${FV}.location.href).href`),
+                          same: await ev(`${FV}.location.href`) === here};
+          for (const id of opened) await c.send('Target.closeTarget', {targetId: id}).catch(() => {}); }
         const tabsAtStart = tabs.length;
         await click(link(`a.querySelector('img')`));
         const hostAtA = mode === 'panel' ? await ev('HOST.length') : 0;
@@ -282,7 +312,8 @@ class HtmlPageInChrome(Hub):
                 self.assertEqual(row['afterPng'].get('image'), 40, row['afterPng'])
                 self.assertEqual(row['newTabs'], 0, 'no new tab opened')
                 self.assertTrue(row['external']['same'], row['external'])
-                self.assertEqual((row['external']['tabs'], row['external']['away']), (1, 1), row['external'])
+                self.assertEqual(row['external']['want'], 'http://example.invalid/page')
+                self.assertEqual(row['external']['opened'], [row['external']['want']], 'one tab, at that address')
                 if 'hostWhileA' in row:
                     self.assertEqual(row['hostWhileA'], [], 'a page opened from a link says nothing to the panel host')
 
