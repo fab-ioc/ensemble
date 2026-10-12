@@ -279,12 +279,13 @@ def _tail_lines(tail: str) -> list[str]:
 # (a shell ending), makes the count stale. Codex counts its own in its status
 # line, "· 1 background terminal running · /ps to view".
 # Only the whole footer line counts (reviews 1, 2): from its start, a glyph,
-# "<Verb>ed for <time> · done H:MM · N shells still"; codex's from its start,
+# "<Verb>ed for <time> · done H:MM · N shells[, M monitors] still"; codex's,
 # "· N background terminals running · /ps" (after its "• Working (…)" while
 # the turn runs). The same words in prose or a typed line are someone talking.
 _OWN_SHELLS = re.compile(_phrase(
     r"^[^\w\n●⏺❯➤▶›>]{0,6}\w+ for [\dhms ]*· ?done? \d{1,2}:\d{2} ?(?:[AP]M)? ?· ?(\d*) ?"
-    r"(?:shells?|background tasks?) still").pattern, re.I | re.M)
+    r"(?:shells?|background tasks?|monitors?)(?:, ?(\d+) ?(?:shells?|monitors?))? still"
+    ).pattern, re.I | re.M)
 _OWN_STALE = _phrase(r"\bdone? \d{1,2}:\d{2}|[●⏺] ?background (?:command|task|shell)")
 _CODEX_OWN = re.compile(_phrase(
     r"^[^\w\n●⏺❯➤▶›>]{0,6}(?:•\s*Working\s*\([^)\n]*\))? ?· ?(\d+) background terminals? \w*ing ?· ?/ps"
@@ -305,7 +306,8 @@ def own_work(tail: str) -> int:
         if m is not None:
             if _OWN_STALE.search(text[m.end():]):
                 return 0
-            return int(m.group(1) or 1)
+            # "2 shells, 1 monitor still running" (#210): a monitor is its own too.
+            return int(m.group(1) or 1) + int((m.groups()[1:] or [None])[0] or 0)
     return 0
 
 

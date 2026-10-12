@@ -60,7 +60,7 @@ def bind(dashboard_module) -> None:
 
 TICK_S = 60                 # how often the tasks are looked at
 GRACE_S = 600               # idle this long before a nudge, and again before the PO hears
-_NUDGE_ECHO_S = 60          # a screen change this soon after a nudge is the nudge's own echo
+_NUDGE_ECHO_S = 10          # a screen change this soon after a nudge is the nudge's own echo
 SENDER = "ensemble"         # who the line in the PO's room is from
 PREFIX = "[stalled] "       # how the typed line starts (HUB_INPUT_KINDS)
 NUDGE = (PREFIX + "You are idle and nothing of yours is open. Carry on from "
@@ -164,6 +164,15 @@ def own_work(sess) -> int:
         return 0
 
 
+def _wrote_since(tpath, ts: float) -> bool:
+    """Whether the agent's transcript was written after ``ts``: the agent
+    took a turn, so a screen change then was its own."""
+    try:
+        return bool(tpath) and Path(tpath).stat().st_mtime > ts
+    except OSError:
+        return False
+
+
 def _busy(part: dict) -> bool:
     rot = _d.rotation
     if rot._pty(part) is None:
@@ -211,11 +220,13 @@ def _look(rid: str, state: dict, now: float) -> str:
         rec = state.get(rid) or {}
         ep = episode(room, owner, last_submit, float(rec.get("nudgedAt") or 0))
         if rec.get("episode") == ep and rec.get("command") and rec.get("nudgedAt"):
-            # Nudged at the cap (reviews 1, 2). The nudge's own echo resets the
-            # screen's idle clock: the episode carries on to the PO line. But
-            # a command that ended, or output after the echo, closes it.
-            changed = now - idle
-            if not own or changed > float(rec["nudgedAt"]) + _NUDGE_ECHO_S:
+            # Nudged at the cap (reviews 1, 2, 4). The nudge's own echo resets
+            # the screen's idle clock: the episode carries on to the PO line,
+            # as it does when the agent only answers the nudge (its transcript
+            # moved). A command that ended, or output after the echo that is
+            # not the agent's, closes it: the cap starts again.
+            echo_end = float(rec["nudgedAt"]) + _NUDGE_ECHO_S
+            if not own or (now - idle > echo_end and not _wrote_since(tpath, echo_end)):
                 state[rid] = {k: rec[k] for k in ("silent", "lastToldAt") if rec.get(k)}
                 return ""
         elif own and idle < _d.attention.OWN_WORK_CAP_S:

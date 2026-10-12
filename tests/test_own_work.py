@@ -22,12 +22,14 @@ The fixtures are real screens, as ``ptyrun.tail`` reads them:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import attention
@@ -69,6 +71,13 @@ class ReadingTheScreen(unittest.TestCase):
     def test_a_later_footer_without_the_count_is_newer(self):
         later = ONE_SHELL + "● Done.\n✻ Worked for 2s · done 4:20 PM\n>\n"
         self.assertEqual(attention.own_work(later), 0)
+
+    def test_a_monitor_counts_as_its_own_work(self):
+        # The footer seen on #210 at 17:16, 2026-10-12.
+        self.assertEqual(attention.own_work(
+            "✻ Worked for 2m 3s · done 5:16 PM · 2 shells, 1 monitor still running\n>"), 3)
+        self.assertEqual(attention.own_work(
+            "✻ Worked for 9s · done 5:16 PM · 1 monitor still running\n>"), 1)
 
     def test_prose_about_shells_is_not_a_footer(self):
         self.assertEqual(attention.own_work("● Ran 2 shell commands\n● The suite is still running.\n>"), 0)
@@ -173,6 +182,33 @@ class NoNudgeWhileItWaitsOnItsOwnCommand(_OwnWork):
         t = self._after_the_cap_nudge(nudged + "  ⎿ 412 passed\n")
         self.assertEqual(stall.tick(t + 2 * stall.GRACE_S + 4), {})
         self.assertEqual(self.typed, [stall.NUDGE_COMMAND])
+
+    def test_output_soon_after_the_cap_nudge_starts_the_cap_again(self):
+        # Review 4: output 30 s after the nudge is not its echo.
+        t = time.time()
+        self.show(ONE_SHELL, CAP + 1)
+        self.assertEqual(stall.tick(t), {self.rid: "nudged"})
+        self.show(ONE_SHELL + "output: 412 passed\n", stall.GRACE_S + 1)
+        self.assertEqual(stall.tick(t + stall.GRACE_S + 31), {})
+        self.assertEqual(self.told(), [])
+        self.assertNotIn(self.rid, stall.records())
+
+    def test_the_agent_answering_the_cap_nudge_still_reaches_the_po(self):
+        # Its answer changes the screen after the echo, but its transcript
+        # moved with it: the command is still why it stalled.
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        tpath = Path(d.name) / "t.jsonl"
+        tpath.write_text("{}", encoding="utf-8")
+        t = time.time()
+        with mock.patch.object(dashboard.rotation, "_transcript_of",
+                               return_value=(tpath, lambda p: {"turnOver": True})):
+            self.show(ONE_SHELL, CAP + 1)
+            self.assertEqual(stall.tick(t), {self.rid: "nudged"})
+            os.utime(tpath, (t + 40, t + 40))           # its answer, 40 s on
+            self.show(ONE_SHELL + "● Still waiting on the suite.\n", stall.GRACE_S + 2)
+            self.assertIn("PO told", stall.tick(t + stall.GRACE_S + 45)[self.rid])
+        self.assertIn("Background command running for 2 h", self.told()[0]["text"])
 
     def test_a_plain_idle_owner_is_nudged_and_reported_as_today(self):
         t = time.time()
