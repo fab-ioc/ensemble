@@ -43,7 +43,8 @@ log.cardNone = cardHtml({ roomId: 'room-3', sessionId: 's3', label: 'Fresh', upd
 log.cardPts = cardHtml({ roomId: 'room-4', sessionId: 's4', label: 'Asked', updatedAt: 0, cost: 0, costTokens: null,
                          points: { open: 1, planned: 1, delivered: 2 } }, 60);
 log.pts = [pointsCountText({ open: 0, planned: 0, delivered: 0 }), pointsCountText(null), pointsCountText({ open: 3, delivered: 0 }),
-           pointsCountText({ open: 1, answered: 2 })];
+           pointsCountText({ open: 1, answered: 2 }),
+           pointsCountText({ open: 4, delivered: 9, decisions: 1, totry: 2, news: 3 })];
 console.log(JSON.stringify(log));
 """
 
@@ -95,11 +96,11 @@ class CostChip(unittest.TestCase):
         self.assertNotIn("ccost", self.r["cardNone"], "nothing used, nothing shown")
 
     def test_the_persons_points_are_quiet_words_on_the_card(self):
-        self.assertIn('<span class="cpts" title="Your asks: 2 ready for your check · 1 in progress · 1 waiting for an answer. '
-                      'Open the chat to see them.">2 to check · 1 in progress · 1 open</span>', self.r["cardPts"])
+        self.assertIn('<span class="cpts" title="Needs you: 2 new answers. '
+                      'Open the chat to see them.">2 new</span>', self.r["cardPts"])
         self.assertNotIn("cpts", self.r["cardNone"])
-        self.assertEqual(self.r["pts"], ["", "", "3 open", "2 to check · 1 open"],
-                         "a hub from before the stages: answered is to check")
+        self.assertEqual(self.r["pts"], ["", "", "", "2 new", "1 decision · 2 to try · 3 new"],
+                         "only what waits on the person; a hub from before Needs you: answered is new")
         self.assertIn(".cpts { font-size: var(--fs-100); color: var(--fg-muted);", INDEX)
 
     def test_the_row_and_the_card_use_it(self):
