@@ -9999,8 +9999,9 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         reported = {}
     try:
         run_state = attention.run_by_room()
+        run_since = attention.run_since_by_room() if "command" in run_state.values() else {}
     except Exception:
-        run_state = {}
+        run_state, run_since = {}, {}
     try:
         for rm in rooms:
             agents_in = [p for p in rm.get("participants", [])
@@ -10069,6 +10070,10 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 **board.view(rm),
                 "hasConversation": len(agents_in) == 1 and bool((agents_in[0].get("sessionId") or "").strip()),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
+                # Not working, but its turn ended waiting on a command of its
+                # own, which wakes it when it ends (ED-212): "running a command".
+                **({"runState": "command", "runSince": run_since.get(rid) or 0}
+                   if live and run_state.get(rid) == "command" else {}),
                 # `status` above is the activity dot; the action bar needs the
                 # room's own lifecycle (active / paused / waiting_human) and
                 # whether a resume is under way, as the pop-out reads them.
