@@ -14375,6 +14375,7 @@ class Handler(BaseHTTPRequestHandler):
         if snap.get("hubPid") == os.getpid():
             note = "this hub process took the snapshot: it did not restart"
             _restart_log(f"restore: {note}; nothing done")
+            restart_drain.not_restarted(lease)
             return {"ok": True, "rooms": [], "note": note}
         path = _restart_snapshot_path()
         with contextlib.suppress(OSError):

@@ -511,12 +511,24 @@ _SCREEN_MARKS = ("●", "⏺", "•")
 
 
 def screen_line(tail: str) -> str:
-    """The last thing a screen shows its agent doing: its last ● / ⏺ / • line."""
-    for ln in reversed((tail or "").splitlines()):
-        t = ln.strip()
+    """The last thing a screen shows its agent doing: its last ● / ⏺ / • line,
+    with the ⎿ line under it (the command a tool runs) when there is one."""
+    lines = [ln.strip() for ln in (tail or "").splitlines()]
+    for i in range(len(lines) - 1, -1, -1):
+        t = lines[i]
         if t[:1] in _SCREEN_MARKS and len(t) > 2:
-            return " ".join(t[1:].split())[:200]
+            out = " ".join(t[1:].split())
+            under = lines[i + 1] if i + 1 < len(lines) else ""
+            if under[:1] == "⎿" and len(under) > 2:
+                out += " — " + " ".join(under[1:].split())
+            return out[:200]
     return ""
+
+
+def _whole_screen(sess) -> str:
+    """All a terminal still holds, as text: a minute of spinner redraws fills
+    the default tail, so the line saying what it was doing is further up."""
+    return sess.tail(lines=100000, max_bytes=1 << 20)
 
 
 def request_restart(reason: str, by: dict, action: str = "restart") -> dict:
@@ -642,7 +654,7 @@ def go(why: str) -> None:
             if a["state"] not in READY_STATES:
                 a["interrupted"] = True
                 sess = _sess_of(a["roomId"], a["identity"])
-                a["screen"] = screen_line(sess.tail() if sess is not None else "")
+                a["screen"] = screen_line(_whole_screen(sess) if sess is not None else "")
                 cut.append(a["label"])
         st["state"] = "restarting"
         st["outcome"] = {"ready": "every agent reached a safe point",
@@ -836,6 +848,16 @@ def _release_one(h, it: dict) -> None:
         _log(f"could not let go of a {kind} for {rid}: {e!r}")
         if kind == "send" and it.get("key"):
             _d.sends.mark(rid, [it["key"]], "failed", f"held for the restart, then: {e}")
+
+
+def not_restarted(lease: str) -> None:
+    """The helper is through but this hub process is still the one that
+    drained (it could not be stopped): nothing restarted, so call the drain
+    off and let go of what it held instead of holding it for good."""
+    st = current()
+    if st and st.get("state") == "restarting" and lease and st.get("lease") == lease \
+            and st.get("hubPid") == os.getpid():
+        end_drain("failed", "the hub could not be stopped, so it did not restart")
 
 
 def restore_notes(lease: str) -> tuple[dict | None, dict]:

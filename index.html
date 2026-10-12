@@ -3046,7 +3046,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #drain-text b { font-weight: 600; }
   #drain-agents { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--s-050) var(--s-300); }
   #drain-agents[hidden] { display: none; }
-  #drain-agents span { white-space: nowrap; }
+  #drain-agents span { min-width: 0; overflow-wrap: anywhere; }
   #drain-banner button {
     height: 24px; padding: 0 var(--s-200); border-radius: var(--r-200);
     background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong);

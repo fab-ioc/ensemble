@@ -252,10 +252,29 @@ class Lock(unittest.TestCase):
                                              "part": {}, "projectId": ""}), \
              mock.patch.object(dashboard, "trigger_restart",
                                return_value={"started": True, "status": 202, "message": "m"}) as trig:
-            text, is_err = ensemble_tools.call("ensemble_restart_hub", {}, "room-po", "claude", None)
+            text, is_err = ensemble_tools.call("ensemble_restart_hub", {"when": "now"}, "room-po",
+                                               "claude", None)
         trig.assert_called_once_with("room-po")
         self.assertFalse(is_err, text)
         self.assertNotIn("status", text)
+
+    def test_by_default_the_po_asks_for_a_drain(self):
+        # #211: "safe" is the default; the drain is restart_drain's (its own
+        # tests), never a file in the real state dir from here.
+        with mock.patch.object(dashboard, "may_restart_hub", return_value=True), \
+             mock.patch.object(ensemble_tools, "_caller",
+                               return_value={"room": self.ROOM, "identity": "claude",
+                                             "part": {}, "projectId": ""}), \
+             mock.patch.object(dashboard, "trigger_restart") as trig, \
+             mock.patch.object(dashboard.restart_drain, "request_restart",
+                               return_value={"started": True, "status": 202,
+                                             "draining": True}) as req:
+            text, is_err = ensemble_tools.call("ensemble_restart_hub", {"reason": "merged #1"},
+                                               "room-po", "claude", None)
+        trig.assert_not_called()
+        self.assertEqual(req.call_args.args[0], "merged #1")
+        self.assertEqual(req.call_args.args[1]["roomId"], "room-po")
+        self.assertFalse(is_err, text)
 
     def test_the_route_asks_what_update_asks(self):
         src = (ROOT / "dashboard.py").read_text(encoding="utf-8")

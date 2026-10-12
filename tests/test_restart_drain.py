@@ -137,6 +137,12 @@ class StateMachine(unittest.TestCase):
         self.assertIn("Do not wait for background commands", rd.DRAIN_LINE)
         self.assertEqual(rd.screen_line("● Reading foo.py\n⏺ Running the full suite\n\n> "),
                          "Running the full suite")
+        # A Claude screen mid-command (seen in the acceptance run): the tool
+        # line, its command under it, then a minute of spinner fragments.
+        spinner = "\n".join(["✶", "*", "●", "✻20", "740"] * 400)
+        self.assertEqual(rd.screen_line("● Running 1 shell command…\n⎿  $ ping -n 200 127.0.0.1 (3s)\n"
+                                        + spinner),
+                         "Running 1 shell command… — $ ping -n 200 127.0.0.1 (3s)")
         self.assertEqual(rd.deadline_s({}), 1200.0)
         self.assertEqual(rd.deadline_s({"restartDrainMinutes": 0}), 60.0)
         self.assertEqual(rd.deadline_s({"restartDrainMinutes": "x"}), 1200.0)
@@ -361,6 +367,24 @@ class Drain(_Hub):
         self.assertFalse(rd.holding())
         self.assertIn("paused at a safe point and resumed: ready", rd.current()["outcome"])
         self.assertIn("cut off and resumed: cut", rd.current()["outcome"])
+
+    def test_a_hub_that_could_not_be_stopped_calls_it_off(self):
+        busy = self.room(title="busy")
+        busy_pty = self.running(busy, "claude", "working")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        rd.agent_ready(busy, "claude", "push the branch")
+        sends.accept(busy, "send:1", "after", "")
+        self.handler_obj._resume_room(chatroom.get_room(busy, public=False), text="after", key="send:1")
+        rd.drain_tick()
+        self.assertEqual(rd.current()["state"], "restarting")
+        dashboard.take_restart_snapshot(self.lease_id, wake_room=self.po)    # this process's pid
+        self.handler_obj._restore_after_restart(self.lease_id)
+        self.join_release()
+        self.assertEqual(rd.current()["state"], "failed")
+        self.assertFalse(rd.holding())
+        self.assertIn("could not be stopped", rd.current()["outcome"])
+        self.assertIn("after", self.ptys[busy_pty].typed[-1])        # the held send, let go
 
     def test_a_hub_that_died_mid_drain_calls_it_off(self):
         rd.request_restart("x", {"label": "the dashboard"})
