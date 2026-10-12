@@ -128,6 +128,24 @@ _ALL_TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "ensemble_ready_for_restart",
+        "description": (
+            "Call it when the hub has told you ([hub restart]) that it restarts for "
+            "an update and you have reached a safe point: your current step finished "
+            "or stopped, work in progress committed, no long command started. `next` "
+            "says in one line exactly what you will do next (e.g. 'rerun the full "
+            "suite, then ask for review 1'); after the restart you are typed that "
+            "line back and carry on from it. Then end your turn: do not wait for "
+            "the restart, and do not wait for background commands you can rerun."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"next": {"type": "string",
+                                    "description": "What you will do next, in one line."}},
+            "required": ["next"],
+        },
+    },
+    {
         "name": "ensemble_report",
         "description": (
             "Report on your task to the people responsible for it. Call it when "
@@ -561,6 +579,7 @@ COMMON_TOOL_NAMES = frozenset({
     "ensemble_whoami", "ensemble_report", "ensemble_ask", "ensemble_list_tasks",
     "ensemble_list_attention", "ensemble_plan_usage", "ensemble_get_task",
     "ensemble_update_task", "ensemble_get_roadmap", "ensemble_points",
+    "ensemble_ready_for_restart",
 })
 ADMIN_TOOL_NAMES = frozenset(t["name"] for t in _ALL_TOOLS) - COMMON_TOOL_NAMES
 COMMON_TOOLS = [t for t in _ALL_TOOLS if t["name"] in COMMON_TOOL_NAMES]
@@ -662,15 +681,29 @@ RESTART_TOOLS = [
         "name": "ensemble_restart_hub",
         "description": (
             "Restart the Ensemble hub on the code already on disk: nothing is "
-            "fetched, reset or pulled, so a merge not yet pushed survives. The hub "
-            "first starts that code on a spare port and gives up, leaving itself "
-            "untouched, if it does not serve. Then, after about 45 seconds (time "
-            "for your reply to reach the user), it stops and starts again: every "
-            "agent on this machine stops with it. You are resumed and told when "
-            "it is back; resume the other rooms yourself. Progress is logged to "
-            "~/.ensemble/logs/restart.log. Call it once."
+            "fetched, reset or pulled, so a merge not yet pushed survives. By "
+            "default (`when: \"safe\"`) the hub first drains: it starts nothing "
+            "new, holds messages for after the restart, tells every working agent "
+            "in every project to reach a safe point and say what it will do next, "
+            "and restarts once all are there (or at the deadline in Settings, 20 "
+            "min by default). Give a `reason` (e.g. 'merged #206 #208'): the CEO "
+            "sees it. Request it and move on: do not poll /api/ptys, do not resume "
+            "rooms; every agent is brought back and told where it stopped, and you "
+            "are told when the hub is back. Before the restart the hub starts the "
+            "code on a spare port and calls it off if it does not serve. `when: "
+            "\"now\"` restarts at once (agents mid-turn are cut off), or forces a "
+            "drain under way; `cancel: true` calls a drain off. Progress is logged "
+            "to ~/.ensemble/logs/restart.log. Call it once."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "when": {"type": "string", "enum": ["safe", "now"],
+                         "description": "safe (default): drain first; now: at once."},
+                "reason": {"type": "string", "description": "Why, for the CEO's banner."},
+                "cancel": {"type": "boolean", "description": "Call off a drain under way."},
+            },
+        },
     },
 ]
 RESTART_TOOL_NAMES = frozenset(t["name"] for t in RESTART_TOOLS)
@@ -1719,9 +1752,12 @@ def _start_task(ctx, args, handler):
     try:
         # Through the hub's resume guard: one resume per task at a time, and
         # a message the board sent it meanwhile is delivered once it is up.
-        handler._resume_room(room)
+        result = handler._resume_room(room)
     except _d.StartRoomError as exc:
         raise ToolError(str(exc)) from exc
+    if (result or {}).get("afterRestart"):
+        return {"ok": True, "taskId": room["id"], "status": _status(room), "held": True,
+                "note": "The hub is draining for a restart: the task starts after it."}
     active = _d.chatroom.get_room(room["id"], public=False) or room
     allocation = active.get("allocation") if first_launch else None
     chosen = _agents_view(active)
@@ -1946,11 +1982,46 @@ def _read_message(ctx, args, handler):
 
 
 def _restart_hub(ctx, args, handler):
-    res = _d.trigger_restart(ctx["room"]["id"])
+    project = next((p for p in _projects().values()
+                    if (p.get("poRoomId") or "") == ctx["room"]["id"]), None)
+    by = {"roomId": ctx["room"]["id"], "identity": ctx["identity"],
+          "label": f"the {project.get('name')} PO" if project else "a PO"}
+    if args.get("cancel") is True:
+        res = _d.restart_drain.cancel_drain(by["label"])
+        if not res["ok"]:
+            raise ToolError(res.get("error") or "no drain to cancel")
+        return {"ok": True, "cancelled": True, "drain": res["drain"]}
+    when = str(args.get("when") or "safe").lower()
+    if when not in ("safe", "now"):
+        raise ToolError('when is "safe" or "now"')
+    if when == "now" and _d.restart_drain.draining():
+        res = _d.restart_drain.force_drain(by["label"])
+        if not res["ok"]:
+            raise ToolError(res.get("error") or "the restart is already under way")
+        return {"ok": True, "forced": True, "drain": res["drain"]}
+    if when == "safe":
+        res = _d.restart_drain.request_restart(str(args.get("reason") or ""), by, "restart")
+    elif _d.restart_drain.holding():
+        res = _d.restart_drain.restart_now(ctx["room"]["id"])
+    else:
+        res = _d.trigger_restart(ctx["room"]["id"])
     res.pop("status", None)
     if not res.get("started"):
         raise ToolError(res.get("error") or "the restart did not start")
     return res
+
+
+def _ready_for_restart(ctx, args, handler):
+    nxt = " ".join(str(args.get("next") or "").split())
+    if not nxt:
+        raise ToolError("say in one line what you will do next after the restart (next)")
+    a = _d.restart_drain.agent_ready(ctx["room"]["id"], ctx["identity"], nxt)
+    if a is None:
+        return {"ok": True, "pending": False,
+                "note": "No restart is pending: carry on with your work."}
+    return {"ok": True, "pending": True, "next": a["next"],
+            "note": ("Noted. End your turn now and start nothing new: after the restart "
+                     "you are typed what you said and carry on from there.")}
 
 
 _IMPL = {
@@ -1972,6 +2043,7 @@ _IMPL = {
     "ensemble_update_roadmap": _update_roadmap,
     "review_done": _review_done,
     "ensemble_restart_hub": _restart_hub,
+    "ensemble_ready_for_restart": _ready_for_restart,
     "ensemble_points": _points,
     "ensemble_message_po": _message_po,
     "ensemble_read_message": _read_message,
