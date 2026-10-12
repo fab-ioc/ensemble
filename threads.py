@@ -713,9 +713,9 @@ def mark_seen(room_id: str, tid: str, ts: float | None = None) -> bool:
 
 def thread_points(room_id: str, room: dict, tid: str) -> list[str]:
     """The points of a thread, oldest first ([] for a thread with none, or
-    one not known)."""
-    idx = build(room_id, room)
-    th = (idx or {}).get("threads", {}).get(tid) if idx else None
+    one not known). Never waits for a chat's first read: a send does not."""
+    idx = ready(room_id, room)
+    th = idx["threads"].get(tid) if idx else None
     if th:
         return list(th["points"])
     return [tid] if re.fullmatch(points.POINT_ID, tid or "") else []

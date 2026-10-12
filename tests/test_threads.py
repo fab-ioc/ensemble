@@ -15,15 +15,19 @@ PO chat in a thread from facts it already has.
 """
 from __future__ import annotations
 
+import io
+import json
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
+import chatroom
 import dashboard
 import points
 import threads
+from tests import test_points as tp
 
 T0 = 1_800_000_000.0
 
@@ -194,6 +198,72 @@ class SideTest(unittest.TestCase):
         threads._ensure_since(rid, T0)
         threads._ensure_since(rid, T0 + 99)
         self.assertEqual(threads.load_side(rid)["since"], T0)
+
+
+def http_get(path):
+    h = dashboard.Handler.__new__(dashboard.Handler)
+    h.path, h.command, h.request_version = path, "GET", "HTTP/1.1"
+    h.requestline = f"GET {path} HTTP/1.1"
+    h.headers = {"Host": "127.0.0.1"}
+    h.rfile, h.wfile = io.BytesIO(), io.BytesIO()
+    h.client_address = ("127.0.0.1", 50000)
+    h.log_message = lambda *a: None
+    h.do_GET()
+    head, _, payload = h.wfile.getvalue().partition(b"\r\n\r\n")
+    return int(head.split(b" ", 2)[1]), json.loads(payload or b"{}")
+
+
+class Endpoints(tp._World):
+    """The hub's side, end to end on a PO chat's transcript."""
+
+    def setUp(self):
+        super().setUp()
+        threads.forget()
+        self.addCleanup(threads.forget)
+        self.rid = self.solo_room()
+        p = mock.patch.object(threads, "is_threaded", lambda rid, projects=None: rid == self.rid)
+        p.start()
+        self.addCleanup(p.stop)
+        out, _ = self.send(self.rid, "Make the chart wider", at=self.t0)
+        self.add("sid-1", tp.turn("user", out, self.t0 + 1), tp.turn("assistant", "Done, it is wider.", self.t0 + 2),
+                 tp.turn("user", "[digest] all quiet", self.t0 + 10),
+                 tp.turn("assistant", "Nothing to do.", self.t0 + 11))
+        points.sync(self.rid, force=True)
+        threads.build(self.rid)                 # the first read, done in the background by a poll
+
+    def test_channel_shows_the_parent_and_hides_its_reply(self):
+        status, ch = http_get(f"/api/room/channel?id={self.rid}")
+        self.assertEqual(status, 200)
+        self.assertEqual([(i["mid"], i.get("thr")) for i in ch["items"]],
+                         [("sid-1:0", ["P1"]), ("sid-1:2", None), ("sid-1:3", None)])
+        self.assertEqual(ch["threads"]["P1"]["replies"], 1)
+        self.assertEqual(ch["threads"]["P1"]["unread"], 0, "what came before threading counts as read")
+        self.assertEqual(http_get(f"/api/room/channel?id={self.rid}&sig={ch['sig']}")[1], {"sig": ch["sig"], "same": True})
+        status, th = http_get(f"/api/room/thread?id={self.rid}&t=P1")
+        self.assertEqual([i["mid"] for i in th["items"]], ["sid-1:0", "sid-1:1"])
+        self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&mid=sid-1:3")[1]["thread"]["id"], "m:sid-1:3")
+        self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
+
+    def test_a_reply_from_a_thread_names_its_point_and_new_replies_are_unread(self):
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room",
+                               lambda h, room, text="", to="", key="", quiet=False: sent.append(text) or {"delivered": 1}), \
+                mock.patch.object(dashboard, "_send_left_behind", return_value=""):
+            status, _ = tp.http("/api/room/resume", {"roomId": self.rid, "text": "a bit more", "key": "k1",
+                                                     "thread": "P1", "also": True})
+        self.assertEqual(status, 200)
+        self.assertTrue(sent[0].startswith("Re P1: a bit more"), sent[0])
+        self.assertEqual(threads.load_side(self.rid)["also"][0]["thread"], "P1")
+        now = time.time()
+        self.add("sid-1", tp.turn("user", sent[0], now + 5), tp.turn("assistant", "Re P1: wider still.", now + 6))
+        room = dashboard._annotate_room_liveness(chatroom.get_room(self.rid), with_points=True)
+        self.assertEqual([(t["id"], t["unread"]) for t in room["threadsUnread"]], [("P1", 1)])
+        status, ch = http_get(f"/api/room/channel?id={self.rid}")
+        self.assertIn(("sid-1:4", "P1"), [(i["mid"], i.get("inThr")) for i in ch["items"]],
+                      "a reply sent to the chat too shows in it")
+        self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": now + 6})[0], 200)
+        room = dashboard._annotate_room_liveness(chatroom.get_room(self.rid), with_points=True)
+        self.assertEqual(room["threadsUnread"], [])
 
 
 if __name__ == "__main__":

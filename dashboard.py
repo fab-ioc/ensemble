@@ -491,6 +491,16 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
             room["points"] = points.view(room.get("id", ""), room=room)
         except Exception as e:      # noqa: BLE001 — the chat still shows
             print(f"[points] {room.get('id')}: not listed: {e!r}", flush=True)
+        # A PO chat's threads with replies not seen (Needs you's Threads);
+        # absent while the chat is first read.
+        try:
+            if threads.is_threaded(room.get("id", "")):
+                full = chatroom.get_room(room.get("id", ""), public=False) or room
+                unread = threads.unread_threads(room.get("id", ""), full)
+                if unread is not None:
+                    room["threadsUnread"] = unread
+        except Exception as e:      # noqa: BLE001 — the chat still shows
+            print(f"[threads] {room.get('id')}: not listed: {e!r}", flush=True)
     return room
 
 
@@ -13030,6 +13040,35 @@ class Handler(BaseHTTPRequestHandler):
                    "more": max(0, len(text) - message_refs.QUOTE_MAX)}
             self._send_json(200, ref)
             return
+        if p in ("/api/room/channel", "/api/room/thread"):
+            # A PO chat as threads (threads.py): ?id=&n= the channel (its
+            # last n entries, each thread's parent with its reply line);
+            # ?id=&t=<thread> or &mid=<balloon> one thread with all its
+            # messages. &sig= the page's: the same chat answers {same: true}.
+            # {pending: true} while the chat is first read.
+            q = parse_qs(u.query)
+            rid = (q.get("id", [""])[0] or "").strip()
+            room = chatroom.get_room(rid, public=False) if rid else None
+            if room is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            if not threads.is_threaded(rid):
+                self._send_json(409, {"error": "not_threaded"})
+                return
+            try:
+                if p == "/api/room/channel":
+                    n = int(q.get("n", [""])[0] or threads.CHANNEL_MAX)
+                    out = threads.channel_view(rid, room, n)
+                else:
+                    out = threads.thread_view(rid, room, q.get("t", [""])[0].strip(), q.get("mid", [""])[0].strip())
+            except Exception as e:      # noqa: BLE001 — the page shows the whole chat
+                print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
+                self._send_json(500, {"error": "not_read"})
+                return
+            if out.get("sig") and out["sig"] == q.get("sig", [""])[0]:
+                out = {"sig": out["sig"], "same": True}
+            self._send_json(404 if out.get("error") else 200, out)
+            return
         if p == "/api/attention":
             # "What needs me, and why" — one item per task. Deliberately cheap
             # (rooms + live-session files + the in-memory PTY registry, all
@@ -13401,6 +13440,12 @@ class Handler(BaseHTTPRequestHandler):
         # whose agent has nothing new to do (the planned restart brings
         # rooms back this way by itself).
         quiet = data.get("quiet") is True
+        # Sent from a thread's reply box of a PO chat (threads.py): the PO
+        # is told which thread, the reply stays in it (``also``: and shows
+        # in the chat too).
+        thread = str(data.get("thread") or "").strip()[:300]
+        if thread and not threads.is_threaded(rid):
+            thread = ""
         pids: list = []
         # A draft (created but never launched, e.g. by a planning agent)
         # starts fresh; anything else resumes its agents' conversations.
@@ -13429,6 +13474,8 @@ class Handler(BaseHTTPRequestHandler):
                     # The person's words become points, each with its line
                     # for the agent; a retry of a held send keeps its own.
                     if text and not held:
+                        if thread:
+                            text = self._thread_text(room_full, thread, text)
                         text, pids = self._take_points(room_full, text, to, key)
                         text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                     elif paths and not held:
@@ -13451,6 +13498,11 @@ class Handler(BaseHTTPRequestHandler):
                 if why:
                     raise StartRoomError(why)
                 _settle_asks(rid, text, key)
+                if thread and text and not held and not again:
+                    try:
+                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text)
+                    except Exception as e:      # noqa: BLE001 — sent; shown by the chain instead
+                        print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
         except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
             print(f"[resume] {rid}: refused — {exc!r}", flush=True)
             # ``kept``: the text is held here, shown in the chat as not
@@ -13471,6 +13523,15 @@ class Handler(BaseHTTPRequestHandler):
         return (200, {"ok": True, **result,
                       **({"send": sends.get(rid, key)} if text and key else {}),
                       "room": chatroom.get_room(rid)})
+
+    def _thread_text(self, room_full: dict, thread: str, text: str) -> str:
+        """A reply typed in a thread's box as its PO gets it (threads.reply_text);
+        as typed when the thread cannot be read."""
+        try:
+            return threads.reply_text(room_full.get("id", ""), room_full, thread, text)
+        except Exception as e:      # noqa: BLE001 — the message goes anyway
+            print(f"[threads] {room_full.get('id')}: reply not marked: {e!r}", flush=True)
+            return text
 
     def _take_points(self, room_full: dict, text: str, to: str, key: str) -> tuple[str, list]:
         """The person's message as its agent gets it, with its points
@@ -16070,6 +16131,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "not_saved", "message": "The hub could not save that."})
                 return
             self._send_json(200, {"ok": True, "seen": got, **({"points": _points_view(rid)} if got else {})})
+            return
+        if p == "/api/room/thread/seen":
+            # The person opened a thread of a PO chat: {roomId, thread, ts}
+            # (ts: its newest message they saw; now when absent). Its replies
+            # up to then are read. Types nothing, wakes nobody.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            if chatroom.get_room(rid) is None or not threads.is_threaded(rid):
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            try:
+                ts = float(data["ts"]) if data.get("ts") else None
+                changed = threads.mark_seen(rid, str(data.get("thread") or ""), ts)
+            except (TypeError, ValueError, OSError) as e:
+                self._send_json(400, {"error": "not_saved", "message": str(e)})
+                return
+            self._send_json(200, {"ok": True, "changed": changed})
             return
         if p == "/api/room/points":
             # The person acknowledges, drops or reopens one of their points:
