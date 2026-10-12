@@ -89,7 +89,8 @@ class LaunchSettings(unittest.TestCase):
         settings = self.settings(False)
         background = {event for event in settings["hooks"]
                       for h in self.handlers(settings, event) if h.get("async")}
-        self.assertEqual(background, {"PostToolUse", "PostToolUseFailure"})
+        # (PermissionDenied is news only, ED-216: nothing waits on it.)
+        self.assertEqual(background, {"PostToolUse", "PostToolUseFailure", "PermissionDenied"})
         for event in settings["hooks"]:
             for h in self.handlers(settings, event):
                 self.assertEqual(h["type"], "command")

@@ -75,6 +75,8 @@ import agent_models
 import agent_hooks
 # A Claude model at its own limit: seen, remembered, seated around (ED-159).
 import model_limit
+# Whether a Claude agent runs in the mode it was launched in (ED-216).
+import permission_mode
 # Which tasks need a human, and why (the /api/attention join).
 import attention
 # What the task list read from each transcript, kept across hub starts (ED-200).
@@ -160,6 +162,7 @@ due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
+permission_mode.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
@@ -2433,10 +2436,19 @@ DOCUMENTS_NOTE = (
     "`#<task no> <title>/` for several files; link them in ensemble_report. TASK-HANDOVER.md and "
     "other working notes stay in your task folder. " + NO_WEB_ARTIFACT_NOTE)
 
+# GitHub issue 17 (ED-216): a denial by Claude's own safety check reads "denied
+# by the Claude Code auto mode classifier", and an agent took that for the
+# hub's launch mode and told the person to restart it in bypass mode.
+SAFETY_CHECK_NOTE = (
+    "If Claude's safety check (the 'auto mode classifier') denies an action, do not tell "
+    "anyone to restart you in bypass mode: you already run in it, and the check covers some "
+    "actions (browser purchases, deploys) in every mode. Do the rest of the work, then report "
+    "it to your PO as blocked with ensemble_report, saying what was blocked.")
+
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {ASK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {SAFETY_CHECK_NOTE} {ASK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -2576,6 +2588,9 @@ _AGENT_HOOK_EVENTS: tuple[tuple[str, str | None, bool], ...] = (
     # which is what orders it at the hub.
     ("PostToolUse", None, True),
     ("PostToolUseFailure", None, True),
+    # Claude's safety check refused a tool call (ED-216): news only, so in the
+    # background.
+    ("PermissionDenied", None, True),
     ("Stop", None, False),
     ("StopFailure", None, False),
     # Ends what that subagent asked: a question dismissed or a permission
@@ -4063,7 +4078,8 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
         parts.append(f"Start by acknowledging your role in one line, then wait for "
                      f"{eng}'s first deliverable — do not begin working the task yourself.")
     else:
-        parts.append(OWNER_OUTPUT_NOTE + " " + POINTS_NOTE + " " + DOCUMENTS_NOTE)
+        parts.append(OWNER_OUTPUT_NOTE + " " + POINTS_NOTE + " " + DOCUMENTS_NOTE + " "
+                     + SAFETY_CHECK_NOTE)
         non_reviewers = [t for t in teammates
                          if chatroom._role_head(t.get("role", "")) != chatroom.REVIEWER_ROLE]
         if non_reviewers:
@@ -9320,10 +9336,8 @@ DEFAULT_EDITOR_MAP = {
 def resolve_editor_for_repo(repo_path: Path) -> tuple[str, str, str | None]:
     return BACKEND.resolve_editor_for_repo(repo_path)
 
-# Permission mode for sessions the dashboard launches. "bypassPermissions"
-# auto-approves everything (no "yes?" prompts). Override with the env var, e.g.
-# ENSEMBLE_PERMISSION_MODE=acceptEdits  (or "" to disable the flag).
-PERMISSION_MODE = os.environ.get("ENSEMBLE_PERMISSION_MODE", "bypassPermissions")
+# PERMISSION_MODE (the mode every Claude agent is launched in) comes from
+# backends.shared, the one place claude_cmd_args reads it.
 
 
 def _claude_cmd(*extra: str) -> str:

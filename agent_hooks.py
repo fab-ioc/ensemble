@@ -100,6 +100,8 @@ def state_of(event: dict) -> tuple[str, str]:
         return ("", "") if event.get("source") == "compact" else ("idle", event.get("source") or "")
     if name == "SessionEnd":
         return "ended", event.get("reason") or ""
+    # PermissionDenied (Claude's safety check refused a tool call) is news, not
+    # a state: the agent carries on. ``record`` keeps it on the entry.
     return "", ""
 
 
@@ -175,6 +177,12 @@ def _effective(held: dict | None) -> dict | None:
         return None
     who = {"room": held["room"], "identity": held["identity"], "sessionId": held["sessionId"],
            "lastEventAt": held.get("lastEventAt", 0.0)}
+    # The permission mode its own events last named, and Claude's safety
+    # check's last refusal (ED-216): facts about the session, whatever it does.
+    if held.get("mode"):
+        who["mode"], who["modeAt"] = held["mode"], held.get("modeAt", 0.0)
+    if held.get("denied"):
+        who["denied"] = dict(held["denied"])
     if held["waits"]:
         w = max(held["waits"], key=lambda w: w["at"])
         return {"state": "waiting", "detail": w["detail"], "event": w["event"], "at": w["at"],
@@ -224,6 +232,13 @@ def record(payload, owner, now: float | None = None) -> dict:
             _apply(held, event, state, detail, at)
             if not event.get("agent_id") and event.get("session_id"):
                 held["sessionId"] = event["session_id"]
+        if not event.get("agent_id") and event.get("permission_mode") \
+                and at >= float(held.get("modeAt") or 0):
+            held["mode"], held["modeAt"] = event["permission_mode"], at
+        if name == "PermissionDenied":
+            held["denied"] = {"tool": event.get("tool_name") or "", "reason": event.get("reason") or "",
+                              "toolUseId": event.get("tool_use_id") or "",
+                              "agentId": event.get("agent_id") or "", "at": at}
         after = _effective(held)
         _RECENT.append({"ptyId": pty_id, "room": room, "identity": identity, "event": name,
                         "says": state, "detail": detail, "agentId": event.get("agent_id") or "",

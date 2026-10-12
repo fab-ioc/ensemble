@@ -387,7 +387,10 @@ class MacBackend(Backend):
                 extra += ["--session-id", session_id]
             if model:
                 extra += ["--model", model]
-            cmd_str = claude_cmd(*extra)
+            # The launch's own flags (its MCP config, its settings), as on
+            # Windows (ED-216).
+            extra += [str(a) for a in extra_args or []]
+            cmd_str = claude_cmd(*(shlex.quote(a) for a in extra))
             if initial_prompt:
                 cmd_str = f"{cmd_str} {shlex.quote(_safe_claude_prompt(initial_prompt))}"
         args = ["osascript", "-e", _OPEN_SCRIPT, cwd, cmd_str, open_mode or "window"]

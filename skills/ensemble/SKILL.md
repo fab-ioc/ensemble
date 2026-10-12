@@ -92,6 +92,7 @@ final reply reaches only whoever happens to open it. Report through the tool:
 |---|---|
 | The work is finished and handed back | `completed` |
 | You cannot go on without help: a missing permission, a failing dependency, an unclear requirement | `blocked` |
+| Claude's safety check (the "auto mode classifier") denied an action. You already run in bypass mode, so never advise a restart in bypass mode; say what was blocked | `blocked` |
 | You need a decision before you continue | `question` |
 | A milestone worth knowing, while you keep working | `update` |
 
