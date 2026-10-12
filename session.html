@@ -10,6 +10,8 @@
 <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg">
 <link rel="icon" href="/static/icons/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
+<link rel="stylesheet" href="/static/progress.css">
+<script src="/static/progress.js"></script>
 <script src="/static/actions.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/selbar.js"></script>
@@ -5545,8 +5547,14 @@ async function renderThreaded(force) {
     const r = await fetch(thrUrl(force ? '' : THR_SIG));
     const d = await r.json();
     // Unchanged, but perhaps only now on screen (a Dock tab shown again): read now.
-    if (d.same) { if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS); return; }
+    if (d.same) {
+      if (d.progress) globalThis.EnsembleProgress?.set('thread-build', d.progress);
+      else globalThis.EnsembleProgress?.clear('thread-build');
+      if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS);
+      return;
+    }
     if (d.pending) {
+      globalThis.EnsembleProgress?.set('thread-build', d.progress || {phase: 'Reading conversations'});
       // The hub reads a long chat once, in the background: the whole chat meanwhile.
       if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
       if (THREAD_MODE) setText($('#hint'), 'Reading the chat’s threads…');
@@ -5555,10 +5563,13 @@ async function renderThreaded(force) {
       return;
     }
     if (!r.ok || d.error) {
+      globalThis.EnsembleProgress?.clear('thread-build');
       if (THREAD_MODE) { setText($('#title'), 'This thread is not in the chat any more'); renderBubbles([]); }
       return;
     }
     THR_SIG = d.sig || '';
+    if (d.progress) globalThis.EnsembleProgress?.set('thread-build', d.progress);
+    else globalThis.EnsembleProgress?.clear('thread-build');
     THR_META = Object.assign({}, d.threads || {});
     if (THREAD_MODE) {
       THR_INFO = d.thread || null;
@@ -5581,6 +5592,7 @@ async function renderThreaded(force) {
     renderBubbles(items);
     if (THREAD_MODE) { THR_ITEMS = items; threadSeen(items); }
   } catch (e) {
+    globalThis.EnsembleProgress?.clear('thread-build');
     if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
   } finally {
     THR_FETCHING = false;

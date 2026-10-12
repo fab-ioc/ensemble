@@ -112,6 +112,7 @@ import points
 import asks
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
+import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
 # The person's sends: each kept by its key until the agent's conversation shows it.
@@ -551,7 +552,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
-              "static/pagekey.js", "static/filelinks.js",
+              "static/pagekey.js", "static/filelinks.js", "static/progress.js", "static/progress.css",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
@@ -8708,15 +8709,23 @@ def _find_deep(q: str, tag: str, seq: int) -> tuple[int, dict]:
     hit = _FIND_DEEP_CACHE.get(q)
     if hit and time.time() - hit[0] < _FIND_DEEP_TTL:
         return 200, hit[1]
-    req = json.dumps({"q": q, "files": _find_files(), "deadline": global_search.DEADLINE_S}).encode("utf-8")
+    files = _find_files()
+    with tempfile.NamedTemporaryFile(prefix="ensemble-find-", suffix=".json", delete=False) as pf:
+        progress_path = pf.name
+    req = json.dumps({"q": q, "files": files, "deadline": global_search.DEADLINE_S,
+                      "progressFile": progress_path}).encode("utf-8")
     argv = _search_argv("global_search", global_search)
     key = ("find:" + tag)[:200] if tag else ""
     try:
         proc = _ws_search_start(key, seq, argv)
     except OSError as e:
+        Path(progress_path).unlink(missing_ok=True)
         return 500, {"error": f"search_failed: {e}"}
     if proc is None:
+        Path(progress_path).unlink(missing_ok=True)
         return 409, {"error": "cancelled"}
+    progress_key = "search:" + (tag or "global") + ":" + str(seq)
+    progress.set_progress(progress_key, "Searching transcripts", 0, len(files), progress_path)
     try:
         out, err = proc.communicate(req, timeout=global_search.DEADLINE_S + 10)
     except subprocess.TimeoutExpired:
@@ -8725,6 +8734,8 @@ def _find_deep(q: str, tag: str, seq: int) -> tuple[int, dict]:
         return 504, {"error": "search_timed_out"}
     finally:
         _ws_search_done(key, proc)
+        progress.clear(progress_key)
+        Path(progress_path).unlink(missing_ok=True)
     if proc.ws_cancelled:
         return 409, {"error": "cancelled"}
     try:
@@ -9649,7 +9660,14 @@ def load_sessions(n: int = 200) -> list[dict]:
             rows = hit[2]
         else:
             gen = _SESS_GEN
-            rows = _load_sessions_uncached(n)
+            key = f"sessions:{n}" if hit is None else ""
+            if key:
+                progress.set_progress(key, "Finding conversations")
+            try:
+                rows = _load_sessions_uncached(n, progress_key=key)
+            finally:
+                if key:
+                    progress.clear(key)
             _SESS_CACHE[n] = (time.time(), gen, rows)
             global _SESS_FIRST_SAVED
             if not _SESS_FIRST_SAVED:
@@ -9761,7 +9779,7 @@ def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
 _PAST_FOUND: dict[str, list[dict]] | None = None     # None: no load yet
 
 
-def _load_sessions_uncached(n: int = 200) -> list[dict]:
+def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     """Unified view: recent transcripts with live-state overlaid where applicable.
     Sorted by updatedAt desc, so active live sessions naturally float to the top.
     `n` bounds the task rows (_cut_task_rows); the sessions no task holds have
@@ -9775,6 +9793,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             continue
         rows.append((mtime, jsonl))
     rows.sort(reverse=True)
+    if progress_key:
+        progress.set_progress(progress_key, "Reading session files", 0, len(rows))
     labels = load_labels()
     parents_map = load_parents()
     archived_set = load_archived()
@@ -9820,6 +9840,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for i, (mtime, jsonl) in enumerate(rows):
+        if progress_key and i % 25 == 0:
+            progress.set_progress(progress_key, "Reading session files", i, len(rows))
         if len(out) >= own_cap:
             break
         # Past the newest own_cap files only what no task holds is looked for,
@@ -9959,6 +9981,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                     and cs.session_id not in archived_set
                     and _norm_cwd(cs.cwd) not in codex_live))
     try:
+        if progress_key:
+            progress.set_progress(progress_key, "Reading Codex conversations")
         codex_sessions = agents.get_agent("codex").list_sessions(
             limit=own_cap, dropped=_codex_dropped, max_age=SESSION_LIST_MAX_AGE)
     except Exception:
@@ -10028,6 +10052,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     # as a live claude row + a codex history row). Matched by agent session id
     # and per-agent subfolder cwd.
     room_rows: list[dict] = []
+    if progress_key:
+        progress.set_progress(progress_key, "Preparing task list")
     # Attention states for the same rooms, so a row can be marked without a
     # second lookup. Cached and independent of everything above — this adds no
     # measurable work to an already-slow endpoint.
@@ -13145,7 +13171,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "not_read"})
                 return
             if out.get("sig") and out["sig"] == q.get("sig", [""])[0]:
-                out = {"sig": out["sig"], "same": True}
+                out = {"sig": out["sig"], "same": True,
+                       **({"progress": out["progress"]} if out.get("progress") else {})}
             self._send_json(404 if out.get("error") else 200, out)
             return
         if p == "/api/attention":
@@ -13153,7 +13180,7 @@ class Handler(BaseHTTPRequestHandler):
             # (rooms + live-session files + the in-memory PTY registry, all
             # cached) so the page can poll it every few seconds; it shares
             # nothing with /api/sessions or /api/projects, which are slow.
-            self._send_json(200, attention.snapshot())
+            self._send_json(200, {**attention.snapshot(), "progress": progress.snapshot()})
             return
         if p == "/api/agent/hooks":
             # What the Claude agents' hooks last said, and the newest events:
