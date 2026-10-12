@@ -239,15 +239,17 @@ def force(st: dict | None, by: str) -> bool:
 
 
 def end(st: dict, state: str, why: str, now: float) -> list[dict]:
-    """End a drain (cancelled | failed | done). Returns what it held, for the
-    caller to let go of; each item stays on file under ``pending`` until it
-    is let go (``settle``), so a hub that dies in between replays it."""
+    """End a drain (cancelled | failed | done). Returns everything not let go
+    yet, for the caller to let go of: what this drain held and what an earlier
+    one still had pending (carried over by ``request``). Each item stays on
+    file under ``pending`` until it is let go (``settle``), so a hub that dies
+    in between replays it."""
     st["state"] = state
     st["outcome"] = why
     st["endedAt"] = now
     held, st["held"] = list(st.get("held") or []), []
     st.setdefault("pending", []).extend(held)
-    return held
+    return list(st["pending"])
 
 
 def settle(st: dict, item: dict) -> None:
@@ -302,6 +304,9 @@ def view(st: dict | None, now: float) -> dict:
 
 LOCK = threading.RLock()
 _CACHE: tuple[str, dict | None] | None = None
+# hids of the held items a thread of this process is letting go (or waits
+# to try again): a later drain that carried them leaves them to it.
+_INFLIGHT: set[str] = set()
 WAKE = threading.Event()        # a request or a ready: tick now, not in 2 s
 
 
@@ -343,6 +348,7 @@ def reset() -> None:
     global _CACHE
     with LOCK:
         _CACHE = None
+        _INFLIGHT.clear()
 
 
 def holding() -> bool:
@@ -398,6 +404,8 @@ RETRY_S = 15                    # a restart refused for the lease is tried again
 LEASE_GONE_S = 5                # the lease gone this long after the start: the helper gave up
 RESTORE_WAIT_S = 600            # a hub back on the port waits this long for the helper's restore
 CANCEL_RELEASE_S = 60           # a hub that died mid-drain lets go this long after it is back
+MAX_TRIES = 3                   # a held item not handed over: tried this often, then failed
+RETRY_S = 30                    # between those tries
 
 
 def _log(msg: str) -> None:
@@ -814,7 +822,11 @@ def release(held: list, after_s: float = 0.0, wait_rooms: bool = False,
     room the usual way (behind a resume under way: after its line), then
     wakes, reviews and task starts. ``wait_rooms``: those wait until their
     room's resume is through; ``late_rooms`` (the PO the restart helper types
-    to) wait ``after_s`` more."""
+    to) wait ``after_s`` more. An item a thread of this process is already
+    letting go (an earlier drain's, carried into this one) is left to it."""
+    with LOCK:
+        held = [it for it in held if not it.get("hid") or it["hid"] not in _INFLIGHT]
+        _INFLIGHT.update(it["hid"] for it in held if it.get("hid"))
     if not held:
         return None
 
@@ -847,23 +859,100 @@ def _resuming(room_id: str) -> bool:
 
 
 def _release_one(h, it: dict) -> None:
+    """Let go of one item. It leaves the file only once it was handed over;
+    a failed try is retried ``RETRY_S`` later, ``MAX_TRIES`` times in all
+    (the count is on file, so a hub that stops in between goes on counting);
+    then it is moved to ``failed``, logged, and the PO told once."""
+    hid = it.get("hid")
     try:
-        _deliver(h, it)
-    finally:
-        with LOCK:
-            st = current()
-            if st and st.get("pending"):
+        why = _deliver(h, it)
+    except BaseException as e:      # noqa: BLE001 — never leave it claimed
+        why = repr(e)
+    if not hid:                     # a line made when the drain ended: once
+        return
+    gave_up = False
+    with LOCK:
+        st = current()
+        mine = next((p for p in (st or {}).get("pending") or [] if p.get("hid") == hid), None)
+        if not why:
+            if mine is not None:
                 settle(st, it)
                 save(st)
+            _INFLIGHT.discard(hid)
+            return
+        tries = (mine or it).get("tries", 0) + 1
+        it.update(tries=tries, lastError=why)
+        if mine is not None:
+            mine.update(tries=tries, lastError=why)
+        if tries >= MAX_TRIES:
+            gave_up = True
+            if mine is not None:
+                settle(st, it)
+            if st is not None:
+                st.setdefault("failed", []).append({**it, "failedAt": time.time()})
+            _INFLIGHT.discard(hid)
+        if st is not None:
+            save(st)
+    if gave_up:
+        _give_up(h, st or {}, it, why)
+        return
+    _log(f"could not let go of a {it.get('kind')} for {it.get('roomId')} "
+         f"(try {tries} of {MAX_TRIES}): {why}; again in {RETRY_S} s")
+
+    def again():
+        time.sleep(RETRY_S)
+        _release_one(h, it)
+    threading.Thread(target=again, daemon=True, name="restart-drain-retry").start()
 
 
-def _deliver(h, it: dict) -> None:
+def _give_up(h, st: dict, it: dict, why: str) -> None:
+    rid, kind = it.get("roomId") or "", it.get("kind")
+    _log(f"FAILED: a {kind} for {rid} held for the restart was not let go after "
+         f"{MAX_TRIES} tries: {why}")
+    if kind == "send" and it.get("key"):
+        try:
+            _d.sends.mark(rid, [it["key"]], "failed", f"held for the restart, then: {why}")
+        except Exception as e:      # noqa: BLE001
+            _log(f"send {it['key']} not marked failed: {e!r}")
+    room = None
+    try:
+        room = _d.chatroom.get_room(rid, public=False)
+    except Exception:               # noqa: BLE001
+        pass
+    what = (room or {}).get("title") or rid
+    text = (f"{DRAIN_PREFIX}A {kind} held for the restart ({what}) could not be let go after "
+            f"{MAX_TRIES} tries: {why}. It is not tried again.")
+    told = False
+    for r in _requesters(st):
+        try:
+            told = bool(h._ring(r["roomId"], [r.get("identity", "")], text)) or told
+        except Exception as e:      # noqa: BLE001
+            _log(f"{r['roomId']} not told of the failed {kind}: {e!r}")
+    if not told:
+        # Nobody asked (the dashboard) or the PO that asked is stopped: a
+        # notice in the PO chat of the task's project.
+        try:
+            pid = _d.room_project(rid)
+        except Exception:           # noqa: BLE001
+            pid = ""
+        _keys, po_rooms = _names()
+        for po_rid, p in po_rooms.items():
+            if p.get("id") == pid:
+                try:
+                    _d.chatroom.post_notice(po_rid, _d.digest.SENDER, text,
+                                            {"noticeKind": _d.RESTART_NOTICE_KIND})
+                except Exception as e:      # noqa: BLE001
+                    _log(f"no notice in {po_rid}: {e!r}")
+
+
+def _deliver(h, it: dict) -> str:
+    """Hand one item over. Returns "" when it was, else why not."""
     rid = it.get("roomId") or ""
     kind = it.get("kind")
     try:
         room = _d.chatroom.get_room(rid, public=False)
         if room is None:
-            return
+            return "the task is gone"
         if kind == "send":
             if it.get("key"):
                 _d.sends.release_after_restart(rid, [it["key"]])
@@ -879,15 +968,16 @@ def _deliver(h, it: dict) -> None:
         elif kind == "review":
             msg = next((m for m in room.get("messages") or []
                         if m.get("id") == it.get("messageId")), None)
-            if msg is not None:
-                h._start_review(rid, it.get("identity", ""), msg)
+            if msg is None:
+                return "its review request is gone"
+            h._start_review(rid, it.get("identity", ""), msg)
         elif kind == "wake":
+            # An agent that is not running is not woken: as without a drain.
             h._ring(rid, [it.get("identity", "")], it.get("text", ""))
         _log(f"let go: {kind} for {rid}" + (f"/{it['identity']}" if it.get("identity") else ""))
+        return ""
     except Exception as e:      # noqa: BLE001 — one item never stops the rest
-        _log(f"could not let go of a {kind} for {rid}: {e!r}")
-        if kind == "send" and it.get("key"):
-            _d.sends.mark(rid, [it["key"]], "failed", f"held for the restart, then: {e}")
+        return repr(e)
 
 
 def not_restarted(lease: str) -> None:
@@ -978,13 +1068,12 @@ def on_startup() -> None:
         # A hub that stopped while it let go of what a drain held: the rest
         # goes in once the rooms are back.
         if st.get("pending"):
-            items = list(st["pending"])
-            _log(f"{len(items)} held item(s) not let go before the hub stopped: "
+            _log(f"{len(st['pending'])} held item(s) not let go before the hub stopped: "
                  f"let go in {CANCEL_RELEASE_S} s")
 
             def later():
                 time.sleep(CANCEL_RELEASE_S)
-                release(items)
+                release(list((current() or {}).get("pending") or []))
             threading.Thread(target=later, daemon=True, name="restart-drain-end").start()
         return
     if st.get("state") == "draining":

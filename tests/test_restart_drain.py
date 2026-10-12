@@ -198,9 +198,14 @@ class Drain(_Hub):
         self.addCleanup(self.join_release)
 
     def join_release(self, timeout=8):
-        for t in threading.enumerate():
-            if t.name == "restart-drain-release":
-                t.join(timeout)
+        end = time.time() + timeout
+        while time.time() < end:
+            left = [t for t in threading.enumerate()
+                    if t.name in ("restart-drain-release", "restart-drain-retry")]
+            if not left:
+                return
+            for t in left:
+                t.join(max(0.0, end - time.time()))
 
     def po_by(self):
         return {"roomId": self.po, "identity": "claude", "label": "the Ensemble PO"}
@@ -378,6 +383,109 @@ class Drain(_Hub):
         self.assertFalse(rd.holding())
         self.assertIn("paused at a safe point and resumed: ready", rd.current()["outcome"])
         self.assertIn("cut off and resumed: cut", rd.current()["outcome"])
+
+    def hold_a_send(self, rid, key, text):
+        sends.accept(rid, key, text, "")
+        self.handler_obj._resume_room(chatroom.get_room(rid, public=False), text=text, key=key)
+
+    def test_a_second_drain_that_restarts_lets_go_of_what_the_first_still_had(self):
+        busy = self.room(title="busy")
+        busy_pty = self.running(busy, "claude", "working")
+        rd.request_restart("first", self.po_by())
+        rd.drain_tick()
+        self.hold_a_send(busy, "send:1", "held by the first drain")
+        with mock.patch.object(rd, "release", lambda *a, **k: None):   # its thread never ran
+            rd.cancel_drain("the dashboard")
+        rd.request_restart("second", self.po_by())
+        self.assertEqual([it["key"] for it in rd.current()["pending"]], ["send:1"])
+        rd.force_drain("the dashboard")
+        rd.drain_tick()
+        self.assertEqual(rd.current()["state"], "restarting")
+        dashboard.take_restart_snapshot(self.lease_id, wake_room=self.po)
+        path = self.dir / "restart-snapshot.json"
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        snap["hubPid"] = os.getpid() + 1
+        path.write_text(json.dumps(snap), encoding="utf-8")
+        self.hub_stops()
+        rd.reset()
+        self.handler_obj._restore_after_restart(self.lease_id)
+        self.join()
+        self.join_release()
+        self.join()
+        typed = "\n".join(self.typed(busy)["claude"])
+        self.assertEqual(typed.count("held by the first drain"), 1)
+        self.assertEqual(rd.current()["pending"], [])
+
+    def test_a_second_drain_leaves_a_release_under_way_to_it(self):
+        busy = self.room(title="busy")
+        busy_pty = self.running(busy, "claude", "working")
+        rd.request_restart("first", self.po_by())
+        rd.drain_tick()
+        self.hold_a_send(busy, "send:1", "held by the first drain")
+        real, go, calls = rd._deliver, threading.Event(), []
+
+        def slow(h, it):
+            calls.append(it.get("key"))
+            go.wait(5)
+            return real(h, it)
+        with mock.patch.object(rd, "_deliver", slow):
+            rd.cancel_drain("the dashboard")             # its release starts, and waits
+            rd.request_restart("second", self.po_by())
+            rd.cancel_drain("the dashboard")             # carries send:1: left to the first
+            go.set()
+            self.join_release()
+        self.assertEqual(calls.count("send:1"), 1)
+        self.assertEqual(self.ptys[busy_pty].typed.count(
+            next(t for t in self.ptys[busy_pty].typed if "held by the first drain" in t)), 1)
+        self.assertEqual(rd.current()["pending"], [])
+
+    def test_a_failed_handover_is_tried_again(self):
+        busy = self.room(title="busy")
+        self.running(busy, "claude", "working")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        self.hold_a_send(busy, "send:1", "after")
+        real, calls = rd._deliver, []
+
+        def flaky(h, it):
+            if it.get("kind") != "send":
+                return real(h, it)
+            calls.append(1)
+            return "no terminal yet" if len(calls) == 1 else real(h, it)
+        with mock.patch.object(rd, "_deliver", flaky), mock.patch.object(rd, "RETRY_S", 0):
+            rd.cancel_drain("the dashboard")
+            self.join_release()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(rd.current()["pending"], [])
+        self.assertNotIn("failed", rd.current())
+        self.assertIn("try 1 of 3", self.log())
+
+    def test_an_item_never_handed_over_fails_after_three_tries_and_the_po_is_told_once(self):
+        busy = self.room(title="busy")
+        self.running(busy, "claude", "working")
+        po_pty = self.running(self.po, "claude", "idle")
+        rd.request_restart("x", self.po_by())
+        rd.drain_tick()
+        self.hold_a_send(busy, "send:1", "after")
+        real, calls = rd._deliver, []
+
+        def gone(h, it):
+            if it.get("kind") != "send":
+                return real(h, it)
+            calls.append(1)
+            return "the task is gone"
+        with mock.patch.object(rd, "_deliver", gone), mock.patch.object(rd, "RETRY_S", 0):
+            rd.cancel_drain("the dashboard")
+            self.join_release()
+        self.assertEqual(len(calls), 3)
+        st = rd.current()
+        self.assertEqual(st["pending"], [])
+        self.assertEqual([(f["key"], f["tries"], f["lastError"]) for f in st["failed"]],
+                         [("send:1", 3, "the task is gone")])
+        self.assertIn("FAILED: a send", self.log())
+        told = [t for t in self.ptys[po_pty].typed if "could not be let go after 3 tries" in t]
+        self.assertEqual(len(told), 1)
+        self.assertEqual(sends.get(busy, "send:1")["state"], "failed")
 
     def test_a_running_review_is_started_again_with_where_it_said_it_would_carry_on(self):
         team = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"], title="team")
