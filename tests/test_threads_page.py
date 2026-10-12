@@ -120,7 +120,7 @@ async function main() {
         return out;
       })()`);
       await shot('0-progress-during');
-      await until('!document.getElementById("ens-progress").hidden && !document.getElementById("ens-progress").classList.contains("indeterminate")', 15000);
+      await until('!document.getElementById("ens-progress").hidden && document.getElementById("ens-progress").textContent.includes("Sorting messages into threads") && !document.getElementById("ens-progress").classList.contains("indeterminate")', 15000);
       o.progressCount = await evalIn('document.getElementById("ens-progress").textContent');
       await shot('0-progress-count');
       await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);

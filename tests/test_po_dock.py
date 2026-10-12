@@ -828,6 +828,35 @@ async function main() {
     for (const [w, h, mob] of [[1400, 900, false], [1800, 1000, false], [390, 844, true]]) {
       const q = await page(w, h, mob);
       await go(q); await ready(q);
+      if (w === 1800 || w === 390) {
+        // A docked chat owns its progress. Other chats' hub work must not
+        // produce a second bar over the dashboard behind the iframe.
+        await sleep(600);
+        out.dockProgress ||= {};
+        out.dockProgress[w] = await q.evalIn(`(async () => {
+          while (_attnInFlight) await new Promise(r => setTimeout(r, 25));
+          const original = api;
+          try {
+            api = async path => path === '/api/attention'
+              ? { items: [], count: 0, progress: { 'thread:another-chat': {phase:'Sorting messages into threads',done:1,total:8} } }
+              : original(path);
+            await updateRoomsBadge();
+          } finally { api = original; }
+          const w = pdChatFrame().contentWindow;
+          w.EnsembleProgress.set('docked-build', {phase:'Sorting messages into threads',done:1,total:8});
+          await new Promise(r => setTimeout(r, 450));
+          const outer = document.getElementById('ens-progress'), inner = w.document.getElementById('ens-progress');
+          return {outerHidden: outer.hidden, innerShown: !inner.hidden, innerText: inner.textContent,
+            scrollX: document.documentElement.scrollWidth - innerWidth};
+        })()`);
+        await q.shot(`progress-docked-${w}-during`);
+        await q.evalIn('pdChatFrame().contentWindow.EnsembleProgress.clear("docked-build"); 0');
+        await sleep(400);
+        out.dockProgress[w].afterHidden = await q.evalIn('pdChatFrame().contentDocument.getElementById("ens-progress").hidden');
+        await q.shot(`progress-docked-${w}-after`);
+        await sleep(6000);
+        out.dockProgress[w].warmDashboardHidden = await q.evalIn('document.getElementById("ens-progress").hidden');
+      }
       for (const theme of ['light', 'dark', 'contrast', 'intellij-dark']) {
         // As the avatar menu does: stored (the chat hears it by a storage event) and applied here.
         await q.evalIn(`(() => { const s = ({ light: 'light', dark: 'dark', contrast: 'light', 'intellij-dark': 'dark' })['${theme}']; localStorage.setItem('cd-theme', '${theme}'); document.documentElement.dataset.theme = '${theme}'; document.documentElement.dataset.scheme = s; return 0; })()`);
@@ -848,6 +877,26 @@ async function main() {
         await sleep(300);
         out.phoneTab = await q.evalIn('({ front: PD.dock.frontOf("points"), chatHidden: getComputedStyle(PO_PANEL).visibility === "hidden", width: Math.round(PD.els.points.getBoundingClientRect().width) })');
         await q.shot('po-dock-390-points');
+        await q.evalIn(`(async () => {
+          while (_refreshInFlight) await new Promise(r => setTimeout(r, 25));
+          const original = window.fetch;
+          window.fetch = async (path, opts) => {
+            if (String(path).startsWith('/api/sessions?')) await new Promise(r => setTimeout(r, 1800));
+            return original(path, opts);
+          };
+          ALL_ROWS = [];
+          window.__coldList = refresh({now:true});
+          window.__coldRestore = () => { window.fetch = original; };
+          return 0;
+        })()`);
+        await sleep(1250);
+        out.coldList = await q.evalIn(`(() => { const e = document.getElementById('ens-progress'), r = e.getBoundingClientRect();
+          return { shown: !e.hidden, text: e.textContent, right: r.right, scrollX: document.documentElement.scrollWidth - innerWidth }; })()`);
+        await q.shot('progress-cold-list-390-during');
+        await q.evalIn('window.__coldList.then(() => window.__coldRestore()); 0');
+        await sleep(2200);
+        out.coldList.afterHidden = await q.evalIn('document.getElementById("ens-progress").hidden');
+        await q.shot('progress-cold-list-390-after');
       }
       await q.close();
     }
@@ -1029,6 +1078,25 @@ class InChrome(unittest.TestCase):
         self.assertFalse(f["elsewhere"] or f["pointsLine"], "Needs you is slid in: the chat shows its own points line")
         self.assertFalse(f["tabs"], "no tab row: the panels are the tabs")
         self.assertTrue(f["panels"], "Panels recovers hidden windows on a desktop")
+
+    def test_a_docked_chat_owns_its_progress_notice(self):
+        for width in (1800, 390):
+            with self.subTest(width=width):
+                got = self.got["dockProgress"][str(width)]
+                self.assertTrue(got["outerHidden"])
+                self.assertTrue(got["innerShown"])
+                self.assertIn("Sorting messages into threads", got["innerText"])
+                self.assertEqual(got["scrollX"], 0)
+                self.assertTrue(got["afterHidden"])
+                self.assertTrue(got["warmDashboardHidden"])
+
+    def test_cold_list_progress_fits_a_phone_and_leaves(self):
+        got = self.got["coldList"]
+        self.assertTrue(got["shown"], got)
+        self.assertIn("Loading task list", got["text"])
+        self.assertLessEqual(got["right"], 390)
+        self.assertEqual(got["scrollX"], 0)
+        self.assertTrue(got["afterHidden"])
 
     def test_real_workspace_and_chat_sources_carry_external_data(self):
         chat = self.got["chatDrag"]

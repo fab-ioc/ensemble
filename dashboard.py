@@ -9631,12 +9631,14 @@ def load_sessions(n: int = 200) -> list[dict]:
             rows = hit[2]
         else:
             gen = _SESS_GEN
-            key = f"sessions:{n}"
-            progress.set_progress(key, "Finding conversations")
+            key = f"sessions:{n}" if hit is None else ""
+            if key:
+                progress.set_progress(key, "Finding conversations")
             try:
-                rows = _load_sessions_uncached(n)
+                rows = _load_sessions_uncached(n, progress_key=key)
             finally:
-                progress.clear(key)
+                if key:
+                    progress.clear(key)
             _SESS_CACHE[n] = (time.time(), gen, rows)
             global _SESS_FIRST_SAVED
             if not _SESS_FIRST_SAVED:
@@ -9748,7 +9750,7 @@ def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
 _PAST_FOUND: dict[str, list[dict]] | None = None     # None: no load yet
 
 
-def _load_sessions_uncached(n: int = 200) -> list[dict]:
+def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     """Unified view: recent transcripts with live-state overlaid where applicable.
     Sorted by updatedAt desc, so active live sessions naturally float to the top.
     `n` bounds the task rows (_cut_task_rows); the sessions no task holds have
@@ -9762,7 +9764,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             continue
         rows.append((mtime, jsonl))
     rows.sort(reverse=True)
-    progress.set_progress(f"sessions:{n}", "Reading conversations", 0, len(rows))
+    if progress_key:
+        progress.set_progress(progress_key, "Reading session files", 0, len(rows))
     labels = load_labels()
     parents_map = load_parents()
     archived_set = load_archived()
@@ -9808,8 +9811,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for i, (mtime, jsonl) in enumerate(rows):
-        if i % 25 == 0:
-            progress.set_progress(f"sessions:{n}", "Reading conversations", i, len(rows))
+        if progress_key and i % 25 == 0:
+            progress.set_progress(progress_key, "Reading session files", i, len(rows))
         if len(out) >= own_cap:
             break
         # Past the newest own_cap files only what no task holds is looked for,
@@ -9949,7 +9952,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                     and cs.session_id not in archived_set
                     and _norm_cwd(cs.cwd) not in codex_live))
     try:
-        progress.set_progress(f"sessions:{n}", "Reading Codex conversations")
+        if progress_key:
+            progress.set_progress(progress_key, "Reading Codex conversations")
         codex_sessions = agents.get_agent("codex").list_sessions(
             limit=own_cap, dropped=_codex_dropped, max_age=SESSION_LIST_MAX_AGE)
     except Exception:
@@ -10019,7 +10023,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     # as a live claude row + a codex history row). Matched by agent session id
     # and per-agent subfolder cwd.
     room_rows: list[dict] = []
-    progress.set_progress(f"sessions:{n}", "Preparing task list")
+    if progress_key:
+        progress.set_progress(progress_key, "Preparing task list")
     # Attention states for the same rooms, so a row can be marked without a
     # second lookup. Cached and independent of everything above — this adds no
     # measurable work to an already-slow endpoint.

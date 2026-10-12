@@ -266,7 +266,7 @@ def _rec(sid: str, mid: str, t: dict) -> dict:
     return r
 
 
-def _session_balloons(sid: str) -> list[dict]:
+def _session_balloons(sid: str, on_turn=None) -> list[dict]:
     """One session's balloons, read again only when its transcript changed."""
     st = points._session_stat(sid)
     with _LOCK:
@@ -274,7 +274,12 @@ def _session_balloons(sid: str) -> list[dict]:
         if hit is not None and st is not None and hit[0] == st:
             return hit[1]
     turns = _d.read_session_turns(sid) or []
-    recs = [_rec(sid, mid, t) for mid, t in _d.page_turn_ids(sid, turns)]
+    entries = _d.page_turn_ids(sid, turns)
+    recs = []
+    for number, (mid, turn) in enumerate(entries, 1):
+        recs.append(_rec(sid, mid, turn))
+        if on_turn and (number == 1 or number % 50 == 0 or number == len(entries)):
+            on_turn(number, len(entries))
     if st is not None:
         with _LOCK:
             _BAL.pop(sid, None)
@@ -290,13 +295,14 @@ def _sessions(room: dict, led: dict) -> list[str]:
     return [s for s in points._session_ids(room, led) if _d._solo_owner(room, s) is not None]
 
 
-def balloons(room: dict, led: dict, on_session=None) -> list[dict]:
+def balloons(room: dict, led: dict, on_session=None, on_turn=None) -> list[dict]:
     """Every balloon of the chat, oldest first: each session's in order, the
     sessions by their first balloon's time."""
     per = []
     sids = _sessions(room, led)
     for number, sid in enumerate(sids, 1):
-        recs = _session_balloons(sid)
+        recs = _session_balloons(sid, (lambda done, total: on_turn(number, len(sids), done, total))
+                                if on_turn else None)
         if recs:
             first = next((r["ts"] for r in recs if r["ts"]), 0.0)
             per.append((first, sid, recs))
@@ -621,7 +627,9 @@ def build(room_id: str, room: dict | None = None) -> dict | None:
     side = load_side(room_id)
     key = "thread:" + room_id
     recs = balloons(room, led, lambda done, total:
-                    progress.set_progress(key, "Reading conversations", done, total))
+                    progress.set_progress(key, "Reading conversations", done, total),
+                    lambda session, sessions, done, total:
+                    progress.set_progress(key, f"Reading conversation {session} of {sessions}", done, total))
     task_of = points.task_lookup(room_id, room)
     progress.set_progress(key, "Sorting messages into threads", 0, len(recs))
     out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",

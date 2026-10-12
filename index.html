@@ -7765,8 +7765,11 @@ const UNASSIGNED_ID = '__unassigned__';
 function projectById(id) { return (PROJECTS && PROJECTS.projects || []).find(p => p.id === id) || null; }
 function registeredProjects() { return (PROJECTS && PROJECTS.projects || []).filter(p => p.registered); }
 async function refreshProjects() {
+  const progressKey = 'projects:' + Date.now();
+  globalThis.EnsembleProgress?.set(progressKey, {phase: 'Loading projects'});
   try { PROJECTS = await api('/api/projects'); _projFailed = false; _projTs = Date.now(); }
   catch (e) { _projFailed = true; }
+  finally { globalThis.EnsembleProgress?.clear(progressKey); }
 }
 function viewSwitchHtml() {
   const b = (m, label) => `<button data-view="${m}" class="${VIEW_MODE === m ? 'on' : ''}">${label}</button>`;
@@ -16247,7 +16250,8 @@ async function refresh({ now = false, until = 0 } = {}) {
   // in a background tab must not sit empty until someone looks at it.
   else if (selectInteracting() || _refreshInFlight || (document.hidden && ALL_ROWS.length)) return;
   _refreshInFlight = true;
-  globalThis.EnsembleProgress?.set('task-list', {phase: 'Loading task list'});
+  const showListProgress = !ALL_ROWS.length || now;
+  if (showListProgress) globalThis.EnsembleProgress?.set('task-list', {phase: 'Loading task list'});
   try {
     const data = await api('/api/sessions?n=300',
       until ? { signal: AbortSignal.timeout(Math.max(1, until - Date.now())) } : undefined);
@@ -16281,10 +16285,13 @@ async function refresh({ now = false, until = 0 } = {}) {
     if (!_projInFlight && Date.now() - _projTs > 5000) {   // projects grouping refreshes on a slower cadence (git status is heavy)
       _projTs = Date.now();
       _projInFlight = true;
+      const projectProgressKey = 'projects-poll:' + Date.now();
+      const showProjectProgress = !PROJECTS;
+      if (showProjectProgress) globalThis.EnsembleProgress?.set(projectProgressKey, {phase: 'Loading projects'});
       // Which attention item is a PO's is known only once the projects are.
       api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); })
         .catch(() => { _projFailed = true; renderRows(); })   // older server without /api/projects → fall back to the flat list
-        .finally(() => { _projInFlight = false; });
+        .finally(() => { if (showProjectProgress) globalThis.EnsembleProgress?.clear(projectProgressKey); _projInFlight = false; });
     }
     renderRows();
     if (SELECTED_SID) renderDetail();
@@ -16299,7 +16306,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden) || document.body.classList.contains('po-dock')) toast('refresh failed: ' + e.message, 4000, 'err');
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
-    globalThis.EnsembleProgress?.clear('task-list');
+    if (showListProgress) globalThis.EnsembleProgress?.clear('task-list');
     _refreshInFlight = false;
     FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
   }
@@ -16394,7 +16401,7 @@ async function findRun() {
     const quick = await findAsk(q, false, seq);
     if (stale()) return;
     FIND.res = quick; FIND.resQ = q; FIND.phase = 'deep';
-    globalThis.EnsembleProgress?.set('deep-search', {phase: 'Searching conversations'});
+    globalThis.EnsembleProgress?.set('deep-search', {phase: 'Searching transcripts'});
     if (findActive().i < 0) { const first = findItems(quick)[0]; FIND.key = first ? findKey(first) : ''; }
     findPaint();
     if (FIND.enter && findItems(quick).length) { findGoActive(); return; }
@@ -17048,7 +17055,12 @@ async function updateRoomsBadge() {
   try {
     const snap = await api('/api/attention');
     ATTENTION = snap || { items: [], count: 0 };
-    globalThis.EnsembleProgress?.sync('hub:', ATTENTION.progress || {});
+    const work = ATTENTION.progress || {}, shown = {};
+    if (!ALL_ROWS.length && work['sessions:300']) shown['sessions:300'] = work['sessions:300'];
+    const ownSearch = typeof FIND_TAG !== 'undefined' && typeof FIND !== 'undefined' && FIND.busy
+      ? 'search:' + FIND_TAG + ':' + FIND.seq : '';
+    if (ownSearch && work[ownSearch]) shown[ownSearch] = work[ownSearch];
+    globalThis.EnsembleProgress?.sync('hub:', shown);
     ATTENTION_BY_ROOM = new Map((ATTENTION.items || []).map(i => [i.roomId, i]));
     renderAttention();
   } catch (e) {

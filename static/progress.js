@@ -7,16 +7,23 @@
     node = document.createElement('div');
     node.id = 'ens-progress'; node.hidden = true;
     node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite');
-    node.innerHTML = '<span id="ens-progress-label"></span><span id="ens-progress-track" role="progressbar"><span id="ens-progress-fill"></span></span>';
+    node.innerHTML = '<span id="ens-progress-label"></span><span id="ens-progress-track" role="progressbar" aria-labelledby="ens-progress-label"><span id="ens-progress-fill"></span></span>';
     document.body.appendChild(node);
     return node;
   }
   function paint() {
     clearTimeout(hideTimer);
     const box = ensure();
-    const item = [...work.values()].at(-1);
+    const entries = [...work.entries()];
+    const local = entries.filter(([key]) => !key.startsWith('hub:'));
+    const action = local.filter(([key]) => key !== 'task-list' && key !== 'deep-search').at(-1);
+    const item = (action
+      || (work.has('deep-search') && entries.filter(([key]) => key.startsWith('hub:search:')).at(-1))
+      || (work.has('task-list') && entries.find(([key]) => key === 'hub:sessions:300'))
+      || local.at(-1) || entries.at(-1))?.[1];
     if (!item) {
       clearTimeout(showTimer);
+      showTimer = 0;
       if (!box.hidden) {
         box.classList.add('ens-progress-leaving');
         hideTimer = setTimeout(() => { if (!work.size) box.hidden = true; box.classList.remove('ens-progress-leaving'); }, 320);
