@@ -505,6 +505,9 @@ def load(room_id: str) -> dict:
         return json.loads(json.dumps(led))
 
 
+SAVES: dict[str, int] = {}     # room id → ledger saves by this hub (two in one clock tick share an mtime)
+
+
 def _save(room_id: str, led: dict) -> None:
     p = _path(room_id)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -531,6 +534,7 @@ def _save(room_id: str, led: dict) -> None:
             tmp.unlink()
         except OSError:
             pass
+    SAVES[room_id] = SAVES.get(room_id, 0) + 1
     try:
         _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(json.dumps(led)))
     except OSError:

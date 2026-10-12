@@ -777,8 +777,8 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     return out
 
 
-def _approved_settles(room_id: str, mid: str, n: int) -> bool:
-    found = balloon_asks(room_id, mid)
+def _approved_settles(room_id: str, mid: str, n: int, room: dict | None = None) -> bool:
+    found = balloon_asks(room_id, mid, room)
     return n < len(found) and found[n]["recommended"] >= 0
 
 
@@ -795,6 +795,15 @@ _RE_POINT = re.compile(r"^(?:[ \t]*[-*+][ \t]+|[ ]{0,3})(?:[-*+][ \t]+|#{1,6}[ \
 _POINT_ID = re.compile(r"P\d{1,5}[a-z]?", re.I)
 _CARDS: dict[str, tuple] = {}   # room id → (signature, {mid: (ts, [questions], {pid: [n]})})
 _SID_CARDS: dict[str, tuple] = {}   # sid → (stat, [(mid, ts, [questions], {pid: [n]})])
+_OPEN: dict[str, tuple] = {}    # room id → (key, open_cards' list)
+
+
+def _room_of(summary: dict | None) -> dict | None:
+    """The room a summary is of: the summary itself when it is a whole room
+    (the chat's poll has just read it), else read."""
+    if summary and "messages" in summary and "participants" in summary:
+        return summary
+    return _d.chatroom.get_room((summary or {}).get("id", ""))
 
 
 def _heads(text: str) -> list[tuple[int, list[str]]]:
@@ -888,7 +897,7 @@ def _room_cards(summary: dict) -> tuple[dict, set]:
     unchanged (a rotated-out one never changes): a chat full of point chips
     asks for each point, and every one reads this."""
     rid = summary.get("id", "")
-    room = _d.chatroom.get_room(rid)
+    room = _room_of(summary)
     if room is None:
         return {}, set()
     sids, _current, sig = _cards_sig(room)
@@ -971,11 +980,34 @@ def open_cards(summary: dict, led: dict | None = None) -> list[dict]:
     that links to it, or follows up an answer it is (a comment on a passage,
     a quote). Writing about something else does not answer it (unlike
     :func:`open_in`'s ``asksSettledAt``, which only says it no longer rings).
-    A Done task's cards wait for nobody."""
+    A Done task's cards wait for nobody.
+
+    Worked out once per room while its cards (:func:`_cards_sig`) and its
+    ledger file are unchanged: the chat polls every few seconds, and the
+    approved cards each read their balloon again. ``led`` is the ledger as
+    saved (a caller's unsaved change is not seen until it is saved)."""
     rid = (summary or {}).get("id", "")
     if not rid or _d.normalize_workflow(summary.get("workflow")) == "done":
         return []
-    cards, _read = _room_cards(summary)
+    room = _room_of(summary)
+    if room is None:
+        return []
+    sig = _cards_sig(room)[2]
+    try:
+        key = (sig, _d.points._path(rid).stat().st_mtime_ns, _d.points.SAVES.get(rid, 0))
+    except OSError:
+        key = None
+    hit = _OPEN.get(rid)
+    if hit is not None and key is not None and hit[0] == key and _CARDS.get(rid, (None,))[0] == sig:
+        return [dict(c) for c in hit[1]]
+    out = _open_cards(rid, room, led)
+    if key is not None:
+        _OPEN[rid] = (key, out)
+    return [dict(c) for c in out]
+
+
+def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
+    cards, _read = _room_cards(room)
     if not cards:
         return []
     if led is None:
@@ -997,7 +1029,7 @@ def open_cards(summary: dict, led: dict | None = None) -> list[dict]:
             continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):
-            if str(n) in got or (mid in approved and _approved_settles(rid, mid, n)):
+            if str(n) in got or (mid in approved and _approved_settles(rid, mid, n, room)):
                 continue
             pids = sorted(pid for pid, ns in (by_point or {}).items() if n in ns)
             refs = _d.points.task_refs(q)
@@ -1057,7 +1089,7 @@ def cards_ready(summary: dict) -> bool:
     not read a transcript)."""
     rid = (summary or {}).get("id", "")
     hit = _CARDS.get(rid)
-    return hit is not None and hit[0] == _cards_sig(_d.chatroom.get_room(rid))[2]
+    return hit is not None and hit[0] == _cards_sig(_room_of(summary))[2]
 
 
 _WARMING: set = set()
@@ -1085,8 +1117,9 @@ def warm_cards(summary: dict) -> None:
     threading.Thread(target=run, name=f"cards-{rid}", daemon=True).start()
 
 
-def balloon_asks(room_id: str, mid: str) -> list[dict]:
-    room = _d.chatroom.get_room(room_id)
+def balloon_asks(room_id: str, mid: str, room: dict | None = None) -> list[dict]:
+    if room is None:
+        room = _d.chatroom.get_room(room_id)
     if room is None:
         return []
     has_po = bool(_d.room_po_id(room))

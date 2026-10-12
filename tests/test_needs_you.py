@@ -226,6 +226,27 @@ class Decisions(point_cards.Resolver):
         points._save(self.rid, led)
         self.assertEqual([c['mid'] for c in asks.open_cards(self.summary())], ['c2'])
 
+    def test_open_cards_kept_while_room_and_ledger_unchanged(self):
+        # The PO's pre-merge fix 2: a poll of an unchanged chat works nothing
+        # out again and reads no room beyond the one it was handed.
+        now = time.time()
+        self.say('c1', now - 50, 'Ask: Which one?\n- A\n- B')
+        self.say('c2', now - 40, 'Ask: What colour?\n- Red\n- Blue')
+        room = self.summary()
+        self.assertEqual([c['mid'] for c in asks.open_cards(room)], ['c2', 'c1'])
+        with mock.patch.object(asks, '_open_cards', wraps=asks._open_cards) as worked, \
+                mock.patch.object(chatroom, 'get_room', wraps=chatroom.get_room) as read:
+            got = asks.open_cards(room)
+            got[0]['question'] = 'changed by a caller'
+            self.assertEqual([c['mid'] for c in asks.open_cards(room)], ['c2', 'c1'])
+            self.assertEqual(asks.open_cards(room)[0]['question'], 'What colour?', "a caller's change stays its own")
+            self.assertEqual((worked.call_count, read.call_count), (0, 0))
+            self.answer('c1')       # the ledger is saved: worked out again
+            self.assertEqual([c['mid'] for c in asks.open_cards(room)], ['c2'])
+            self.assertEqual(worked.call_count, 1)
+        self.say('c3', now - 30, 'Ask: Ship it?\n- Yes\n- No')     # the room changed
+        self.assertEqual([c['mid'] for c in asks.open_cards(self.summary())], ['c3', 'c2'])
+
     def test_repeat_and_old_go_to_older(self):
         now = time.time()
         self.say('a', now - 9 * 86400, 'Ask: Shall I set it up?\n- Yes\n- No')
