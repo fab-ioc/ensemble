@@ -48,11 +48,19 @@ async function main() {
         await press(x, y);
       };
       const CHAT = '#po-panel iframe.po-session:not([hidden])';
-      // A point in the conversation's messages (not its composer), or one of its own elements.
+      // A point in the conversation's messages (not its composer, nor a control
+      // on a balloon: an answer's Comment adds a point to the box), or one of its own elements.
       const inChat = async (inner) => {
         const [x, y] = await evalIn(`(() => { const f = document.querySelector(${JSON.stringify(CHAT)}), a = f.getBoundingClientRect();
           const e = ${inner ? `f.contentDocument.querySelector(${JSON.stringify(inner)})` : 'null'};
-          if (!e) return [a.left + a.width / 2, a.top + Math.min(160, a.height / 3)];
+          if (!e) {
+            const m = f.contentDocument.querySelector('#msgs').getBoundingClientRect();
+            for (let y = Math.min(160, a.height / 3); y < m.bottom; y += 8) {
+              const t = f.contentDocument.elementFromPoint(a.width / 2, y);
+              if (t && t.closest('#msgs') && !t.closest('a, button, input, textarea, select, summary, [role=button], .pt-bar')) return [a.left + a.width / 2, a.top + y];
+            }
+            return [a.left + a.width / 2, a.top + Math.min(160, a.height / 3)];
+          }
           const b = e.getBoundingClientRect(); return [a.left + b.left + b.width / 2, a.top + b.top + b.height / 2]; })()`);
         await press(x, y);
       };

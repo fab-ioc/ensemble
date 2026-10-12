@@ -71,7 +71,7 @@ const ctx = { esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<
   attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { CHAT_NAMES, forCeo, gapsOf, gapWords, gapRowHtml, chatBarNote, hasReMarks, pointMaps, pointsListHtml, pointBarHtml, heldBy, PT_WORD };`, ctx);
+  globalThis.t = { CHAT_NAMES, forCeo, gapsOf, gapWords, gapRowHtml, chatBarNote, hasReMarks, pointMaps, pointsListHtml, pointBarHtml, heldBy, PT_WORD, PT_FOLDS };`, ctx);
 const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = {};
@@ -138,7 +138,10 @@ out.word = T.PT_WORD.followed;
 // leads to the words it quoted; one whose answer has the paragraph leads there.
 const pv2 = { ...pv, items: [...pv.items.map(p => p.id === 'P2' ? { ...p, state: 'followed', followedBy: 'P3' } : p),
   { id: 'P3', state: 'open', text: '**1.** > test_login\n\nWhich file?', createdAt: 130, mid: 'u3', replyTo: 'P2', comment: true, quote: 'test_login', answers: [] }] };
+// P3 waits on the PO: it is under the With the PO fold, opened here.
+T.PT_FOLDS.add('po');
 out.listQ = T.pointsListHtml(T.pointMaps(pv2), href, 2000);
+T.PT_FOLDS.delete('po');
 console.log(JSON.stringify(out));
 """
 
@@ -255,6 +258,9 @@ async function main() {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
+    // The asks line is read with P2's answer on screen: the chat seeing it (#209) would take it out of the list.
+    await c.send('Network.enable', {}, sessionId);
+    await c.send('Network.setBlockedURLs', { urls: ['*/api/room/points/seen*'] }, sessionId);
     await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: !!mobile }, sessionId);
     if (mobile) await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sessionId);
     const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
@@ -285,7 +291,10 @@ async function main() {
       // The asks line: P2 with its answer's words, its thread, 👍 and Comment.
       await p.evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
       await sleep(200);
-      o.asks = await p.evalIn(`(() => { const rows = [...document.querySelectorAll('#points-list .pt-row')]; return { ids: rows.map(r => r.dataset.pt), said: rows.map(r => (r.querySelector('.pt-said') || {}).textContent || ''),
+      // The question cards are read in the background (#209): the list says so until they are there.
+      await p.until('!!document.querySelector("#points-list .pt-ask")', 15000).catch(() => null);
+      o.asks = await p.evalIn(`(() => { const rows = [...document.querySelectorAll('#points-list .pt-row[data-pt]')]; return {
+        decisions: [...document.querySelectorAll('#points-list .pt-ask')].map(r => r.textContent), ids: rows.map(r => r.dataset.pt), said: rows.map(r => (r.querySelector('.pt-said') || {}).textContent || ''),
         thread: rows.map(r => (r.querySelector('.pt-thread') || {}).textContent || ''), btns: rows.map(r => [...r.querySelectorAll('.pt-btn')].map(b => b.dataset.ptAct)),
         heights: [...document.querySelectorAll('#points-list .pt-btn, #points-list a.pt-link')].map(e => Math.round(e.getBoundingClientRect().height)) }; })()`);
       await p.shot(`po-chat-${w}-asks`);
@@ -496,6 +505,8 @@ class InChrome(unittest.TestCase):
         for w, o in self._both():
             with self.subTest(width=w):
                 a = o["asks"]
+                self.assertEqual(len(a["decisions"]), 1, a["decisions"])
+                self.assertIn("ship on Friday?", a["decisions"][0], "the question card waits on the person: a decision on top")
                 self.assertEqual(a["ids"], ["P2"])
                 self.assertEqual(a["said"][0], "Re P2: tests/test_login.py, the retry on a cold cache.")
                 self.assertEqual(a["thread"][0], "follow-up to P1 ↑")

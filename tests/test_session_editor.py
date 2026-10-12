@@ -187,8 +187,8 @@ class Editor(unittest.TestCase):
     def setUpClass(cls):
         code = "\n".join([ATTACH, MODEL, ITEMS, js_const("REF_BLOCK_RE"), js_function("stripRefBlocks"), js_function("mdToHtml"),
                           js_function("itemsHtml"), js_function("foldLine"), js_function("pointBarHtml"), js_function("ptOwn"),
-                          js_function("pointItemsHtml"), js_const("PT_WORD"), js_const("ptItem"), js_const("isPlan"),
-                          js_function("ptLatest"), js_const("lastAnswer"), js_const("lastPlan"), js_const("ptAnswerOf"), js_const("ptSaid"),
+                          js_function("pointItemsHtml"), js_const("PT_WORD"), js_const("ptNeeds"), js_const("ptItem"), js_const("isPlan"),
+                          js_function("ptLatest"), js_const("lastAnswer"), js_const("curAnswer"), js_const("lastPlan"), js_const("ptAnswerOf"), js_const("ptSaid"),
                           js_const("commentBtn"), js_function("ptThreadHtml"),
                           js_function("ptTaskWords"), js_function("pointMaps"), js_const("headWords")])
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True, text=True,
@@ -298,7 +298,7 @@ class Editor(unittest.TestCase):
         h = self.r["perItem"]
         self.assertEqual(h.count('<div class="pt-bar">'), 3, "one bar per item, and one for the follow-up")
         first = h[h.index('<li class="pt-item">'):h.index('<li class="pt-item">', h.index('<li class="pt-item">') + 1)]
-        self.assertIn("P1 · ready for your check", first, "a hub from before the stages says answered")
+        self.assertIn("P1 · answered", first, "a hub from before the stages says answered")
         self.assertNotIn("P2", first)
         self.assertIn('data-pt="P2" data-pt-act="drop"', h)
         self.assertTrue(h.endswith('<div class="pt-bar"><span class="pt-chip open" data-pt-id="P3">P3 · waiting for an answer</span><button data-pt="P3" data-pt-act="drop">Drop</button></div>'), h)

@@ -340,7 +340,7 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         self.assertTrue(p["narrow"], p)
         self.assertTrue(p["task"], "the task is still in the middle on the phone")
         self.everywhere(p, "Chat", window=False)
-        for name in ("Chat", "Your asks", "Board", "Spec"):
+        for name in ("Chat", "Needs you", "Board", "Spec"):
             self.assertIn(name, p["tabs"], p["tabs"])
         # The tab is "Chat"'s width, not a title's 160px, and Board is on screen without scrolling (the six fixed
         # tabs need some 374px of a 390px phone's 331px row since #129: Spec's end was off it before this too).

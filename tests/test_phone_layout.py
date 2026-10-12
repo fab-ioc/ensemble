@@ -321,7 +321,7 @@ class ThePhone(unittest.TestCase):
                 self.assertEqual((g["panel"]["x"], g["panel"]["w"]), (0, g["vw"]))
                 self.assertLessEqual(abs(g["panel"]["b"] - g["vh"]), 1, "to the bottom")
                 self.assertIsNotNone(g["chat"], "the conversation shows")
-                self.assertEqual(g["tabs"], ["Chat", "Your asks", "Changes", "Files", "Board", "Spec"])
+                self.assertEqual(g["tabs"], ["Chat", "Needs you", "Changes", "Files", "Board", "Spec"])
                 self.assertEqual(g["front"], "po-chat")
                 self.assertTrue(g["back"], "← back to the list")
                 self.assertEqual(g["project"], "Motors")

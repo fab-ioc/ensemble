@@ -208,7 +208,7 @@ begin with **C** — colour is load-bearing in that circle, not decorative.
 
 ### Tool identity
 
-`--tool-points` (Your asks, amber) · `--tool-changes` (green) · `--tool-workspace` (Files, blue) ·
+`--tool-points` (Needs you, amber) · `--tool-changes` (green) · `--tool-workspace` (Files, blue) ·
 `--tool-board` (violet) · `--tool-spec` (teal) · `--tool-list` (the task list, orange) ·
 `--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
 the strip can be scanned the way IntelliJ's tool windows are (#166). Like an avatar, a tool
@@ -225,7 +225,7 @@ blue to violet ground); orange, not coral, so nothing reads as the one red.
   `class="ti ti-<id>"`, painted in `currentColor`, and `.ti { color: var(--ti) }` gives it the
   tool's colour. **Where one colour is needed, set `--ti: currentColor`**: the open tool's
   button does (`--selected-fg`, as every selected control).
-- **A drawing per tool, each its own silhouette at 16px:** Your asks a speech bubble with a
+- **A drawing per tool, each its own silhouette at 16px:** Needs you a speech bubble with a
   question, Changes a branch with solid commits, Files a folder with its tree, Board three lanes
   with cards (the app icon's lanes), Spec a page with a check, the task list rows with state dots
   and one row selected. 24-unit grid, 1.8 outline, a 22% tint of the same colour under it.
@@ -783,7 +783,7 @@ Where the file showing is: the bar under a Workspace's file tabs (`wsCrumbsHtml`
 In every chat balloon, including folded rows, `P23` uses the task chip and card
 (`TaskCard`, with `PointRefs` matching and resolving points). The chip shows `P23`
 alone, without a status dot. Its card shows the point's first line (up to 140
-characters), stage and raised date; the text is the jump link used by Your asks.
+characters), stage and raised date; the text is the jump link used by Needs you.
 The card names the project when it differs from the chat's. A tap opens the card;
 only a mouse double click jumps directly. Keyboard Enter and the card link work
 as for tasks. Use the same tokens, spacing and phone wrapping as task cards.
@@ -862,20 +862,37 @@ them), the same tray, the same `## Review comments (N)` message.
 ### Points
 
 Every message the person sends an agent is a point (`P12`) the hub keeps until they acknowledge its
-answer (`points.py`). The chat shows it; `session.html`'s `pointBarHtml` and `pointsLineHtml` are
-the reference. It is information for the person, not an alarm: **no colour of its own, never in
-Needs you.**
+answer (`points.py`), or until it closes by itself. The chat shows it; `session.html`'s
+`pointBarHtml` and `pointsListHtml` are the reference. It is information for the person, not an
+alarm: **no colour of its own, never in the task list's Needs you group.**
 
-- **The person's name for them is "your asks"**: "Your asks" is the panel, the line and the
-  summaries; the ids (`P12`), endpoints and `[point P12]` lines keep "point".
+- **The list is "Needs you"** (#209): only what waits on the person, in three groups, newest first:
+  **Decisions** (the PO's open question cards, `asks.decisions`: a card asked again keeps only its
+  newest; one older than three days that the person wrote past goes under *Older questions*),
+  **To try** (an answer whose words ask them to try or check something, `points.asks_action`),
+  **New answers** (an answer not seen yet). Then three folds, closed until opened (`PT_FOLDS`,
+  `.pt-fold-sum` buttons with a `▸`/`▾` glyph and the count): **Older questions**, **With the PO**
+  (open and in progress: they wait on the agent, not the person) and **Closed** (with **Reopen**).
+  The ids (`P12`), endpoints and `[point P12]` lines keep "point".
+- **Seen closes an answer by itself** (`points.py` "Needs you" section): an answer on screen
+  (page in front, at least min(120px, half of it) for one second) or opened from a link is marked
+  seen (`POST /api/room/points/seen`, `how: screen|link`, kept per answer so a newer one is unseen
+  again); the person's next message in the chat closes it as *seen*. A later ask naming the same
+  task closes it as *superseded*; once per ledger, an answer older than three days and than their
+  latest message closed as *closed as old* (answers above the chat's read mark start seen). The
+  thumbs up still closes one at once; a send taken back takes back what it closed.
 - **The line** (`#points-line`) sits under the ask line, in its look (`--surface`, `--border`,
-  `--r-200`, `--fs-200`, `--fg-muted`): "Your asks: 2 waiting for an answer · 3 answered, not yet
-  acknowledged". Hidden when both are 0. It is a disclosure button (`aria-expanded`, a `▸`/`▾`
-  glyph) that opens a compact list under it, at most 40% of the height, scrolling within itself.
+  `--r-200`, `--fs-200`, `--fg-muted`): "Needs you: 1 decision · 2 to try · 3 new answers", or
+  "Nothing waits on you" when only folds are left. Hidden when there is nothing at all. It is a
+  disclosure button (`aria-expanded`, a `▸`/`▾` glyph) that opens a compact list under it, at most
+  40% of the height, scrolling within itself.
+- **A question's row:** its first line as the link to the card (`part=ask:<n>`, landing on the ask),
+  its task, its age. While the hub still reads the cards (in the background) the group says
+  "Reading the question cards…".
 - **A list row:** the id in `--font-mono`, its first words (`--fg`, one line, cut with `…`, the
   whole text its tooltip), its age ("12m", patched in place, never a redraw), its state in words,
   "your message ↑" and "answer ↓" as links (`--link`), and its one click: **👍 Ack** for an answer,
-  **Drop** for one still waiting. Answers to acknowledge first, then the waiting ones, oldest first.
+  **Drop** for one still waiting.
   **The answer's own words show under the ask** (`.pt-said`, `--fg-muted`: the hub's `said`, the
   `Re Pn:` paragraph of the answer, else its first words, else an answer by doing's summary), so
   the ask reads with its answer without a jump (#146). A delivered ask has **Comment** beside its
@@ -908,7 +925,7 @@ Needs you.**
   "approved".
 - **Never folded:** a balloon holding an open point or an unacknowledged answer is drawn in full
   whatever would fold it (age, its task's row, a Team activity gap), and the catch-up line names
-  "N answers to your asks to acknowledge" first.
+  "N new answers to your asks" (only answers that still need the person) first.
 - **Team activity** (#146): over a transcript the hub types into, the chat shows the person only
   what is theirs (`forCeo`: their messages, the answers to them, a `Re Pn:` or `To <name>:` /
   `For you:` paragraph wherever it is, a decision, a message to them, a PO-to-PO message naming
@@ -931,27 +948,29 @@ Needs you.**
   "Just us", which still drew ~600 rows between the CEO's ~105 balloons over three days (measured in
   the #146 report). Never interleave hub rows between the person's balloons in the default view.
 - **Outside the chat:** the task card (`.cpts`, beside the cost), the PO's header and its list row say
-  "2 to acknowledge · 1 open" in `--fg-muted` words, the tooltip in full. No lozenge: a card keeps
+  "1 decision · 2 new" in `--fg-muted` words (`pointsCountText`), the tooltip in full ("Needs you:
+  …"); nothing when nothing waits on the person. No lozenge: a card keeps
   its two.
-- **The Your asks panel** of a PO screen (see *Panels*; `pdPointsHtml` in `index.html` is the
-  reference) is the same list with room of its own: the summary line in `--fg-subtle`, then a row a
-  point: id and first words (two lines, `--fs-300`), then state, age, both links and the one click.
+- **The Needs you panel** of a PO screen (see *Panels*; `pdPointsHtml` in `index.html` is the
+  reference) is the same list with room of its own, the same groups and folds (`PD_PT_FOLDS`,
+  `.pdp-fold`): the summary line in `--fg-subtle`, then a row a point: id and first words (two
+  lines, `--fs-300`), then state, age, both links and the one click.
   The chat tells its host every change (`pointsTell`, with each point's words as the chat cuts
   them). While the panel is on screen the chat's own line steps aside (the frame carries
   `data-points-elsewhere`); hidden, the line comes back. An arrow brings the PO chat panel forward
   and lands on the balloon as the chat's own arrows do (`gotoMsg`); Ack and Drop post once and hand
   the hub's answer to the chat, so both show the same state at once. The panel's tab carries the
-  count as quiet words (`.dk-badge`, `--fg-muted`), never a badge colour.
+  count (decisions + to try + new answers) as quiet words (`.dk-badge`, `--fg-muted`), never a badge colour.
 - **Phone:** the summary, every control and every link are `--touch-min`.
 
 ### Panels
 
 **Layout A, step 3 (#125): the tool strip.** On a desktop the dock is the conversation in the
-middle and a **44px strip at the right edge** holding the tools, in this order: **Your asks ·
+middle and a **44px strip at the right edge** holding the tools, in this order: **Needs you ·
 Changes · Files · Board · Spec** (`PD_TOOLS`; Files is the panel `workspace`, Spec is `spec`: a
 task's Spec with its Details under it). Each is an icon button (`PD_ICON`, from `toolIcon`, in its
 tool's colour: see *Tool identity* in §2) whose name is its tooltip and `aria-label`; a count sits on the icon's top right
-corner (`setBadge`: Your asks' open asks; Changes' uncommitted files on a PO screen, the branch's
+corner (`setBadge`: Needs you's decisions, answers to try and new answers; Changes' uncommitted files on a PO screen, the branch's
 lines added on a task, short: `+512`, `+1.7k`, the exact numbers in its tooltip). A click opens a
 tool **beside** the conversation, which narrows (`stripOpen: 'beside'`: nothing is covered, no
 shadow); a second click, its slide-in control or Esc puts it back; one is open at a time; hovering
@@ -960,9 +979,9 @@ opens nothing (`stripHover: false`). **A click or focus elsewhere in the page pu
 v0.14.1 sees focus move into a frame (its ⋯ menu open, the first click closes only the menu). A press
 Dock cannot see (the chat's frame had focus already, or the window was not active) is told to the
 page by `session.html` (`chat-clicked`), and `pdChatClicked` calls Dock's `closeFly()`. It stays out while it is used: typing in it, its ⋯ menu, a dialog or context menu it
-opened (`modalSelector`), its own frames (the file view), Your asks' arrow, and when the browser
+opened (`modalSelector`), its own frames (the file view), Needs you's arrow, and when the browser
 window loses focus. **A tool that should stay open is pinned** (⋯ › View Mode › Dock Pinned); a
-Float stays too. Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
+Float stays too. Its width is its own (`pdToolSize`): Needs you 400, Spec 480,
 Changes, Files and the Board 60% of what the list and the strip leave (480 to 760, the conversation
 keeping at least 360). **The open tool is remembered per browser** (`cd-tool-open`) and opens
 again after a reload; the middle changing conversation by code (not a click in the list) leaves
@@ -1029,7 +1048,7 @@ it recovers Tasks and tools whose closed window has no former strip button, incl
 **A popped-out window outlives a reload** (#204, P170; Dock's own since v0.22.0, #205): Dock keeps its windows while the page is leaving and the reloaded page adopts them (`popAdoptTimeout`, 10 min: a hub restart can take minutes); Ensemble only keeps each window's file and scroll (`pdPopKeep` on `pagehide`, sessionStorage `cd-pop-keep`) and puts them back on Dock's `pop-adopt` event (`pdOnAdopt`). The panel stays in its window with its file, scroll and place, and there is **no notice** (`popLostNotice: 'quiet'`). A window closed meanwhile leaves its panel out with a quiet mark: Dock's muted ring on its strip button (`.dk-out-lost`, `isOutLost`) and Ensemble's on Panels (`.pd-out-closed`), whose menu lists it first as "window closed" with one click to open it again and "Bring back here". The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
 Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
-there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Your asks ·
+there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Needs you ·
 Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is that dock's Chat tab
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
@@ -1037,8 +1056,8 @@ component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's
 on a computer ("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; on a phone (the narrow dock) it keeps reading **Chat** (`PD_TITLES`), so the 390 px tab row grows no longer than it was (Board stays on screen). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit, v0.22.0 now) of five panels, **PO chat, Your asks, Board, Workspace,
-Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
+library; `VERSION` names its commit, v0.22.0 now) of five panels, **PO chat, Needs you, Board, Workspace,
+Changes** (`PD_IDS` in `index.html`; Needs you is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
 brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
@@ -1100,7 +1119,7 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   finds an element in a popped-out window when this page has none.
 - **The PO's header** (`poHeadHtml`, #126, the mockup's conversation header): its avatar,
   "*Project* · PO" at `--fs-400` 600, and one `--fs-200` `--fg-muted` line of what is true: agent
-  and model, the project, its open tasks (`poOpenCount`), the run chip, your asks. **Resume** is
+  and model, the project, its open tasks (`poOpenCount`), the run chip, what needs you. **Resume** is
   the one button (Default), and only while the PO is not running; Switch agent and the PO's task
   wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`; `poMenuItems` is the data), whose
   items keep their `data-po`. Esc or a click elsewhere closes it; the header is not rewritten while
@@ -1486,7 +1505,7 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    conversation's place (`pdPlaceTask`, with `moveBefore`, so its live chat keeps its page;
    `body.dp-docked`), its tabs go, and its Changes, Workspace, Spec and Details panes move into the
    tools (`dpPlacePanes`; a tool holding a task's pane shows it instead of the PO's, `.pd-for-task`).
-   Opening a task on a desktop makes its project the page's (so Your asks and the Board are its
+   Opening a task on a desktop makes its project the page's (so Needs you and the Board are its
    project's; closing it lands there), also for a project without a PO, whose open task gets the
    strip too. Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the
    task's header. Opening a task replaces what the middle showed; closing it (×, Esc, the project's
@@ -1745,7 +1764,7 @@ desktop is untouched by construction.
   with the full path retained in the link and title. Expanded reports scroll internally
   and retain their open state and reading position through updates.
 - Waiting for you keeps its semantic warning emphasis. A waiting-message link occupies
-  its own slim row and jumps to the complete balloon. The Your asks disclosure and Team
+  its own slim row and jumps to the complete balloon. The Needs you disclosure and Team
   activity control share one row on desktop. Expanded asks stay in flow, never over chat.
 - Use the shared one-row composer and fixed focus-ring inset. Keep the selected dock tab's
   selected background/text and 4px accent underline at every width. A message needing an
