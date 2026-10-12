@@ -371,9 +371,11 @@ class MergeAndHubStart(unittest.TestCase):
         room = {"id": "room-4", "cwd": "repo"}  # no mergedHead yet
         git = {"merged": True, "sha": "abc1234567", "base": "main",
                "branch": "sess/motor", "commits": 0, "head": "abc1234"}
+        report = {"kind": "completed", "ts": 10,
+                  "text": "Summary. " + "x" * 260 + ". Needs a hub restart. Useful detail."}
         with (mock.patch.object(digest, "_git_facts", return_value=git),
               mock.patch.object(digest, "_merged_at", return_value=100) as merged_at,
-              mock.patch.object(digest._d.chatroom, "last_real_report", return_value={}),
+              mock.patch.object(digest._d.chatroom, "last_real_report", return_value=report),
               mock.patch.object(digest._d.attention, "open_ask", return_value={}),
               mock.patch.object(digest._d.ensemble_tools, "_title", return_value="Motor spec"),
               mock.patch.object(digest._d.ensemble_tools, "_status", return_value="stopped"),
@@ -383,6 +385,8 @@ class MergeAndHubStart(unittest.TestCase):
             facts = digest._task_facts(room, {}, {}, 200)
         self.assertEqual(facts["mergedAt"], 100)
         merged_at.assert_called_once_with("repo", "main", "abc1234567")
+        self.assertIn("Useful detail", digest._report_context(facts))
+        self.assertNotIn("Needs a hub restart", digest._report_context(facts))
 
 
 if __name__ == "__main__":

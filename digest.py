@@ -343,7 +343,9 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
         # A report is identified by when it was made; its kind and gist are facts.
         "report": float(rep.get("ts") or 0),
         "reportKind": rep.get("kind", ""),
-        "reportText": " ".join((rep.get("text") or "").split())[:300],
+        # Keep enough source text to fill the 300-character gist after old
+        # merge/restart status sentences have been removed.
+        "reportText": " ".join((rep.get("text") or "").split())[:900],
         # What it put to the CEO that is still open ("" when nothing is): a
         # blocked or a question stays open until answered, not until the agent
         # goes busy.
@@ -541,9 +543,9 @@ def _report_context(t: dict) -> str:
     """Keep a merged task's report content, minus obsolete status sentences."""
     text = t.get("reportText") or ""
     if not t.get("merged"):
-        return text
+        return text[:300]
     sentences = re.split(r"(?<=[.!?])\s+", text)
-    return " ".join(s for s in sentences if not _STALE_REPORT_STATUS.search(s)).strip()
+    return " ".join(s for s in sentences if not _STALE_REPORT_STATUS.search(s)).strip()[:300]
 
 
 def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: float,
