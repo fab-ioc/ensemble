@@ -13159,14 +13159,43 @@ function pdFits(w) {
 // time the dock's iframes let clicks through to their panel.
 const PD_DBL_MS = 500;
 let pdDblT = 0;
+// The panel a click just restored, where and when: { id, x, y, t }.
+let pdRestored = null;
 function pdDblGuard(e) {
   const head = e.detail === 1 && e.target.closest && e.target.closest('.dk-head');
-  if (!head || e.target.closest('.dk-ctl') || !head.closest('.dk-min')) return;
+  if (!head || e.target.closest('.dk-ctl, [data-dk-act]') || !head.closest('.dk-min')) return;
+  const tab = e.target.closest('[data-dk-tab]') || head.querySelector('.dk-tab.on');
+  pdRestored = tab ? { id: tab.dataset.dkTab, x: e.clientX, y: e.clientY, t: e.timeStamp } : null;
   PD_ROOT.classList.add('pd-dbl');
   clearTimeout(pdDblT);
   pdDblT = setTimeout(() => PD_ROOT.classList.remove('pd-dbl'), PD_DBL_MS);
 }
 PD_ROOT.addEventListener('click', pdDblGuard, true);
+// Temporary (ED-213): removed when Ensemble takes Dock v0.22.1, whose
+// secondClick fixes it (the Dock PO's D-39). The restored
+// panel's title bar can bring one of its own controls under the pointer (a
+// side panel's minimise, when its tab has no count), and Dock lets the second
+// click of the double click reach it, so the panel minimises again. That
+// click is swallowed here, and its double click maximises, as one on the
+// title bar does.
+function pdRestoredCtl(e) {
+  const r = pdRestored;
+  if (!r || e.button !== 0 || e.timeStamp - r.t > PD_DBL_MS || Math.abs(e.clientX - r.x) > 6 || Math.abs(e.clientY - r.y) > 6) return false;
+  const ctl = e.target.closest && e.target.closest('.dk-ctl, [data-dk-act]');
+  const head = ctl && ctl.closest('.dk-head');
+  return !!head && !head.closest('.dk-min') && !!head.querySelector(`[data-dk-tab="${CSS.escape(r.id)}"]`);
+}
+for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick']) {
+  PD_ROOT.addEventListener(type, e => {
+    if (!pdRestoredCtl(e)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (type !== 'dblclick') return;
+    const id = pdRestored.id;
+    pdRestored = null;
+    if (PD.dock && PD.dock.can(id, 'max')) PD.dock.toggleMax(id);
+  }, true);
+}
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
   const rt = PD.rt.get(id);
