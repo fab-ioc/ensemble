@@ -4933,7 +4933,7 @@ function unwrapMarks(root) {
 }
 function landPending() {
   const box = $('#msgs');
-  if (GOTO && THREADED && !THREAD_MODE && threadedView()) {
+  if (GOTO && typeof THREADED !== 'undefined' && THREADED && typeof THREAD_MODE !== 'undefined' && !THREAD_MODE && typeof threadedView === 'function' && threadedView()) {
     if (!THR_DRAWN) return;
     const target = GOTO, passage = GOTO_PART;
     GOTO = ''; GOTO_PART = '';
