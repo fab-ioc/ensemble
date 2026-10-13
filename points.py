@@ -1084,7 +1084,11 @@ def _session_ids(room: dict, led: dict) -> list[str]:
 
 def _session_stat(sid: str) -> list | None:
     try:
-        tp = _d.find_transcript(sid)
+        try:
+            tp = _d.find_transcript(sid, immediate=False)
+        except TypeError:
+            # A few adapters replace this lookup with a one-argument callable.
+            tp = _d.find_transcript(sid)
         if tp:
             st = Path(tp).stat()
             return [st.st_size, round(st.st_mtime, 3)]
