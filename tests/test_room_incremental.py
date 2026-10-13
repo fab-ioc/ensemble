@@ -47,6 +47,17 @@ class RoomIncrementalTests(unittest.TestCase):
         room["workflow"] = "inprogress"
         self.assertFalse(chatroom.room_is_cold(room))
 
+    def test_old_stop_does_not_hide_a_resumed_open_task(self):
+        old = time.time() - 3 * 86400
+        room = self.room(updatedAt=old + 3600, workflow="inprogress",
+                         stoppedAt=old, participants=[{"resumedAt": old + 300}])
+        self.assertFalse(chatroom.room_is_cold(room, lambda _: False))
+        room["participants"][0]["resumedAt"] = 0
+        room["launchedAt"] = old + 200
+        self.assertFalse(chatroom.room_is_cold(room, lambda _: False))
+        room["launchedAt"] = old - 200
+        self.assertTrue(chatroom.room_is_cold(room, lambda _: False))
+
     def test_delta_collects_appends_and_edits_or_requires_refetch(self):
         room = self.room()
         chatroom._write(room)

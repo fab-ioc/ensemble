@@ -99,10 +99,15 @@ def room_is_cold(room: dict, is_live=None, now: float | None = None) -> bool:
     """A finished room leaves hot scans one day after its last change."""
     now = _now() if now is None else now
     done = (room.get("workflow") or "").lower() == "done"
-    stopped = bool(room.get("stoppedAt"))
+    stopped_at = float(room.get("stoppedAt") or 0)
+    # Stop records a timestamp permanently. A later launch/resume makes that
+    # marker historical, even if the terminal has since gone idle or died.
+    resumed_at = max([float(room.get("launchedAt") or 0)] +
+                     [float(p.get("resumedAt") or 0) for p in room.get("participants", [])])
+    stopped = stopped_at > 0 and stopped_at >= resumed_at
     if not (done or stopped):
         return False
-    changed = max(float(room.get("updatedAt") or 0), float(room.get("stoppedAt") or 0))
+    changed = max(float(room.get("updatedAt") or 0), stopped_at)
     return changed < now - 86400 and not (is_live and is_live(room))
 
 

@@ -46,7 +46,7 @@ def validate(after, on_ready, project_id, room_id=""):
 
 
 def view(room):
-    return {"after": [{"task": _d.task_label(_d.chatroom.get_room(g["task"]) or {})
+    return {"after": [{"task": _d.task_label(_d.chatroom.get_room(g["task"], copy_room=False) or {})
                                or g["task"], "when": g.get("when", "merged")}
                       for g in room.get("after", [])],
             "onReady": room.get("onReady", "start")}

@@ -50,12 +50,16 @@ def _legacy_rollouts(root: Path, session_id: str) -> list[Path]:
                     ids[key] = [f for f in files if f in current]
                     if not ids[key]:
                         del ids[key]
+            parsed = set(current & seen)
             for f in current - seen:
                 meta = _read_meta(f)
                 key = meta.get("session_id") or meta.get("id")
                 if key:
                     ids.setdefault(key, []).append(f)
-            _FALLBACK_INDEX[root] = (now, current, ids)
+                    parsed.add(f)
+            # An empty rollout can be observed before its session_meta line
+            # is written. Recheck such files on the next inexpensive rescan.
+            _FALLBACK_INDEX[root] = (now, parsed, ids)
             if len(_FALLBACK_INDEX) > 8:
                 for old_root in list(_FALLBACK_INDEX)[:-8]:
                     _FALLBACK_INDEX.pop(old_root, None)

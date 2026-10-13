@@ -9719,12 +9719,26 @@ def load_live() -> list[dict]:
 
 def load_recent(n: int = 100) -> list[dict]:
     rows = []
-    for jsonl in PROJ_DIR.glob("*/*.jsonl"):
-        try:
-            mtime = jsonl.stat().st_mtime
-        except OSError:
-            continue
-        rows.append((mtime, jsonl))
+    # DirEntry carries stat data from Windows directory enumeration, avoiding
+    # a separate filesystem call for every historical transcript on a poll.
+    try:
+        with os.scandir(PROJ_DIR) as folders:
+            for folder in folders:
+                try:
+                    if not folder.is_dir():
+                        continue
+                    with os.scandir(folder.path) as files:
+                        for file in files:
+                            if not file.name.lower().endswith(".jsonl"):
+                                continue
+                            try:
+                                rows.append((file.stat().st_mtime, Path(file.path)))
+                            except OSError:
+                                continue
+                except OSError:
+                    continue
+    except OSError:
+        pass
     rows.sort(reverse=True)
     live_ids = {d.get("sessionId", "") for d in _read_session_files()}
     labels = load_labels()

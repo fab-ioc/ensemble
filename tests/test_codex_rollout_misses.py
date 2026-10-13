@@ -1,10 +1,10 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.codex import CodexAgent, _FALLBACK_INDEX
 import agents.codex as codex
+from agents.codex import CodexAgent, _FALLBACK_INDEX
 
 
 class CodexRolloutMissTests(unittest.TestCase):
@@ -27,6 +27,23 @@ class CodexRolloutMissTests(unittest.TestCase):
                 path = folder / f"rollout-2026-10-13T00-00-00-{sid}.jsonl"
                 path.write_text("", encoding="utf-8")
                 self.assertEqual(agent.rollouts_for_session(sid), [path])
+            _FALLBACK_INDEX.clear()
+
+    def test_partial_legacy_file_is_retried_after_metadata_arrives(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "2026" / "10" / "13"
+            folder.mkdir(parents=True)
+            path = folder / "rollout-legacy.jsonl"
+            path.write_text("", encoding="utf-8")
+            _FALLBACK_INDEX.clear()
+            agent = CodexAgent()
+            with patch.object(agent, "sessions_dir", return_value=root), \
+                    patch.object(codex, "_FALLBACK_RESCAN_SECONDS", 0):
+                self.assertEqual(agent.rollouts_for_session("legacy-id"), [])
+                path.write_text('{"type":"session_meta","payload":{"id":"legacy-id"}}\n',
+                                encoding="utf-8")
+                self.assertEqual(agent.rollouts_for_session("legacy-id"), [path])
             _FALLBACK_INDEX.clear()
 
 
