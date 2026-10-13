@@ -160,7 +160,7 @@ class Resolver(Hub):
         text = 'Re P5 (the legs).\n\nAsk: Which one?\n- A\n- B'
         turns = {'old:3': {'role': 'assistant', 'text': text, 'timestamp': '1970-01-01T00:02:10Z'}}
         for target, fake in ((dashboard, {'solo_turns': lambda room, sid: turns if sid == 'old' else {}}),
-                             (points, {'_session_stat': lambda sid: [1, 1]})):
+                             (points, {'_session_stat': lambda sid, **_kw: [1, 1]})):
             for name, f in fake.items():
                 p = mock.patch.object(target, name, side_effect=f)
                 p.start(); self.addCleanup(p.stop)

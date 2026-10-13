@@ -77,7 +77,7 @@ class _World(unittest.TestCase):
             mock.patch.object(dashboard, "read_session_turns",
                               side_effect=lambda sid: dashboard.classify_turns(self.turns.get(sid, []))),
             mock.patch.object(points, "_session_stat",
-                              side_effect=lambda sid: [len(self.turns.get(sid, [])), self.mtime + self.gen]
+                              side_effect=lambda sid, **_kw: [len(self.turns.get(sid, [])), self.mtime + self.gen]
                               if sid in self.turns else None),
             mock.patch.object(points, "_log"),
         ]
@@ -420,7 +420,7 @@ class POCheck(_World):
             room["participants"][0]["rotations"] = [{"fromSessionId": "sid-old", "toSessionId": "sid-1"}]
             chatroom.update_room(room)
             with mock.patch.object(points, "_session_stat",
-                                   side_effect=lambda sid: [1, self.t0 - 9000] if sid == "sid-old" else None):
+                                   side_effect=lambda sid, **_kw: [1, self.t0 - 9000] if sid == "sid-old" else None):
                 read.clear()
                 points.sync(rid, force=True)
             self.assertEqual(read, [])

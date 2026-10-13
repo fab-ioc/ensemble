@@ -97,7 +97,7 @@ class ClassifiedTurns(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "s1.jsonl"
             transcript(p, TURNS)
-            with mock.patch.object(dashboard, "find_transcript", lambda sid: p), \
+            with mock.patch.object(dashboard, "find_transcript", lambda sid, **_kw: p), \
                     mock.patch.object(dashboard, "load_labels", lambda: {}):
                 self.check(get("/api/session/s1?full=1")["turns"])
                 # The plain list of user turns is unchanged.
@@ -114,7 +114,7 @@ class ClassifiedTurns(unittest.TestCase):
             def cwd_for_session(self, sid):
                 return ""
 
-        with mock.patch.object(dashboard, "find_transcript", lambda sid: None), \
+        with mock.patch.object(dashboard, "find_transcript", lambda sid, **_kw: None), \
                 mock.patch.object(dashboard.agents, "get_agent", lambda k: Codex()), \
                 mock.patch.object(dashboard, "load_labels", lambda: {}):
             self.check(get("/api/session/c1?full=1")["turns"])
