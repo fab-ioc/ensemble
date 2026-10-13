@@ -468,9 +468,16 @@ def silent_for(room: dict, part: dict, ev: dict, now: float) -> float:
 
 def _look_silent(rid: str, state: dict, now: float, statuses: dict) -> str:
     """Tell the PO once per silent episode (the attention item shows it).
-    Under the gate, as ``_look``: a seat being handed over is left alone."""
+    Select under the gate, then type without holding it."""
     with _d.rotation.GATE:
-        return _look_silent_gated(rid, state, now, statuses)
+        result = _look_silent_gated(rid, state, now, statuses)
+    if isinstance(result, str):
+        return result
+    did, room, wake, srec = result
+    if _type_po(room, wake):
+        srec["wokeAt"] = now
+        return (did + ", woken") if did else "PO woken (silent)"
+    return did
 
 
 def silent_owner_owes(room: dict, identity: str) -> bool:
@@ -482,7 +489,7 @@ def silent_owner_owes(room: dict, identity: str) -> bool:
     return bool(_d.attention._owed_since(view, identity)[0])
 
 
-def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str:
+def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict):
     cr, rot = _d.chatroom, _d.rotation
     room = cr.get_room(rid, public=False)
     if not room or not _d._room_is_live(room) or not _d.room_po_id(room):
@@ -537,10 +544,7 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         did = "PO told (silent)"
     wake = (f"[digest] {label} silent since {at}: its owner has produced nothing for "
             f"{int(quiet // 60)} min with nothing open. Details with ensemble_get_task {_d.task_arg(room)}.")
-    if _type_po(room, wake):
-        srec["wokeAt"] = now
-        return (did + ", woken") if did else "PO woken (silent)"
-    return did
+    return did, room, wake, srec
 
 
 # ---------------------------------------------------------------------------

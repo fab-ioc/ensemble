@@ -230,7 +230,8 @@ def reason(rec, *, retry_enabled=True):
 
 def _input_pending(sess):
     """A terminal editor already holds text that a retry must not overwrite."""
-    if getattr(sess, "person_line_text", "") or getattr(sess, "hub_line_typed", False):
+    if (_d.rotation.hub_line_pending(sess) or getattr(sess, "person_line_text", "")
+            or getattr(sess, "hub_line_typed", False)):
         return True
     try:
         tail = sess.tail() if callable(getattr(sess, "tail", None)) else ""

@@ -12,6 +12,7 @@ from unittest import mock
 import chatroom
 import dashboard
 import input_provenance
+import provider_retry
 from backends import ptyrun
 import rotation
 
@@ -456,6 +457,68 @@ class PtyInputEndpointFilter(unittest.TestCase):
         self.assertEqual(brief.writes, ["x" * 400, "\r"])
         self.assertFalse(worker.is_alive())
         self.assertFalse(key.is_alive())
+
+    def test_hub_line_reservation_blocks_rotation_and_a_second_line(self):
+        class Session:
+            meta = {}
+            person_line_text = ""
+            hub_line_typed = False
+
+            def __init__(self):
+                self.writes = []
+
+            def alive(self):
+                return True
+
+            def last_submit(self):
+                return 0
+
+            def tail(self):
+                return ""
+
+            def write(self, data):
+                self.writes.append(data)
+                return True
+
+        sess = Session()
+        waiting = threading.Event()
+        release = threading.Event()
+        result = []
+
+        def pause(_seconds):
+            waiting.set()
+            self.assertTrue(release.wait(2))
+
+        with mock.patch.object(dashboard.time, "sleep", side_effect=pause), \
+                mock.patch.object(dashboard, "_record_typed_input"):
+            worker = threading.Thread(target=lambda: result.append(dashboard._type_input(sess, "first")))
+            worker.start()
+            try:
+                self.assertTrue(waiting.wait(1))
+                self.assertTrue(rotation.hub_line_pending(sess))
+                self.assertTrue(rotation._submitted_lately(sess))
+                self.assertTrue(provider_retry._input_pending(sess))
+                self.assertFalse(dashboard._type_input(sess, "second"))
+            finally:
+                release.set()
+                worker.join(3)
+        self.assertEqual(result, [True])
+        self.assertEqual(sess.writes, ["first", "\r"])
+        self.assertFalse(rotation.hub_line_pending(sess))
+        self.assertFalse(rotation._submitted_lately(sess))
+        self.assertFalse(provider_retry._input_pending(sess))
+        self.assertFalse(worker.is_alive())
+
+    def test_stale_hub_line_mark_ages_out(self):
+        sess = mock.Mock(meta={})
+        sess.last_submit.return_value = 0
+        sess.hub_line_typing_at = rotation.time.time() - rotation.HUB_LINE_LEASE_S - 1
+        self.assertFalse(rotation.hub_line_pending(sess))
+        token = rotation.reserve_hub_line(sess)
+        self.assertIsNotNone(token)
+        self.assertTrue(rotation._submitted_lately(sess))
+        rotation.release_hub_line(sess, token)
+        self.assertFalse(rotation.hub_line_pending(sess))
 
     def test_visible_terminal_send_journals_human_only_after_success(self):
         with tempfile.TemporaryDirectory() as tmp, \

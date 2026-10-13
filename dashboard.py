@@ -3361,6 +3361,19 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
+    lease = rotation.reserve_hub_line(sess)
+    if lease is None:
+        return False
+    try:
+        return _type_input_reserved(sess, text, provenance, record=record, parts=parts)
+    finally:
+        rotation.release_hub_line(sess, lease)
+
+
+def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
+                         record: bool = True,
+                         parts: list[tuple[str, dict]] | None = None) -> bool:
+    """Write and confirm one reserved line outside the lifecycle gate."""
     agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
     codex_path, codex_size = _codex_rollout_start(sess) if agent == "codex" else (None, -1)
     # A long line typed raw reached Claude cut to its last 123 characters
