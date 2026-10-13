@@ -4921,7 +4921,8 @@ function unwrapMarks(root) {
 }
 function landPending() {
   const box = $('#msgs');
-  if (GOTO && THREADED && !THREAD_MODE && threadedView() && THR_DRAWN) {
+  if (GOTO && THREADED && !THREAD_MODE && threadedView()) {
+    if (!THR_DRAWN) return;
     const target = GOTO, passage = GOTO_PART;
     GOTO = ''; GOTO_PART = '';
     openThread('', target, passage);
@@ -5605,8 +5606,8 @@ async function renderThreaded(force) {
     }
     if (d.pending) {
       globalThis.EnsembleProgress?.set('thread-build', d.progress || {phase: 'Reading conversations'});
-      // The hub reads a long chat once, in the background: the whole chat meanwhile.
-      if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
+      // Keep the channel empty while its roots are being built. The progress
+      // notice stays visible, and a balloon link waits for its thread.
       if (THREAD_MODE) setText($('#hint'), 'Reading the chat’s threads…');
       clearTimeout(THR_WAIT);
       THR_WAIT = setTimeout(() => renderThreaded(true), 1500);

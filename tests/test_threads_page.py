@@ -214,6 +214,24 @@ async function main() {
       out[w] = o;
       await c.send('Target.closeTarget', { targetId });
     }
+    // A cold copied-balloon link must wait for thread indexing. While it
+    // builds, the channel must never fall back to a wall of balloons.
+    const coldMid = 'coldlink:3';
+    const { targetId: coldTarget } = await c.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId: coldSession } = await c.send('Target.attachToTarget', { targetId: coldTarget, flatten: true });
+    await c.send('Page.enable', {}, coldSession);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: 'window.open = url => { window.__openedThread = String(url); return null; };'
+    }, coldSession);
+    const coldEval = async expr => { const r = await c.send('Runtime.evaluate',
+      { expression: expr, returnByValue: true }, coldSession); return r.result.value; };
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.coldRoom + '&msg=' + encodeURIComponent(coldMid) }, coldSession);
+    for (let i = 0; i < 100 && !(await coldEval('!!document.getElementById("ens-progress") && !document.getElementById("ens-progress").hidden')); i++) await sleep(100);
+    const coldRowsDuring = await coldEval('document.querySelectorAll("#msgs .msg, #msgs .msg-fold").length');
+    let opened = '';
+    for (let i = 0; i < 100 && !opened; i++) { opened = await coldEval('window.__openedThread || ""'); if (!opened) await sleep(150); }
+    out.coldLink = { coldRowsDuring, opened };
+    await c.send('Target.closeTarget', { targetId: coldTarget });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -286,6 +304,7 @@ class ThreadsPage(unittest.TestCase):
         cls.rooms = {}
         for w, _h, _m in SIZES:
             cls.rooms[str(w)] = cls._po_room(f"Motors {w}", f"po{w}")
+        cls.cold_link_room = cls._po_room("Link room", "coldlink")
         original_balloons = threads.balloons
         slowed_rooms = set()
         def slow_balloons(*args, **kwargs):
@@ -364,7 +383,7 @@ class ThreadsPage(unittest.TestCase):
     def _chrome(cls):
         base = Path(cls.tmp.name)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "rooms": cls.rooms, "sizes": SIZES, "shots": cls.shots}
+                "rooms": cls.rooms, "coldRoom": cls.cold_link_room, "sizes": SIZES, "shots": cls.shots}
         script = base / "threads_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
@@ -420,8 +439,8 @@ class ThreadsPage(unittest.TestCase):
                 self.assertIn("2 replies", lines["P1"]["text"])
                 self.assertIn("PO", lines["P1"]["text"])
                 self.assertTrue(lines["P1"]["unread"] and lines["P1"]["dot"], "replies not seen: bold, with the dot")
-                self.assertEqual(o["needsThreads"], ["P2", "P1"], "unread topics newest first")
-                self.assertIn("2 threads with new replies", o["sum"])
+                self.assertEqual(o["needsThreads"], ["P2", "team:activity", "P1"], "unread PO updates and topics newest first")
+                self.assertIn("3 threads with new replies", o["sum"])
                 self.assertEqual(ch["threads"], "false")
                 self.assertLessEqual(ch["scrollX"], 1)
                 self.assertEqual(o["legacyWhole"]["mids"], [], "an older Whole chat preference cannot restore balloon rows")
@@ -431,7 +450,7 @@ class ThreadsPage(unittest.TestCase):
         for w, o in self._each():
             with self.subTest(width=w):
                 self.assertEqual(o["unread"]["mids"], [])
-                self.assertEqual([x["thr"] for x in o["unread"]["lines"]], ["P2", "P1"])
+                self.assertEqual([x["thr"] for x in o["unread"]["lines"]], ["P2", "team:activity", "P1"])
                 self.assertEqual(o["unread"]["threads"], "true")
 
     def test_whole_chat_is_available_as_an_explicit_view(self):
@@ -446,6 +465,11 @@ class ThreadsPage(unittest.TestCase):
                 self.assertEqual(got["deepLink"]["thread"], "P1")
                 self.assertTrue(got["deepLink"]["present"])
                 self.assertTrue(got["deepLink"]["visible"])
+
+    def test_cold_balloon_link_waits_for_the_thread_without_balloon_rows(self):
+        self.assertEqual(self.got["coldLink"]["coldRowsDuring"], 0)
+        self.assertIn("tmid=coldlink%3A3", self.got["coldLink"]["opened"])
+        self.assertIn("msg=coldlink%3A3", self.got["coldLink"]["opened"])
 
     def test_a_thread_has_all_its_messages_and_a_reply_lands_in_it(self):
         for w, o in self._each():

@@ -183,6 +183,27 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(out["threads"]["team:activity"]["members"], ["s:5", "s:6", "s:7"])
         self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
 
+    def test_po_point_mention_after_a_digest_claims_the_answer_turn(self):
+        recs = [human("s:0", 0, "three problems"), note("s:1", 1),
+                po("s:2", 2, "I've started three tasks for your P5."),
+                po("s:3", 3, "The first task is working now.")]
+        out = self.run_(recs, [point("P5", "s:0", "three problems")])
+        self.assertEqual(out["threads"]["P5"]["members"], ["s:0", "s:2", "s:3"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:1"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+        self.assertEqual(threads._point_mentions("Re P506–P509: done"),
+                         ["P506", "P509", "P507", "P508"])
+
+    def test_po_ask_or_live_after_team_activity_starts_a_visible_topic(self):
+        recs = [note("s:0", 0), po("s:1", 1, "Ask: shall we deploy?\n- Yes\n- No", ask=True),
+                po("s:2", 2, "The change is ready."), report("s:3", 3, "#12"),
+                po("s:4", 4, "#12 is live", live=True)]
+        out = self.run_(recs, [])
+        self.assertEqual(out["threads"]["m:s:1"]["members"], ["s:1", "s:2"])
+        self.assertEqual(out["threads"]["m:s:4"]["members"], ["s:4"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0", "s:3"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:1", "s:4"])
+
     def test_live_news_shows_in_the_channel_and_an_old_re_is_ignored(self):
         recs = [human("s:0", 0, "a"), po("s:1", 1000, "Re P9: #12 is live", re_=["P9"], live=True)]
         out = self.run_(recs, [point("P1", "s:0", "a"), point("P9", "x:9", "later", 5000)])
@@ -302,6 +323,17 @@ class Endpoints(tp._World):
         self.assertEqual([i["mid"] for i in th["items"]], ["sid-1:0", "sid-1:1"])
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&mid=sid-1:3")[1]["thread"]["id"], "team:activity")
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
+
+    def test_team_activity_unread_points_to_latest_po_reply_not_hub_traffic(self):
+        now = time.time() + 2
+        self.add("sid-1", tp.turn("assistant", "An update for you.", now),
+                 tp.turn("user", "[digest] more traffic", now + 1))
+        self.poll()
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.assertEqual(ch["activity"]["unread"], 1)
+        self.assertEqual(ch["activity"]["lastMid"], "sid-1:4")
+        self.assertIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
+        self.assertEqual(ch["activity"]["lastWho"], "po")
 
     def test_a_reply_from_a_thread_names_its_point_and_new_replies_are_unread(self):
         sent = []
