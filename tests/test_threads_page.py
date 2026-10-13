@@ -1,21 +1,9 @@
-"""Threads in a PO chat, in the browser (#210).
+"""CDP coverage for PO thread channels, deep links, and panel geometry.
 
-In headless Chrome over CDP, against a hub in a thread serving a solo PO room
-whose transcript is a file, at 1728x1117, 390x844 (a phone) and 4096x2160,
-each size its own project and PO:
-
-* the chat is a channel: each thread once, as its first message with a line
-  under it ("2 replies · PO · last reply …", where it stands); the replies are
-  not in it; a thread with replies not seen has the unread dot, and Needs you
-  lists it under Threads;
-* "Whole chat" shows every message in place again, and back;
-* a thread's page has all its messages and its own box: a reply typed there
-  goes to the PO as "Re P1: …", with "Also send to chat" it shows in the chat
-  too, and the PO's answer lands in the thread;
-* opened, a thread is read: its dot goes.
-
-Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node and
-Chrome.
+Each viewport has a solo PO room with a transcript file. The channel renders
+one compact row per topic; replies live in its panel, and unread topic rows
+are listed in Threads. The optional Whole chat view preserves chronology.
+Screenshots go to $ENSEMBLE_SHOTS when set. Skipped without Node and Chrome.
 """
 from __future__ import annotations
 
@@ -43,7 +31,7 @@ from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
 NODE = shutil.which("node")
-SIZES = [(1728, 1117, False), (390, 844, True), (4096, 2160, False)]
+SIZES = [(1728, 1117, False), (625, 2000, False), (390, 844, True), (4096, 2160, False)]
 
 CDP_JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
@@ -69,12 +57,12 @@ class Cdp {
 // What the chat shows: each balloon's id, and each thread line's words.
 const VIEW = `(() => ({
   mids: [...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid),
-  lines: [...document.querySelectorAll('#msgs .thr-line')].map(e => ({ thr: e.querySelector('.thr-open').dataset.thr,
+  lines: [...document.querySelectorAll('#msgs .thr-card')].map(e => ({ thr: e.dataset.thr,
     text: e.textContent.replace(/\\s+/g, ' ').trim(), unread: e.classList.contains('unread'), dot: !!e.querySelector('.thr-dot') })),
   ins: [...document.querySelectorAll('#msgs .thr-in')].map(e => e.textContent.replace(/\\s+/g, ' ').trim()),
   // The bar's switch, or on a phone the composer menu's.
-  whole: (b => b && !b.hidden && b.getBoundingClientRect().width > 0 ? b.getAttribute('aria-pressed') : null)(document.getElementById('whole-chat'))
-    || (m => m && !m.hidden ? m.getAttribute('aria-pressed') : null)(document.querySelector('[data-phone-action="whole-chat"]')),
+  threads: document.getElementById('threads-view').getAttribute('aria-pressed'),
+  folded: document.querySelectorAll('#msgs .msg-fold, #msgs .fold-note, #msgs .gap-row').length,
   scrollX: document.documentElement.scrollWidth - innerWidth,
 }))()`;
 async function main() {
@@ -95,7 +83,7 @@ async function main() {
       const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, `threads-${w}-${name}.png`), Buffer.from(r.data, 'base64')); };
       const go = async (q) => {
         await c.send('Page.navigate', { url: A.base + '/session?' + q }, sessionId);
-        await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);
+        await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && (document.querySelectorAll("#msgs .thr-card").length > 0 || document.querySelectorAll("#msgs .msg[data-mid]").length > 0)', 30000);
         await sleep(400);
       };
       // A deliberately slow first build: the fixed notice appears, gives the
@@ -124,7 +112,7 @@ async function main() {
       await until('!document.getElementById("ens-progress").hidden && document.getElementById("ens-progress").textContent.includes("Sorting messages into threads") && !document.getElementById("ens-progress").classList.contains("indeterminate")', 15000);
       o.progressCount = await evalIn('document.getElementById("ens-progress").textContent');
       await shot('0-progress-count');
-      await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);
+      await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .thr-card").length > 0', 30000);
       await until('document.getElementById("ens-progress").hidden', 15000);
       o.progressVisibleMs = Date.now() - progressShownAt;
       o.progressAfter = await evalIn('document.getElementById("ens-progress").hidden');
@@ -137,16 +125,43 @@ async function main() {
       o.needsThreads = await evalIn('[...document.querySelectorAll("#points-list .pt-thr")].map(e => e.dataset.thr)');
       await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
       await shot('1-channel');
-      // The whole chat, and back.
-      await evalIn('document.getElementById("whole-chat").click(); 0');
-      await until('document.getElementById("whole-chat").getAttribute("aria-pressed") === "true" && !THR_DRAWN || document.querySelectorAll("#msgs .msg[data-mid]").length > ' + o.channel.mids.length, 15000);
-      await sleep(400);
+      await evalIn('toggleWhole(); 0');
+      await until('document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 20000);
       o.whole = await evalIn(VIEW);
-      await evalIn('document.getElementById("whole-chat").click(); 0');
-      await until('document.querySelectorAll("#msgs .thr-line").length > 0', 15000);
+      await evalIn('toggleWhole(); 0');
+      await until('document.querySelectorAll("#msgs .thr-card").length > 0', 20000);
+      await evalIn('localStorage.setItem("cd-chat-whole", "1"); 0');
+      await go('room=' + room);
+      o.legacyWhole = await evalIn(VIEW);
+      await evalIn('localStorage.removeItem("cd-chat-whole"); 0');
+      // Threads with new replies, newest first, then the channel again.
+      await evalIn('document.getElementById("threads-view").click(); 0');
+      await until('document.getElementById("threads-view").getAttribute("aria-pressed") === "true"', 15000);
+      await sleep(400);
+      o.unread = await evalIn(VIEW);
+      await evalIn('document.getElementById("threads-view").click(); 0');
+      await until('document.querySelectorAll("#msgs .thr-card").length > 0', 15000);
+      // A copied balloon link resolves to its containing thread and lands on
+      // the exact message, even though replies are absent from the channel.
+      const linked = 'po' + w + ':3';
+      await go('id=' + room + '&thread=&tmid=' + encodeURIComponent(linked) + '&msg=' + encodeURIComponent(linked));
+      o.deepLink = await evalIn(`(() => ({ thread: THREAD,
+        present: !!document.querySelector('#msgs .msg[data-mid="${linked}"]'),
+        visible: (() => { const e = document.querySelector('#msgs .msg[data-mid="${linked}"]');
+          const list = document.getElementById('msgs');
+          return !!e && e.getBoundingClientRect().top < list.getBoundingClientRect().bottom
+            && e.getBoundingClientRect().bottom > list.getBoundingClientRect().top; })() }))()`);
       // A thread: all its messages, and a reply in it, also sent to the chat.
       await go('id=' + room + '&thread=P1');
       o.thread = await evalIn(VIEW);
+      o.threadGeometry = await evalIn(`(() => {
+        const pane = document.getElementById('msgpane').getBoundingClientRect();
+        const list = document.getElementById('msgs').getBoundingClientRect();
+        const box = document.getElementById('compose').getBoundingClientRect();
+        return { gapBelowBox: Math.max(0, innerHeight - box.bottom),
+          gapBetweenListAndBox: Math.max(0, box.top - pane.bottom),
+          listHeight: list.height, paneHeight: pane.height };
+      })()`);
       o.title = await evalIn('document.getElementById("title").textContent');
       o.also = await evalIn('(e => e && !e.hidden && e.getBoundingClientRect().width > 0)(document.getElementById("thr-also-l"))');
       await shot('2-thread');
@@ -199,6 +214,24 @@ async function main() {
       out[w] = o;
       await c.send('Target.closeTarget', { targetId });
     }
+    // A cold copied-balloon link must wait for thread indexing. While it
+    // builds, the channel must never fall back to a wall of balloons.
+    const coldMid = 'coldlink:3';
+    const { targetId: coldTarget } = await c.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId: coldSession } = await c.send('Target.attachToTarget', { targetId: coldTarget, flatten: true });
+    await c.send('Page.enable', {}, coldSession);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: 'window.open = url => { window.__openedThread = String(url); return null; };'
+    }, coldSession);
+    const coldEval = async expr => { const r = await c.send('Runtime.evaluate',
+      { expression: expr, returnByValue: true }, coldSession); return r.result.value; };
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.coldRoom + '&msg=' + encodeURIComponent(coldMid) }, coldSession);
+    for (let i = 0; i < 100 && !(await coldEval('!!document.getElementById("ens-progress") && !document.getElementById("ens-progress").hidden')); i++) await sleep(100);
+    const coldRowsDuring = await coldEval('document.querySelectorAll("#msgs .msg, #msgs .msg-fold").length');
+    let opened = '';
+    for (let i = 0; i < 100 && !opened; i++) { opened = await coldEval('window.__openedThread || ""'); if (!opened) await sleep(150); }
+    out.coldLink = { coldRowsDuring, opened };
+    await c.send('Target.closeTarget', { targetId: coldTarget });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -271,6 +304,7 @@ class ThreadsPage(unittest.TestCase):
         cls.rooms = {}
         for w, _h, _m in SIZES:
             cls.rooms[str(w)] = cls._po_room(f"Motors {w}", f"po{w}")
+        cls.cold_link_room = cls._po_room("Link room", "coldlink")
         original_balloons = threads.balloons
         slowed_rooms = set()
         def slow_balloons(*args, **kwargs):
@@ -349,7 +383,7 @@ class ThreadsPage(unittest.TestCase):
     def _chrome(cls):
         base = Path(cls.tmp.name)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "rooms": cls.rooms, "sizes": SIZES, "shots": cls.shots}
+                "rooms": cls.rooms, "coldRoom": cls.cold_link_room, "sizes": SIZES, "shots": cls.shots}
         script = base / "threads_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
@@ -397,27 +431,45 @@ class ThreadsPage(unittest.TestCase):
             with self.subTest(width=w):
                 sid = f"po{w}"
                 ch = o["channel"]
-                # The two asks, each once; none of their replies.
-                self.assertIn(f"{sid}:1", ch["mids"])
-                self.assertIn(f"{sid}:6", ch["mids"])
-                for reply in (2, 3, 7):
-                    self.assertNotIn(f"{sid}:{reply}", ch["mids"])
+                # The channel is one compact row per topic, with no balloons.
+                self.assertEqual(ch["mids"], [])
+                self.assertEqual(ch["folded"], 0)
                 lines = {x["thr"]: x for x in ch["lines"]}
-                self.assertEqual(sorted(lines), ["P1", "P2"])
-                self.assertTrue(lines["P1"]["text"].startswith("2 replies"), lines["P1"])
+                self.assertEqual(sorted(lines), ["P1", "P2", f"m:{sid}:0"])
+                self.assertIn("2 replies", lines["P1"]["text"])
                 self.assertIn("PO", lines["P1"]["text"])
                 self.assertTrue(lines["P1"]["unread"] and lines["P1"]["dot"], "replies not seen: bold, with the dot")
-                self.assertEqual(o["needsThreads"], ["P2", "P1"], "Needs you lists them, newest first")
-                self.assertIn("2 threads with new replies", o["sum"])
-                self.assertEqual(ch["whole"], "false")
+                self.assertEqual(o["needsThreads"], ["P2", "team:activity", "P1"], "unread PO updates and topics newest first")
+                self.assertIn("3 threads with new replies", o["sum"])
+                self.assertEqual(ch["threads"], "false")
                 self.assertLessEqual(ch["scrollX"], 1)
+                self.assertEqual(o["legacyWhole"]["mids"], [], "an older Whole chat preference cannot restore balloon rows")
+                self.assertEqual(len(o["legacyWhole"]["lines"]), len(ch["lines"]))
 
-    def test_whole_chat_shows_every_message(self):
+    def test_threads_view_lists_unread_topics(self):
         for w, o in self._each():
             with self.subTest(width=w):
-                self.assertGreater(len(o["whole"]["mids"]), len(o["channel"]["mids"]))
-                self.assertIn(f"po{w}:3", o["whole"]["mids"])
-                self.assertEqual(o["whole"]["lines"], [])
+                self.assertEqual(o["unread"]["mids"], [])
+                self.assertEqual([x["thr"] for x in o["unread"]["lines"]], ["P2", "team:activity", "P1"])
+                self.assertEqual(o["unread"]["threads"], "true")
+
+    def test_whole_chat_is_available_as_an_explicit_view(self):
+        for width, got in self._each():
+            with self.subTest(width=width):
+                self.assertIn(f"po{width}:3", got["whole"]["mids"])
+                self.assertEqual(got["whole"]["lines"], [])
+
+    def test_balloon_link_opens_its_thread_with_message_in_view(self):
+        for width, got in self._each():
+            with self.subTest(width=width):
+                self.assertEqual(got["deepLink"]["thread"], "P1")
+                self.assertTrue(got["deepLink"]["present"])
+                self.assertTrue(got["deepLink"]["visible"])
+
+    def test_cold_balloon_link_waits_for_the_thread_without_balloon_rows(self):
+        self.assertEqual(self.got["coldLink"]["coldRowsDuring"], 0)
+        self.assertIn("tmid=coldlink%3A3", self.got["coldLink"]["opened"])
+        self.assertIn("msg=coldlink%3A3", self.got["coldLink"]["opened"])
 
     def test_a_thread_has_all_its_messages_and_a_reply_lands_in_it(self):
         for w, o in self._each():
@@ -431,16 +483,23 @@ class ThreadsPage(unittest.TestCase):
                 self.assertTrue(sent[0].startswith("Re P1: A bit wider still, please."), sent[0])
                 self.assertEqual(o["threadAfter"]["mids"][-2:], [f"{sid}:8", f"{sid}:9"], "the reply and the PO's answer, in the thread")
 
+    def test_thread_list_fills_panel_and_box_stays_at_bottom(self):
+        for width in ("625", "1728"):
+            with self.subTest(width=width):
+                geo = self.got[width]["threadGeometry"]
+                self.assertGreater(geo["listHeight"], 100, geo)
+                self.assertLessEqual(geo["gapBelowBox"], 16, geo)
+                self.assertLessEqual(geo["gapBetweenListAndBox"], 16, geo)
+
     def test_back_in_the_chat_the_reply_shows_and_the_thread_is_read(self):
         for w, o in self._each():
             with self.subTest(width=w):
                 sid = f"po{w}"
                 after = o["channelAfter"]
-                self.assertIn(f"{sid}:8", after["mids"], "sent to the chat too")
-                self.assertNotIn(f"{sid}:9", after["mids"], "the PO's answer stays in the thread")
-                self.assertTrue(any(t.startswith("Replied in") for t in after["ins"]), after["ins"])
+                self.assertEqual(after["mids"], [], "replies stay in the thread")
+                self.assertEqual(after["ins"], [])
                 lines = {x["thr"]: x for x in after["lines"]}
-                self.assertTrue(lines["P1"]["text"].startswith("4 replies"), lines["P1"])
+                self.assertIn("4 replies", lines["P1"]["text"])
                 self.assertFalse(lines["P1"]["unread"], "opened: read")
                 self.assertTrue(lines["P2"]["unread"], "never opened: still unread")
 
