@@ -13123,7 +13123,7 @@ function pdThreadOpen(roomId, thread, mid, source, part = '') {
     return true;
   }
   const el = document.createElement('div');
-  el.className = 'pd-chat pd-thread';
+  el.className = 'pd-chat pd-chat-x pd-thread';
   el.dataset.room = roomId;
   el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-thread src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write"></iframe>`;
   PD.rt.set(id, { kind: 'thread', room: roomId, el, title: 'Thread' });
@@ -18817,8 +18817,13 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
   // A PO chat's thread (#210): opened beside it; its page names it; its ‹ Chat.
   if (d && d.type === 'open-thread' && d.roomId && ev.origin === location.origin) {
-    const ok = pdThreadOpen(String(d.roomId), String(d.thread || ''), String(d.mid || ''), ev.source, String(d.part || ''));
-    if (!ok) window.open('/session?id=' + encodeURIComponent(String(d.roomId)) + (d.thread ? '&thread=' + encodeURIComponent(String(d.thread)) : '&thread=&tmid=' + encodeURIComponent(String(d.mid || ''))), '_blank', 'noopener');
+    const roomId = String(d.roomId), mid = String(d.mid || ''), part = String(d.part || '');
+    const ok = pdThreadOpen(roomId, String(d.thread || ''), mid, ev.source, part);
+    if (!ok) {
+      const q = (d.thread ? '&thread=' + encodeURIComponent(String(d.thread)) : '&thread=&tmid=' + encodeURIComponent(mid))
+        + (mid ? '&msg=' + encodeURIComponent(mid) : '') + (part ? '&part=' + encodeURIComponent(part) : '');
+      window.open('/session?id=' + encodeURIComponent(roomId) + q, '_blank', 'noopener');
+    }
   }
   if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''));
   if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {

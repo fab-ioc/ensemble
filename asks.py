@@ -739,16 +739,8 @@ def answered(room_id: str) -> dict:
 
 
 def open_in(summary: dict, now: float | None = None) -> list[dict]:
-    """The asks of a room still waiting for the person, oldest first:
-    ``[{mid, n, question, ts, who}]``. An ask counts until it is answered
-    (an unread one never ages out: GitHub issue 11), and until the person
-    writes in the chat after it (``asksSettledAt``: they answered in words,
-    or set it aside); one whose message was approved with a thumbs up ("go
-    with your recommendation") is answered if it has a recommendation. The
-    page's ``openAsks`` keeps the same rules. Needs you also lets go of an
-    ask the person has read once it is a day old (attention.read_and_old):
-    it stays open in the chat, for them to come back to; and at once of one
-    they said they are done with (attention.set_aside: Done with this)."""
+    """Asks still calling for attention, oldest first. A read or set-aside
+    ask can leave Needs you while its card remains open in :func:`open_cards`."""
     now = time.time() if now is None else now
     rid = summary.get("id", "")
     marked = _room_asks(summary)
@@ -928,8 +920,7 @@ def point_card(summary: dict, point: dict) -> dict | None:
     answered one, else None. A card that holds several points' questions
     under their ``Re`` heads waits on each for its own. Nothing is recorded:
     the tie is read from the ledger's answers and the card's own words, which
-    the hub already keeps. A Done task's card waits for nobody, as in
-    :func:`open_by_room`."""
+    the hub already keeps. Workflow does not change its open state."""
     rid, pid = summary.get("id", ""), (point.get("id") or "").upper()
     if not pid:
         return None
@@ -938,7 +929,6 @@ def point_card(summary: dict, point: dict) -> dict | None:
     since = float(point.get("createdAt") or 0)
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
-    over = _d.normalize_workflow(summary.get("workflow")) == "done"
     best = None
     for mid in set(answers) | {m for m, c in cards.items() if pid in c[2]}:
         if mid in cards:
@@ -964,7 +954,7 @@ def point_card(summary: dict, point: dict) -> dict | None:
                    and not (mid in approved and _approved_settles(rid, mid, n))]
         n = waiting[0] if waiting else mine[0]
         card = {"mid": mid, "n": n, "question": qs[n] if n < len(qs) else "", "ts": ts,
-                "open": bool(waiting) and not over}
+                "open": bool(waiting)}
         if best is None or (card["open"], ts, mid) >= (best["open"], best["ts"], best["mid"]):
             best = card
     return best
@@ -978,16 +968,14 @@ def open_cards(summary: dict, led: dict | None = None) -> list[dict]:
     answered on its card, its message approved (with a recommendation), or
     answered by a typed message the hub links to the card: a later point
     that links to it, or follows up an answer it is (a comment on a passage,
-    a quote). Writing about something else does not answer it (unlike
-    :func:`open_in`'s ``asksSettledAt``, which only says it no longer rings).
-    A Done task's cards wait for nobody.
+    a quote). Writing about something else and workflow changes do not close it.
 
     Worked out once per room while its cards (:func:`_cards_sig`) and its
     ledger file are unchanged: the chat polls every few seconds, and the
     approved cards each read their balloon again. ``led`` is the ledger as
     saved (a caller's unsaved change is not seen until it is saved)."""
     rid = (summary or {}).get("id", "")
-    if not rid or _d.normalize_workflow(summary.get("workflow")) == "done":
+    if not rid:
         return []
     room = _room_of(summary)
     if room is None:
@@ -1034,7 +1022,11 @@ def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
             pids = sorted(pid for pid, ns in (by_point or {}).items() if n in ns)
             refs = _d.points.task_refs(q)
             task = refs[0] if refs else next((by_id[p]["task"] for p in pids if (by_id.get(p) or {}).get("task")), "")
-            out.append({"mid": mid, "n": n, "question": q, "ts": float(ts or 0),
+            who = next((m.get("from") for m in room.get("messages") or [] if m.get("id") == mid), "")
+            if not who:
+                who = next((p.get("identity") for p in room.get("participants") or []
+                            if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")), "")
+            out.append({"mid": mid, "n": n, "question": q, "ts": float(ts or 0), "who": who,
                         **({"task": task} if task else {}), **({"points": pids} if pids else {})})
     out.sort(key=lambda c: (c["ts"], c["mid"], -c["n"]), reverse=True)
     return out
@@ -1226,7 +1218,7 @@ def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, l
         out = {}
         for s in summaries:
             if not s.get("launched", True) or _d.normalize_workflow(s.get("workflow")) == "done":
-                continue        # a draft asks nothing yet; a Done task's asks are over
+                continue
             try:
                 got = open_in(s, now)
             except Exception as e:      # noqa: BLE001 — one room's trouble hides no other's
