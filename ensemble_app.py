@@ -52,8 +52,21 @@ def _app_update(argv: list[str]) -> None:
     sys.exit(app_update.main(argv))
 
 
+def _pty_host(argv: list[str]) -> None:
+    from pathlib import Path
+    from backends import ptyhost
+    ptyhost.serve(Path(argv[1]))
+
+
+def _restart_helper(argv: list[str]) -> None:
+    import restart_helper
+    sys.exit(restart_helper.run(argv[1]))
+
+
 SCRIPTS = {
     "app_update": _app_update,
+    "pty_host": _pty_host,
+    "restart_helper": _restart_helper,
     "agent_hook": _agent_hook,
     "task_tool_hook": _task_tool_hook,
     "usage_statusline": _usage_statusline,

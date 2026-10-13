@@ -208,12 +208,13 @@ class SharedBlock(unittest.TestCase):
             for src in re.findall(r'<script src="/static/([^"]+)"', read(n)):
                 self.assertIn("static/" + src, dashboard.PAGE_FILES, f"{n} loads {src}")
 
-    def test_the_update_button_path_reloads_once(self):
+    def test_the_update_button_path_refreshes_without_a_reload(self):
         src = read("index.html")
         fn = src[src.index("async function triggerUpdate("):src.index("function renderRuntimeConfig(")]
         self.assertIn("ensUpd.hold = true", fn)
         self.assertNotIn("location.reload()", fn, "the update block's reload, which keeps the place")
-        self.assertIn("ensUpd.reload()", fn)
+        self.assertIn("ensUpd.poll()", fn)
+        self.assertIn("refresh()", fn)
         self.assertEqual(fn.count("ensUpd.hold = false"), 5,
                          "draining (the banner takes over), refused, the app's update stopped, "
                          "timed out, reloading")

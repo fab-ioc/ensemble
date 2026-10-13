@@ -1,12 +1,7 @@
-"""A hub restart at a safe point (#211): the hub drains before it restarts.
+"""Classic restart drain for a PTY host change or a requested safe stop.
 
-Until now a restart (the PO's ``ensemble_restart_hub``, the page's Update now)
-stopped every agent wherever it was: a test suite running in a background
-shell was lost, an agent in the middle of a turn got one line and redid its
-work (0.8 to 3.4M tokens each), and the PO polled ``/api/ptys`` for an hour
-looking for a quiet moment that never came.
-
-A ``safe`` request drains first:
+Ordinary hub-only restarts keep the PTY host and agents running. A classic
+restart drains first:
 
 * **Nothing new starts.** While a drain is on (``holding()``), the hub holds
   what it would start or type on its own or for a person: task launches,
@@ -290,6 +285,7 @@ def view(st: dict | None, now: float) -> dict:
         return {"state": "none"}
     agents = sorted(st.get("agents", {}).values(), key=lambda a: a["label"])
     return {"id": st.get("id"), "state": st.get("state"), "action": st.get("action"),
+            "external": bool(st.get("external")),
             "reason": reason_text(st), "reasons": list(st.get("reasons") or []),
             "requestedBy": [r.get("label", "") for r in st.get("requestedBy") or []],
             "requestedAt": st.get("requestedAt"), "deadline": st.get("deadline"),
@@ -587,10 +583,28 @@ def _whole_screen(sess) -> str:
     return sess.tail(lines=100000, max_bytes=1 << 20)
 
 
-def request_restart(reason: str, by: dict, action: str = "restart") -> dict:
+def request_restart(reason: str, by: dict, action: str = "restart",
+                    external: bool = False) -> dict:
     """A ``safe`` request (the PO's tool, the page): a drain starts, or its
     reason joins the one under way. ``by`` is {roomId, identity, label} for a
     PO, {label} for the page. Returns {status, ...} for the caller."""
+    # A matching detached PTY owner survives the web process. There is no
+    # safe point to wait for and no agent needs a resume line.
+    if action == "restart" and not holding() and _d.pty_host_compatible():
+        _log(f"hub-only mode by {by.get('label') or 'someone'}: {reason or '(no reason)'}")
+        return _d.trigger_restart(by.get("roomId", ""))
+    if action == "update" and not holding() and not external:
+        if _d.app_version.packaged():
+            _log("packaged update staging; helper will select hub-only or classic mode")
+            res = _d.start_app_update()
+            return {"status": 202 if res.get("started") else 500, **res}
+        if _d.source_update_keeps_host():
+            err = _d.pull_checkout()
+            if err:
+                return {"status": 500, "started": False, "error": err}
+            _log("source update: PTY host unchanged; hub-only mode")
+            res = _d.trigger_restart(by.get("roomId", ""))
+            return {"status": 202 if res.get("started") else 500, **res}
     now = time.time()
     with LOCK:
         st = current()
@@ -598,6 +612,8 @@ def request_restart(reason: str, by: dict, action: str = "restart") -> dict:
             return {"status": 409, "started": False, "drain": view(st, now),
                     "error": "the restart is already under way: it takes no more requests"}
         st, merged = request(st, reason, by, action, now, deadline_s(_d.load_settings()))
+        if external:
+            st["external"] = True
         if by.get("roomId"):
             # The PO that asks is at its safe point: it asked and moves on.
             room = _d.chatroom.get_room(by["roomId"], public=False) or {"id": by["roomId"]}
@@ -744,6 +760,9 @@ def _launch() -> None:
     st = current()
     if not st or st.get("state") != "restarting" or os.getpid() != st.get("hubPid"):
         return
+    if st.get("external"):
+        _log("external update helper continues after the drain")
+        return
     update = st.get("action") == "update"
     if os.environ.get("ENSEMBLE_UPDATE_DRY_RUN" if update else "ENSEMBLE_RESTART_DRY_RUN"):
         _log("dry run: nothing restarted")
@@ -754,12 +773,6 @@ def _launch() -> None:
         if update and _d.app_version.packaged():
             res = _d.start_app_update()
             res["status"] = 202 if res.get("started") else (409 if "under way" in res.get("error", "") else 500)
-        elif update and sys.platform != "win32":
-            # A checkout on macOS: its updater restarts the hub by itself;
-            # no helper restores the rooms (the hub that comes back closes
-            # the drain, on_startup).
-            res = _d.trigger_update()
-            res["status"] = 202 if res.get("started") else 500
         else:
             if update:
                 err = _d.pull_checkout()

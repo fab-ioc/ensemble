@@ -1,0 +1,155 @@
+"""Detached macOS helper for a plain hub restart on code already on disk."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def hub_args(plan: dict, port: int) -> list[str]:
+    """Keep the original bind and flags while replacing this instance's port."""
+    args = [plan["python"]]
+    if plan.get("script"):
+        args.append(plan["script"])
+    original = iter(plan.get("args") or [])
+    for arg in original:
+        if arg in ("--port", "--log"):
+            next(original, None)
+        elif not (arg.startswith("--port=") or arg.startswith("--log=") or arg == "--background"):
+            args.append(arg)
+    args.extend(["--port", str(port), "--log", plan["preflightLog"] if port != plan["port"]
+                 else plan["log"], "--background"])
+    return args
+
+
+def run(plan_path: str) -> int:
+    path = Path(plan_path)
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    path.unlink(missing_ok=True)
+    try:
+        return _run(plan)
+    finally:
+        lease_path = Path(plan.get("leasePath") or "")
+        try:
+            if lease_path.is_file() and json.loads(lease_path.read_text(encoding="utf-8")).get("id") == plan.get("leaseId"):
+                lease_path.unlink()
+        except (OSError, ValueError):
+            pass
+
+
+def _run(plan: dict) -> int:
+    os.environ.update(plan["env"])
+    log_path = Path(plan["log"])
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log(message):
+        with log_path.open("a", encoding="utf-8") as out:
+            out.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [restart] {message}\n")
+
+    def get(port, endpoint, timeout=10):
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{endpoint}", timeout=timeout) as resp:
+            return resp.read()
+
+    def post(endpoint, body):
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(f"http://127.0.0.1:{plan['port']}{endpoint}",
+                                     data=data, headers={"Content-Type": "application/json; charset=utf-8"})
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def spawn(port):
+        args = hub_args(plan, port)
+        env = dict(plan["env"])
+        if port != plan["port"]:
+            env["ENSEMBLE_PTY_PREFLIGHT"] = "1"
+        with log_path.open("a", encoding="utf-8") as out:
+            return subprocess.Popen(args, cwd=plan["repo"], env=env,
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                    start_new_session=True, text=True, encoding="utf-8")
+
+    def wait(port, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                get(port, "/api/platform", timeout=3)
+                return True
+            except OSError:
+                time.sleep(1)
+        return False
+
+    log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
+                     else "classic drain and resume"))
+    pf = spawn(plan["preflightPort"])
+    try:
+        if not wait(plan["preflightPort"], 60):
+            log("preflight failed; hub left running")
+            return 1
+        for endpoint in ("/api/sessions?n=5", "/", "/api/projects"):
+            get(plan["preflightPort"], endpoint, timeout=170)
+    except OSError as exc:
+        log(f"preflight failed: {exc}; hub left running")
+        return 1
+    finally:
+        try:
+            data = json.dumps({"lease": plan["leaseId"]}).encode("utf-8")
+            req = urllib.request.Request(f"http://127.0.0.1:{plan['preflightPort']}/api/restart/host-stop",
+                                         data=data, headers={"Content-Type": "application/json; charset=utf-8"})
+            urllib.request.urlopen(req, timeout=10).close()
+        except OSError:
+            pass
+        pf.terminate()
+        try:
+            pf.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pf.kill()
+
+    time.sleep(max(0, plan.get("graceSeconds", 0)))
+    lease = {"lease": plan["leaseId"]}
+    try:
+        if plan["keepAgents"]:
+            post("/api/restart/prepare", lease)
+        else:
+            post("/api/restart/snapshot", lease)
+            post("/api/restart/host-stop", lease)
+    except OSError as exc:
+        log(f"restart preparation failed: {exc}")
+
+    svc = plan.get("launchd")
+    if svc:
+        res = subprocess.run(["launchctl", "kickstart", "-k", svc["target"]],
+                             capture_output=True, text=True, encoding="utf-8", timeout=30)
+        log(f"launchctl kickstart: {res.returncode}")
+        if res.returncode != 0:
+            return 1
+    else:
+        os.kill(int(plan["hubPid"]), signal.SIGTERM)
+        end = time.monotonic() + 30
+        while time.monotonic() < end:
+            try:
+                os.kill(int(plan["hubPid"]), 0)
+            except OSError:
+                break
+            time.sleep(0.2)
+        else:
+            log("old hub did not stop; leaving it running")
+            return 1
+        spawn(plan["port"])
+    if not wait(plan["port"], 90):
+        log("hub did not come back")
+        return 1
+    if not plan["keepAgents"]:
+        try:
+            post("/api/restart/restore", lease)
+        except OSError as exc:
+            log(f"rooms could not be restored: {exc}")
+    log("hub up; restart complete")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run(sys.argv[1]))

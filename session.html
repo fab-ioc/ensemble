@@ -7,6 +7,7 @@
 <meta name="ensemble-file-drag" content="">
 <title>Ensemble — session</title>
 <script src="/static/noun.js"></script>
+<script src="/static/hub-resilience.js"></script>
 <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg">
 <link rel="icon" href="/static/icons/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
@@ -2202,6 +2203,7 @@ function itemsHtml(it, bars, md, headBar) {
 }
 const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
 const jpost = (path, body) => fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
+window.addEventListener('hub:online', () => refresh());
 const b64bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 // Strip terminal query REPLIES (fg/bg color = OSC 10/11, device attributes =
 // CSI ? … c) that some PTY/ConPTY setups leak into the output as literal text.

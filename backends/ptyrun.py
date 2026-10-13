@@ -14,6 +14,7 @@ the child alive" and teardown kills the whole process tree.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import queue
 import re
 import subprocess
@@ -179,6 +180,13 @@ class PtySession:
         self.meta = dict(meta or {})
         self.created = time.time()
         self._buf = bytearray()
+        self._stream_size = 0
+        self._spool = None
+        spool_dir = os.environ.get("ENSEMBLE_PTY_SPOOL_DIR")
+        if spool_dir:
+            Path(spool_dir).mkdir(parents=True, exist_ok=True)
+            self._spool = Path(spool_dir) / f"{self.id}.bin"
+            self._spool.write_bytes(b"")
         self._subs: list[queue.Queue] = []
         self._lock = threading.Lock()
         self._alive = True
@@ -346,6 +354,15 @@ class PtySession:
             self._last_output = time.time()
             with self._lock:
                 self._buf.extend(chunk)
+                if self._spool is not None:
+                    try:
+                        with self._spool.open("ab") as out:
+                            out.write(chunk)
+                    except OSError:
+                        # A full or unavailable disk must not stop draining the
+                        # PTY; otherwise the agent can block on its own output.
+                        self._spool = None
+                self._stream_size += len(chunk)
                 if len(self._buf) > _BUFFER_MAX:
                     del self._buf[:len(self._buf) - _BUFFER_MAX]
                 subs = list(self._subs)
@@ -385,8 +402,28 @@ class PtySession:
         q: queue.Queue = queue.Queue(maxsize=1024)
         with self._lock:
             snapshot = bytes(self._buf)
+            q._start_offset = self._stream_size
             self._subs.append(q)
         return snapshot, q
+
+    def snapshot(self) -> tuple[bytes, int]:
+        """Atomically read the visible screen and its next stream position."""
+        with self._lock:
+            return bytes(self._buf), self._stream_size
+
+    def read_from(self, offset: int, limit: int = 65536) -> tuple[bytes, int, bool]:
+        """Read output by position so reconnecting clients miss no bytes."""
+        with self._lock:
+            end = self._stream_size
+            if self._spool is None:
+                start = max(0, end - len(self._buf))
+                offset = max(offset, start)
+                data = bytes(self._buf[offset - start:offset - start + limit])
+            else:
+                with self._spool.open("rb") as src:
+                    src.seek(offset)
+                    data = src.read(min(limit, max(0, end - offset)))
+            return data, offset + len(data), self.alive()
 
     def unsubscribe(self, q: queue.Queue) -> None:
         with self._lock:
@@ -489,3 +526,18 @@ def reap() -> None:
             _record_death(s)
         except Exception:
             pass
+
+
+def use_host(client) -> None:
+    """Route the public PTY API to the detached owner after hub startup."""
+    global create, get, list_sessions, kill, reap, death_for, forget_death, set_death_hook
+    if _death_hook is not None:
+        client.set_death_hook(_death_hook)
+    create = client.create
+    get = client.get
+    list_sessions = client.list_sessions
+    kill = client.kill
+    reap = client.reap
+    death_for = client.death_for
+    forget_death = client.forget_death
+    set_death_hook = client.set_death_hook
