@@ -26,7 +26,7 @@ async function main() {
       await c.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<768},s);
       await c.send('Emulation.setTouchEmulationEnabled',{enabled:width<768,maxTouchPoints:5},s);
       const ev = async expression => {const r = await c.send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},s); if(r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value;};
-      const until = async ex => {for(let i=0;i<150;i++){try{if(await ev(ex))return;}catch{} await sleep(100);}throw Error('timeout '+ex);};
+      const until = async ex => {for(let i=0;i<300;i++){try{if(await ev(ex))return;}catch{} await sleep(100);}throw Error('timeout '+ex);};
       await c.send('Page.addScriptToEvaluateOnNewDocument',{source:"try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}"},s);   // the grouped list: its rows include a project's tasks (#189)
       await c.send('Page.navigate',{url:A.base+'/'},s);
       await until(`typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r=>r.roomId===${JSON.stringify(A.task)})`);
@@ -68,6 +68,9 @@ async function main() {
         })()`);
         if(A.shots) {const shot=await c.send('Page.captureScreenshot',{format:'png'},s);fs.writeFileSync(path.join(A.shots,`${kind}-${width}-${theme}.png`),Buffer.from(shot.data,'base64'));}
         if(!baseline && width<768) {
+          // A parent poll can replace its iframe after the first ready check.
+          // Wait for the current frame before using its composer.
+          await until(`document.querySelector('${sel}')?.contentDocument?.getElementById('input')`);
           g.actions=await ev(`(() => {
             const f=document.querySelector('${sel}'),w=f.contentWindow,d=f.contentDocument;
             const box=d.getElementById('msgs'),ask=d.getElementById('ask-line');
