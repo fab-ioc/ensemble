@@ -1095,6 +1095,16 @@
   .ed-refs[hidden] { display:none; }
   #compose .ed-row { display:flex; align-items:center; gap:var(--s-200); }
   #compose .ed-row .grow { flex:1 1 auto; }
+  #stop-wrap { position:relative; margin-right:var(--s-100); }
+  #stop-wrap[hidden], #stop-choices[hidden], #stop-note[hidden] { display:none; }
+  #stop-agent { min-height:var(--touch-min); padding:0 var(--s-300); border:1px solid var(--c-danger-bold); border-radius:var(--r-200); background:var(--surface); color:var(--c-danger-fg); font:inherit; cursor:pointer; }
+  #stop-agent:hover { background:var(--c-danger-bg); }
+  #stop-agent:focus-visible, #stop-choices button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #stop-choices { position:absolute; z-index:70; right:0; bottom:calc(100% + var(--s-100)); min-width:180px; padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); }
+  #stop-choices button { display:block; width:100%; min-height:var(--touch-min); padding:0 var(--s-200); text-align:left; border:0; background:transparent; color:var(--fg); font:inherit; cursor:pointer; }
+  #stop-choices button:hover { background:var(--hover); }
+  #stop-note { flex:0 0 auto; padding:var(--s-100) var(--s-300); color:var(--fg-muted); font-size:var(--fs-200); text-align:center; }
+
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
   #add-point:hover, #attach:hover { background:var(--hover); color:var(--fg); }
   #attach:focus-visible, #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
@@ -1157,7 +1167,7 @@
     #hint:empty { display:none; }
     #compose #input { border:0; padding:var(--s-100) 0; min-height:40px; resize:none; field-sizing:content; background:transparent; }
     #compose #input:focus { outline:none; }
-    #send { height:32px; padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg); font-weight:500; }
+    #send { height:var(--touch-min); padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg); font-weight:500; }
     #send:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
     #send:disabled { border-color:var(--border); background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
     #send:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
@@ -1421,6 +1431,7 @@
     <div id="promptcard" hidden></div>
     <div id="livetail" hidden></div>
     <div id="activity" hidden></div>
+    <div id="stop-note" role="status" hidden></div>
     <div id="compose">
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
@@ -1444,6 +1455,7 @@
         <input type="file" id="attach-input" accept="image/*" multiple hidden>
         <span class="grow"></span>
         <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
+        <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <button id="send" disabled>Send</button>
       </div>
     </div>
@@ -4504,7 +4516,7 @@ function loadRead() {
 function catchUpOpen() {
   const box = $('#msgs');
   CU_OPENED = true;
-  if (THREAD_MODE) { box.scrollTop = box.scrollHeight; return; }
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE) { box.scrollTop = box.scrollHeight; return; }
   if (!LAST_ITEMS || !box || !box.clientHeight) return;
   const items = withTaskBubble(LAST_ITEMS, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   const stored = loadRead(), p = stored ? null : readPoint(items, null);
@@ -5760,6 +5772,7 @@ function refreshShow(room, ticket, sendsGen) {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
+  showInterrupt(room.interrupts || [], room);
   // The agents a message can be directed to with its @<identity> prefix:
   // from every poll, so a stopped room with its terminals hidden knows them too.
   ROOM_IDENTS = mem.map(m => m.identity);
@@ -5853,6 +5866,7 @@ async function updateAgentStatus() {
     setText(stat, s.txt);
   });
   renderActivity(map, lmap);
+  updateStopControl(map, lmap);
   // A message of the person's still without an answer says so once the agent
   // has stopped working (a stopped session is not working either).
   if (SOLO_SID) {
@@ -5870,6 +5884,85 @@ async function updateAgentStatus() {
     else if (!_pcDismissed) renderPromptCard();
   }
 }
+// A terminal interrupt is a person's action. Keep it out of the chat messages
+// so the agent never reads it as a new instruction or loses a question card.
+let STOP_TARGETS = [], STOP_LAST = -Infinity, STOP_PENDING = false;
+function showInterrupt(events, room = ROOM_OBJ) {
+  const event = events[events.length - 1];
+  const note = $('#stop-note');
+  const newerMessage = event && (room?.messages || []).some(m => (+m.ts || 0) > event.ts);
+  const recent = event && Date.now() / 1000 - event.ts < 300;
+  note.hidden = !recent || !!newerMessage;
+  if (!note.hidden) {
+    const time = new Date(event.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    setText(note, `Stopped by you · ${time}`);
+  }
+}
+function updateStopControl(ptyMap, liveMap) {
+  const working = new Set((ROOM_OBJ && ROOM_OBJ.workingAgents) || []);
+  STOP_TARGETS = ROOM_LIVE ? ROOM_AGENTS.filter(a => {
+    if (!a.ptyId || !working.has(a.identity)) return false;
+    if (a.agent !== 'codex') return true;
+    const last = [...(ROOM_OBJ.interrupts || [])].reverse().find(e => e.identity === a.identity && e.ptyId === a.ptyId);
+    return !last || (ROOM_OBJ.messages || []).some(m => (+m.ts || 0) > last.ts && m.from !== a.identity && m.from !== 'hub');
+  }) : [];
+  const wrap = $('#stop-wrap'), choices = $('#stop-choices');
+  wrap.hidden = !STOP_TARGETS.length;
+  if (!STOP_TARGETS.length) choices.hidden = true;
+  $('#stop-agent').disabled = STOP_PENDING;
+}
+async function stopAgent(identity = '') {
+  if (STOP_PENDING || !STOP_TARGETS.length || performance.now() - STOP_LAST < 1000) return;
+  if (!identity && STOP_TARGETS.length > 1) {
+    const choices = $('#stop-choices');
+    choices.innerHTML = STOP_TARGETS.map(a => `<button type="button" data-stop-identity="${esc(a.identity)}">Stop ${esc(a.identity)}</button>`).join('');
+    choices.hidden = false;
+    choices.querySelector('button').focus();
+    return;
+  }
+  STOP_PENDING = true;
+  $('#stop-agent').disabled = true;
+  $('#stop-choices').hidden = true;
+  try {
+    const result = await postOk('/api/room/interrupt', { roomId:ROOM, identity:identity || STOP_TARGETS[0].identity });
+    STOP_LAST = performance.now();
+    if (result.interrupt) {
+      ROOM_OBJ.interrupts = [...(ROOM_OBJ.interrupts || []), result.interrupt];
+      showInterrupt([result.interrupt]);
+      updateStopControl({}, {});
+    }
+    $('#input').focus({ preventScroll:true });
+    refresh();
+  } catch (err) {
+    await refresh();
+    const code = err && err.message;
+    const reason = code === 'agent_not_working' ? 'It had already stopped.'
+      : ['room_stopped', 'agent_stopped', 'terminal_closed'].includes(code) ? 'The session has stopped.'
+      : code === 'page_only' ? 'Open this chat from the dashboard to stop its agent.'
+      : 'Could not stop the agent. Please try again.';
+    setText($('#hint'), reason);
+  } finally {
+    STOP_PENDING = false;
+    $('#stop-agent').disabled = false;
+  }
+}
+$('#stop-agent').addEventListener('click', () => stopAgent());
+$('#stop-choices').addEventListener('click', e => {
+  const b = e.target.closest('[data-stop-identity]');
+  if (b) stopAgent(b.dataset.stopIdentity);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const choices = $('#stop-choices');
+  if (!choices.hidden) { choices.hidden = true; $('#stop-agent').focus(); e.preventDefault(); return; }
+  // Open cards and popovers get Escape first. Any editor other than the empty
+  // message box keeps it too, including question comments and point drafts.
+  if (document.querySelector('dialog[open], [role=dialog]:not([hidden]), #tailpop:not([hidden]), .am-menu:not([hidden]), .theme-dd-menu:not([hidden]), .phone-compose-tools[open], .cmt-composer:not([hidden])')) return;
+  const editor = document.activeElement?.closest('input, textarea, select, [contenteditable]');
+  if (editor && (editor !== $('#input') || $('#input').value)) return;
+  if (STOP_TARGETS.length) { e.preventDefault(); stopAgent(); }
+}, true);
+
 // The always-visible activity bar above the composer, so you can tell at a glance
 // whether an agent is working — or waiting on you — without opening its terminal.
 function renderActivity(ptyMap, liveMap) {
@@ -6297,7 +6390,14 @@ const PG_SETTLE = 400, PG_SLOP = 4, PG_HOLD = 300;
 // the person last typed in the box; scrolled: when they last scrolled (wheel,
 // a scroll key, a touch drag). (var: renderBubbles may run before this line.)
 var PG = { els: new WeakMap(), keys: new Map(), at: null, any: 0, down: 0, up: 0, press: null, click: false, queued: false, flush: 0, later: null, typed: -Infinity, scrolled: -Infinity };
-document.addEventListener('input', e => { if (e.target.closest && e.target.closest('#compose')) PG.typed = performance.now(); }, true);
+document.addEventListener('input', e => {
+  if (!(e.target.closest && e.target.closest('#compose'))) return;
+  PG.typed = performance.now();
+  // Typing a new draft makes a later Send press intentional, even if the
+  // button moved under the pointer when the previous send cleared its draft.
+  const send = $('#send'), entry = PG.els.get(send);
+  if (entry) entry.t = -Infinity;
+}, true);
 const pgScrolled = () => { PG.scrolled = performance.now(); };
 window.addEventListener('wheel', pgScrolled, { capture: true, passive: true });
 window.addEventListener('touchmove', pgScrolled, { capture: true, passive: true });
