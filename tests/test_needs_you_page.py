@@ -99,6 +99,8 @@ async function main() {
       const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, `needs-you-${w}-${name}.png`), Buffer.from(r.data, 'base64')); };
       const load = async () => {
         await c.send('Page.navigate', { url: A.base + '/session?room=' + room }, sessionId);
+        await until('document.querySelector("#whole-chat") && !document.querySelector("#whole-chat").hidden');
+        await evalIn('document.querySelector("#whole-chat").click()');
         await until('typeof CHAT_DRAWN !== "undefined" && CHAT_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0 && typeof POINTS !== "undefined" && POINTS.items.length >= 3', 30000);
         await sleep(300);
         await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');

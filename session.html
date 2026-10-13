@@ -756,9 +756,29 @@
   .thr-state.st-needs { background:var(--c-warning-bg); color:var(--c-warning-fg); }
   .thr-state.st-task { background:var(--c-progress-bg); color:var(--c-progress-fg); }
   .thr-more-btn { height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }
+  .thr-card { display:flex; align-items:center; width:100%; min-height:40px; gap:var(--s-200); padding:var(--s-100) var(--s-200);
+    margin:0 0 var(--s-050); text-align:left; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-200);
+    color:var(--fg); font:inherit; cursor:pointer; }
+  .thr-card:hover { background:var(--hover); }
+  .thr-card:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .thr-card .thr-root { flex:1 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-weight:500; }
+  .thr-card.unread .thr-root { font-weight:700; }
+  .thr-card .thr-count, .thr-card .thr-meta, .thr-card .thr-asks { flex:0 0 auto; color:var(--fg-muted); font-size:var(--fs-200); }
+  .thr-card .thr-asks { color:var(--c-warning-fg); }
+  .thr-empty { padding:var(--s-400); color:var(--fg-muted); text-align:center; }
+  #threads-view[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
+  body.po-thread-channel #chatbar button { min-height:var(--touch-min); }
+  .thr-card { gap:var(--s-100); min-height:44px; } .thr-card .thr-root { flex-basis:0; }
+  #thread-catchup { display:flex; align-items:center; gap:var(--s-200); min-height:32px; padding:0 var(--s-300);
+    border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); }
+  #thread-catchup[hidden], body.thread #thread-catchup { display:none; }
+  #thread-catchup button { background:transparent; border:0; color:var(--link); font:inherit; cursor:pointer; min-height:var(--touch-min); }
+  #thread-catchup button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #whole-chat { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); line-height:16px; }
   #whole-chat[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
   #whole-chat[hidden], #thr-also-l[hidden], #thr-back[hidden] { display:none; }
+  #activity-thread.unread::after { content:""; display:inline-block; width:8px; height:8px; margin-left:var(--s-100); border-radius:var(--r-full); background:var(--c-discovery-bold); }
+  @media (max-width:600px) { #chatbar #whole-chat, #chatbar-note { display:none; } }
   /* A thread: its own messages, all of them; the chat's own bars are not its. */
   body.thread #chatbar, body.thread #points-line, body.thread #ask-line { display:none; }
   #thr-also-l { display:inline-flex; align-items:center; gap:var(--s-100); color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; white-space:nowrap; }
@@ -1256,6 +1276,7 @@
     #msgs .msg.needs-answer { border-inline-start:4px solid var(--c-warning-bold); }
     #msgs .msg.needs-answer > .from::after { content:'Reply needed'; color:var(--c-warning-fg); background:var(--c-warning-bg); padding:0 var(--s-100); margin-left:var(--s-200); font-size:var(--fs-100); }
     #chatbar { display:none; }
+    body.po-thread-channel #chatbar { display:flex; min-height:var(--touch-min); }
     #ask-line { margin:0; padding:0 var(--s-200); border-radius:0; min-height:var(--touch-min); }
     #ask-line .ask-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #ask-line .ask-link { display:block; min-height:var(--touch-min); line-height:var(--touch-min); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1297,6 +1318,7 @@
     #chat-controls:has(#chatbar[hidden]):has(#points-line[hidden]) { display:none; }
     #chatbar { display:flex; padding:0 var(--s-200); min-height:28px; margin-left:auto; }
     #chatbar-note { display:none; }
+
     #points-line { flex:1 1 auto; min-width:0; border:0; }
     #points-line .pt-sum-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   }
@@ -1423,8 +1445,9 @@
       <div id="ask-line" role="status" hidden></div>
       <div id="chat-controls">
         <div id="points-line" hidden></div>
-        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="whole-chat" aria-pressed="false" hidden title="Show the whole chat in order, every reply in place. Off, each thread shows once, with its replies one click away">Whole chat</button></div>
+        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="activity-thread" hidden>Team activity</button><button type="button" id="earlier-threads" hidden>Show earlier threads</button><button type="button" id="whole-chat" aria-pressed="false" hidden title="Show the whole chat in order, every reply in place. Off, each thread shows once, with its replies one click away">Whole chat</button></div>
       </div>
+      <div id="thread-catchup" hidden></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
@@ -4273,7 +4296,7 @@ function renderBubbles(items, opt = {}) {
   const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',') + '|' + [...(POINTS.askMids || [])].join(',');
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
-  CU_SHOWN = !!cu;
+  CU_SHOWN = !!cu && !channel;
   // What you sent that the conversation does not show yet, as the hub keeps
   // it (sends.py): queued, typed in and waiting for the agent to take it, or
   // not delivered with the reason, Retry and Discard. Held by the hub, so it
@@ -4283,7 +4306,12 @@ function renderBubbles(items, opt = {}) {
   // bottom with no time, under the answers that came after it).
   const shown = sendsToShow(given);
   const due = shown.slice();
-  items.forEach((m, i) => {
+  if (channel) {
+    const tids = THR_LIST ? THR_UNREAD.map(t => t.id)
+      : items.flatMap(m => m.thr || []).filter(t => t !== 'team:activity');
+    for (const tid of tids) rows.push(threadCardHtml(tid));
+    if (THR_LIST && !tids.length) rows.push('<div class="thr-empty">No threads with new replies</div>');
+  } else items.forEach((m, i) => {
     while (due.length && m.ts && m.ts > (due[0].at || 0)) rows.push(sendHtml(due.shift(), md));
     const k = foldKey(m, i);
     const gp = gapAt.get(i);
@@ -4322,7 +4350,7 @@ function renderBubbles(items, opt = {}) {
     }
   });
   // A channel shows its latest entries: the way to those before.
-  if (thr && !THREAD_MODE && THR_BEFORE) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
+  if (thr && !THREAD_MODE && THR_BEFORE && !channel) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
@@ -4636,6 +4664,12 @@ function showChatBar(items, quietRows) {
     phoneFilter.textContent = TEAM_ALL ? 'Team activity: shown' : 'Team activity: folded';
     phoneFilter.title = chatBarNote(TEAM_ALL, quietRows, GAP_N, GAP_MSGS);
   }
+  if (threadedView() && !THREAD_MODE) {
+    bar.hidden = false; btn.hidden = true;
+    setText($('#chatbar-note'), THR_LIST ? 'Threads with new replies' : 'Channel');
+    return;
+  }
+  btn.hidden = false;
   const any = items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
   bar.hidden = !any;
   if (!any) return;
@@ -4837,6 +4871,13 @@ function gotoMsg(mid, part) {
   GOTO_AT = Date.now();
   if (SOLO_WANT && SOLO_WANT.failed) SOLO_WANT = null;   // a new try loads it again
   showGotoNote('');
+  if (THREADED && !THREAD_MODE && threadedView()) {
+    const target = GOTO, passage = GOTO_PART;
+    GOTO = ''; GOTO_PART = '';
+    openThread('', target, passage);
+    const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
+    return;
+  }
   landPending();
 }
 // The passage of a balloon a part names, or null for the whole balloon:
@@ -4892,6 +4933,14 @@ function unwrapMarks(root) {
 }
 function landPending() {
   const box = $('#msgs');
+  if (GOTO && typeof THREADED !== 'undefined' && THREADED && typeof THREAD_MODE !== 'undefined' && !THREAD_MODE && typeof threadedView === 'function' && threadedView()) {
+    if (!THR_DRAWN) return;
+    const target = GOTO, passage = GOTO_PART;
+    GOTO = ''; GOTO_PART = '';
+    openThread('', target, passage);
+    const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
+    return;
+  }
   if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || selShown()) return;
   _landing = true;
   try {
@@ -5533,9 +5582,9 @@ async function renderSolo(sid, agentId, force) {
 // for one started on a balloon), and draws them as it draws the transcript.
 // "Whole chat" is the old flat chat, per browser.
 let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
-let WHOLE = false;         // the person asked for the whole chat
-try { WHOLE = localStorage.getItem('cd-chat-whole') === '1'; } catch (e) {}
+let WHOLE = false;         // PO chats start in the thread channel, including older saved preferences
 let WHOLE_FOR_LINK = false;   // opened on a link to a reply: the whole chat, for this visit
+let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
 let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;
 let THR_DRAWN = false;    // the channel or thread is what is drawn
@@ -5569,8 +5618,8 @@ async function renderThreaded(force) {
     }
     if (d.pending) {
       globalThis.EnsembleProgress?.set('thread-build', d.progress || {phase: 'Reading conversations'});
-      // The hub reads a long chat once, in the background: the whole chat meanwhile.
-      if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
+      // Keep the channel empty while its roots are being built. The progress
+      // notice stays visible, and a balloon link waits for its thread.
       if (THREAD_MODE) setText($('#hint'), 'Reading the chat’s threads…');
       clearTimeout(THR_WAIT);
       THR_WAIT = setTimeout(() => renderThreaded(true), 1500);
@@ -5585,6 +5634,19 @@ async function renderThreaded(force) {
     if (d.progress) globalThis.EnsembleProgress?.set('thread-build', d.progress);
     else globalThis.EnsembleProgress?.clear('thread-build');
     THR_META = Object.assign({}, d.threads || {});
+    THR_UNREAD = d.unreadThreads || [];
+    THR_ACTIVITY = d.activity || null;
+    if (THR_ACTIVITY) THR_META[THR_ACTIVITY.id] = THR_ACTIVITY;
+    THR_UNREAD.forEach(t => { THR_META[t.id] = t; });
+    showThreadCatchup();
+    const ab = $('#activity-thread');
+    if (ab) {
+      ab.hidden = !THR_ACTIVITY;
+      setText(ab, 'Team activity');
+      ab.classList.toggle('unread', !!(THR_ACTIVITY && THR_ACTIVITY.unread));
+      ab.title = THR_ACTIVITY && THR_ACTIVITY.unread ? THR_ACTIVITY.unread + ' new replies in Team activity' : 'Open Team activity';
+      ab.setAttribute('aria-label', ab.title);
+    }
     if (THREAD_MODE) {
       THR_INFO = d.thread || null;
       if (THR_INFO) { THR_META[THR_INFO.id] = THR_INFO; if (!THREAD) THREAD = THR_INFO.id; }
@@ -5594,13 +5656,15 @@ async function renderThreaded(force) {
     let items = (d.items || []).map(t => Object.assign(soloItems([t], 's', SOLO_AGENT, 1)[0], { id: t.mid },
       t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {}));
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
-    // A link to a reply that the channel does not show: the whole chat, this time.
-    if (!THREAD_MODE && GOTO && !CHAT_DRAWN && !items.some(m => m.id === GOTO)) {
-      WHOLE_FOR_LINK = true;
-      renderSolo(SOLO_SID, SOLO_AGENT, true);
-      return;
+    // A balloon link lands in the thread containing that balloon.
+    if (!THREAD_MODE && GOTO && !items.some(m => m.id === GOTO)) {
+      const target = GOTO, part = GOTO_PART;
+      GOTO = ''; GOTO_PART = '';
+      openThread('', target, part);
     }
-    if (!THREAD_MODE) items = withHubRows(items, ROOM_OBJ);
+    if (!THREAD_MODE && !threadedView()) items = withHubRows(items, ROOM_OBJ);
+    document.body.classList.toggle('po-thread-channel', !THREAD_MODE && threadedView());
+    const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !d.before;
     CHAT_DRAWN = THR_DRAWN = true;
     DRAWN_ROOM_TS = roomTs;
     renderBubbles(items);
@@ -5638,6 +5702,31 @@ function threadSeen(items) {
 // "5 replies · you, PO · last reply 12:14 · answered": the line under a parent.
 const THR_STATE = { needs: 'needs you', po: 'with the PO', task: 'task working', answered: 'answered', done: 'done' };
 const THR_WHO = { you: 'you', po: 'PO', task: 'task', hub: 'hub' };
+function showThreadCatchup() {
+  const el = $('#thread-catchup');
+  if (!el) return;
+  const newest = !THREAD_MODE && !THR_LIST && THR_UNREAD[0];
+  el.hidden = !newest;
+  if (!newest) return;
+  el.innerHTML = `<span>${THR_UNREAD.length} thread${THR_UNREAD.length === 1 ? '' : 's'} with new replies</span><button type="button" data-thr="${esc(newest.id)}" data-mid="${esc(newest.lastMid || newest.root)}">Open newest reply</button>`;
+}
+function threadCardHtml(tid) {
+  const t = THR_META[tid];
+  if (!t) return '';
+  const n = +t.replies || 0, unread = +t.unread || 0;
+  const who = [...new Set([t.rootWho, ...(t.who || [])].filter(Boolean))].map(w => THR_WHO[w] || w).join(', ');
+  const when = n ? new Date((+t.lastAt || 0) * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+  const root = t.title || 'Thread';
+  const open = t.openQuestions || 0;
+  return `<button type="button" class="thr-card thr-open${unread ? ' unread' : ''}" data-thr="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${open}:${+t.lastAt || 0}" aria-label="${esc(root)}. ${n} replies${unread ? ', ' + unread + ' unread' : ''}">
+    ${unread ? '<span class="thr-dot" aria-hidden="true"></span>' : ''}
+    <span class="thr-root" title="${esc(root)}">${esc(root)}</span>
+    <span class="thr-count">${n} repl${n === 1 ? 'y' : 'ies'}</span>
+    ${who ? `<span class="thr-meta">${esc(who)}</span>` : ''}
+    ${when ? `<span class="thr-meta">${esc(when)}</span>` : ''}
+    ${open ? `<span class="thr-asks" title="${open} open question${open === 1 ? '' : 's'}" aria-label="${open} open question${open === 1 ? '' : 's'}">?${open}</span>` : ''}
+  </button>`;
+}
 function threadLineHtml(tid, mine) {
   const t = THR_META[tid];
   if (!t) return '';
@@ -5667,11 +5756,11 @@ function threadMarkHtml(m) {
   return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc((m.alsoIn || []).join(','))}">Replied in <button type="button" class="thr-open" data-thr="${esc(m.inThr)}">${esc(t ? t.title || 'a thread' : 'a thread')}</button>${also.length ? ', also in ' + also.join(', ') : ''}</div>`;
 }
 // A thread opens beside the chat (the dashboard's panel), or in this window.
-function openThread(tid, mid) {
+function openThread(tid, mid, part = '') {
   if (!tid && !mid) return;
   const host = embedHost();
-  if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '' }, location.origin); return; }
-  const u = '/session?id=' + encodeURIComponent(ROOM) + (tid ? '&thread=' + encodeURIComponent(tid) : '&thread=&tmid=' + encodeURIComponent(mid));
+  if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '', part }, location.origin); return; }
+  const u = '/session?id=' + encodeURIComponent(ROOM) + (tid ? '&thread=' + encodeURIComponent(tid) : '&thread=&tmid=' + encodeURIComponent(mid)) + (mid ? '&msg=' + encodeURIComponent(mid) : '') + (part ? '&part=' + encodeURIComponent(part) : '');
   window.open(u, '_blank', 'noopener');
 }
 function embedHost() {
@@ -5685,7 +5774,6 @@ function toggleWhole() {
   // Shown for a link only: the switch goes back to the threads.
   if (!(WHOLE_FOR_LINK && !WHOLE)) WHOLE = !WHOLE;
   WHOLE_FOR_LINK = false;
-  try { localStorage.setItem('cd-chat-whole', WHOLE ? '1' : '0'); } catch (e) {}
   THR_SIG = ''; SOLO_TURN_COUNT = -1; _soloStatKey = '';
   foldUnkeep(FOLD);
   if (threadedView()) renderThreaded(true); else renderSolo(SOLO_SID, SOLO_AGENT, true);
@@ -5695,13 +5783,15 @@ function showWholeBtn() {
   const b = $('#whole-chat');
   if (!b) return;
   const on = THREADED && !THREAD_MODE;
-  if (b.hidden !== !on) b.hidden = !on;
+  b.hidden = !on;
+  const tv = $('#threads-view'); if (tv) { tv.hidden = !on; tv.setAttribute('aria-pressed', String(THR_LIST)); }
+
   const pressed = String(!threadedView());
   if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
   // The composer's menu has it too (a phone has no bar over the chat).
   const m = document.querySelector('[data-phone-action="whole-chat"]');
   if (m) {
-    if (m.hidden !== !on) m.hidden = !on;
+    m.hidden = !on;
     m.setAttribute('aria-pressed', pressed);
     setText(m, pressed === 'true' ? 'Whole chat: shown' : 'Whole chat: threads');
   }
@@ -7580,6 +7670,10 @@ $('#msgs').addEventListener('click', e => {
 $('#to-latest').addEventListener('click', toLatest);
 $('#team-all').addEventListener('click', toggleTeam);
 $('#whole-chat').addEventListener('click', toggleWhole);
+$('#threads-view').addEventListener('click', () => { THR_LIST = !THR_LIST; $('#threads-view').setAttribute('aria-pressed', String(THR_LIST)); showThreadCatchup(); renderBubbles(LAST_ITEMS || []); });
+$('#activity-thread').addEventListener('click', () => openThread('team:activity', ''));
+$('#thread-catchup').addEventListener('click', e => { const b = e.target.closest('button[data-thr]'); if (b) openThread(b.dataset.thr, b.dataset.mid); });
+$('#earlier-threads').addEventListener('click', () => { THR_N += 150; STICK = false; renderThreaded(true); });
 $('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h.postMessage({ type: 'thread-back', roomId: ROOM }, location.origin); });
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and

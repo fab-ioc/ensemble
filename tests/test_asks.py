@@ -528,6 +528,8 @@ async function main() {
       const until = async (expr, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       const shot = async name => { if (!A.shots) return; const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
       await send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
+      await until('document.querySelector("#whole-chat") && !document.querySelector("#whole-chat").hidden');
+      await evalIn('document.querySelector("#whole-chat").click()');
       await until('document.querySelectorAll("#msgs .qa").length >= ' + A.need);
       await sleep(400);
       const look = () => evalIn(`(() => ({ cards: document.querySelectorAll('#msgs .qa').length, done: [...document.querySelectorAll('#msgs .qa')].map(c => c.classList.contains('done')),

@@ -13081,11 +13081,11 @@ function pdChatRemoved(id) {
 // (?thread=), with its own reply box. On a phone it is a tab, and its
 // "‹ Chat" brings the chat back (thread-back).
 const pdThreadId = roomId => 'thread:' + roomId;
-function pdThreadOpen(roomId, thread, mid, source) {
+function pdThreadOpen(roomId, thread, mid, source, part = '') {
   const d = PD.dock;
   if (!d || !roomId || !pdPanelsOn()) return false;
   const id = pdThreadId(roomId);
-  const q = thread ? '&thread=' + encodeURIComponent(thread) : '&thread=&tmid=' + encodeURIComponent(mid || '');
+  const q = (thread ? '&thread=' + encodeURIComponent(thread) : '&thread=&tmid=' + encodeURIComponent(mid || '')) + (mid ? '&msg=' + encodeURIComponent(mid) : '') + (part ? '&part=' + encodeURIComponent(part) : '');
   const src = `/session?id=${encodeURIComponent(roomId)}&embed=1${q}`;
   const had = PD.rt.get(id);
   if (had) {
@@ -18787,7 +18787,7 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
   // A PO chat's thread (#210): opened beside it; its page names it; its ‹ Chat.
   if (d && d.type === 'open-thread' && d.roomId && ev.origin === location.origin) {
-    const ok = pdThreadOpen(String(d.roomId), String(d.thread || ''), String(d.mid || ''), ev.source);
+    const ok = pdThreadOpen(String(d.roomId), String(d.thread || ''), String(d.mid || ''), ev.source, String(d.part || ''));
     if (!ok) window.open('/session?id=' + encodeURIComponent(String(d.roomId)) + (d.thread ? '&thread=' + encodeURIComponent(String(d.thread)) : '&thread=&tmid=' + encodeURIComponent(String(d.mid || ''))), '_blank', 'noopener');
   }
   if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''));
@@ -18817,6 +18817,10 @@ function openMsgLink(rid, msg, part) {
   GOTO_MSG.set(rid, { msg, part: part || '' });
   if (pj) {
     openPoOf(pj);
+    if (pdThreadOpen(rid, '', msg, null, part)) {
+      GOTO_MSG.delete(rid);
+      return;
+    }
   } else {
     openDetail(row.sessionId);
   }

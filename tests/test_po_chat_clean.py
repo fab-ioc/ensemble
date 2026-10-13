@@ -267,7 +267,7 @@ async function main() {
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
     await c.send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
-    await until('typeof CHAT_DRAWN !== "undefined" && CHAT_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0 && typeof POINTS !== "undefined" && POINTS.items.length >= 2 && !document.getElementById("chatbar").hidden', 30000);
+    await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .thr-card").length > 0 && typeof POINTS !== "undefined" && POINTS.items.length >= 2 && !document.getElementById("chatbar").hidden', 30000);
     await sleep(500);
     return { evalIn, until, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
@@ -298,7 +298,7 @@ async function main() {
       o.bars = await p.evalIn(`[...document.querySelectorAll('#msgs .msg .pt-bar')].map(b => [b.closest('.msg').dataset.mid, b.textContent])`);
       await p.shot(`po-chat-${w}-clean`);
       await wholeOn(false);
-      await p.until('THR_DRAWN && document.querySelectorAll("#msgs .thr-line").length > 0');
+      await p.until('THR_DRAWN && document.querySelectorAll("#msgs .thr-card").length > 0');
       await sleep(300);
       // The asks line: P2 with its answer's words, its thread, 👍 and Comment.
       await p.evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
@@ -310,7 +310,9 @@ async function main() {
         thread: rows.map(r => (r.querySelector('.pt-thread') || {}).textContent || ''), btns: rows.map(r => [...r.querySelectorAll('.pt-btn')].map(b => b.dataset.ptAct)),
         heights: [...document.querySelectorAll('#points-list .pt-btn, #points-list a.pt-link')].map(e => Math.round(e.getBoundingClientRect().height)) }; })()`);
       await p.shot(`po-chat-${w}-asks`);
-      // The answer link lands on the "Re P2" paragraph alone.
+      // Passage-level landing is checked in the explicit chronological view.
+      await wholeOn(true);
+      await p.until('document.querySelectorAll("#msgs .msg[data-mid]").length >= 6');
       o.land = await p.evalIn(`(async () => {
         const a = document.querySelector('#points-list .pt-row[data-pt="P2"] a.pt-link[data-ref-part="re:P2"]'); a.click();
         for (let i = 0; i < 40 && GOTO; i++) await new Promise(r => setTimeout(r, 100));
@@ -333,6 +335,8 @@ async function main() {
       o.comment = await p.evalIn(`(() => { const tas = [...document.querySelectorAll('#ed-points textarea')]; return { n: tas.length, text: tas.map(t => t.value).join('|'), focused: tas.includes(document.activeElement), chips: document.querySelectorAll('#ed-points .ed-refs a.ref-chip, #ed-points .ed-refs').length }; })()`);
       await p.shot(`po-chat-${w}-comment`);
       await p.evalIn('edClear(); 0');
+      await wholeOn(true);
+      await p.until('!!document.querySelector("#msgs .msg-fold.gap")');
       // A gap opens in place: its hub rows and the PO's notes show under its row.
       await p.evalIn('document.querySelector("#msgs .msg-fold.gap").click(); 0');
       await sleep(300);
@@ -504,10 +508,8 @@ class InChrome(unittest.TestCase):
     def test_the_chat_opens_as_threads(self):
         for w, o in self._both():
             with self.subTest(width=w):
-                msgs = [s.split(":", 1)[1] for s in o["channel"]["shown"] if s.startswith("msg:")]
-                # P1's thread holds the interim line, its answer, the follow-up P2 and P2's answer.
-                self.assertEqual(msgs, ["po-sid:2", "po-sid:10"], o["channel"]["shown"])
-                self.assertEqual(o["threadLines"], ["po-sid:2"])
+                self.assertEqual(o["channel"]["shown"], ["thr-card:"], o["channel"]["shown"])
+                self.assertEqual(o["threadLines"], [])
 
     def test_a_gap_names_the_asks_its_folded_messages_mention(self):
         for w, o in self._both():
