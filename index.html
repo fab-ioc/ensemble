@@ -7,6 +7,7 @@
 <meta name="ensemble-file-drag" content="">
 <title>Ensemble</title>
 <script src="/static/noun.js"></script>
+<script src="/static/hub-resilience.js"></script>
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
 // theme. A theme is a complete token set under :root[data-theme="<name>"].
@@ -2199,6 +2200,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font: inherit; font-size: var(--fs-100); font-weight: 500;
   }
   #status .dismiss:hover { background: var(--hover); color: var(--fg); }
+  #status .retry {
+    background: transparent; color: var(--accent); border: 0;
+    padding: 2px 6px; border-radius: var(--r-200); cursor: pointer;
+    font: inherit; font-size: var(--fs-100); font-weight: 600;
+  }
+  #status .retry:hover { background: var(--hover); }
   /* --- Board ------------------------------------------------------------- */
   /* Columns never wrap and never shrink below 248px; horizontal scroll is the
      escape valve, which is what Jira does and what stays legible. A card never
@@ -3970,7 +3977,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <h3>Updating Ensemble</h3>
     <div class="update-progress"><div class="update-progress-bar"></div></div>
     <p class="update-stage" id="update-stage">Fetching from origin…</p>
-    <p class="update-hint" id="update-hint">The server will restart and the page will reload automatically.</p>
+    <p class="update-hint" id="update-hint">The server will restart and this page will refresh automatically.</p>
     <button type="button" id="update-close" hidden>Close</button>
   </div>
 </div>
@@ -4814,6 +4821,25 @@ const toast = (msg, ms=2500, kind='') => {
     toast._t = setTimeout(() => { s.hidden = true; }, ms);
   }
 };
+
+function offerTerminalSendRetry(pid, text) {
+  toast('May not have been delivered - check the chat, then Retry.', 0, 'err');
+  const s = _toastEl();
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'retry';
+  retry.textContent = 'Retry';
+  s.insertBefore(retry, s.querySelector('.dismiss'));
+  retry.onclick = async () => {
+    retry.disabled = true;
+    try {
+      const r = await api('/api/send', { method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pid, text}) });
+      if (r.result === 'ok') toast('message sent', 1800, 'ok');
+      else toast('send failed: ' + r.result, 5000, 'err');
+    } catch { offerTerminalSendRetry(pid, text); }
+  };
+}
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -7637,8 +7663,7 @@ async function drainPoll() {
   catch { v = null; }   // the hub is restarting
   finally { DRAIN.inflight = false; }
   if (DRAIN.pid && v && v.pid && v.pid !== DRAIN.pid && DRAIN.wasHolding) {
-    ensUpd.reload();
-    return;
+    refresh();
   }
   if (v && v.pid) DRAIN.pid = v.pid;
   drainPaint(v);
@@ -7649,7 +7674,7 @@ function drainPaint(v) {
   const banner = document.getElementById('drain-banner');
   if (!banner) return;
   if (!v) {   // no answer: a restart under way keeps its banner, saying so
-    if (DRAIN.wasHolding) document.getElementById('drain-text').textContent = 'Restarting… the page reloads when the hub is back.';
+    if (DRAIN.wasHolding) document.getElementById('drain-text').textContent = 'Restarting… the page refreshes when the hub is back.';
     return;
   }
   const holding = v.state === 'draining' || v.state === 'restarting';
@@ -7667,7 +7692,7 @@ function drainPaint(v) {
       ? `waiting for ${waiting.length} agent${waiting.length === 1 ? '' : 's'} (${waiting.map(a => a.label).join(', ')}) · restarts anyway in ${mins} min`
       : 'every agent is at a safe point · restarting';
   } else if (v.state === 'restarting') {
-    words = 'restarting now: the page reloads when the hub is back' + (v.error ? ` (${v.error})` : '');
+    words = 'restarting now: the page refreshes when the hub is back' + (v.error ? ` (${v.error})` : '');
   } else {
     words = `the restart did not happen: ${v.outcome || v.state}. Nothing was restarted.`;
   }
@@ -7710,7 +7735,7 @@ function setUpdateStage(text) {
 async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
-  ensUpd.hold = true;   // the page reloads on the new pid below, not for a changed stamp too
+  ensUpd.hold = true;   // the page refreshes on the new pid below, not for a changed stamp too
   const banner = document.getElementById('update-banner');
   const overlay = document.getElementById('update-overlay');
   if (banner) banner.hidden = true;
@@ -7732,15 +7757,17 @@ async function triggerUpdate() {
                                            body: JSON.stringify({ when: 'safe', reason: 'an update' }) });
     const body = await r.json().catch(() => ({}));
     if (body.log) logPath = body.log;
+    if (body.keepAgents && overlay) overlay.hidden = true;
     if (body.draining) {
       // The hub waits for every agent to reach a safe point first: the
-      // drain banner takes over, and reloads the page once it is back.
+      // drain banner takes over, and refreshes the page once it is back.
       UPDATE_IN_PROGRESS = false;
       ensUpd.hold = false;
       if (overlay) overlay.hidden = true;
       drainPoll();
       return;
     }
+    if (body.started && overlay) overlay.hidden = true;
     if (r.status === 403) {
       refused = body.message || 'the hub refused the update';
     } else if (!r.ok && r.status !== 202) {
@@ -7792,11 +7819,12 @@ async function triggerUpdate() {
       if (!resp.ok) continue;
       const cfg = await resp.json();
       if (cfg && cfg.pid && cfg.pid !== startPid) {
-        setUpdateStage('Reloading…');
-        // Small pause so the user sees the final stage flash, then reload.
-        await new Promise(r => setTimeout(r, 300));
+        if (overlay) overlay.hidden = true;
+        UPDATE_IN_PROGRESS = false;
         ensUpd.hold = false;
-        ensUpd.reload();   // where it was, like an update reload
+        ensUpd.checkedAt = 0;
+        ensUpd.poll();
+        refresh();
         return;
       }
     } catch { /* still restarting */ }
@@ -7812,7 +7840,7 @@ async function triggerUpdate() {
     try {
       const resp = await fetch('/api/config');
       const cfg = resp.ok ? await resp.json() : null;
-      if (cfg && cfg.pid && cfg.pid !== startPid) { ensUpd.reload(); return; }
+      if (cfg && cfg.pid && cfg.pid !== startPid) { ensUpd.checkedAt = 0; ensUpd.poll(); refresh(); return; }
     } catch { /* still down */ }
   }
 }
@@ -7822,7 +7850,7 @@ function resetUpdateModal() {
   modal.classList.remove('is-failed');
   modal.querySelector('h3').textContent = 'Updating Ensemble';
   document.getElementById('update-hint').textContent =
-    'The server will restart and the page will reload automatically.';
+    'The server will restart and this page will refresh automatically.';
   document.getElementById('update-close').hidden = true;
 }
 function showUpdateFailed(logPath, reason) {
@@ -7840,7 +7868,7 @@ function showUpdateFailed(logPath, reason) {
     modal.querySelector('h3').textContent = 'The hub did not come back';
     setUpdateStage(`See ${tildeify(logPath) || 'the hub log'}`);
     document.getElementById('update-hint').textContent =
-      'The last lines there say why. This page reloads if the hub starts again.';
+      'The last lines there say why. This page refreshes if the hub starts again.';
   }
   const close = document.getElementById('update-close');
   close.hidden = false;
@@ -16415,13 +16443,14 @@ async function refresh({ now = false, until = 0 } = {}) {
       if (showProjectProgress) globalThis.EnsembleProgress?.set(projectProgressKey, {phase: 'Loading projects'});
       // Which attention item is a PO's is known only once the projects are.
       api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); })
-        .catch(() => { _projFailed = true; renderRows(); })   // older server without /api/projects → fall back to the flat list
+        .catch(() => { if (typeof HubResilience === 'undefined' || !HubResilience.offline) { _projFailed = true; renderRows(); } })
         .finally(() => { if (showProjectProgress) globalThis.EnsembleProgress?.clear(projectProgressKey); _projInFlight = false; });
     }
     renderRows();
     if (SELECTED_SID) renderDetail();
     pdSyncTitles();   // a task renamed: its chat panel's tab, the conversation's window
   } catch (e) {
+    if (typeof HubResilience !== 'undefined' && HubResilience.offline) return;
     // Out of time: the action that asked gives up and says so itself.
     if (e && e.name === 'TimeoutError') return;
     // A dropped poll must not cost you the workspace. The tree, the folders you
@@ -16438,6 +16467,7 @@ async function refresh({ now = false, until = 0 } = {}) {
 }
 // A hidden tab stops polling; bring it up to date the moment it is looked at.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+window.addEventListener('hub:online', () => { refresh(); drainPoll(); });
 // A chat read to its end, in its panel or its own window, clears its unread
 // dot now rather than at the next poll.
 let _unreadPaint = 0;
@@ -19826,7 +19856,7 @@ document.addEventListener('click', async (ev) => {
       });
       if (r.result === 'ok') toast('message sent', 1800, 'ok');
       else toast('send failed: ' + r.result, 5000, 'err');
-    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    } catch (e) { offerTerminalSendRetry(pid, text); }
     finally { sendBtn.classList.remove('busy'); }
     return;
   }

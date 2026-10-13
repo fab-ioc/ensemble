@@ -241,6 +241,8 @@ async function main() {
       await until(`typeof ALL_ROWS!=='undefined' && ALL_ROWS.some(r=>r.roomId===${JSON.stringify(A.task)})`);
       const frameSend=async (label,selector,setup,tap=false) => {
         await until(`!!document.querySelector(${JSON.stringify(selector)})?.contentWindow?.eval('ROOM_OBJ') && !document.querySelector(${JSON.stringify(selector)}).contentDocument.getElementById('send').disabled`);
+        // The frame can load before Dock lays out a newly revealed panel.
+        await until(`(() => {const r=document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect();return r && r.width>0 && r.height>0;})()`);
         await ev(`(() => {const w=document.querySelector(${JSON.stringify(selector)}).contentWindow;
           w.eval(\`tick=()=>{}; refresh=async()=>{}; window.__sent=[]; window.__trace=[];
             for(const t of ['pointerdown','mousedown','mouseup','click']) document.addEventListener(t,e=>window.__trace.push([t,e.target.id||e.target.className||e.target.tagName,e.clientX,e.clientY]),true);

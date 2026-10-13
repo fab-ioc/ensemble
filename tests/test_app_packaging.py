@@ -315,7 +315,7 @@ class HelperFailureTest(unittest.TestCase):
         self.h.preflight = lambda exe: True
         self.h.restore_rooms = lambda: None
         self.h.stop_hub_after_failed_start = lambda: None
-        for name, value in (("_post", lambda *a, **k: {}), ("_served", lambda *a, **k: None),
+        for name, value in (("_post", lambda *a, **k: {"ok": True}), ("_served", lambda *a, **k: None),
                             ("wait_served", lambda *a, **k: None)):
             p = mock.patch.object(app_update, name, value)
             p.start()
@@ -504,7 +504,7 @@ class MacUpdateReadyTest(unittest.TestCase):
         h.start_hub = lambda exe, via: None
         h.restore_rooms = lambda: None
         h.stop_hub_after_failed_start = lambda: None
-        for name, value in (("_post", lambda *a, **k: {}), ("_served", lambda *a, **k: None),
+        for name, value in (("_post", lambda *a, **k: {"ok": True}), ("_served", lambda *a, **k: None),
                             ("wait_served", lambda *a, **k: None)):
             p = mock.patch.object(app_update, name, value)
             p.start()
@@ -513,7 +513,7 @@ class MacUpdateReadyTest(unittest.TestCase):
 
     def test_the_helper_readies_what_it_swaps_in_before_stopping_the_hub(self):
         with tempfile.TemporaryDirectory() as d, \
-                mock.patch.object(app_update, "_post", lambda *a, **k: {}):
+                mock.patch.object(app_update, "_post", lambda *a, **k: {"ok": True}):
             h, cur, new = self._helper(Path(d))
             h.ready_mac_app = mock.Mock()
             self.assertEqual(h.run()["stage"], "stop")

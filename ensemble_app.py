@@ -9,6 +9,7 @@ starts the hub, with ``dashboard.py``'s own arguments.
 from __future__ import annotations
 
 import multiprocessing
+import json
 import os
 import sys
 
@@ -52,8 +53,27 @@ def _app_update(argv: list[str]) -> None:
     sys.exit(app_update.main(argv))
 
 
+def _pty_host(argv: list[str]) -> None:
+    from pathlib import Path
+    from backends import ptyhost
+    if len(argv) >= 3 and argv[1] == "--stop":
+        pin = json.loads(Path(argv[3]).read_text(encoding="utf-8")) if len(argv) > 3 else None
+        sys.exit(0 if ptyhost.stop(Path(argv[2]), expected=pin) else 1)
+    if len(argv) >= 3 and argv[1] == "--force-stop":
+        pin = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        sys.exit(0 if ptyhost.force_stop(pin) else 1)
+    ptyhost.serve(Path(argv[1]))
+
+
+def _restart_helper(argv: list[str]) -> None:
+    import restart_helper
+    sys.exit(restart_helper.run(argv[1]))
+
+
 SCRIPTS = {
     "app_update": _app_update,
+    "pty_host": _pty_host,
+    "restart_helper": _restart_helper,
     "agent_hook": _agent_hook,
     "task_tool_hook": _task_tool_hook,
     "usage_statusline": _usage_statusline,

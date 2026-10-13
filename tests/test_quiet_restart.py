@@ -497,7 +497,9 @@ class TheHelper(unittest.TestCase):
         self.assertLess(stop, up)
         self.assertLess(up, restore)
         self.assertLess(restore, wake)
-        self.assertEqual(HELPER.count("lease = [string]$cfg.leaseId"), 2)
+        self.assertGreaterEqual(HELPER.count("lease = [string]$cfg.leaseId"), 2)
+        self.assertLess(HELPER.index("Post '/api/restart/prepare'"), stop)
+        self.assertIn("if ($cfg.keepAgents)", HELPER)
 
     def test_a_hub_without_a_snapshot_still_gets_the_plans_rooms_resumed(self):
         # The first restart onto this code stops a hub that has no snapshot
@@ -512,7 +514,7 @@ class TheHelper(unittest.TestCase):
 class TheEndpoints(unittest.TestCase):
     def test_both_ask_for_the_lease_of_the_restart_under_way(self):
         src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
-        i = src.index('if p in ("/api/restart/snapshot", "/api/restart/restore"):')
+        i = src.index('if p in ("/api/restart/snapshot", "/api/restart/restore", "/api/restart/host-stop",')
         block = src[i:src.index('if p == "/api/iterm/consolidate":', i)]
         self.assertIn("hmac.compare_digest(", block)
         self.assertLess(block.index("compare_digest"), block.index("take_restart_snapshot"))

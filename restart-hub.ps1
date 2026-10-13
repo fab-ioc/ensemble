@@ -36,7 +36,7 @@ function Ok($u, [int]$timeoutSec = 30) { try { $r = Invoke-WebRequest -Uri $u -U
 function Q($s) { '"' + ([string]$s -replace '"', '\"') + '"' }
 function Post($path, $obj) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress))
-  Invoke-WebRequest -Uri "$base$path" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 60
+  Invoke-WebRequest -Uri "$base$path" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 170
 }
 # The processes serving the hub on a port: its listener, and any whose command
 # line names that port. Never anything else. A checkout's hub is python running
@@ -81,7 +81,7 @@ function Nap([int]$s) { Start-Sleep -Seconds $s; RenewLease }
 
 $t0 = Get-Date
 $head0 = Head
-L "=== plain restart of the hub on port $port (pid $($cfg.hubPid)); code at $($cfg.repo) $head0; no fetch, reset or pull ==="
+L "=== plain restart of the hub on port $port (pid $($cfg.hubPid)); mode $(if ($cfg.keepAgents) { 'hub only' } else { 'classic' }); code at $($cfg.repo) $head0 ==="
 
 # --- 1. Preflight: the code on disk must start and serve on a spare port. ---
 $pf = [int]$cfg.preflightPort
@@ -89,8 +89,11 @@ $pfArgs = @()
 if ($cfg.script) { $pfArgs += (Q $cfg.script) }
 $pfArgs += @('--port', "$pf", '--log', (Q $cfg.preflightLog))
 try {
+  $env:ENSEMBLE_PTY_PREFLIGHT = '1'
   $pfp = Start-Process -FilePath $cfg.python -ArgumentList $pfArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -PassThru -ErrorAction Stop
+  Remove-Item Env:ENSEMBLE_PTY_PREFLIGHT -ErrorAction SilentlyContinue
 } catch {
+  Remove-Item Env:ENSEMBLE_PTY_PREFLIGHT -ErrorAction SilentlyContinue
   L "PREFLIGHT FAILED - could not start $($cfg.python): $_; the hub was NOT touched"
   DropLease
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
@@ -115,6 +118,10 @@ if ($env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S) {
   try { $sessTimeoutSec = [int]$env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S } catch {}
 }
 $pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec) -and (Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")
+try {
+  $bytes = [Text.Encoding]::UTF8.GetBytes((@{ lease = [string]$cfg.leaseId } | ConvertTo-Json -Compress))
+  Invoke-WebRequest -Uri "http://127.0.0.1:$pf/api/restart/host-stop" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 10 | Out-Null
+} catch {}
 try { Stop-Process -Id $pfp.Id -Force -ErrorAction Stop } catch {}
 HubProcs $pf | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }
 if (-not $pfOk) {
@@ -134,10 +141,46 @@ while ($left -gt 0) { $s = [int][math]::Min(10, [math]::Ceiling($left)); Nap $s;
 # First the hub's last word on who is running and who is mid-turn. A hub from
 # before this existed answers 404: the rooms of the plan are then resumed the
 # old way in step 4.
-try {
-  $r = Post '/api/restart/snapshot' @{ lease = [string]$cfg.leaseId }
-  L "snapshot before the stop: HTTP $($r.StatusCode) $($r.Content)"
-} catch { L "no snapshot before the stop ($_): the one taken at the request, if any, is used" }
+if ($cfg.keepAgents) {
+  try {
+    $r = Post '/api/restart/prepare' @{ lease = [string]$cfg.leaseId }
+    L "warm caches prepared before the stop: HTTP $($r.StatusCode)"
+  } catch { L "warm caches could not be prepared: $_" }
+}
+if (-not $cfg.keepAgents) {
+  $snapshotOk = $false
+  for ($attempt = 0; $attempt -lt 3 -and -not $snapshotOk; $attempt++) {
+    try {
+      $r = Post '/api/restart/snapshot' @{ lease = [string]$cfg.leaseId }
+      $snapshotOk = ($r.StatusCode -eq 200)
+      if ($snapshotOk) { L "snapshot before the stop: HTTP $($r.StatusCode) $($r.Content)" }
+    } catch { L "snapshot attempt $($attempt + 1) failed: $_"; Nap 1 }
+  }
+  if (-not $snapshotOk) {
+    L "classic restart cancelled: no confirmed fresh snapshot; hub and PTY host remain running"
+    DropLease
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+}
+$hostPin = ''
+if (-not $cfg.keepAgents) {
+  $stateDir = Split-Path -Parent ([string]$cfg.leasePath)
+  $descriptor = Join-Path $stateDir 'pty-host.json'
+  $hostPin = Join-Path $stateDir "_launch\host-pin-$($cfg.leaseId).json"
+  try {
+    if ($cfg.ptyHostVersion -and -not (Test-Path -LiteralPath $descriptor)) {
+      throw 'old PTY host identity is missing'
+    }
+    if (Test-Path -LiteralPath $descriptor) { Copy-Item -LiteralPath $descriptor -Destination $hostPin -Force -ErrorAction Stop }
+    else { [IO.File]::WriteAllText($hostPin, '{"absent":true}', (New-Object Text.UTF8Encoding $false)) }
+  } catch {
+    L "classic restart cancelled: could not pin PTY host identity: $_"
+    DropLease
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+}
 $useTask = $false
 if (-not $cfg.noTask) {
   $task = Get-ScheduledTask -TaskName $cfg.taskName -ErrorAction SilentlyContinue
@@ -158,9 +201,20 @@ foreach ($v in ($victims | Where-Object { $_ } | Sort-Object ProcessId -Unique))
   try { Stop-Process -Id $v.ProcessId -Force -ErrorAction Stop; L "stopped pid $($v.ProcessId)" } catch { L "stop pid $($v.ProcessId): $_" }
 }
 $free = $false
-for ($i = 0; $i -lt 15 -and -not $free; $i++) {
+$oldGone = $false
+for ($i = 0; $i -lt 15 -and -not ($free -and $oldGone); $i++) {
   Nap 1
   $free = -not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+  $old = Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$cfg.hubPid)" -ErrorAction SilentlyContinue | Where-Object { IsHub $_ }
+  $oldGone = -not $old
+}
+if (-not ($free -and $oldGone)) {
+  L "old hub PID or port $port is still active; PTY host left running"
+  if ($useTask) { try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop } catch {} }
+  DropLease
+  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+  exit 1
 }
 $hubArgs = @()
 if ($cfg.script) { $hubArgs += (Q $cfg.script) }
@@ -170,6 +224,32 @@ function StartDirect {
     Start-Process -FilePath $cfg.python -ArgumentList $hubArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -ErrorAction Stop | Out-Null
     L "started $($cfg.python) $($hubArgs -join ' ')"
   } catch { L "start err: $_" }
+}
+if (-not $cfg.keepAgents) {
+  $stateDir = Split-Path -Parent ([string]$cfg.leasePath)
+  $hostArgs = @()
+  if ($cfg.script) { $hostArgs += (Q (Join-Path $cfg.repo 'backends\ptyhost.py')) }
+  else { $hostArgs += @('--run', 'pty_host') }
+  $hostArgs += @('--stop', (Q $stateDir))
+  if ($hostPin) { $hostArgs += (Q $hostPin) }
+  try {
+    $stopper = Start-Process -FilePath $cfg.python -ArgumentList $hostArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+    $hostGone = ($stopper.ExitCode -eq 0)
+  } catch { $hostGone = $false; L "PTY host stop failed: $_" }
+  if (-not $hostGone) {
+    L "PTY host did not stop cleanly; force-killing pinned process tree"
+    $forceArgs = @()
+    if ($cfg.script) { $forceArgs += (Q (Join-Path $cfg.repo 'backends\ptyhost.py')) }
+    else { $forceArgs += @('--run', 'pty_host') }
+    $forceArgs += @('--force-stop', (Q $hostPin))
+    try {
+      $forced = Start-Process -FilePath $cfg.python -ArgumentList $forceArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+      L "pinned PTY host force-stop exit code: $($forced.ExitCode); starting hub anyway"
+    } catch { L "pinned PTY host force-stop failed: $_; starting hub anyway" }
+  } else {
+    L "classic PTY host process confirmed gone"
+  }
+  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
 }
 $up = $false
 if ($useTask) {
@@ -189,6 +269,11 @@ if (-not $up) {
 }
 
 # --- 4. Bring the rooms back and tell the PO what to do next. ---
+if ($cfg.keepAgents) {
+  L "hub-only restart complete; PTY host and agents stayed running"
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+  exit 0
+}
 Start-Sleep -Seconds 4
 # The hub does it from the snapshot and logs each room here itself. What it did
 # not bring back of the plan's own rooms (no snapshot: the hub that stopped was

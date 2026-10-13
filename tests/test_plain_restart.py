@@ -74,6 +74,13 @@ class HelperScript(unittest.TestCase):
 
 
 class Plan(unittest.TestCase):
+    def setUp(self):
+        # These assertions describe the classic path regardless of whether
+        # another test left a compatible throwaway PTY host running.
+        patcher = mock.patch.object(dashboard, "pty_host_compatible", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_how_the_hub_started(self):
         env = {"ENSEMBLE_RESTART_NO_TASK": "1", "ENSEMBLE_RESTART_GRACE": "7"}
         with mock.patch.dict(os.environ, env), \

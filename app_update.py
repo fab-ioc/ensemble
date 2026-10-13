@@ -536,6 +536,27 @@ class Helper:
         self.platform = plan.get("platform", sys.platform)
         self.started: subprocess.Popen | None = None    # the hub this helper last started
         self.ready_mac_app = ready_mac_app
+        self.new_host_version = ""
+        self.keep_agents = False
+        self.external_drain = False
+        self.pinned_host = None
+
+    def cancel_external_drain(self) -> None:
+        if not self.external_drain:
+            return
+        try:
+            _post(self.port, "/api/restart/external-cancel",
+                  {"lease": self.plan.get("leaseId", "")})
+            self.external_drain = False
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            self.log(f"external drain could not be cancelled: {exc}")
+
+    def stop_pty_host(self) -> bool:
+        from backends import ptyhost
+        state = Path(self.plan["leasePath"]).parent
+        stopped = ptyhost.stop(state, expected=self.pinned_host)
+        self.log(f"classic PTY host stop after hub exit: {stopped}")
+        return stopped
 
     def log(self, msg: str) -> None:
         line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [update] {msg}\n"
@@ -615,10 +636,16 @@ class Helper:
     def preflight(self, new_exe: Path) -> bool:
         port = _spare_port()
         # --background: the try opens no browser tab.
-        proc = _start(new_exe, ["--port", str(port), "--background", "--log", str(self.plan["preflightLog"])])
+        proc = _start(new_exe, ["--port", str(port), "--background", "--log", str(self.plan["preflightLog"])],
+                      env=dict(os.environ, ENSEMBLE_PTY_PREFLIGHT="1"))
         try:
             got = wait_served(port, self.plan["toVersion"], SERVE_TIMEOUT_S, self.renew)
+            self.new_host_version = (got or {}).get("ptyHostVersion", "")
         finally:
+            try:
+                _post(port, "/api/restart/host-stop", {"lease": self.plan.get("leaseId", "")}, timeout=10)
+            except (OSError, ValueError, urllib.error.URLError):
+                pass
             _kill(proc.pid)
             _wait_exit(proc)
         self.log(f"preflight of {self.plan['toVersion']} on port {port}: {'passed' if got else 'FAILED'}")
@@ -678,6 +705,7 @@ class Helper:
             return self._swap_and_start(cur_app, folder, names, new_from, new_names, prev, failed)
         except Exception as e:      # noqa: BLE001 — whatever happens, leave an app serving
             self.log(f"unexpected: {e!r}")
+            self.cancel_external_drain()
             try:
                 self.ensure_serving(cur_app, prev, False)
             except Exception as e2:     # noqa: BLE001 — the result is still recorded
@@ -686,24 +714,86 @@ class Helper:
 
     def _swap_and_start(self, cur_app: Path, folder: Path, names: list[str], new_from: Path,
                         new_names: list[str], prev: Path, failed: Path) -> dict:
-        try:
-            snap = _post(self.port, "/api/restart/snapshot", {"lease": self.plan.get("leaseId", "")})
-            self.log(f"snapshot: {len(snap.get('rooms') or [])} room(s)")
-        except (OSError, ValueError, urllib.error.URLError) as e:
-            self.log(f"no snapshot before the stop: {e}")
+        self.keep_agents = bool(self.plan.get("ptyHostVersion") and
+                                self.plan["ptyHostVersion"] == self.new_host_version)
+        self.log("mode: " + ("hub only; agents keep running" if self.keep_agents
+                             else "classic drain and resume; PTY host changed"))
+        if not self.keep_agents:
+            if "ptyHostVersion" in self.plan:
+                try:
+                    _post(self.port, "/api/restart/external-drain", {"lease": self.plan.get("leaseId", "")})
+                    self.external_drain = True
+                    deadline = time.time() + 30 * 60
+                    while time.time() < deadline:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/restart/drain",
+                                                    timeout=10) as resp:
+                            state = json.loads(resp.read().decode("utf-8"))
+                        if state.get("state") == "restarting" and state.get("external"):
+                            break
+                        time.sleep(2)
+                    else:
+                        raise RuntimeError("agents did not reach the external update drain")
+                except (OSError, ValueError, urllib.error.URLError) as e:
+                    raise RuntimeError(f"could not drain agents for the PTY host change: {e}") from e
+            try:
+                for attempt in range(3):
+                    try:
+                        snap = _post(self.port, "/api/restart/snapshot",
+                                     {"lease": self.plan.get("leaseId", "")}, timeout=180)
+                        if not snap.get("ok"):
+                            raise ValueError("snapshot was not confirmed")
+                        break
+                    except (OSError, ValueError, urllib.error.URLError):
+                        if attempt == 2:
+                            raise
+                        time.sleep(1)
+                self.log(f"snapshot: {len(snap.get('rooms') or [])} room(s)")
+                if "ptyHostVersion" in self.plan:
+                    from backends import ptyhost
+                    self.pinned_host = ptyhost.descriptor(Path(self.plan["leasePath"]).parent)
+                    if self.pinned_host is None:
+                        if self.plan.get("ptyHostVersion"):
+                            raise ValueError("old PTY host identity is missing")
+                        self.pinned_host = {"absent": True}
+            except (OSError, ValueError, urllib.error.URLError) as e:
+                self.cancel_external_drain()
+                raise RuntimeError(f"snapshot failed: {e}") from e
+        else:
+            try:
+                _post(self.port, "/api/restart/prepare", {"lease": self.plan.get("leaseId", "")})
+            except (OSError, ValueError, urllib.error.URLError) as e:
+                self.log(f"warm cache preparation failed: {e}")
         via_service, stopped = self.stop_hub()
         if not stopped:
             # Its files are still open: a swap now would fail half-way. Leave it.
             self.ensure_serving(cur_app, prev, via_service)
-            self.restore_rooms()
+            if not self.keep_agents:
+                self.cancel_external_drain()
+                self.restore_rooms()
             return self.record(ok=False, stage="stop",
                                reason="the running hub did not stop; nothing was changed")
+        if not self.keep_agents and "ptyHostVersion" in self.plan:
+            try:
+                host_stopped = self.stop_pty_host()
+            except Exception as exc:
+                self.log(f"PTY host stop failed: {exc}")
+                host_stopped = False
+            if not host_stopped:
+                from backends import ptyhost
+                self.log("PTY host did not stop cleanly; force-killing pinned process tree")
+                try:
+                    forced = ptyhost.force_stop(self.pinned_host)
+                except Exception as exc:
+                    self.log(f"pinned PTY host force-stop failed: {exc}")
+                    forced = False
+                self.log(f"pinned PTY host force-stop confirmed: {forced}; continuing hub update")
         try:
             swap_in(folder, names, new_from, new_names, prev)
         except OSError as e:
             self.log(f"swap failed, the old version stays: {e}")
             self.ensure_serving(cur_app, prev, via_service)
-            self.restore_rooms()
+            if not self.keep_agents:
+                self.restore_rooms()
             return self.record(ok=False, stage="swap", reason=str(e))
         self.log(f"swapped in the new version; the old one is in {prev}")
         if new_from.name == INCOMING_DIR:
@@ -712,7 +802,8 @@ class Helper:
         if self._try_start(exe_in(cur_app, self.platform), via_service):
             served = wait_served(self.port, self.plan["toVersion"], SERVE_TIMEOUT_S, self.renew)
         if decide(served, self.plan["toVersion"]) == "keep":
-            self.restore_rooms()
+            if not self.keep_agents:
+                self.restore_rooms()
             return self.record(ok=True, stage="done")
         self.log("the new version did not serve: rolling back")
         self.stop_hub_after_failed_start()
@@ -727,7 +818,8 @@ class Helper:
                                reason="the new version did not serve and putting the old one "
                                       f"back failed ({e}); the old version is in {prev}")
         back = self.ensure_serving(cur_app, prev, via_service)
-        self.restore_rooms()
+        if not self.keep_agents:
+            self.restore_rooms()
         return self.record(ok=False, stage="rollback", rolledBack=True, oldServes=bool(back),
                            reason="the new version did not serve on the hub's port")
 

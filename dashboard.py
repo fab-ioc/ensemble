@@ -130,11 +130,12 @@ import board_brief
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
 # background so no request path ever waits on the network.
 import usage
+import warm_cache
 # Go to file and search in files for a Workspace; a search runs as a child.
 import workspace_search
 import global_search
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
-from backends import ptyrun
+from backends import ptyrun, ptyhost
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -251,8 +252,8 @@ SIGN_IN_PAGE = b"""<!doctype html>
 
 
 # --- Who may restart the hub -------------------------------------------------
-# POST /api/update pulls the code and restarts the hub, ending every agent on
-# the machine. The loopback exemption above would let any agent do that with
+# POST /api/update pulls the code and restarts the hub. A PTY host change also
+# drains and resumes agents. The loopback exemption above would let any agent do that with
 # one curl, so the route asks for its own proof, from this machine too:
 #   * the bearer token of the PO agent in a room listed here (by default the
 #     Ensemble Dashboard PO, the project where the hub itself is built), or
@@ -630,7 +631,7 @@ STATIC_DIR = Path(__file__).parent
 # every page and script response carries in X-Ensemble-Stamp, and that a served
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
-PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/filedrag.js",
+PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/hub-resilience.js", "static/filedrag.js",
               "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
@@ -9836,6 +9837,7 @@ _SESS_GEN = 0
 _SESS_CACHE: dict[int, tuple[float, int, list]] = {}
 _SESS_LOCKS: dict[int, threading.Lock] = {}
 _SESS_FIRST_SAVED = False
+_SESS_BOOT: set[int] = set()
 
 
 def invalidate_session_listing() -> None:
@@ -9885,8 +9887,11 @@ def load_sessions(n: int = 200) -> list[dict]:
     lock = _SESS_LOCKS.setdefault(n, threading.Lock())
     with lock:
         hit = _SESS_CACHE.get(n)
-        if hit and hit[1] == _SESS_GEN and time.time() - hit[0] < _SESS_TTL:
+        if hit and hit[1] == _SESS_GEN and (n in _SESS_BOOT or time.time() - hit[0] < _SESS_TTL):
             rows = hit[2]
+            if n in _SESS_BOOT:
+                _SESS_BOOT.discard(n)
+                _SESS_CACHE[n] = (time.time(), hit[1], rows)
         else:
             gen = _SESS_GEN
             key = f"sessions:{n}" if hit is None else ""
@@ -10641,6 +10646,32 @@ def pull_checkout() -> str:
     return ""
 
 
+def source_update_keeps_host() -> bool:
+    """Read the upstream PTY owner before choosing the update's restart mode."""
+    if _PTY_HOST_MODE == "local":
+        return False
+    host = ptyhost.connect(DASHBOARD_DIR, start=False)
+    if not host:
+        return False
+    try:
+        fetched = _run(["git", "-C", str(STATIC_DIR), "fetch", "--quiet"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120)
+        if fetched.returncode:
+            return False
+        digest = hashlib.sha256()
+        for name in ("backends/ptyhost.py", "backends/ptyrun.py"):
+            shown = _run(["git", "-C", str(STATIC_DIR), "show", f"@{{u}}:{name}"],
+                         capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", timeout=30)
+            if shown.returncode:
+                return False
+            digest.update(shown.stdout.encode("utf-8"))
+        return digest.hexdigest()[:16] == host.version
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+
+
 # --- Update now in the built app ---------------------------------------------
 # From GitHub Releases (app_update.py): download, check, unpack here, then a
 # helper outside the hub preflights the new version, swaps it in, restarts the
@@ -10711,6 +10742,8 @@ def update_plan(rel: dict, new_app: Path, lease: str) -> dict:
         "args": [*args, "--background"],
         "launchd": _launchd_service(),
         "leaseId": lease, "leasePath": str(_restart_lease_path()),
+        "ptyHostVersion": (ptyhost.connect(DASHBOARD_DIR, start=False).version
+                           if ptyhost.connect(DASHBOARD_DIR, start=False) else ""),
         "log": str(logs / "update.log"), "preflightLog": str(logs / "preflight.log"),
         "resultPath": str(UPDATE_DIR / "last.json"),
         "env": dict(os.environ),
@@ -10911,6 +10944,55 @@ def _restart_log(msg: str) -> None:
             time.sleep(0.2)
 
 
+def save_restart_caches() -> None:
+    """Rebuild warm reads and save only if their sources stayed fixed."""
+    try:
+        before = warm_cache._fingerprint(HOME, DASHBOARD_DIR)
+        sizes = [n for n, (_, gen, _) in _SESS_CACHE.items() if gen == _SESS_GEN]
+        sessions = {str(n): _load_sessions_uncached(n) for n in sizes}
+        global _TRANSCRIPT_INDEX
+        with _TRANSCRIPT_INDEX_LOCK:
+            _TRANSCRIPT_INDEX = ("", 0.0, {})
+        transcript = _transcript_index(fresh=True).copy()
+        with threads._LOCK:
+            room_ids = list(threads._INDEX)
+            for room_id in room_ids:
+                threads._INDEX.pop(room_id, None)
+        for room_id in room_ids:
+            threads.build(room_id, show_progress=False)
+        with threads._LOCK:
+            thread_indexes = dict(threads._INDEX)
+        warm_cache.save(HOME, DASHBOARD_DIR, sessions, transcript,
+                        {"index": thread_indexes, "threadSaves": dict(threads.SAVES),
+                         "pointSaves": dict(points.SAVES)}, expected_sources=before)
+        _restart_log(f"warm caches saved: {len(sessions)} session lists, "
+                     f"{len(transcript)} transcripts, {len(thread_indexes)} thread builds")
+    except (OSError, ValueError, TypeError) as exc:
+        _restart_log(f"warm caches not saved: {exc}")
+
+
+def load_restart_caches() -> None:
+    global _TRANSCRIPT_INDEX
+    cached = warm_cache.load(HOME, DASHBOARD_DIR)
+    if cached is None:
+        _restart_log("warm caches invalid or absent; reading current files")
+        return
+    for key, rows in cached["sessions"].items():
+        n = int(key)
+        _SESS_CACHE[n] = (time.time(), _SESS_GEN, rows)
+        _SESS_BOOT.add(n)
+    with _TRANSCRIPT_INDEX_LOCK:
+        _TRANSCRIPT_INDEX = (str(PROJ_DIR), time.time(), cached["transcripts"])
+    thread_cache = cached["threads"]
+    with threads._LOCK:
+        threads._INDEX.update(thread_cache.get("index", {}))
+        threads.SAVES.update(thread_cache.get("threadSaves", {}))
+    points.SAVES.update(thread_cache.get("pointSaves", {}))
+    _restart_log(f"warm caches loaded: {len(_SESS_BOOT)} session lists, "
+                 f"{len(cached['transcripts'])} transcripts, "
+                 f"{len(thread_cache.get('index', {}))} thread builds")
+
+
 def _read_restart_snapshot() -> dict | None:
     try:
         snap = json.loads(_restart_snapshot_path().read_text(encoding="utf-8"))
@@ -10980,19 +11062,56 @@ def _snapshot_summary(snap: dict) -> str:
         for r in rooms)
 
 
+def pty_host_compatible() -> bool:
+    """Only a running host with the code on disk can keep PTYs through a restart."""
+    if _PTY_HOST_MODE == "local":
+        return False
+    try:
+        host = ptyhost.connect(DASHBOARD_DIR, start=False)
+        return bool(host and host.version == ptyhost.version())
+    except (OSError, ValueError, ConnectionError, TimeoutError):
+        return False
+
+
+def pty_host_state_dir() -> Path:
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return DASHBOARD_DIR / "pty-preflight" / str(HUB_PORT)
+    return DASHBOARD_DIR
+
+
+_PTY_HOST_MODE = "unknown"  # startup sets attached/local; local must drain
+
+
+def attach_pty_host() -> None:
+    """The web hub must serve even when the detached PTY owner fails."""
+    global _PTY_HOST_MODE
+    try:
+        host_client = ptyhost.connect(pty_host_state_dir(), BACKEND)
+        ptyrun.use_host(host_client)
+        _PTY_HOST_MODE = "attached"
+        _restart_log(f"PTY host attached: pid {host_client.pid}, version {host_client.version}")
+    except Exception as exc:
+        ptyrun.use_local()
+        _PTY_HOST_MODE = "local"
+        _restart_log(f"PTY host unavailable; using in-process PTYs: {exc}")
+
+
 def restart_plan(room_id: str = "", drain: bool = False) -> dict:
     """What the helper needs: how this hub was started (to start it again the
     same way), where to preflight, whom to resume and what to tell them.
     ``room_id`` is the calling PO's room; without one (the dashboard page) the
     restart rooms that have a live terminal are resumed, and nobody is told."""
-    if room_id:
+    keep_agents = not drain and pty_host_compatible()
+    if room_id and not keep_agents:
         resume = [room_id]
-    else:
+    elif not keep_agents:
         live = {(s.get("meta") or {}).get("room") for s in ptyrun.list_sessions()
                 if s.get("alive")}
         resume = sorted(r for r in HUB_RESTART_ROOMS if r in live)
+    else:
+        resume = []
     wake = ""
-    if room_id:
+    if room_id and not keep_agents:
         room = chatroom.get_room(room_id, public=False) or {}
         project = {p["id"]: p for p in load_projects()}.get(
             ensemble_tools._project_of_room(room) if room else "")
@@ -11029,6 +11148,8 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
         "taskName": APP_NAME,
         # A test hub never touches the machine's scheduled task, whatever port.
         "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
+        "keepAgents": keep_agents,
+        "launchd": _launchd_service(),
         "graceSeconds": grace,
         "resumeRooms": resume,
         "wakeRoom": room_id if wake else "",
@@ -11061,10 +11182,13 @@ def trigger_restart(room_id: str = "", drain: bool = False) -> dict:
             return {"started": True, "status": 202, "dryRun": True, "plan": view}
         # Who is running, now: what the hub that comes back restores from if
         # the helper's own snapshot, taken just before the stop, never lands.
-        try:
-            take_restart_snapshot(lease, wake_room=room_id if plan["wakeRoom"] else "")
-        except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
-            print(f"[restart] no snapshot at the request: {e!r}", flush=True)
+        _restart_log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
+                                 else "classic drain and resume"))
+        if not plan["keepAgents"]:
+            try:
+                take_restart_snapshot(lease, wake_room=room_id if plan["wakeRoom"] else "")
+            except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
+                print(f"[restart] no snapshot at the request: {e!r}", flush=True)
         result = BACKEND.self_restart(plan)
     except BaseException:
         _drop_restart_lease(lease)
@@ -11073,9 +11197,12 @@ def trigger_restart(room_id: str = "", drain: bool = False) -> dict:
         _drop_restart_lease(lease)
         return {**result, "status": 500}
     return {**result, "status": 202, "leaseId": lease, "graceSeconds": plan["graceSeconds"],
+            "keepAgents": plan["keepAgents"],
             "preflightPort": plan["preflightPort"], "resumeRooms": plan["resumeRooms"],
             "log": plan["log"],
-            "message": (f"Restart started. In about {plan['graceSeconds']}s, once the code "
+            "message": (("Hub-only restart started. Agents and their commands keep running. "
+                         f"Progress: {plan['log']}" if plan["keepAgents"] else
+                         f"Restart started. In about {plan['graceSeconds']}s, once the code "
                         f"on disk has served on port {plan['preflightPort']}, the hub stops "
                         "and starts again; every agent on it stops with it, and every "
                         "room that was running is brought back by the restart itself "
@@ -11083,7 +11210,7 @@ def trigger_restart(room_id: str = "", drain: bool = False) -> dict:
                         "one line): do not resume rooms by hand. "
                         + ("You will be resumed and told when it is back. "
                            if plan["wakeRoom"] else "")
-                        + f"Progress: {plan['log']}")}
+                        + f"Progress: {plan['log']}") )}
 
 
 # ---------- HTTP server ----------
@@ -13511,7 +13638,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, check_for_update())
             return
         if p == "/api/version":
-            self._send_json(200, app_version.describe())
+            self._send_json(200, {**app_version.describe(), "ptyHostVersion": ptyhost.version()})
             return
         if p == "/api/restart/drain":
             # A restart at a safe point (restart_drain.py): the page's banner.
@@ -15245,16 +15372,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
-        snapshot, q = sess.subscribe()
+        try:
+            from_offset = int(self.headers.get("Last-Event-ID", ""))
+            from_offset = max(0, from_offset)
+        except ValueError:
+            from_offset = None
+        snapshot, q = (sess.subscribe(from_offset=from_offset) if from_offset is not None
+                       else sess.subscribe())
+        offset = getattr(q, "_start_offset", 0)
 
-        def emit(chunk: bytes):
+        def emit(chunk: bytes, position: int):
             b64 = base64.b64encode(chunk).decode("ascii")
-            self.wfile.write(f"data: {b64}\n\n".encode("ascii"))
+            self.wfile.write(f"id: {position}\ndata: {b64}\n\n".encode("ascii"))
             self.wfile.flush()
 
         try:
             if snapshot:
-                emit(snapshot)
+                emit(snapshot, offset)
             while True:
                 try:
                     chunk = q.get(timeout=15)
@@ -15266,7 +15400,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b"event: end\ndata: end\n\n")
                     self.wfile.flush()
                     break
-                emit(chunk)
+                offset += len(chunk)
+                emit(chunk, offset)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
@@ -16212,11 +16347,9 @@ class Handler(BaseHTTPRequestHandler):
             if refusal:
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
-            # Fire and forget — the spawned `ensemble update`
-            # restarts the server via launchctl kickstart -k. Send the 202
-            # before that SIGKILL arrives.
-            result = trigger_update()
-            self._send_json(202 if result.get("started") else 500, result)
+            result = restart_drain.request_restart(str(data.get("reason") or "an update"),
+                                                   self._drain_requester(), "update")
+            self._send_json(result.pop("status"), result)
             return
         if p == "/api/app/autostart":
             # Start at sign-in, for the built app only (a checkout has
@@ -16247,7 +16380,9 @@ class Handler(BaseHTTPRequestHandler):
             result = trigger_restart(resolved[0] if resolved else "")
             self._send_json(result.pop("status"), result)
             return
-        if p in ("/api/restart/snapshot", "/api/restart/restore"):
+        if p in ("/api/restart/snapshot", "/api/restart/restore", "/api/restart/host-stop",
+                 "/api/restart/prepare", "/api/restart/external-drain",
+                 "/api/restart/external-cancel"):
             # The restart helper's two calls, proved by the lease id of the
             # restart under way (a file in the state dir, like a room token).
             lease = str(data.get("lease") or "")
@@ -16259,8 +16394,29 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if p == "/api/restart/snapshot":
                 snap = take_restart_snapshot(lease)
+                save_restart_caches()
                 _restart_log(f"snapshot before the stop: {_snapshot_summary(snap)}")
                 self._send_json(200, {"ok": True, "rooms": [r["roomId"] for r in snap["rooms"]]})
+                return
+            if p == "/api/restart/prepare":
+                save_restart_caches()
+                self._send_json(200, {"ok": True})
+                return
+            if p == "/api/restart/external-drain":
+                result = restart_drain.request_restart("an update", {"label": "the updater"},
+                                                       "update", external=True)
+                self._send_json(result.pop("status"), result)
+                return
+            if p == "/api/restart/external-cancel":
+                restart_drain.end_drain("failed", "the update stopped before the hub restart")
+                self._send_json(200, {"ok": True})
+                return
+            if p == "/api/restart/host-stop":
+                host = ptyhost.connect(pty_host_state_dir(), start=False)
+                if host:
+                    host.call("shutdown")
+                _restart_log("classic mode: PTY host stopped after the drain")
+                self._send_json(200, {"ok": True})
                 return
             self._send_json(200, self._restore_after_restart(lease))
             return
@@ -17420,6 +17576,10 @@ def main():
             except OSError:
                 pass
 
+    # The PTY owner is outside the hub's process tree. A new web process
+    # attaches to the same host and the same terminal IDs after a restart.
+    attach_pty_host()
+
     cleaned = cleanup_rename_artifacts()
     if cleaned:
         print(f"cleaned up {cleaned} rename artifact session(s)", flush=True)
@@ -17448,6 +17608,7 @@ def main():
     # Needs you (#209): answers older than three days, and than the person's
     # latest message, close once (the backlog of ticks the old list held).
     points.migrate_all()
+    load_restart_caches()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)

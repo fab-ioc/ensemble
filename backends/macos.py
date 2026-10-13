@@ -4,10 +4,12 @@ ensemble behavior, relocated behind the Backend interface unchanged."""
 from __future__ import annotations
 
 import plistlib
+import json
 import random
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -573,6 +575,22 @@ class MacBackend(Backend):
         return False, _osascript_error_summary(r.stderr)
 
     # ---------- self-update ----------
+
+    def self_restart(self, plan: dict) -> dict:
+        """A detached helper preflights, then restarts only this hub."""
+        import app_version
+        state = Path(plan["log"]).parent.parent / "_launch"
+        state.mkdir(parents=True, exist_ok=True)
+        path = state / f"restart-{time.time_ns()}.json"
+        path.write_text(json.dumps(plan), encoding="utf-8")
+        if app_version.packaged():
+            argv = [sys.executable, "--run", "restart_helper", str(path)]
+        else:
+            argv = [sys.executable, str(Path(plan["repo"]) / "restart_helper.py"), str(path)]
+        result = self.start_detached(argv, Path(plan["log"]))
+        if not result.get("started"):
+            path.unlink(missing_ok=True)
+        return result
 
     def self_update(self, install_dir, port=None, log_file=None) -> dict:
         """Spawn `ensemble update` detached so it survives our restart
