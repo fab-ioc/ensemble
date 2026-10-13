@@ -66,6 +66,14 @@ class InterruptTests(unittest.TestCase):
         self.assertTrue(response["duplicate"])
         self.assertEqual(self.reviewer.writes, ["\x03"])
 
+    def test_claude_can_be_stopped_again_after_a_second(self):
+        self.assertEqual(dashboard.interrupt_agent("room-test", "claude")[0], 200)
+        dashboard._LAST_INTERRUPT[("room-test", "claude")] -= 2
+        code, result = dashboard.interrupt_agent("room-test", "claude")
+        self.assertEqual(code, 200)
+        self.assertFalse(result.get("duplicate", False))
+        self.assertEqual(self.reviewer.writes, ["\x03", "\x03"])
+
     def test_second_stop_waits_for_a_new_incoming_message(self):
         self.assertEqual(dashboard.interrupt_agent("room-test", "codex")[0], 200)
         dashboard._LAST_INTERRUPT[("room-test", "codex")] -= 2

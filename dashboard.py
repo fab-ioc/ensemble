@@ -499,7 +499,7 @@ def interrupt_agent(room_id: str, identity: str = "") -> tuple[int, dict]:
         last = next((e for e in reversed(room.get("interrupts") or [])
                      if e.get("identity") == target["identity"]
                      and e.get("ptyId") == target["ptyId"]), None)
-        if last and not any((m.get("ts") or 0) > last.get("ts", 0)
+        if target.get("agent") == "codex" and last and not any((m.get("ts") or 0) > last.get("ts", 0)
                             and m.get("from") not in (target["identity"], "hub")
                             for m in room.get("messages") or []):
             return 200, {"ok": True, "duplicate": True, "identity": target["identity"]}

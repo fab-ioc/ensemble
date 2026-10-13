@@ -5902,6 +5902,7 @@ function updateStopControl(ptyMap, liveMap) {
   const working = new Set((ROOM_OBJ && ROOM_OBJ.workingAgents) || []);
   STOP_TARGETS = ROOM_LIVE ? ROOM_AGENTS.filter(a => {
     if (!a.ptyId || !working.has(a.identity)) return false;
+    if (a.agent !== 'codex') return true;
     const last = [...(ROOM_OBJ.interrupts || [])].reverse().find(e => e.identity === a.identity && e.ptyId === a.ptyId);
     return !last || (ROOM_OBJ.messages || []).some(m => (+m.ts || 0) > last.ts && m.from !== a.identity && m.from !== 'hub');
   }) : [];
@@ -6389,7 +6390,14 @@ const PG_SETTLE = 400, PG_SLOP = 4, PG_HOLD = 300;
 // the person last typed in the box; scrolled: when they last scrolled (wheel,
 // a scroll key, a touch drag). (var: renderBubbles may run before this line.)
 var PG = { els: new WeakMap(), keys: new Map(), at: null, any: 0, down: 0, up: 0, press: null, click: false, queued: false, flush: 0, later: null, typed: -Infinity, scrolled: -Infinity };
-document.addEventListener('input', e => { if (e.target.closest && e.target.closest('#compose')) PG.typed = performance.now(); }, true);
+document.addEventListener('input', e => {
+  if (!(e.target.closest && e.target.closest('#compose'))) return;
+  PG.typed = performance.now();
+  // Typing a new draft makes a later Send press intentional, even if the
+  // button moved under the pointer when the previous send cleared its draft.
+  const send = $('#send'), entry = PG.els.get(send);
+  if (entry) entry.t = -Infinity;
+}, true);
 const pgScrolled = () => { PG.scrolled = performance.now(); };
 window.addEventListener('wheel', pgScrolled, { capture: true, passive: true });
 window.addEventListener('touchmove', pgScrolled, { capture: true, passive: true });

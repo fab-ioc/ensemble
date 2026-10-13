@@ -55,7 +55,7 @@ async function main(){
     await ve('window.__stops=[]; postOk=async (url, body)=>{ if(url.includes("interrupt")){window.__stops.push(body);return {ok:true,interrupt:{from:"user",identity:body.identity,ptyId:"pty-test",ts:Date.now()/1000}};}return {ok:true};}; refresh=()=>{}; 0');
     const idle=await ve('document.querySelector("#stop-wrap").hidden');
     if(A.shots){const shot=await send('Page.captureScreenshot',{format:'png'},sessionId);fs.writeFileSync(A.shots+'/before-'+surface+'-'+W+'.png',Buffer.from(shot.data,'base64'));}
-    await ve('ROOM_LIVE=true; ROOM_OBJ.workingAgents=["claude"]; ROOM_AGENTS=[{identity:"claude",ptyId:"pty-test"}]; updateStopControl({},{}); 0');
+    await ve('ROOM_LIVE=true; ROOM_OBJ.workingAgents=["codex"]; ROOM_AGENTS=[{identity:"codex",agent:"codex",ptyId:"pty-test"}]; updateStopControl({},{}); 0');
     const busy=await ve('(() => {const b=document.querySelector("#stop-agent"),r=b.getBoundingClientRect(),s=document.querySelector("#send").getBoundingClientRect();return {visible:!document.querySelector("#stop-wrap").hidden, rect:[r.left,r.top,r.right,r.bottom],sendHeight:s.height,gap:s.left-r.right,scroller:document.querySelector("#msgs").getBoundingClientRect().height,coarse:matchMedia("(pointer: coarse)").matches};})()');
     if(A.shots){const shot=await send('Page.captureScreenshot',{format:'png'},sessionId);fs.writeFileSync(A.shots+'/after-'+surface+'-'+W+'.png',Buffer.from(shot.data,'base64'));}
     await ve('document.querySelector("#stop-agent").click(); 0');await vu('window.__stops.length===1');
@@ -89,10 +89,11 @@ async function main(){
     const escaped=await ve('({n:window.__stops.length,focus:document.activeElement.id})');
     await sleep(1050);
     await ve('ROOM_OBJ.messages.push({from:"user",ts:Date.now()/1000+2});updateStopControl({},{});0');
-    const failed=await ve('(async()=>{postOk=async()=>{throw Object.assign(new Error("agent_not_working"),{status:409})};refresh=async()=>{ROOM_OBJ.workingAgents=[];updateStopControl({},{});};await stopAgent("claude");return {hint:document.querySelector("#hint").textContent,hidden:document.querySelector("#stop-wrap").hidden}})()');
-    await ve('ROOM_OBJ.workingAgents=["claude"]; ROOM_LIVE=false; updateStopControl({},{}); 0');
+    const failed=await ve('(async()=>{postOk=async()=>{throw Object.assign(new Error("agent_not_working"),{status:409})};refresh=async()=>{ROOM_OBJ.workingAgents=[];updateStopControl({},{});};await stopAgent("codex");return {hint:document.querySelector("#hint").textContent,hidden:document.querySelector("#stop-wrap").hidden}})()');
+    const claudeWorking=await ve('(() => {ROOM_AGENTS=[{identity:"claude",agent:"claude",ptyId:"pty-claude"}];ROOM_OBJ.workingAgents=["claude"];ROOM_OBJ.messages=[];ROOM_OBJ.interrupts=[{identity:"claude",ptyId:"pty-claude",ts:Date.now()/1000}];ROOM_LIVE=true;updateStopControl({},{});return !document.querySelector("#stop-wrap").hidden;})()');
+    await ve('ROOM_OBJ.workingAgents=["codex"]; ROOM_LIVE=false; updateStopControl({},{}); 0');
     const stopped=await ve('document.querySelector("#stop-wrap").hidden');
-    out[surface+'/'+W]={baseline,idle,busy,clicked,hiddenAfterStop,noteGone,dedup,filled,card,tail,copy,comment,point,dialog,menu,escaped,failed,stopped};
+    out[surface+'/'+W]={baseline,idle,busy,clicked,hiddenAfterStop,noteGone,dedup,filled,card,tail,copy,comment,point,dialog,menu,escaped,failed,claudeWorking,stopped};
     await send('Target.closeTarget',{targetId});
   }}finally{sock.close();ch.kill();}
   console.log(JSON.stringify(out));
@@ -126,7 +127,7 @@ class InChrome(unittest.TestCase):
         for p in cls.patches:
             p.start()
             cls.addClassCleanup(p.stop)
-        room = chatroom.create_room("Interrupt", [{"identity": "claude", "agent": "claude"}])
+        room = chatroom.create_room("Interrupt", [{"identity": "codex", "agent": "codex"}])
         cls.room = room["id"]
         class TestHandler(dashboard.Handler):
             def do_GET(self):
@@ -201,6 +202,7 @@ class InChrome(unittest.TestCase):
                     self.assertEqual(r["menu"], {"n": 1, "open": False})
                     self.assertEqual(r["escaped"], {"n": 2, "focus": "input"})
                     self.assertEqual(r["failed"], {"hint": "It had already stopped.", "hidden": True})
+                    self.assertTrue(r["claudeWorking"])
                     self.assertTrue(r["stopped"])
 
 

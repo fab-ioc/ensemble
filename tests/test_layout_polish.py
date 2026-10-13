@@ -190,7 +190,7 @@ class TheChatBox(unittest.TestCase):
         self.assertIn("border:1px solid var(--border-strong); border-radius:var(--r-300);", css)
         self.assertIn("#compose #input { border:0;", css)
         self.assertIn("field-sizing:content", css)
-        self.assertIn("#send { height:32px; padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg);", css)
+        self.assertIn("#send { height:var(--touch-min); padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg);", css)
         self.assertIn(".msg.user:not(.hub) { align-self:flex-end; max-width:85%;", css)
         self.assertIn(".msg.user.pending { border:1px dashed var(--border-strong); }", css)   # a send on its way keeps its edge
         self.assertIn('.msg.claude:not(.user) > .from::before { content:"C"; background:var(--agent-claude-bg); color:var(--agent-claude-fg); }', css)
