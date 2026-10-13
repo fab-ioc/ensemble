@@ -114,6 +114,10 @@ class StructuredRoundTrip(_World):
                 {"question": "Deploy tonight?", "yesno": True},
                 {"question": "Any notes?"}]}, self._handler())
         mid = result["messageId"]
+        self.assertEqual(result["references"], [
+            f"http://127.0.0.1:8765/session?room={rid}&msg={mid}&part=ask:0",
+            f"http://127.0.0.1:8765/session?room={rid}&msg={mid}&part=ask:1",
+        ])
         msg = next(m for m in chatroom.get_room(rid)["messages"] if m["id"] == mid)
         self.assertEqual(len(msg["asks"]), 2)
         self.assertIn("A short reason.", msg["text"])
@@ -144,6 +148,8 @@ class StructuredRoundTrip(_World):
              mock.patch.object(dashboard, "room_po_id", side_effect=lambda r, *a, **k: po_room if r and r.get("id") == rid else ""):
             result = ensemble_tools._ask(ctx, {"questions": [{"question": "Proceed?", "yesno": True}]}, self._handler())
             self.assertEqual(result["deliveredTo"]["roomId"], po_room)
+            self.assertEqual(result["reportReference"],
+                             f"http://127.0.0.1:8765/session?room={po_room}&msg={result['messageId']}")
             routed = chatroom.get_room(rid)["messages"][-1]
             self.assertEqual(routed["askAudience"], "po")
             self.assertEqual(routed["asks"][0]["question"], "Proceed?")

@@ -1187,6 +1187,7 @@ def _report(ctx, args, handler, *, structured_asks=None):
     return {"ok": True, "kind": kind,
             "deliveredTo": {"roomId": po["roomId"], "identity": po["identity"],
                             "title": po["title"]},
+            **({"messageId": res["message"]["id"]} if res and structured_asks is not None else {}),
             "poWoken": bool(rung),
             "note": ("delivered, and the PO was woken" if rung else
                      "delivered to the PO's room, but the PO is not running, so it "
@@ -1221,7 +1222,13 @@ def _ask(ctx, args, handler):
     if po and args.get("forCeo") is not True:
         routed = _report(ctx, {"kind": "question", "text": body}, handler,
                          structured_asks=questions)
-        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay.",
+        mid = routed.get("messageId")
+        headers = getattr(handler, "headers", {}) or {}
+        host = headers.get("Host", "127.0.0.1:8765")
+        scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
+        ref = f"{scheme}://{host}/session?room={po['roomId']}&msg={mid}" if mid else ""
+        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. Link reportReference when following up with the PO.",
+                **({"reportReference": ref} if ref else {}),
                 **({"warnings": warnings} if warnings else {})}
     result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
                                       structured_asks=questions, ask_audience="user")
@@ -1229,8 +1236,15 @@ def _ask(ctx, args, handler):
         raise ToolError("your room no longer exists")
     handler._ring_recipients(room["id"], result)
     _d.asks.forget()
+    mid = result["message"]["id"]
+    headers = getattr(handler, "headers", {}) or {}
+    host = headers.get("Host", "127.0.0.1:8765")
+    scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
+    refs = [f"{scheme}://{host}/session?room={room['id']}&msg={mid}&part=ask:{a['n']}"
+            for a in questions]
     return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
-            "questions": len(questions), "note": "The card is waiting for the user's answer.",
+            "questions": len(questions), "references": refs,
+            "note": "Paste the matching reference whenever you mention an open card. The card is waiting for the user's answer.",
             **({"warnings": warnings} if warnings else {})}
 
 
