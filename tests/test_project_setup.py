@@ -189,7 +189,7 @@ class WhatTheHubReadsNow(unittest.TestCase):
         with mock.patch.object(dashboard.agents, "get_agent", lambda k: ag if k == "codex" else None), \
                 mock.patch.object(dashboard, "_read_agent_session_files", lambda: list(records)), \
                 mock.patch.object(dashboard, "_read_session_files", lambda: [{"sessionId": s} for s in pids]), \
-                mock.patch.object(dashboard, "find_transcript", lambda s: transcript if s == sid else None):
+                mock.patch.object(dashboard, "find_transcript", lambda s, **_kw: transcript if s == sid else None):
             now = dashboard._session_live_now(sid)
         if transcript is not None:
             dashboard._CWD_CACHE.pop(str(transcript), None)
@@ -219,7 +219,7 @@ class WhatTheHubReadsNow(unittest.TestCase):
         t = self.transcript("C:\\work\\engine")
         with mock.patch.object(dashboard.agents, "get_agent", boom), \
                 mock.patch.object(dashboard, "_read_session_files", lambda: []), \
-                mock.patch.object(dashboard, "find_transcript", lambda s: t):
+                mock.patch.object(dashboard, "find_transcript", lambda s, **_kw: t):
             self.assertEqual(dashboard._session_live_now("sid-a")["seen"], False)
         dashboard._CWD_CACHE.pop(str(t), None)
         with mock.patch.object(dashboard, "_read_session_files", side_effect=OSError("denied")):

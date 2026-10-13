@@ -706,47 +706,73 @@ class RotatingLog:
         self.encoding = "utf-8"
         self._lock = threading.RLock()
         self._stream = path.open("ab", buffering=0)
+        self._retry_at = 0.0
 
-    def _rotate(self):
+    def _rotate(self) -> bool:
         self._stream.close()
-        for i in range(self.backups, 1, -1):
-            older = self.path.with_name(f"{self.path.name}.{i - 1}")
-            newer = self.path.with_name(f"{self.path.name}.{i}")
-            if older.exists():
-                older.replace(newer)
-        if self.path.exists():
-            archive = self.path.with_name(f"{self.path.name}.1")
-            self.path.replace(archive)
-            if archive.stat().st_size > self.max_bytes:
-                with archive.open("rb") as source:
-                    source.seek(-self.max_bytes, os.SEEK_END)
-                    tail = source.read()
-                archive.write_bytes(tail)
-        self._stream = self.path.open("ab", buffering=0)
+        self._stream = None
+        ok = True
+        try:
+            for i in range(self.backups, 1, -1):
+                older = self.path.with_name(f"{self.path.name}.{i - 1}")
+                newer = self.path.with_name(f"{self.path.name}.{i}")
+                if older.exists():
+                    older.replace(newer)
+            if self.path.exists():
+                archive = self.path.with_name(f"{self.path.name}.1")
+                self.path.replace(archive)
+                if archive.stat().st_size > self.max_bytes:
+                    with archive.open("rb") as source:
+                        source.seek(-self.max_bytes, os.SEEK_END)
+                        tail = source.read()
+                    archive.write_bytes(tail)
+        except OSError:
+            ok = False  # a Windows log viewer may hold the file without delete sharing
+        finally:
+            try:
+                self._stream = self.path.open("ab", buffering=0)
+            except OSError:
+                ok = False
+        if not ok:
+            self._retry_at = time.monotonic() + 1.0
+        return ok
 
     def write(self, text: str) -> int:
         data = text.encode(self.encoding, errors="replace")
         with self._lock:
-            while data:
-                size = self._stream.tell()
-                if size >= self.max_bytes:
-                    self._rotate()
-                    size = 0
-                n = min(len(data), self.max_bytes - size)
-                # Keep a UTF-8 character together when one write crosses a file.
-                if n < len(data):
-                    while n and data[n] & 0xc0 == 0x80:
-                        n -= 1
-                if not n:
-                    self._rotate()
-                    continue
-                self._stream.write(data[:n])
-                data = data[n:]
+            try:
+                if self._stream is None:
+                    self._stream = self.path.open("ab", buffering=0)
+                while data:
+                    size = self._stream.tell()
+                    if size >= self.max_bytes:
+                        if time.monotonic() < self._retry_at or not self._rotate():
+                            self._stream.write(data)  # keep logging; retry rotation later
+                            break
+                        continue
+                    n = min(len(data), self.max_bytes - size)
+                    # Keep a UTF-8 character together when one write crosses a file.
+                    if n < len(data):
+                        while n and data[n] & 0xc0 == 0x80:
+                            n -= 1
+                    if not n:
+                        if not self._rotate():
+                            self._stream.write(data)
+                            break
+                        continue
+                    self._stream.write(data[:n])
+                    data = data[n:]
+            except (OSError, ValueError, AttributeError):
+                pass  # logging must not break a request or its traceback
         return len(text)
 
     def flush(self):
         with self._lock:
-            self._stream.flush()
+            try:
+                if self._stream is not None:
+                    self._stream.flush()
+            except (OSError, ValueError):
+                pass
 
     def isatty(self):
         return False
@@ -1164,7 +1190,7 @@ def compute_codex_session_cost(session_id: str) -> dict:
     return result
 
 
-def compute_room_cost(room: dict) -> dict:
+def compute_room_cost(room: dict, *, immediate: bool = False) -> dict:
     """Aggregate cost across a collaboration's agent members — sum each member's
     conversations and merge the per-model breakdowns — so a room shows the same
     Cost section a single-agent session does. Every conversation counts: each
@@ -1186,7 +1212,7 @@ def compute_room_cost(room: dict) -> dict:
             if session_agent(pp, sid) == "codex":
                 costs.append(compute_codex_session_cost(sid))
             else:
-                costs.append(compute_session_cost(find_transcript(sid, immediate=False)))
+                costs.append(compute_session_cost(find_transcript(sid, immediate=immediate)))
     for c in costs:
         total["dollars"] += c.get("dollars", 0.0)
         for k, v in (c.get("tokens") or {}).items():
@@ -13442,7 +13468,7 @@ class Handler(BaseHTTPRequestHandler):
             sid = p[len("/api/cost/"):]
             if sid.startswith("room-"):
                 rm = chatroom.get_room(sid, public=False)
-                self._send_json(200, compute_room_cost(rm) if rm
+                self._send_json(200, compute_room_cost(rm, immediate=True) if rm
                                 else compute_session_cost(None))
                 return
             self._send_json(200, compute_session_cost(find_transcript(sid)))

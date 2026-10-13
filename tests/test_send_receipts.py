@@ -96,7 +96,7 @@ class Receipts(unittest.TestCase):
             mock.patch.object(dashboard, "load_projects", lambda: []),
             mock.patch.object(dashboard, "RESUME_NOTE_WAIT_S", 2),
             mock.patch.object(dashboard, "read_session_turns", lambda sid: self.turns.get(sid)),
-            mock.patch.object(dashboard, "find_transcript", lambda sid: None),
+            mock.patch.object(dashboard, "find_transcript", lambda sid, **_kw: None),
             # A transcript's size and time, as its file would give them.
             mock.patch.object(points, "_session_stat", lambda sid: self.stat(sid)),
             mock.patch.object(dashboard.Handler, "_resume_room_agent_pty",
@@ -518,7 +518,7 @@ class Receipts(unittest.TestCase):
                           encoding="utf-8")
             sends._SCANNED.clear()
             # The transcript's own time is the hidden line's: written since the send.
-            with mock.patch.object(dashboard, "find_transcript", lambda sid: tp), \
+            with mock.patch.object(dashboard, "find_transcript", lambda sid, **_kw: tp), \
                     mock.patch.object(points, "_session_stat", lambda sid: None):
                 rows = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
         # Shown once, as read: the chat draws no turn for it.
