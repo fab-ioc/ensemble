@@ -3727,8 +3727,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      host, out of sight (never display:none, which tells the chat it has no
      height). */
   .pd-chat > #po-panel { position: absolute; inset: 0; border: 0; border-radius: 0; }
-  /* A task's chat as a panel of its own (#150): its frame fills the panel. */
-  .pd-chat-x > iframe.dp-session { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  /* Task chats and threads use the same session frame and fill their panel. */
+  .pd-chat > iframe.dp-session { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
   /* A file as a panel of its own (#150): the path bar over its viewer, the
      note where the viewer would be when the file is gone, the history box
      over it for a documents project. The Files pane is then the tree alone

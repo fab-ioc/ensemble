@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -44,7 +45,7 @@ async function main() {
   const measure = `(() => {
     const b=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom};};
     const rid=${JSON.stringify(A.task)};
-    const panel=PD.rt.get('chat:'+rid)?.el || null;
+    const panel=PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el || PD.rt.get('chat:'+rid)?.el || null;
     const host=PD.els['po-chat'];
     const frame=panel?.querySelector('iframe.dp-session') || (document.body.classList.contains('detail-open') && host.querySelector('#detail-panel iframe.dp-session')) || host.querySelector('#po-panel iframe.po-session:not([hidden])');
     const d=frame?.contentDocument, list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
@@ -52,8 +53,10 @@ async function main() {
     const pb=b(parent), fb=b(frame), lb=b(list), cb=b(compose);
     return {panel:pb,frame:fb,list:lb,box:cb,body:b(d?.body),main:b(d?.querySelector('main')),
       listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null, emptyBelow:cb&&pb?pb.b-(fb?.y||0)-cb.b:null,
+      scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
       ratio:lb&&pb?lb.h/pb.h:null, bodyHeight:d?.body?.getBoundingClientRect().height,
-      frameClientHeight:frame?.clientHeight, mode:panel?PD.dock.viewMode('chat:'+rid):'middle',
+      frameClientHeight:frame?.clientHeight, mode:panel?(panel.classList.contains('pd-thread')?'thread':PD.dock.viewMode('chat:'+rid)):'middle',
+      frameInnerHeight:frame?.contentWindow?.innerHeight, frameVisualHeight:frame?.contentWindow?.visualViewport?.height,
       activityFlex:host.querySelector('#detail-panel .dp-pane[data-pane="activity"]') && getComputedStyle(host.querySelector('#detail-panel .dp-pane[data-pane="activity"]')).flexGrow,
       parentStyle:parent?getComputedStyle(parent).height:null};
   })()`;
@@ -85,10 +88,28 @@ async function main() {
     const {sessionId:ps}=await send('Target.attachToTarget',{targetId:popId,flatten:true});
     await send('Emulation.setDeviceMetricsOverride',{width:625,height:2000,deviceScaleFactor:1,mobile:false},ps);
     await sleep(600); out.popTall=await ev(measure);
+    await send('Emulation.setPageScaleFactor',{pageScaleFactor:5},ps);
+    await sleep(300); out.popScaled=await ev(measure);
+    await send('Emulation.setPageScaleFactor',{pageScaleFactor:1},ps);
     await send('Emulation.setDeviceMetricsOverride',{width:625,height:900,deviceScaleFactor:1,mobile:false},ps);
     await sleep(400); out.popShort=await ev(measure);
+    await send('Emulation.setDeviceMetricsOverride',{width:625,height:2000,deviceScaleFactor:1,mobile:false},ps);
+    await send('Page.reload',{},s);
+    await until(`!!PD.dock && !!PD.rt.get('chat:'+${JSON.stringify(A.task)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
+    await sleep(600); out.popReload=await ev(measure);
     await ev(`PD.dock.setViewMode('chat:'+${JSON.stringify(A.task)},'pinned'); 0`);
     await sleep(500); out.restored=await ev(measure);
+    await ev(`(() => { const id='chat:'+${JSON.stringify(A.task)}; const find=n=>n?.t==='stack'&&n.panels.includes('po-chat')?n:(n?.kids||[]).map(find).find(Boolean);
+      PD.dock.moveTo(id,{kind:'stack',stack:find(PD.dock.layout().root)},'center'); PD.dock.activate('po-chat'); return 0; })()`);
+    await size(1728,2000); await sleep(300);
+    await ev(`PD.dock.activate('chat:'+${JSON.stringify(A.task)}); 0`);
+    await sleep(400); out.backTab=await ev(measure);
+    await ev(`(() => { const id='chat:'+${JSON.stringify(A.task)}; const find=n=>n?.t==='stack'&&n.panels.includes('po-chat')?n:(n?.kids||[]).map(find).find(Boolean);
+      PD.dock.moveTo(id,{kind:'stack',stack:find(PD.dock.layout().root)},'right'); PD.dock.toggleMin(id); return 0; })()`);
+    await size(1728,900); await sleep(300);
+    await size(1728,2000); await sleep(300);
+    await ev(`PD.dock.toggleMin('chat:'+${JSON.stringify(A.task)}); 0`);
+    await sleep(400); out.minRestored=await ev(measure);
     await size(390,844,true); await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5},s);
     await sleep(600); out.phone=await ev(measure);
     await ev(`PD.dock.removePanel('chat:'+${JSON.stringify(A.task)}); 0`);
@@ -134,6 +155,46 @@ async function main() {
       return {panelHeight:r.height,hostHeight:host?.height,bottomGap:host?host.bottom-r.bottom:null,
         viewerHeight:viewer.height,viewerBottomGap:r.bottom-viewer.bottom}; })()`);
     await ev('closeDetail(); 0'); await sleep(400); out.poTall=await ev(measure);
+    const {browserContextId:ctx}=await send('Target.createBrowserContext');
+    const {targetId:tt}=await send('Target.createTarget',{url:'about:blank',browserContextId:ctx});
+    const {sessionId:ts}=await send('Target.attachToTarget',{targetId:tt,flatten:true});
+    await send('Page.enable',{},ts);
+    await send('Emulation.setDeviceMetricsOverride',{width:1728,height:1117,deviceScaleFactor:1,mobile:false},ts);
+    const evT=async expression => { const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},ts); if(r.exceptionDetails)throw Error(expression.slice(0,100)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
+    const untilT=async expression => { for(let i=0;i<100;i++){try{if(await evT(expression))return;}catch(e){}await sleep(150);}throw Error('timeout '+expression);};
+    await send('Page.navigate',{url:A.base+'/'},ts);
+    await untilT(`typeof ALL_ROWS!=='undefined' && !!PROJECTS`);
+    await evT(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
+    await untilT(`!!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
+    const threadId=await evT(`(() => { const t=PD.els['po-chat'].querySelector('iframe.po-session').contentDocument.querySelector('#msgs .thr-open[data-thr]').dataset.thr;
+      if(!pdThreadOpen(${JSON.stringify(A.po)},t))throw Error('thread not opened'); return t; })()`);
+    await untilT(`!!PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
+    await sleep(400); out.threadLaptop=await evT(measure);
+    out.threadShotLaptop=await evT(`(async()=>{const b=await PD.dock.screenshot('thread:'+${JSON.stringify(A.po)});const i=await createImageBitmap(b);return {width:i.width,height:i.height,bytes:b.size};})()`);
+    await send('Emulation.setDeviceMetricsOverride',{width:1728,height:2000,deviceScaleFactor:1,mobile:false},ts);
+    await sleep(300); out.threadTall=await evT(measure);
+    await evT(`PD.dock.toggleMax('thread:'+${JSON.stringify(A.po)}); 0`);
+    await sleep(250); out.threadMax=await evT(measure);
+    await evT(`PD.dock.restoreMax(); 0`);
+    await sleep(250); out.threadMaxRestored=await evT(measure);
+    await send('Page.reload',{},ts);
+    await untilT(`!!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
+    await evT(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(threadId)}); 0`);
+    await untilT(`!!PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
+    await sleep(400); out.threadReload=await evT(measure);
+    await evT(`PD.dock.setViewMode('thread:'+${JSON.stringify(A.po)},'window'); 0`);
+    await untilT(`!!PD.dock.popWindow('thread:'+${JSON.stringify(A.po)})`);
+    let tp;
+    for(let i=0;i<30;i++){const t=await send('Target.getTargets');tp=t.targetInfos.find(x=>x.type==='page'&&x.targetId!==targetId&&x.targetId!==popId&&x.targetId!==mainPop&&x.targetId!==tt&&x.url.startsWith(A.base))?.targetId;if(tp)break;await sleep(100);}
+    if(!tp)throw Error('thread popup target absent');
+    const {sessionId:tps}=await send('Target.attachToTarget',{targetId:tp,flatten:true});
+    await send('Emulation.setDeviceMetricsOverride',{width:625,height:2000,deviceScaleFactor:1,mobile:false},tps);
+    await sleep(400); out.threadPopTall=await evT(measure);
+    out.threadShotPop=await evT(`(async()=>{const b=await PD.dock.screenshot('thread:'+${JSON.stringify(A.po)});const i=await createImageBitmap(b);return {width:i.width,height:i.height,bytes:b.size};})()`);
+    await send('Emulation.setDeviceMetricsOverride',{width:625,height:900,deviceScaleFactor:1,mobile:false},tps);
+    await sleep(300); out.threadPopShort=await evT(measure);
+    await evT(`PD.dock.setViewMode('thread:'+${JSON.stringify(A.po)},'pinned'); 0`);
+    await sleep(300); out.threadRestored=await evT(measure);
     console.log(JSON.stringify(out));
   } finally { await send('Browser.close').catch(()=>{}); ch.kill(); }
 }
@@ -171,9 +232,24 @@ class ChatHeight(unittest.TestCase):
         ok, proj, _ = dashboard.register_project('Motors'); assert ok, proj
         cls.proj = proj['id']
         home = Path(proj.get('home') or proj['path'])
-        po = chatroom.create_room('PO talk', [{'identity':'claude','agent':'claude','cwd':str(home)}])
+        po_sid = 'height-po'
+        po = chatroom.create_room('PO talk', [{'identity':'claude','agent':'claude','role':'Product owner','sessionId':po_sid,'cwd':str(home)}])
+        po_data = chatroom.get_room(po['id'], public=False)
+        po_data['mode'] = 'solo'; chatroom.update_room(po_data)
         dashboard.assign_session_project(po['id'], cls.proj)
         dashboard.set_project_po(cls.proj, po['id'])
+        cls.po = po['id']
+        transcript = base / 'transcripts' / 'C--po'
+        transcript.mkdir()
+        at = time.time() - 3600
+        def turn(role, text, offset):
+            stamp = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(at + offset)) + '.000Z'
+            msg = {'role': role, 'content': text if role == 'user' else [{'type':'text','text':text}]}
+            if role == 'assistant': msg['stop_reason'] = 'end_turn'
+            return {'type':role,'timestamp':stamp,'sessionId':po_sid,'message':msg}
+        lines = [turn('user', 'We need to add this chat thread and keep the conversation readable.', 1)]
+        lines += [turn('assistant', f'Answer {i}: ' + 'Conversation details. ' * 12, i + 2) for i in range(30)]
+        (transcript / f'{po_sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
         task = chatroom.create_room('Tall chat', [{'identity':'claude','agent':'claude','cwd':str(home)}])
         chatroom.post_message(task['id'], 'user', 'A message above the composer')
         dashboard.assign_session_project(task['id'], cls.proj)
@@ -185,7 +261,7 @@ class ChatHeight(unittest.TestCase):
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         args = {**chrome_profile.node_args(), 'tmp': cls.tmp.name,
                 'base': f'http://127.0.0.1:{cls.server.server_address[1]}',
-                'proj': cls.proj, 'task': cls.task}
+                'proj': cls.proj, 'task': cls.task, 'po': cls.po}
         script = base / 'chat_height_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=120)
         assert out.returncode == 0, out.stderr[-4000:]
@@ -196,7 +272,8 @@ class ChatHeight(unittest.TestCase):
             'bottomGap': round(g['bottomGap']) if g['bottomGap'] is not None else None,
             'emptyBelow': round(g['emptyBelow']) if g['emptyBelow'] is not None else None,
             'ratio': round(g['ratio'], 3) if g['ratio'] is not None else None,
-        } for name, g in cls.got.items() if name != 'tools'}, indent=2))
+        } for name, g in cls.got.items() if name not in ('tools', 'threadShotLaptop', 'threadShotPop')}, indent=2))
+        print('thread screenshots CDP: '+json.dumps({name:cls.got[name] for name in ('threadShotLaptop', 'threadShotPop')}))
         print('tool panels CDP: '+json.dumps(cls.got['tools']))
 
     @classmethod
@@ -205,11 +282,15 @@ class ChatHeight(unittest.TestCase):
 
     def test_chat_fills_height(self):
         for name, g in self.got.items():
-            if name == 'tools':
+            if name in ('tools', 'threadShotLaptop', 'threadShotPop'):
                 continue
             with self.subTest(name=name):
                 self.assertLessEqual(g['emptyBelow'], 16, g)
                 self.assertGreaterEqual(g['ratio'], .7, g)
+        for name in ('threadLaptop', 'threadTall', 'threadMax', 'threadMaxRestored', 'threadReload', 'threadPopTall', 'threadPopShort'):
+            self.assertLessEqual(self.got[name]['scrollRemaining'], 16, (name, self.got[name]))
+        for name, panel in (('threadShotLaptop', 'threadLaptop'), ('threadShotPop', 'threadPopTall')):
+            self.assertGreaterEqual(self.got[name]['height'], self.got[panel]['panel']['h'] - 2)
 
     def test_live_chat_grows_with_flex(self):
         self.assertEqual(self.got['middleStaleTall']['activityFlex'], '1')
