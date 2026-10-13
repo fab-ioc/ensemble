@@ -5874,6 +5874,8 @@ function showWholeBtn() {
 // The room poll: one request at a time. A refresh asked for while one is
 // under way (after a click) runs once it is done, not beside it.
 let REFRESH_BUSY = false, REFRESH_AGAIN = false;
+let ROOM_ETAG = '';
+let ROOM_LAST = null;  // last received room; a deferred draw may still show the prior one
 async function refresh() {
   if (REFRESH_BUSY) { REFRESH_AGAIN = true; return; }
   REFRESH_BUSY = true;
@@ -5888,7 +5890,21 @@ async function refreshRoom() {
   let room;
   const ticket = ptTicket();
   const sendsGen = ++SENDS_GEN;
-  try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
+  try {
+    const url = '/api/room?id=' + encodeURIComponent(ROOM);
+    let r = await fetch(url,
+      ROOM_ETAG ? {headers: {'If-None-Match': ROOM_ETAG}} : undefined);
+    if (r.status === 304 && (!ROOM_LAST || ROOM_LAST.etag !== ROOM_ETAG)) {
+      ROOM_ETAG = '';
+      r = await fetch(url);
+    }
+    if (r.status === 304) room = structuredClone(ROOM_LAST.room);
+    else {
+      room = await r.json();
+      ROOM_ETAG = r.ok ? (r.headers.get('ETag') || '') : '';
+      ROOM_LAST = ROOM_ETAG ? {etag: ROOM_ETAG, room: structuredClone(room)} : null;
+    }
+  }
   catch(e) { if (!ROOM_OBJ) setText($('#hint'), 'Cannot load the conversation yet; retrying.'); return; }
   if (!room || room.error) { setText($('#title'), '(session not found)'); if (!ROOM_OBJ) setText($('#hint'), 'Cannot send: session not found.'); return; }
   // A press on the page: what the poll brought is shown once it is over (#198).

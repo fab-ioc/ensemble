@@ -1082,9 +1082,9 @@ def _session_ids(room: dict, led: dict) -> list[str]:
     return sids
 
 
-def _session_stat(sid: str) -> list | None:
+def _session_stat(sid: str, *, immediate: bool = False) -> list | None:
     try:
-        tp = _d.find_transcript(sid)
+        tp = _d.find_transcript(sid, immediate=immediate)
         if tp:
             st = Path(tp).stat()
             return [st.st_size, round(st.st_mtime, 3)]
@@ -1276,7 +1276,7 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
         live = [p["createdAt"] for p in led["points"] if p["state"] in LIVE]
         floor = (min(live) - SLACK_S) if live else None
         for sid in _session_ids(room, led):
-            st = _session_stat(sid)
+            st = _session_stat(sid, immediate=force)
             if st is None or _SCANNED.get((room_id, sid)) == st:
                 continue
             if floor is None or st[1] < floor:

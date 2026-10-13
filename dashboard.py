@@ -712,6 +712,87 @@ if sys.platform == "darwin":
 else:
     DEFAULT_LOG_FILE = DASHBOARD_DIR / "logs" / "ensemble.log"
 _LOG_FILE = None  # set by main() when --log is passed
+
+
+class RotatingLog:
+    """A text stream for stdout and stderr with bounded on-disk history."""
+
+    def __init__(self, path: Path, max_bytes: int = 8 * 1024 * 1024,
+                 backups: int = 3):
+        self.path, self.max_bytes, self.backups = path, max_bytes, backups
+        self.encoding = "utf-8"
+        self._lock = threading.RLock()
+        self._stream = path.open("ab", buffering=0)
+        self._retry_at = 0.0
+
+    def _rotate(self) -> bool:
+        self._stream.close()
+        self._stream = None
+        ok = True
+        try:
+            for i in range(self.backups, 1, -1):
+                older = self.path.with_name(f"{self.path.name}.{i - 1}")
+                newer = self.path.with_name(f"{self.path.name}.{i}")
+                if older.exists():
+                    older.replace(newer)
+            if self.path.exists():
+                archive = self.path.with_name(f"{self.path.name}.1")
+                self.path.replace(archive)
+                if archive.stat().st_size > self.max_bytes:
+                    with archive.open("rb") as source:
+                        source.seek(-self.max_bytes, os.SEEK_END)
+                        tail = source.read()
+                    archive.write_bytes(tail)
+        except OSError:
+            ok = False  # a Windows log viewer may hold the file without delete sharing
+        finally:
+            try:
+                self._stream = self.path.open("ab", buffering=0)
+            except OSError:
+                ok = False
+        if not ok:
+            self._retry_at = time.monotonic() + 1.0
+        return ok
+
+    def write(self, text: str) -> int:
+        data = text.encode(self.encoding, errors="replace")
+        with self._lock:
+            try:
+                if self._stream is None:
+                    self._stream = self.path.open("ab", buffering=0)
+                while data:
+                    size = self._stream.tell()
+                    if size >= self.max_bytes:
+                        if time.monotonic() < self._retry_at or not self._rotate():
+                            self._stream.write(data)  # keep logging; retry rotation later
+                            break
+                        continue
+                    n = min(len(data), self.max_bytes - size)
+                    # Keep a UTF-8 character together when one write crosses a file.
+                    if n < len(data):
+                        while n and data[n] & 0xc0 == 0x80:
+                            n -= 1
+                    if not n:
+                        if not self._rotate():
+                            self._stream.write(data)
+                            break
+                        continue
+                    self._stream.write(data[:n])
+                    data = data[n:]
+            except (OSError, ValueError, AttributeError):
+                pass  # logging must not break a request or its traceback
+        return len(text)
+
+    def flush(self):
+        with self._lock:
+            try:
+                if self._stream is not None:
+                    self._stream.flush()
+            except (OSError, ValueError):
+                pass
+
+    def isatty(self):
+        return False
 # HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, _NUMBERED_RE come from backends.base;
 # SESS_DIR, RENAME_WORKSPACE, GEOMETRIES_FILE from backends.shared.
 _SLUG_NONALNUM = re.compile(r"[^a-z0-9]+")
@@ -889,6 +970,7 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
 
 
 _TRANSCRIPT_PATHS: dict[str, Path] = {}
+_TRANSCRIPT_MISSES: dict[tuple[str, str], float] = {}
 # Every transcript by session id, from one listing of the project folders,
 # listed again when a lookup misses and it is older than _TRANSCRIPT_INDEX_TTL_S
 # (a miss on a younger one globs for that id alone).
@@ -919,7 +1001,7 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
         return idx
 
 
-def find_transcript(session_id: str) -> Path | None:
+def find_transcript(session_id: str, *, immediate: bool = True) -> Path | None:
     """A session's transcript. Remembered once found, so the task list does not
     glob every project folder for every live session on every refresh; checked
     for existence on each use, so a deleted transcript is looked up afresh."""
@@ -928,18 +1010,27 @@ def find_transcript(session_id: str) -> Path | None:
         return hit
     if not session_id or any(c in session_id for c in "*?[]/\\"):
         return None
+    miss_key = (str(PROJ_DIR), session_id)
+    if not immediate and _TRANSCRIPT_MISSES.get(miss_key, 0.0) > time.monotonic():
+        return None
     found = _transcript_index().get(session_id)
     if found is None or not found.exists():
         found = _transcript_index(fresh=True).get(session_id)
-    if found is None or not found.exists():
+    if immediate and (found is None or not found.exists()):
         # A listing younger than its TTL may predate the file: the glob for
         # this one id, as before, so a lookup never misses a transcript.
         hits = list(PROJ_DIR.glob(f"*/{session_id}.jsonl"))
         found = hits[0] if hits else None
     if found is not None:
+        _TRANSCRIPT_MISSES.pop(miss_key, None)
         _TRANSCRIPT_PATHS[session_id] = found
         return found
     _TRANSCRIPT_PATHS.pop(session_id, None)
+    # A missing retired session may be checked by every attention poll. Avoid
+    # walking every project directory for the same miss until the index expires.
+    if len(_TRANSCRIPT_MISSES) > 8192:
+        _TRANSCRIPT_MISSES.clear()
+    _TRANSCRIPT_MISSES[miss_key] = time.monotonic() + _TRANSCRIPT_INDEX_TTL_S
     return None
 
 
@@ -1116,7 +1207,7 @@ def compute_codex_session_cost(session_id: str) -> dict:
     return result
 
 
-def compute_room_cost(room: dict) -> dict:
+def compute_room_cost(room: dict, *, immediate: bool = False) -> dict:
     """Aggregate cost across a collaboration's agent members — sum each member's
     conversations and merge the per-model breakdowns — so a room shows the same
     Cost section a single-agent session does. Every conversation counts: each
@@ -1138,7 +1229,7 @@ def compute_room_cost(room: dict) -> dict:
             if session_agent(pp, sid) == "codex":
                 costs.append(compute_codex_session_cost(sid))
             else:
-                costs.append(compute_session_cost(find_transcript(sid)))
+                costs.append(compute_session_cost(find_transcript(sid, immediate=immediate)))
     for c in costs:
         total["dollars"] += c.get("dollars", 0.0)
         for k, v in (c.get("tokens") or {}).items():
@@ -9895,6 +9986,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
         rooms = chatroom.list_rooms()
     except Exception:
         rooms = []
+    for rm in rooms:
+        note_session_owners(rm)
     collab_sids: set[str] = set()
     collab_cwds: set[str] = set()
     for rm in rooms:
@@ -12719,12 +12812,22 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return False
 
-    def _send_json(self, code: int, payload):
+    def _send_json(self, code: int, payload, *, conditional: bool = False):
         body = json.dumps(payload).encode()
+        etag = '"' + hashlib.sha1(body).hexdigest() + '"' if conditional else ""
+        if etag and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         self.wfile.write(body)
 
@@ -13179,7 +13282,7 @@ class Handler(BaseHTTPRequestHandler):
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
             except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
                 print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
-            self._send_json(200, out)
+            self._send_json(200, out, conditional=True)
             return
         if p == "/api/task/ref":
             # The task a number in a chat names, for the chip that shows it:
@@ -13385,7 +13488,7 @@ class Handler(BaseHTTPRequestHandler):
             sid = p[len("/api/cost/"):]
             if sid.startswith("room-"):
                 rm = chatroom.get_room(sid, public=False)
-                self._send_json(200, compute_room_cost(rm) if rm
+                self._send_json(200, compute_room_cost(rm, immediate=True) if rm
                                 else compute_session_cost(None))
                 return
             self._send_json(200, compute_session_cost(find_transcript(sid)))
@@ -17146,7 +17249,7 @@ def main():
         log_path = Path(args[args.index("--log") + 1])
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            f = open(log_path, "a", buffering=1, encoding="utf-8")
+            f = RotatingLog(log_path)
             sys.stdout = f
             sys.stderr = f
             _LOG_FILE = log_path
