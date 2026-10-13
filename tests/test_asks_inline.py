@@ -278,7 +278,7 @@ def _expected() -> list[list[str]]:
 
 @unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
 class InChrome(ChromePage):
-    """At 1728 and 390 px on a throwaway hub (port 8798 when free) every form
+    """At 1728 and 390 px on a throwaway hub every form
     draws the buttons the hub reads, and none is wider than the screen; one
     click sends one tracked answer with the comment kept."""
     TEXT = EVERY

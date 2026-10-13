@@ -67,6 +67,8 @@ async function main() {
     const key = (type, k, modifiers = 0, repeat = false) => send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: k === 'Enter' ? 13 : 0, nativeVirtualKeyCode: k === 'Enter' ? 13 : 0, modifiers, autoRepeat: repeat }, sessionId);
     const open = async () => {
       await send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
+      await until('document.querySelector("#whole-chat") && !document.querySelector("#whole-chat").hidden');
+      await evalIn('document.querySelector("#whole-chat").click()');
       await until('document.querySelectorAll("#msgs .qa").length >= 3');
       await sleep(400);
     };

@@ -327,6 +327,21 @@ def _words(text: str, n: int = TITLE_WORDS) -> str:
     return out + ("…" if len(words) > n else "")
 
 
+_POINT_MENTION = re.compile(r"(?<![\w])P(\d{1,5})([a-z]?)(?![\w])", re.I)
+_POINT_RANGE = re.compile(r"(?<![\w])P(\d{1,5})\s*[-–—]\s*P(\d{1,5})(?![\w])", re.I)
+
+
+def _point_mentions(text: str) -> list[str]:
+    """Point names in the PO's own prose, including short `P5–P8` ranges."""
+    prose = points._prose(points.strip_point_lines(text or ""))
+    found = ["P" + n + suffix.lower() for n, suffix in _POINT_MENTION.findall(prose)]
+    for start, end in _POINT_RANGE.findall(prose):
+        lo, hi = int(start), int(end)
+        if 0 < hi - lo <= 20:
+            found.extend(f"P{n}" for n in range(lo + 1, hi))
+    return list(dict.fromkeys(found))
+
+
 def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=None) -> dict:
     """The threads of a chat, from its balloons (oldest first), its points
     ledger and its record (:func:`load_side`). Pure: the same input gives the
@@ -384,6 +399,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         out = None
         if p is not None:
             anc = anchors.get(pid) or ""
+            if anc.startswith("task:") and anc not in threads:
+                anc = task_thread.get(anc[5:], anc)
             if anc.startswith("m:") and anc not in threads:
                 # Started from a balloon's "Reply in thread": that balloon is
                 # its parent, or the thread it is in by now.
@@ -392,6 +409,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     anc = of[root["mid"]][-1]
                 elif root is not None:
                     new(anc, root, _words(root["turn"].get("text") or "") or "Thread")
+            # Team activity is a shared inbox for hub and task traffic. A
+            # human point raised from it starts a topic of its own.
+            if anc == "team:activity":
+                anc = ""
             if anc in threads:
                 out = anc
             else:
@@ -413,10 +434,19 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         refs = points.task_refs(points.strip_point_lines(p.get("text") or ""))
         for ref in ([p["task"]] if p.get("task") else []) + list(refs):
             task_thread[ref] = tid
-            if threads[tid].get("task") in ("", None):
+            if tid != "team:activity" and threads[tid].get("task") in ("", None):
                 threads[tid]["task"] = ref
 
     last: str | None = None         # the thread of the last input: what a PO message answers
+    activity = "team:activity"
+
+    def team(r: dict) -> str:
+        # Hub and unclaimed task traffic has one home outside the channel.
+        if activity not in threads:
+            new(activity, r, "Team activity")
+        else:
+            join(activity, r)
+        return activity
     for number, r in enumerate(recs, 1):
         if on_message and (number == 1 or number % 50 == 0 or number == len(recs)):
             on_message(number, len(recs))
@@ -451,9 +481,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     if t:
                         tids.append(t)
                 tids = list(dict.fromkeys(tids))
-                if not tids and r.get("words"):
+                if not tids:
                     # A message the ledger has no point of (sent before the
-                    # ledger, or a point taken back): a thread of its own.
+                    # ledger, a point taken back, or an image): a thread of its own.
                     tid = "m:" + mid
                     if tid not in threads:
                         new(tid, r, _words(r["turn"].get("text") or "") or "Thread")
@@ -466,23 +496,20 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             elif kind == "report":
                 ref = r.get("task") or ""
                 tid = task_thread.get(ref) if ref else None
-                if ref and tid is None:
-                    tid = "task:" + ref
-                    if tid in threads:
+                if tid is None:
+                    tid = team(r)
+                    if ref:
                         task_thread[ref] = tid
-                    else:
-                        title = r.get("taskTitle") or (task_title(ref) if task_title else "") or ""
-                        new(tid, r, f"{ref} {title}".strip(), task=ref)
-                        task_thread[ref] = tid
-                if tid:
+                else:
                     join(tid, r)
                 last = tid
             else:
-                last = None          # a hub note: Team activity, as before
+                last = team(r)
             continue
         # The PO's balloon.
         tids = []
-        for i in (r.get("re") or []) + answers.get(mid, []):
+        for i in list(dict.fromkeys((r.get("re") or []) + answers.get(mid, [])
+                                    + _point_mentions(r["turn"].get("text") or ""))):
             p = pts.get(i)
             if p is None or (r["ts"] and r["ts"] < float(p.get("createdAt") or 0) - points.SLACK_S):
                 continue
@@ -490,14 +517,27 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             if t:
                 tids.append(t)
         tids = list(dict.fromkeys(tids))
+        if not tids and last == activity and (r.get("ask") or r.get("live")):
+            # A PO question or live announcement woken by a digest/report is
+            # addressed to the person, not just more task traffic.
+            tid = "m:" + mid
+            new(tid, r, _words(r["turn"].get("text") or "") or "Thread")
+            tids = [tid]
         if not tids and last:
             tids = [last]
+        if not tids:
+            tid = "m:" + mid
+            new(tid, r, _words(r["turn"].get("text") or "") or "Thread")
+            tids = [tid]
         for t in tids:
             join(t, r)
         if tids and (len(tids) > 1 or r.get("ask") or r.get("live")):
             # Never hidden in a thread (an ask, "is live"), and an answer to
             # several points shown once: under the newest of its threads.
             also[mid] = max(tids, key=lambda t: (threads[t]["rootTs"], order.index(t)))
+        # Several PO balloons may be one answer with no new input between
+        # them. Keep the same home until the next human or hub input.
+        last = tids[-1]
     return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
 
 
@@ -654,13 +694,23 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
         mine = max([r["ts"] for r in rs if _who(r) == "you"] + [0.0])
         mark = max(since, _num(seen.get(tid)), mine)
         news = [r for r in replies if _who(r) != "you" and r["ts"] > mark]
+        po_replies = [r for r in replies if _who(r) == "po"] if tid == "team:activity" else []
+        po_news = [r for r in po_replies if r["ts"] > mark]
+        last_po = max(po_replies, key=lambda r: r["ts"]) if po_replies else None
         lastr = replies[-1] if replies else None
+        open_questions = sum(1 for m in th["members"] if m in open_mids)
         th.update({
             "replies": len(replies),
+            "rootWho": _who(rs[0]) if rs else "",
             "who": list(dict.fromkeys(_who(r) for r in replies)),
             "lastAt": (lastr or rs[0])["ts"] if rs else th["rootTs"],
+            "lastMid": (lastr or rs[0])["mid"] if rs else th["root"],
             "lastWho": _who(lastr) if lastr else "",
             "unread": len(news),
+            "poUnread": len(po_news),
+            "lastPoAt": last_po["ts"] if last_po else 0,
+            "lastPoMid": last_po["mid"] if last_po else "",
+            "openQuestions": open_questions,
             "state": _state_of(th, pts, open_mids, task_of),
         })
     idx = {**out, "sig": sig, "builtAt": time.time(), "took": round(time.time() - t0, 3),
@@ -673,11 +723,10 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
 
 
 def _channel(idx: dict) -> list[str]:
-    """The balloons the channel shows, oldest first: each thread's parent,
-    every balloon in no thread, and the replies also sent to the chat."""
-    of, also, parent = idx["of"], idx["also"], idx["parent"]
-    return [r["mid"] for r in idx["recs"]
-            if r["mid"] in parent or r["mid"] not in of or r["mid"] in also]
+    """Only top-level human and PO messages; each topic is a thread line."""
+    parent = idx["parent"]
+    return [r["mid"] for r in idx["recs"] if r["mid"] in parent
+            and (r["role"] == "agent" or r.get("kind") == "human")]
 
 
 def ready(room_id: str, room: dict) -> dict | None:
@@ -719,8 +768,14 @@ def ready(room_id: str, room: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _meta(th: dict) -> dict:
-    return {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "who",
-                                   "lastAt", "lastWho", "unread", "state")}
+    out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "rootWho", "who",
+                                   "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions")}
+    if th["id"] == "team:activity":
+        # Hub notes and reports do not ring the unread bell. A PO reply in
+        # this shared thread still has a visible, message-specific signal.
+        out.update(unread=th.get("poUnread", 0), lastAt=th.get("lastPoAt") or out["lastAt"],
+                   lastMid=th.get("lastPoMid") or out["lastMid"], lastWho="po" if th.get("lastPoAt") else out["lastWho"])
+    return out
 
 
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
@@ -748,11 +803,14 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
     n = max(1, min(int(n or CHANNEL_MAX), CHANNEL_LIMIT))
     ch = idx["channel"]
     shown = ch[-n:]
-    tids = {t for m in shown for t in (idx["parent"].get(m) or [])
-            + ((idx["of"].get(m) or []) if m in idx["also"] else [])}
+    tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
             "items": [_turn(idx, m) for m in shown],
             "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
+            "activity": _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None,
+            "unreadThreads": sorted((_meta(t) for t in idx["threads"].values()
+                                    if (t.get("poUnread") if t["id"] == "team:activity" else t.get("unread"))),
+                                    key=lambda t: t.get("lastAt") or 0, reverse=True),
             "before": max(0, len(ch) - n), "balloons": len(idx["recs"]), "channel": len(ch)}
 
 
@@ -790,7 +848,8 @@ def unread_threads(room_id: str, room: dict) -> list[dict] | None:
     idx = ready(room_id, room)
     if idx is None:
         return None
-    out = [_meta(th) for th in idx["threads"].values() if th.get("unread")]
+    out = [_meta(th) for th in idx["threads"].values()
+           if (th.get("poUnread") if th["id"] == "team:activity" else th.get("unread"))]
     out.sort(key=lambda t: (t["lastAt"] or 0, t["id"]), reverse=True)
     return out
 
