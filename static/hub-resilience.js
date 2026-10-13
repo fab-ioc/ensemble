@@ -5,6 +5,9 @@
   let offline = false, timer = 0, delay = 500, probing = false, flushing = false;
   const retryable = new Set(['/api/room/resume', '/api/room/points',
                              '/api/room/ask', '/api/send']);
+  // A terminal injection has no durable receipt. A lost response can mean
+  // that the terminal already received it, so only queue it before the send.
+  const uncertainOnFailure = new Set(['/api/send']);
   const unavailable = res => [502, 503, 504].includes(res.status);
 
   async function flush() {
@@ -86,7 +89,8 @@
       const res = await raw(input, init);
       if (api && unavailable(res)) {
         markOffline();
-        if (queued) return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
+        if (queued && !uncertainOnFailure.has(path))
+          return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
         throw new Error('hub unavailable');
       }
       if (api && offline && res.ok) {
@@ -100,7 +104,8 @@
     } catch (e) {
       if (!api || e?.name === 'AbortError' || e?.name === 'TimeoutError') throw e;
       markOffline();
-      if (queued) return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
+      if (queued && !uncertainOnFailure.has(path))
+        return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
       throw e;
     }
   };

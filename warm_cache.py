@@ -91,11 +91,14 @@ def path(state: Path) -> Path:
 
 
 def save(home: Path, state: Path, sessions: dict, transcript_index: dict,
-         thread_indexes: dict) -> None:
+         thread_indexes: dict, *, expected_sources: dict | None = None) -> None:
     target = path(state)
     target.parent.mkdir(parents=True, exist_ok=True)
+    sources = _fingerprint(home, state)
+    if expected_sources is not None and sources != expected_sources:
+        raise ValueError("warm cache sources changed while rebuilding")
     body = {"format": FORMAT, "codexHome": str(_codex_home(home)),
-            "sources": _fingerprint(home, state),
+            "sources": sources,
             "sessions": _encode(sessions),
             "transcripts": _encode(transcript_index),
             "threads": _encode(thread_indexes)}

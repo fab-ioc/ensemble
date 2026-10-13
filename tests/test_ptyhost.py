@@ -1,7 +1,9 @@
 """The detached owner retains a real PTY and its output across client loss."""
 import base64
+import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
@@ -12,6 +14,28 @@ from backends import get_backend, ptyhost
 
 
 class HostTest(unittest.TestCase):
+    def test_classic_stop_requires_pinned_identity_and_dead_host_process(self):
+        with tempfile.TemporaryDirectory(prefix="ensemble-pty-stop-") as td:
+            state = Path(td)
+            host = ptyhost.connect(state, get_backend())
+            pin = ptyhost.descriptor(state)
+            try:
+                wrong = dict(pin, token="wrong")
+                pin_file = state / "pinned.json"
+                pin_file.write_text(json.dumps(wrong), encoding="utf-8")
+                command = [sys.executable, str(Path(ptyhost.__file__)),
+                           "--stop", str(state), str(pin_file)]
+                self.assertEqual(subprocess.run(command, timeout=25).returncode, 1)
+                self.assertTrue(host.call("ping"))
+                pin_file.write_text(json.dumps(pin), encoding="utf-8")
+                self.assertEqual(subprocess.run(command, timeout=25).returncode, 0)
+                self.assertFalse(ptyhost._pid_alive(pin["pid"]))
+                with self.assertRaises(OSError):
+                    socket.create_connection(("127.0.0.1", pin["port"]), timeout=0.5)
+            finally:
+                if ptyhost._pid_alive(pin["pid"]):
+                    host.call("shutdown")
+
     def test_spool_replays_output_larger_than_screen_tail(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-pty-replay-") as td:
             state = Path(td)

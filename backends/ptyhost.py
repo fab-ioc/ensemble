@@ -364,10 +364,72 @@ def connect(state_dir: Path, backend=None, *, start=True) -> Client | None:
     raise RuntimeError("PTY host did not become ready")
 
 
-if __name__ == "__main__" and len(sys.argv) == 3:
+def descriptor(state_dir: Path) -> dict | None:
+    path = Path(state_dir) / DESCRIPTOR
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def stop(state_dir: Path, timeout: float = 15, expected: dict | None = None) -> bool:
+    """Stop the pinned old host after its hub exits; wait for socket and PID."""
+    path = Path(state_dir) / DESCRIPTOR
+    if not path.exists():
+        return expected is None or expected == {"absent": True}
+    try:
+        info = descriptor(state_dir)
+        if expected is not None and info != expected:
+            return False
+        client = Client(info)
+        end = time.monotonic() + timeout
+        try:
+            client.call("shutdown")
+        except (OSError, ConnectionError, RuntimeError, TimeoutError):
+            pass  # the reply may be lost after shutdown took effect
+        while time.monotonic() < end:
+            listening = False
+            try:
+                with socket.create_connection(("127.0.0.1", client.port), timeout=0.5):
+                    listening = True
+            except OSError:
+                pass
+            if not listening and not _pid_alive(client.pid):
+                return True
+            if listening:
+                try:
+                    client.call("shutdown")
+                except (OSError, ConnectionError, RuntimeError, TimeoutError):
+                    pass
+            time.sleep(0.1)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return False
+
+
+if __name__ == "__main__" and len(sys.argv) >= 3:
     if sys.argv[1] == "--serve":
         serve(Path(sys.argv[2]))
     elif sys.argv[1] == "--stop":
-        old = connect(Path(sys.argv[2]), start=False)
-        if old:
-            old.call("shutdown")
+        pin = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")) if len(sys.argv) > 3 else None
+        sys.exit(0 if stop(Path(sys.argv[2]), expected=pin) else 1)

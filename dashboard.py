@@ -10849,17 +10849,26 @@ def _restart_log(msg: str) -> None:
 
 
 def save_restart_caches() -> None:
-    """Snapshot warm reads while the old hub still has their exact inputs."""
-    with _TRANSCRIPT_INDEX_LOCK:
-        transcript = _TRANSCRIPT_INDEX[2].copy()
-    with threads._LOCK:
-        thread_indexes = dict(threads._INDEX)
-    sessions = {str(n): rows for n, (_, gen, rows) in _SESS_CACHE.items()
-                if gen == _SESS_GEN}
+    """Rebuild warm reads and save only if their sources stayed fixed."""
     try:
+        before = warm_cache._fingerprint(HOME, DASHBOARD_DIR)
+        sizes = [n for n, (_, gen, _) in _SESS_CACHE.items() if gen == _SESS_GEN]
+        sessions = {str(n): _load_sessions_uncached(n) for n in sizes}
+        global _TRANSCRIPT_INDEX
+        with _TRANSCRIPT_INDEX_LOCK:
+            _TRANSCRIPT_INDEX = ("", 0.0, {})
+        transcript = _transcript_index(fresh=True).copy()
+        with threads._LOCK:
+            room_ids = list(threads._INDEX)
+            for room_id in room_ids:
+                threads._INDEX.pop(room_id, None)
+        for room_id in room_ids:
+            threads.build(room_id, show_progress=False)
+        with threads._LOCK:
+            thread_indexes = dict(threads._INDEX)
         warm_cache.save(HOME, DASHBOARD_DIR, sessions, transcript,
                         {"index": thread_indexes, "threadSaves": dict(threads.SAVES),
-                         "pointSaves": dict(points.SAVES)})
+                         "pointSaves": dict(points.SAVES)}, expected_sources=before)
         _restart_log(f"warm caches saved: {len(sessions)} session lists, "
                      f"{len(transcript)} transcripts, {len(thread_indexes)} thread builds")
     except (OSError, ValueError, TypeError) as exc:

@@ -539,6 +539,7 @@ class Helper:
         self.new_host_version = ""
         self.keep_agents = False
         self.external_drain = False
+        self.pinned_host = None
 
     def cancel_external_drain(self) -> None:
         if not self.external_drain:
@@ -549,6 +550,13 @@ class Helper:
             self.external_drain = False
         except (OSError, ValueError, urllib.error.URLError) as exc:
             self.log(f"external drain could not be cancelled: {exc}")
+
+    def stop_pty_host(self) -> bool:
+        from backends import ptyhost
+        state = Path(self.plan["leasePath"]).parent
+        stopped = ptyhost.stop(state, expected=self.pinned_host)
+        self.log(f"classic PTY host stop after hub exit: {stopped}")
+        return stopped
 
     def log(self, msg: str) -> None:
         line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [update] {msg}\n"
@@ -728,13 +736,28 @@ class Helper:
                 except (OSError, ValueError, urllib.error.URLError) as e:
                     raise RuntimeError(f"could not drain agents for the PTY host change: {e}") from e
             try:
-                snap = _post(self.port, "/api/restart/snapshot", {"lease": self.plan.get("leaseId", "")})
+                for attempt in range(3):
+                    try:
+                        snap = _post(self.port, "/api/restart/snapshot",
+                                     {"lease": self.plan.get("leaseId", "")}, timeout=180)
+                        if not snap.get("ok"):
+                            raise ValueError("snapshot was not confirmed")
+                        break
+                    except (OSError, ValueError, urllib.error.URLError):
+                        if attempt == 2:
+                            raise
+                        time.sleep(1)
                 self.log(f"snapshot: {len(snap.get('rooms') or [])} room(s)")
                 if "ptyHostVersion" in self.plan:
-                    _post(self.port, "/api/restart/host-stop", {"lease": self.plan.get("leaseId", "")})
+                    from backends import ptyhost
+                    self.pinned_host = ptyhost.descriptor(Path(self.plan["leasePath"]).parent)
+                    if self.pinned_host is None:
+                        if self.plan.get("ptyHostVersion"):
+                            raise ValueError("old PTY host identity is missing")
+                        self.pinned_host = {"absent": True}
             except (OSError, ValueError, urllib.error.URLError) as e:
                 self.cancel_external_drain()
-                raise RuntimeError(f"snapshot or PTY host stop failed: {e}") from e
+                raise RuntimeError(f"snapshot failed: {e}") from e
         else:
             try:
                 _post(self.port, "/api/restart/prepare", {"lease": self.plan.get("leaseId", "")})
@@ -749,6 +772,12 @@ class Helper:
                 self.restore_rooms()
             return self.record(ok=False, stage="stop",
                                reason="the running hub did not stop; nothing was changed")
+        if not self.keep_agents and "ptyHostVersion" in self.plan and not self.stop_pty_host():
+            self.log("PTY host did not stop; starting the old version again")
+            self.ensure_serving(cur_app, prev, via_service)
+            self.restore_rooms()
+            return self.record(ok=False, stage="host-stop",
+                               reason="the old PTY host did not stop")
         try:
             swap_in(folder, names, new_from, new_names, prev)
         except OSError as e:

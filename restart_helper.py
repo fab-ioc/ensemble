@@ -5,10 +5,12 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import time
 import urllib.request
+from backends import ptyhost
 
 
 def hub_args(plan: dict, port: int) -> list[str]:
@@ -110,34 +112,67 @@ def _run(plan: dict) -> int:
 
     time.sleep(max(0, plan.get("graceSeconds", 0)))
     lease = {"lease": plan["leaseId"]}
+    pinned_host = None
     try:
         if plan["keepAgents"]:
             post("/api/restart/prepare", lease)
         else:
-            post("/api/restart/snapshot", lease)
-            post("/api/restart/host-stop", lease)
-    except OSError as exc:
+            for attempt in range(3):
+                try:
+                    snap = post("/api/restart/snapshot", lease)
+                    if not snap.get("ok"):
+                        raise ValueError("snapshot was not confirmed")
+                    break
+                except (OSError, ValueError):
+                    if attempt == 2:
+                        raise
+                    time.sleep(1)
+            pinned_host = ptyhost.descriptor(Path(plan["leasePath"]).parent)
+            if pinned_host is None:
+                if plan.get("ptyHostVersion"):
+                    raise ValueError("old PTY host identity is missing")
+                pinned_host = {"absent": True}
+    except (OSError, ValueError) as exc:
         log(f"restart preparation failed: {exc}")
+        if not plan["keepAgents"]:
+            return 1
 
     svc = plan.get("launchd")
     if svc:
-        res = subprocess.run(["launchctl", "kickstart", "-k", svc["target"]],
+        res = subprocess.run(["launchctl", "bootout", svc["target"]],
                              capture_output=True, text=True, encoding="utf-8", timeout=30)
-        log(f"launchctl kickstart: {res.returncode}")
+        log(f"launchctl bootout: {res.returncode}")
+    else:
+        try:
+            os.kill(int(plan["hubPid"]), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    end = time.monotonic() + 30
+    while time.monotonic() < end:
+        try:
+            os.kill(int(plan["hubPid"]), 0)
+        except OSError:
+            break
+        time.sleep(0.2)
+    else:
+        log("old hub did not stop; leaving it running")
+        return 1
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as check:
+        if check.connect_ex(("127.0.0.1", plan["port"])) == 0:
+            log("old hub port is still occupied; leaving PTY host intact")
+            return 1
+    if not plan["keepAgents"]:
+        state = Path(plan["leasePath"]).parent
+        if not ptyhost.stop(state, expected=pinned_host):
+            log("old PTY host process not confirmed gone; refusing to start incompatible hub code")
+            return 1
+    if svc:
+        res = subprocess.run(["launchctl", "bootstrap", svc["domain"], svc["plist"]],
+                             capture_output=True, text=True, encoding="utf-8", timeout=30)
+        log(f"launchctl bootstrap: {res.returncode}")
         if res.returncode != 0:
             return 1
     else:
-        os.kill(int(plan["hubPid"]), signal.SIGTERM)
-        end = time.monotonic() + 30
-        while time.monotonic() < end:
-            try:
-                os.kill(int(plan["hubPid"]), 0)
-            except OSError:
-                break
-            time.sleep(0.2)
-        else:
-            log("old hub did not stop; leaving it running")
-            return 1
         spawn(plan["port"])
     if not wait(plan["port"], 90):
         log("hub did not come back")

@@ -11,6 +11,79 @@ import app_update
 
 
 class HotRestartTest(TestCase):
+    def test_mac_helper_refuses_new_hub_when_old_host_survives(self):
+        with tempfile.TemporaryDirectory(prefix="ensemble-mac-stop-") as td:
+            root = Path(td)
+            plan = {"python": "python", "script": "dashboard.py", "repo": td,
+                    "port": 8798, "preflightPort": 8799, "hubPid": 123,
+                    "log": str(root / "restart.log"), "preflightLog": str(root / "pf.log"),
+                    "args": [], "env": {}, "keepAgents": False, "graceSeconds": 0,
+                    "leaseId": "ours", "leasePath": str(root / "lease.json"),
+                    "ptyHostVersion": "old"}
+            pf = mock.Mock()
+            port = mock.MagicMock()
+            port.__enter__.return_value.connect_ex.return_value = 1
+            def kill(pid, sig):
+                if sig == 0:
+                    raise ProcessLookupError()
+            with mock.patch.object(restart_helper.subprocess, "Popen", return_value=pf) as spawn, \
+                 mock.patch.object(restart_helper.urllib.request, "urlopen",
+                                   side_effect=lambda *a, **kw: io.BytesIO(b'{"ok":true}')), \
+                 mock.patch.object(restart_helper.os, "kill", side_effect=kill), \
+                 mock.patch.object(restart_helper.socket, "socket", return_value=port), \
+                 mock.patch.object(restart_helper.ptyhost, "descriptor",
+                                   return_value={"pid": 456, "port": 789}), \
+                 mock.patch.object(restart_helper.ptyhost, "stop", return_value=False) as stop, \
+                 mock.patch.object(restart_helper.time, "sleep"):
+                self.assertEqual(restart_helper._run(plan), 1)
+            spawn.assert_called_once()  # preflight only; incompatible hub never starts
+            stop.assert_called_once_with(root, expected={"pid": 456, "port": 789})
+
+    def test_update_keeps_old_host_when_hub_stop_fails(self):
+        with tempfile.TemporaryDirectory(prefix="ensemble-update-stop-") as td:
+            root = Path(td)
+            helper = app_update.Helper({"port": 8798, "ptyHostVersion": "old",
+                                        "leaseId": "ours", "leasePath": str(root / "lease.json"),
+                                        "log": str(root / "update.log")})
+            helper.new_host_version = "new"
+            helper.external_drain = True
+            calls = []
+            with mock.patch.object(app_update, "_post", side_effect=lambda p, e, b, **kw: calls.append(e) or {"ok": True, "rooms": []}), \
+                 mock.patch.object(app_update.urllib.request, "urlopen",
+                                   return_value=io.BytesIO(b'{"state":"restarting","external":true}')), \
+                 mock.patch("backends.ptyhost.descriptor", return_value={"pid": 123, "port": 456}), \
+                 mock.patch.object(helper, "stop_hub", return_value=(False, False)), \
+                 mock.patch.object(helper, "stop_pty_host") as stop_host, \
+                 mock.patch.object(helper, "ensure_serving"), \
+                 mock.patch.object(helper, "restore_rooms"), \
+                 mock.patch.object(helper, "record", return_value={"ok": False}):
+                self.assertFalse(helper._swap_and_start(root, root, [], root, [], root, root)["ok"])
+            stop_host.assert_not_called()
+            self.assertEqual(helper.pinned_host, {"pid": 123, "port": 456})
+            self.assertIn("/api/restart/external-cancel", calls)
+
+    def test_update_refuses_swap_if_old_host_process_survives(self):
+        with tempfile.TemporaryDirectory(prefix="ensemble-update-host-") as td:
+            root = Path(td)
+            helper = app_update.Helper({"port": 8798, "ptyHostVersion": "old",
+                                        "leaseId": "ours", "leasePath": str(root / "lease.json"),
+                                        "log": str(root / "update.log")})
+            helper.new_host_version = "new"
+            with mock.patch.object(app_update, "_post", return_value={"ok": True, "rooms": []}), \
+                 mock.patch.object(app_update.urllib.request, "urlopen",
+                                   return_value=io.BytesIO(b'{"state":"restarting","external":true}')), \
+                 mock.patch("backends.ptyhost.descriptor", return_value={"pid": 123, "port": 456}), \
+                 mock.patch.object(helper, "stop_hub", return_value=(False, True)), \
+                 mock.patch.object(helper, "stop_pty_host", return_value=False), \
+                 mock.patch.object(helper, "ensure_serving") as restore_old, \
+                 mock.patch.object(helper, "restore_rooms"), \
+                 mock.patch.object(helper, "record", side_effect=lambda **kw: kw), \
+                 mock.patch.object(app_update, "swap_in") as swap:
+                result = helper._swap_and_start(root, root, [], root, [], root, root)
+            self.assertEqual(result["stage"], "host-stop")
+            swap.assert_not_called()
+            restore_old.assert_called_once()
+
     def test_mac_helper_keeps_bind_and_original_flags(self):
         plan = {"python": "python", "script": "dashboard.py", "port": 8765,
                 "log": "hub.log", "preflightLog": "preflight.log",
@@ -40,7 +113,7 @@ class HotRestartTest(TestCase):
             helper.new_host_version = "new"
             calls = []
 
-            def post(port, path, body):
+            def post(port, path, body, **kwargs):
                 calls.append(path)
                 if path == "/api/restart/snapshot":
                     raise OSError("snapshot unavailable")
@@ -49,11 +122,13 @@ class HotRestartTest(TestCase):
             state = io.BytesIO(b'{"state":"restarting","external":true}')
             with mock.patch.object(app_update, "_post", side_effect=post), \
                  mock.patch.object(app_update.urllib.request, "urlopen", return_value=state), \
-                 mock.patch.object(helper, "stop_hub") as stop:
+                 mock.patch.object(helper, "stop_hub") as stop, \
+                 mock.patch.object(app_update.time, "sleep"):
                 with self.assertRaisesRegex(RuntimeError, "snapshot unavailable"):
                     helper._swap_and_start(root, root, [], root, [], root, root)
-            self.assertEqual(calls, ["/api/restart/external-drain",
-                                     "/api/restart/snapshot", "/api/restart/external-cancel"])
+            self.assertEqual(calls, ["/api/restart/external-drain"] +
+                             ["/api/restart/snapshot"] * 3 +
+                             ["/api/restart/external-cancel"])
             stop.assert_not_called()
 
     def test_matching_host_skips_drain_and_snapshot(self):

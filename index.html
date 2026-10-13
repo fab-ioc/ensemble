@@ -16418,14 +16418,14 @@ async function refresh({ now = false, until = 0 } = {}) {
       if (showProjectProgress) globalThis.EnsembleProgress?.set(projectProgressKey, {phase: 'Loading projects'});
       // Which attention item is a PO's is known only once the projects are.
       api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); })
-        .catch(() => { if (!HubResilience.offline) { _projFailed = true; renderRows(); } })
+        .catch(() => { if (typeof HubResilience === 'undefined' || !HubResilience.offline) { _projFailed = true; renderRows(); } })
         .finally(() => { if (showProjectProgress) globalThis.EnsembleProgress?.clear(projectProgressKey); _projInFlight = false; });
     }
     renderRows();
     if (SELECTED_SID) renderDetail();
     pdSyncTitles();   // a task renamed: its chat panel's tab, the conversation's window
   } catch (e) {
-    if (HubResilience.offline) return;
+    if (typeof HubResilience !== 'undefined' && HubResilience.offline) return;
     // Out of time: the action that asked gives up and says so itself.
     if (e && e.name === 'TimeoutError') return;
     // A dropped poll must not cost you the workspace. The tree, the folders you
@@ -19826,7 +19826,7 @@ document.addEventListener('click', async (ev) => {
       });
       if (r.result === 'ok') toast('message sent', 1800, 'ok');
       else toast('send failed: ' + r.result, 5000, 'err');
-    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    } catch (e) { toast('Delivery uncertain. Check the terminal before sending again.', 7000, 'err'); }
     finally { sendBtn.classList.remove('busy'); }
     return;
   }

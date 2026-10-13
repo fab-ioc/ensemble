@@ -36,7 +36,7 @@ function Ok($u, [int]$timeoutSec = 30) { try { $r = Invoke-WebRequest -Uri $u -U
 function Q($s) { '"' + ([string]$s -replace '"', '\"') + '"' }
 function Post($path, $obj) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress))
-  Invoke-WebRequest -Uri "$base$path" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 60
+  Invoke-WebRequest -Uri "$base$path" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 170
 }
 # The processes serving the hub on a port: its listener, and any whose command
 # line names that port. Never anything else. A checkout's hub is python running
@@ -148,14 +148,38 @@ if ($cfg.keepAgents) {
   } catch { L "warm caches could not be prepared: $_" }
 }
 if (-not $cfg.keepAgents) {
+  $snapshotOk = $false
+  for ($attempt = 0; $attempt -lt 3 -and -not $snapshotOk; $attempt++) {
+    try {
+      $r = Post '/api/restart/snapshot' @{ lease = [string]$cfg.leaseId }
+      $snapshotOk = ($r.StatusCode -eq 200)
+      if ($snapshotOk) { L "snapshot before the stop: HTTP $($r.StatusCode) $($r.Content)" }
+    } catch { L "snapshot attempt $($attempt + 1) failed: $_"; Nap 1 }
+  }
+  if (-not $snapshotOk) {
+    L "classic restart cancelled: no confirmed fresh snapshot; hub and PTY host remain running"
+    DropLease
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+}
+$hostPin = ''
+if (-not $cfg.keepAgents) {
+  $stateDir = Split-Path -Parent ([string]$cfg.leasePath)
+  $descriptor = Join-Path $stateDir 'pty-host.json'
+  $hostPin = Join-Path $stateDir "_launch\host-pin-$($cfg.leaseId).json"
   try {
-    $r = Post '/api/restart/snapshot' @{ lease = [string]$cfg.leaseId }
-    L "snapshot before the stop: HTTP $($r.StatusCode) $($r.Content)"
-  } catch { L "no snapshot before the stop ($_): the one taken at the request, if any, is used" }
-  try {
-    $r = Post '/api/restart/host-stop' @{ lease = [string]$cfg.leaseId }
-    L "PTY host stopped for classic restart: HTTP $($r.StatusCode)"
-  } catch { L "no PTY host stop: $_" }
+    if ($cfg.ptyHostVersion -and -not (Test-Path -LiteralPath $descriptor)) {
+      throw 'old PTY host identity is missing'
+    }
+    if (Test-Path -LiteralPath $descriptor) { Copy-Item -LiteralPath $descriptor -Destination $hostPin -Force -ErrorAction Stop }
+    else { [IO.File]::WriteAllText($hostPin, '{"absent":true}', (New-Object Text.UTF8Encoding $false)) }
+  } catch {
+    L "classic restart cancelled: could not pin PTY host identity: $_"
+    DropLease
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
 }
 $useTask = $false
 if (-not $cfg.noTask) {
@@ -177,9 +201,20 @@ foreach ($v in ($victims | Where-Object { $_ } | Sort-Object ProcessId -Unique))
   try { Stop-Process -Id $v.ProcessId -Force -ErrorAction Stop; L "stopped pid $($v.ProcessId)" } catch { L "stop pid $($v.ProcessId): $_" }
 }
 $free = $false
-for ($i = 0; $i -lt 15 -and -not $free; $i++) {
+$oldGone = $false
+for ($i = 0; $i -lt 15 -and -not ($free -and $oldGone); $i++) {
   Nap 1
   $free = -not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+  $old = Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$cfg.hubPid)" -ErrorAction SilentlyContinue | Where-Object { IsHub $_ }
+  $oldGone = -not $old
+}
+if (-not ($free -and $oldGone)) {
+  L "old hub PID or port $port is still active; PTY host left running"
+  if ($useTask) { try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop } catch {} }
+  DropLease
+  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+  exit 1
 }
 $hubArgs = @()
 if ($cfg.script) { $hubArgs += (Q $cfg.script) }
@@ -189,6 +224,26 @@ function StartDirect {
     Start-Process -FilePath $cfg.python -ArgumentList $hubArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -ErrorAction Stop | Out-Null
     L "started $($cfg.python) $($hubArgs -join ' ')"
   } catch { L "start err: $_" }
+}
+if (-not $cfg.keepAgents) {
+  $stateDir = Split-Path -Parent ([string]$cfg.leasePath)
+  $hostArgs = @()
+  if ($cfg.script) { $hostArgs += (Q (Join-Path $cfg.repo 'backends\ptyhost.py')) }
+  else { $hostArgs += @('--run', 'pty_host') }
+  $hostArgs += @('--stop', (Q $stateDir))
+  if ($hostPin) { $hostArgs += (Q $hostPin) }
+  try {
+    $stopper = Start-Process -FilePath $cfg.python -ArgumentList $hostArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+    $hostGone = ($stopper.ExitCode -eq 0)
+  } catch { $hostGone = $false; L "PTY host stop failed: $_" }
+  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
+  if (-not $hostGone) {
+    L "PTY host process not confirmed gone; refusing to start incompatible hub code"
+    DropLease
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+  L "classic PTY host process confirmed gone"
 }
 $up = $false
 if ($useTask) {

@@ -9,6 +9,7 @@ starts the hub, with ``dashboard.py``'s own arguments.
 from __future__ import annotations
 
 import multiprocessing
+import json
 import os
 import sys
 
@@ -55,6 +56,9 @@ def _app_update(argv: list[str]) -> None:
 def _pty_host(argv: list[str]) -> None:
     from pathlib import Path
     from backends import ptyhost
+    if len(argv) >= 3 and argv[1] == "--stop":
+        pin = json.loads(Path(argv[3]).read_text(encoding="utf-8")) if len(argv) > 3 else None
+        sys.exit(0 if ptyhost.stop(Path(argv[2]), expected=pin) else 1)
     ptyhost.serve(Path(argv[1]))
 
 

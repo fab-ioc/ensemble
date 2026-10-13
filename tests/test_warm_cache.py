@@ -4,9 +4,40 @@ import unittest
 from unittest import mock
 
 import warm_cache
+import dashboard
 
 
 class WarmCacheTest(unittest.TestCase):
+    def test_save_refuses_sources_changed_during_rebuild(self):
+        with tempfile.TemporaryDirectory(prefix="ensemble-warm-race-") as td:
+            home = Path(td)
+            state = home / ".ensemble"
+            before = warm_cache._fingerprint(home, state)
+            (state / "rooms").mkdir(parents=True)
+            with self.assertRaisesRegex(ValueError, "changed while rebuilding"):
+                warm_cache.save(home, state, {}, {}, {}, expected_sources=before)
+            self.assertFalse(warm_cache.path(state).exists())
+
+    def test_restart_save_rebuilds_stale_session_and_thread_rows(self):
+        old = {300: (0, 1, [{"id": "stale"}])}
+        thread = {"room-one": ((1,), {"items": ["stale"]})}
+        def rebuild(room_id, **kwargs):
+            thread[room_id] = ((2,), {"items": ["fresh"]})
+        with mock.patch.object(dashboard, "_SESS_CACHE", old), \
+             mock.patch.object(dashboard, "_SESS_GEN", 1), \
+             mock.patch.object(dashboard, "_load_sessions_uncached", return_value=[{"id": "fresh"}]) as sessions, \
+             mock.patch.object(dashboard.warm_cache, "_fingerprint", return_value={"source": [1, 2]}), \
+             mock.patch.object(dashboard, "_TRANSCRIPT_INDEX", ("", 0.0, {})), \
+             mock.patch.object(dashboard, "_transcript_index", return_value={"fresh": Path("fresh.jsonl")}), \
+             mock.patch.object(dashboard.threads, "_INDEX", thread), \
+             mock.patch.object(dashboard.threads, "build", side_effect=rebuild), \
+             mock.patch.object(dashboard.warm_cache, "save") as save:
+            dashboard.save_restart_caches()
+        sessions.assert_called_once_with(300)
+        self.assertEqual(save.call_args.args[2], {"300": [{"id": "fresh"}]})
+        self.assertEqual(save.call_args.args[4]["index"]["room-one"][1]["items"], ["fresh"])
+        self.assertEqual(save.call_args.kwargs["expected_sources"], {"source": [1, 2]})
+
     def test_codex_home_override_is_part_of_snapshot(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-warm-") as td:
             home = Path(td)
