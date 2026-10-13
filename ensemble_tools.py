@@ -1229,8 +1229,14 @@ def _ask(ctx, args, handler):
         raise ToolError("your room no longer exists")
     handler._ring_recipients(room["id"], result)
     _d.asks.forget()
+    mid = result["message"]["id"]
+    host = handler.headers.get("Host", "127.0.0.1:8765")
+    scheme = "https" if handler.headers.get("X-Forwarded-Proto") == "https" else "http"
+    refs = [f"{scheme}://{host}/session?room={room['id']}&msg={mid}&part=ask:{a['n']}"
+            for a in questions]
     return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
-            "questions": len(questions), "note": "The card is waiting for the user's answer.",
+            "questions": len(questions), "references": refs,
+            "note": "Paste the matching reference whenever you mention an open card. The card is waiting for the user's answer.",
             **({"warnings": warnings} if warnings else {})}
 
 

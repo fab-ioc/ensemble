@@ -1411,6 +1411,26 @@ def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None =
         return None
 
 
+def close_ask(room_id: str, mid: str, n: int, question: str, now: float | None = None) -> dict | None:
+    """Close an unanswered card once, retaining its state for every device."""
+    return answer_ask(room_id, mid, n, {"closed": True, "question": question}, now)
+
+
+def unclose_ask(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
+    """Reopen a closed card during its ten-second Undo period."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        got = (led["asks"].get(mid) or {}).get(str(n))
+        if not isinstance(got, dict) or not got.get("closed") or now - float(got.get("at") or 0) > 10:
+            return False
+        del led["asks"][mid][str(n)]
+        if not led["asks"][mid]:
+            del led["asks"][mid]
+        _save(room_id, led)
+        return True
+
+
 def settle_asks(room_id: str, text: str, now: float | None = None) -> None:
     """The person wrote in the chat (not a quick answer): the asks of the
     messages before it wait for them no more. Their cards still answer.

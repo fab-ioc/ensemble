@@ -220,16 +220,14 @@ class TheMarker(unittest.TestCase):
         self.assertIn('aria-pressed="true"', a)
         self.assertEqual(self.o["approvedOpen"], [1, 2], "a thumbs up answers the ask that had a recommendation")
 
-    def test_words_in_the_chat_end_the_wait_age_does_not(self):
-        self.assertEqual(self.o["settledOpen"], 0)
-        self.assertIn("You answered after this", self.o["settledBody"])
+    def test_words_and_age_leave_cards_open(self):
+        self.assertEqual(self.o["settledOpen"], 3)
         self.assertEqual(self.o["settledBody"].count("<textarea"), 3, "the cards still answer")
         self.assertEqual(self.o["ages"], [3, 3, 3], "6 days, 8 days, unknown time: open until answered (issue 11)")
-        self.assertEqual(self.o["doneOpen"], 0, "a Done task waits for nobody")
-        self.assertIn("This task is done", self.o["doneBody"])
+        self.assertEqual(self.o["doneOpen"], 3, "workflow does not close a card")
 
     def test_a_po_reply_does_not_settle_a_task_direct_user_ask(self):
-        self.assertEqual(self.o["poAnsweredOpen"], 0)
+        self.assertEqual(self.o["poAnsweredOpen"], 3)
         self.assertEqual(self.o["taskPoAnsweredOpen"], 3)
         self.assertEqual(self.o["reviewerOpen"], 0)
 
@@ -447,13 +445,13 @@ class TheEndpoint(_World):
         self.assertFalse(dashboard.withdraw_send(rid, "ask:sid-1:1:2"))
         self.assertEqual(len(res.queue), 1)
 
-    def test_words_in_the_chat_end_the_wait_and_a_quick_answer_does_not(self):
+    def test_words_in_the_chat_leave_unanswered_cards_open(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
             http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 0, "option": "30 days"})
             self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
             self.assertEqual(http("/api/room/resume", {"roomId": rid, "text": "1. yes 2. nothing else", "key": "k9"})[0], 200)
-        self.assertEqual(asks.open_in(chatroom.get_room(rid)), [])
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
         self.assertGreater(points.view(rid)["asksSettledAt"], self.t0 + 2)
 
     def test_a_command_or_a_refused_send_does_not_end_the_wait(self):
@@ -467,13 +465,33 @@ class TheEndpoint(_World):
         self.assertEqual(len(asks.open_in(chatroom.get_room(rid))), 3, "a send that did not go settles nothing")
         self.assertFalse(points.view(rid).get("asksSettledAt"))
 
-    def test_a_done_task_asks_nothing(self):
+    def test_a_done_task_keeps_unanswered_cards_open(self):
         rid = self._room()
         room = chatroom.get_room(rid)
         asks.forget()
         self.assertEqual(list(asks.open_by_room([room])), [rid])
         asks.forget()
-        self.assertEqual(asks.open_by_room([{**room, "workflow": "done"}]), {})
+        self.assertEqual(list(asks.open_by_room([{**room, "workflow": "done"}])), [rid])
+
+    def test_close_notifies_asker_and_undo_reopens(self):
+        rid = self._room()
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)):
+            status, r = http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})
+            self.assertEqual(status, 200, r)
+            self.assertTrue(points.load(rid)["asks"]["sid-1:1"]["0"]["closed"])
+            self.assertEqual([c["n"] for c in asks.open_cards(chatroom.get_room(rid))], [1, 2])
+            self.assertEqual(http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})[0], 409)
+            status, r = http("/api/room/ask/reopen", {"roomId": rid, "mid": "sid-1:1", "n": 0})
+            self.assertEqual(status, 200, r)
+        self.assertIn('[asks] The CEO closed your question "Which retention for old transcripts?" without an answer.', sent[0][0])
+        self.assertEqual([c["n"] for c in asks.open_cards(chatroom.get_room(rid))], [0, 1, 2])
+
+    def test_close_undo_expires(self):
+        rid = self._room()
+        self.assertIsNone(points.close_ask(rid, "sid-1:1", 0, "Question?", now=100))
+        self.assertFalse(points.unclose_ask(rid, "sid-1:1", 0, now=111))
+        self.assertTrue(points.load(rid)["asks"]["sid-1:1"]["0"]["closed"])
 
     def test_a_room_with_open_asks_waits_for_the_person(self):
         rid = self._room()
