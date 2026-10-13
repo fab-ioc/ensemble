@@ -160,6 +160,39 @@ class PtyInputEndpointFilter(unittest.TestCase):
         self.post(sess, DA + "hub-authored", hub=True)
         self.assertEqual(sess.writes, [DA + "hub-authored"])
 
+    def test_po_helper_enter_is_checked_for_codex(self):
+        class Session:
+            meta = {"agent": "codex"}
+            hub_line_typed = False
+            hub_line_text = ""
+            hub_line_info = None
+            person_line_text = ""
+
+            def __init__(self):
+                self.writes = []
+                self.submitted = False
+
+            def alive(self):
+                return True
+
+            def write(self, data):
+                self.writes.append(data)
+                if data == "\r" and self.writes.count("\r") == 2:
+                    self.submitted = True
+                return True
+
+            def tail(self):
+                return "› [Pasted Content 1204 chars]" if not self.submitted else "› "
+
+        sess = Session()
+        with mock.patch.object(dashboard.time, "sleep", return_value=None) as delay, \
+             mock.patch.object(dashboard, "note_answer"):
+            self.post(sess, "[from the PO] carry on", hub=True, origin="po")
+            self.assertGreaterEqual(delay.call_args.args[0], 1.0)
+            self.post(sess, "\r", hub=True, origin="po")
+        self.assertTrue(sess.submitted)
+        self.assertEqual(sess.writes, ["[from the PO] carry on", "\r", "\r"])
+
     def test_provenance_preserves_modified_f3_and_plain_user_paste(self):
         class Session:
             meta = {}

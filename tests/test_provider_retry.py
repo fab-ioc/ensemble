@@ -56,6 +56,35 @@ class ProviderRetryTest(unittest.TestCase):
             self.assertEqual((rec["attempts"], rec["nextAt"]), (count, next_at))
         self.assertEqual(provider_retry.schedule(rec, 1200)["attempts"], 3)
 
+    def test_three_refusals_get_three_backed_off_retries(self):
+        class Pty:
+            def alive(self):
+                return True
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            state = Path(tmp) / "retries.json"
+            part = {"agent": "codex", "ptyId": "pty-test"}
+            writes = []
+            with mock.patch.object(provider_retry, "_file", return_value=state), \
+                 mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})), \
+                 mock.patch.object(dashboard.rotation, "_idle", return_value=True), \
+                 mock.patch.object(dashboard, "_type_input", side_effect=lambda s, line: writes.append(line) or True), \
+                 mock.patch.object(dashboard, "room_po_id", return_value=None):
+                at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
+                now = at + 120
+                for n, wait in enumerate((300, 600, 0, 0)):
+                    with rollout.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps({"timestamp": f"2026-10-13T09:13:0{n}.000Z",
+                                            "type": "event_msg", "payload": {"type": "task_complete",
+                                            "error": {"codex_error_info": "server_overloaded"}}}) + "\n")
+                    provider_retry.tick({}, part, Pty(), now)
+                    if wait:
+                        now += wait
+                rec = json.loads(state.read_text(encoding="utf-8"))["pty-test"]
+            self.assertEqual(writes, ["[provider retry] Carry on."] * 3)
+            self.assertEqual(rec["attempts"], 3)
+            self.assertEqual(rec["nextAt"], 0)
+
     def test_submit_check_recovers_swallowed_enter(self):
         class Pty:
             meta = {"agent": "codex"}
@@ -77,6 +106,19 @@ class ProviderRetryTest(unittest.TestCase):
             self.assertTrue(dashboard._type_input(sess, "carry on"))
         self.assertTrue(sess.submitted)
         self.assertEqual(sess.writes, ["carry on", "\r", "\r"])
+
+    def test_submit_check_trusts_new_rollout_turn_over_stale_screen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            rollout.write_text(json.dumps({"type": "event_msg", "payload": {
+                "type": "task_started"}}) + "\n", encoding="utf-8")
+            class Pty:
+                def tail(self):
+                    return "› [Pasted Content 400 chars]"
+            writes = []
+            with mock.patch.object(dashboard.time, "sleep", return_value=None):
+                dashboard._verify_codex_submit(Pty(), writes.append, "carry on", rollout, 0)
+            self.assertEqual(writes, [])
 
     def test_attention_is_blocked_with_retry_time(self):
         rec = {"key": "error", "attempts": 1, "nextAt": 1791879000,

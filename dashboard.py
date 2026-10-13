@@ -3217,6 +3217,22 @@ def _record_typed_input_safely(sess, text: str, forced: dict | None = None,
         return None
 
 
+def _codex_rollout_start(sess):
+    """Current rollout and byte offset before an externally submitted line."""
+    meta = getattr(sess, "meta", None) or {}
+    room = chatroom.get_room(str(meta.get("room") or ""), public=False)
+    part = chatroom.participant(room, str(meta.get("identity") or "")) if room else None
+    if not part:
+        return None, -1
+    path, _ = rotation._transcript_of(part)
+    if not path:
+        return None, -1
+    try:
+        return path, path.stat().st_size
+    except OSError:
+        return path, -1
+
+
 def _type_input(sess, text: str, provenance: dict | None = None, *,
                 record: bool = True,
                 parts: list[tuple[str, dict]] | None = None) -> bool:
@@ -3234,19 +3250,7 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
     agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
-    codex_path = None
-    codex_size = -1
-    if agent == "codex":
-        meta = getattr(sess, "meta", None) or {}
-        room = chatroom.get_room(str(meta.get("room") or ""), public=False)
-        part = chatroom.participant(room, str(meta.get("identity") or "")) if room else None
-        if part:
-            codex_path, _ = rotation._transcript_of(part)
-            if codex_path:
-                try:
-                    codex_size = codex_path.stat().st_size
-                except OSError:
-                    pass
+    codex_path, codex_size = _codex_rollout_start(sess) if agent == "codex" else (None, -1)
     # A long line typed raw reached Claude cut to its last 123 characters
     # (#192: the handover ask, 10-05 and 10-08): it goes as a paste too.
     pasted = "\n" in text or (agent in ("claude", "codex") and len(text) > PASTE_LINE_OVER)
@@ -15849,6 +15853,7 @@ class Handler(BaseHTTPRequestHandler):
             answers = False
             submit_text = ""
             submit_info = None
+            verify_codex = None
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -15893,14 +15898,27 @@ class Handler(BaseHTTPRequestHandler):
                         current = re.split(r"[\r\n]", str(typed), maxsplit=1)[0]
                         submit_text = person_pending + current
                         submit_info = _origin_sender_info(submit_text, "human")
+                    if ((sess.meta or {}).get("agent") == "codex" and submit_text
+                            and (hub_line or pending_hub)):
+                        path = getattr(sess, "hub_line_rollout_path", None)
+                        before = getattr(sess, "hub_line_rollout_size", -1)
+                        if path is None:
+                            path, before = _codex_rollout_start(sess)
+                        verify_codex = (submit_text, path, before)
                     sess.hub_line_typed = False
                     sess.hub_line_text = ""
                     sess.hub_line_info = None
+                    sess.hub_line_rollout_path = None
+                    sess.hub_line_rollout_size = -1
                     sess.person_line_text = ""
                 elif hub_line:
                     sess.hub_line_typed = True      # its Enter follows by itself
                     sess.hub_line_text = normalized_typed
                     sess.hub_line_info = typed_info
+                    if (sess.meta or {}).get("agent") == "codex":
+                        path, before = _codex_rollout_start(sess)
+                        sess.hub_line_rollout_path = path
+                        sess.hub_line_rollout_size = before
                 else:
                     # The embedded terminal normally sends key chunks and a
                     # later Enter. Keep enough of the edited line to journal
@@ -15920,6 +15938,12 @@ class Handler(BaseHTTPRequestHandler):
             if answers:
                 meta = sess.meta or {}
                 note_answer(meta.get("room", ""), meta.get("identity", ""))
+            if hub_line and not submits and (sess.meta or {}).get("agent") == "codex":
+                # The helper's next HTTP request carries Enter. Let Codex
+                # finish ingesting this chunk before that request can start.
+                time.sleep(min(2.0, max(1.0, 0.25 + len(typed) / 600)))
+            if verify_codex:
+                _verify_codex_submit(sess, sess.write, *verify_codex)
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":
