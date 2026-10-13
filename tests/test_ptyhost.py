@@ -13,6 +13,34 @@ import unittest
 from backends import get_backend, ptyhost
 
 
+class PoolTest(unittest.TestCase):
+    """10-13: a TCP connection per call left ~15k sockets in TIME_WAIT and
+    exhausted the machine's ports (WinError 10048)."""
+
+    def test_many_calls_reuse_one_connection(self):
+        import threading
+        server = ptyhost._Server("tok")
+        accepted = []
+        orig = server.process_request
+
+        def counting(request, client_address):
+            accepted.append(client_address)
+            return orig(request, client_address)
+        server.process_request = counting
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05},
+                         daemon=True).start()
+        try:
+            pool = ptyhost._Pool(server.server_address[1], "tok")
+            for _ in range(200):
+                self.assertIsInstance(pool.call("list"), list)
+            self.assertEqual(len(accepted), 1)
+            with self.assertRaises(RuntimeError):
+                ptyhost._Pool(server.server_address[1], "wrong").call("list")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 class HostTest(unittest.TestCase):
     def test_dead_predecessor_spool_is_removed_on_new_host_start(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-pty-stale-") as td:

@@ -57,19 +57,80 @@ def _call(port: int, token: str, op: str, *, timeout: float = 20, **args):
     return result.get("value")
 
 
+class _Pool:
+    """Persistent connections to one host, reused across calls and threads."""
+
+    MAX_IDLE = 16
+
+    def __init__(self, port: int, token: str):
+        self.port, self.token = port, token
+        self._idle = []
+        self._lock = threading.Lock()
+
+    def _open(self, timeout: float):
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=min(5, timeout))
+        return sock, sock.makefile("r", encoding="utf-8")
+
+    def _close(self, conn):
+        for part in (conn[1], conn[0]):
+            try:
+                part.close()
+            except OSError:
+                pass
+
+    def call(self, op: str, *, timeout: float = 20, **args):
+        request = json.dumps({"token": self.token, "op": op, "args": args}).encode("utf-8") + b"\n"
+        for attempt in (0, 1):
+            with self._lock:
+                conn = self._idle.pop() if self._idle else None
+            reused = conn is not None
+            if conn is None:
+                conn = self._open(timeout)
+            try:
+                conn[0].settimeout(timeout)
+                conn[0].sendall(request)
+                line = conn[1].readline(4 * 1024 * 1024)
+            except (ConnectionError, OSError):
+                self._close(conn)
+                if reused and attempt == 0:
+                    continue  # a pooled connection the host dropped: one fresh try
+                raise
+            if not line:
+                self._close(conn)
+                if reused and attempt == 0:
+                    continue
+                raise ConnectionError("PTY host closed the connection")
+            with self._lock:
+                if len(self._idle) < self.MAX_IDLE:
+                    self._idle.append(conn)
+                    conn = None
+            if conn is not None:
+                self._close(conn)
+            result = json.loads(line)
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error") or "PTY host request failed")
+            return result.get("value")
+
+
 class _Handler(socketserver.StreamRequestHandler):
     def handle(self):
-        try:
+        # One connection carries many requests: a connection per call left
+        # ~15k sockets in TIME_WAIT and exhausted the machine's ports.
+        while True:
             line = self.rfile.readline(4 * 1024 * 1024)
-            req = json.loads(line)
-            if not hmac.compare_digest(str(req.get("token") or ""), self.server.token):
-                raise PermissionError("PTY host token required")
-            op, args = req.get("op"), req.get("args") or {}
-            value = self.server.dispatch(op, args)
-            out = {"ok": True, "value": value}
-        except Exception as exc:
-            out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-        self.wfile.write(json.dumps(out).encode("utf-8") + b"\n")
+            if not line:
+                return
+            try:
+                req = json.loads(line)
+                if not hmac.compare_digest(str(req.get("token") or ""), self.server.token):
+                    raise PermissionError("PTY host token required")
+                op, args = req.get("op"), req.get("args") or {}
+                value = self.server.dispatch(op, args)
+                out = {"ok": True, "value": value}
+            except Exception as exc:
+                out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            self.wfile.write(json.dumps(out).encode("utf-8") + b"\n")
+            self.wfile.flush()
 
 
 class _Server(socketserver.ThreadingTCPServer):
@@ -331,9 +392,10 @@ class Client:
         self.pid = info["pid"]
         self.death_hook = None
         self.seen_deaths = set()
+        self._pool = _Pool(self.port, self.token)
 
     def call(self, op, **args):
-        return _call(self.port, self.token, op, **args)
+        return self._pool.call(op, **args)
 
     def create(self, argv, cwd=None, env=None, rows=40, cols=120, label="", meta=None):
         return Proxy(self, self.call("create", argv=argv, cwd=cwd, env=env,
