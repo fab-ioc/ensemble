@@ -1275,6 +1275,18 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         why, cause, line, limit_extra = _limit_block(part, hit)
         block = (why, cause, (block[2] if block and block[1] == "model_limit" else "") or line)
 
+    if ev["alive"] and status != "busy" and _d is not None:
+        retry = _d.provider_retry.status(part, room.get("id") or "", now)
+        if retry:
+            workflow = _d.workflow_of(room)
+            retry_enabled = (room.get("status") not in ("paused", "waiting_human")
+                             and workflow != "done"
+                             and not (workflow == "inreview"
+                                      and identity in _d.chatroom.owners(room)))
+            return ("blocked", f"{who}: {_d.provider_retry.reason(retry, retry_enabled=retry_enabled)}",
+                    {"cause": "provider_overload", "retryAt": retry.get("nextAt", 0) if retry_enabled else 0,
+                     "attempts": retry.get("attempts", 0), "quote": retry.get("error", "")})
+
     if not ev["alive"]:
         death = ev["death"]
         if death is None:

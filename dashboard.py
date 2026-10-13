@@ -75,6 +75,7 @@ import agent_models
 import agent_hooks
 # A Claude model at its own limit: seen, remembered, seated around (ED-159).
 import model_limit
+import provider_retry
 # Whether a Claude agent runs in the mode it was launched in (ED-216).
 import permission_mode
 # Which tasks need a human, and why (the /api/attention join).
@@ -162,6 +163,7 @@ due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
+provider_retry.bind(sys.modules[__name__])
 permission_mode.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
@@ -2124,6 +2126,7 @@ def _checkpoint_tell(room_id: str, line: str, wait_s: float = 900) -> None:
         if not owners:
             return
         part = owners[0]
+        ready = False
         with rotation.GATE:
             sess = rotation._pty(part)
             if sess is None:
@@ -2132,9 +2135,10 @@ def _checkpoint_tell(room_id: str, line: str, wait_s: float = 900) -> None:
             if not (rotation.is_rotating(room_id, ident) or rotation.awaiting_handover(room_id, ident)
                     or restart_drain.holding()):
                 tpath, reader = rotation._transcript_of(part)
-                if rotation._idle(part, reader(tpath)) and not rotation._submitted_lately(sess):
-                    _type_input(sess, line)
-                    return
+                ready = rotation._idle(part, reader(tpath)) and not rotation._submitted_lately(sess)
+        if ready:
+            _type_input(sess, line)
+            return
         time.sleep(3)
 
 
@@ -3325,6 +3329,22 @@ def _record_typed_input_safely(sess, text: str, forced: dict | None = None,
         return None
 
 
+def _codex_rollout_start(sess):
+    """Current rollout and byte offset before an externally submitted line."""
+    try:
+        meta = getattr(sess, "meta", None) or {}
+        room = chatroom.get_room(str(meta.get("room") or ""), public=False)
+        part = chatroom.participant(room, str(meta.get("identity") or "")) if room else None
+        if not part:
+            return None, -1
+        path, _ = rotation._transcript_of(part)
+        if not path:
+            return None, -1
+        return path, path.stat().st_size
+    except Exception:
+        return None, -1
+
+
 def _type_input(sess, text: str, provenance: dict | None = None, *,
                 record: bool = True,
                 parts: list[tuple[str, dict]] | None = None) -> bool:
@@ -3341,10 +3361,24 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
+    lease = rotation.reserve_hub_line(sess)
+    if lease is None:
+        return False
+    try:
+        return _type_input_reserved(sess, text, provenance, record=record, parts=parts)
+    finally:
+        rotation.release_hub_line(sess, lease)
+
+
+def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
+                         record: bool = True,
+                         parts: list[tuple[str, dict]] | None = None) -> bool:
+    """Write and confirm one reserved line outside the lifecycle gate."""
     agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
+    codex_path, codex_size = _codex_rollout_start(sess) if agent == "codex" else (None, -1)
     # A long line typed raw reached Claude cut to its last 123 characters
     # (#192: the handover ask, 10-05 and 10-08): it goes as a paste too.
-    pasted = "\n" in text or (agent == "claude" and len(text) > PASTE_LINE_OVER)
+    pasted = "\n" in text or (agent in ("claude", "codex") and len(text) > PASTE_LINE_OVER)
     body = "\x1b[200~" + text + "\x1b[201~" if pasted else text
     writer = getattr(sess, "write", None)
     if callable(writer):
@@ -3358,13 +3392,14 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
                 _record_typed_input_safely(sess, text, provenance, parts)
         if not ok:
             return False
-        time.sleep(0.25 if len(body) <= 200 else min(2.0, 0.25 + len(body) / 600))
+        time.sleep(max(1.0, 0.25 + len(body) / 600) if agent == "codex" and pasted
+                   else (0.25 if len(body) <= 200 else min(2.0, 0.25 + len(body) / 600)))
         try:
             entered = writer("\r")
         except (OSError, EOFError):
             return False
-        if entered is not False and pasted and agent == "codex":
-            _enter_codex_paste(sess, writer)
+        if entered is not False and agent == "codex":
+            _verify_codex_submit(sess, writer, text, codex_path, codex_size)
         return entered is not False and sess.alive()
 
     # Compatibility for the small test/adapter sessions that expose only the
@@ -3381,19 +3416,25 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     return ok
 
 
-PASTE_LINE_OVER = 300           # a one-line text longer than this goes to Claude as a paste
+PASTE_LINE_OVER = 300           # a long one-line hub message goes as a paste
 _CODEX_PASTE_LEFT = re.compile(r"\[Pasted Content \d+ chars\]")
 
 
-def _enter_codex_paste(sess, writer) -> None:
-    """Codex sometimes keeps a paste as ``[Pasted Content N chars]`` in its
-    box and drops the Enter that followed (#173, #176: 75 minutes unread).
-    Still there a moment later: Enter once more."""
+def _verify_codex_submit(sess, writer, text: str, path=None, before=-1) -> None:
+    """Check every hub line after Enter; repeat once if it stayed in the editor."""
     time.sleep(1.5)
     try:
-        lines = (sess.tail() or "").splitlines()[-6:]
-        if any(_CODEX_PASTE_LEFT.search(ln) for ln in lines):
-            writer("\r")
+        if path and before >= 0 and rotation.read_rollout(path, since=before)["promptSince"]:
+            return
+        lines = (sess.tail() or "").splitlines()[-3:]
+        plain = " ".join(text.split())
+        editor = [ln.lstrip() for ln in lines if re.match(r"^[›❯>]\s*", ln.lstrip())]
+        pending = any(_CODEX_PASTE_LEFT.search(ln) for ln in editor)
+        pending |= any(plain[:min(24, len(plain))] in " ".join(ln.split())
+                       for ln in editor if plain)
+        if pending and writer("\r") is not False:
+            print(f"[input] Codex turn not confirmed; sent another Enter for "
+                  f"{str((sess.meta or {}).get('room') or '')}", flush=True)
     except (OSError, EOFError, AttributeError):
         pass
 
@@ -14890,8 +14931,8 @@ class Handler(BaseHTTPRequestHandler):
                           _origin_sender_info(it["text"], it.get("origin") or "human"))
                          for it in items]
             text = "\n\n".join(part for part, _info in delivered)
-            if not _type_input(sess, text, delivered[0][1], parts=delivered):
-                return items     # it looked alive, but the write found it gone
+        if not _type_input(sess, text, delivered[0][1], parts=delivered):
+            return items     # it looked alive, but the write found it gone
         _typed_sends(rid, items)
         if any((it.get("origin") or "human") in {"human", "po"} for it in items):
             note_answer(rid, agents_in[0].get("identity", ""))     # a person's or the PO's
@@ -15990,6 +16031,12 @@ class Handler(BaseHTTPRequestHandler):
             answers = False
             submit_text = ""
             submit_info = None
+            verify_codex = None
+            # Discover the rollout before taking the rotation gate: on a miss
+            # this may inspect old rollouts, and no other terminal should wait.
+            codex_rollout = ((None, -1) if (sess.meta or {}).get("agent") != "codex"
+                             or not (hub_line or getattr(sess, "hub_line_typed", False))
+                             else _codex_rollout_start(sess))
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -16034,14 +16081,27 @@ class Handler(BaseHTTPRequestHandler):
                         current = re.split(r"[\r\n]", str(typed), maxsplit=1)[0]
                         submit_text = person_pending + current
                         submit_info = _origin_sender_info(submit_text, "human")
+                    if ((sess.meta or {}).get("agent") == "codex" and submit_text
+                            and (hub_line or pending_hub)):
+                        path = getattr(sess, "hub_line_rollout_path", None)
+                        before = getattr(sess, "hub_line_rollout_size", -1)
+                        if path is None:
+                            path, before = codex_rollout
+                        verify_codex = (submit_text, path, before)
                     sess.hub_line_typed = False
                     sess.hub_line_text = ""
                     sess.hub_line_info = None
+                    sess.hub_line_rollout_path = None
+                    sess.hub_line_rollout_size = -1
                     sess.person_line_text = ""
                 elif hub_line:
                     sess.hub_line_typed = True      # its Enter follows by itself
                     sess.hub_line_text = normalized_typed
                     sess.hub_line_info = typed_info
+                    if (sess.meta or {}).get("agent") == "codex":
+                        path, before = codex_rollout
+                        sess.hub_line_rollout_path = path
+                        sess.hub_line_rollout_size = before
                 else:
                     # The embedded terminal normally sends key chunks and a
                     # later Enter. Keep enough of the edited line to journal
@@ -16061,6 +16121,12 @@ class Handler(BaseHTTPRequestHandler):
             if answers:
                 meta = sess.meta or {}
                 note_answer(meta.get("room", ""), meta.get("identity", ""))
+            if hub_line and not submits and (sess.meta or {}).get("agent") == "codex":
+                # The helper's next HTTP request carries Enter. Let Codex
+                # finish ingesting this chunk before that request can start.
+                time.sleep(min(2.0, max(1.0, 0.25 + len(typed) / 600)))
+            if verify_codex:
+                _verify_codex_submit(sess, sess.write, *verify_codex)
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":

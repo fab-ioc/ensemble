@@ -101,9 +101,10 @@ def deliver(project, text):
         if sess:
             if _d.rotation.is_rotating(rid, ident) or _d.rotation.awaiting_handover(rid, ident):
                 return False
-            return _d._type_input(sess, line)
-        return bool(_d.chatroom.post_report(rid, "ensemble", ident, line,
-                                           {"reportKind": "board"}, wake=False))
+        else:
+            return bool(_d.chatroom.post_report(rid, "ensemble", ident, line,
+                                               {"reportKind": "board"}, wake=False))
+    return _d._type_input(sess, line)
 
 
 def _load():
