@@ -488,7 +488,20 @@ def interrupt_agent(room_id: str, identity: str = "") -> tuple[int, dict]:
     key = room_id, target["identity"]
     with _INTERRUPT_LOCK:
         now = time.monotonic()
+        # Claude treats a second Ctrl+C within about 0.8 s as exit; keep
+        # the full second so a held or repeated Stop cannot quit the CLI.
         if now - _LAST_INTERRUPT.get(key, -1e9) < 1.0:
+            return 200, {"ok": True, "duplicate": True, "identity": target["identity"]}
+        # Codex can still show a busy screen after Escape while its former
+        # shell runs in the background. A second Escape at that idle prompt
+        # can quit the CLI. Require a new incoming chat message on this PTY
+        # before another interrupt, even after the one-second key debounce.
+        last = next((e for e in reversed(room.get("interrupts") or [])
+                     if e.get("identity") == target["identity"]
+                     and e.get("ptyId") == target["ptyId"]), None)
+        if last and not any((m.get("ts") or 0) > last.get("ts", 0)
+                            and m.get("from") not in (target["identity"], "hub")
+                            for m in room.get("messages") or []):
             return 200, {"ok": True, "duplicate": True, "identity": target["identity"]}
         # Measured in a real ConPTY with a 30 s shell command: Claude Code's
         # Escape leaves that command running, while Ctrl+C cancels its turn;
@@ -497,7 +510,7 @@ def interrupt_agent(room_id: str, identity: str = "") -> tuple[int, dict]:
         if not sess.write(control):
             return 410, {"error": "terminal_closed"}
         _LAST_INTERRUPT[key] = now
-        event = chatroom.record_interrupt(room_id, target["identity"])
+        event = chatroom.record_interrupt(room_id, target["identity"], target["ptyId"])
     return 200, {"ok": True, "identity": target["identity"], "interrupt": event}
 
 

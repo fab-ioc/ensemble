@@ -399,7 +399,7 @@ def patch_room(room_id: str, **fields) -> dict | None:
         return room
 
 
-def record_interrupt(room_id: str, identity: str) -> dict | None:
+def record_interrupt(room_id: str, identity: str, pty_id: str = "") -> dict | None:
     """Record a person's terminal interrupt without sending the agent a message.
 
     It deliberately leaves the room status, reads, asks, and pending sends alone.
@@ -408,7 +408,7 @@ def record_interrupt(room_id: str, identity: str) -> dict | None:
         room = _read(room_id)
         if room is None:
             return None
-        event = {"from": HUMAN_IDENTITY, "identity": identity, "ts": _now()}
+        event = {"from": HUMAN_IDENTITY, "identity": identity, "ptyId": pty_id, "ts": _now()}
         room["interrupts"] = (room.get("interrupts") or [])[-29:] + [event]
         room["updatedAt"] = event["ts"]
         _write(room)

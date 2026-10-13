@@ -52,18 +52,34 @@ async function main(){
     const ve=x=>surface==='dock'?ev('document.querySelector("iframe").contentWindow.eval('+JSON.stringify(x)+')'):ev(x);
     const vu=async x=>{let last='';for(let n=0;n<300;n++){try{if(await ve(x))return;}catch(e){last=String(e)}await sleep(100);}let state='';try{state=JSON.stringify(await ev('({outer:location.href,src:document.querySelector("iframe")?.contentWindow?.location.href,ready:document.querySelector("iframe")?.contentDocument?.readyState,html:document.querySelector("iframe")?.contentDocument?.body?.innerHTML.slice(0,100)})'))}catch(e){}throw Error('timeout '+surface+'/'+W+' '+x+' '+last+' '+state);};
     await vu('typeof updateStopControl === "function" && !!ROOM_OBJ');
-    await ve('window.__stops=[]; postOk=async (url, body)=>{ if(url.includes("interrupt")){window.__stops.push(body);return {ok:true,interrupt:{from:"user",identity:body.identity,ts:Date.now()/1000}};}return {ok:true};}; refresh=()=>{}; 0');
+    await ve('window.__stops=[]; postOk=async (url, body)=>{ if(url.includes("interrupt")){window.__stops.push(body);return {ok:true,interrupt:{from:"user",identity:body.identity,ptyId:"pty-test",ts:Date.now()/1000}};}return {ok:true};}; refresh=()=>{}; 0');
     const idle=await ve('document.querySelector("#stop-wrap").hidden');
     if(A.shots){const shot=await send('Page.captureScreenshot',{format:'png'},sessionId);fs.writeFileSync(A.shots+'/before-'+surface+'-'+W+'.png',Buffer.from(shot.data,'base64'));}
     await ve('ROOM_LIVE=true; ROOM_OBJ.workingAgents=["claude"]; ROOM_AGENTS=[{identity:"claude",ptyId:"pty-test"}]; updateStopControl({},{}); 0');
-    const busy=await ve('(() => {const b=document.querySelector("#stop-agent"),r=b.getBoundingClientRect();return {visible:!document.querySelector("#stop-wrap").hidden, rect:[r.left,r.top,r.right,r.bottom],scroller:document.querySelector("#msgs").getBoundingClientRect().height,coarse:matchMedia("(pointer: coarse)").matches};})()');
+    const busy=await ve('(() => {const b=document.querySelector("#stop-agent"),r=b.getBoundingClientRect(),s=document.querySelector("#send").getBoundingClientRect();return {visible:!document.querySelector("#stop-wrap").hidden, rect:[r.left,r.top,r.right,r.bottom],sendHeight:s.height,gap:s.left-r.right,scroller:document.querySelector("#msgs").getBoundingClientRect().height,coarse:matchMedia("(pointer: coarse)").matches};})()');
     if(A.shots){const shot=await send('Page.captureScreenshot',{format:'png'},sessionId);fs.writeFileSync(A.shots+'/after-'+surface+'-'+W+'.png',Buffer.from(shot.data,'base64'));}
     await ve('document.querySelector("#stop-agent").click(); 0');await vu('window.__stops.length===1');
     const clicked=await ve('({n:window.__stops.length,focus:document.activeElement.id,note:document.querySelector("#stop-note").textContent})');
+    const hiddenAfterStop=await ve('document.querySelector("#stop-wrap").hidden');
+    if(A.shots){const shot=await send('Page.captureScreenshot',{format:'png'},sessionId);fs.writeFileSync(A.shots+'/stopped-by-you-'+surface+'-'+W+'.png',Buffer.from(shot.data,'base64'));}
+    const noteGone=await ve('(() => {const now=Date.now()/1000; showInterrupt([{ts:now}],{messages:[{ts:now+1}]});const afterMessage=document.querySelector("#stop-note").hidden;showInterrupt([{ts:now-86400}],{messages:[]});return {afterMessage,afterDay:document.querySelector("#stop-note").hidden};})()');
+    await ve('ROOM_OBJ.messages.push({from:"user",ts:Date.now()/1000+2});updateStopControl({},{});0');
     await key();const dedup=await ve('window.__stops.length');
     await sleep(1050);
     await ve('document.querySelector("#input").focus();document.querySelector("#input").value="draft";0');await key();
     const filled=await ve('({n:window.__stops.length,value:document.querySelector("#input").value})');
+    await ve('document.querySelector("#input").value=""; document.querySelector("#input").blur(); const a=document.createElement("a");a.className="task-chip";a.href="#";a.textContent="#1";a.dataset.card=JSON.stringify({ref:"#1",title:"Task",href:"#"});document.body.appendChild(a);a.click();0');
+    await vu('!!document.querySelector(".task-card")'); await key();
+    const card=await ve('({n:window.__stops.length,open:!!document.querySelector(".task-card")})');
+    await ve('document.querySelector(".task-chip")?.remove(); TAIL_POP_PTY="test";document.querySelector("#tailpop").hidden=false;0'); await key();
+    const tail=await ve('({n:window.__stops.length,open:!document.querySelector("#tailpop").hidden})');
+    await ve('const f=document.createElement("div");f.className="copy-field";f.innerHTML="<input>";document.body.appendChild(f);f.querySelector("input").addEventListener("keydown",e=>{if(e.key==="Escape")f.remove()});f.querySelector("input").focus();0'); await key();
+    const copy=await ve('({n:window.__stops.length,open:!!document.querySelector(".copy-field")})');
+    await ve('const q=document.createElement("textarea");q.className="qa-cm";q.value="draft";document.body.appendChild(q);q.focus();0'); await key();
+    const comment=await ve('({n:window.__stops.length,value:document.querySelector("textarea.qa-cm").value})');
+    await ve('document.querySelector("textarea.qa-cm").remove();const p=document.createElement("textarea");p.className="ed-text";p.value="point draft";document.body.appendChild(p);p.focus();0'); await key();
+    const point=await ve('({n:window.__stops.length,value:document.querySelector("textarea.ed-text").value})');
+    await ve('document.querySelector("textarea.ed-text").remove();0');
     await ve('window.__dlg=document.createElement("dialog");document.body.appendChild(window.__dlg);window.__dlg.showModal(); 0');await key();
     const dialog=await ve('({n:window.__stops.length,open:window.__dlg.open})');
     await ve('window.__dlg.remove(); 0');
@@ -71,9 +87,12 @@ async function main(){
     const menu=await ve('({n:window.__stops.length,open:document.querySelector(".phone-compose-tools").open})');
     await ve('document.querySelector("#input").value=""; document.querySelector("#input").blur(); 0');await key();await vu('window.__stops.length===2');
     const escaped=await ve('({n:window.__stops.length,focus:document.activeElement.id})');
-    await ve('ROOM_LIVE=false; updateStopControl({},{}); 0');
+    await sleep(1050);
+    await ve('ROOM_OBJ.messages.push({from:"user",ts:Date.now()/1000+2});updateStopControl({},{});0');
+    const failed=await ve('(async()=>{postOk=async()=>{throw Object.assign(new Error("agent_not_working"),{status:409})};refresh=async()=>{ROOM_OBJ.workingAgents=[];updateStopControl({},{});};await stopAgent("claude");return {hint:document.querySelector("#hint").textContent,hidden:document.querySelector("#stop-wrap").hidden}})()');
+    await ve('ROOM_OBJ.workingAgents=["claude"]; ROOM_LIVE=false; updateStopControl({},{}); 0');
     const stopped=await ve('document.querySelector("#stop-wrap").hidden');
-    out[surface+'/'+W]={baseline,idle,busy,clicked,dedup,filled,dialog,menu,escaped,stopped};
+    out[surface+'/'+W]={baseline,idle,busy,clicked,hiddenAfterStop,noteGone,dedup,filled,card,tail,copy,comment,point,dialog,menu,escaped,failed,stopped};
     await send('Target.closeTarget',{targetId});
   }}finally{sock.close();ch.kill();}
   console.log(JSON.stringify(out));
@@ -101,7 +120,7 @@ class InChrome(unittest.TestCase):
             mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
             mock.patch.object(dashboard, "load_live", lambda: []),
             mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
-            mock.patch.object(dashboard, "_room_is_live", lambda room: False),
+            mock.patch.object(dashboard, "_room_is_live", lambda room: True),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
         ]
         for p in cls.patches:
@@ -136,7 +155,7 @@ class InChrome(unittest.TestCase):
                     return
                 super().do_GET()
 
-        old_page = subprocess.check_output(['git', 'show', 'HEAD:session.html'])
+        old_page = subprocess.check_output(['git', 'show', 'main:session.html'])
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), TestHandler)
         cls.server.daemon_threads = True
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -165,13 +184,23 @@ class InChrome(unittest.TestCase):
                     r = self.results[f'{surface}/{width}']
                     self.assertTrue(r["idle"])
                     self.assertTrue(r["busy"]["visible"])
+                    self.assertGreaterEqual(r["busy"]["sendHeight"], 44)
+                    self.assertGreaterEqual(r["busy"]["gap"], 4)
                     self.assertEqual(r["clicked"]["focus"], "input")
                     self.assertIn("Stopped by you", r["clicked"]["note"])
+                    self.assertTrue(r["hiddenAfterStop"])
+                    self.assertEqual(r["noteGone"], {"afterMessage": True, "afterDay": True})
                     self.assertEqual(r["dedup"], 1)
                     self.assertEqual(r["filled"], {"n": 1, "value": "draft"})
+                    self.assertEqual(r["card"], {"n": 1, "open": False})
+                    self.assertEqual(r["tail"], {"n": 1, "open": False})
+                    self.assertEqual(r["copy"], {"n": 1, "open": False})
+                    self.assertEqual(r["comment"], {"n": 1, "value": "draft"})
+                    self.assertEqual(r["point"], {"n": 1, "value": "point draft"})
                     self.assertEqual(r["dialog"], {"n": 1, "open": False})
                     self.assertEqual(r["menu"], {"n": 1, "open": False})
                     self.assertEqual(r["escaped"], {"n": 2, "focus": "input"})
+                    self.assertEqual(r["failed"], {"hint": "It had already stopped.", "hidden": True})
                     self.assertTrue(r["stopped"])
 
 

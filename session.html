@@ -1095,7 +1095,7 @@
   .ed-refs[hidden] { display:none; }
   #compose .ed-row { display:flex; align-items:center; gap:var(--s-200); }
   #compose .ed-row .grow { flex:1 1 auto; }
-  #stop-wrap { position:relative; }
+  #stop-wrap { position:relative; margin-right:var(--s-100); }
   #stop-wrap[hidden], #stop-choices[hidden], #stop-note[hidden] { display:none; }
   #stop-agent { min-height:var(--touch-min); padding:0 var(--s-300); border:1px solid var(--c-danger-bold); border-radius:var(--r-200); background:var(--surface); color:var(--c-danger-fg); font:inherit; cursor:pointer; }
   #stop-agent:hover { background:var(--c-danger-bg); }
@@ -1167,7 +1167,7 @@
     #hint:empty { display:none; }
     #compose #input { border:0; padding:var(--s-100) 0; min-height:40px; resize:none; field-sizing:content; background:transparent; }
     #compose #input:focus { outline:none; }
-    #send { height:32px; padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg); font-weight:500; }
+    #send { height:var(--touch-min); padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg); font-weight:500; }
     #send:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
     #send:disabled { border-color:var(--border); background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
     #send:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
@@ -5770,7 +5770,7 @@ function refreshShow(room, ticket, sendsGen) {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
-  showInterrupt(room.interrupts || []);
+  showInterrupt(room.interrupts || [], room);
   // The agents a message can be directed to with its @<identity> prefix:
   // from every poll, so a stopped room with its terminals hidden knows them too.
   ROOM_IDENTS = mem.map(m => m.identity);
@@ -5885,18 +5885,24 @@ async function updateAgentStatus() {
 // A terminal interrupt is a person's action. Keep it out of the chat messages
 // so the agent never reads it as a new instruction or loses a question card.
 let STOP_TARGETS = [], STOP_LAST = -Infinity, STOP_PENDING = false;
-function showInterrupt(events) {
+function showInterrupt(events, room = ROOM_OBJ) {
   const event = events[events.length - 1];
   const note = $('#stop-note');
-  note.hidden = !event;
-  if (event) {
+  const newerMessage = event && (room?.messages || []).some(m => (+m.ts || 0) > event.ts);
+  const recent = event && Date.now() / 1000 - event.ts < 300;
+  note.hidden = !recent || !!newerMessage;
+  if (!note.hidden) {
     const time = new Date(event.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     setText(note, `Stopped by you · ${time}`);
   }
 }
 function updateStopControl(ptyMap, liveMap) {
   const working = new Set((ROOM_OBJ && ROOM_OBJ.workingAgents) || []);
-  STOP_TARGETS = ROOM_LIVE ? ROOM_AGENTS.filter(a => a.ptyId && working.has(a.identity)) : [];
+  STOP_TARGETS = ROOM_LIVE ? ROOM_AGENTS.filter(a => {
+    if (!a.ptyId || !working.has(a.identity)) return false;
+    const last = [...(ROOM_OBJ.interrupts || [])].reverse().find(e => e.identity === a.identity && e.ptyId === a.ptyId);
+    return !last || (ROOM_OBJ.messages || []).some(m => (+m.ts || 0) > last.ts && m.from !== a.identity && m.from !== 'hub');
+  }) : [];
   const wrap = $('#stop-wrap'), choices = $('#stop-choices');
   wrap.hidden = !STOP_TARGETS.length;
   if (!STOP_TARGETS.length) choices.hidden = true;
@@ -5917,11 +5923,21 @@ async function stopAgent(identity = '') {
   try {
     const result = await postOk('/api/room/interrupt', { roomId:ROOM, identity:identity || STOP_TARGETS[0].identity });
     STOP_LAST = performance.now();
-    if (result.interrupt) showInterrupt([result.interrupt]);
+    if (result.interrupt) {
+      ROOM_OBJ.interrupts = [...(ROOM_OBJ.interrupts || []), result.interrupt];
+      showInterrupt([result.interrupt]);
+      updateStopControl({}, {});
+    }
     $('#input').focus({ preventScroll:true });
     refresh();
   } catch (err) {
-    setText($('#hint'), err.message || 'Could not stop the agent.');
+    await refresh();
+    const code = err && err.message;
+    const reason = code === 'agent_not_working' ? 'It had already stopped.'
+      : ['room_stopped', 'agent_stopped', 'terminal_closed'].includes(code) ? 'The session has stopped.'
+      : code === 'page_only' ? 'Open this chat from the dashboard to stop its agent.'
+      : 'Could not stop the agent. Please try again.';
+    setText($('#hint'), reason);
   } finally {
     STOP_PENDING = false;
     $('#stop-agent').disabled = false;
@@ -5936,10 +5952,11 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   const choices = $('#stop-choices');
   if (!choices.hidden) { choices.hidden = true; $('#stop-agent').focus(); e.preventDefault(); return; }
-  // Existing menus, dialogs, comment composers, and a filled message box get
-  // their own Escape first. An empty focused box and the rest of the chat stop.
-  if (document.querySelector('dialog[open], .am-menu:not([hidden]), .theme-dd-menu:not([hidden]), .phone-compose-tools[open], .cmt-composer:not([hidden])') ||
-      (document.activeElement === $('#input') && $('#input').value)) return;
+  // Open cards and popovers get Escape first. Any editor other than the empty
+  // message box keeps it too, including question comments and point drafts.
+  if (document.querySelector('dialog[open], [role=dialog]:not([hidden]), #tailpop:not([hidden]), .am-menu:not([hidden]), .theme-dd-menu:not([hidden]), .phone-compose-tools[open], .cmt-composer:not([hidden])')) return;
+  const editor = document.activeElement?.closest('input, textarea, select, [contenteditable]');
+  if (editor && (editor !== $('#input') || $('#input').value)) return;
   if (STOP_TARGETS.length) { e.preventDefault(); stopAgent(); }
 }, true);
 

@@ -1,4 +1,5 @@
 """A chat interrupt targets only a live working agent and is a person action."""
+import copy
 import io
 import json
 import tempfile
@@ -34,23 +35,25 @@ class Terminal:
 class InterruptTests(unittest.TestCase):
     def setUp(self):
         dashboard._LAST_INTERRUPT.clear()
+        self.room = copy.deepcopy(ROOM)
         self.owner, self.reviewer = Terminal("codex"), Terminal("claude")
         self.events = []
         self.patches = [
-            mock.patch.object(chatroom, "get_room", return_value=ROOM),
+            mock.patch.object(chatroom, "get_room", return_value=self.room),
             mock.patch.object(dashboard, "_room_is_live", return_value=True),
             mock.patch.object(dashboard.attention, "turn_state", return_value=("working", "hook")),
             mock.patch.object(ptyrun, "get", side_effect=lambda pid: {
                 "pty-owner": self.owner, "pty-review": self.reviewer}.get(pid)),
-            mock.patch.object(chatroom, "record_interrupt", side_effect=lambda rid, ident: self._event(rid, ident)),
+            mock.patch.object(chatroom, "record_interrupt", side_effect=lambda rid, ident, pty: self._event(rid, ident, pty)),
         ]
         for patch in self.patches:
             patch.start()
             self.addCleanup(patch.stop)
 
-    def _event(self, rid, ident):
-        event = {"from": "user", "identity": ident, "ts": 1}
+    def _event(self, rid, ident, pty_id):
+        event = {"from": "user", "identity": ident, "ptyId": pty_id, "ts": 1}
         self.events.append(event)
+        self.room.setdefault("interrupts", []).append(event)
         return event
 
     def test_running_reviewer_is_default_and_second_press_is_deduplicated(self):
@@ -58,10 +61,23 @@ class InterruptTests(unittest.TestCase):
         self.assertEqual((code, response["identity"]), (200, "claude"))
         self.assertEqual(self.reviewer.writes, ["\x03"])
         self.assertEqual(self.owner.writes, [])
-        self.assertEqual(self.events, [{"from": "user", "identity": "claude", "ts": 1}])
+        self.assertEqual(self.events, [{"from": "user", "identity": "claude", "ptyId": "pty-review", "ts": 1}])
         code, response = dashboard.interrupt_agent("room-test")
         self.assertTrue(response["duplicate"])
         self.assertEqual(self.reviewer.writes, ["\x03"])
+
+    def test_second_stop_waits_for_a_new_incoming_message(self):
+        self.assertEqual(dashboard.interrupt_agent("room-test", "codex")[0], 200)
+        dashboard._LAST_INTERRUPT[("room-test", "codex")] -= 2
+        code, result = dashboard.interrupt_agent("room-test", "codex")
+        self.assertEqual(code, 200)
+        self.assertTrue(result["duplicate"])
+        self.assertEqual(self.owner.writes, ["\x1b"])
+        self.room["messages"] = [{"from": "user", "ts": 2}]
+        code, result = dashboard.interrupt_agent("room-test", "codex")
+        self.assertEqual(code, 200)
+        self.assertFalse(result.get("duplicate", False))
+        self.assertEqual(self.owner.writes, ["\x1b", "\x1b"])
 
     def test_explicit_owner_and_stopped_room(self):
         self.assertEqual(dashboard.interrupt_agent("room-test", "codex")[0], 200)
