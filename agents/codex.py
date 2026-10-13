@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +29,37 @@ import filefacts
 
 from .base import AgentSession, AgentType
 
-_ROLLOUT_MISSES: dict[str, float] = {}
+_FALLBACK_LOCK = threading.Lock()
+_FALLBACK_INDEX: dict[Path, tuple[float, set[Path], dict[str, list[Path]]]] = {}
+_FALLBACK_RESCAN_SECONDS = 60
+
+
+def _legacy_rollouts(root: Path, session_id: str) -> list[Path]:
+    """Index unusual rollout names once, then inspect only new files."""
+    with _FALLBACK_LOCK:
+        now = time.monotonic()
+        hit = _FALLBACK_INDEX.get(root)
+        if hit is None:
+            at, seen, ids = 0.0, set(), {}
+        else:
+            at, seen, ids = hit
+        if now - at >= _FALLBACK_RESCAN_SECONDS:
+            current = set(root.glob("*/*/*/rollout-*.jsonl"))
+            if seen - current:
+                for key, files in list(ids.items()):
+                    ids[key] = [f for f in files if f in current]
+                    if not ids[key]:
+                        del ids[key]
+            for f in current - seen:
+                meta = _read_meta(f)
+                key = meta.get("session_id") or meta.get("id")
+                if key:
+                    ids.setdefault(key, []).append(f)
+            _FALLBACK_INDEX[root] = (now, current, ids)
+            if len(_FALLBACK_INDEX) > 8:
+                for old_root in list(_FALLBACK_INDEX)[:-8]:
+                    _FALLBACK_INDEX.pop(old_root, None)
+        return list(ids.get(session_id, []))
 
 
 def _codex_home() -> Path:
@@ -307,22 +338,10 @@ class CodexAgent(AgentType):
             return []
         hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
         if not hits:
-            # Missing ids are common when an old solo task was run by Claude.
-            # The targeted glob above still sees a newly arrived normal
-            # rollout immediately; only the legacy full-scan fallback is
-            # deferred for a known miss.
-            now = time.monotonic()
-            if now < _ROLLOUT_MISSES.get(session_id, 0):
-                return []
-            hits = [f for f in self.rollout_files()
-                    if (_read_meta(f).get("session_id")
-                        or _read_meta(f).get("id")) == session_id]
-            if not hits:
-                if len(_ROLLOUT_MISSES) > 4096:
-                    _ROLLOUT_MISSES.clear()
-                _ROLLOUT_MISSES[session_id] = now + 60
-            else:
-                _ROLLOUT_MISSES.pop(session_id, None)
+            # A missing old solo-session ID is common. Do not scan every
+            # rollout's metadata per ID or every minute; the fallback index
+            # scans filenames and reads metadata only for new files.
+            hits = _legacy_rollouts(root, session_id)
         hits.sort(key=_mtime)
         return hits
 
