@@ -177,8 +177,9 @@ async function main() {
     await sleep(250); out.threadMax=await evT(measure);
     await evT(`PD.dock.restoreMax(); 0`);
     await sleep(250); out.threadMaxRestored=await evT(measure);
+    await evT('window.__chatHeightBeforeReload = 1; 0');
     await send('Page.reload',{},ts);
-    await untilT(`!!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
+    await untilT(`!window.__chatHeightBeforeReload && typeof window.pdThreadOpen === 'function' && !!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
     await evT(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(threadId)}); 0`);
     await untilT(`!!PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
     await sleep(400); out.threadReload=await evT(measure);
