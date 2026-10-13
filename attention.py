@@ -1275,8 +1275,13 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if ev["alive"] and status != "busy" and _d is not None:
         retry = _d.provider_retry.status(part, room.get("id") or "", now)
         if retry:
-            return ("blocked", f"{who}: {_d.provider_retry.reason(retry)}",
-                    {"cause": "provider_overload", "retryAt": retry.get("nextAt", 0),
+            workflow = _d.workflow_of(room)
+            retry_enabled = (room.get("status") not in ("paused", "waiting_human")
+                             and workflow != "done"
+                             and not (workflow == "inreview"
+                                      and identity in _d.chatroom.owners(room)))
+            return ("blocked", f"{who}: {_d.provider_retry.reason(retry, retry_enabled=retry_enabled)}",
+                    {"cause": "provider_overload", "retryAt": retry.get("nextAt", 0) if retry_enabled else 0,
                      "attempts": retry.get("attempts", 0), "quote": retry.get("error", "")})
 
     if not ev["alive"]:

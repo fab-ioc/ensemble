@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,6 +15,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ProviderRetryTest(unittest.TestCase):
+    def setUp(self):
+        provider_retry._PATHS.clear()
+
     def test_codex_rollout_detects_refusal_and_clears_on_new_turn(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "rollout.jsonl"
@@ -64,12 +68,14 @@ class ProviderRetryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             rollout = Path(tmp) / "rollout.jsonl"
             state = Path(tmp) / "retries.json"
-            part = {"agent": "codex", "identity": "codex", "ptyId": "pty-test"}
+            part = {"agent": "codex", "identity": "codex", "ptyId": "pty-test",
+                    "sessionId": "session-test"}
             room = {"id": "room-test"}
             writes = []
             with mock.patch.object(provider_retry, "_file", return_value=state), \
                  mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})), \
                  mock.patch.object(dashboard.rotation, "_idle", return_value=True), \
+                 mock.patch.object(dashboard.rotation, "_submitted_lately", return_value=False), \
                  mock.patch.object(dashboard, "_type_input", side_effect=lambda s, line: writes.append(line) or True), \
                  mock.patch.object(dashboard, "room_po_id", return_value=None):
                 at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
@@ -103,7 +109,8 @@ class ProviderRetryTest(unittest.TestCase):
             rollout = Path(tmp) / "rollout.jsonl"
             rollout.write_bytes((FIXTURES / "provider_codex_overloaded.jsonl").read_bytes())
             state = Path(tmp) / "retries.json"
-            part = {"agent": "codex", "identity": "codex", "ptyId": "pty-old"}
+            part = {"agent": "codex", "identity": "codex", "ptyId": "pty-old",
+                    "sessionId": "session-old"}
             at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
             now = at + provider_retry.MAX_AGE_S + 1
             with mock.patch.object(provider_retry, "_file", return_value=state), \
@@ -180,10 +187,164 @@ class ProviderRetryTest(unittest.TestCase):
                "error": "server_overloaded"}
         ev = {"alive": True, "scan": {"block": None}, "hook": None,
               "claudeStatus": "", "limit": None}
-        with mock.patch.object(provider_retry, "status", return_value=rec):
+        with mock.patch.object(provider_retry, "status", return_value=rec), \
+             mock.patch.object(dashboard, "workflow_of", return_value="inprogress"):
             state, reason, extra = attention._classify_agent(
                 {"owners": ["codex"]}, {"identity": "codex", "agent": "codex"},
                 ev, 600, 1791878500)
         self.assertEqual(state, "blocked")
         self.assertIn("the model provider was overloaded, retrying at", reason)
         self.assertEqual(extra["cause"], "provider_overload")
+
+    def test_attention_does_not_promise_retry_for_paused_task(self):
+        rec = {"key": "error", "attempts": 0, "nextAt": 1791879000,
+               "error": "server_overloaded"}
+        ev = {"alive": True, "scan": {"block": None}, "hook": None,
+              "claudeStatus": "", "limit": None}
+        with mock.patch.object(provider_retry, "status", return_value=rec), \
+             mock.patch.object(dashboard, "workflow_of", return_value="inprogress"):
+            state, reason, extra = attention._classify_agent(
+                {"status": "paused"}, {"identity": "codex", "agent": "codex"},
+                ev, 600, 1791878500)
+        self.assertEqual(state, "blocked")
+        self.assertIn("automatic retry is paused", reason)
+        self.assertEqual(extra["retryAt"], 0)
+
+    def test_rollout_path_and_miss_are_cached(self):
+        at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            rollout.write_bytes((FIXTURES / "provider_codex_overloaded.jsonl").read_bytes())
+            part = {"agent": "codex", "sessionId": "cached-sid"}
+            with mock.patch.object(dashboard.rotation, "_transcript_of", side_effect=[
+                    (None, dashboard.rotation.read_rollout),
+                    (rollout, dashboard.rotation.read_rollout)]) as lookup:
+                self.assertIsNone(provider_retry.status(part, "room-cache", at + 120))
+                self.assertIsNone(provider_retry.status(part, "room-cache", at + 120))
+                self.assertEqual(lookup.call_count, 1, "a miss must not glob every poll")
+                provider_retry._PATHS["cached-sid"] = (None, 0)  # expired TTL
+                self.assertIsNotNone(provider_retry.status(part, "room-cache", at + 120))
+                self.assertIsNotNone(provider_retry.status(part, "room-cache", at + 120))
+                self.assertEqual(lookup.call_count, 2, "the found path is reused")
+
+    def test_recent_submission_or_unsent_editor_blocks_retry(self):
+        at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
+        class Pty:
+            def __init__(self):
+                self.editor = ""
+            def alive(self):
+                return True
+            def tail(self):
+                return self.editor
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            rollout.write_bytes((FIXTURES / "provider_codex_overloaded.jsonl").read_bytes())
+            state = Path(tmp) / "retries.json"
+            part = {"agent": "codex", "identity": "codex", "sessionId": "guard-sid"}
+            room = {"id": "room-guard"}
+            sess = Pty()
+            with mock.patch.object(provider_retry, "_file", return_value=state), \
+                 mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})), \
+                 mock.patch.object(dashboard.rotation, "_idle", return_value=True), \
+                 mock.patch.object(dashboard.rotation, "_submitted_lately", side_effect=[True, False, False, False]), \
+                 mock.patch.object(dashboard, "_type_input", return_value=True) as typed:
+                provider_retry.tick(room, part, sess, at + 120)
+                sess.editor = "› [Pasted Content 37 chars]"
+                provider_retry.tick(room, part, sess, at + 120)
+                sess.editor = ""
+                sess.person_line_text = "draft still in the editor"
+                provider_retry.tick(room, part, sess, at + 120)
+                typed.assert_not_called()
+                sess.person_line_text = ""
+                sess.editor = "› "
+                provider_retry.tick(room, part, sess, at + 120)
+                typed.assert_called_once()
+                self.assertEqual(provider_retry._load()["room-guard::codex"]["attempts"], 1)
+
+    def test_retry_and_po_wake_type_without_global_locks(self):
+        def locks_free():
+            got = []
+            def probe():
+                for lock in (dashboard.rotation.GATE, provider_retry._LOCK):
+                    acquired = lock.acquire(timeout=0.2)
+                    got.append(acquired)
+                    if acquired:
+                        lock.release()
+            worker = threading.Thread(target=probe)
+            worker.start()
+            worker.join(timeout=1)
+            self.assertEqual(got, [True, True])
+            return True
+        at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            rollout.write_bytes((FIXTURES / "provider_codex_overloaded.jsonl").read_bytes())
+            state = Path(tmp) / "retries.json"
+            room = {"id": "room-lock", "status": "running", "launched": True}
+            part = {"agent": "codex", "identity": "codex", "sessionId": "lock-sid"}
+            sess = mock.Mock(alive=lambda: True, tail=lambda: "› ")
+            sess.person_line_text = ""
+            sess.hub_line_typed = False
+            with mock.patch.object(provider_retry, "_file", return_value=state), \
+                 mock.patch.object(dashboard.chatroom, "get_room", return_value=room), \
+                 mock.patch.object(dashboard.chatroom, "agent_participants", return_value=[part]), \
+                 mock.patch.object(dashboard.chatroom, "po_identity", return_value="po"), \
+                 mock.patch.object(dashboard.chatroom, "participant", return_value=part), \
+                 mock.patch.object(dashboard, "room_po_id", return_value="po-room"), \
+                 mock.patch.object(dashboard, "workflow_of", return_value="inprogress"), \
+                 mock.patch.object(dashboard, "_room_is_live", return_value=True), \
+                 mock.patch.object(dashboard.rotation, "is_rotating", return_value=False), \
+                 mock.patch.object(dashboard.rotation, "awaiting_handover", return_value=False), \
+                 mock.patch.object(dashboard.rotation, "_pty", return_value=sess), \
+                 mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})), \
+                 mock.patch.object(dashboard.rotation, "_idle", return_value=True), \
+                 mock.patch.object(dashboard.rotation, "_submitted_lately", return_value=False), \
+                 mock.patch.object(stall, "limit_hit", return_value=None), \
+                 mock.patch.object(dashboard, "_type_input", side_effect=lambda *_: locks_free()) as typed:
+                stall._look_provider(room["id"], at + 120)
+                typed.assert_called_once()
+                rec = provider_retry._load()["room-lock::codex"]
+                rec.update(attempts=3, nextAt=0, toldAt=at + 120, wokeAt=0)
+                provider_retry._save({"room-lock::codex": rec})
+                provider_retry.tick(room, part, sess, at + 121)
+                self.assertEqual(typed.call_count, 2, "the PO wake must also type without either lock")
+
+    def test_retry_record_is_not_rewritten_on_unchanged_tick(self):
+        at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            rollout.write_bytes((FIXTURES / "provider_codex_overloaded.jsonl").read_bytes())
+            state = Path(tmp) / "retries.json"
+            part = {"agent": "codex", "identity": "codex", "sessionId": "quiet-sid"}
+            with mock.patch.object(provider_retry, "_file", return_value=state), \
+                 mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})):
+                provider_retry.tick({"id": "room-quiet"}, part, None, at + 1)
+                with mock.patch.object(provider_retry, "_save") as save:
+                    provider_retry.tick({"id": "room-quiet"}, part, None, at + 2)
+                    save.assert_not_called()
+
+    def test_stall_survives_prune_error_and_failed_room_glob(self):
+        room_path = Path("room-kept.json")
+        with mock.patch.object(stall, "_load", return_value={}), \
+             mock.patch.object(dashboard.chatroom, "ROOMS_DIR") as rooms, \
+             mock.patch.object(provider_retry, "prune_rooms", side_effect=PermissionError("locked")) as prune, \
+             mock.patch.object(stall, "_look_provider", return_value="") as looked, \
+             mock.patch.object(stall, "_look", return_value=""), \
+             mock.patch.object(stall, "_look_limit", return_value=""), \
+             mock.patch.object(stall, "_look_silent", return_value=""), \
+             mock.patch.object(stall, "_look_permission", return_value=""):
+            rooms.glob.return_value = [room_path]
+            stall.tick(1000)
+            looked.assert_called_once_with("room-kept", 1000)
+            rooms.glob.side_effect = PermissionError("no rooms")
+            looked.reset_mock()
+            self.assertEqual(stall.tick(1001), {})
+            looked.assert_not_called()
+            self.assertEqual(prune.call_count, 1, "a failed glob must not prune with an empty set")
+
+    def test_codex_submit_probe_survives_rollout_lookup_error(self):
+        sess = mock.Mock(meta={"room": "room-test", "identity": "codex"})
+        with mock.patch.object(dashboard.chatroom, "get_room", return_value={"id": "room-test"}), \
+             mock.patch.object(dashboard.chatroom, "participant", return_value={"agent": "codex"}), \
+             mock.patch.object(dashboard.rotation, "_transcript_of", side_effect=PermissionError("locked")):
+            self.assertEqual(dashboard._codex_rollout_start(sess), (None, -1))

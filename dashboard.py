@@ -3219,18 +3219,18 @@ def _record_typed_input_safely(sess, text: str, forced: dict | None = None,
 
 def _codex_rollout_start(sess):
     """Current rollout and byte offset before an externally submitted line."""
-    meta = getattr(sess, "meta", None) or {}
-    room = chatroom.get_room(str(meta.get("room") or ""), public=False)
-    part = chatroom.participant(room, str(meta.get("identity") or "")) if room else None
-    if not part:
-        return None, -1
-    path, _ = rotation._transcript_of(part)
-    if not path:
-        return None, -1
     try:
+        meta = getattr(sess, "meta", None) or {}
+        room = chatroom.get_room(str(meta.get("room") or ""), public=False)
+        part = chatroom.participant(room, str(meta.get("identity") or "")) if room else None
+        if not part:
+            return None, -1
+        path, _ = rotation._transcript_of(part)
+        if not path:
+            return None, -1
         return path, path.stat().st_size
-    except OSError:
-        return path, -1
+    except Exception:
+        return None, -1
 
 
 def _type_input(sess, text: str, provenance: dict | None = None, *,

@@ -561,9 +561,10 @@ def _type_po(room: dict, line: str) -> bool:
         if sess is None or rot.is_rotating(po, ident) or rot.awaiting_handover(po, ident):
             return False
         tpath, reader = rot._transcript_of(part)
-        if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
+        if (not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess)
+                or _d.provider_retry._input_pending(sess)):
             return False
-        return _d._type_input(sess, line)
+    return _d._type_input(sess, line)
 
 
 def limit_hit(part: dict) -> dict | None:
@@ -747,6 +748,7 @@ def _look_provider(rid: str, now: float) -> str:
             return ""
         owners = set(cr.owners(room))
         in_review = _d.workflow_of(room) == "inreview"
+        targets = []
         for part in cr.agent_participants(room):
             ident = part.get("identity") or ""
             if in_review and ident in owners:
@@ -755,8 +757,10 @@ def _look_provider(rid: str, now: float) -> str:
                 continue
             sess = rot._pty(part)
             if sess:
-                _d.provider_retry.tick(room, part, sess, now)
-        return ""
+                targets.append((part, sess))
+    for part, sess in targets:
+        _d.provider_retry.tick(room, part, sess, now)
+    return ""
 
 
 def tick(now: float | None = None) -> dict[str, str]:
@@ -768,9 +772,13 @@ def tick(now: float | None = None) -> dict[str, str]:
         out = {}
         try:
             ids = [p.stem for p in _d.chatroom.ROOMS_DIR.glob("room-*.json")]
-        except OSError:
-            ids = []
-        _d.provider_retry.prune_rooms(set(ids))
+        except OSError as e:
+            _log(f"rooms list failed: {str(e)[:200]}")
+            return {}
+        try:
+            _d.provider_retry.prune_rooms(set(ids))
+        except OSError as e:
+            _log(f"provider retry prune failed: {str(e)[:200]}")
         try:
             statuses = _d.attention._claude_status_by_session()
         except Exception:
