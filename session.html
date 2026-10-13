@@ -4577,7 +4577,7 @@ function loadRead() {
 function catchUpOpen() {
   const box = $('#msgs');
   CU_OPENED = true;
-  if (THREAD_MODE) { box.scrollTop = box.scrollHeight; return; }
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE) { box.scrollTop = box.scrollHeight; return; }
   if (!LAST_ITEMS || !box || !box.clientHeight) return;
   const items = withTaskBubble(LAST_ITEMS, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   const stored = loadRead(), p = stored ? null : readPoint(items, null);
