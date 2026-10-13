@@ -4450,7 +4450,7 @@ function pointsChanged(pv, ticket) {
   pointsTell(pv);
   showPointsLine();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
-  showOpenQuestions();
+  if (typeof showOpenQuestions === 'function') showOpenQuestions();
 }
 // A chat framed in a project's PO screen (index.html) whose Points panel is
 // on screen: the panel lists the points, so the line above the chat does not
@@ -7632,7 +7632,7 @@ function refClickHandler(ev) {
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.askMid || a.dataset.refMsg, part = a.dataset.askN !== undefined ? 'ask:' + a.dataset.askN : a.dataset.refPart || '';
-  if (room === ROOM && THREADED && a.classList.contains('card-jump')) { openThread('', msg, part); return; }
+  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED) { openThread('', msg, part); return; }
   if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}

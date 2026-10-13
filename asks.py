@@ -739,9 +739,8 @@ def answered(room_id: str) -> dict:
 
 
 def open_in(summary: dict, now: float | None = None) -> list[dict]:
-    """The unanswered cards of a room, oldest first. Workflow, reading, and
-    later messages do not close a card. An explicit answer, approval with a
-    recommendation, or close does."""
+    """Asks still calling for attention, oldest first. A read or set-aside
+    ask can leave Needs you while its card remains open in :func:`open_cards`."""
     now = time.time() if now is None else now
     rid = summary.get("id", "")
     marked = _room_asks(summary)
@@ -749,8 +748,16 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
         return []
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
+    settled = float(led.get("asksSettledAt") or 0)
+    if not _d.room_po_id(summary):
+        settled = max(settled, *(float(p.get("answeredAt") or 0)
+                                  for p in summary.get("participants", []) if p.get("kind") == "agent"))
     out = []
     for mid, ts, qs, who in marked:
+        if ts and ts < settled:
+            continue
+        if _d.attention.read_and_old(summary, ts, now) or _d.attention.set_aside(summary, ts):
+            continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):
             if str(n) in got:
@@ -1210,7 +1217,7 @@ def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, l
             return _RESULT[1]
         out = {}
         for s in summaries:
-            if not s.get("launched", True):
+            if not s.get("launched", True) or _d.normalize_workflow(s.get("workflow")) == "done":
                 continue
             try:
                 got = open_in(s, now)

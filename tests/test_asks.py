@@ -451,7 +451,8 @@ class TheEndpoint(_World):
             http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 0, "option": "30 days"})
             self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
             self.assertEqual(http("/api/room/resume", {"roomId": rid, "text": "1. yes 2. nothing else", "key": "k9"})[0], 200)
-        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
+        self.assertEqual([a["n"] for a in asks.open_cards(chatroom.get_room(rid))], [1, 2])
+        self.assertEqual(asks.open_in(chatroom.get_room(rid)), [], "words settle attention, not the cards")
         self.assertGreater(points.view(rid)["asksSettledAt"], self.t0 + 2)
 
     def test_a_command_or_a_refused_send_does_not_end_the_wait(self):
@@ -471,7 +472,9 @@ class TheEndpoint(_World):
         asks.forget()
         self.assertEqual(list(asks.open_by_room([room])), [rid])
         asks.forget()
-        self.assertEqual(list(asks.open_by_room([{**room, "workflow": "done"}])), [rid])
+        done = {**room, "workflow": "done"}
+        self.assertEqual(list(asks.open_by_room([done])), [], "Done leaves Needs you")
+        self.assertEqual([a["n"] for a in asks.open_cards(done)], [0, 1, 2])
 
     def test_close_notifies_asker_and_undo_reopens(self):
         rid = self._room()
@@ -492,6 +495,24 @@ class TheEndpoint(_World):
         self.assertIsNone(points.close_ask(rid, "sid-1:1", 0, "Question?", now=100))
         self.assertFalse(points.unclose_ask(rid, "sid-1:1", 0, now=111))
         self.assertTrue(points.load(rid)["asks"]["sid-1:1"]["0"]["closed"])
+
+    def test_close_of_stopped_task_does_not_start_its_agent(self):
+        rid = self._room()
+        with mock.patch.object(dashboard, "_hub_task_room", return_value=True), \
+                mock.patch.object(dashboard, "_pty_alive", return_value=False), \
+                mock.patch.object(dashboard.Handler, "_resume_room", side_effect=AssertionError("started")):
+            status, result = http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})
+            self.assertEqual(status, 200, result)
+            self.assertTrue(result["askerStopped"])
+            self.assertEqual(http("/api/room/ask/reopen", {"roomId": rid, "mid": "sid-1:1", "n": 0})[0], 200)
+        self.assertEqual([a["n"] for a in asks.open_cards(chatroom.get_room(rid))], [0, 1, 2])
+
+    def test_reopen_expiring_during_request_does_not_notify(self):
+        rid = self._room()
+        points.close_ask(rid, "sid-1:1", 0, "Question?")
+        with mock.patch.object(points, "unclose_ask", return_value=False), \
+                mock.patch.object(dashboard.Handler, "_resume_room", side_effect=AssertionError("not reopened")):
+            self.assertEqual(http("/api/room/ask/reopen", {"roomId": rid, "mid": "sid-1:1", "n": 0})[0], 409)
 
     def test_a_room_with_open_asks_waits_for_the_person(self):
         rid = self._room()
@@ -546,6 +567,10 @@ async function main() {
       const until = async (expr, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       const shot = async name => { if (!A.shots) return; const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
       await send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
+      // A PO chat opens as thread summaries; this form test needs every
+      // question in transcript order, including replies inside threads.
+      await until('typeof CHAT_DRAWN !== "undefined" && CHAT_DRAWN && typeof THREADED !== "undefined"');
+      await evalIn(`(() => { const b = document.getElementById('whole-chat'); if (THREADED && b && b.getAttribute('aria-pressed') !== 'true') b.click(); return 0; })()`);
       await until('document.querySelectorAll("#msgs .qa").length >= ' + A.need);
       await sleep(400);
       const look = () => evalIn(`(() => ({ cards: document.querySelectorAll('#msgs .qa').length, done: [...document.querySelectorAll('#msgs .qa')].map(c => c.classList.contains('done')),

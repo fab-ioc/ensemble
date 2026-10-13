@@ -1416,6 +1416,19 @@ def close_ask(room_id: str, mid: str, n: int, question: str, now: float | None =
     return answer_ask(room_id, mid, n, {"closed": True, "question": question}, now)
 
 
+def refresh_close_ask_time(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
+    """Start Undo when the close request finishes notifying the asker."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        got = (led["asks"].get(mid) or {}).get(str(n))
+        if not isinstance(got, dict) or not got.get("closed"):
+            return False
+        got["at"] = now
+        _save(room_id, led)
+        return True
+
+
 def unclose_ask(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
     """Reopen a closed card during its ten-second Undo period."""
     now = time.time() if now is None else now

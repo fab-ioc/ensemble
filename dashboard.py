@@ -16445,26 +16445,38 @@ class Handler(BaseHTTPRequestHandler):
                 asks.forget()
                 q = " ".join(card["question"].split())[:200]
                 text = f'[asks] The CEO closed your question "{q}" without an answer.'
-                code, reply = self._room_resume({"roomId": rid, "to": card.get("who") or "",
-                                                 "key": key, "text": text})
-                if code != 200 and not reply.get("kept"):
-                    points.unclose_ask(rid, mid, n)
-                    asks.forget()
+                stopped_task = _hub_task_room(room_full) and (
+                    normalize_workflow(room_full.get("workflow")) == "done"
+                    or not any(_pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full)))
+                if stopped_task:
+                    # A card can outlive a Done or stopped task. Closing it
+                    # must not start an agent solely to receive this notice.
+                    code, reply = 200, {"ok": True, "askerStopped": True}
+                else:
+                    code, reply = self._room_resume({"roomId": rid, "to": card.get("who") or "",
+                                                     "key": key, "text": text})
+                    if code != 200 and not reply.get("kept"):
+                        points.unclose_ask(rid, mid, n)
+                        asks.forget()
+                if code == 200:
+                    points.refresh_close_ask_time(rid, mid, n)
                 self._send_json(code, {**reply, "points": _points_view(rid)})
                 return
             got = ((points.load(rid).get("asks") or {}).get(mid) or {}).get(str(n))
             if not isinstance(got, dict) or not got.get("closed") or time.time() - float(got.get("at") or 0) > 10:
                 self._send_json(409, {"error": "undo_expired", "message": "The close can no longer be undone."})
                 return
-            if not withdraw_send(rid, key):
+            if not points.unclose_ask(rid, mid, n):
+                self._send_json(409, {"error": "undo_expired", "message": "The close can no longer be undone."})
+                return
+            prior = sends.get(rid, key)
+            if prior and not withdraw_send(rid, key):
                 q = " ".join(str(got.get("question") or "").split())[:200]
-                to = (sends.get(rid, key) or {}).get("to") or ""
-                code, reply = self._room_resume({"roomId": rid, "to": to, "key": "reopen:" + key,
-                                                 "text": f'[asks] The CEO reopened your question "{q}".'})
-                if code != 200 and not reply.get("kept"):
-                    self._send_json(code, {**reply, "points": _points_view(rid)})
-                    return
-            points.unclose_ask(rid, mid, n)
+                to = prior.get("to") or ""
+                if not (_hub_task_room(room_full) and not any(
+                        _pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full))):
+                    self._room_resume({"roomId": rid, "to": to, "key": "reopen:" + key,
+                                       "text": f'[asks] The CEO reopened your question "{q}".'})
             asks.forget()
             self._send_json(200, {"ok": True, "points": _points_view(rid)})
             return
