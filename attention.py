@@ -651,7 +651,8 @@ def _analyse_live(sess) -> tuple[str, dict]:
 # Room reading (mtime-cached — this endpoint is polled)
 # ---------------------------------------------------------------------------
 
-_SUMMARY_CACHE: dict[str, tuple[float, dict]] = {}
+_SUMMARY_CACHE: dict[str, tuple[str, dict]] = {}
+_COLD_HUMAN: dict[str, tuple[str, bool]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
@@ -951,13 +952,21 @@ def _room_summaries() -> list[dict]:
         projects, links = _d.load_projects(), _d.load_session_projects()
     except Exception:
         projects, links = [], {}
+    po_ids = {p.get("poRoomId") for p in projects if p.get("poRoomId")}
     for entry in entries:
         rid = entry["id"]
         live_ids.add(rid)
         room = entry["room"]
-        if _d.chatroom.room_is_cold(room, _d._room_is_live):
-            continue
         mtime = entry["signature"]
+        if _d.chatroom.room_is_cold(room, _d._room_is_live) and rid not in po_ids:
+            held = _COLD_HUMAN.get(rid)
+            if not held or held[0] != mtime:
+                open_item = _open_to_human(room, room.get("messages") or [], "", False)
+                held = (mtime, bool(open_item and open_item.get("kind") in
+                                    ("question", "blocked", "message")))
+                _COLD_HUMAN[rid] = held
+            if room.get("status") != "waiting_human" and not held[1]:
+                continue
         with _CACHE_LOCK:
             hit = _SUMMARY_CACHE.get(rid)
         if hit and hit[0] == mtime and _po_still(hit[1], projects, links):
@@ -974,6 +983,7 @@ def _room_summaries() -> list[dict]:
     with _CACHE_LOCK:                       # forget deleted rooms
         for gone in [k for k in _SUMMARY_CACHE if k not in live_ids]:
             _SUMMARY_CACHE.pop(gone, None)
+            _COLD_HUMAN.pop(gone, None)
     return out
 
 

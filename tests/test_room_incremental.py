@@ -85,6 +85,23 @@ class RoomIncrementalTests(unittest.TestCase):
             chatroom._write(room)
             self.assertEqual([r["id"] for r in attention._room_summaries()], [room["id"]])
 
+    def test_attention_keeps_old_po_and_room_waiting_for_person(self):
+        old = time.time() - 90000
+        po = self.room("room-po", updatedAt=old, workflow="done",
+                       participants=[], status="active")
+        waiting = self.room("room-waiting", updatedAt=old, workflow="done",
+                            participants=[], status="waiting_human")
+        chatroom._write(po)
+        chatroom._write(waiting)
+        attention._SUMMARY_CACHE.clear()
+        attention._COLD_HUMAN.clear()
+        with patch.object(dashboard, "load_projects", return_value=[
+                {"id": "proj-1", "name": "Project", "poRoomId": po["id"]}]), \
+                patch.object(dashboard, "load_session_projects", return_value={}), \
+                patch.object(dashboard, "_room_is_live", return_value=False):
+            self.assertEqual({r["id"] for r in attention._room_summaries()},
+                             {po["id"], waiting["id"]})
+
 
 if __name__ == "__main__":
     unittest.main()

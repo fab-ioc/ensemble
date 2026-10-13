@@ -10231,8 +10231,11 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     except Exception:
         run_state, run_since = {}, {}
     try:
+        po_room_ids = {p.get("poRoomId") for p in load_projects() if p.get("poRoomId")}
         for rm in rooms:
-            if chatroom.room_is_cold(rm, _room_is_live):
+            if (chatroom.room_is_cold(rm, _room_is_live)
+                    and rm.get("id") not in att_by_room
+                    and rm.get("id") not in po_room_ids):
                 continue
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
