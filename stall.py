@@ -191,7 +191,10 @@ def _look(rid: str, state: dict, now: float) -> str:
         owners = cr.owners(room)
         owner = owners[0] if owners else ""
         part = cr.participant(room, owner) if owner else None
-        if not part or why_not(room, owner):
+        if not part:
+            return ""
+        excluded = why_not(room, owner)
+        if excluded and excluded != "no PO":
             return ""
         if rot.is_rotating(rid, owner) or rot.awaiting_handover(rid, owner):
             return ""
@@ -199,6 +202,10 @@ def _look(rid: str, state: dict, now: float) -> str:
             return ""                   # at a model limit: _look_limit tells the PO
         sess = rot._pty(part)
         if sess is None:
+            return ""
+        if _d.provider_retry.status(part):
+            return ""                   # provider refusal has its own backoff
+        if excluded:
             return ""
         # A teammate still at work (a review running) is not a stall.
         if any(_busy(p) for p in cr.agent_participants(room) if p.get("identity") != owner):
@@ -491,6 +498,8 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         return ""
     if limit_hit(part):
         return ""                       # at a model limit: _look_limit tells the PO
+    if _d.provider_retry.status(part):
+        return ""                       # provider refusal is retried, never silent
     view = {**room, "owners": owners, "workflow": _d.workflow_of(room)}
     quiet = silent_for(view, part, _d.attention._evidence(part, statuses), now) \
         if silent_owner_owes(view, owners[0]) else 0.0
@@ -730,6 +739,23 @@ def _look_permission(rid: str, state: dict, now: float, statuses: dict) -> str:
 # Looking
 # ---------------------------------------------------------------------------
 
+def _look_provider(rid: str, now: float) -> str:
+    """Retry refused turns for every seat, including a reviewer on mention."""
+    rot, cr = _d.rotation, _d.chatroom
+    with rot.GATE:
+        room = cr.get_room(rid, public=False)
+        if not room or not _d._room_is_live(room) or not room.get("launched", True):
+            return ""
+        for part in cr.agent_participants(room):
+            ident = part.get("identity") or ""
+            if rot.is_rotating(rid, ident) or rot.awaiting_handover(rid, ident) or limit_hit(part):
+                continue
+            sess = rot._pty(part)
+            if sess:
+                _d.provider_retry.tick(room, part, sess, now)
+        return ""
+
+
 def tick(now: float | None = None) -> dict[str, str]:
     """Look at every task once. Returns {roomId: what was done}."""
     now = time.time() if now is None else now
@@ -749,7 +775,8 @@ def tick(now: float | None = None) -> dict[str, str]:
             if rid in state:
                 state[rid]["current"] = False   # until this look finds it stopped again
             dids = []
-            for look in (lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
+            for look in (lambda: _look_provider(rid, now),
+                         lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
                          lambda: _look_silent(rid, state, now, statuses),
                          lambda: _look_permission(rid, state, now, statuses)):
                 try:

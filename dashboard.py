@@ -75,6 +75,7 @@ import agent_models
 import agent_hooks
 # A Claude model at its own limit: seen, remembered, seated around (ED-159).
 import model_limit
+import provider_retry
 # Whether a Claude agent runs in the mode it was launched in (ED-216).
 import permission_mode
 # Which tasks need a human, and why (the /api/attention join).
@@ -162,6 +163,7 @@ due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
+provider_retry.bind(sys.modules[__name__])
 permission_mode.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
@@ -3169,9 +3171,22 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
     agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
+    codex_path = None
+    codex_size = -1
+    if agent == "codex":
+        meta = getattr(sess, "meta", None) or {}
+        room = chatroom.get_room(str(meta.get("room") or ""), public=False)
+        part = chatroom.participant(room, str(meta.get("identity") or "")) if room else None
+        if part:
+            codex_path, _ = rotation._transcript_of(part)
+            if codex_path:
+                try:
+                    codex_size = codex_path.stat().st_size
+                except OSError:
+                    pass
     # A long line typed raw reached Claude cut to its last 123 characters
     # (#192: the handover ask, 10-05 and 10-08): it goes as a paste too.
-    pasted = "\n" in text or (agent == "claude" and len(text) > PASTE_LINE_OVER)
+    pasted = "\n" in text or (agent in ("claude", "codex") and len(text) > PASTE_LINE_OVER)
     body = "\x1b[200~" + text + "\x1b[201~" if pasted else text
     writer = getattr(sess, "write", None)
     if callable(writer):
@@ -3185,13 +3200,14 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
                 _record_typed_input_safely(sess, text, provenance, parts)
         if not ok:
             return False
-        time.sleep(0.25 if len(body) <= 200 else min(2.0, 0.25 + len(body) / 600))
+        time.sleep(max(1.0, 0.25 + len(body) / 600) if agent == "codex" and pasted
+                   else (0.25 if len(body) <= 200 else min(2.0, 0.25 + len(body) / 600)))
         try:
             entered = writer("\r")
         except (OSError, EOFError):
             return False
-        if entered is not False and pasted and agent == "codex":
-            _enter_codex_paste(sess, writer)
+        if entered is not False and agent == "codex":
+            _verify_codex_submit(sess, writer, text, codex_path, codex_size)
         return entered is not False and sess.alive()
 
     # Compatibility for the small test/adapter sessions that expose only the
@@ -3208,19 +3224,23 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     return ok
 
 
-PASTE_LINE_OVER = 300           # a one-line text longer than this goes to Claude as a paste
+PASTE_LINE_OVER = 300           # a long one-line hub message goes as a paste
 _CODEX_PASTE_LEFT = re.compile(r"\[Pasted Content \d+ chars\]")
 
 
-def _enter_codex_paste(sess, writer) -> None:
-    """Codex sometimes keeps a paste as ``[Pasted Content N chars]`` in its
-    box and drops the Enter that followed (#173, #176: 75 minutes unread).
-    Still there a moment later: Enter once more."""
+def _verify_codex_submit(sess, writer, text: str, path=None, before=-1) -> None:
+    """Check every hub line after Enter; repeat once if it stayed in the editor."""
     time.sleep(1.5)
     try:
-        lines = (sess.tail() or "").splitlines()[-6:]
-        if any(_CODEX_PASTE_LEFT.search(ln) for ln in lines):
-            writer("\r")
+        if path and before >= 0 and rotation.read_rollout(path, since=before)["promptSince"]:
+            return
+        lines = (sess.tail() or "").splitlines()[-8:]
+        plain = " ".join(text.split())
+        pending = any(_CODEX_PASTE_LEFT.search(ln) for ln in lines)
+        pending |= any(plain[:min(24, len(plain))] in " ".join(ln.split())
+                       for ln in lines if plain)
+        if pending and writer("\r") is not False:
+            print(f"[input] repeated Codex Enter for {str((sess.meta or {}).get('room') or '')}", flush=True)
     except (OSError, EOFError, AttributeError):
         pass
 
