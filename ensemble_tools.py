@@ -1227,7 +1227,7 @@ def _ask(ctx, args, handler):
         host = headers.get("Host", "127.0.0.1:8765")
         scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
         ref = f"{scheme}://{host}/session?room={po['roomId']}&msg={mid}" if mid else ""
-        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay.",
+        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. Link reportReference when following up with the PO.",
                 **({"reportReference": ref} if ref else {}),
                 **({"warnings": warnings} if warnings else {})}
     result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",

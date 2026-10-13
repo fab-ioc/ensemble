@@ -496,6 +496,12 @@ class TheEndpoint(_World):
         self.assertFalse(points.unclose_ask(rid, "sid-1:1", 0, now=111))
         self.assertTrue(points.load(rid)["asks"]["sid-1:1"]["0"]["closed"])
 
+    def test_close_undo_starts_after_notification_finishes(self):
+        rid = self._room()
+        points.close_ask(rid, "sid-1:1", 0, "Question?", now=100)
+        self.assertTrue(points.refresh_close_ask_time(rid, "sid-1:1", 0, now=120))
+        self.assertTrue(points.unclose_ask(rid, "sid-1:1", 0, now=129))
+
     def test_close_of_stopped_task_does_not_start_its_agent(self):
         rid = self._room()
         with mock.patch.object(dashboard, "_hub_task_room", return_value=True), \
