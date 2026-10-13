@@ -669,12 +669,12 @@ def _marked(mid: str, ts: float, text: str, who: str, message: dict | None = Non
     return (mid, ts, [a["question"] for a in found], who) if found else None
 
 
-def _session_asks(room: dict, sid: str, who: str) -> list[tuple]:
-    if _d.room_po_id(room):
+def _session_asks(room: dict, sid: str, who: str, has_po: bool | None = None) -> list[tuple]:
+    if (bool(_d.room_po_id(room)) if has_po is None else has_po):
         return []
     st = _d.points._session_stat(sid)
     hit = _SID_CACHE.get(sid)
-    if hit is not None and st is not None and hit[0] == st:
+    if hit is not None and hit[0] == st:
         return hit[1]
     turns = _d.solo_turns(room, sid) or {}
     found = []
@@ -684,15 +684,14 @@ def _session_asks(room: dict, sid: str, who: str) -> list[tuple]:
         x = _marked(mid, _d._turn_epoch(t.get("timestamp")), t.get("text") or "", who)
         if x:
             found.append(x)
-    if st is not None:
-        _SID_CACHE[sid] = (st, found)
+    _SID_CACHE[sid] = (st, found)
     return found
 
 
-def message_asks(room: dict) -> list[tuple]:
+def message_asks(room: dict, has_po: bool | None = None) -> list[tuple]:
     """A room's agents' messages that mark asks: ``[(mid, ts, [questions],
     who)]``, from what the room holds (a team's messages)."""
-    has_po = bool(_d.room_po_id(room))
+    has_po = bool(_d.room_po_id(room)) if has_po is None else has_po
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")}
     out = []
@@ -710,23 +709,24 @@ def message_asks(room: dict) -> list[tuple]:
 
 def _room_asks(summary: dict) -> list[tuple]:
     rid = summary.get("id", "")
+    has_po = bool(summary["po"]) if "po" in summary else bool(_d.room_po_id(summary))
     agents = [p for p in summary.get("participants", []) if p.get("kind") == "agent"]
     if (summary.get("mode") or "") == "solo":
-        room = _d.chatroom.get_room(rid)
+        room = _d.chatroom.get_room(rid, copy_room=False)
         if room is None:
             return []
-        out = message_asks(room)
+        out = message_asks(room, has_po)
         for p in agents:
             sid = (p.get("sessionId") or "").strip()
             if not sid:
                 continue
-            out += _session_asks(room, sid, p.get("identity") or "")
+            out += _session_asks(room, sid, p.get("identity") or "", has_po)
         return out
     hit = _ROOM_CACHE.get(rid)
     if hit is not None and hit[0] == summary.get("updatedAt"):
         return hit[1]
-    room = _d.chatroom.get_room(rid)
-    found = message_asks(room) if room else []
+    room = _d.chatroom.get_room(rid, copy_room=False)
+    found = message_asks(room, has_po) if room else []
     _ROOM_CACHE[rid] = (summary.get("updatedAt"), found)
     return found
 
@@ -757,7 +757,7 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     settled = float(led.get("asksSettledAt") or 0)
-    if not _d.room_po_id(summary):
+    if not (bool(summary["po"]) if "po" in summary else bool(_d.room_po_id(summary))):
         settled = max(settled, *(float(p.get("answeredAt") or 0)
                                   for p in summary.get("participants", []) if p.get("kind") == "agent"))
     out = []

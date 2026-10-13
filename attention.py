@@ -944,31 +944,24 @@ def _room_summaries() -> list[dict]:
     of them every few seconds is the one cost worth avoiding here."""
     out: list[dict] = []
     live_ids: set[str] = set()
-    try:
-        paths = list(_d.chatroom.ROOMS_DIR.glob("room-*.json"))
-    except OSError:
-        return out
+    entries = _d.chatroom.room_index()
     # Whom each task reports to changes without its room file changing (a
     # project gets a PO): that is part of what a cached summary is for.
     try:
         projects, links = _d.load_projects(), _d.load_session_projects()
     except Exception:
         projects, links = [], {}
-    for p in paths:
-        rid = p.stem
+    for entry in entries:
+        rid = entry["id"]
         live_ids.add(rid)
-        try:
-            mtime = p.stat().st_mtime
-        except OSError:
+        room = entry["room"]
+        if _d.chatroom.room_is_cold(room, _d._room_is_live):
             continue
+        mtime = entry["signature"]
         with _CACHE_LOCK:
             hit = _SUMMARY_CACHE.get(rid)
         if hit and hit[0] == mtime and _po_still(hit[1], projects, links):
             out.append(hit[1])
-            continue
-        try:
-            room = json.loads(p.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
             continue
         try:
             po = _d.room_po_id(room, projects, links)

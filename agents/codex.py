@@ -28,6 +28,8 @@ import filefacts
 
 from .base import AgentSession, AgentType
 
+_ROLLOUT_MISSES: dict[str, float] = {}
+
 
 def _codex_home() -> Path:
     env = os.environ.get("CODEX_HOME")
@@ -305,9 +307,22 @@ class CodexAgent(AgentType):
             return []
         hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
         if not hits:
+            # Missing ids are common when an old solo task was run by Claude.
+            # The targeted glob above still sees a newly arrived normal
+            # rollout immediately; only the legacy full-scan fallback is
+            # deferred for a known miss.
+            now = time.monotonic()
+            if now < _ROLLOUT_MISSES.get(session_id, 0):
+                return []
             hits = [f for f in self.rollout_files()
                     if (_read_meta(f).get("session_id")
                         or _read_meta(f).get("id")) == session_id]
+            if not hits:
+                if len(_ROLLOUT_MISSES) > 4096:
+                    _ROLLOUT_MISSES.clear()
+                _ROLLOUT_MISSES[session_id] = now + 60
+            else:
+                _ROLLOUT_MISSES.pop(session_id, None)
         hits.sort(key=_mtime)
         return hits
 

@@ -34,6 +34,7 @@ the doorbell live in ``dashboard.py`` (which injects a ``ring`` callback).
 from __future__ import annotations
 
 import json
+import copy
 import re
 import secrets
 import threading
@@ -48,6 +49,92 @@ HUMAN_IDENTITY = "user"
 DEFAULT_MAX_HOPS = 24
 
 _LOCK = threading.RLock()
+# A stat is cheap; parsing a 10 MB room on each browser poll is not. Entries
+# are replaced as a unit, including their small metadata index.
+_INDEX: dict[str, dict] = {}
+_CHANGES: dict[str, list[tuple[str, str, set[str]]]] = {}
+_INDEX_LOCK = threading.RLock()
+
+
+def _signature(st) -> str:
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+
+def _entry(room: dict, st) -> dict:
+    signature = f'{room.get("_revision", "")}:{_signature(st)}' if room.get("_revision") else _signature(st)
+    return {"id": room["id"], "project": room.get("projectId") or room.get("noProjectId") or "",
+            "workflow": room.get("workflow") or "", "updatedAt": room.get("updatedAt", 0),
+            "stoppedAt": room.get("stoppedAt", 0), "size": st.st_size,
+            "mtime": st.st_mtime_ns, "signature": signature, "room": room}
+
+
+def room_index() -> list[dict]:
+    """Incremental room index; external edits and deletions are noticed by stat."""
+    ROOMS_DIR.mkdir(parents=True, exist_ok=True)
+    seen = set()
+    with _INDEX_LOCK:
+        for path in ROOMS_DIR.glob("room-*.json"):
+            rid = path.stem
+            seen.add(rid)
+            try:
+                st = path.stat()
+                hit = _INDEX.get(rid)
+                if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
+                    continue
+                room = _read(rid)
+                if room is not None:
+                    _INDEX[rid] = _entry(room, st)
+                    # An external write has no recorded message diff.
+                    _CHANGES.pop(rid, None)
+            except OSError:
+                continue
+        for rid in list(_INDEX):
+            if rid not in seen:
+                _INDEX.pop(rid, None)
+                _CHANGES.pop(rid, None)
+        return list(_INDEX.values())
+
+
+def room_is_cold(room: dict, is_live=None, now: float | None = None) -> bool:
+    """A finished room leaves hot scans one day after its last change."""
+    now = _now() if now is None else now
+    done = (room.get("workflow") or "").lower() == "done"
+    stopped = bool(room.get("stoppedAt"))
+    if not (done or stopped):
+        return False
+    changed = max(float(room.get("updatedAt") or 0), float(room.get("stoppedAt") or 0))
+    return changed < now - 86400 and not (is_live and is_live(room))
+
+
+def room_delta(room_id: str, cursor: str, target: str = "") -> tuple[str, set[str]] | None:
+    """Return current revision and changed message IDs, or require a full load."""
+    with _INDEX_LOCK:
+        hit = _INDEX.get(room_id)
+        if not hit:
+            return None
+        current = target or hit["signature"]
+        if cursor == current:
+            return current, set()
+        changed: set[str] = set()
+        for before, after, ids in _CHANGES.get(room_id, []):
+            if before == cursor:
+                changed.update(ids)
+                cursor = after
+                if cursor == current:
+                    return current, changed
+        return None
+
+
+def room_revision(room_id: str) -> str:
+    with _INDEX_LOCK:
+        return (_INDEX.get(room_id) or {}).get("signature", "")
+
+
+def get_room_snapshot(room_id: str) -> tuple[dict | None, str]:
+    """Read the room and its cursor under the same index lock."""
+    with _INDEX_LOCK:
+        room = get_room(room_id)
+        return room, room_revision(room_id)
 
 
 def _now() -> float:
@@ -70,18 +157,43 @@ def _write(room: dict) -> None:
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
+    room["_revision"] = uuid.uuid4().hex
     tmp.write_text(json.dumps(room, indent=2), encoding="utf-8")
     # Windows refuses the replace while another process (a virus scanner, a
     # backup, the indexer) has the file open for a moment: WinError 5 on
     # 2026-09-23 failed a PO resume after its terminal had started.
-    for attempt in range(8):
+    with _INDEX_LOCK:
+        prior = _INDEX.get(room["id"])
         try:
-            tmp.replace(p)
-            return
-        except PermissionError:
-            if attempt == 7:
-                raise
-            time.sleep(0.05 * (attempt + 1))
+            old_st = p.stat()
+            old = prior["room"] if prior and prior["size"] == old_st.st_size and prior["mtime"] == old_st.st_mtime_ns else _read(room["id"])
+            old_sig = _entry(old, old_st)["signature"] if old else ""
+        except OSError:
+            old_sig, old = "", None
+        for attempt in range(8):
+            try:
+                tmp.replace(p)
+                break
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+        st = p.stat()
+        new_sig = _entry(room, st)["signature"]
+        _INDEX[room["id"]] = _entry(copy.deepcopy(room), st)
+        old_msgs = (old or {}).get("messages") or []
+        new_msgs = room.get("messages") or []
+        # A delta can patch changed messages and appends. Deletion or reorder
+        # invalidates the chain and tells the browser to reload in full.
+        if old is not None and len(new_msgs) >= len(old_msgs) and all(
+                a.get("id") == b.get("id") for a, b in zip(old_msgs, new_msgs)):
+            changed = {b.get("id") for a, b in zip(old_msgs, new_msgs) if a != b}
+            changed.update(m.get("id") for m in new_msgs[len(old_msgs):])
+            history = _CHANGES.setdefault(room["id"], [])
+            history.append((old_sig, new_sig, changed))
+            del history[:-64]
+        else:
+            _CHANGES.pop(room["id"], None)
 
 
 # ---------------------------------------------------------------------------
@@ -436,19 +548,32 @@ def clear_exits(room_id: str) -> bool:
         return cleared
 
 
-def list_rooms() -> list[dict]:
-    ROOMS_DIR.mkdir(parents=True, exist_ok=True)
-    out = []
-    for p in ROOMS_DIR.glob("room-*.json"):
-        r = _read(p.stem)
-        if r:
-            out.append(_public(r))
+def list_rooms(*, copy_rooms: bool = True) -> list[dict]:
+    """List rooms; read-only hot paths may borrow nested indexed values."""
+    out = [_public(copy.deepcopy(e["room"]) if copy_rooms else e["room"])
+           for e in room_index()]
     out.sort(key=lambda r: r.get("updatedAt", 0), reverse=True)
     return out
 
 
-def get_room(room_id: str, public: bool = True) -> dict | None:
-    r = _read(room_id)
+def get_room(room_id: str, public: bool = True, *, copy_room: bool = True) -> dict | None:
+    # The GET path uses the index, while mutations keep using _read under
+    # _LOCK. Copy so status decoration cannot change the indexed source.
+    p = _room_path(room_id)
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    with _INDEX_LOCK:
+        hit = _INDEX.get(room_id)
+        if not hit or hit["size"] != st.st_size or hit["mtime"] != st.st_mtime_ns:
+            fresh = _read(room_id)
+            if fresh is None:
+                return None
+            hit = _entry(fresh, st)
+            _INDEX[room_id] = hit
+            _CHANGES.pop(room_id, None)
+        r = copy.deepcopy(hit["room"]) if copy_room else hit["room"]
     if r is None:
         return None
     return _public(r) if public else r
@@ -458,6 +583,7 @@ def _public(room: dict) -> dict:
     """Room view without the secret tokens."""
     r = dict(room)
     r.pop("tokens", None)
+    r.pop("_revision", None)
     return r
 
 

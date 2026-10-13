@@ -9963,7 +9963,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     def _norm_cwd(p: str) -> str:
         return os.path.normcase(os.path.normpath(p)) if p else ""
     try:
-        rooms = chatroom.list_rooms()
+        rooms = chatroom.list_rooms(copy_rooms=False)
     except Exception:
         rooms = []
     for rm in rooms:
@@ -10232,6 +10232,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
         run_state, run_since = {}, {}
     try:
         for rm in rooms:
+            if chatroom.room_is_cold(rm, _room_is_live):
+                continue
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
             live = _room_is_live(rm)
@@ -13237,7 +13239,7 @@ class Handler(BaseHTTPRequestHandler):
             if bad:
                 self._send_json(404, bad)
                 return
-            room = chatroom.get_room(rid) if rid else None
+            room, revision = chatroom.get_room_snapshot(rid) if rid else (None, "")
             if room is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
@@ -13262,6 +13264,25 @@ class Handler(BaseHTTPRequestHandler):
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
             except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
                 print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
+            status_sig = hashlib.sha1(json.dumps(
+                {k: v for k, v in out.items() if k != "messages"}, sort_keys=True
+            ).encode("utf-8")).hexdigest()[:20]
+            cursor = q.get("cursor", [""])[0]
+            if cursor:
+                change = chatroom.room_delta(rid, cursor, revision)
+                if change is None:
+                    self._send_json(200, {"refetch": True, "revision": revision})
+                    return
+                revision, ids = change
+                messages = [m for m in out.pop("messages", []) if m.get("id") in ids]
+                same_status = q.get("statusSig", [""])[0] == status_sig
+                self._send_json(200, {"delta": True, "revision": revision,
+                                      "statusSig": status_sig, "statusSame": same_status,
+                                      **({} if same_status else {"room": out}),
+                                      "messages": messages})
+                return
+            out["revision"] = revision
+            out["statusSig"] = status_sig
             self._send_json(200, out, conditional=True)
             return
         if p == "/api/task/ref":

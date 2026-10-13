@@ -5819,17 +5819,41 @@ async function refreshRoom() {
   const sendsGen = ++SENDS_GEN;
   try {
     const url = '/api/room?id=' + encodeURIComponent(ROOM);
-    let r = await fetch(url,
-      ROOM_ETAG ? {headers: {'If-None-Match': ROOM_ETAG}} : undefined);
-    if (r.status === 304 && (!ROOM_LAST || ROOM_LAST.etag !== ROOM_ETAG)) {
+    let r = await fetch(ROOM_LAST?.revision
+      ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
+        + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '') : url,
+      !ROOM_LAST && ROOM_ETAG ? {headers: {'If-None-Match': ROOM_ETAG}} : undefined);
+    if (r.ok && ROOM_LAST?.revision) {
+      const patch = await r.json();
+      if (patch.refetch) {
+        ROOM_LAST = null;
+        ROOM_ETAG = '';
+        r = await fetch(url);
+      } else if (patch.delta && patch.revision && (patch.statusSame || patch.room)) {
+        const old = ROOM_LAST.room.messages || [];
+        const changed = new Map((patch.messages || []).map(m => [m.id, m]));
+        const messages = old.map(m => changed.get(m.id) || m);
+        const known = new Set(old.map(m => m.id));
+        for (const m of patch.messages || []) if (!known.has(m.id)) messages.push(m);
+        room = {...(patch.statusSame ? ROOM_LAST.room : patch.room), messages,
+          revision: patch.revision, statusSig: patch.statusSig};
+        ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig, room};
+      } else {
+        ROOM_LAST = null;
+        ROOM_ETAG = '';
+        r = await fetch(url);
+      }
+    }
+    if (!room && r.status === 304 && (!ROOM_LAST || ROOM_LAST.etag !== ROOM_ETAG)) {
       ROOM_ETAG = '';
       r = await fetch(url);
     }
-    if (r.status === 304) room = structuredClone(ROOM_LAST.room);
-    else {
+    if (!room && r.status === 304) room = structuredClone(ROOM_LAST.room);
+    else if (!room) {
       room = await r.json();
       ROOM_ETAG = r.ok ? (r.headers.get('ETag') || '') : '';
-      ROOM_LAST = ROOM_ETAG ? {etag: ROOM_ETAG, room: structuredClone(room)} : null;
+      ROOM_LAST = r.ok ? {etag: ROOM_ETAG, revision: room.revision || '',
+        statusSig: room.statusSig || '', room: structuredClone(room)} : null;
     }
   }
   catch(e) { if (!ROOM_OBJ) setText($('#hint'), 'Cannot load the conversation yet; retrying.'); return; }
