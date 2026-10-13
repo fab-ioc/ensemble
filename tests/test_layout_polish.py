@@ -163,7 +163,8 @@ class TheChatBox(unittest.TestCase):
     def test_the_row_under_the_words(self):
         row = SESSION[SESSION.index('<div class="ed-row">'):]
         row = row[:row.index('<div id="agentcol">')]
-        self.assertEqual(re.findall(r'<button[^>]* id="(\w[\w-]*)"', row), ["add-point", "attach", "send"])
+        self.assertEqual(re.findall(r'<button[^>]* id="(\w[\w-]*)"', row),
+                         ["add-point", "attach", "stop-agent", "send"])
         self.assertIn('<input type="file" id="attach-input" accept="image/*" multiple hidden>', row)
         wire = SESSION[SESSION.index("$('#attach').addEventListener"):]
         wire = wire[:wire.index("$('#att-chips')")]

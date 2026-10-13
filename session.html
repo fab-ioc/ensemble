@@ -1095,6 +1095,16 @@
   .ed-refs[hidden] { display:none; }
   #compose .ed-row { display:flex; align-items:center; gap:var(--s-200); }
   #compose .ed-row .grow { flex:1 1 auto; }
+  #stop-wrap { position:relative; }
+  #stop-wrap[hidden], #stop-choices[hidden], #stop-note[hidden] { display:none; }
+  #stop-agent { min-height:var(--touch-min); padding:0 var(--s-300); border:1px solid var(--c-danger-bold); border-radius:var(--r-200); background:var(--surface); color:var(--c-danger-fg); font:inherit; cursor:pointer; }
+  #stop-agent:hover { background:var(--c-danger-bg); }
+  #stop-agent:focus-visible, #stop-choices button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #stop-choices { position:absolute; z-index:70; right:0; bottom:calc(100% + var(--s-100)); min-width:180px; padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); }
+  #stop-choices button { display:block; width:100%; min-height:var(--touch-min); padding:0 var(--s-200); text-align:left; border:0; background:transparent; color:var(--fg); font:inherit; cursor:pointer; }
+  #stop-choices button:hover { background:var(--hover); }
+  #stop-note { flex:0 0 auto; padding:var(--s-100) var(--s-300); color:var(--fg-muted); font-size:var(--fs-200); text-align:center; }
+
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
   #add-point:hover, #attach:hover { background:var(--hover); color:var(--fg); }
   #attach:focus-visible, #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
@@ -1421,6 +1431,7 @@
     <div id="promptcard" hidden></div>
     <div id="livetail" hidden></div>
     <div id="activity" hidden></div>
+    <div id="stop-note" role="status" hidden></div>
     <div id="compose">
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
@@ -1444,6 +1455,7 @@
         <input type="file" id="attach-input" accept="image/*" multiple hidden>
         <span class="grow"></span>
         <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
+        <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <button id="send" disabled>Send</button>
       </div>
     </div>
@@ -5758,6 +5770,7 @@ function refreshShow(room, ticket, sendsGen) {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
+  showInterrupt(room.interrupts || []);
   // The agents a message can be directed to with its @<identity> prefix:
   // from every poll, so a stopped room with its terminals hidden knows them too.
   ROOM_IDENTS = mem.map(m => m.identity);
@@ -5851,6 +5864,7 @@ async function updateAgentStatus() {
     setText(stat, s.txt);
   });
   renderActivity(map, lmap);
+  updateStopControl(map, lmap);
   // A message of the person's still without an answer says so once the agent
   // has stopped working (a stopped session is not working either).
   if (SOLO_SID) {
@@ -5868,6 +5882,67 @@ async function updateAgentStatus() {
     else if (!_pcDismissed) renderPromptCard();
   }
 }
+// A terminal interrupt is a person's action. Keep it out of the chat messages
+// so the agent never reads it as a new instruction or loses a question card.
+let STOP_TARGETS = [], STOP_LAST = -Infinity, STOP_PENDING = false;
+function showInterrupt(events) {
+  const event = events[events.length - 1];
+  const note = $('#stop-note');
+  note.hidden = !event;
+  if (event) {
+    const time = new Date(event.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    setText(note, `Stopped by you · ${time}`);
+  }
+}
+function updateStopControl(ptyMap, liveMap) {
+  const working = new Set((ROOM_OBJ && ROOM_OBJ.workingAgents) || []);
+  STOP_TARGETS = ROOM_LIVE ? ROOM_AGENTS.filter(a => a.ptyId && working.has(a.identity)) : [];
+  const wrap = $('#stop-wrap'), choices = $('#stop-choices');
+  wrap.hidden = !STOP_TARGETS.length;
+  if (!STOP_TARGETS.length) choices.hidden = true;
+  $('#stop-agent').disabled = STOP_PENDING;
+}
+async function stopAgent(identity = '') {
+  if (STOP_PENDING || !STOP_TARGETS.length || performance.now() - STOP_LAST < 1000) return;
+  if (!identity && STOP_TARGETS.length > 1) {
+    const choices = $('#stop-choices');
+    choices.innerHTML = STOP_TARGETS.map(a => `<button type="button" data-stop-identity="${esc(a.identity)}">Stop ${esc(a.identity)}</button>`).join('');
+    choices.hidden = false;
+    choices.querySelector('button').focus();
+    return;
+  }
+  STOP_PENDING = true;
+  $('#stop-agent').disabled = true;
+  $('#stop-choices').hidden = true;
+  try {
+    const result = await postOk('/api/room/interrupt', { roomId:ROOM, identity:identity || STOP_TARGETS[0].identity });
+    STOP_LAST = performance.now();
+    if (result.interrupt) showInterrupt([result.interrupt]);
+    $('#input').focus({ preventScroll:true });
+    refresh();
+  } catch (err) {
+    setText($('#hint'), err.message || 'Could not stop the agent.');
+  } finally {
+    STOP_PENDING = false;
+    $('#stop-agent').disabled = false;
+  }
+}
+$('#stop-agent').addEventListener('click', () => stopAgent());
+$('#stop-choices').addEventListener('click', e => {
+  const b = e.target.closest('[data-stop-identity]');
+  if (b) stopAgent(b.dataset.stopIdentity);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const choices = $('#stop-choices');
+  if (!choices.hidden) { choices.hidden = true; $('#stop-agent').focus(); e.preventDefault(); return; }
+  // Existing menus, dialogs, comment composers, and a filled message box get
+  // their own Escape first. An empty focused box and the rest of the chat stop.
+  if (document.querySelector('dialog[open], .am-menu:not([hidden]), .theme-dd-menu:not([hidden]), .phone-compose-tools[open], .cmt-composer:not([hidden])') ||
+      (document.activeElement === $('#input') && $('#input').value)) return;
+  if (STOP_TARGETS.length) { e.preventDefault(); stopAgent(); }
+}, true);
+
 // The always-visible activity bar above the composer, so you can tell at a glance
 // whether an agent is working — or waiting on you — without opening its terminal.
 function renderActivity(ptyMap, liveMap) {
