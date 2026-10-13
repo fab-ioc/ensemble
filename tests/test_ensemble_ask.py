@@ -114,6 +114,10 @@ class StructuredRoundTrip(_World):
                 {"question": "Deploy tonight?", "yesno": True},
                 {"question": "Any notes?"}]}, self._handler())
         mid = result["messageId"]
+        self.assertEqual(result["references"], [
+            f"http://127.0.0.1:8765/session?room={rid}&msg={mid}&part=ask:0",
+            f"http://127.0.0.1:8765/session?room={rid}&msg={mid}&part=ask:1",
+        ])
         msg = next(m for m in chatroom.get_room(rid)["messages"] if m["id"] == mid)
         self.assertEqual(len(msg["asks"]), 2)
         self.assertIn("A short reason.", msg["text"])

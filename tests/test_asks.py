@@ -115,7 +115,7 @@ out.settledOpen = T.openAsks(m, S).length;
 out.settledBody = T.askBodyHtml(m, S, t => t, null);
 out.ages = [T.openAsks({ ...m, ts: now - 6 * 86400 }, none).length, T.openAsks({ ...m, ts: now - 8 * 86400 }, none).length,
   T.openAsks({ ...m, ts: 0 }, S).length];
-// A Done task waits for nobody, as on the hub.
+// Workflow never closes an unanswered card.
 ctx.ROOM_OBJ = { workflow: 'done' };
 out.doneOpen = T.openAsks(m, none).length;
 out.doneBody = T.askBodyHtml(m, none, t => t, null);

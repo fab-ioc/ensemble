@@ -1230,8 +1230,9 @@ def _ask(ctx, args, handler):
     handler._ring_recipients(room["id"], result)
     _d.asks.forget()
     mid = result["message"]["id"]
-    host = handler.headers.get("Host", "127.0.0.1:8765")
-    scheme = "https" if handler.headers.get("X-Forwarded-Proto") == "https" else "http"
+    headers = getattr(handler, "headers", {}) or {}
+    host = headers.get("Host", "127.0.0.1:8765")
+    scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
     refs = [f"{scheme}://{host}/session?room={room['id']}&msg={mid}&part=ask:{a['n']}"
             for a in questions]
     return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
