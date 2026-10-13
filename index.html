@@ -1192,19 +1192,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      panel scrolls to what sits below it. At 360px the file got 150px, of
      which its own header took half. */
   #detail-panel .dp-pane[data-pane="workspace"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: max(480px, calc(100vh - var(--top-h) - 120px)); }
-  /* The live chat is the one pane sized to the screen rather than to its
-     content. A zero-basis flex: 1 only grew into free space, and a long title
-     and summary left none, so the chat collapsed to a sliver in a scrolling
-     column. Instead it is exactly as tall as the panel below the header and
-     tabs (--dp-fill, set by fitLiveChat()), so the composer sits at the
-     panel's bottom edge. It never
-     drops below --dp-chat-min, the embed's 124px composer plus about eight
-     lines of messages: when the header is taller than that allows, the panel
-     scrolls to reach the rest of the chat rather than squeezing it. */
+  /* The live chat fills the space below the header and tabs. Its iframe is a
+     flex column too: the message list grows, and the composer stays at its
+     foot. Keep a floor for short panels with tall headers; the panel itself
+     then scrolls instead of squeezing the conversation. */
   #detail-panel { --dp-chat-min: 280px; }
   #detail-panel.is-live .dp-pane[data-pane="activity"] {
     display: flex; flex-direction: column;
-    flex: 0 0 auto; height: max(var(--dp-chat-min), var(--dp-fill, 100vh));
+    flex: 1 0 auto; min-height: var(--dp-chat-min);
   }
   #detail-panel.is-live .dp-pane[data-pane="activity"] iframe.dp-session { flex: 1 1 auto; height: auto; min-height: 0; }
   /* While the chat is live, its latest message is in the chat itself, so the
@@ -5653,11 +5648,7 @@ function dpPlacePanes(panel) {
   return docked;
 }
 
-// The live chat is exactly as tall as the panel below the header and tabs, so
-// the composer sits at the panel's bottom edge; CSS keeps a floor under it.
-// The header's height changes with the title, the summary and the panel width,
-// so it is observed rather than guessed.
-// The Changes pane uses the same measure, so a long diff scrolls inside the
+// The Changes pane uses this measure, so a long diff scrolls inside the
 // pane and its file list stays in reach instead of the panel running on for
 // the length of the diff.
 let DP_FIT_RO = null;
@@ -5687,7 +5678,7 @@ function fitLiveChat() {
   if (!pane) return;
   // In the middle (body.mid) the Workspace fills it too: its tree and file
   // scroll inside it, as they do on a project's screen.
-  const fits = pane.dataset.pane === 'changes' || (pane.dataset.pane === 'activity' && panel.classList.contains('is-live'))
+  const fits = pane.dataset.pane === 'changes'
     || (pane.dataset.pane === 'workspace' && document.body.classList.contains('mid'));
   if (!fits) return;
   const padB = parseFloat(getComputedStyle(panel).paddingBottom) || 0;
