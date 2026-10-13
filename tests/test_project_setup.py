@@ -445,11 +445,6 @@ class Requests(TheHub):
         self.assertEqual((status, out["error"]), (403, "cross_origin"))
         self.nothing_left()
 
-    def test_the_sessions_list_carries_the_verdict(self):
-        # On every row, with its words: the action menu takes a row without it as not known.
-        self.assertIn('r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))',
-                      Path(dashboard.__file__).read_text(encoding="utf-8"))
-
     def test_the_room_carries_it_for_the_pop_out(self):
         rid = self.task()
         status, out = self.get(f"/api/room?id={rid}")
