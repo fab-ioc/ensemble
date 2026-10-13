@@ -5,11 +5,12 @@ PO chat in a thread from facts it already has.
   in the ledger a thread of its own; a follow-up (``replyTo``, ``Re Pn``, a
   card's answer, a reply sent from a thread) is in the thread it follows;
 * a PO message is in the threads its ``Re Pn`` names (one copy, each), else
-  in the thread of the input before it; after a hub note it is in none;
+  in the thread of the input or PO balloon before it; after a hub note it
+  joins Team activity;
 * a task's report is in the thread of the latest point about the task, else
-  in a thread of the task's own;
-* an ``Ask:`` or "is live" PO message and a reply sent to the chat too show in
-  the channel; a thread's title is its first words, not a quote or a number;
+  in Team activity;
+* an ``Ask:`` or "is live" PO message and a reply sent to the chat too remain
+  in their threads; a thread's title is its first words, not a quote or number;
 * an old hub line the provenance journal did not claim is a hub line, not the
   person's; the side record keeps what was seen, anchors and also-sends.
 """
@@ -74,12 +75,11 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(th["title"], "make the chart wider")
         self.assertEqual(out["parent"], {"s:0": ["P1"]})
 
-    def test_a_hub_note_breaks_the_chain_and_what_answers_it_is_in_no_thread(self):
+    def test_a_hub_note_and_its_answer_live_in_team_activity(self):
         out = self.run_([human("s:0", 0, "a"), note("s:1", 5), po("s:2", 6, "Digest read.")],
                         [point("P1", "s:0", "a")])
         self.assertEqual(out["threads"]["P1"]["members"], ["s:0"])
-        self.assertNotIn("s:1", out["of"])
-        self.assertNotIn("s:2", out["of"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:1", "s:2"])
 
     def test_review_comments_are_a_thread_each_and_a_reply_to_both_is_in_both(self):
         recs = [human("s:0", 0, "## Review comments (2)\n**1.** one\n**2.** two"),
@@ -88,10 +88,10 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(out["parent"]["s:0"], ["P2", "P3"])
         self.assertEqual(out["of"]["s:1"], ["P2", "P3"])
         self.assertEqual(out["threads"]["P2"]["title"], "one")
-        # Shown once in the channel, under the newest of its threads (review 1).
+        # A reply is present in its threads only, even when it answers several.
         self.assertEqual(out["also"], {"s:1": "P3"})
         idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
-        self.assertEqual(threads._channel(idx), ["s:0", "s:1"])
+        self.assertEqual(threads._channel(idx), ["s:0"])
         self.assertEqual((threads._turn(idx, "s:1")["inThr"], threads._turn(idx, "s:1")["alsoIn"]), ("P3", ["P2"]))
         self.assertEqual(threads._turn(idx, "s:1", "P2")["alsoIn"], ["P3"])
 
@@ -117,28 +117,31 @@ class AssignTest(unittest.TestCase):
         pts = [point("P1", "s:0", "a"), point("P2", "s:2", "x", 10, key="ask:s:1:0")]
         out = self.run_(recs, pts)
         self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2"])
-        self.assertEqual(out["also"], {"s:1": "P1"})          # the question shows in the channel
+        self.assertEqual(out["also"], {"s:1": "P1"})          # the question keeps its thread marker
 
     def test_a_reply_sent_from_a_thread_is_in_it(self):
         recs = [report("s:0", 0, "#12", "Wider chart"), human("s:1", 5, "looks good")]
         out = self.run_(recs, [point("P7", "s:1", "looks good", 5)], side(anchors={"P7": "task:#12"}))
-        self.assertEqual(out["threads"]["task:#12"]["members"], ["s:0", "s:1"])
-        self.assertNotIn("P7", out["threads"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0"])
+        self.assertEqual(out["threads"]["P7"]["members"], ["s:1"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:1"])
+        self.assertEqual(out["threads"]["team:activity"]["task"], "")
 
     def test_reply_in_thread_on_a_loose_balloon_makes_it_the_parent(self):
         recs = [note("s:0", 0), po("s:1", 1, "Digest: all quiet"), human("s:2", 5, "and #9?")]
         out = self.run_(recs, [point("P8", "s:2", "and #9?", 5)], side(anchors={"P8": "m:s:1"}))
-        self.assertEqual(out["threads"]["m:s:1"]["members"], ["s:1", "s:2"])
-        self.assertEqual(out["parent"]["s:1"], ["m:s:1"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0", "s:1"])
+        self.assertEqual(out["threads"]["P8"]["members"], ["s:2"])
+        self.assertNotIn("s:1", threads._channel({**out, "recs": recs}))
 
-    def test_a_report_goes_to_the_latest_point_about_its_task_else_its_own_thread(self):
+    def test_a_report_goes_to_the_latest_point_about_its_task_else_team_activity(self):
         recs = [human("s:0", 0, "build it"), po("s:1", 5, "Re P1 (planned #12): started"),
                 report("s:2", 50, "#12"), report("s:3", 60, "#13", "Other work"), po("s:4", 61, "ok")]
         out = self.run_(recs, [point("P1", "s:0", "build it", state="planned", task="#12")],
                         title=lambda ref: "never asked")
         self.assertIn("s:2", out["threads"]["P1"]["members"])
-        th = out["threads"]["task:#13"]
-        self.assertEqual((th["title"], th["members"]), ("#13 Other work", ["s:3", "s:4"]))
+        th = out["threads"]["team:activity"]
+        self.assertEqual((th["title"], th["members"]), ("Team activity", ["s:3", "s:4"]))
 
     def test_a_point_naming_one_task_claims_its_reports(self):
         recs = [human("s:0", 0, "how is #12 going?"), report("s:1", 50, "#12")]
@@ -156,11 +159,57 @@ class AssignTest(unittest.TestCase):
         out = self.run_([human("s:0", 0, "hello there"), po("s:1", 2, "hi")], [])
         self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1"])
 
+    def test_every_message_kind_has_one_home_and_only_roots_enter_the_channel(self):
+        recs = [human("s:0", 0, "first topic"), po("s:1", 1, "answer"),
+                po("s:2", 2, "a new PO topic"), note("s:3", 3),
+                po("s:4", 4, "digest acknowledged"), report("s:5", 5, "#13"),
+                human("s:6", 6, "Re P1: another thought", re_=["P1"]),
+                po("s:7", 7, "Ask: choose one\n- A\n- B", ask=True),
+                po("s:8", 8, "#13 is live", live=True)]
+        out = self.run_(recs, [point("P1", "s:0", "first topic", followUps=["s:6"])])
+        idx = {**out, "recs": recs}
+        self.assertEqual(threads._channel(idx), ["s:0"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:3", "s:4", "s:5"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2", "s:6", "s:7", "s:8"])
+        self.assertEqual(set(out["of"]), {r["mid"] for r in recs})
+
+    def test_po_turn_stays_together_after_a_human_or_digest(self):
+        recs = [po("s:0", 0, "Unprompted topic"), po("s:1", 1, "more on topic"),
+                human("s:2", 2, "please fix"), po("s:3", 3, "working"), po("s:4", 4, "done"),
+                note("s:5", 5), po("s:6", 6, "reading digest"), po("s:7", 7, "digest details")]
+        out = self.run_(recs, [point("P1", "s:2", "please fix", 2)])
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:2", "s:3", "s:4"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:5", "s:6", "s:7"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+
+    def test_po_point_mention_after_a_digest_claims_the_answer_turn(self):
+        recs = [human("s:0", 0, "three problems"), note("s:1", 1),
+                po("s:2", 2, "I've started three tasks for your P5."),
+                po("s:3", 3, "The first task is working now.")]
+        out = self.run_(recs, [point("P5", "s:0", "three problems")])
+        self.assertEqual(out["threads"]["P5"]["members"], ["s:0", "s:2", "s:3"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:1"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+        self.assertEqual(threads._point_mentions("Re P506–P509: done"),
+                         ["P506", "P509", "P507", "P508"])
+
+    def test_po_ask_or_live_after_team_activity_starts_a_visible_topic(self):
+        recs = [note("s:0", 0), po("s:1", 1, "Ask: shall we deploy?\n- Yes\n- No", ask=True),
+                po("s:2", 2, "The change is ready."), report("s:3", 3, "#12"),
+                po("s:4", 4, "#12 is live", live=True)]
+        out = self.run_(recs, [])
+        self.assertEqual(out["threads"]["m:s:1"]["members"], ["s:1", "s:2"])
+        self.assertEqual(out["threads"]["m:s:4"]["members"], ["s:4"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0", "s:3"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:1", "s:4"])
+
     def test_live_news_shows_in_the_channel_and_an_old_re_is_ignored(self):
         recs = [human("s:0", 0, "a"), po("s:1", 1000, "Re P9: #12 is live", re_=["P9"], live=True)]
         out = self.run_(recs, [point("P1", "s:0", "a"), point("P9", "x:9", "later", 5000)])
         self.assertEqual(out["of"]["s:1"], ["P1"])             # P9 came later: the chain decides
         self.assertEqual(out["also"], {"s:1": "P1"})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
 
     def test_a_reply_sent_to_the_chat_too_is_marked(self):
         recs = [human("s:0", 0, "a"), po("s:1", 5, "b"), human("s:2", 100, "Re P1: also this", re_=["P1"])]
@@ -265,14 +314,26 @@ class Endpoints(tp._World):
         status, ch = http_get(f"/api/room/channel?id={self.rid}")
         self.assertEqual(status, 200)
         self.assertEqual([(i["mid"], i.get("thr")) for i in ch["items"]],
-                         [("sid-1:0", ["P1"]), ("sid-1:2", None), ("sid-1:3", None)])
+                         [("sid-1:0", ["P1"])])
+        self.assertEqual(ch["activity"]["id"], "team:activity")
         self.assertEqual(ch["threads"]["P1"]["replies"], 1)
         self.assertEqual(ch["threads"]["P1"]["unread"], 0, "what came before threading counts as read")
         self.assertEqual(http_get(f"/api/room/channel?id={self.rid}&sig={ch['sig']}")[1], {"sig": ch["sig"], "same": True})
         status, th = http_get(f"/api/room/thread?id={self.rid}&t=P1")
         self.assertEqual([i["mid"] for i in th["items"]], ["sid-1:0", "sid-1:1"])
-        self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&mid=sid-1:3")[1]["thread"]["id"], "m:sid-1:3")
+        self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&mid=sid-1:3")[1]["thread"]["id"], "team:activity")
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
+
+    def test_team_activity_unread_points_to_latest_po_reply_not_hub_traffic(self):
+        now = time.time() + 2
+        self.add("sid-1", tp.turn("assistant", "An update for you.", now),
+                 tp.turn("user", "[digest] more traffic", now + 1))
+        self.poll()
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.assertEqual(ch["activity"]["unread"], 1)
+        self.assertEqual(ch["activity"]["lastMid"], "sid-1:4")
+        self.assertIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
+        self.assertEqual(ch["activity"]["lastWho"], "po")
 
     def test_a_reply_from_a_thread_names_its_point_and_new_replies_are_unread(self):
         sent = []
@@ -289,8 +350,8 @@ class Endpoints(tp._World):
         room = self.poll()
         self.assertEqual([(t["id"], t["unread"]) for t in room["threadsUnread"]], [("P1", 1)])
         status, ch = http_get(f"/api/room/channel?id={self.rid}")
-        self.assertIn(("sid-1:4", "P1"), [(i["mid"], i.get("inThr")) for i in ch["items"]],
-                      "a reply sent to the chat too shows in it")
+        self.assertNotIn("sid-1:4", [i["mid"] for i in ch["items"]],
+                         "a reply sent from the thread remains in the thread")
         self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": now + 6})[0], 200)
         self.assertEqual(self.poll()["threadsUnread"], [])
         for bad in ("nan", "inf", now + 10 * 86400):
