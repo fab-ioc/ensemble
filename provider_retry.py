@@ -12,6 +12,7 @@ _d = None
 _LOCK = threading.Lock()
 _SEEN = {}
 DELAYS = (120, 300, 600)
+MAX_AGE_S = 3600          # an old refusal is shown but never woken on deploy
 _TRANSIENT = re.compile(r"(?:overload|at capacity|temporar(?:ily|y) unavailable|internal server error|bad gateway|service unavailable|gateway timeout|server_error|internal_error|service_unavailable|upstream_timeout|rate limit|too many requests|\b(?:429|500|502|503|504|529)\b)", re.I)
 _LIMIT = re.compile(r"(?:usage limit|model_requires_usage_credits|insufficient (?:credit|quota)|quota exceeded)", re.I)
 
@@ -137,6 +138,19 @@ def _save(data):
     tmp.replace(path)
 
 
+def _key(room_id, part):
+    return f"{room_id}::{part.get('identity') or ''}" if room_id else ""
+
+
+def prune_rooms(room_ids):
+    """Discard attempts for deleted rooms and old PTY-keyed state."""
+    with _LOCK:
+        data = _load()
+        kept = {k: v for k, v in data.items() if k.split("::", 1)[0] in room_ids and "::" in k}
+        if kept != data:
+            _save(kept)
+
+
 def schedule(rec, now):
     """Advance only after a due retry was successfully submitted."""
     count = int(rec.get("attempts") or 0)
@@ -148,26 +162,37 @@ def schedule(rec, now):
                if count + 1 == len(DELAYS) else {})}
 
 
-def status(part):
+def status(part, room_id="", now=None):
     try:
+        now = time.time() if now is None else now
         path, _ = _d.rotation._transcript_of(part)
         hit = detect(path, part.get("agent") or "claude")
         if not hit:
             return None
-        rec = _load().get(part.get("ptyId") or "") or {}
+        key = _key(room_id, part)
+        rec = _load().get(key) or {} if key else {}
+        stale = now - hit["at"] > MAX_AGE_S
         if rec.get("key") != hit["key"]:
+            # A fresh error after an old incident starts a new retry budget.
+            if now - float(rec.get("at") or now) > MAX_AGE_S:
+                rec = {}
             attempts = int(rec.get("attempts") or 0)
             rec = {**hit, "attempts": attempts,
                    "nextAt": hit["at"] + DELAYS[attempts] if attempts < len(DELAYS) else 0,
                    "toldAt": rec.get("toldAt", 0),
+                   "wokeAt": rec.get("wokeAt", 0),
                    "lastSentKey": rec.get("lastSentKey", ""),
                    "settleAt": rec.get("settleAt", 0)}
+        if stale:
+            rec = {**rec, "nextAt": 0, "stale": True}
         return rec
     except Exception:
         return None
 
 
 def reason(rec):
+    if rec.get("stale"):
+        return "the model provider was overloaded; the retry window expired"
     if rec.get("nextAt"):
         return "the model provider was overloaded, retrying at " + time.strftime("%H:%M", time.localtime(rec["nextAt"]))
     return "the model provider was overloaded; automatic retries were exhausted"
@@ -175,9 +200,9 @@ def reason(rec):
 
 def tick(room, part, sess, now):
     """Return true while a provider refusal owns this task's idle state."""
-    hit = status(part)
+    key = _key(room.get("id") or "", part)
+    hit = status(part, room.get("id") or "", now)
     if not hit:
-        key = part.get("ptyId") or ""
         if key and _load().get(key):
             path, _ = _d.rotation._transcript_of(part)
             if resolved(path, part.get("agent") or "claude"):
@@ -186,8 +211,9 @@ def tick(room, part, sess, now):
                     if data.pop(key, None):
                         _save(data)
         return False
-    key = part.get("ptyId") or ""
     if not key:
+        return True
+    if hit.get("stale"):
         return True
     with _LOCK:
         data = _load()

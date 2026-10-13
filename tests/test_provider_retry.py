@@ -7,6 +7,7 @@ from unittest import mock
 import dashboard
 import attention
 import provider_retry
+import stall
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -63,7 +64,8 @@ class ProviderRetryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             rollout = Path(tmp) / "rollout.jsonl"
             state = Path(tmp) / "retries.json"
-            part = {"agent": "codex", "ptyId": "pty-test"}
+            part = {"agent": "codex", "identity": "codex", "ptyId": "pty-test"}
+            room = {"id": "room-test"}
             writes = []
             with mock.patch.object(provider_retry, "_file", return_value=state), \
                  mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})), \
@@ -77,13 +79,66 @@ class ProviderRetryTest(unittest.TestCase):
                         f.write(json.dumps({"timestamp": f"2026-10-13T09:13:0{n}.000Z",
                                             "type": "event_msg", "payload": {"type": "task_complete",
                                             "error": {"codex_error_info": "server_overloaded"}}}) + "\n")
-                    provider_retry.tick({}, part, Pty(), now)
+                    provider_retry.tick(room, part, Pty(), now)
                     if wait:
                         now += wait
-                rec = json.loads(state.read_text(encoding="utf-8"))["pty-test"]
+                rec = json.loads(state.read_text(encoding="utf-8"))["room-test::codex"]
+                rec["toldAt"], rec["wokeAt"] = now, now
+                state.write_text(json.dumps({"room-test::codex": rec}), encoding="utf-8")
+                with rollout.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps({"timestamp": "2026-10-13T09:13:04.000Z",
+                                        "type": "event_msg", "payload": {"type": "task_complete",
+                                        "error": {"codex_error_info": "server_overloaded"}}}) + "\n")
+                with mock.patch.object(stall, "_type_po") as wake:
+                    provider_retry.tick(room, {**part, "ptyId": "new-pty"}, Pty(), now + 1)
+                self.assertFalse(wake.called, "the PO was woken again on the fifth refusal")
+                continued = provider_retry.status({**part, "ptyId": "new-pty"}, room["id"], now + 1)
+                self.assertEqual((continued["attempts"], continued["wokeAt"]), (3, now))
             self.assertEqual(writes, ["[provider retry] Carry on."] * 3)
             self.assertEqual(rec["attempts"], 3)
             self.assertEqual(rec["nextAt"], 0)
+
+    def test_old_refusal_stays_blocked_without_retrying(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            rollout.write_bytes((FIXTURES / "provider_codex_overloaded.jsonl").read_bytes())
+            state = Path(tmp) / "retries.json"
+            part = {"agent": "codex", "identity": "codex", "ptyId": "pty-old"}
+            at = provider_retry._d.model_limit._ts("2026-10-13T09:13:00.000Z")
+            now = at + provider_retry.MAX_AGE_S + 1
+            with mock.patch.object(provider_retry, "_file", return_value=state), \
+                 mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(rollout, lambda _: {})), \
+                 mock.patch.object(dashboard.rotation, "_idle", return_value=True), \
+                 mock.patch.object(dashboard, "_type_input") as typed:
+                rec = provider_retry.status(part, "room-old", now)
+                self.assertTrue(rec["stale"])
+                self.assertIn("overloaded", provider_retry.reason(rec))
+                provider_retry.tick({"id": "room-old"}, part, mock.Mock(alive=lambda: True), now)
+                typed.assert_not_called()
+            self.assertFalse(state.exists())
+
+    def test_paused_and_done_tasks_are_not_retried(self):
+        for status, workflow in (("paused", "inprogress"), ("waiting_human", "inprogress"),
+                                 ("running", "done")):
+            room = {"id": "room-quiet", "launched": True, "status": status}
+            with self.subTest(status=status, workflow=workflow), \
+                 mock.patch.object(dashboard.chatroom, "get_room", return_value=room), \
+                 mock.patch.object(dashboard, "_room_is_live", return_value=True), \
+                 mock.patch.object(dashboard, "workflow_of", return_value=workflow), \
+                 mock.patch.object(provider_retry, "tick") as retried:
+                stall._look_provider("room-quiet", 1000)
+                retried.assert_not_called()
+
+    def test_deleted_rooms_and_old_pty_keys_are_pruned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "retries.json"
+            state.write_text(json.dumps({"room-gone::codex": {"attempts": 1},
+                                         "room-kept::codex": {"attempts": 2},
+                                         "pty-old": {"attempts": 3}}), encoding="utf-8")
+            with mock.patch.object(provider_retry, "_file", return_value=state):
+                provider_retry.prune_rooms({"room-kept"})
+            self.assertEqual(list(json.loads(state.read_text(encoding="utf-8"))),
+                             ["room-kept::codex"])
 
     def test_submit_check_recovers_swallowed_enter(self):
         class Pty:

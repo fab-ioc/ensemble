@@ -3301,13 +3301,15 @@ def _verify_codex_submit(sess, writer, text: str, path=None, before=-1) -> None:
     try:
         if path and before >= 0 and rotation.read_rollout(path, since=before)["promptSince"]:
             return
-        lines = (sess.tail() or "").splitlines()[-8:]
+        lines = (sess.tail() or "").splitlines()[-3:]
         plain = " ".join(text.split())
-        pending = any(_CODEX_PASTE_LEFT.search(ln) for ln in lines)
+        editor = [ln.lstrip() for ln in lines if re.match(r"^[›❯>]\s*", ln.lstrip())]
+        pending = any(_CODEX_PASTE_LEFT.search(ln) for ln in editor)
         pending |= any(plain[:min(24, len(plain))] in " ".join(ln.split())
-                       for ln in lines if plain)
+                       for ln in editor if plain)
         if pending and writer("\r") is not False:
-            print(f"[input] repeated Codex Enter for {str((sess.meta or {}).get('room') or '')}", flush=True)
+            print(f"[input] Codex turn not confirmed; sent another Enter for "
+                  f"{str((sess.meta or {}).get('room') or '')}", flush=True)
     except (OSError, EOFError, AttributeError):
         pass
 

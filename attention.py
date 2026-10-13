@@ -1273,7 +1273,7 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         block = (why, cause, (block[2] if block and block[1] == "model_limit" else "") or line)
 
     if ev["alive"] and status != "busy" and _d is not None:
-        retry = _d.provider_retry.status(part)
+        retry = _d.provider_retry.status(part, room.get("id") or "", now)
         if retry:
             return ("blocked", f"{who}: {_d.provider_retry.reason(retry)}",
                     {"cause": "provider_overload", "retryAt": retry.get("nextAt", 0),

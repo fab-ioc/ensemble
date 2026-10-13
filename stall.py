@@ -193,8 +193,7 @@ def _look(rid: str, state: dict, now: float) -> str:
         part = cr.participant(room, owner) if owner else None
         if not part:
             return ""
-        excluded = why_not(room, owner)
-        if excluded and excluded != "no PO":
+        if why_not(room, owner):
             return ""
         if rot.is_rotating(rid, owner) or rot.awaiting_handover(rid, owner):
             return ""
@@ -203,10 +202,8 @@ def _look(rid: str, state: dict, now: float) -> str:
         sess = rot._pty(part)
         if sess is None:
             return ""
-        if _d.provider_retry.status(part):
+        if _d.provider_retry.status(part, rid, now):
             return ""                   # provider refusal has its own backoff
-        if excluded:
-            return ""
         # A teammate still at work (a review running) is not a stall.
         if any(_busy(p) for p in cr.agent_participants(room) if p.get("identity") != owner):
             return ""
@@ -498,7 +495,7 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         return ""
     if limit_hit(part):
         return ""                       # at a model limit: _look_limit tells the PO
-    if _d.provider_retry.status(part):
+    if _d.provider_retry.status(part, rid, now):
         return ""                       # provider refusal is retried, never silent
     view = {**room, "owners": owners, "workflow": _d.workflow_of(room)}
     quiet = silent_for(view, part, _d.attention._evidence(part, statuses), now) \
@@ -746,8 +743,14 @@ def _look_provider(rid: str, now: float) -> str:
         room = cr.get_room(rid, public=False)
         if not room or not _d._room_is_live(room) or not room.get("launched", True):
             return ""
+        if room.get("status") in ("paused", "waiting_human") or _d.workflow_of(room) == "done":
+            return ""
+        owners = set(cr.owners(room))
+        in_review = _d.workflow_of(room) == "inreview"
         for part in cr.agent_participants(room):
             ident = part.get("identity") or ""
+            if in_review and ident in owners:
+                continue
             if rot.is_rotating(rid, ident) or rot.awaiting_handover(rid, ident) or limit_hit(part):
                 continue
             sess = rot._pty(part)
@@ -767,6 +770,7 @@ def tick(now: float | None = None) -> dict[str, str]:
             ids = [p.stem for p in _d.chatroom.ROOMS_DIR.glob("room-*.json")]
         except OSError:
             ids = []
+        _d.provider_retry.prune_rooms(set(ids))
         try:
             statuses = _d.attention._claude_status_by_session()
         except Exception:
