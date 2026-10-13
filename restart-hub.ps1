@@ -236,14 +236,20 @@ if (-not $cfg.keepAgents) {
     $stopper = Start-Process -FilePath $cfg.python -ArgumentList $hostArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
     $hostGone = ($stopper.ExitCode -eq 0)
   } catch { $hostGone = $false; L "PTY host stop failed: $_" }
-  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
   if (-not $hostGone) {
-    L "PTY host process not confirmed gone; refusing to start incompatible hub code"
-    DropLease
-    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-    exit 1
+    L "PTY host did not stop cleanly; force-killing pinned process tree"
+    $forceArgs = @()
+    if ($cfg.script) { $forceArgs += (Q (Join-Path $cfg.repo 'backends\ptyhost.py')) }
+    else { $forceArgs += @('--run', 'pty_host') }
+    $forceArgs += @('--force-stop', (Q $hostPin))
+    try {
+      $forced = Start-Process -FilePath $cfg.python -ArgumentList $forceArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+      L "pinned PTY host force-stop exit code: $($forced.ExitCode); starting hub anyway"
+    } catch { L "pinned PTY host force-stop failed: $_; starting hub anyway" }
+  } else {
+    L "classic PTY host process confirmed gone"
   }
-  L "classic PTY host process confirmed gone"
+  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
 }
 $up = $false
 if ($useTask) {

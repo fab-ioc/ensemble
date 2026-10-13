@@ -463,6 +463,17 @@ class PtySession:
             self._proc.terminate(force=True)
         except Exception:
             pass
+        self.discard_spool()
+
+    def discard_spool(self) -> None:
+        """Stop spooling and remove bytes after explicit teardown."""
+        with self._lock:
+            spool, self._spool = self._spool, None
+        if spool is not None:
+            try:
+                spool.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def info(self) -> dict:
         return {
@@ -541,3 +552,13 @@ def use_host(client) -> None:
     death_for = client.death_for
     forget_death = client.forget_death
     set_death_hook = client.set_death_hook
+
+
+_LOCAL_API = {name: globals()[name] for name in (
+    "create", "get", "list_sessions", "kill", "reap", "death_for",
+    "forget_death", "set_death_hook")}
+
+
+def use_local() -> None:
+    """Use the in-process PTYs if the detached owner cannot be attached."""
+    globals().update(_LOCAL_API)

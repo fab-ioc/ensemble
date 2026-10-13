@@ -59,6 +59,9 @@ def _pty_host(argv: list[str]) -> None:
     if len(argv) >= 3 and argv[1] == "--stop":
         pin = json.loads(Path(argv[3]).read_text(encoding="utf-8")) if len(argv) > 3 else None
         sys.exit(0 if ptyhost.stop(Path(argv[2]), expected=pin) else 1)
+    if len(argv) >= 3 and argv[1] == "--force-stop":
+        pin = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
+        sys.exit(0 if ptyhost.force_stop(pin) else 1)
     ptyhost.serve(Path(argv[1]))
 
 

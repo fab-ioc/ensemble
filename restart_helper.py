@@ -163,15 +163,26 @@ def _run(plan: dict) -> int:
             return 1
     if not plan["keepAgents"]:
         state = Path(plan["leasePath"]).parent
-        if not ptyhost.stop(state, expected=pinned_host):
-            log("old PTY host process not confirmed gone; refusing to start incompatible hub code")
-            return 1
+        try:
+            host_stopped = ptyhost.stop(state, expected=pinned_host)
+        except Exception as exc:
+            log(f"old PTY host stop failed: {exc}")
+            host_stopped = False
+        if not host_stopped:
+            log("old PTY host did not stop cleanly; force-killing pinned process tree")
+            try:
+                forced = ptyhost.force_stop(pinned_host)
+            except Exception as exc:
+                log(f"pinned PTY host force-stop failed: {exc}")
+                forced = False
+            log(f"pinned PTY host force-stop confirmed: {forced}; starting hub anyway")
     if svc:
         res = subprocess.run(["launchctl", "bootstrap", svc["domain"], svc["plist"]],
                              capture_output=True, text=True, encoding="utf-8", timeout=30)
         log(f"launchctl bootstrap: {res.returncode}")
         if res.returncode != 0:
-            return 1
+            log("launchd bootstrap failed; starting hub directly")
+            spawn(plan["port"])
     else:
         spawn(plan["port"])
     if not wait(plan["port"], 90):

@@ -14,7 +14,7 @@
     const path = typeof p.input === 'string' ? p.input.split('?')[0] : '';
     if (!uncertainOnFailure.has(path)) return false;
     pending.shift();
-    p.reject(new Error('Delivery uncertain. Check the terminal before sending again.'));
+    p.reject(new Error('May not have been delivered - check the chat, then Retry.'));
     return true;
   }
 

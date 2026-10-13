@@ -11,7 +11,20 @@ import app_update
 
 
 class HotRestartTest(TestCase):
-    def test_mac_helper_refuses_new_hub_when_old_host_survives(self):
+    def test_windows_restart_force_stop_precedes_hub_start(self):
+        script = (Path(__file__).resolve().parent.parent / "restart-hub.ps1").read_text(encoding="utf-8")
+        force = script.index("'--force-stop'")
+        hub = script.index("$up = $false", force)
+        self.assertLess(force, hub)
+        self.assertNotIn("exit 1", script[force:hub])
+
+    def test_session_page_new_lines_use_crlf(self):
+        page = (Path(__file__).resolve().parent.parent / "session.html").read_bytes()
+        for token in (b"/static/hub-resilience.js", b"hub:online"):
+            at = page.index(token)
+            self.assertTrue(page[at:page.index(b"\n", at) + 1].endswith(b"\r\n"))
+
+    def test_mac_helper_forces_old_host_then_starts_new_hub(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-mac-stop-") as td:
             root = Path(td)
             plan = {"python": "python", "script": "dashboard.py", "repo": td,
@@ -34,10 +47,12 @@ class HotRestartTest(TestCase):
                  mock.patch.object(restart_helper.ptyhost, "descriptor",
                                    return_value={"pid": 456, "port": 789}), \
                  mock.patch.object(restart_helper.ptyhost, "stop", return_value=False) as stop, \
+                 mock.patch.object(restart_helper.ptyhost, "force_stop", return_value=False) as force, \
                  mock.patch.object(restart_helper.time, "sleep"):
-                self.assertEqual(restart_helper._run(plan), 1)
-            spawn.assert_called_once()  # preflight only; incompatible hub never starts
+                self.assertEqual(restart_helper._run(plan), 0)
+            self.assertEqual(spawn.call_count, 2)  # preflight and replacement hub
             stop.assert_called_once_with(root, expected={"pid": 456, "port": 789})
+            force.assert_called_once_with({"pid": 456, "port": 789})
 
     def test_update_keeps_old_host_when_hub_stop_fails(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-update-stop-") as td:
@@ -62,10 +77,10 @@ class HotRestartTest(TestCase):
             self.assertEqual(helper.pinned_host, {"pid": 123, "port": 456})
             self.assertIn("/api/restart/external-cancel", calls)
 
-    def test_update_refuses_swap_if_old_host_process_survives(self):
+    def test_update_forces_old_host_then_starts_new_hub(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-update-host-") as td:
             root = Path(td)
-            helper = app_update.Helper({"port": 8798, "ptyHostVersion": "old",
+            helper = app_update.Helper({"port": 8798, "ptyHostVersion": "old", "toVersion": "new",
                                         "leaseId": "ours", "leasePath": str(root / "lease.json"),
                                         "log": str(root / "update.log")})
             helper.new_host_version = "new"
@@ -75,14 +90,18 @@ class HotRestartTest(TestCase):
                  mock.patch("backends.ptyhost.descriptor", return_value={"pid": 123, "port": 456}), \
                  mock.patch.object(helper, "stop_hub", return_value=(False, True)), \
                  mock.patch.object(helper, "stop_pty_host", return_value=False), \
-                 mock.patch.object(helper, "ensure_serving") as restore_old, \
+                 mock.patch("backends.ptyhost.force_stop", return_value=False) as force, \
+                 mock.patch.object(helper, "_try_start", return_value=True) as start, \
+                 mock.patch.object(app_update, "wait_served", return_value={"version": "new"}), \
+                 mock.patch.object(app_update, "decide", return_value="keep"), \
                  mock.patch.object(helper, "restore_rooms"), \
                  mock.patch.object(helper, "record", side_effect=lambda **kw: kw), \
                  mock.patch.object(app_update, "swap_in") as swap:
                 result = helper._swap_and_start(root, root, [], root, [], root, root)
-            self.assertEqual(result["stage"], "host-stop")
-            swap.assert_not_called()
-            restore_old.assert_called_once()
+            self.assertEqual(result["stage"], "done")
+            swap.assert_called_once()
+            force.assert_called_once_with({"pid": 123, "port": 456})
+            start.assert_called_once()
 
     def test_mac_helper_keeps_bind_and_original_flags(self):
         plan = {"python": "python", "script": "dashboard.py", "port": 8765,

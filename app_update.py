@@ -772,12 +772,21 @@ class Helper:
                 self.restore_rooms()
             return self.record(ok=False, stage="stop",
                                reason="the running hub did not stop; nothing was changed")
-        if not self.keep_agents and "ptyHostVersion" in self.plan and not self.stop_pty_host():
-            self.log("PTY host did not stop; starting the old version again")
-            self.ensure_serving(cur_app, prev, via_service)
-            self.restore_rooms()
-            return self.record(ok=False, stage="host-stop",
-                               reason="the old PTY host did not stop")
+        if not self.keep_agents and "ptyHostVersion" in self.plan:
+            try:
+                host_stopped = self.stop_pty_host()
+            except Exception as exc:
+                self.log(f"PTY host stop failed: {exc}")
+                host_stopped = False
+            if not host_stopped:
+                from backends import ptyhost
+                self.log("PTY host did not stop cleanly; force-killing pinned process tree")
+                try:
+                    forced = ptyhost.force_stop(self.pinned_host)
+                except Exception as exc:
+                    self.log(f"pinned PTY host force-stop failed: {exc}")
+                    forced = False
+                self.log(f"pinned PTY host force-stop confirmed: {forced}; continuing hub update")
         try:
             swap_in(folder, names, new_from, new_names, prev)
         except OSError as e:

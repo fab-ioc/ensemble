@@ -14,12 +14,29 @@ from backends import get_backend, ptyhost
 
 
 class HostTest(unittest.TestCase):
+    def test_dead_predecessor_spool_is_removed_on_new_host_start(self):
+        with tempfile.TemporaryDirectory(prefix="ensemble-pty-stale-") as td:
+            state = Path(td)
+            spool = state / "pty-spool" / "old.bin"
+            spool.parent.mkdir()
+            spool.write_bytes(b"unreachable")
+            (state / ptyhost.DESCRIPTOR).write_text(json.dumps({
+                "port": 1, "token": "old", "pid": 99_999_999,
+                "protocol": ptyhost.PROTOCOL, "version": ptyhost.version()}), encoding="utf-8")
+            host = ptyhost.connect(state, get_backend())
+            try:
+                self.assertFalse(spool.exists())
+            finally:
+                self.assertTrue(ptyhost.stop(state, expected=ptyhost.descriptor(state)))
+
     def test_classic_stop_requires_pinned_identity_and_dead_host_process(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-pty-stop-") as td:
             state = Path(td)
             host = ptyhost.connect(state, get_backend())
             pin = ptyhost.descriptor(state)
             try:
+                self.assertEqual(host.call("ping"), {"pid": pin["pid"],
+                    "protocol": ptyhost.PROTOCOL, "version": ptyhost.version()})
                 wrong = dict(pin, token="wrong")
                 pin_file = state / "pinned.json"
                 pin_file.write_text(json.dumps(wrong), encoding="utf-8")

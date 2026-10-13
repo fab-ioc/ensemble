@@ -10615,6 +10615,8 @@ def pull_checkout() -> str:
 
 def source_update_keeps_host() -> bool:
     """Read the upstream PTY owner before choosing the update's restart mode."""
+    if _PTY_HOST_MODE == "local":
+        return False
     host = ptyhost.connect(DASHBOARD_DIR, start=False)
     if not host:
         return False
@@ -11029,6 +11031,8 @@ def _snapshot_summary(snap: dict) -> str:
 
 def pty_host_compatible() -> bool:
     """Only a running host with the code on disk can keep PTYs through a restart."""
+    if _PTY_HOST_MODE == "local":
+        return False
     try:
         host = ptyhost.connect(DASHBOARD_DIR, start=False)
         return bool(host and host.version == ptyhost.version())
@@ -11040,6 +11044,23 @@ def pty_host_state_dir() -> Path:
     if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         return DASHBOARD_DIR / "pty-preflight" / str(HUB_PORT)
     return DASHBOARD_DIR
+
+
+_PTY_HOST_MODE = "unknown"  # startup sets attached/local; local must drain
+
+
+def attach_pty_host() -> None:
+    """The web hub must serve even when the detached PTY owner fails."""
+    global _PTY_HOST_MODE
+    try:
+        host_client = ptyhost.connect(pty_host_state_dir(), BACKEND)
+        ptyrun.use_host(host_client)
+        _PTY_HOST_MODE = "attached"
+        _restart_log(f"PTY host attached: pid {host_client.pid}, version {host_client.version}")
+    except Exception as exc:
+        ptyrun.use_local()
+        _PTY_HOST_MODE = "local"
+        _restart_log(f"PTY host unavailable; using in-process PTYs: {exc}")
 
 
 def restart_plan(room_id: str = "", drain: bool = False) -> dict:
@@ -17505,9 +17526,7 @@ def main():
 
     # The PTY owner is outside the hub's process tree. A new web process
     # attaches to the same host and the same terminal IDs after a restart.
-    host_client = ptyhost.connect(pty_host_state_dir(), BACKEND)
-    ptyrun.use_host(host_client)
-    _restart_log(f"PTY host attached: pid {host_client.pid}, version {host_client.version}")
+    attach_pty_host()
 
     cleaned = cleanup_rename_artifacts()
     if cleaned:

@@ -4823,7 +4823,7 @@ const toast = (msg, ms=2500, kind='') => {
 };
 
 function offerTerminalSendRetry(pid, text) {
-  toast('Not delivered: confirmation was lost. Check the terminal before retrying.', 0, 'err');
+  toast('May not have been delivered - check the chat, then Retry.', 0, 'err');
   const s = _toastEl();
   const retry = document.createElement('button');
   retry.type = 'button';

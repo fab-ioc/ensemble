@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @unittest.skipUnless(shutil.which("node"), "Node is required for browser script checks")
 class HubResilienceTest(unittest.TestCase):
+    def test_uncertain_send_explains_manual_check_and_retry(self):
+        wording = "May not have been delivered - check the chat, then Retry."
+        for file in ("index.html", "static/hub-resilience.js"):
+            self.assertIn(wording, (ROOT / file).read_text(encoding="utf-8"))
+
     def test_queued_terminal_send_lost_reply_is_not_flushed_twice(self):
         code = r"""
 const assert = require('assert');
@@ -30,7 +35,7 @@ vm.runInNewContext(fs.readFileSync('static/hub-resilience.js', 'utf8'), context)
 (async () => {
   await assert.rejects(window.fetch('/api/sessions'));
   const send = window.fetch('/api/send', { method: 'POST' });
-  const rejected = assert.rejects(send, /Delivery uncertain/);
+  const rejected = assert.rejects(send, /May not have been delivered/);
   assert.strictEqual(window.HubResilience.queued, 1);
   up = true;
   await window.HubResilience.probe();

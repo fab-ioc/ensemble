@@ -7,10 +7,24 @@ files; individual files catch appended transcripts and edited room records.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 
-FORMAT = 2
+FORMAT = 3
+
+
+def _code_version() -> str:
+    """Invalidate parsed rows when application Python code changes."""
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    paths = sorted(p for p in root.rglob("*.py")
+                   if not any(part in {"tests", ".venv", "build", "dist", "__pycache__"}
+                              for part in p.relative_to(root).parts))
+    for file in paths:
+        digest.update(str(file.relative_to(root)).encode("utf-8"))
+        digest.update(file.read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()[:16]
 
 
 def _codex_home(home: Path) -> Path:
@@ -98,6 +112,7 @@ def save(home: Path, state: Path, sessions: dict, transcript_index: dict,
     if expected_sources is not None and sources != expected_sources:
         raise ValueError("warm cache sources changed while rebuilding")
     body = {"format": FORMAT, "codexHome": str(_codex_home(home)),
+            "codeVersion": _code_version(),
             "sources": sources,
             "sessions": _encode(sessions),
             "transcripts": _encode(transcript_index),
@@ -110,7 +125,9 @@ def save(home: Path, state: Path, sessions: dict, transcript_index: dict,
 def load(home: Path, state: Path) -> dict | None:
     try:
         data = json.loads(path(state).read_text(encoding="utf-8"))
-        if data.get("format") != FORMAT or data.get("codexHome") != str(_codex_home(home)):
+        if (data.get("format") != FORMAT or
+            data.get("codexHome") != str(_codex_home(home)) or
+            data.get("codeVersion") != _code_version()):
             return None
         for name, expected in data["sources"].items():
             try:
