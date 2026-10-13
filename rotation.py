@@ -2073,8 +2073,9 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
             end = time.time() + REPLAY_WAIT_S
             while True:
                 time.sleep(1)
-                part = _d.chatroom.participant(_d.chatroom.get_room(rid) or {}, ident)
-                sess = _pty(part or {})
+                with GATE:
+                    part = _d.chatroom.participant(_d.chatroom.get_room(rid) or {}, ident)
+                    sess = _pty(part or {})
                 if sess is None:
                     _log(f"{rid}/{ident}: not running — {len(wakes) - i} held wake(s) dropped")
                     lost = [it.get("key") for w in wakes[i:] if isinstance(w, dict)
@@ -2085,11 +2086,10 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
                 quiet = bool(tail) and time.time() - sess.last_output >= IDLE_S
                 if (quiet and not _d.attention.looks_like_prompt(tail)) or time.time() > end:
                     break
-            with GATE:
-                if isinstance(wake, dict):
-                    _type_sends(rid, ident, sess, wake)
-                else:
-                    _d._type_input(sess, wake)
+            if isinstance(wake, dict):
+                _type_sends(rid, ident, sess, wake)
+            else:
+                _d._type_input(sess, wake)
             _replayed((rid, ident), [wake])
         _log(f"{rid}/{ident}: typed {len(wakes)} held wake(s) into the fresh session")
     threading.Thread(target=run, daemon=True, name=f"rotation-replay-{rid}-{ident}").start()

@@ -7,6 +7,7 @@ from unittest import mock
 
 import dashboard
 import attention
+import due
 import provider_retry
 import stall
 
@@ -341,6 +342,59 @@ class ProviderRetryTest(unittest.TestCase):
             self.assertEqual(stall.tick(1001), {})
             looked.assert_not_called()
             self.assertEqual(prune.call_count, 1, "a failed glob must not prune with an empty set")
+
+    def test_empty_room_listing_keeps_retry_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "retries.json"
+            record = {"room-kept::codex": {"attempts": 2, "nextAt": 123}}
+            state.write_text(json.dumps(record), encoding="utf-8")
+            with mock.patch.object(provider_retry, "_file", return_value=state):
+                provider_retry.prune_rooms(set())
+                self.assertEqual(provider_retry._load(), record)
+
+    def test_due_codex_rollout_lookup_and_submit_wait_leave_gate_free(self):
+        class Session:
+            meta = {"agent": "codex", "room": "room-gate", "identity": "codex"}
+
+            def write(self, _data):
+                return True
+
+            def alive(self):
+                return True
+
+        def gate_free(*_args):
+            got = []
+            def probe():
+                acquired = dashboard.rotation.GATE.acquire(timeout=0.3)
+                got.append(acquired)
+                if acquired:
+                    dashboard.rotation.GATE.release()
+            worker = threading.Thread(target=probe)
+            worker.start()
+            worker.join(1)
+            self.assertEqual(got, [True], "a Codex submit wait held rotation.GATE")
+            return None, -1
+
+        room = {"id": "room-gate"}
+        part = {"agent": "codex", "identity": "codex"}
+        items = [{"key": "due-1"}]
+        with mock.patch.object(dashboard.chatroom, "get_room", return_value=room), \
+             mock.patch.object(dashboard.chatroom, "participant", return_value=part), \
+             mock.patch.object(dashboard.rotation, "_pty", return_value=Session()), \
+             mock.patch.object(dashboard.rotation, "is_rotating", return_value=False), \
+             mock.patch.object(dashboard.rotation, "awaiting_handover", return_value=False), \
+             mock.patch.object(dashboard.rotation, "_transcript_of", return_value=(None, lambda _: {})), \
+             mock.patch.object(dashboard.rotation, "_idle", return_value=True), \
+             mock.patch.object(dashboard.rotation, "_submitted_lately", return_value=False), \
+             mock.patch.object(due, "wake_line", return_value=("Carry on.", items)), \
+             mock.patch.object(dashboard, "checkpoint_wait_restore"), \
+             mock.patch.object(dashboard, "_record_typed_input_safely"), \
+             mock.patch.object(dashboard, "_codex_rollout_start", side_effect=gate_free) as lookup, \
+             mock.patch.object(dashboard, "_verify_codex_submit", side_effect=gate_free) as verify:
+            self.assertEqual(due._deliver({"roomId": "room-gate", "identity": "codex"}, items, 100),
+                             ("typed", items))
+            lookup.assert_called_once()
+            verify.assert_called_once()
 
     def test_codex_submit_probe_survives_rollout_lookup_error(self):
         sess = mock.Mock(meta={"room": "room-test", "identity": "codex"})

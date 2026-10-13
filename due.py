@@ -350,7 +350,7 @@ def _deliver(subj: dict, items: list[dict], now: float) -> tuple[str, list[dict]
         if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
             return "", []
         wake, told = wake_line(subj, items, now)
-        return ("typed", told) if _d._type_input(sess, wake) else ("", [])
+    return ("typed", told) if _d._type_input(sess, wake) else ("", [])
 
 
 # ---------------------------------------------------------------------------

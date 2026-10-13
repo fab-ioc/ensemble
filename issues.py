@@ -457,7 +457,7 @@ def _deliver_one(room_id: str, items: list[dict], now: float) -> list[tuple[dict
         if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
             return []
         wake, told = wake_line(items)
-        return [(it, "typed") for it in told] if _d._type_input(sess, wake) else []
+    return [(it, "typed") for it in told] if _d._type_input(sess, wake) else []
 
 
 def deliver(now: float | None = None) -> list[dict]:

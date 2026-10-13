@@ -170,6 +170,8 @@ def _key(room_id, part):
 
 def prune_rooms(room_ids):
     """Discard attempts for deleted rooms and old PTY-keyed state."""
+    if not room_ids:
+        return
     with _LOCK:
         data = _load()
         kept = {k: v for k, v in data.items() if k.split("::", 1)[0] in room_ids and "::" in k}

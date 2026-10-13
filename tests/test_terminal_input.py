@@ -117,6 +117,35 @@ class PtyInputEndpointFilter(unittest.TestCase):
     def post(self, sess, data, **extra):
         return self.request("/api/pty/input", {"id": "pty-x", "data": data, **extra}, sess)
 
+    def test_codex_rollout_discovery_runs_outside_rotation_gate(self):
+        class Session:
+            meta = {"agent": "codex", "room": "room-one", "identity": "codex"}
+            hub_line_typed = False
+
+            def alive(self):
+                return True
+
+            def write(self, _data):
+                return True
+
+        def lookup(_sess):
+            got = []
+            def probe():
+                acquired = rotation.GATE.acquire(timeout=0.3)
+                got.append(acquired)
+                if acquired:
+                    rotation.GATE.release()
+            worker = threading.Thread(target=probe)
+            worker.start()
+            worker.join(1)
+            self.assertEqual(got, [True], "rollout lookup held rotation.GATE")
+            return None, -1
+
+        with mock.patch.object(dashboard, "_codex_rollout_start", side_effect=lookup) as searched, \
+             mock.patch.object(dashboard.time, "sleep", return_value=None):
+            self.assertEqual(self.post(Session(), "Carry on.", hub=True), b"200")
+        searched.assert_called_once()
+
     def test_browser_input_filters_only_the_recognized_frames(self):
         class Session:
             meta = {}

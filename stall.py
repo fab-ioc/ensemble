@@ -241,32 +241,32 @@ def _look(rid: str, state: dict, now: float) -> str:
             rec = {"episode": ep, **{k: rec[k] for k in ("silent", "lastToldAt", "permission") if rec.get(k)}}
         rec["current"] = True           # stopped right now (record())
         state[rid] = rec
-        if not rec.get("nudgedAt"):
-            if not _d._type_input(sess, NUDGE_COMMAND if own else NUDGE):
-                return ""
-            rec.update(nudgedAt=now, owner=owner, idleSince=now - idle)
-            if own:
-                rec["command"] = own
-            state[rid] = rec
-            return "nudged"
-        if now - float(rec["nudgedAt"]) < GRACE_S or rec.get("wokeAt"):
+    if not rec.get("nudgedAt"):
+        if not _d._type_input(sess, NUDGE_COMMAND if own else NUDGE):
             return ""
-        if not rec.get("toldAt"):
-            # The line in the PO's room, once; the wake below until it lands.
-            if not _post_po(room, rec, now):
-                return ""
-            rec["toldAt"] = rec["lastToldAt"] = now
-            state[rid] = rec
-            did = "PO told"
-        else:
-            did = ""
-        # A busy, rotating or stopped PO is typed the line when it is next
-        # idle (review 2): the record keeps it pending, across a restart too.
-        if _wake_po(room, rec, now):
-            rec["wokeAt"] = now
-            state[rid] = rec
-            return (did + ", woken") if did else "PO woken"
-        return (did + " (in its chat; typed when it is idle)") if did else ""
+        rec.update(nudgedAt=now, owner=owner, idleSince=now - idle)
+        if own:
+            rec["command"] = own
+        state[rid] = rec
+        return "nudged"
+    if now - float(rec["nudgedAt"]) < GRACE_S or rec.get("wokeAt"):
+        return ""
+    if not rec.get("toldAt"):
+        # The line in the PO's room, once; the wake below until it lands.
+        if not _post_po(room, rec, now):
+            return ""
+        rec["toldAt"] = rec["lastToldAt"] = now
+        state[rid] = rec
+        did = "PO told"
+    else:
+        did = ""
+    # A busy, rotating or stopped PO is typed the line when it is next
+    # idle (review 2): the record keeps it pending, across a restart too.
+    if _wake_po(room, rec, now):
+        rec["wokeAt"] = now
+        state[rid] = rec
+        return (did + ", woken") if did else "PO woken"
+    return (did + " (in its chat; typed when it is idle)") if did else ""
 
 
 def _words(room: dict, rec: dict, now: float) -> tuple[str, str, str]:
@@ -339,7 +339,7 @@ def _wake_po(room: dict, rec: dict, now: float) -> bool:
         wake = (f"[digest] {proj or 'Your project'}: {label} stalled since {since} — {why} "
                 f"did not carry on after the hub's "
                 f"nudge at {nudged}. Details with ensemble_get_task {_d.task_arg(room)}.")
-        return _d._type_input(sess, wake)
+    return _d._type_input(sess, wake)
 
 
 # ---------------------------------------------------------------------------

@@ -2109,6 +2109,7 @@ def _checkpoint_tell(room_id: str, line: str, wait_s: float = 900) -> None:
         if not owners:
             return
         part = owners[0]
+        ready = False
         with rotation.GATE:
             sess = rotation._pty(part)
             if sess is None:
@@ -2117,9 +2118,10 @@ def _checkpoint_tell(room_id: str, line: str, wait_s: float = 900) -> None:
             if not (rotation.is_rotating(room_id, ident) or rotation.awaiting_handover(room_id, ident)
                     or restart_drain.holding()):
                 tpath, reader = rotation._transcript_of(part)
-                if rotation._idle(part, reader(tpath)) and not rotation._submitted_lately(sess):
-                    _type_input(sess, line)
-                    return
+                ready = rotation._idle(part, reader(tpath)) and not rotation._submitted_lately(sess)
+        if ready:
+            _type_input(sess, line)
+            return
         time.sleep(3)
 
 
@@ -14858,8 +14860,8 @@ class Handler(BaseHTTPRequestHandler):
                           _origin_sender_info(it["text"], it.get("origin") or "human"))
                          for it in items]
             text = "\n\n".join(part for part, _info in delivered)
-            if not _type_input(sess, text, delivered[0][1], parts=delivered):
-                return items     # it looked alive, but the write found it gone
+        if not _type_input(sess, text, delivered[0][1], parts=delivered):
+            return items     # it looked alive, but the write found it gone
         _typed_sends(rid, items)
         if any((it.get("origin") or "human") in {"human", "po"} for it in items):
             note_answer(rid, agents_in[0].get("identity", ""))     # a person's or the PO's
@@ -15959,6 +15961,11 @@ class Handler(BaseHTTPRequestHandler):
             submit_text = ""
             submit_info = None
             verify_codex = None
+            # Discover the rollout before taking the rotation gate: on a miss
+            # this may inspect old rollouts, and no other terminal should wait.
+            codex_rollout = ((None, -1) if (sess.meta or {}).get("agent") != "codex"
+                             or not (hub_line or getattr(sess, "hub_line_typed", False))
+                             else _codex_rollout_start(sess))
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -16008,7 +16015,7 @@ class Handler(BaseHTTPRequestHandler):
                         path = getattr(sess, "hub_line_rollout_path", None)
                         before = getattr(sess, "hub_line_rollout_size", -1)
                         if path is None:
-                            path, before = _codex_rollout_start(sess)
+                            path, before = codex_rollout
                         verify_codex = (submit_text, path, before)
                     sess.hub_line_typed = False
                     sess.hub_line_text = ""
@@ -16021,7 +16028,7 @@ class Handler(BaseHTTPRequestHandler):
                     sess.hub_line_text = normalized_typed
                     sess.hub_line_info = typed_info
                     if (sess.meta or {}).get("agent") == "codex":
-                        path, before = _codex_rollout_start(sess)
+                        path, before = codex_rollout
                         sess.hub_line_rollout_path = path
                         sess.hub_line_rollout_size = before
                 else:
