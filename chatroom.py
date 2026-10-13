@@ -324,6 +324,10 @@ def update_room(room: dict) -> None:
                     room[k] = disk[k]
                 else:
                     room.pop(k, None)
+        if (disk.get("interrupts") or []) and (
+                not room.get("interrupts") or
+                disk["interrupts"][-1]["ts"] > room["interrupts"][-1]["ts"]):
+            room["interrupts"] = disk["interrupts"]
         room["updatedAt"] = _now()
         _write(room)
 
@@ -393,6 +397,22 @@ def patch_room(room_id: str, **fields) -> dict | None:
         room.update(fields)
         _write(room)
         return room
+
+
+def record_interrupt(room_id: str, identity: str, pty_id: str = "") -> dict | None:
+    """Record a person's terminal interrupt without sending the agent a message.
+
+    It deliberately leaves the room status, reads, asks, and pending sends alone.
+    """
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        event = {"from": HUMAN_IDENTITY, "identity": identity, "ptyId": pty_id, "ts": _now()}
+        room["interrupts"] = (room.get("interrupts") or [])[-29:] + [event]
+        room["updatedAt"] = event["ts"]
+        _write(room)
+        return event
 
 
 def clear_exits(room_id: str) -> bool:

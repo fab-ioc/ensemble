@@ -451,6 +451,69 @@ def seat_ptys(room_id: str, ident: str) -> list[str]:
             if (x.get("meta") or {}).get("identity") == ident]
 
 
+_INTERRUPT_LOCK = threading.Lock()
+_LAST_INTERRUPT: dict[tuple[str, str], float] = {}
+
+
+def interrupt_agent(room_id: str, identity: str = "") -> tuple[int, dict]:
+    """Send Esc to the working agent selected by the person in a chat.
+
+    This is a terminal control, not a chat message or a room stop. The next
+    human message therefore follows the ordinary send path, including a send
+    held during a restart drain.
+    """
+    room = chatroom.get_room(room_id, public=False)
+    if room is None:
+        return 404, {"error": "no_such_room"}
+    if not _room_is_live(room):
+        return 409, {"error": "room_stopped"}
+    parts = [p for p in room.get("participants", []) if p.get("kind") == "agent"]
+    working = {p["identity"]: p for p in parts
+               if p.get("ptyId") and attention.turn_state(p)[0] == "working"}
+    if identity:
+        if identity not in working:
+            return 409, {"error": "agent_not_working"}
+        target = working[identity]
+    else:
+        reviewers = [p for p in parts if chatroom.is_on_mention(room, p)
+                     and p["identity"] in working]
+        owners = [working[i] for i in chatroom.owners(room) if i in working]
+        target = (reviewers or owners or list(working.values()) or [None])[0]
+        if target is None:
+            return 409, {"error": "agent_not_working"}
+    sess = ptyrun.get(target["ptyId"])
+    if not sess or not sess.alive() or (sess.meta or {}).get("room") != room_id \
+            or (sess.meta or {}).get("identity") != target["identity"]:
+        return 409, {"error": "agent_stopped"}
+    key = room_id, target["identity"]
+    with _INTERRUPT_LOCK:
+        now = time.monotonic()
+        # Claude treats a second Ctrl+C within about 0.8 s as exit; keep
+        # the full second so a held or repeated Stop cannot quit the CLI.
+        if now - _LAST_INTERRUPT.get(key, -1e9) < 1.0:
+            return 200, {"ok": True, "duplicate": True, "identity": target["identity"]}
+        # Codex can still show a busy screen after Escape while its former
+        # shell runs in the background. A second Escape at that idle prompt
+        # can quit the CLI. Require a new incoming chat message on this PTY
+        # before another interrupt, even after the one-second key debounce.
+        last = next((e for e in reversed(room.get("interrupts") or [])
+                     if e.get("identity") == target["identity"]
+                     and e.get("ptyId") == target["ptyId"]), None)
+        if target.get("agent") == "codex" and last and not any((m.get("ts") or 0) > last.get("ts", 0)
+                            and m.get("from") not in (target["identity"], "hub")
+                            for m in room.get("messages") or []):
+            return 200, {"ok": True, "duplicate": True, "identity": target["identity"]}
+        # Measured in a real ConPTY with a 30 s shell command: Claude Code's
+        # Escape leaves that command running, while Ctrl+C cancels its turn;
+        # Codex cancels with Escape. Both CLIs remain open for the next input.
+        control = "\x1b" if target.get("agent") == "codex" else "\x03"
+        if not sess.write(control):
+            return 410, {"error": "terminal_closed"}
+        _LAST_INTERRUPT[key] = now
+        event = chatroom.record_interrupt(room_id, target["identity"], target["ptyId"])
+    return 200, {"ok": True, "identity": target["identity"], "interrupt": event}
+
+
 def unrecorded_room_ptys(room: dict) -> list[str]:
     """Live terminals of the room that no participant records: an agent the
     hub no longer tracks (it would never be stopped, and a start would add a
@@ -13094,6 +13157,12 @@ class Handler(BaseHTTPRequestHandler):
                                       "specRev": _spec_rev(spec)})
                 return
             out = _annotate_room_liveness(room, with_points=True)
+            # The composer needs turn state, not recent terminal output: a
+            # quiet long-running shell is still interruptible.
+            statuses = attention._claude_status_by_session()
+            out["workingAgents"] = [p["identity"] for p in room.get("participants", [])
+                                    if p.get("kind") == "agent" and
+                                    attention.turn_state(p, statuses)[0] == "working"]
             out["reportsToRoom"] = room_po_id(room)
             out["checkpoints"] = checkpoint_list(room.get("id", rid))
             try:
@@ -14067,6 +14136,9 @@ class Handler(BaseHTTPRequestHandler):
         tools = self._task_agent_tools(room_full)
         codex_mcp, claude_mcp, env = self._mcp_wiring(
             token, collab, tools=tools, cwd=cwd, codex=agent_key == "codex")
+        # A headless ConPTY supports ANSI even if the hub inherited TERM=dumb
+        # from a service shell. Codex otherwise pauses at a TUI warning.
+        env["TERM"] = "xterm-256color"
         env.update(rtk_env)
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
@@ -15705,6 +15777,20 @@ class Handler(BaseHTTPRequestHandler):
             sess = ptyrun.create(cmd, cwd=cwd, rows=rows, cols=cols,
                                  label=(data.get("label") or "").strip())
             self._send_json(200, {"id": sess.id, "info": sess.info()})
+            return
+        if p == "/api/room/interrupt":
+            # Only the person's dashboard page may interrupt an agent. Agent
+            # bearer tokens cannot interrupt a room in this or another project.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if not re.fullmatch(r"room-[A-Za-z0-9_-]{1,64}", rid):
+                self._send_json(400, {"error": "bad_room"})
+                return
+            code, result = interrupt_agent(rid, str(data.get("identity") or "").strip())
+            self._send_json(code, result)
             return
         if p == "/api/pty/input":
             sess = ptyrun.get((data.get("id") or "").strip())
