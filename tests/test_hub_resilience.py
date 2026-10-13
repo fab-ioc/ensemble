@@ -10,6 +10,41 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @unittest.skipUnless(shutil.which("node"), "Node is required for browser script checks")
 class HubResilienceTest(unittest.TestCase):
+    def test_queued_terminal_send_lost_reply_is_not_flushed_twice(self):
+        code = r"""
+const assert = require('assert');
+const fs = require('fs');
+const vm = require('vm');
+let up = false, sends = 0;
+const window = {
+  fetch: async (path) => {
+    if (path === '/api/send') { sends++; throw new TypeError('reply lost after injection'); }
+    return { ok: up, status: up ? 200 : 503 };
+  },
+  dispatchEvent() {}
+};
+const document = { body: { appendChild() {} }, getElementById() { return null; },
+  createElement() { return { style: {}, setAttribute() {} }; }, addEventListener() {} };
+const context = { window, document, Event: class {}, setTimeout() { return 1; } };
+vm.runInNewContext(fs.readFileSync('static/hub-resilience.js', 'utf8'), context);
+(async () => {
+  await assert.rejects(window.fetch('/api/sessions'));
+  const send = window.fetch('/api/send', { method: 'POST' });
+  const rejected = assert.rejects(send, /Delivery uncertain/);
+  assert.strictEqual(window.HubResilience.queued, 1);
+  up = true;
+  await window.HubResilience.probe();
+  await rejected;
+  assert.strictEqual(sends, 1);
+  assert.strictEqual(window.HubResilience.queued, 0);
+  await window.HubResilience.probe();
+  assert.strictEqual(sends, 1);
+})().catch(e => { console.error(e); process.exitCode = 1; });
+"""
+        result = subprocess.run([shutil.which("node"), "-e", code], cwd=ROOT,
+                                capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_ambiguous_terminal_send_is_never_replayed(self):
         code = r"""
 const assert = require('assert');

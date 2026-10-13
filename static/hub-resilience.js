@@ -10,6 +10,14 @@
   const uncertainOnFailure = new Set(['/api/send']);
   const unavailable = res => [502, 503, 504].includes(res.status);
 
+  function rejectUncertain(p) {
+    const path = typeof p.input === 'string' ? p.input.split('?')[0] : '';
+    if (!uncertainOnFailure.has(path)) return false;
+    pending.shift();
+    p.reject(new Error('Delivery uncertain. Check the terminal before sending again.'));
+    return true;
+  }
+
   async function flush() {
     if (flushing) return;
     flushing = true;
@@ -19,12 +27,14 @@
       try {
         const reply = await raw(p.input, p.init);
         if (unavailable(reply)) {
+          rejectUncertain(p);
           markOffline();
           break;
         }
         pending.shift();
         p.resolve(reply);
       } catch {
+        rejectUncertain(p);
         markOffline();
         break;
       }

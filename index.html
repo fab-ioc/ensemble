@@ -2200,6 +2200,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font: inherit; font-size: var(--fs-100); font-weight: 500;
   }
   #status .dismiss:hover { background: var(--hover); color: var(--fg); }
+  #status .retry {
+    background: transparent; color: var(--accent); border: 0;
+    padding: 2px 6px; border-radius: var(--r-200); cursor: pointer;
+    font: inherit; font-size: var(--fs-100); font-weight: 600;
+  }
+  #status .retry:hover { background: var(--hover); }
   /* --- Board ------------------------------------------------------------- */
   /* Columns never wrap and never shrink below 248px; horizontal scroll is the
      escape valve, which is what Jira does and what stays legible. A card never
@@ -4815,6 +4821,25 @@ const toast = (msg, ms=2500, kind='') => {
     toast._t = setTimeout(() => { s.hidden = true; }, ms);
   }
 };
+
+function offerTerminalSendRetry(pid, text) {
+  toast('Not delivered: confirmation was lost. Check the terminal before retrying.', 0, 'err');
+  const s = _toastEl();
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'retry';
+  retry.textContent = 'Retry';
+  s.insertBefore(retry, s.querySelector('.dismiss'));
+  retry.onclick = async () => {
+    retry.disabled = true;
+    try {
+      const r = await api('/api/send', { method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pid, text}) });
+      if (r.result === 'ok') toast('message sent', 1800, 'ok');
+      else toast('send failed: ' + r.result, 5000, 'err');
+    } catch { offerTerminalSendRetry(pid, text); }
+  };
+}
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -19826,7 +19851,7 @@ document.addEventListener('click', async (ev) => {
       });
       if (r.result === 'ok') toast('message sent', 1800, 'ok');
       else toast('send failed: ' + r.result, 5000, 'err');
-    } catch (e) { toast('Delivery uncertain. Check the terminal before sending again.', 7000, 'err'); }
+    } catch (e) { offerTerminalSendRetry(pid, text); }
     finally { sendBtn.classList.remove('busy'); }
     return;
   }
