@@ -23,8 +23,8 @@ class LaptopFocus(focus.PhoneFocus):
               .replace("r.attention={state:'blocked'", "r.attention={state:'waiting_for_you'")
               .replace('const top=document.querySelector', "r.lastAgent='**Report — completed** Reviewed D:/work/projects/security_audit/evidence/plans/codex/LOCKDOWN-PLAN.md and the next steps. Full evidence below.'; const top=document.querySelector")
               .replace('renderBubbles(fixtureItems);', "POINTS=pointMaps({delivered:1,items:[{id:'P1',mid:'focus-1',text:'Confirm the next step',state:'delivered',answers:[{mid:'focus-ask',said:'Ready to check'}]}]}); showPointsLine(); LAST_ITEMS=fixtureItems; renderBubbles(fixtureItems);")
-              .replace('if(!baseline) {\n          g.actions', r"""
-        if(!baseline) g.desktop=await ev(`(() => {
+              .replace('          g.actions=await ev', r"""
+          g.desktop=await ev(`(() => {
           const f=document.querySelector('${sel}'),d=f.contentDocument,w=f.contentWindow;
           const b=e=>e.getBoundingClientRect(),m=d.getElementById('msgs'),input=d.getElementById('input'),send=d.getElementById('send');
           const points=d.getElementById('points-line');
@@ -52,8 +52,7 @@ class LaptopFocus(focus.PhoneFocus):
             fullPath:!header || fresh.querySelector('.file-link')?.getAttribute('href').includes('security_audit'),
             filterRow};
         })()`);
-        if(!baseline) {
-          g.actions
+          g.actions=await ev
 """)
               .replace('out.push(g);', r"""
         if(!baseline && kind!=='po') g.headerStates=await ev(`(() => {
