@@ -1590,6 +1590,8 @@ def _items() -> list[dict]:
     _RUN.clear()
     _RUN_SINCE.clear()
     rooms = _room_summaries()
+    for room in rooms:
+        _d.note_session_owners(room)
     statuses = _claude_status_by_session()
     stall = _stall_seconds()
     links = _d.load_session_projects()
