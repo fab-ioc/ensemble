@@ -843,6 +843,15 @@ a yes/no question; any other comes back with a `warnings` line and a card with
 a comment box only, so give the options. In a plain
 reply, use the `Ask:` format below. Never put a question to them in prose.
 
+Never mention an open card without a link to that card. `ensemble_ask` returns
+one reference per question to paste in later messages. For a plain `Ask:` card,
+use its Copy link control. The linked card opens in its own chat and remains
+open until the person answers or closes it.
+When a task's `ensemble_ask` routes to its project PO, the result instead has
+`reportReference`: link the PO report when following up with the PO. The PO
+creates a new card and uses its returned card reference if it relays the
+question to the person.
+
 **Several questions in one message: one `Ask:` each.** When a reply holds
 more than one thing only the product owner can answer, give each its own
 `Ask:` line, and the chat draws a quick-answer row under each: a button per

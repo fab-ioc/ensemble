@@ -139,7 +139,7 @@ class PoMessageNames(unittest.TestCase):
         render = fn(SESSION, "renderBubbles")
         self.assertIn("pmIndex(items, ROOM_OBJ);", render)
         self.assertIn("plain: t => pmPlain(refPlain(t))", render)
-        self.assertIn("a.pm-link, a[data-point]')", SESSION, "a click lands on the balloon")
+        self.assertIn("a.pm-link, a.card-jump, a[data-point]')", SESSION, "a click lands on the balloon")
 
 
 if __name__ == "__main__":

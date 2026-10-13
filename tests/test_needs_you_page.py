@@ -118,6 +118,10 @@ async function main() {
         // (on a phone the open list covers it: not seen while it does).
         await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
         await block(false);
+        // The fixed open-question line reduces the phone chat viewport. Bring
+        // P3's answer fully into view before asserting that it counts as read.
+        await evalIn(`(() => { const p = POINTS.items.find(x => x.id === 'P3'), a = lastAnswer(p);
+          document.querySelector('#msgs .msg[data-mid="' + CSS.escape(a.mid) + '"]').scrollIntoView({ block: 'center' }); return 0; })()`);
         o.screenLeft = await until('POINTS.items.find(p => p.id === "P3").seen === true', 15000).then(() => true, () => false);
         o.inViewSeen = await evalIn(IN_VIEW);
         await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');

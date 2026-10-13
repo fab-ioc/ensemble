@@ -866,6 +866,28 @@
   /* What the task asked of the person and is still open, held above the
      conversation until it closes (the hub decides: the room's openAsk). The
      catch-up line's look: the words say it, no colour of its own. */
+  #open-questions { flex:0 0 auto; margin:var(--s-200) var(--s-300) 0; background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--r-200); font-size:var(--fs-200); line-height:16px; }
+  #open-questions[hidden], #oq-list[hidden] { display:none; }
+  #oq-toggle { width:100%; min-height:28px; padding:var(--s-100) var(--s-300); border:0; background:transparent;
+    color:var(--fg); font:inherit; font-weight:600; text-align:left; cursor:pointer; }
+  #oq-toggle:hover, .oq-row:hover { background:var(--hover); }
+  #oq-list { max-height:min(40vh, 360px); overflow:auto; border-top:1px solid var(--border); }
+  .oq-row { display:flex; align-items:center; gap:var(--s-200); padding:var(--s-100) var(--s-300); border-bottom:1px solid var(--border); }
+  .oq-row:last-child { border-bottom:0; }
+  .oq-row a { flex:1 1 auto; min-width:0; color:var(--link); overflow-wrap:anywhere; text-decoration:none; }
+  .oq-row a:hover { text-decoration:underline; }
+  .oq-row small { display:block; color:var(--fg-muted); margin-top:var(--s-050); }
+  .oq-close, .qa-close { flex:0 0 auto; padding:var(--s-100) var(--s-200); border:0; border-radius:var(--r-100);
+    background:transparent; color:var(--fg-subtle); font:inherit; cursor:pointer; }
+  .qa-copy { flex:0 0 auto; padding:var(--s-100) var(--s-200); border:0; border-radius:var(--r-100);
+    background:transparent; color:var(--fg-subtle); font:inherit; cursor:pointer; }
+  .qa-copy:hover { background:var(--hover); color:var(--fg); }
+  .oq-close:hover, .qa-close:hover { background:var(--hover); color:var(--fg); }
+  .oq-row a:focus-visible, #oq-toggle:focus-visible, .oq-close:focus-visible, .qa-close:focus-visible, .qa-copy:focus-visible {
+    outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #oq-undo { padding:var(--s-100) var(--s-300); color:var(--fg-muted); border-top:1px solid var(--border); }
+  @media (pointer:coarse) { #oq-toggle, .oq-close, .qa-close, .qa-copy, .oq-row a { min-height:var(--touch-min); } }
   #ask-line { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); margin:var(--s-200) var(--s-300) 0;
     padding:var(--s-100) var(--s-300); background:var(--surface); border:1px solid var(--border);
     border-radius:var(--r-200); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
@@ -1442,6 +1464,7 @@
   <div id="chatcol">
     <div id="msgpane">
       <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
+      <div id="open-questions" hidden></div>
       <div id="ask-line" role="status" hidden></div>
       <div id="chat-controls">
         <div id="points-line" hidden></div>
@@ -1916,7 +1939,7 @@ function refOfUrl(u) {
   let x = null;
   try { x = new URL(url); } catch (e) { return null; }
   const room = (x.searchParams.get('room') || '').trim(), msg = (x.searchParams.get('msg') || '').trim();
-  return x.pathname === '/session' && room && msg ? { url, room, msg, tail: u.slice(url.length) } : null;
+  return x.pathname === '/session' && room && msg ? { url, room, msg, part: x.searchParams.get('part') || '', tail: u.slice(url.length) } : null;
 }
 // ---- Task references: begin ------------------------------------------------
 // A task named by its number in chat text (#18, #ED-18, @codex@18,
@@ -2041,9 +2064,9 @@ function refChipHtml(ref) {
   const r = refInfo(ref.room, ref.msg);
   if (r.state !== 'ok') return null;
   const prev = refPreview(r), label = refLabel(r);
-  return `<a class="ref-chip" href="${esc(refHref(ref.room, ref.msg))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}"`
+  return `<a class="ref-chip${ref.part.startsWith('ask:') ? ' card-jump' : ''}" href="${esc(refHref(ref.room, ref.msg, ref.part))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}" data-ref-part="${esc(ref.part)}"`
     + ` title="${esc('Open this message: ' + label + (prev ? ' — ' + prev : ''))}"><span class="ref-arrow" aria-hidden="true">↗</span>`
-    + `<span class="ref-who">${esc(label)}</span>${prev ? `<span class="ref-prev">${esc(prev)}</span>` : ''}</a>`;
+    + `<span class="ref-who">${esc(ref.part.startsWith('ask:') ? 'Question · ' + label : label)}</span>${prev ? `<span class="ref-prev">${esc(prev)}</span>` : ''}</a>`;
 }
 // A folded row's line: a resolved link reads as its chip's words.
 const refPlain = t => String(t || '').replace(REF_URL_RE, u => {
@@ -3040,25 +3063,16 @@ function askAnswer(m, a, P) {
   if (P && P.approvals && P.approvals.has(m.id) && a.recommended >= 0) return { approved: a.options[a.recommended].label };
   return null;
 }
-// Waiting for the person, by the hub's rules (asks.open_in): until answered,
-// or until they write in the chat after it, answering it in words or setting
-// it aside. Its card still answers then; it just no longer holds the balloon
-// or asks for attention. (Needs you also lets go of one read a day ago.)
-// A Done task waits for nobody (asks.open_by_room): its column as stored.
-const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
-const askSettledAt = P => Math.max((P && P.asksSettledAt) || 0,
-  ...((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.reportsToRoom ? []
-    : ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.participants) || [])
-      .filter(p => p.kind === 'agent').map(p => +p.answeredAt || 0))));
-const askSettled = (m, P) => roomDone() || (!!m.ts && m.ts < askSettledAt(P));
-const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
+// A card stays open until answered or explicitly closed, independent of
+// later messages, reading state, or task workflow.
+const openAsks = (m, P) => asksOf(m).filter(a => !askAnswer(m, a, P));
 // One ask drawn: its question, then its quick answers or, answered, what was
 // answered with the buttons settled (pressed, disabled).
 function askCardHtml(m, a, total, P) {
   const got = askAnswer(m, a, P), key = m.id + ':' + a.n;
   const chosen = got ? (got.approved || got.option || '') : '';
   const busy = !!(got && got.pending);
-  const head = `<div class="qa-q"><span class="qa-no">${total > 1 ? `Ask ${a.n + 1} of ${total}` : 'Ask'}</span><span class="qa-qt">${esc(a.question)}</span></div>`;
+  const head = `<div class="qa-q"><span class="qa-no">${total > 1 ? `Ask ${a.n + 1} of ${total}` : 'Ask'}</span><span class="qa-qt">${esc(a.question)}</span><button type="button" class="qa-copy" data-ask="${esc(key)}" title="Copy a link to this question">Copy link</button>${!got ? `<button type="button" class="qa-close" data-ask="${esc(key)}" title="Close without answering">Close</button>` : ''}</div>`;
   const opts = a.options.map(o => {
     const on = !!chosen && o.label === chosen;
     return `<button type="button" class="qa-opt${o.recommended ? ' rec' : ''}${on ? ' on' : ''}" data-ask="${esc(key)}" data-opt="${esc(o.label)}"`
@@ -3068,19 +3082,19 @@ function askCardHtml(m, a, total, P) {
   }).join('');
   if (got) {
     const said = got.approved ? `Approved: ${got.approved}` : (got.option || '');
+    const closed = !!got.closed;
     // Sent from this page a moment ago: Undo for a while (#198); read before
     // it, the agent was told to ignore it.
-    const undo = !busy && !got.undone && !!got.option && askUndoLeft(key) > 0;
-    const words = busy ? 'Sending…' : undo ? 'Sent' : 'You answered';
+    const undo = !busy && !got.undone && (!!got.option || closed) && askUndoLeft(key) > 0;
+    const words = closed ? `Closed by you · ${chatStamp(got.at).split(' ').at(-1)}` : busy ? 'Sending…' : undo ? 'Sent' : 'You answered';
     return `<div class="qa${busy ? ' busy' : ''} done" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts">${opts}</div>` : ''}`
       + `<div class="qa-done"><span class="qa-dw">${words}${said ? ':' : ''}</span>${said ? ` <strong>${esc(said)}</strong>` : ''}`
-      + (undo ? ` · <button type="button" class="qa-undo" data-ask="${esc(key)}" title="Take this answer back: withdrawn if the agent has not read it yet, else it is told to ignore it">Undo</button>` : '')
+      + (undo ? ` · <button type="button" class="qa-undo${closed ? ' qa-reopen' : ''}" data-ask="${esc(key)}" title="${closed ? 'Reopen this question' : 'Take this answer back'}">Undo</button>` : '')
       + (got.undone ? ' · taken back' : '')
       + `${got.comment ? `<span class="qa-dc">${esc(got.comment)}</span>` : ''}</div></div>`;
   }
   const open = a.kind === 'open';
-  const aside = !askSettled(m, P) ? ''
-    : `<div class="qa-note">${roomDone() ? 'This task is done' : m.ts < askSettledAt(P) ? 'You answered after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
+  const aside = ''; // An open card never ages out or closes when attention moves on.
   return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
     + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? `${MOD_ENTER} sends` : `Goes with the answer you press, or alone with Send comment (${MOD_ENTER})`}"></textarea>`
     + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'} (${MOD_ENTER})">${open ? 'Send' : 'Send comment'}</button></div></div>`;
@@ -3226,6 +3240,64 @@ async function askUndo(b) {
     if (e && e.points) pointsChanged(e.points, ptTicket());
     pointsNote('Not taken back: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '.');
   }
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+}
+// Close and Undo use the same ten-second window as a sent answer.
+let OQ_OPEN = false, OQ_LAST_CLOSED = '', OQ_SIG = '';
+function showOpenQuestions() {
+  const root = $('#open-questions');
+  if (!root) return;
+  const cards = (ROOM_OBJ && ROOM_OBJ.openCards) || [];
+  const offered = OQ_LAST_CLOSED && askUndoLeft(OQ_LAST_CLOSED) > 0;
+  const show = cards.length || offered;
+  const sig = JSON.stringify(cards) + '|' + OQ_OPEN + '|' + (offered ? OQ_LAST_CLOSED : '');
+  if (sig === OQ_SIG) return;
+  OQ_SIG = sig;
+  root.hidden = !show;
+  if (!show) return;
+  const rows = cards.map(c => {
+    const key = c.mid + ':' + c.n, href = refHref(ROOM, c.mid, 'ask:' + c.n);
+    return `<div class="oq-row"><a class="card-jump" href="${esc(href)}" data-ask-mid="${esc(c.mid)}" data-ask-n="${c.n}">${esc(c.question)}<small>${esc(c.who || 'Agent')} · since ${esc(chatStamp(c.ts) || 'earlier')}</small></a><button type="button" class="oq-close" data-ask="${esc(key)}" title="Close this question without answering">Close</button></div>`;
+  }).join('');
+  const undo = OQ_LAST_CLOSED && askUndoLeft(OQ_LAST_CLOSED) > 0
+    ? `<div id="oq-undo">Closed · <button type="button" class="qa-undo qa-reopen" data-ask="${esc(OQ_LAST_CLOSED)}">Undo</button></div>` : '';
+  root.innerHTML = `<button type="button" id="oq-toggle" aria-expanded="${OQ_OPEN}">Open questions (${cards.length})</button><div id="oq-list"${OQ_OPEN ? '' : ' hidden'}>${rows}</div>${undo}`;
+}
+async function askClose(key) {
+  const cut = key.lastIndexOf(':'), mid = key.slice(0, cut), n = +key.slice(cut + 1);
+  const c = ((ROOM_OBJ && ROOM_OBJ.openCards) || []).find(x => x.mid === mid && x.n === n);
+  if (!c || ASK_LOCAL.has(key)) return;
+  ASK_LOCAL.set(key, { pending:true });
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  try {
+    const r = await postOk('/api/room/ask/close', { roomId: ROOM, mid, n });
+    if (r && r.points) pointsChanged(r.points, ptTicket());
+    ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== mid || x.n !== n);
+    OQ_LAST_CLOSED = key;
+    askUndoOffer(key);
+    showOpenQuestions();
+  } catch (e) {
+    if (e && e.points) pointsChanged(e.points, ptTicket());
+    if (e && e.kept) {
+      ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== mid || x.n !== n);
+      OQ_LAST_CLOSED = key;
+      askUndoOffer(key);
+      showOpenQuestions();
+    } else pointsNote('Not closed: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '.');
+  }
+  finally { ASK_LOCAL.delete(key); if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
+}
+async function askReopen(key) {
+  if (askUndoLeft(key) <= 0) return;
+  const cut = key.lastIndexOf(':');
+  try {
+    const r = await postOk('/api/room/ask/reopen', { roomId: ROOM, mid: key.slice(0, cut), n: +key.slice(cut + 1) });
+    ASK_UNDO.delete(key);
+    OQ_LAST_CLOSED = '';
+    if (r && r.points) pointsChanged(r.points, ptTicket());
+    await refresh();
+  } catch (e) { pointsNote('Not reopened: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '.'); }
+  showOpenQuestions();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
 // A click on an option (or Send): sent once from this page, and the hub takes
@@ -4418,6 +4490,7 @@ function pointsChanged(pv, ticket) {
   pointsTell(pv);
   showPointsLine();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  if (typeof showOpenQuestions === 'function') showOpenQuestions();
 }
 // A chat framed in a project's PO screen (index.html) whose Points panel is
 // on screen: the panel lists the points, so the line above the chat does not
@@ -5902,6 +5975,7 @@ function refreshShow(room, ticket, sendsGen) {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
+  showOpenQuestions();
   showInterrupt(room.interrupts || [], room);
   // The agents a message can be directed to with its @<identity> prefix:
   // from every poll, so a stopped room with its terminals hidden knows them too.
@@ -7657,9 +7731,29 @@ $('#msgs').addEventListener('compositionend', e => {
   ASK_AFTER_COMPOSE.delete(key);
   setTimeout(() => { askSyncDraft(key); askSend(key, option, postOk); }, 0);
 });
+$('#open-questions').addEventListener('click', e => {
+  const toggle = e.target.closest('#oq-toggle');
+  if (toggle) { OQ_OPEN = !OQ_OPEN; showOpenQuestions(); return; }
+  const close = e.target.closest('.oq-close');
+  if (close) { askClose(close.dataset.ask); return; }
+  const undo = e.target.closest('.qa-reopen');
+  if (undo) { askReopen(undo.dataset.ask); return; }
+});
 $('#msgs').addEventListener('click', e => {
   const undo = e.target.closest && e.target.closest('.qa-undo');
-  if (undo) { askUndo(undo); return; }
+  if (undo) { if (undo.classList.contains('qa-reopen')) askReopen(undo.dataset.ask); else askUndo(undo); return; }
+  const close = e.target.closest && e.target.closest('.qa-close');
+  if (close) { askClose(close.dataset.ask); return; }
+  const copy = e.target.closest && e.target.closest('.qa-copy');
+  if (copy) {
+    const key = copy.dataset.ask, cut = key.lastIndexOf(':');
+    const url = location.origin + refHref(ROOM, key.slice(0, cut), 'ask:' + key.slice(cut + 1));
+    copyText(url).then(ok => {
+      if (ok) { copy.textContent = 'Copied'; setTimeout(() => { if (copy.isConnected) copy.textContent = 'Copy link'; }, 1500); }
+      else pointsNote('Copy this question link: ' + url);
+    });
+    return;
+  }
   if (askClick(e)) return;
   if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');
@@ -7770,10 +7864,11 @@ document.addEventListener('keydown', ev => {
 // at it; on its own, this page goes there. With a modifier key it is a link,
 // opening a new tab.
 function refClickHandler(ev) {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a[data-point]');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a.card-jump, a[data-point]');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
-  const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg, part = a.dataset.refPart || '';
+  const room = a.dataset.refRoom || ROOM, msg = a.dataset.askMid || a.dataset.refMsg, part = a.dataset.askN !== undefined ? 'ask:' + a.dataset.askN : a.dataset.refPart || '';
+  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED) { openThread('', msg, part); return; }
   if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}

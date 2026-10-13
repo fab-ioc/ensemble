@@ -523,6 +523,9 @@ def unrecorded_room_ptys(room: dict) -> list[str]:
     return [x["id"] for x in room_ptys(room.get("id", "")) if x["id"] not in known]
 
 
+_LAST_OPEN_CARDS: dict[str, list[dict]] = {}
+
+
 def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state. A reviewer
@@ -554,6 +557,20 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
         ask = None
     if ask:
         room["openAsk"] = ask
+    # Every open card is a first-class part of this chat, including cards
+    # outside the currently drawn transcript window or a folded thread.
+    if with_points:
+        try:
+            rid = room.get("id", "")
+            if asks.cards_ready(room):
+                room["openCards"] = asks.open_cards(room)
+                _LAST_OPEN_CARDS[rid] = room["openCards"]
+            else:
+                asks.warm_cards(room)
+                room["openCards"] = _LAST_OPEN_CARDS.get(rid, [])
+        except Exception as e:  # noqa: BLE001
+            print(f"[asks] {room.get('id')}: cards not listed: {e!r}", flush=True)
+            room["openCards"] = _LAST_OPEN_CARDS.get(room.get("id", ""), [])
     # The person's points (points.py), on the poll the chat already makes.
     if with_points:
         try:
@@ -2561,7 +2578,9 @@ ASK_NOTE = (
     "Every question carries its answers: options (ensemble_ask options, or a "
     "list under the Ask: line), or Yes and No (yesno: true, or Ask (yes/no):). "
     "A task with a PO routes its question to that PO unless forCeo is true; "
-    "reviewers ask the owner.")
+    "reviewers ask the owner. Never mention an open card without its link: "
+    "ensemble_ask returns a reference to paste, and a plain Ask card's "
+    "Copy link control provides one too.")
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
@@ -3972,6 +3991,7 @@ def _relay_wake(sender: str) -> str:
 # the kind to fold hub traffic and to say what each reply answers; it keeps no
 # list of its own. A [word] not listed here is a person's (they type brackets).
 HUB_INPUT_KINDS = (
+    ("[asks] ", "asks"),              # a card was closed or reopened without an answer
     ("[board] ", "board"),
     ("[digest] ", "digest"),            # digest.py: the PO's progress check
     ("[due] ", "due"),                  # due.py: what its handover says is due now
@@ -16630,6 +16650,73 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "point": {"id": pt["id"], "state": pt["state"]},
                                   "points": _points_view(rid)})
+            return
+        if p in ("/api/room/ask/close", "/api/room/ask/reopen"):
+            if self._files_cross_site():
+                return
+            rid = str(data.get("roomId") or "").strip()
+            mid = str(data.get("mid") or "").strip()[:200]
+            room_full = chatroom.get_room(rid, public=False) if rid else None
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            try:
+                n = int(data.get("n"))
+            except (TypeError, ValueError):
+                n = -1
+            if not mid or n < 0:
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            if p.endswith("/close"):
+                card = next((c for c in asks.open_cards(room_full)
+                             if c["mid"] == mid and c["n"] == n), None)
+                if card is None:
+                    self._send_json(409, {"error": "not_open", "message": "That question is no longer open."})
+                    return
+                # Resume keys are capped at 200 characters; a card's mid can
+                # already be that long, so the nonce alone identifies this close.
+                key = f"ask-close:{uuid.uuid4().hex}"
+                before = points.close_ask(rid, mid, n, card["question"], notice_key=key)
+                if before is not None:
+                    self._send_json(200, {"ok": True, "duplicate": True, "points": _points_view(rid)})
+                    return
+                asks.forget()
+                q = " ".join(card["question"].split())[:200]
+                text = f'[asks] The CEO closed your question "{q}" without an answer.'
+                stopped_asker = (_hub_task_room(room_full) and
+                                 normalize_workflow(room_full.get("workflow")) == "done") or not any(
+                    _pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full))
+                if stopped_asker:
+                    # A card can outlive a stopped PO or task. Closing it
+                    # must not start an agent solely to receive this notice.
+                    code, reply = 200, {"ok": True, "askerStopped": True}
+                else:
+                    code, reply = self._room_resume({"roomId": rid, "to": card.get("who") or "",
+                                                     "key": key, "text": text})
+                    if code != 200 and not reply.get("kept"):
+                        points.unclose_ask(rid, mid, n, force=True, notice_key=key)
+                        asks.forget()
+                if code == 200:
+                    points.refresh_close_ask_time(rid, mid, n, notice_key=key)
+                self._send_json(code, {**reply, "points": _points_view(rid)})
+                return
+            got = ((points.load(rid).get("asks") or {}).get(mid) or {}).get(str(n))
+            if not isinstance(got, dict) or not got.get("closed") or time.time() - float(got.get("at") or 0) > 10:
+                self._send_json(409, {"error": "undo_expired", "message": "The close can no longer be undone."})
+                return
+            if not points.unclose_ask(rid, mid, n):
+                self._send_json(409, {"error": "undo_expired", "message": "The close can no longer be undone."})
+                return
+            key = got.get("noticeKey") or f"ask-close:{mid}:{n}"[:200]
+            prior = sends.get(rid, key)
+            if prior and not withdraw_send(rid, key):
+                q = " ".join(str(got.get("question") or "").split())[:200]
+                to = prior.get("to") or ""
+                if any(_pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full)):
+                    self._room_resume({"roomId": rid, "to": to, "key": "reopen:" + key,
+                                       "text": f'[asks] The CEO reopened your question "{q}".'})
+            asks.forget()
+            self._send_json(200, {"ok": True, "points": _points_view(rid)})
             return
         if p == "/api/room/ask":
             # The quick answer to one ask of a balloon (asks.py):

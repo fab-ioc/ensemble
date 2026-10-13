@@ -96,12 +96,12 @@ class Resolver(Hub):
         self.answer('later', 0)
         self.assertEqual(self.card(), {'mid': 'later', 'n': 1, 'question': 'And then?', 'open': True})
 
-    def test_done_task_waits_for_nobody(self):
+    def test_done_task_keeps_card_open(self):
         self.say('later', 120, 'Re P5 (legs).', ASK_A)
         full = chatroom.get_room(self.rid, public=False)
         full['workflow'] = 'done'
         chatroom.update_room(full)
-        self.assertFalse(self.card()['open'])
+        self.assertTrue(self.card()['open'])
 
     def test_each_point_gets_its_own_question_of_one_card(self):
         self.say('both', 120, 'Re P5: the legs.\n\nAsk: First?\n- A\n- B\n\nRe P6: the stops.\n\nAsk: Second?\n- C\n- D')
