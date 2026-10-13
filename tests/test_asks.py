@@ -245,6 +245,29 @@ class TheEndpoint(_World):
             return {"delivered": 1}
         return resume
 
+    def test_cold_room_poll_warms_cards_without_reading_them_inline(self):
+        rid = self._room()
+        old = dashboard._LAST_OPEN_CARDS.pop(rid, None)
+        self.addCleanup(lambda: dashboard._LAST_OPEN_CARDS.pop(rid, None))
+        if old is not None:
+            self.addCleanup(lambda: dashboard._LAST_OPEN_CARDS.__setitem__(rid, old))
+        room = chatroom.get_room(rid)
+        with mock.patch.object(asks, "cards_ready", return_value=False), \
+                mock.patch.object(asks, "warm_cards") as warm, \
+                mock.patch.object(asks, "open_cards") as read, \
+                mock.patch.object(points, "view", return_value={}):
+            self.assertEqual(dashboard._annotate_room_liveness(room, with_points=True)["openCards"], [])
+            dashboard._LAST_OPEN_CARDS[rid] = [{"mid": "old"}]
+            self.assertEqual(dashboard._annotate_room_liveness(room, with_points=True)["openCards"],
+                             [{"mid": "old"}])
+            self.assertEqual(warm.call_count, 2)
+            read.assert_not_called()
+        with mock.patch.object(asks, "cards_ready", return_value=True), \
+                mock.patch.object(asks, "open_cards", return_value=[{"mid": "new"}]):
+            self.assertEqual(dashboard._annotate_room_liveness(room, with_points=True)["openCards"],
+                             [{"mid": "new"}])
+            self.assertEqual(dashboard._LAST_OPEN_CARDS[rid], [{"mid": "new"}])
+
     def test_one_answer_sent_once_and_the_others_stay_open(self):
         rid = self._room()
         sent = []
@@ -479,7 +502,8 @@ class TheEndpoint(_World):
     def test_close_notifies_asker_and_undo_reopens(self):
         rid = self._room()
         sent = []
-        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)):
+        with mock.patch.object(dashboard, "_pty_alive", return_value=True), \
+                mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)):
             status, r = http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})
             self.assertEqual(status, 200, r)
             self.assertTrue(points.load(rid)["asks"]["sid-1:1"]["0"]["closed"])
@@ -488,6 +512,35 @@ class TheEndpoint(_World):
             status, r = http("/api/room/ask/reopen", {"roomId": rid, "mid": "sid-1:1", "n": 0})
             self.assertEqual(status, 200, r)
         self.assertIn('[asks] The CEO closed your question "Which retention for old transcripts?" without an answer.', sent[0][0])
+        self.assertEqual([c["n"] for c in asks.open_cards(chatroom.get_room(rid))], [0, 1, 2])
+
+    def test_each_close_and_reopen_has_a_new_notice_key(self):
+        rid = self._room()
+        sent = []
+        card = {"roomId": rid, "mid": "sid-1:1", "n": 0}
+        with mock.patch.object(dashboard, "_pty_alive", return_value=True), \
+                mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)):
+            for _ in range(2):
+                self.assertEqual(http("/api/room/ask/close", card)[0], 200)
+                close_key = points.load(rid)["asks"]["sid-1:1"]["0"]["noticeKey"]
+                self.assertEqual(sent[-1][1], close_key)
+                self.assertEqual(http("/api/room/ask/reopen", card)[0], 200)
+                self.assertEqual(sent[-1][1], "reopen:" + close_key)
+        self.assertEqual(len(sent), 4)
+        self.assertNotEqual(sent[0][1], sent[2][1])
+        self.assertNotEqual(sent[1][1], sent[3][1])
+
+    def test_failed_notice_rolls_back_close_after_undo_deadline(self):
+        rid = self._room()
+
+        def fail(*args, **kwargs):
+            points.refresh_close_ask_time(rid, "sid-1:1", 0, now=100)
+            return 500, {"error": "notice_failed"}
+
+        with mock.patch.object(dashboard, "_pty_alive", return_value=True), \
+                mock.patch.object(dashboard.Handler, "_room_resume", side_effect=fail):
+            self.assertEqual(http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})[0], 500)
+        self.assertNotIn("sid-1:1", points.load(rid)["asks"])
         self.assertEqual([c["n"] for c in asks.open_cards(chatroom.get_room(rid))], [0, 1, 2])
 
     def test_close_undo_expires(self):
@@ -505,6 +558,17 @@ class TheEndpoint(_World):
     def test_close_of_stopped_task_does_not_start_its_agent(self):
         rid = self._room()
         with mock.patch.object(dashboard, "_hub_task_room", return_value=True), \
+                mock.patch.object(dashboard, "_pty_alive", return_value=False), \
+                mock.patch.object(dashboard.Handler, "_resume_room", side_effect=AssertionError("started")):
+            status, result = http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})
+            self.assertEqual(status, 200, result)
+            self.assertTrue(result["askerStopped"])
+            self.assertEqual(http("/api/room/ask/reopen", {"roomId": rid, "mid": "sid-1:1", "n": 0})[0], 200)
+        self.assertEqual([a["n"] for a in asks.open_cards(chatroom.get_room(rid))], [0, 1, 2])
+
+    def test_close_of_stopped_po_does_not_start_its_agent(self):
+        rid = self._room()
+        with mock.patch.object(dashboard, "_hub_task_room", return_value=False), \
                 mock.patch.object(dashboard, "_pty_alive", return_value=False), \
                 mock.patch.object(dashboard.Handler, "_resume_room", side_effect=AssertionError("started")):
             status, result = http("/api/room/ask/close", {"roomId": rid, "mid": "sid-1:1", "n": 0})

@@ -523,6 +523,9 @@ def unrecorded_room_ptys(room: dict) -> list[str]:
     return [x["id"] for x in room_ptys(room.get("id", "")) if x["id"] not in known]
 
 
+_LAST_OPEN_CARDS: dict[str, list[dict]] = {}
+
+
 def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state. A reviewer
@@ -558,10 +561,16 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     # outside the currently drawn transcript window or a folded thread.
     if with_points:
         try:
-            room["openCards"] = asks.open_cards(room)
+            rid = room.get("id", "")
+            if asks.cards_ready(room):
+                room["openCards"] = asks.open_cards(room)
+                _LAST_OPEN_CARDS[rid] = room["openCards"]
+            else:
+                asks.warm_cards(room)
+                room["openCards"] = _LAST_OPEN_CARDS.get(rid, [])
         except Exception as e:  # noqa: BLE001
             print(f"[asks] {room.get('id')}: cards not listed: {e!r}", flush=True)
-            room["openCards"] = []
+            room["openCards"] = _LAST_OPEN_CARDS.get(room.get("id", ""), [])
     # The person's points (points.py), on the poll the chat already makes.
     if with_points:
         try:
@@ -16517,35 +16526,37 @@ class Handler(BaseHTTPRequestHandler):
             if not mid or n < 0:
                 self._send_json(400, {"error": "missing_fields"})
                 return
-            key = f"ask-close:{mid}:{n}"
             if p.endswith("/close"):
                 card = next((c for c in asks.open_cards(room_full)
                              if c["mid"] == mid and c["n"] == n), None)
                 if card is None:
                     self._send_json(409, {"error": "not_open", "message": "That question is no longer open."})
                     return
-                before = points.close_ask(rid, mid, n, card["question"])
+                # Resume keys are capped at 200 characters; a card's mid can
+                # already be that long, so the nonce alone identifies this close.
+                key = f"ask-close:{uuid.uuid4().hex}"
+                before = points.close_ask(rid, mid, n, card["question"], notice_key=key)
                 if before is not None:
                     self._send_json(200, {"ok": True, "duplicate": True, "points": _points_view(rid)})
                     return
                 asks.forget()
                 q = " ".join(card["question"].split())[:200]
                 text = f'[asks] The CEO closed your question "{q}" without an answer.'
-                stopped_task = _hub_task_room(room_full) and (
-                    normalize_workflow(room_full.get("workflow")) == "done"
-                    or not any(_pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full)))
-                if stopped_task:
-                    # A card can outlive a Done or stopped task. Closing it
+                stopped_asker = (_hub_task_room(room_full) and
+                                 normalize_workflow(room_full.get("workflow")) == "done") or not any(
+                    _pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full))
+                if stopped_asker:
+                    # A card can outlive a stopped PO or task. Closing it
                     # must not start an agent solely to receive this notice.
                     code, reply = 200, {"ok": True, "askerStopped": True}
                 else:
                     code, reply = self._room_resume({"roomId": rid, "to": card.get("who") or "",
                                                      "key": key, "text": text})
                     if code != 200 and not reply.get("kept"):
-                        points.unclose_ask(rid, mid, n)
+                        points.unclose_ask(rid, mid, n, force=True, notice_key=key)
                         asks.forget()
                 if code == 200:
-                    points.refresh_close_ask_time(rid, mid, n)
+                    points.refresh_close_ask_time(rid, mid, n, notice_key=key)
                 self._send_json(code, {**reply, "points": _points_view(rid)})
                 return
             got = ((points.load(rid).get("asks") or {}).get(mid) or {}).get(str(n))
@@ -16555,12 +16566,12 @@ class Handler(BaseHTTPRequestHandler):
             if not points.unclose_ask(rid, mid, n):
                 self._send_json(409, {"error": "undo_expired", "message": "The close can no longer be undone."})
                 return
+            key = got.get("noticeKey") or f"ask-close:{mid}:{n}"[:200]
             prior = sends.get(rid, key)
             if prior and not withdraw_send(rid, key):
                 q = " ".join(str(got.get("question") or "").split())[:200]
                 to = prior.get("to") or ""
-                if not (_hub_task_room(room_full) and not any(
-                        _pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full))):
+                if any(_pty_alive(p.get("ptyId")) for p in chatroom.agent_participants(room_full)):
                     self._room_resume({"roomId": rid, "to": to, "key": "reopen:" + key,
                                        "text": f'[asks] The CEO reopened your question "{q}".'})
             asks.forget()

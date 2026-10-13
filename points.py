@@ -1411,31 +1411,37 @@ def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None =
         return None
 
 
-def close_ask(room_id: str, mid: str, n: int, question: str, now: float | None = None) -> dict | None:
+def close_ask(room_id: str, mid: str, n: int, question: str, now: float | None = None,
+              *, notice_key: str = "") -> dict | None:
     """Close an unanswered card once, retaining its state for every device."""
-    return answer_ask(room_id, mid, n, {"closed": True, "question": question}, now)
+    return answer_ask(room_id, mid, n, {"closed": True, "question": question,
+                                        **({"noticeKey": notice_key} if notice_key else {})}, now)
 
 
-def refresh_close_ask_time(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
+def refresh_close_ask_time(room_id: str, mid: str, n: int, now: float | None = None,
+                           *, notice_key: str = "") -> bool:
     """Start Undo when the close request finishes notifying the asker."""
     now = time.time() if now is None else now
     with _LOCK:
         led = load(room_id)
         got = (led["asks"].get(mid) or {}).get(str(n))
-        if not isinstance(got, dict) or not got.get("closed"):
+        if not isinstance(got, dict) or not got.get("closed") or (notice_key and got.get("noticeKey") != notice_key):
             return False
         got["at"] = now
         _save(room_id, led)
         return True
 
 
-def unclose_ask(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
-    """Reopen a closed card during its ten-second Undo period."""
+def unclose_ask(room_id: str, mid: str, n: int, now: float | None = None,
+                *, force: bool = False, notice_key: str = "") -> bool:
+    """Reopen a closed card during Undo, or roll back its failed notice."""
     now = time.time() if now is None else now
     with _LOCK:
         led = load(room_id)
         got = (led["asks"].get(mid) or {}).get(str(n))
-        if not isinstance(got, dict) or not got.get("closed") or now - float(got.get("at") or 0) > 10:
+        if (not isinstance(got, dict) or not got.get("closed")
+                or (notice_key and got.get("noticeKey") != notice_key)
+                or (not force and now - float(got.get("at") or 0) > 10)):
             return False
         del led["asks"][mid][str(n)]
         if not led["asks"][mid]:
