@@ -2181,7 +2181,7 @@ def _deliver(room_id: str, owner: str, items: list[dict], now: float) -> list[di
         if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
             return []
         wake, told = reminder_line(items, now)
-        return told if _d._type_input(sess, wake) else []
+    return told if _d._type_input(sess, wake) else []
 
 
 def tick(now: float | None = None) -> list[str]:

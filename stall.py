@@ -191,7 +191,9 @@ def _look(rid: str, state: dict, now: float) -> str:
         owners = cr.owners(room)
         owner = owners[0] if owners else ""
         part = cr.participant(room, owner) if owner else None
-        if not part or why_not(room, owner):
+        if not part:
+            return ""
+        if why_not(room, owner):
             return ""
         if rot.is_rotating(rid, owner) or rot.awaiting_handover(rid, owner):
             return ""
@@ -200,6 +202,8 @@ def _look(rid: str, state: dict, now: float) -> str:
         sess = rot._pty(part)
         if sess is None:
             return ""
+        if _d.provider_retry.status(part, rid, now):
+            return ""                   # provider refusal has its own backoff
         # A teammate still at work (a review running) is not a stall.
         if any(_busy(p) for p in cr.agent_participants(room) if p.get("identity") != owner):
             return ""
@@ -237,32 +241,32 @@ def _look(rid: str, state: dict, now: float) -> str:
             rec = {"episode": ep, **{k: rec[k] for k in ("silent", "lastToldAt", "permission") if rec.get(k)}}
         rec["current"] = True           # stopped right now (record())
         state[rid] = rec
-        if not rec.get("nudgedAt"):
-            if not _d._type_input(sess, NUDGE_COMMAND if own else NUDGE):
-                return ""
-            rec.update(nudgedAt=now, owner=owner, idleSince=now - idle)
-            if own:
-                rec["command"] = own
-            state[rid] = rec
-            return "nudged"
-        if now - float(rec["nudgedAt"]) < GRACE_S or rec.get("wokeAt"):
+    if not rec.get("nudgedAt"):
+        if not _d._type_input(sess, NUDGE_COMMAND if own else NUDGE):
             return ""
-        if not rec.get("toldAt"):
-            # The line in the PO's room, once; the wake below until it lands.
-            if not _post_po(room, rec, now):
-                return ""
-            rec["toldAt"] = rec["lastToldAt"] = now
-            state[rid] = rec
-            did = "PO told"
-        else:
-            did = ""
-        # A busy, rotating or stopped PO is typed the line when it is next
-        # idle (review 2): the record keeps it pending, across a restart too.
-        if _wake_po(room, rec, now):
-            rec["wokeAt"] = now
-            state[rid] = rec
-            return (did + ", woken") if did else "PO woken"
-        return (did + " (in its chat; typed when it is idle)") if did else ""
+        rec.update(nudgedAt=now, owner=owner, idleSince=now - idle)
+        if own:
+            rec["command"] = own
+        state[rid] = rec
+        return "nudged"
+    if now - float(rec["nudgedAt"]) < GRACE_S or rec.get("wokeAt"):
+        return ""
+    if not rec.get("toldAt"):
+        # The line in the PO's room, once; the wake below until it lands.
+        if not _post_po(room, rec, now):
+            return ""
+        rec["toldAt"] = rec["lastToldAt"] = now
+        state[rid] = rec
+        did = "PO told"
+    else:
+        did = ""
+    # A busy, rotating or stopped PO is typed the line when it is next
+    # idle (review 2): the record keeps it pending, across a restart too.
+    if _wake_po(room, rec, now):
+        rec["wokeAt"] = now
+        state[rid] = rec
+        return (did + ", woken") if did else "PO woken"
+    return (did + " (in its chat; typed when it is idle)") if did else ""
 
 
 def _words(room: dict, rec: dict, now: float) -> tuple[str, str, str]:
@@ -335,7 +339,7 @@ def _wake_po(room: dict, rec: dict, now: float) -> bool:
         wake = (f"[digest] {proj or 'Your project'}: {label} stalled since {since} — {why} "
                 f"did not carry on after the hub's "
                 f"nudge at {nudged}. Details with ensemble_get_task {_d.task_arg(room)}.")
-        return _d._type_input(sess, wake)
+    return _d._type_input(sess, wake)
 
 
 # ---------------------------------------------------------------------------
@@ -464,9 +468,16 @@ def silent_for(room: dict, part: dict, ev: dict, now: float) -> float:
 
 def _look_silent(rid: str, state: dict, now: float, statuses: dict) -> str:
     """Tell the PO once per silent episode (the attention item shows it).
-    Under the gate, as ``_look``: a seat being handed over is left alone."""
+    Select under the gate, then type without holding it."""
     with _d.rotation.GATE:
-        return _look_silent_gated(rid, state, now, statuses)
+        result = _look_silent_gated(rid, state, now, statuses)
+    if isinstance(result, str):
+        return result
+    did, room, wake, srec = result
+    if _type_po(room, wake):
+        srec["wokeAt"] = now
+        return (did + ", woken") if did else "PO woken (silent)"
+    return did
 
 
 def silent_owner_owes(room: dict, identity: str) -> bool:
@@ -478,7 +489,7 @@ def silent_owner_owes(room: dict, identity: str) -> bool:
     return bool(_d.attention._owed_since(view, identity)[0])
 
 
-def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str:
+def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict):
     cr, rot = _d.chatroom, _d.rotation
     room = cr.get_room(rid, public=False)
     if not room or not _d._room_is_live(room) or not _d.room_po_id(room):
@@ -491,6 +502,8 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         return ""
     if limit_hit(part):
         return ""                       # at a model limit: _look_limit tells the PO
+    if _d.provider_retry.status(part, rid, now):
+        return ""                       # provider refusal is retried, never silent
     view = {**room, "owners": owners, "workflow": _d.workflow_of(room)}
     quiet = silent_for(view, part, _d.attention._evidence(part, statuses), now) \
         if silent_owner_owes(view, owners[0]) else 0.0
@@ -531,10 +544,7 @@ def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str
         did = "PO told (silent)"
     wake = (f"[digest] {label} silent since {at}: its owner has produced nothing for "
             f"{int(quiet // 60)} min with nothing open. Details with ensemble_get_task {_d.task_arg(room)}.")
-    if _type_po(room, wake):
-        srec["wokeAt"] = now
-        return (did + ", woken") if did else "PO woken (silent)"
-    return did
+    return did, room, wake, srec
 
 
 # ---------------------------------------------------------------------------
@@ -555,9 +565,10 @@ def _type_po(room: dict, line: str) -> bool:
         if sess is None or rot.is_rotating(po, ident) or rot.awaiting_handover(po, ident):
             return False
         tpath, reader = rot._transcript_of(part)
-        if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
+        if (not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess)
+                or _d.provider_retry._input_pending(sess)):
             return False
-        return _d._type_input(sess, line)
+    return _d._type_input(sess, line)
 
 
 def limit_hit(part: dict) -> dict | None:
@@ -730,6 +741,32 @@ def _look_permission(rid: str, state: dict, now: float, statuses: dict) -> str:
 # Looking
 # ---------------------------------------------------------------------------
 
+def _look_provider(rid: str, now: float) -> str:
+    """Retry refused turns for every seat, including a reviewer on mention."""
+    rot, cr = _d.rotation, _d.chatroom
+    with rot.GATE:
+        room = cr.get_room(rid, public=False)
+        if not room or not _d._room_is_live(room) or not room.get("launched", True):
+            return ""
+        if room.get("status") in ("paused", "waiting_human") or _d.workflow_of(room) == "done":
+            return ""
+        owners = set(cr.owners(room))
+        in_review = _d.workflow_of(room) == "inreview"
+        targets = []
+        for part in cr.agent_participants(room):
+            ident = part.get("identity") or ""
+            if in_review and ident in owners:
+                continue
+            if rot.is_rotating(rid, ident) or rot.awaiting_handover(rid, ident) or limit_hit(part):
+                continue
+            sess = rot._pty(part)
+            if sess:
+                targets.append((part, sess))
+    for part, sess in targets:
+        _d.provider_retry.tick(room, part, sess, now)
+    return ""
+
+
 def tick(now: float | None = None) -> dict[str, str]:
     """Look at every task once. Returns {roomId: what was done}."""
     now = time.time() if now is None else now
@@ -739,8 +776,13 @@ def tick(now: float | None = None) -> dict[str, str]:
         out = {}
         try:
             ids = [p.stem for p in _d.chatroom.ROOMS_DIR.glob("room-*.json")]
-        except OSError:
-            ids = []
+        except OSError as e:
+            _log(f"rooms list failed: {str(e)[:200]}")
+            return {}
+        try:
+            _d.provider_retry.prune_rooms(set(ids))
+        except OSError as e:
+            _log(f"provider retry prune failed: {str(e)[:200]}")
         try:
             statuses = _d.attention._claude_status_by_session()
         except Exception:
@@ -749,7 +791,8 @@ def tick(now: float | None = None) -> dict[str, str]:
             if rid in state:
                 state[rid]["current"] = False   # until this look finds it stopped again
             dids = []
-            for look in (lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
+            for look in (lambda: _look_provider(rid, now),
+                         lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
                          lambda: _look_silent(rid, state, now, statuses),
                          lambda: _look_permission(rid, state, now, statuses)):
                 try:

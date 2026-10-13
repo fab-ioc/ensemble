@@ -373,7 +373,7 @@ class Typing(unittest.TestCase):
         codex = Pty("p2", agent="codex")
         with mock.patch.object(dashboard.time, "sleep", lambda s: None):
             dashboard._type_input(codex, long)
-        self.assertEqual(codex.writes, [long, "\r"])
+        self.assertEqual(codex.writes, ["\x1b[200~" + long + "\x1b[201~", "\r"])
 
     def test_a_codex_paste_left_in_the_box_gets_one_more_enter(self):
         codex = Pty("p2", agent="codex")

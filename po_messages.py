@@ -479,11 +479,12 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
                 # What wakes first, then what waited longest.
                 order = sorted(free, key=lambda p: (p not in due, p["at"]))
                 wake, told = wake_line(order)
-                typed = _type_line(state, room_id, sess, wake, told, now, count=True)
-                if typed is None:
-                    return before_how
-                changed = True
-                how = typed
+        if sess is not None:
+            typed = _type_line(state, room_id, sess, wake, told, now, count=True)
+            if typed is None:
+                return before_how
+            changed = True
+            how = typed
     if stopped is not None and any(p.get("wake") for p in due):
         # Only a message that wakes starts a PO; a quiet one goes along.
         how = _resume(state, stopped, free, due, now)
@@ -664,16 +665,17 @@ def _resume_outcome(state: dict, room_id: str, now: float) -> str:
                 wake, told = wake_line(sorted(marked, key=lambda p: (not p.get("wake"), p["at"])))
                 for p in told:
                     p.pop("resuming", None)
-                typed = _type_line(state, room_id, sess, wake, told, now, count=False)
-                if typed:
-                    _save(state)
-                    return "typed"
-                for p in told:
-                    p["resuming"] = {"at": now, "key": ""}
-                _save(state)
-                return ""
-            if _stopped(room_id) is None:
+            elif _stopped(room_id) is None:
                 return ""       # coming up, busy, or being rotated
+        if sess is not None:
+            typed = _type_line(state, room_id, sess, wake, told, now, count=False)
+            if typed:
+                _save(state)
+                return "typed"
+            for p in told:
+                p["resuming"] = {"at": now, "key": ""}
+            _save(state)
+            return ""
         why = "the PO stopped before the line could be typed"
     else:
         held = _d.pending_input(room_id) or {}
