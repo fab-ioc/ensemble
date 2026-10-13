@@ -1,21 +1,9 @@
-"""Threads in a PO chat, in the browser (#210).
+"""CDP coverage for PO thread channels, deep links, and panel geometry.
 
-In headless Chrome over CDP, against a hub in a thread serving a solo PO room
-whose transcript is a file, at 1728x1117, 390x844 (a phone) and 4096x2160,
-each size its own project and PO:
-
-* the chat is a channel: each thread once, as its first message with a line
-  under it ("2 replies · PO · last reply …", where it stands); the replies are
-  not in it; a thread with replies not seen has the unread dot, and Needs you
-  lists it under Threads;
-* "Whole chat" shows every message in place again, and back;
-* a thread's page has all its messages and its own box: a reply typed there
-  goes to the PO as "Re P1: …", with "Also send to chat" it shows in the chat
-  too, and the PO's answer lands in the thread;
-* opened, a thread is read: its dot goes.
-
-Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node and
-Chrome.
+Each viewport has a solo PO room with a transcript file. The channel renders
+one compact row per topic; replies live in its panel, and unread topic rows
+are listed in Threads. The optional Whole chat view preserves chronology.
+Screenshots go to $ENSEMBLE_SHOTS when set. Skipped without Node and Chrome.
 """
 from __future__ import annotations
 
@@ -137,6 +125,15 @@ async function main() {
       o.needsThreads = await evalIn('[...document.querySelectorAll("#points-list .pt-thr")].map(e => e.dataset.thr)');
       await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
       await shot('1-channel');
+      await evalIn('toggleWhole(); 0');
+      await until('document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 20000);
+      o.whole = await evalIn(VIEW);
+      await evalIn('toggleWhole(); 0');
+      await until('document.querySelectorAll("#msgs .thr-card").length > 0', 20000);
+      await evalIn('localStorage.setItem("cd-chat-whole", "1"); 0');
+      await go('room=' + room);
+      o.legacyWhole = await evalIn(VIEW);
+      await evalIn('localStorage.removeItem("cd-chat-whole"); 0');
       // Threads with new replies, newest first, then the channel again.
       await evalIn('document.getElementById("threads-view").click(); 0');
       await until('document.getElementById("threads-view").getAttribute("aria-pressed") === "true"', 15000);
@@ -423,17 +420,25 @@ class ThreadsPage(unittest.TestCase):
                 self.assertIn("2 replies", lines["P1"]["text"])
                 self.assertIn("PO", lines["P1"]["text"])
                 self.assertTrue(lines["P1"]["unread"] and lines["P1"]["dot"], "replies not seen: bold, with the dot")
-                self.assertEqual(o["needsThreads"], ["P2", "team:activity", "P1"], "unread threads newest first")
-                self.assertIn("3 threads with new replies", o["sum"])
+                self.assertEqual(o["needsThreads"], ["P2", "P1"], "unread topics newest first")
+                self.assertIn("2 threads with new replies", o["sum"])
                 self.assertEqual(ch["threads"], "false")
                 self.assertLessEqual(ch["scrollX"], 1)
+                self.assertEqual(o["legacyWhole"]["mids"], [], "an older Whole chat preference cannot restore balloon rows")
+                self.assertEqual(len(o["legacyWhole"]["lines"]), len(ch["lines"]))
 
     def test_threads_view_lists_unread_topics(self):
         for w, o in self._each():
             with self.subTest(width=w):
                 self.assertEqual(o["unread"]["mids"], [])
-                self.assertEqual([x["thr"] for x in o["unread"]["lines"]], ["P2", "team:activity", "P1"])
+                self.assertEqual([x["thr"] for x in o["unread"]["lines"]], ["P2", "P1"])
                 self.assertEqual(o["unread"]["threads"], "true")
+
+    def test_whole_chat_is_available_as_an_explicit_view(self):
+        for width, got in self._each():
+            with self.subTest(width=width):
+                self.assertIn(f"po{width}:3", got["whole"]["mids"])
+                self.assertEqual(got["whole"]["lines"], [])
 
     def test_balloon_link_opens_its_thread_with_message_in_view(self):
         for width, got in self._each():

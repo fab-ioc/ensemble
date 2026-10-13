@@ -5,11 +5,12 @@ PO chat in a thread from facts it already has.
   in the ledger a thread of its own; a follow-up (``replyTo``, ``Re Pn``, a
   card's answer, a reply sent from a thread) is in the thread it follows;
 * a PO message is in the threads its ``Re Pn`` names (one copy, each), else
-  in the thread of the input before it; after a hub note it is in none;
+  in the thread of the input or PO balloon before it; after a hub note it
+  joins Team activity;
 * a task's report is in the thread of the latest point about the task, else
-  in a thread of the task's own;
-* an ``Ask:`` or "is live" PO message and a reply sent to the chat too show in
-  the channel; a thread's title is its first words, not a quote or a number;
+  in Team activity;
+* an ``Ask:`` or "is live" PO message and a reply sent to the chat too remain
+  in their threads; a thread's title is its first words, not a quote or number;
 * an old hub line the provenance journal did not claim is a hub line, not the
   person's; the side record keeps what was seen, anchors and also-sends.
 """
@@ -116,18 +117,21 @@ class AssignTest(unittest.TestCase):
         pts = [point("P1", "s:0", "a"), point("P2", "s:2", "x", 10, key="ask:s:1:0")]
         out = self.run_(recs, pts)
         self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2"])
-        self.assertEqual(out["also"], {"s:1": "P1"})          # the question shows in the channel
+        self.assertEqual(out["also"], {"s:1": "P1"})          # the question keeps its thread marker
 
     def test_a_reply_sent_from_a_thread_is_in_it(self):
         recs = [report("s:0", 0, "#12", "Wider chart"), human("s:1", 5, "looks good")]
         out = self.run_(recs, [point("P7", "s:1", "looks good", 5)], side(anchors={"P7": "task:#12"}))
-        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0", "s:1"])
-        self.assertNotIn("P7", out["threads"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0"])
+        self.assertEqual(out["threads"]["P7"]["members"], ["s:1"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:1"])
+        self.assertEqual(out["threads"]["team:activity"]["task"], "")
 
     def test_reply_in_thread_on_a_loose_balloon_makes_it_the_parent(self):
         recs = [note("s:0", 0), po("s:1", 1, "Digest: all quiet"), human("s:2", 5, "and #9?")]
         out = self.run_(recs, [point("P8", "s:2", "and #9?", 5)], side(anchors={"P8": "m:s:1"}))
-        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0", "s:1", "s:2"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0", "s:1"])
+        self.assertEqual(out["threads"]["P8"]["members"], ["s:2"])
         self.assertNotIn("s:1", threads._channel({**out, "recs": recs}))
 
     def test_a_report_goes_to_the_latest_point_about_its_task_else_team_activity(self):
@@ -164,10 +168,20 @@ class AssignTest(unittest.TestCase):
                 po("s:8", 8, "#13 is live", live=True)]
         out = self.run_(recs, [point("P1", "s:0", "first topic", followUps=["s:6"])])
         idx = {**out, "recs": recs}
-        self.assertEqual(threads._channel(idx), ["s:0", "s:2", "s:8"])
+        self.assertEqual(threads._channel(idx), ["s:0"])
         self.assertEqual(out["threads"]["team:activity"]["members"], ["s:3", "s:4", "s:5"])
-        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:6", "s:7"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2", "s:6", "s:7", "s:8"])
         self.assertEqual(set(out["of"]), {r["mid"] for r in recs})
+
+    def test_po_turn_stays_together_after_a_human_or_digest(self):
+        recs = [po("s:0", 0, "Unprompted topic"), po("s:1", 1, "more on topic"),
+                human("s:2", 2, "please fix"), po("s:3", 3, "working"), po("s:4", 4, "done"),
+                note("s:5", 5), po("s:6", 6, "reading digest"), po("s:7", 7, "digest details")]
+        out = self.run_(recs, [point("P1", "s:2", "please fix", 2)])
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:2", "s:3", "s:4"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:5", "s:6", "s:7"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
 
     def test_live_news_shows_in_the_channel_and_an_old_re_is_ignored(self):
         recs = [human("s:0", 0, "a"), po("s:1", 1000, "Re P9: #12 is live", re_=["P9"], live=True)]

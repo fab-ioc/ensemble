@@ -394,6 +394,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     anc = of[root["mid"]][-1]
                 elif root is not None:
                     new(anc, root, _words(root["turn"].get("text") or "") or "Thread")
+            # Team activity is a shared inbox for hub and task traffic. A
+            # human point raised from it starts a topic of its own.
+            if anc == "team:activity":
+                anc = ""
             if anc in threads:
                 out = anc
             else:
@@ -415,7 +419,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         refs = points.task_refs(points.strip_point_lines(p.get("text") or ""))
         for ref in ([p["task"]] if p.get("task") else []) + list(refs):
             task_thread[ref] = tid
-            if threads[tid].get("task") in ("", None):
+            if tid != "team:activity" and threads[tid].get("task") in ("", None):
                 threads[tid]["task"] = ref
 
     last: str | None = None         # the thread of the last input: what a PO message answers
@@ -509,9 +513,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             # Never hidden in a thread (an ask, "is live"), and an answer to
             # several points shown once: under the newest of its threads.
             also[mid] = max(tids, key=lambda t: (threads[t]["rootTs"], order.index(t)))
-        # The input has been answered. A later untagged PO message starts its
-        # own topic instead of inheriting an earlier input's thread.
-        last = None
+        # Several PO balloons may be one answer with no new input between
+        # them. Keep the same home until the next human or hub input.
+        last = tids[-1]
     return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
 
 
@@ -770,7 +774,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
             "items": [_turn(idx, m) for m in shown],
             "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
             "activity": _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None,
-            "unreadThreads": sorted((_meta(t) for t in idx["threads"].values() if t.get("unread")),
+            "unreadThreads": sorted((_meta(t) for t in idx["threads"].values()
+                                    if t.get("unread") and t["id"] != "team:activity"),
                                     key=lambda t: t.get("lastAt") or 0, reverse=True),
             "before": max(0, len(ch) - n), "balloons": len(idx["recs"]), "channel": len(ch)}
 
@@ -809,7 +814,8 @@ def unread_threads(room_id: str, room: dict) -> list[dict] | None:
     idx = ready(room_id, room)
     if idx is None:
         return None
-    out = [_meta(th) for th in idx["threads"].values() if th.get("unread")]
+    out = [_meta(th) for th in idx["threads"].values()
+           if th.get("unread") and th["id"] != "team:activity"]
     out.sort(key=lambda t: (t["lastAt"] or 0, t["id"]), reverse=True)
     return out
 

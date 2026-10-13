@@ -777,6 +777,8 @@
   #whole-chat { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); line-height:16px; }
   #whole-chat[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
   #whole-chat[hidden], #thr-also-l[hidden], #thr-back[hidden] { display:none; }
+  #activity-thread.unread::after { content:""; display:inline-block; width:8px; height:8px; margin-left:var(--s-100); border-radius:var(--r-full); background:var(--c-discovery-bold); }
+  @media (max-width:600px) { #chatbar #whole-chat, #chatbar-note { display:none; } }
   /* A thread: its own messages, all of them; the chat's own bars are not its. */
   body.thread #chatbar, body.thread #points-line, body.thread #ask-line { display:none; }
   #thr-also-l { display:inline-flex; align-items:center; gap:var(--s-100); color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; white-space:nowrap; }
@@ -1306,6 +1308,7 @@
     #chat-controls:has(#chatbar[hidden]):has(#points-line[hidden]) { display:none; }
     #chatbar { display:flex; padding:0 var(--s-200); min-height:28px; margin-left:auto; }
     #chatbar-note { display:none; }
+
     #points-line { flex:1 1 auto; min-width:0; border:0; }
     #points-line .pt-sum-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   }
@@ -5564,8 +5567,7 @@ async function renderSolo(sid, agentId, force) {
 // for one started on a balloon), and draws them as it draws the transcript.
 // "Whole chat" is the old flat chat, per browser.
 let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
-let WHOLE = false;         // the person asked for the whole chat
-try { WHOLE = localStorage.getItem('cd-chat-whole') === '1'; } catch (e) {}
+let WHOLE = false;         // PO chats start in the thread channel, including older saved preferences
 let WHOLE_FOR_LINK = false;   // opened on a link to a reply: the whole chat, for this visit
 let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
@@ -5623,7 +5625,13 @@ async function renderThreaded(force) {
     THR_UNREAD.forEach(t => { THR_META[t.id] = t; });
     showThreadCatchup();
     const ab = $('#activity-thread');
-    if (ab) ab.hidden = !THR_ACTIVITY;
+    if (ab) {
+      ab.hidden = !THR_ACTIVITY;
+      setText(ab, 'Team activity');
+      ab.classList.toggle('unread', !!(THR_ACTIVITY && THR_ACTIVITY.unread));
+      ab.title = THR_ACTIVITY && THR_ACTIVITY.unread ? THR_ACTIVITY.unread + ' new replies in Team activity' : 'Open Team activity';
+      ab.setAttribute('aria-label', ab.title);
+    }
     if (THREAD_MODE) {
       THR_INFO = d.thread || null;
       if (THR_INFO) { THR_META[THR_INFO.id] = THR_INFO; if (!THREAD) THREAD = THR_INFO.id; }
@@ -5695,7 +5703,7 @@ function threadCardHtml(tid) {
   const when = n ? new Date((+t.lastAt || 0) * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
   const root = t.title || 'Thread';
   const open = t.openQuestions || 0;
-  return `<button type="button" class="thr-card thr-open${unread ? ' unread' : ''}" data-thr="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${+t.lastAt || 0}" aria-label="${esc(root)}. ${n} replies${unread ? ', ' + unread + ' unread' : ''}">
+  return `<button type="button" class="thr-card thr-open${unread ? ' unread' : ''}" data-thr="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${open}:${+t.lastAt || 0}" aria-label="${esc(root)}. ${n} replies${unread ? ', ' + unread + ' unread' : ''}">
     ${unread ? '<span class="thr-dot" aria-hidden="true"></span>' : ''}
     <span class="thr-root" title="${esc(root)}">${esc(root)}</span>
     <span class="thr-count">${n} repl${n === 1 ? 'y' : 'ies'}</span>
@@ -5751,7 +5759,6 @@ function toggleWhole() {
   // Shown for a link only: the switch goes back to the threads.
   if (!(WHOLE_FOR_LINK && !WHOLE)) WHOLE = !WHOLE;
   WHOLE_FOR_LINK = false;
-  try { localStorage.setItem('cd-chat-whole', WHOLE ? '1' : '0'); } catch (e) {}
   THR_SIG = ''; SOLO_TURN_COUNT = -1; _soloStatKey = '';
   foldUnkeep(FOLD);
   if (threadedView()) renderThreaded(true); else renderSolo(SOLO_SID, SOLO_AGENT, true);
@@ -5761,14 +5768,18 @@ function showWholeBtn() {
   const b = $('#whole-chat');
   if (!b) return;
   const on = THREADED && !THREAD_MODE;
-  b.hidden = true;
+  b.hidden = !on;
   const tv = $('#threads-view'); if (tv) { tv.hidden = !on; tv.setAttribute('aria-pressed', String(THR_LIST)); }
 
   const pressed = String(!threadedView());
   if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
   // The composer's menu has it too (a phone has no bar over the chat).
   const m = document.querySelector('[data-phone-action="whole-chat"]');
-  if (m) m.hidden = true;
+  if (m) {
+    m.hidden = !on;
+    m.setAttribute('aria-pressed', pressed);
+    setText(m, pressed === 'true' ? 'Whole chat: shown' : 'Whole chat: threads');
+  }
 }
 // ---- Threads in a PO chat (#210): end -----------------------------------------
 
