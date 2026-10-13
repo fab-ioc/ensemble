@@ -20,7 +20,8 @@ const A=JSON.parse(process.argv[1]);
 const {spawn}=require('child_process'); const fs=require('fs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function main(){
-  const ch=spawn(A.chrome,['--headless=new','--remote-debugging-port=0','--user-data-dir='+chromeProfile(A),'--no-first-run','--no-default-browser-check','--disable-gpu','about:blank'],{stdio:['ignore','ignore','pipe']});
+  const udd = chromeProfile(A);
+  const ch=spawn(A.chrome,['--headless=new','--remote-debugging-port=0','--user-data-dir=' + udd,'--no-first-run','--no-default-browser-check','--disable-gpu','about:blank'],{stdio:['ignore','ignore','pipe']});
   const ws=await new Promise((res,rej)=>{let b='';ch.stderr.on('data',d=>{b+=d;let m=b.match(/DevTools listening on (ws:\S+)/);if(m)res(m[1]);});setTimeout(()=>rej(Error(b||'no CDP')),20000);});
   const sock=new WebSocket(ws), waits=new Map();let seq=0;
   await new Promise(res=>sock.onopen=res);
