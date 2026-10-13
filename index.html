@@ -13090,12 +13090,13 @@ function pdChatRemoved(id) {
 // (?thread=), with its own reply box. On a phone it is a tab, and its
 // "‹ Chat" brings the chat back (thread-back).
 const pdThreadId = roomId => 'thread:' + roomId;
-function pdThreadOpen(roomId, thread, mid, source) {
+function pdThreadOpen(roomId, thread, mid, source, part = '') {
   const d = PD.dock;
   if (!d || !roomId || !pdPanelsOn()) return false;
   const id = pdThreadId(roomId);
   const q = thread ? '&thread=' + encodeURIComponent(thread) : '&thread=&tmid=' + encodeURIComponent(mid || '');
-  const src = `/session?id=${encodeURIComponent(roomId)}&embed=1${q}`;
+  const src = `/session?id=${encodeURIComponent(roomId)}&embed=1${q}`
+    + (mid && part ? '&msg=' + encodeURIComponent(mid) + '&part=' + encodeURIComponent(part) : '');
   const had = PD.rt.get(id);
   if (had) {
     const f = had.el.querySelector('iframe');
@@ -13104,7 +13105,7 @@ function pdThreadOpen(roomId, thread, mid, source) {
     return true;
   }
   const el = document.createElement('div');
-  el.className = 'pd-chat pd-thread';
+  el.className = 'pd-chat pd-chat-x pd-thread';
   el.dataset.room = roomId;
   el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-thread src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write"></iframe>`;
   PD.rt.set(id, { kind: 'thread', room: roomId, el, title: 'Thread' });
@@ -18796,8 +18797,10 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
   // A PO chat's thread (#210): opened beside it; its page names it; its ‹ Chat.
   if (d && d.type === 'open-thread' && d.roomId && ev.origin === location.origin) {
-    const ok = pdThreadOpen(String(d.roomId), String(d.thread || ''), String(d.mid || ''), ev.source);
-    if (!ok) window.open('/session?id=' + encodeURIComponent(String(d.roomId)) + (d.thread ? '&thread=' + encodeURIComponent(String(d.thread)) : '&thread=&tmid=' + encodeURIComponent(String(d.mid || ''))), '_blank', 'noopener');
+    const mid = String(d.mid || ''), part = String(d.part || '');
+    const ok = pdThreadOpen(String(d.roomId), String(d.thread || ''), mid, ev.source, part);
+    if (!ok) window.open('/session?id=' + encodeURIComponent(String(d.roomId)) + (d.thread ? '&thread=' + encodeURIComponent(String(d.thread)) : '&thread=&tmid=' + encodeURIComponent(mid))
+      + (mid && part ? '&msg=' + encodeURIComponent(mid) + '&part=' + encodeURIComponent(part) : ''), '_blank', 'noopener');
   }
   if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''));
   if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {

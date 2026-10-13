@@ -5726,12 +5726,12 @@ function threadMarkHtml(m) {
   return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc((m.alsoIn || []).join(','))}">Replied in <button type="button" class="thr-open" data-thr="${esc(m.inThr)}">${esc(t ? t.title || 'a thread' : 'a thread')}</button>${also.length ? ', also in ' + also.join(', ') : ''}</div>`;
 }
 // A thread opens beside the chat (the dashboard's panel), or in this window.
-function openThread(tid, mid) {
+function openThread(tid, mid, part = '') {
   if (!tid && !mid) return;
   const host = embedHost();
-  if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '' }, location.origin); return; }
+  if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '', part }, location.origin); return; }
   const u = '/session?id=' + encodeURIComponent(ROOM) + (tid ? '&thread=' + encodeURIComponent(tid) : '&thread=&tmid=' + encodeURIComponent(mid));
-  window.open(u, '_blank', 'noopener');
+  window.open(u + (part && mid ? '&msg=' + encodeURIComponent(mid) + '&part=' + encodeURIComponent(part) : ''), '_blank', 'noopener');
 }
 function embedHost() {
   try { return window.parent !== window && window.parent.location.origin === location.origin ? window.parent : null; } catch (e) { return null; }
@@ -7632,12 +7632,7 @@ function refClickHandler(ev) {
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.askMid || a.dataset.refMsg, part = a.dataset.askN !== undefined ? 'ask:' + a.dataset.askN : a.dataset.refPart || '';
-  if (room === ROOM && THREAD_MODE && a.classList.contains('card-jump')) {
-    const host = embedHost();
-    if (host) host.postMessage({ type: 'open-msg', roomId: ROOM, msg, part }, location.origin);
-    else location.href = a.href;
-    return;
-  }
+  if (room === ROOM && THREADED && a.classList.contains('card-jump')) { openThread('', msg, part); return; }
   if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
