@@ -102,6 +102,7 @@ MIN_TOKENS = 100_000
 MAX_TOKENS = 5_000_000
 TICK_S = 60
 IDLE_S = 5.0                # terminal quiet this long after an end_turn = idle
+HUB_LINE_LEASE_S = 90.0      # stale typing marks age out after a failed thread
 ASK_TIMEOUT_S = 20 * 60     # no answer to the ask by then: rotate once idle
 GIVE_UP_S = 60 * 60         # still busy by then: drop the attempt, try later
 COOLDOWN_S = 30 * 60        # a session this young is never rotated, nor re-asked
@@ -1919,10 +1920,46 @@ def _typed_since(sess, since: float) -> bool:
 def _submitted_lately(sess) -> bool:
     """Anything was submitted to it within IDLE_S — a doorbell rung just
     before the gate was taken may not have reached the transcript yet."""
+    if hub_line_pending(sess):
+        return True
     try:
         return time.time() - float(sess.last_submit() or 0) < IDLE_S
     except Exception:
         return True
+
+
+def hub_line_pending(sess) -> bool:
+    """A hub line is being typed or checked after Enter, before it is settled."""
+    stamped = getattr(sess, "hub_line_typing_at", 0)
+    return (isinstance(stamped, (int, float)) and stamped > 0
+            and 0 <= time.time() - stamped < HUB_LINE_LEASE_S)
+
+
+def reserve_hub_line(sess):
+    """Claim a live seat before typing, atomically with rotation's last look."""
+    with GATE:
+        if hub_line_pending(sess) or not sess.alive():
+            return None
+        meta = getattr(sess, "meta", None) or {}
+        rid, ident = str(meta.get("room") or ""), str(meta.get("identity") or "")
+        if rid and room_rotating(rid):
+            return None
+        if rid and ident and _d:
+            room = _d.chatroom.get_room(rid, public=False)
+            part = _d.chatroom.participant(room, ident) if room else None
+            if part and part.get("ptyId") and _pty(part) is not sess:
+                return None
+        token = object()
+        sess.hub_line_typing_at = time.time()
+        sess.hub_line_typing_token = token
+        return token
+
+
+def release_hub_line(sess, token) -> None:
+    with GATE:
+        if getattr(sess, "hub_line_typing_token", None) is token:
+            sess.hub_line_typing_at = 0
+            sess.hub_line_typing_token = None
 
 
 def room_rotating(room_id: str) -> bool:
@@ -2073,8 +2110,9 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
             end = time.time() + REPLAY_WAIT_S
             while True:
                 time.sleep(1)
-                part = _d.chatroom.participant(_d.chatroom.get_room(rid) or {}, ident)
-                sess = _pty(part or {})
+                with GATE:
+                    part = _d.chatroom.participant(_d.chatroom.get_room(rid) or {}, ident)
+                    sess = _pty(part or {})
                 if sess is None:
                     _log(f"{rid}/{ident}: not running — {len(wakes) - i} held wake(s) dropped")
                     lost = [it.get("key") for w in wakes[i:] if isinstance(w, dict)
@@ -2085,11 +2123,10 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
                 quiet = bool(tail) and time.time() - sess.last_output >= IDLE_S
                 if (quiet and not _d.attention.looks_like_prompt(tail)) or time.time() > end:
                     break
-            with GATE:
-                if isinstance(wake, dict):
-                    _type_sends(rid, ident, sess, wake)
-                else:
-                    _d._type_input(sess, wake)
+            if isinstance(wake, dict):
+                _type_sends(rid, ident, sess, wake)
+            else:
+                _d._type_input(sess, wake)
             _replayed((rid, ident), [wake])
         _log(f"{rid}/{ident}: typed {len(wakes)} held wake(s) into the fresh session")
     threading.Thread(target=run, daemon=True, name=f"rotation-replay-{rid}-{ident}").start()

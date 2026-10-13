@@ -799,8 +799,13 @@ def _redeliver_room(room_id: str, now: float) -> None:
     with rot.GATE:
         if rot.room_rotating(room_id):
             return
+        latest = _d.chatroom.get_room(room_id, public=False)
+        current_agents = _d.chatroom.agent_participants(latest) if latest else []
+        current = rot._pty(current_agents[0]) if current_agents else None
+        if current is not sess:
+            return
         sess.last_input = time.time()
-        ok = _d._type_input(sess, "\n\n".join(t for t, _ in parts), parts[0][1], parts=parts)
+    ok = _d._type_input(sess, "\n\n".join(t for t, _ in parts), parts[0][1], parts=parts)
     if ok:
         redelivered(room_id, keys, "typed again", now)
         _log(f"{room_id}: typed {len(keys)} unread send(s) again")

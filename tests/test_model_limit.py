@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -409,6 +410,26 @@ class SilentOwnerTellsThePo(_Stall):
                 mock.patch.object(stall, "_look_limit", return_value=""):
             self.assertNotIn("silent", self.tick())
         self.assertEqual(self.silent_lines(), [])
+
+    def test_silent_po_line_is_typed_without_holding_rotation_gate(self):
+        self.silent()
+        gate_free = []
+
+        def type_po(_room, _line):
+            def probe():
+                acquired = dashboard.rotation.GATE.acquire(timeout=0.3)
+                gate_free.append(acquired)
+                if acquired:
+                    dashboard.rotation.GATE.release()
+
+            worker = threading.Thread(target=probe)
+            worker.start()
+            worker.join(1)
+            return True
+
+        with mock.patch.object(stall, "_type_po", side_effect=type_po):
+            self.assertIn("woken", self.tick())
+        self.assertEqual(gate_free, [True])
 
     def test_an_owner_that_owes_nothing_is_not_silent(self):
         # It spoke last (after its resume), to nobody: the ball is elsewhere.
