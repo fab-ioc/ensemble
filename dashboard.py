@@ -5328,13 +5328,13 @@ def make_po_verdict(f: dict, target: dict | None = None, now: float | None = Non
     return {"ok": True, "code": ""}
 
 
-def make_po_words(v: dict) -> dict:
+def make_po_words(v: dict, *, project_word: str | None = None) -> dict:
     """{reason, fix} for a verdict, in the person's words: the same text as
     makePoWords in index.html (tests/test_project_setup.py)."""
     c = v.get("code") or ""
     q = lambda k: f"“{v.get(k) or ''}”"      # noqa: E731
     mins = int(v.get("min") or 1)
-    pn = project_noun()
+    pn = project_word if project_word is not None else project_noun()
     words = {
         "": ("", ""),
         "orphan": ("It is what is left of a collaboration whose task was deleted: several conversations, "
@@ -5373,11 +5373,11 @@ def make_po_words(v: dict) -> dict:
     return {"reason": reason, "fix": fix}
 
 
-def make_po_answer(v: dict) -> dict:
+def make_po_answer(v: dict, *, project_word: str | None = None) -> dict:
     """A verdict with its words, as a row's ``makePo``: the action menu
     (static/actions.js makePoItem) shows reason and fix, and takes a row
     without one as not known."""
-    return {**v, **make_po_words(v)}
+    return {**v, **make_po_words(v, project_word=project_word)}
 
 
 def make_po_refusal(v: dict) -> str:
@@ -10307,41 +10307,51 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
         run_state, run_since = {}, {}
     try:
         po_room_ids = {p.get("poRoomId") for p in load_projects() if p.get("poRoomId")}
-        for rm in rooms:
-            if (chatroom.room_is_cold(rm, _room_is_live)
-                    and rm.get("id") not in att_by_room
-                    and rm.get("id") not in po_room_ids):
-                continue
+        cold_done_kept = 0
+        for rm in sorted(rooms, key=lambda r: r.get("updatedAt") or 0, reverse=True):
+            rid = rm["id"]
+            # The Board and task list are built from these rows. A cold task
+            # still needs its stored row; only transcript, cost and Git work
+            # can leave the hot path.
+            cold = (chatroom.room_is_cold(rm, _room_is_live)
+                    and rid not in att_by_room and rid not in po_room_ids)
+            if cold and workflow_of(rm) == "done":
+                cold_done_kept += 1
+                # _cut_task_rows can take at most n finished rows. Keep the
+                # newest n cold Done candidates; older ones cannot reach this
+                # response, while the Board's larger n still sees its rows.
+                if cold_done_kept > n:
+                    continue
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
-            live = _room_is_live(rm)
+            live = False if cold else _room_is_live(rm)
             idle = None
-            for pp in agents_in:
-                pid = pp.get("ptyId")
-                sess = ptyrun.get(pid) if pid else None
-                if sess:
-                    isec = sess.info().get("idleSeconds")
-                    if isec is not None:
-                        idle = isec if idle is None else min(idle, isec)
+            if live:
+                for pp in agents_in:
+                    pid = pp.get("ptyId")
+                    sess = ptyrun.get(pid) if pid else None
+                    if sess:
+                        isec = sess.info().get("idleSeconds")
+                        if isec is not None:
+                            idle = isec if idle is None else min(idle, isec)
             # Busy is an agent in a turn, as attention reads it (its hooks,
             # Claude's status file, else the screen), not a terminal that
             # printed in the last moments: every run dot reads this, and green
             # is an agent working (GitHub issue 13, point P157).
             busy = run_state.get(rm["id"]) == "working"
-            rid = rm["id"]
             msgs = rm.get("messages", []) or []
-            _user_msgs = [m for m in msgs
-                          if m.get("from") == "user" and (m.get("text") or "").strip()]
-            first_txt = ((_user_msgs[0] if _user_msgs else (msgs[0] if msgs else {})).get("text") or "")[:200]
+            first_user = next((m for m in msgs
+                               if m.get("from") == "user" and (m.get("text") or "").strip()), None)
+            first_txt = ((first_user or (msgs[0] if msgs else {})).get("text") or "")[:200]
             last_txt = points.strip_point_lines((msgs[-1] if msgs else {}).get("text") or "")[:200]
             # The issue view's summary answers "what did this task do", so it
             # needs the last thing an AGENT said. `last` is the last message
             # from anyone, which would happily caption your own question as
             # "what happened".
-            _agent_msgs = [m for m in msgs
-                           if m.get("from") != "user" and (m.get("text") or "").strip()]
-            last_agent_txt = ((_agent_msgs[-1] if _agent_msgs else {}).get("text") or "")[:400]
-            room_cost = compute_room_cost(rm)
+            last_agent = next((m for m in reversed(msgs)
+                               if m.get("from") != "user" and (m.get("text") or "").strip()), None)
+            last_agent_txt = ((last_agent or {}).get("text") or "")[:400]
+            room_cost = {} if cold else compute_room_cost(rm)
             pend = pending_input(rid)
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
@@ -10357,7 +10367,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                              "modelShown": seat_model_shown(p.get("agent", ""), p.get("model", "")),
                              "role": p.get("role", ""),
                              **({"onMention": True,
-                                 "reviewing": _pty_alive(p.get("ptyId"))}
+                                 "reviewing": False if cold else _pty_alive(p.get("ptyId"))}
                                 if chatroom.is_on_mention(rm, p) else {})}
                             for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
@@ -10392,7 +10402,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "turns": len(rm.get("messages", [])),
                 "idleSeconds": (idle if live else None),
                 "pid": None, "archived": False,
-                "parent": "", "jira": [], "cost": room_cost.get("dollars", 0.0),
+                "parent": "", "jira": [],
+                "cost": None if cold else room_cost.get("dollars", 0.0),
                 # Tokens across every conversation, Codex's included (which
                 # have no price, so "cost" alone shows nothing for them).
                 "costTokens": room_cost.get("tokens"),
@@ -10400,7 +10411,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 # and a worktree branch's change against main (+N −N).
                 "newsAt": room_news_at(rm),
                 "changes": (branch_changes(rm.get("cwd", ""))
-                            if (rm.get("workspace") or {}).get("mode") == "worktree" else None),
+                            if not cold and (rm.get("workspace") or {}).get("mode") == "worktree" else None),
                 "currentTheme": "",
                 "first": first_txt, "last": last_txt,
                 "lastAgent": last_agent_txt, "transcriptPath": "",
@@ -10421,10 +10432,11 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 # looked at yet: ready for their check, never Needs you.
                 "reported": reported.get(rid),
                 # {open, answered}: the person's points waiting, or None.
-                "points": _points_counts(rid),
+                "points": None if cold else _points_counts(rid),
                 # How many conversations it has left behind (past_conversations).
-                "pastConversations": len({x["sessionId"] for x in room_past_sessions(rm)}
-                                         | {x["sessionId"] for x in past_found.get(rid, [])}),
+                "pastConversations": (0 if cold else len(
+                    {x["sessionId"] for x in room_past_sessions(rm)}
+                    | {x["sessionId"] for x in past_found.get(rid, [])})),
             })
     except Exception:
         pass
@@ -10497,8 +10509,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     try:
         po_facts = _PoFacts()
         now = time.time()
+        project_word = project_noun()
         for r in out:
-            r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))
+            r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now),
+                                          project_word=project_word)
     except Exception as e:      # noqa: BLE001 — the list without it; the request checks again
         print(f"[make-po] verdicts not listed: {e!r}", flush=True)
     # The file APIs may show what is in these rows' folders (workspace_access_ok).

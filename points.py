@@ -1842,16 +1842,28 @@ def counts(room_id: str) -> dict | None:
     """``{open, planned, delivered}`` for a task card or the PO pill, from the
     ledger as it stands (no looking for answers: the chat and the reminder do
     that). None when the room has no ledger or nothing in it waits."""
-    if not exists(room_id):
+    if not _ROOM_ID.fullmatch(room_id or ""):
         return None
-    led = load(room_id)
-    c = _counts(led)
-    # Needs you (#209): what the counter shows. Decisions as the chat's last
-    # view worked them out (reading cards here would cost a listing seconds).
-    kinds = [needs_you(p) for p in led["points"]]
-    c.update(decisions=len((_LAST_DECISIONS.get(room_id) or ([], []))[0]),
-             totry=kinds.count("try"), news=kinds.count("new"))
-    return c if any(c.values()) else None
+    with _LOCK:
+        p = _path(room_id)
+        try:
+            mt = p.stat().st_mtime_ns
+        except OSError:
+            if not p.with_suffix(".json.prev").exists():
+                return None
+            led = load(room_id)
+        else:
+            hit = _CACHE.get(room_id)
+            # Counting only reads the ledger. The cached copy is safe under
+            # this lock, and avoids cloning it on every task-list poll.
+            led = hit[1] if hit and hit[0] == mt else load(room_id)
+        c = _counts(led)
+        # Needs you (#209): what the counter shows. Decisions as the chat's last
+        # view worked them out (reading cards here would cost a listing seconds).
+        kinds = [needs_you(p) for p in led["points"]]
+        c.update(decisions=len((_LAST_DECISIONS.get(room_id) or ([], []))[0]),
+                 totry=kinds.count("try"), news=kinds.count("new"))
+        return c if any(c.values()) else None
 
 
 def _project_of(room_id: str, room: dict | None, projects: list[dict]) -> str:

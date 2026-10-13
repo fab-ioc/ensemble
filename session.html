@@ -5910,7 +5910,8 @@ async function refreshRoom() {
         for (const m of patch.messages || []) if (!known.has(m.id)) messages.push(m);
         room = {...(patch.statusSame ? ROOM_LAST.room : patch.room), messages,
           revision: patch.revision, statusSig: patch.statusSig};
-        ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig, room};
+        ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig,
+          room: structuredClone(room)};
       } else {
         ROOM_LAST = null;
         ROOM_ETAG = '';
