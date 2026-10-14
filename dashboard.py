@@ -11367,10 +11367,20 @@ _BOOT_HOST_ROOMS: set | None = None
 _RESTART_RESTORING = False
 
 
+_BOOT_HOST_UNKNOWN = False      # that lookup failed: no boot restore this start
+
+
 def note_host_at_attach() -> None:
-    global _BOOT_HOST_ROOMS
-    _BOOT_HOST_ROOMS = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions()
-                        if i.get("alive")} - {None, ""}
+    """Never stops the hub from serving: a lookup that fails is logged, and
+    this start brings nothing back (cold or warm is not known)."""
+    global _BOOT_HOST_ROOMS, _BOOT_HOST_UNKNOWN
+    try:
+        _BOOT_HOST_ROOMS = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions()
+                            if i.get("alive")} - {None, ""}
+    except Exception as exc:    # noqa: BLE001 — the hub serves without it
+        _BOOT_HOST_ROOMS, _BOOT_HOST_UNKNOWN = None, True
+        _restart_log(f"boot: the PTY host's terminals could not be listed when the hub "
+                     f"attached ({exc!r}); no room is brought back on this start")
 
 
 def restore_after_boot(handler=None, gap: float | None = None) -> dict:
@@ -11389,6 +11399,9 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
     if not running_rooms.exists():
         running_rooms.refresh()
         return done("no record of running rooms yet; started one from what runs now")
+    if _BOOT_HOST_UNKNOWN:
+        return done("the PTY host could not be listed when the hub attached: nothing "
+                    "brought back", log=False)
     entries = running_rooms.boot_entries()
     if not entries:
         return done("no room was running", log=False)
@@ -16743,11 +16756,14 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/pty/kill":
             pty_id = (data.get("id") or "").strip()
             sess = ptyrun.get(pty_id)
-            rid = str(((getattr(sess, "meta", None) or {}) if sess else {}).get("room") or "")
+            meta = ((getattr(sess, "meta", None) or {}) if sess else {})
+            rid = str(meta.get("room") or "")
             ok = ptyrun.kill(pty_id)
             if ok and rid and not _room_has_live_pty(rid):
                 running_rooms.note_stopped(rid)     # its last terminal ended on purpose
                 hub_typing.forget_room(rid)
+            elif ok and rid and meta.get("identity"):
+                hub_typing.forget_room(rid, str(meta.get("identity")))  # that agent only
             self._send_json(200, {"ok": ok})
             return
         if p in ("/api/update", "/api/restart") and str(data.get("when") or "safe").lower() != "now":

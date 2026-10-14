@@ -151,16 +151,20 @@ def _settle(gone) -> list:
     return cleared
 
 
-def forget_room(rid: str) -> None:
-    """A task stopped or deleted: its agents leave every alarm (an alarm
-    left naming nobody clears) and their refusals are dropped."""
+def forget_room(rid: str, identity: str = "") -> None:
+    """A task stopped or deleted (or, with ``identity``, one agent's terminal
+    ended from the page): its agents leave every alarm (an alarm left naming
+    nobody clears) and their refusals are dropped."""
     if not rid:
         return
+
+    def gone(k):
+        return k[0] == rid and (not identity or k[1] == identity)
     try:
         with _LOCK:
-            for k in [k for k in _FAILS if k[0] == rid]:
+            for k in [k for k in _FAILS if gone(k)]:
                 _FAILS.pop(k)
-            cleared = _settle(lambda k: k[0] == rid)
+            cleared = _settle(gone)
         for name, alarm in cleared:
             _clear(name, alarm, ended=True)
     except Exception as exc:    # noqa: BLE001 — a Stop never fails on it

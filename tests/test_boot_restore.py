@@ -32,7 +32,8 @@ class _Boot(_Hub):
         super().setUp()
         for p in (mock.patch.object(running_rooms, "_ACTIVE", True),
                   mock.patch.object(dashboard, "_BOOT_HOST_ROOMS", None),
-                  mock.patch.object(dashboard, "_RESTART_RESTORING", False)):
+                  mock.patch.object(dashboard, "_RESTART_RESTORING", False),
+                  mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", False)):
             p.start()
             self.addCleanup(p.stop)
         os.environ.pop("ENSEMBLE_PTY_PREFLIGHT", None)
@@ -137,6 +138,35 @@ class BootRestore(_Boot):
         self.assertIn(f"1 recorded room(s) already started again since the hub came up: "
                       f"left as they are ({early})", self.log())
         self.assertEqual(sorted(self.record()), sorted([early, other]))
+
+    def test_a_host_lookup_that_fails_at_attach_is_logged_and_restores_nothing(self):
+        rid = self.room()
+        self.running(rid, "claude", "idle")
+        running_rooms.refresh()
+        self.hub_stops()
+
+        def broken():
+            raise ConnectionError("host stalled")
+        with mock.patch.object(dashboard.ptyrun, "list_sessions", broken):
+            dashboard.note_host_at_attach()             # main() goes on
+        out = self.boot()
+        self.assertEqual((out["rooms"], self.starts), ([], 0))
+        self.assertIn("could not be listed when the hub attached", self.log())
+        self.assertIn("no room is brought back on this start", self.log())
+
+    def test_one_agent_ended_from_the_page_leaves_the_alarm(self):
+        hub_typing.reset()
+        self.addCleanup(hub_typing.reset)
+        hub_typing.record(types.SimpleNamespace(
+            id="p1", meta={"room": "r1", "identity": "a"}, alive=lambda: True,
+            last_output=0), False, "own-seat")
+        hub_typing.record(types.SimpleNamespace(
+            id="p2", meta={"room": "r1", "identity": "b"}, alive=lambda: True,
+            last_output=0), False, "own-seat")
+        hub_typing.forget_room("r1", "a")
+        self.assertEqual([a["identity"] for a in hub_typing.view()["alarms"][0]["agents"]], ["b"])
+        hub_typing.forget_room("r1", "b")
+        self.assertEqual(hub_typing.view()["alarms"], [])
 
     def test_a_host_that_outlived_the_hub_is_a_warm_start(self):
         """At attach the host runs a room the (stale) record does not name:
