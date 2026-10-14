@@ -5515,7 +5515,8 @@ def make_po_facts(data: dict) -> dict:
     projects = load_projects()
     po_of = {(p.get("poRoomId") or "").strip(): p for p in projects if (p.get("poRoomId") or "").strip()}
     if rid:
-        room = chatroom.get_room(rid, public=False)
+        # Read only: the indexed room, not a copy of every message (#228).
+        room = chatroom.get_room(rid, public=False, copy_room=False)
         if room is None:
             return {"kind": "gone"}
         agents_in = chatroom.agent_participants(room)
@@ -6491,19 +6492,11 @@ def _task_index() -> list[dict]:
     """Every room's numbering and the little a reference shows of it, reading
     again only the room files that changed since the last call."""
     out: list[dict] = []
-    try:
-        paths = list(chatroom.ROOMS_DIR.glob("room-*.json"))
-    except OSError:
-        return out
     seen = set()
-    for p in paths:
-        rid = p.stem
+    for name, sig in chatroom.ROOM_FILES.files().items():
+        rid = filetable.as_path(name).stem
         seen.add(rid)
-        try:
-            st = p.stat()
-            mtime = (st.st_mtime_ns, st.st_size)
-        except OSError:
-            continue
+        mtime = (sig[2], sig[1])
         with _TASK_INDEX_LOCK:
             hit = _TASK_INDEX.get(rid)
         if hit and hit[0] == mtime:

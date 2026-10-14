@@ -19,6 +19,10 @@ from pathlib import Path
 
 HOT_S = 6 * 3600.0
 FULL_S = 60.0
+# File times tick coarsely (~16 ms on Windows): a file added in the tick a
+# folder was listed in leaves the folder's time as it was. A listing is
+# trusted only once taken this long after the folder's last change.
+SETTLE_NS = 2_000_000_000
 
 
 class FileTable:
@@ -35,7 +39,7 @@ class FileTable:
 
     def _reset(self, root: str) -> None:
         self._root = root
-        self._dirs: dict[str, tuple[int, list[str], list[str]]] = {}
+        self._dirs: dict[str, tuple[int, list[str], list[str], bool]] = {}
         self._files: dict[str, tuple[float, int, int]] = {}
         self._full_at = 0.0
 
@@ -54,7 +58,7 @@ class FileTable:
             if full:
                 self._full_at = now
             files: dict[str, tuple[float, int, int]] = {}
-            dirs: dict[str, tuple[int, list[str], list[str]]] = {}
+            dirs: dict[str, tuple[int, list[str], list[str], bool]] = {}
             self._walk(root, 0, full, now, set(hot_names), files, dirs)
             self._dirs, self._files = dirs, files
             return dict(files)
@@ -66,10 +70,12 @@ class FileTable:
         except OSError:
             return
         seen = self._dirs.get(d)
-        if not full and seen and seen[0] == dm:
-            subs, names = seen[1], seen[2]
+        listed: dict[str, tuple[float, int, int]] = {}
+        if not full and seen and seen[3] and seen[0] == dm:
+            subs, names, settled = seen[1], seen[2], True
         else:
             subs, names = [], []
+            settled = time.time_ns() - dm > SETTLE_NS
             try:
                 with os.scandir(d) as it:
                     for e in it:
@@ -79,11 +85,15 @@ class FileTable:
                                     subs.append(e.name)
                             elif self._match(e.name) and e.is_file():
                                 names.append(e.name)
+                                # Windows: from the listing, no extra call. It
+                                # can lag an append, never an add or a replace.
+                                est = e.stat()
+                                listed[e.name] = (est.st_mtime, est.st_size, est.st_mtime_ns)
                         except OSError:
                             continue
             except OSError:
                 return
-        dirs[d] = (dm, subs, names)
+        dirs[d] = (dm, subs, names, settled)
         for s in subs:
             self._walk(os.path.join(d, s), level + 1, full, now, hot, files, dirs)
         hot_after = now - HOT_S
@@ -92,7 +102,9 @@ class FileTable:
             had = self._files.get(p)
             if had is not None and not full and had[0] < hot_after \
                     and name.rsplit(".", 1)[0] not in hot:
-                files[p] = had        # quiet for hours: as it was, until the next full walk
+                # quiet for hours: as it was, or as a new listing of its
+                # folder has it (a replaced file), until the next full walk
+                files[p] = listed.get(name, had)
                 continue
             try:
                 st = os.stat(p)

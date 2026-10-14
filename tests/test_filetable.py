@@ -32,6 +32,12 @@ class FileTableTest(unittest.TestCase):
             os.utime(p, (t, t))
         return p
 
+    def _settle(self):
+        """The folders' last change well before the next listing."""
+        t = time.time() - 10
+        for d in (self.root, os.path.join(self.root, "p")):
+            os.utime(d, (t, t))
+
     def _append(self, p, text):
         # an append keeps the folder time, as on NTFS: put it back to be sure
         d = os.path.dirname(p)
@@ -56,6 +62,7 @@ class FileTableTest(unittest.TestCase):
 
     def test_cold_file_waits_for_full_walk_unless_named(self):
         p = self._write("old.jsonl", "x", age=filetable.HOT_S + 100)
+        self._settle()
         self.table.files()
         self._append(p, "yy")
         self.assertEqual(self.table.files()[p][1], 1)          # cold: as it was
@@ -63,6 +70,7 @@ class FileTableTest(unittest.TestCase):
 
     def test_cold_file_seen_after_full_walk(self):
         p = self._write("old.jsonl", "x", age=filetable.HOT_S + 100)
+        self._settle()
         self.table.files()
         self._append(p, "yy")
         os.utime(p, (time.time() - filetable.HOT_S - 50,) * 2)
@@ -71,6 +79,37 @@ class FileTableTest(unittest.TestCase):
                                return_value=time.time() + filetable.FULL_S + 1):
             self.assertEqual(self.table.files()[p][1], 3)
         self.table.forget()
+        self.assertEqual(self.table.files()[p][1], 3)
+
+    def test_file_added_in_the_listing_tick_seen(self):
+        # the folder's time does not move when a file lands in the same tick
+        d = os.path.join(self.root, "p")
+        self.assertEqual(self.table.files(), {})
+        dm = os.stat(d).st_mtime_ns
+        p = self._write("a.jsonl", "x")
+        os.utime(d, ns=(dm, dm))
+        self.assertEqual(list(self.table.files()), [p])
+
+    def test_settled_folder_not_listed_again(self):
+        self._write("a.jsonl", "x")
+        self._settle()
+        self.table.files()
+        with mock.patch.object(filetable.os, "scandir", side_effect=AssertionError("listed")):
+            self.assertEqual(len(self.table.files()), 1)
+
+    def test_replaced_cold_file_seen(self):
+        # the hub writes rooms by replacing them: the folder moves
+        p = self._write("old.jsonl", "x", age=filetable.HOT_S + 100)
+        self._settle()
+        self.table.files()
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("xyz")
+        d = os.path.dirname(p)
+        before = os.stat(d).st_mtime_ns
+        os.replace(tmp, p)
+        if os.stat(d).st_mtime_ns == before:      # coarse folder clock
+            os.utime(d, ns=(before + 10**9,) * 2)
         self.assertEqual(self.table.files()[p][1], 3)
 
     def test_removed_file_gone(self):

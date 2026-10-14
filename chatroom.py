@@ -44,6 +44,7 @@ from pathlib import Path
 
 from backends.base import DASHBOARD_DIR
 import durable
+import filetable
 
 ROOMS_DIR = DASHBOARD_DIR / "rooms"
 HUMAN_IDENTITY = "user"
@@ -69,15 +70,30 @@ def _entry(room: dict, st) -> dict:
             "mtime": st.st_mtime_ns, "signature": signature, "room": room}
 
 
+# The room files with their time and size (#228): the hub writes a room by
+# replacing it, which moves the folder, so a refresh re-lists the folder only
+# then and re-stats only rooms changed lately, not all ~600.
+ROOM_FILES = filetable.FileTable(lambda: ROOMS_DIR, 0,
+                                 lambda n: n.startswith("room-") and n.endswith(".json"))
+
+
 def room_index() -> list[dict]:
-    """Incremental room index; external edits and deletions are noticed by stat."""
+    """Incremental room index; external edits and deletions are noticed by
+    stat (an in-place edit of a room quiet for hours: within a minute)."""
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     seen = set()
     with _INDEX_LOCK:
-        for path in ROOMS_DIR.glob("room-*.json"):
+        # Listed under the lock, as a write replaces a room under it: a room
+        # written meanwhile is never taken for one deleted.
+        table = ROOM_FILES.files()
+        for name, sig in table.items():
+            path = filetable.as_path(name)
             rid = path.stem
             seen.add(rid)
             try:
+                hit = _INDEX.get(rid)
+                if hit and hit["size"] == sig[1] and hit["mtime"] == sig[2]:
+                    continue
                 st = path.stat()
                 hit = _INDEX.get(rid)
                 if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
