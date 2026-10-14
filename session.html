@@ -4876,7 +4876,7 @@ function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
 // A room opens with its latest ROOM_N messages (the hub's &n=); scrolled near
 // the top, or a link to a balloon not loaded, asks for the page before
 // (&before=<oldest held>, &upto=<the balloon>). What the page needs from the
-// rest, the hub sends as a summary: window.total, pmIndex, specInMessages.
+// rest, the hub sends as a summary: window.total, pmIndex.
 const ROOM_N = 150;
 let OLDER_BUSY = null;
 function roomHasOlder() { return !!(ROOM_OBJ && ROOM_OBJ.window && ROOM_OBJ.window.before > 0); }
