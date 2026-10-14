@@ -1935,15 +1935,23 @@ def hub_line_pending(sess) -> bool:
             and 0 <= time.time() - stamped < HUB_LINE_LEASE_S)
 
 
-def reserve_hub_line(sess):
-    """Claim a live seat before typing, atomically with rotation's last look."""
+def reserve_hub_line(sess, why: list | None = None):
+    """Claim a live seat before typing, atomically with rotation's last look.
+    None when refused; ``why`` then gets the cause (hub_typing.CAUSES, or
+    "gone" / "rotating", which are not faults)."""
+    def refuse(cause):
+        if why is not None:
+            why.append(cause)
+        return None
     with GATE:
-        if hub_line_pending(sess) or not sess.alive():
-            return None
+        if not sess.alive():
+            return refuse("gone")
+        if hub_line_pending(sess):
+            return refuse("busy")
         meta = getattr(sess, "meta", None) or {}
         rid, ident = str(meta.get("room") or ""), str(meta.get("identity") or "")
         if rid and room_rotating(rid):
-            return None
+            return refuse("rotating")
         if rid and ident and _d:
             room = _d.chatroom.get_room(rid, public=False)
             part = _d.chatroom.participant(room, ident) if room else None
@@ -1953,7 +1961,9 @@ def reserve_hub_line(sess):
                 # lookup may hand back another object for the same PTY.
                 seat = _pty(part)
                 if getattr(seat, "id", None) != getattr(sess, "id", None):
-                    return None
+                    # Its own terminal refused is the 10-13 fault (P190).
+                    return refuse("own-seat" if part.get("ptyId") == getattr(sess, "id", None)
+                                  else "seat")
         token = object()
         sess.hub_line_typing_at = time.time()
         sess.hub_line_typing_token = token

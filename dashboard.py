@@ -42,6 +42,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -136,6 +137,10 @@ import workspace_search
 import global_search
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun, ptyhost
+# What was running, for a hub that starts with an empty PTY host (P190), and
+# whether the lines the hub types into agents arrive.
+import running_rooms
+import hub_typing
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -168,6 +173,8 @@ provider_retry.bind(sys.modules[__name__])
 permission_mode.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
+running_rooms.bind(sys.modules[__name__])
+hub_typing.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
@@ -3362,13 +3369,27 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
-    lease = rotation.reserve_hub_line(sess)
+    why: list[str] = []
+    lease = rotation.reserve_hub_line(sess, why)
     if lease is None:
+        hub_typing.record(sess, False, why[0] if why else "refused")
         return False
+    ok = False
     try:
-        return _type_input_reserved(sess, text, provenance, record=record, parts=parts)
+        ok = _type_input_reserved(sess, text, provenance, record=record, parts=parts)
+        return ok
     finally:
         rotation.release_hub_line(sess, lease)
+        hub_typing.record(sess, ok, "" if ok else _not_typed_cause(sess))
+
+
+def _not_typed_cause(sess) -> str:
+    """Why a reserved line was not typed: the terminal ended, or it refused
+    the write while the agent ran (hub_typing)."""
+    try:
+        return "write" if sess.alive() else "gone"
+    except Exception:       # noqa: BLE001
+        return "gone"
 
 
 def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
@@ -11008,6 +11029,32 @@ def _current_restart_lease() -> str:
         return ""
 
 
+def room_run_entry(rid: str, statuses: dict) -> dict | None:
+    """What a room's agents are doing now, as a restart snapshot (and the
+    running-rooms record) lists it; None when none of them runs, or no room."""
+    room = chatroom.get_room(rid, public=False)
+    if room is None:
+        return None
+    agents_out = []
+    for part in room.get("participants", []):
+        if part.get("kind") != "agent":
+            continue
+        try:
+            state, source = attention.turn_state(part, statuses)
+        except Exception:       # noqa: BLE001 — a snapshot never stops a restart
+            state, source = ("unknown" if _pty_alive(part.get("ptyId")) else "stopped"), ""
+        entry = {"identity": part.get("identity", ""), "agent": part.get("agent", ""),
+                 "ptyId": part.get("ptyId") or "", "state": state, "source": source}
+        if chatroom.is_on_mention(room, part):
+            entry["onMention"] = True
+            if state != "stopped":
+                entry["reviewMessageId"] = (part.get("review") or {}).get("messageId", "")
+        agents_out.append(entry)
+    if not any(a["state"] != "stopped" for a in agents_out):
+        return None
+    return {"roomId": rid, "title": room.get("title", ""), "agents": agents_out}
+
+
 def take_restart_snapshot(lease: str, wake_room: str | None = None) -> dict:
     """Write down every room with a live terminal and what each of its agents
     is doing right now (attention.turn_state: its hooks, Claude's status file,
@@ -11019,28 +11066,8 @@ def take_restart_snapshot(lease: str, wake_room: str | None = None) -> dict:
         wake_room = prior.get("wakeRoom", "") if prior.get("leaseId") == lease else ""
     live = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions() if i.get("alive")}
     statuses = attention._claude_status_by_session()
-    rooms = []
-    for rid in sorted(r for r in live if r):
-        room = chatroom.get_room(rid, public=False)
-        if room is None:
-            continue
-        agents_out = []
-        for part in room.get("participants", []):
-            if part.get("kind") != "agent":
-                continue
-            try:
-                state, source = attention.turn_state(part, statuses)
-            except Exception:       # noqa: BLE001 — a snapshot never stops a restart
-                state, source = ("unknown" if _pty_alive(part.get("ptyId")) else "stopped"), ""
-            entry = {"identity": part.get("identity", ""), "agent": part.get("agent", ""),
-                     "ptyId": part.get("ptyId") or "", "state": state, "source": source}
-            if chatroom.is_on_mention(room, part):
-                entry["onMention"] = True
-                if state != "stopped":
-                    entry["reviewMessageId"] = (part.get("review") or {}).get("messageId", "")
-            agents_out.append(entry)
-        if any(a["state"] != "stopped" for a in agents_out):
-            rooms.append({"roomId": rid, "title": room.get("title", ""), "agents": agents_out})
+    rooms = [e for e in (room_run_entry(rid, statuses) for rid in sorted(r for r in live if r))
+             if e is not None]
     snap = {"leaseId": lease, "at": time.time(), "hubPid": os.getpid(),
             "wakeRoom": wake_room or "", "rooms": rooms}
     path = _restart_snapshot_path()
@@ -11140,6 +11167,128 @@ def attach_pty_host() -> None:
         ptyrun.use_local()
         _PTY_HOST_MODE = "local"
         _restart_log(f"PTY host unavailable; using in-process PTYs: {exc}")
+
+
+TYPING_CHECK_LINE = "[preflight] a harmless line typed by the hub"
+_TYPING_CHECK_CHILD = (
+    "print('ready', flush=True)\n"
+    "while True:\n"
+    "    try:\n"
+    "        line = input()\n"
+    "    except EOFError:\n"
+    "        break\n"
+    "    print('got:' + line.strip(), flush=True)\n")
+
+
+def preflight_typing_check(timeout: float = 20.0) -> dict:
+    """The restart preflight's check that a hub line arrives (P190): start a
+    throwaway agent on this hub's PTY host (a preflight hub has its own), look
+    it up again the way every hub line does, type TYPING_CHECK_LINE through
+    ``_type_input`` and see it echoed. The 10-13 fault (a fresh session object
+    per lookup, so every hub line was refused) fails it. {ok, detail}."""
+    if app_version.packaged():
+        return {"ok": True, "detail": "skipped: the built app has no interpreter to run"}
+    sess = None
+
+    def wait_for(text, until):
+        while time.time() < until:
+            if text in (sess.tail() or ""):
+                return True
+            time.sleep(0.2)
+        return False
+    try:
+        sess = ptyrun.create([sys.executable, "-u", "-c", _TYPING_CHECK_CHILD],
+                             cwd=str(DASHBOARD_DIR), label="preflight typing check",
+                             meta={"preflight": True})
+        end = time.time() + timeout
+        if not wait_for("ready", end):
+            return {"ok": False, "detail": "the throwaway agent did not start"}
+        again = ptyrun.get(sess.id)
+        if again is None:
+            return {"ok": False, "detail": "the PTY host does not find the terminal it just made"}
+        if ptyrun.get(sess.id) is not again:
+            return {"ok": False, "detail": "two lookups of one terminal gave two session objects: "
+                                           "what the hub marks on a session is lost between them"}
+        if not _type_input(again, TYPING_CHECK_LINE, record=False):
+            return {"ok": False, "detail": "the hub refused to type into the throwaway agent"}
+        if not wait_for("got:" + TYPING_CHECK_LINE, end):
+            return {"ok": False, "detail": "the typed line did not reach the throwaway agent"}
+        return {"ok": True, "detail": "a hub line reached a throwaway agent"}
+    except Exception as exc:    # noqa: BLE001 — a failed check, said as such
+        return {"ok": False, "detail": f"the check failed: {exc!r}"}
+    finally:
+        if sess is not None:
+            with contextlib.suppress(Exception):
+                ptyrun.kill(sess.id)
+
+
+BOOT_RESTORE_DELAY_S = 5.0      # after the listeners are up: the page answers first
+BOOT_RESTORE_GAP_S = 2.0        # between rooms, so 27 rooms do not start at once
+
+
+def restore_after_boot(handler=None, gap: float | None = None) -> dict:
+    """A hub that starts with none of the running-rooms record's rooms on its
+    PTY host (the machine booted, the host died) brings them back as a restart
+    would: an agent that was idle is typed nothing, one that was mid-turn the
+    one restart line, a room stopped on purpose is not in the record. Skipped
+    while a restart is under way (its helper restores from its snapshot) and
+    in a preflight hub. Logged to restart.log. Returns {ok, rooms, note}."""
+    def done(note, log=True):
+        if log:
+            _restart_log(f"boot: {note}")
+        return {"ok": True, "rooms": [], "note": note}
+    if not running_rooms.enabled():
+        return done("a preflight hub brings nothing back", log=False)
+    if not running_rooms.exists():
+        running_rooms.refresh()
+        return done("no record of running rooms yet; started one from what runs now")
+    entries = running_rooms.boot_entries()
+    if not entries:
+        return done("no room was running", log=False)
+    live = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions() if i.get("alive")}
+    kept = [e["roomId"] for e in entries if e["roomId"] in live]
+    if kept:
+        return done(f"the PTY host kept {len(kept)} of the {len(entries)} running room(s): "
+                    f"nothing to bring back", log=False)
+    lease = _restart_lease_path()
+    if lease.exists() and 0 <= _restart_lease_age(lease) < RESTART_BUSY_S:
+        return done("a restart is under way: its helper brings the rooms back")
+    snap = _read_restart_snapshot()
+    if (snap and snap.get("hubPid") != os.getpid()
+            and 0 <= time.time() - float(snap.get("at") or 0) <= RESTART_SNAPSHOT_MAX_AGE_S):
+        return done("a restart's snapshot waits for its restore: left to the helper")
+    gap = BOOT_RESTORE_GAP_S if gap is None else gap
+    age = time.time() - float(running_rooms.read().get("at") or 0)
+    _restart_log(f"boot: the PTY host runs none of the {len(entries)} room(s) that were "
+                 f"running (record {int(age)}s old): bringing them back, {gap:g}s apart")
+    po_rooms = {(pr.get("poRoomId") or "") for pr in load_projects()}
+    h = handler
+    if h is None:
+        # No request behind it: the agents' hook env needs the hub's port.
+        h = Handler.__new__(Handler)
+        h.server = types.SimpleNamespace(server_address=("127.0.0.1", HUB_PORT))
+    out = h._bring_back_rooms(
+        entries, fresh=True, wake_room="", po_rooms=po_rooms, gap=gap,
+        notice=(f"The hub started at {time.strftime('%H:%M')} with no agent running (the "
+                f"machine restarted or its terminal host stopped) and brought back what was "
+                f"running."))
+    _restart_log(f"boot: {sum(o['outcome'].startswith('brought back') for o in out)} of "
+                 f"{len(out)} room(s) brought back")
+    return {"ok": True, "rooms": out, "note": ""}
+
+
+def start_boot_restore() -> None:
+    """In the background, once the hub serves: the boot restore, then the
+    running-rooms heartbeat (not before: it would count rooms not yet back
+    as ended)."""
+    def run():
+        time.sleep(BOOT_RESTORE_DELAY_S)
+        try:
+            restore_after_boot()
+        except Exception as exc:    # noqa: BLE001 — the hub serves without it
+            _restart_log(f"boot: bringing rooms back failed: {exc!r}")
+        running_rooms.start_heartbeat()
+    threading.Thread(target=run, daemon=True, name="boot-restore").start()
 
 
 def restart_plan(room_id: str = "", drain: bool = False) -> dict:
@@ -12664,6 +12813,7 @@ def stop_task(rid: str) -> bool:
     # we read before a slow kill loop would drop a chat message posted during it.
     chatroom.patch_room(rid, stoppedAt=time.time())
     chatroom.clear_exits(rid)
+    running_rooms.note_stopped(rid)     # stopped on purpose: a cold start leaves it
     return True
 
 
@@ -13389,6 +13539,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/platform":
             self._send_json(200, BACKEND.info())
+            return
+        if p == "/api/hub-typing":
+            self._send_json(200, hub_typing.view())
             return
         if p == "/api/agents":
             self._send_json(200, agents.agents_info())
@@ -14638,7 +14791,9 @@ class Handler(BaseHTTPRequestHandler):
                     f"again.")
             before = {x["id"] for x in room_ptys(rid)}
             try:
-                return fn(*args, **kw)
+                launched = fn(*args, **kw)
+                running_rooms.note_started(rid)     # what a cold start brings back
+                return launched
             except BaseException:
                 for x in room_ptys(rid):
                     if x["id"] not in before:
@@ -14973,10 +15128,29 @@ class Handler(BaseHTTPRequestHandler):
                      + ("" if fresh else f" (over {RESTART_SNAPSHOT_MAX_AGE_S}s: who was mid-turn "
                                          f"is unknown, everyone comes back quiet)")
                      + f", {len(snap['rooms'])} room(s)")
+        out = self._bring_back_rooms(snap["rooms"], fresh=fresh, wake_room=wake_room,
+                                     po_rooms=po_rooms, drained=drained, drain_notes=drain_notes,
+                                     notice=f"The hub was restarted at {time.strftime('%H:%M')}.")
+        if drained:
+            restart_drain.finish_restore(drained, drain_held, wake_room)
+        return {"ok": True, "rooms": out, "note": ""}
+
+    def _bring_back_rooms(self, entries: list[dict], *, fresh: bool, wake_room: str,
+                          po_rooms: set, drained=None, drain_notes: dict | None = None,
+                          notice: str = "", gap: float = 0.0) -> list[dict]:
+        """Bring back each room ``entries`` lists (the restart snapshot's
+        shape), under the rule of ``_start_or_resume_room(restart=…)``; each is
+        logged to restart.log. ``fresh``: the agents' states are known, so one
+        that was mid-turn gets the restart line. ``notice``: the row an idle
+        PO other than ``wake_room`` gets. ``gap``: seconds between rooms, so a
+        cold start with many rooms does not start them all at once."""
+        drain_notes = drain_notes or {}
         out = []
         # Restore task terminals before any PO: even a fresh launch prompt
         # must see its tasks restored, regardless of snapshot room-id order.
-        for entry in sorted(snap["rooms"], key=lambda e: e.get("roomId") in po_rooms):
+        for n, entry in enumerate(sorted(entries, key=lambda e: e.get("roomId") in po_rooms)):
+            if n and gap:
+                time.sleep(gap)
             rid = entry.get("roomId") or ""
             agents_was = [a for a in entry.get("agents") or [] if isinstance(a, dict)]
             was = ", ".join(f"{a.get('identity')} {a.get('state')}"
@@ -15028,8 +15202,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         if rid in po_rooms and rid != wake_room and not lined and not drained:
                             chatroom.post_notice(
-                                rid, digest.SENDER,
-                                f"The hub was restarted at {time.strftime('%H:%M')}.",
+                                rid, digest.SENDER, notice,
                                 {"noticeKind": RESTART_NOTICE_KIND})
                         for a in agents_was:
                             if not (a.get("onMention") and a.get("state") != "stopped"):
@@ -15051,9 +15224,7 @@ class Handler(BaseHTTPRequestHandler):
                                             f"is lost (its request was not found)")
             _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}' (was: {was}): {outcome}")
             out.append({"roomId": rid, "outcome": outcome})
-        if drained:
-            restart_drain.finish_restore(drained, drain_held, wake_room)
-        return {"ok": True, "rooms": out, "note": ""}
+        return out
 
     def _resume_after_all(self, room_full: dict, items: list[dict]) -> dict:
         """The room read as live but an agent was gone by the time the message
@@ -16333,7 +16504,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/kill":
-            self._send_json(200, {"ok": ptyrun.kill((data.get("id") or "").strip())})
+            pty_id = (data.get("id") or "").strip()
+            sess = ptyrun.get(pty_id)
+            rid = str(((getattr(sess, "meta", None) or {}) if sess else {}).get("room") or "")
+            ok = ptyrun.kill(pty_id)
+            if ok and rid and not _room_has_live_pty(rid):
+                running_rooms.note_stopped(rid)     # its last terminal ended on purpose
+            self._send_json(200, {"ok": ok})
             return
         if p in ("/api/update", "/api/restart") and str(data.get("when") or "safe").lower() != "now":
             # A restart or an update at a safe point, the default: the hub
@@ -16428,7 +16605,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p in ("/api/restart/snapshot", "/api/restart/restore", "/api/restart/host-stop",
                  "/api/restart/prepare", "/api/restart/external-drain",
-                 "/api/restart/external-cancel"):
+                 "/api/restart/external-cancel", "/api/restart/typing-check"):
             # The restart helper's two calls, proved by the lease id of the
             # restart under way (a file in the state dir, like a room token).
             lease = str(data.get("lease") or "")
@@ -16437,6 +16614,13 @@ class Handler(BaseHTTPRequestHandler):
                     lease.encode("utf-8"), str(held).encode("utf-8")):
                 self._send_json(403, {"error": "not_allowed",
                                       "message": "only the helper of the restart under way"})
+                return
+            if p == "/api/restart/typing-check":
+                # Only on a preflight hub: its PTY host is its own.
+                if not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+                    self._send_json(409, {"ok": False, "detail": "only a preflight hub runs it"})
+                    return
+                self._send_json(200, preflight_typing_check())
                 return
             if p == "/api/restart/snapshot":
                 snap = take_restart_snapshot(lease)
@@ -17625,6 +17809,7 @@ def main():
     # The PTY owner is outside the hub's process tree. A new web process
     # attaches to the same host and the same terminal IDs after a restart.
     attach_pty_host()
+    running_rooms.activate()     # this process keeps the running-rooms record
 
     cleaned = cleanup_rename_artifacts()
     if cleaned:
@@ -17745,6 +17930,10 @@ def main():
     # tells working agents, watches them and restarts when all are ready.
     restart_drain.on_startup()
     restart_drain.start_monitor(restart_drain.drain_tick)
+
+    # A cold start (the machine booted, the PTY host died) brings back the
+    # rooms that were running, as a restart would (P190).
+    start_boot_restore()
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:

@@ -93,6 +93,17 @@ def _run(plan: dict) -> int:
             return 1
         for endpoint in ("/api/sessions?n=5", "/", "/api/projects"):
             get(plan["preflightPort"], endpoint, timeout=170)
+        # A hub line must reach a throwaway agent on the preflight's PTY host.
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{plan['preflightPort']}/api/restart/typing-check",
+            data=json.dumps({"lease": plan["leaseId"]}).encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            check = json.loads(resp.read().decode("utf-8"))
+        log(f"preflight typing check: {check.get('detail')}")
+        if not check.get("ok"):
+            log("preflight failed: a hub line did not reach the throwaway agent; hub left running")
+            return 1
     except OSError as exc:
         log(f"preflight failed: {exc}; hub left running")
         return 1
