@@ -1711,12 +1711,14 @@ function urlTarget(raw) {
   if (/^file:/i.test(u)) { const s = splitLine(filePathOfUrl(u)); return { file: s.path, line: s.line }; }
   let x = null;
   try { x = new URL(u); } catch (e) { return { href: u }; }
+  const msg = /^https?:$/.test(x.protocol) ? msgLinkOf(x) : null;
   if (LOOPBACK_HOST_RE.test(x.hostname)) {
     const port = x.port || (x.protocol === 'https:' ? '443' : '80');
-    if (port === hubPort()) return { href: location.origin + x.pathname + x.search + x.hash };
+    if (port === hubPort()) return msg ? { msg } : { href: location.origin + x.pathname + x.search + x.hash };
     if (!onHubMachine()) return { dead: x.host };
+    return { href: u };
   }
-  return { href: u };
+  return msg ? { msg } : { href: u };
 }
 // A sentence's full stop, comma or closing bracket is not part of its URL.
 function trimUrlTail(u) {
@@ -1730,6 +1732,24 @@ function trimUrlTail(u) {
 const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
 const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
+// A link to a chat message or card (/session?room=room-…&msg=…[&part=…]) is
+// Ensemble's own, whatever address it was written with (127.0.0.1, localhost,
+// the tailnet name, the https address): it opens in place, in the chat that
+// holds it (the page's click handler for a.msg-link), never in a window of its
+// own. Its href is this page's origin, so Ctrl-click or a middle click opens it
+// in a tab from any computer. A link to a chat alone (no msg) is the task's
+// link; one to a thread stays the link it is. A loopback address on another
+// port is another hub's and stays a link.
+function msgLinkOf(x) {
+  if (x.pathname !== '/session') return null;
+  const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
+  if (!/^room-[0-9a-f]{8}$/.test(room) || x.searchParams.has('thread')) return null;
+  return { room, msg: (x.searchParams.get('msg') || '').trim(), part: (x.searchParams.get('part') || '').trim() };
+}
+const msgHref = r => '/session?room=' + encodeURIComponent(r.room) + '&msg=' + encodeURIComponent(r.msg).replace(/%3A/gi, ':')
+  + (r.part ? '&part=' + encodeURIComponent(r.part).replace(/%3A/gi, ':') : '');
+const msgLinkHtml = (r, text) => !r.msg ? taskLinkHtml(r.room, text)
+  : `<a class="msg-link${r.part.startsWith('ask:') ? ' card-jump' : ''}" href="${esc(msgHref(r))}" data-ref-room="${esc(r.room)}" data-ref-msg="${esc(r.msg)}"${r.part ? ` data-ref-part="${esc(r.part)}"` : ''}>${text}</a>`;
 // ---- Pictures named by their path, and paths abbreviated with "..." --------
 // A picture an agent names by its path (png, jpg, jpeg, gif, webp, svg, bmp:
 // what /api/file serves as one) shows as a thumbnail wherever the path stands
@@ -1780,15 +1800,19 @@ function pathThumbGone(img) {
 function urlLinkHtml(raw, text, kind) {
   const t = urlTarget(raw);
   if (t.file != null) return fileRefHtml(t.file, text, t.line, kind);
+  if (t.msg) return msgLinkHtml(t.msg, text);
   if (t.dead) return `<span class="dead-link" title="${esc(t.dead)} is an address on the hub machine itself">${text} (only on the hub machine)</span>`;
   return `<a href="${esc(t.href)}"${A_NEW}>${text}</a>`;
 }
 // [text](target): a web or file URL, an #anchor on this page, a dashboard
 // page, a task, a file or a folder. Anything else stays as it was written.
 function mdLinkHtml(m, txt, target) {
-  const t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
+  let t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
   if (/^#/.test(t) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
+  // "localhost:8765/session?…" written without its http://.
+  if (/^[\w.-]+:\d+\/session\?/.test(t)) t = 'http://' + t;
   if (/^(?:https?|file):/i.test(t)) return urlLinkHtml(t, txt, 'text');
+  if (/^\/session\?/.test(t)) { const r = msgLinkOf(new URL(t, 'http://hub')); if (r) return msgLinkHtml(r, txt); }
   const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
   if (task) return taskLinkHtml(task[1], txt);
   if (/^\/(?:fileview|session)?(?:\?|$)/.test(t)) return `<a href="${esc(t)}"${A_NEW}>${txt}</a>`;
@@ -5001,6 +5025,7 @@ function carryOlder(room) {
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
 let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
 let GOTO_PART = (qs.get('part') || '').trim();   // … and the passage of it (refHref)
+const URL_GOTO = GOTO;     // the balloon this page was opened for
 let GOTO_OPEN = !!GOTO;    // the chat was opened for that link: no catch-up jump over it
 let SOLO_WANT = null;      // {sid, n, loaded}: an older transcript turn than shown, asked for by a link
 let LANDED = null;         // {mid, at}: the balloon just landed on, marked again if a redraw replaces it
@@ -5159,6 +5184,16 @@ function landPending() {
       FOLD.open.add(row.dataset.key);
       renderBubbles(LAST_ITEMS, { anchor: row });
       el = find('.msg[data-mid]');
+    }
+    if (!el && THREAD_MODE && mid !== URL_GOTO) {
+      // A link to a balloon this thread does not hold (#235): the chat that
+      // holds it opens at it, the dashboard's or this window's own.
+      const part = GOTO_PART;
+      GOTO = ''; GOTO_PART = '';
+      const host = embedHost();
+      if (host) host.postMessage({ type: 'open-msg', roomId: ROOM, msg: mid, ...(part ? { part } : {}) }, location.origin);
+      else location.assign(refHref(ROOM, mid, part));
+      return;
     }
     if (!el && typeof THREADED !== 'undefined' && THREADED && !THREAD_MODE && THR_DRAWN) {
       // Not drawn in the channel after all (#234): in its thread beside it.
@@ -6078,6 +6113,7 @@ window.addEventListener('message', e => {
     const host = dashboardHost();
     if (host) host.postMessage(d, location.origin);
     else if (d.type === 'open-task' && d.roomId) window.open('/?task=' + encodeURIComponent(d.roomId), '_blank', 'noopener');
+    else if (d.type === 'open-msg' && d.roomId && d.msg) location.assign(refHref(d.roomId, d.msg, d.part || ''));
   }
 });
 function replyInThreadHtml(m) {
@@ -8177,11 +8213,11 @@ document.addEventListener('keydown', ev => {
 // at it; on its own, this page goes there. With a modifier key it is a link,
 // opening a new tab.
 function refClickHandler(ev) {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a.card-jump, a[data-point]');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.msg-link, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a.card-jump, a[data-point]');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.askMid || a.dataset.refMsg, part = a.dataset.askN !== undefined ? 'ask:' + a.dataset.askN : a.dataset.refPart || '';
-  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED) { openThread('', msg, part); return; }
+  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED && !THREAD_MODE) { openThread('', msg, part); return; }
   if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}

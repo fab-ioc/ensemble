@@ -48,6 +48,7 @@ def js_const(name: str) -> str:
 
 HARNESS = r"""
 const out = { fetches: [], notes: [] };
+const THREAD_MODE = false, URL_GOTO = '';
 let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false, SOLO_FIRST_TRIES = 0;
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
 const SOLO_PREV = new Map();

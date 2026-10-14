@@ -820,12 +820,14 @@ function urlTarget(raw) {
   if (/^file:/i.test(u)) { const s = splitLine(filePathOfUrl(u)); return { file: s.path, line: s.line }; }
   let x = null;
   try { x = new URL(u); } catch (e) { return { href: u }; }
+  const msg = /^https?:$/.test(x.protocol) ? msgLinkOf(x) : null;
   if (LOOPBACK_HOST_RE.test(x.hostname)) {
     const port = x.port || (x.protocol === 'https:' ? '443' : '80');
-    if (port === hubPort()) return { href: location.origin + x.pathname + x.search + x.hash };
+    if (port === hubPort()) return msg ? { msg } : { href: location.origin + x.pathname + x.search + x.hash };
     if (!onHubMachine()) return { dead: x.host };
+    return { href: u };
   }
-  return { href: u };
+  return msg ? { msg } : { href: u };
 }
 // A sentence's full stop, comma or closing bracket is not part of its URL.
 function trimUrlTail(u) {
@@ -839,6 +841,24 @@ function trimUrlTail(u) {
 const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
 const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
+// A link to a chat message or card (/session?room=room-…&msg=…[&part=…]) is
+// Ensemble's own, whatever address it was written with (127.0.0.1, localhost,
+// the tailnet name, the https address): it opens in place, in the chat that
+// holds it (the page's click handler for a.msg-link), never in a window of its
+// own. Its href is this page's origin, so Ctrl-click or a middle click opens it
+// in a tab from any computer. A link to a chat alone (no msg) is the task's
+// link; one to a thread stays the link it is. A loopback address on another
+// port is another hub's and stays a link.
+function msgLinkOf(x) {
+  if (x.pathname !== '/session') return null;
+  const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
+  if (!/^room-[0-9a-f]{8}$/.test(room) || x.searchParams.has('thread')) return null;
+  return { room, msg: (x.searchParams.get('msg') || '').trim(), part: (x.searchParams.get('part') || '').trim() };
+}
+const msgHref = r => '/session?room=' + encodeURIComponent(r.room) + '&msg=' + encodeURIComponent(r.msg).replace(/%3A/gi, ':')
+  + (r.part ? '&part=' + encodeURIComponent(r.part).replace(/%3A/gi, ':') : '');
+const msgLinkHtml = (r, text) => !r.msg ? taskLinkHtml(r.room, text)
+  : `<a class="msg-link${r.part.startsWith('ask:') ? ' card-jump' : ''}" href="${esc(msgHref(r))}" data-ref-room="${esc(r.room)}" data-ref-msg="${esc(r.msg)}"${r.part ? ` data-ref-part="${esc(r.part)}"` : ''}>${text}</a>`;
 // ---- Pictures named by their path, and paths abbreviated with "..." --------
 // A picture an agent names by its path (png, jpg, jpeg, gif, webp, svg, bmp:
 // what /api/file serves as one) shows as a thumbnail wherever the path stands
@@ -889,15 +909,19 @@ function pathThumbGone(img) {
 function urlLinkHtml(raw, text, kind) {
   const t = urlTarget(raw);
   if (t.file != null) return fileRefHtml(t.file, text, t.line, kind);
+  if (t.msg) return msgLinkHtml(t.msg, text);
   if (t.dead) return `<span class="dead-link" title="${esc(t.dead)} is an address on the hub machine itself">${text} (only on the hub machine)</span>`;
   return `<a href="${esc(t.href)}"${A_NEW}>${text}</a>`;
 }
 // [text](target): a web or file URL, an #anchor on this page, a dashboard
 // page, a task, a file or a folder. Anything else stays as it was written.
 function mdLinkHtml(m, txt, target) {
-  const t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
+  let t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
   if (/^#/.test(t) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
+  // "localhost:8765/session?…" written without its http://.
+  if (/^[\w.-]+:\d+\/session\?/.test(t)) t = 'http://' + t;
   if (/^(?:https?|file):/i.test(t)) return urlLinkHtml(t, txt, 'text');
+  if (/^\/session\?/.test(t)) { const r = msgLinkOf(new URL(t, 'http://hub')); if (r) return msgLinkHtml(r, txt); }
   const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
   if (task) return taskLinkHtml(task[1], txt);
   if (/^\/(?:fileview|session)?(?:\?|$)/.test(t)) return `<a href="${esc(t)}"${A_NEW}>${txt}</a>`;
@@ -2185,6 +2209,20 @@ document.addEventListener('click', ev => {
   ev.preventDefault();
   openTaskFrom(a);
 });
+// A link to a chat message or card (a.msg-link, #235): inside the dashboard,
+// the dashboard opens that chat at it; in a tab of its own, the chat opens in
+// one new tab and the file stays open here.
+document.addEventListener('click', ev => {
+  const a = ev.target.closest && ev.target.closest('a.msg-link');
+  if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  ev.preventDefault();
+  openMsgRef({ room: a.dataset.refRoom, msg: a.dataset.refMsg, part: a.dataset.refPart || '' });
+});
+function openMsgRef(r) {
+  const host = hostPage();
+  if (host) host.postMessage({ type: 'open-msg', roomId: r.room, msg: r.msg, ...(r.part ? { part: r.part } : {}) }, location.origin);
+  else window.open(msgHref(r), '_blank', 'noopener');
+}
 // The tasks a Markdown file names, as the hub reads them in this file's chat;
 // the file is drawn again when an answer comes.
 let FV_PAINT = null;
@@ -2325,7 +2363,10 @@ function wireFrameLinks(ifr) {
     if (/^(?:https?|file):/i.test(href)) {
       const t = urlTarget(href);
       if (t.dead) { toast(`${t.dead} is an address on the hub machine itself, so it cannot open here.`); return; }
-      url = t.file != null ? fileHref(t.file, t.line) : t.href;
+      // A chat message or card (#235): in place, as in the viewer's own text.
+      if (t.msg && !t.msg.msg) url = '/?task=' + t.msg.room;
+      else if (t.msg) { if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey || ev.button) url = msgHref(t.msg); else { openMsgRef(t.msg); return; } }
+      else url = t.file != null ? fileHref(t.file, t.line) : t.href;
     } else if (!/^(?:\/\/|[A-Za-z][A-Za-z0-9+.\-]+:)/.test(href)) {
       // Not "//host/x" nor another scheme (mailto:, tel:, ...): those open as
       // they are, in a tab; a drive's "C:" is one letter, so stays a file.

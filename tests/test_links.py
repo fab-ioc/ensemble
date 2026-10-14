@@ -130,6 +130,15 @@ CASES = [
     "`--foo.txt`",
     "`~/.claude/projects/*/<sid>.jsonl`",
     "`merge_check.py index.html`",
+    # 49-: #235 - a link to a chat message or card, written with any host, opens it in place.
+    "[auto or copilot](http://127.0.0.1:8765/session?room=room-c30a8711&msg=3dca91a0-049b-452c-b2b0-373179c5372c:67&part=ask:1)",
+    "see http://localhost:8765/session?room=room-c30a8711&msg=26e81eed-f553-491c-b2ad-f63fe5311680:67 now",
+    "[the task message](https://hub.example.net/session?room=room-75a3668e&msg=8e267f5e008c)",
+    "[relative](/session?room=room-75a3668e&msg=abc:3&part=ask:0)",
+    "[no scheme](localhost:8765/session?room=room-75a3668e&msg=abc:3)",
+    "[another hub](http://127.0.0.1:8797/session?room=room-75a3668e&msg=abc:3)",
+    "`http://127.0.0.1:8765/session?room=room-75a3668e&msg=abc:3`",
+    "[a thread](http://127.0.0.1:8765/session?id=room-75a3668e&thread=t-1)",
 ]
 
 
@@ -149,7 +158,8 @@ class GeneratedLinks(unittest.TestCase):
                 self.assertIsNone(LOOPBACK_OR_FILE.match(h), f"{text!r} links to {h}")
         self.assertEqual(hrefs(r[CASES[0]]), ["http://hub-host:8765/fileview?path=C%3A%5Cx.md"])
         self.assertEqual(hrefs(r[CASES[1]]), ["http://hub-host:8765/"])
-        self.assertEqual(hrefs(r[CASES[2]]), ["http://hub-host:8765/session?id=room-35d21def"])
+        # A chat's own link, whatever host it names, is its task's link (#235).
+        self.assertEqual(hrefs(r[CASES[2]]), ["/?task=room-35d21def"])
         for c in (CASES[3], CASES[4], CASES[16]):          # another port on the hub: said, not linked
             self.assertEqual(hrefs(r[c]), [], c)
             self.assertIn("only on the hub machine", r[c])
@@ -231,6 +241,33 @@ class GeneratedLinks(unittest.TestCase):
         for c in (CASES[37], CASES[38]):
             self.assertEqual(hrefs(r[c]), [], c)
             self.assertEqual(r[c], f'<code class="ic">{c[1:-1]}</code>', c)
+
+    def test_message_links_open_in_place(self):
+        # #235: one link, never a window of its own or a file view, whatever
+        # address the agent wrote it with; Ctrl-click opens it from this origin.
+        for loc in ("http://hub-host:8765/", "http://127.0.0.1:8765/", "http://localhost:8765/"):
+            r = self.render(loc)
+            for c, room, msg, part in [(49, "room-c30a8711", "3dca91a0-049b-452c-b2b0-373179c5372c:67", "ask:1"),
+                                       (50, "room-c30a8711", "26e81eed-f553-491c-b2ad-f63fe5311680:67", ""),
+                                       (51, "room-75a3668e", "8e267f5e008c", ""),
+                                       (52, "room-75a3668e", "abc:3", "ask:0"),
+                                       (53, "room-75a3668e", "abc:3", ""),
+                                       (55, "room-75a3668e", "abc:3", "")]:
+                html = r[CASES[c]]
+                want = f"/session?room={room}&amp;msg={msg}" + (f"&amp;part={part}" if part else "")
+                self.assertEqual(html.count("<a "), 1, (loc, c, html))
+                self.assertIn(f'href="{want}"', html, (loc, c))
+                self.assertIn('class="msg-link' + (' card-jump"' if part.startswith("ask:") else '"'), html, (loc, c))
+                self.assertIn(f'data-ref-msg="{msg}"', html, (loc, c))
+                self.assertNotIn("_blank", html, (loc, c))
+                self.assertNotIn("file-link", html, (loc, c))
+                self.assertNotIn("fileview", html, (loc, c))
+            # A loopback address on another port is another hub's: not taken for this one's.
+            self.assertNotIn("msg-link", r[CASES[54]], loc)
+            # A thread's link keeps its thread.
+            self.assertNotIn("msg-link", r[CASES[56]], loc)
+            self.assertNotIn("task-link", r[CASES[56]], loc)
+            self.assertIn("thread=t-1", r[CASES[56]], loc)
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")
