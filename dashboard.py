@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import difflib
+import errno
 import getpass
 import hashlib
 import hmac
@@ -18441,6 +18442,38 @@ class HubServer(ThreadingHTTPServer):
     every one past those 5, so a page's pictures and scripts failed at random
     (ERR_CONNECTION_REFUSED) — a rendered page with ten pictures lost some."""
     request_queue_size = 128
+    # Windows: with SO_REUSEADDR (the stdlib's default) a second process binds
+    # a port another hub already listens on, without an error, and the two
+    # share its requests (ED-230: two hubs on 8765 after a restart). Bind
+    # exclusively there; elsewhere SO_REUSEADDR never lets two listeners share.
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+class PortTaken(OSError):
+    """The hub's port has a listener already: this hub exits before it
+    touches the PTY host or the state. An address-in-use OSError, so the
+    built app's launcher (app_launch) reports it as one."""
+
+
+def _listen_or_exit(host: str, port: int) -> HubServer:
+    try:
+        return HubServer((host, port), Handler)
+    except OSError as e:
+        # WinError 10013 is what a port bound exclusively by another answers.
+        if e.errno != errno.EADDRINUSE and getattr(e, "winerror", None) != 10013:
+            print(f"cannot listen on {host}:{port} ({e})", flush=True)
+            raise
+        msg = (f"port {port} on {host} is taken ({e}): another hub or program listens there; "
+               f"this hub exits without touching the agents' terminals or the state")
+        print(msg, flush=True)
+        if sys.stderr is not sys.stdout:
+            print(msg, file=sys.stderr, flush=True)
+        raise PortTaken(errno.EADDRINUSE, msg) from e
 
 
 def main():
@@ -18530,11 +18563,11 @@ def main():
     servers = []
     remote_bound = False
     if wildcard:
-        servers.append(HubServer((remote_host, port), Handler))
+        servers.append(_listen_or_exit(remote_host, port))
         _announce_remote(remote_host)
         remote_bound = True
     else:
-        servers.append(HubServer(("127.0.0.1", port), Handler))
+        servers.append(_listen_or_exit("127.0.0.1", port))
         print(f"ensemble [{BACKEND.os_name}]: http://127.0.0.1:{port}", flush=True)
         if remote_host:
             # The remote (tailnet) bind must NEVER kill the hub. Right after a
@@ -18692,4 +18725,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except PortTaken:
+        sys.exit(3)
