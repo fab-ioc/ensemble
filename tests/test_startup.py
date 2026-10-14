@@ -173,6 +173,39 @@ class StartupHubTest(unittest.TestCase):
         self.assertFalse(restart_helper.started(down))
 
 
+class StartupOrderTest(unittest.TestCase):
+    """PO check of cc820db: fixed points of the code, read from the source."""
+
+    def test_starting_is_set_before_any_socket_is_bound(self):
+        import inspect
+        src = inspect.getsource(dashboard.main)
+        self.assertLess(src.index("startup.begin("), src.index("HubServer("))
+        self.assertEqual(src.count("startup.begin("), 1)
+
+    def test_the_worker_shows_the_start_up_page_only_when_the_hub_says_so(self):
+        from pathlib import Path
+        sw = (Path(dashboard.__file__).parent / "static" / "sw.js").read_text(encoding="utf-8")
+        self.assertNotIn("grace", sw)
+        self.assertIn("fetch('/api/health'", sw)
+        # A slow page from a hub that is up is waited for, not replaced.
+        self.assertIn("if (state === 'page' || state === 'up') return await network;", sw)
+
+    def test_the_board_holds_panels_while_the_hub_is_not_ready(self):
+        from pathlib import Path
+        page = (Path(dashboard.__file__).parent / "index.html").read_text(encoding="utf-8")
+        body = page[page.index("function pdRuntimeRestore()"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("const hold = HUB_PHASE !== 'ready';", body)
+        self.assertIn("pdRestorePanels(wsPanelsSaved(), pdChatsSaved(), hold)", body)
+        held = page[page.index("function pdRestorePanels("):]
+        held = held[:held.index("\n}")]
+        self.assertIn("if (hold) { held.ctxs.push(ctx); continue; }", held)
+        # What is held stays in what the page remembers.
+        for fn in ("function wsPanelsRemember()", "function pdChatsRemember()"):
+            at = page.index(fn)
+            self.assertIn("PD_HOLD", page[at:page.index("\n}", at)], fn)
+
+
 class StartupHealthTest(unittest.TestCase):
     def tearDown(self):
         startup.ready()

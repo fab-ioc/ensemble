@@ -156,12 +156,8 @@
     if (leaving) return;
     leaving = true;
     $('detail').textContent = 'Ready · opening the board';
-    // Tell the service worker the hub is up, so the reload waits for it
-    // rather than showing this page again after 0.7 s.
-    try {
-      var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
-      if (sw) sw.postMessage({ grace: 15000 });
-    } catch (e) {}
+    // The service worker shows this page again only while the hub says it
+    // is starting or does not answer, so the reload waits for the board.
     setTimeout(function () {
       if (location.pathname === '/startup') location.replace('/');
       else location.reload();

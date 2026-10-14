@@ -11096,22 +11096,35 @@ _WARM_SAVED_SIG = None
 def _warm_parts() -> tuple[dict, dict, dict]:
     """What the next hub starts from: copies of what this one holds now,
     nothing read again (ED-227). Each part is a first answer there."""
-    sessions = {str(n): rows for n, (_, _, rows) in list(_SESS_CACHE.items())
-                if n not in _SESS_BOOT}
+    # Only lists still current: one a change made stale (an archive, a label)
+    # would come back as valid and the board would open on it.
+    sessions = {str(n): [dict(r) for r in rows] for n, (_, gen, rows) in list(_SESS_CACHE.items())
+                if n not in _SESS_BOOT and gen == _SESS_GEN}
+    # Deep copies under their owners' locks: the save walks them unlocked
+    # while the hub keeps changing the originals.
     with _TRANSCRIPT_INDEX_LOCK:
         transcript = dict(_TRANSCRIPT_INDEX[2]) if _TRANSCRIPT_INDEX[0] == str(PROJ_DIR) else {}
     with threads._LOCK:
-        thread_indexes = dict(threads._INDEX)
+        thread_indexes = copy.deepcopy(threads._INDEX)
         thread_saves = dict(threads.SAVES)
+    with points._LOCK:
+        point_saves = dict(points.SAVES)
     return sessions, transcript, {"index": thread_indexes, "threadSaves": thread_saves,
-                                  "pointSaves": dict(points.SAVES)}
+                                  "pointSaves": point_saves}
+
+
+# Row fields that change on their own (time, live state): not a reason to
+# write the 20 MB file again; the next start reads them fresh anyway.
+_WARM_SIG_SKIP = frozenset({"idleSeconds", "isLive", "status", "pid", "attention", "resuming"})
 
 
 def _warm_sig(sessions: dict, transcript: dict, thread_cache: dict) -> tuple:
     """Whether the parts changed enough since the last save to write 20 MB
     again: the rows (a label or an archive too), the index's size, and the
     signature each thread build was made from."""
-    rows = tuple(sorted((n, hash(repr(r))) for n, r in sessions.items()))
+    rows = tuple(sorted((n, hash(repr([{k: v for k, v in x.items() if k not in _WARM_SIG_SKIP}
+                                       for x in r])))
+                        for n, r in sessions.items()))
     builds = hash(tuple(sorted((rid, repr(v[0]) if isinstance(v, tuple) and v else "")
                                for rid, v in thread_cache["index"].items())))
     return rows, len(transcript), builds
@@ -11142,8 +11155,8 @@ def _save_restart_caches(why: str) -> bool:
         _restart_log(f"warm caches saved ({why}, {time.time() - t0:.1f}s): {len(sessions)} session lists, "
                      f"{len(transcript)} transcripts, {len(thread_cache['index'])} thread builds")
         return True
-    except (OSError, ValueError, TypeError) as exc:
-        _restart_log(f"warm caches not saved: {exc}")
+    except Exception as exc:     # noqa: BLE001 — a restart goes ahead without it
+        _restart_log(f"warm caches not saved: {exc!r}")
         return False
 
 
@@ -11170,8 +11183,11 @@ def _warm_saver() -> None:
     power cut then costs the next start at most these minutes of reading."""
     while True:
         time.sleep(WARM_SAVE_EVERY_S)
-        if startup.is_ready():
-            save_restart_caches(why="periodic")
+        try:
+            if startup.is_ready():
+                save_restart_caches(why="periodic")
+        except Exception as e:      # noqa: BLE001 — the next round tries again
+            print(f"[restart] periodic warm save failed: {e!r}", flush=True)
 
 
 def load_restart_caches() -> None:
@@ -18059,6 +18075,9 @@ def main():
             print(f"open from another device: http://{ip}:{port}/"
                   f"?token={ACCESS_TOKEN}", flush=True)
 
+    # Starting before the first socket is bound: a probe between the bind and
+    # the steps must never see "ready" (ED-227).
+    startup.begin(steps=7)
     servers = []
     remote_bound = False
     if wildcard:
@@ -18108,7 +18127,6 @@ def main():
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
 
-    startup.begin(steps=7)
     startup.step("Opening the saved state")
     # Moving from claude-dashboard: copy its state in once, and say so in the
     # log, however this hub was started (see legacy_install).

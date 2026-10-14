@@ -3,20 +3,21 @@
    puts the start-up page's stamp below, so a changed page installs again.
 
    It answers only page loads of the board, a chat and a file view. Each goes
-   to the hub as before; when the hub has not answered in NAV_WAIT_MS the
-   cached start-up page shows instead ("slow"), and when the hub cannot be
-   reached at all it shows saying so ("down"). The start-up page polls the hub
-   and reloads once it is ready; it first posts {grace} so that reload waits
-   for the hub instead of racing it. Nothing else is cached or intercepted:
-   every API call, script and picture goes to the hub as if this file did not
-   exist. */
+   to the hub as before. When the hub cannot be reached at all the cached
+   start-up page shows saying so ("down"). When the page has not come in
+   NAV_WAIT_MS, /api/health is asked: the start-up page shows only if the hub
+   says it is starting, or does not answer that either ("slow"); a hub that is
+   merely busy (warming, a large page, a file view) is waited for as without
+   this file. The start-up page polls the hub and reloads once it is ready.
+   Nothing else is cached or intercepted: every API call, script and picture
+   goes to the hub as if this file did not exist. */
 const STAMP = '__STARTUP_STAMP__';
 const CACHE = 'ensemble-startup-' + STAMP;
 const PAGE = '/startup';
 const FILES = [PAGE, '/static/icons/icon-192.png'];
 const PAGES = new Set(['/', '/index.html', '/session', '/fileview']);
 const NAV_WAIT_MS = 700;
-let graceUntil = 0;
+const HEALTH_WAIT_MS = 1500;
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -35,11 +36,6 @@ self.addEventListener('activate', event => {
   })());
 });
 
-self.addEventListener('message', event => {
-  const ms = Number(event.data && event.data.grace) || 0;
-  if (ms > 0) graceUntil = Date.now() + Math.min(ms, 60000);
-});
-
 async function startupPage(state) {
   const cache = await caches.open(CACHE);
   const hit = await cache.match(PAGE);
@@ -53,6 +49,23 @@ async function startupPage(state) {
 
 function unavailable(res) {
   return res.status === 502 || res.status === 503 || res.status === 504;
+}
+
+// What the hub says of itself: 'starting', 'up' (warming, ready, or a hub
+// from before /api/health), or 'silent' when it does not answer in time.
+async function hubState() {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), HEALTH_WAIT_MS);
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store', signal: ctl.signal });
+    if (res.status === 404 || res.status === 401) return 'up';
+    if (!res.ok) return 'silent';
+    return (await res.json()).phase === 'starting' ? 'starting' : 'up';
+  } catch (e) {
+    return 'silent';
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 self.addEventListener('fetch', event => {
@@ -73,16 +86,15 @@ self.addEventListener('fetch', event => {
     // Keep the network answer from being reported as unhandled when the
     // start-up page wins the race.
     network.catch(() => {});
-    if (Date.now() < graceUntil) {
-      graceUntil = 0;     // for the one load the start-up page asked for
-      try { return await network; } catch (e) { return startupPage('down'); }
-    }
     let timer;
     const slow = new Promise(resolve => { timer = setTimeout(() => resolve('slow'), NAV_WAIT_MS); });
     try {
       const first = await Promise.race([network, slow]);
       if (first !== 'slow') return first;
-      return startupPage('slow');
+      // The page is slow: ask the hub why, while the page keeps coming.
+      const state = await Promise.race([hubState(), network.then(() => 'page')]);
+      if (state === 'page' || state === 'up') return await network;
+      return startupPage(state === 'starting' ? 'starting' : 'slow');
     } catch (e) {
       return startupPage('down');
     } finally {
