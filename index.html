@@ -13179,37 +13179,14 @@ function pdChatRemoved(id) {
   if (PD.rtLast.chat === id) PD.rtLast.chat = '';
   pdChatsRemember();
 }
-// A thread of a PO chat (#210): one panel per chat, beside it ("thread:<room>"),
-// showing the thread last opened from it; another thread opened replaces it,
-// as Slack's thread pane does. Its page is session.html on that thread
-// (?thread=), with its own reply box. On a phone it is a tab, and its
-// "‹ Chat" brings the chat back (thread-back).
+// A thread of a PO chat (#210, #234): the chat page opens it beside its
+// channel, so the chat framed here is told which thread (or balloon) to open,
+// as a balloon link is (GOTO_MSG); one still loading is told when it starts.
 const pdThreadId = roomId => 'thread:' + roomId;
 function pdThreadOpen(roomId, thread, mid, source, part = '') {
-  const d = PD.dock;
-  if (!d || !roomId || !pdPanelsOn()) return false;
-  const id = pdThreadId(roomId);
-  const q = (thread ? '&thread=' + encodeURIComponent(thread) : '&thread=&tmid=' + encodeURIComponent(mid || '')) + (mid ? '&msg=' + encodeURIComponent(mid) : '') + (part ? '&part=' + encodeURIComponent(part) : '');
-  const src = `/session?id=${encodeURIComponent(roomId)}&embed=1${q}`;
-  const had = PD.rt.get(id);
-  if (had) {
-    const f = had.el.querySelector('iframe');
-    if (f && f.getAttribute('src') !== src) f.setAttribute('src', src);
-    try { d.reveal(id); } catch (e) {}
-    return true;
-  }
-  const el = document.createElement('div');
-  el.className = 'pd-chat pd-chat-x pd-thread';
-  el.dataset.room = roomId;
-  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-thread src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write"></iframe>`;
-  PD.rt.set(id, { kind: 'thread', room: roomId, el, title: 'Thread' });
-  // Beside the chat it came from (the conversation, or that chat's panel).
-  const from = PD.rt.has(pdChatId(roomId)) ? pdChatId(roomId) : 'po-chat';
-  const where = pdFits(pdMinOf(id).w) ? { beside: from, side: 'right' } : { kind: 'stack', stack: from };
-  let res = null;
-  try { res = d.addPanel({ id, title: 'Thread', el, closable: true }, where); } catch (e) { res = null; }
-  if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
-  pdToolsFit();
+  if (!roomId) return false;
+  GOTO_MSG.set(roomId, { msg: mid || '', part: part || '', thread: thread || '' });
+  sendGotoMsg(roomId);
   return true;
 }
 // The thread's page names its thread: the panel's tab follows.
@@ -19012,10 +18989,6 @@ function openMsgLink(rid, msg, part) {
   GOTO_MSG.set(rid, { msg, part: part || '' });
   if (pj) {
     openPoOf(pj);
-    if (pdThreadOpen(rid, '', msg, null, part)) {
-      GOTO_MSG.delete(rid);
-      return;
-    }
   } else {
     openDetail(row.sessionId);
   }
@@ -19026,7 +18999,7 @@ function sendGotoMsg(rid) {
   if (!g) return;
   document.querySelectorAll('iframe.dp-session, iframe.po-session').forEach(f => {
     if (f.dataset.room !== rid || !f.contentWindow) return;
-    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '' }, location.origin); } catch (e) {}
+    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '' }, location.origin); } catch (e) {}
   });
 }
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,

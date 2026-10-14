@@ -75,38 +75,49 @@ async function main() {
     setInterval(() => walk(document, location.href), 50); return 0; })()`;
   const FILEVIEW = `[...document.querySelectorAll('iframe')].some(f => /fileview/.test(f.src))`;
   const PO = `document.querySelector('iframe.po-session:not([hidden])')`;
+  // The PO's replies are in threads (#234): the links are in the thread beside the chat.
+  const SIDE = `${PO}.contentDocument.getElementById('ts-frame')`;
+  const ROOT = A.sid + ':29';     // the thread the links' balloon is in
+  // A link inside a frame (inside a frame): its place on the page, on its
+  // first line (a link wrapped over two lines has a box wider than either).
   const where = (frame, text) => `(() => { const f = ${frame}; const a = [...f.contentDocument.querySelectorAll('#msgs .msg a')].find(a => a.textContent.includes(${JSON.stringify(text)}));
-    if (!a) return null; a.scrollIntoView({block:'center'}); const b = a.getBoundingClientRect(), fb = f.getBoundingClientRect();
-    return { x: fb.left + b.left + Math.min(8, b.width / 2), y: fb.top + b.top + b.height / 2, cls: a.className, href: a.getAttribute('href'), target: a.target }; })()`;
+    if (!a) return null; a.scrollIntoView({block:'center'}); const b = a.getClientRects()[0]; let x = b.left + Math.min(8, b.width / 2), y = b.top + b.height / 2, w = a.ownerDocument.defaultView;
+    while (w.frameElement) { const r = w.frameElement.getBoundingClientRect(); x += r.left; y += r.top; w = w.parent; }
+    return { x, y, cls: a.className, href: a.getAttribute('href'), target: a.target }; })()`;
+  // What the page shows at a point, through its frames.
+  const at = (x, y) => `(() => { let d = document, x = ${x}, y = ${y}, e = d.elementFromPoint(x, y);
+    while (e && e.tagName === 'IFRAME') { const r = e.getBoundingClientRect(); x -= r.left; y -= r.top; d = e.contentDocument; e = d.elementFromPoint(x, y); }
+    return e; })()`;
   // The link's place once the chat holds still (a late redraw moves it), and
   // the link is what is at that point.
   const aim = async (ev, frame, text) => {
     let last = null;
     for (let i = 0; i < 40; i++) {
       const a = await ev(where(frame, text));
-      const hit = a && await ev(`(() => { const f = ${frame}, fb = f.getBoundingClientRect(); const e = f.contentDocument.elementFromPoint(${a.x} - fb.left, ${a.y} - fb.top); return !!(e && e.closest('a') && e.closest('a').textContent.includes(${JSON.stringify(text)})) && document.elementFromPoint(${a.x}, ${a.y}) === f; })()`);
+      const hit = a && await ev(`(e => !!(e && e.closest('a') && e.closest('a').textContent.includes(${JSON.stringify(text)})))(${at(a.x, a.y)})`);
       if (a && hit && last && last.x === a.x && last.y === a.y) return a;
       last = a; await sleep(250);
     }
-    const top = last && await ev(`(() => { const e = document.elementFromPoint(${last.x}, ${last.y}); return e ? e.tagName + '.' + e.className + ' in ' + ((e.closest('[id]') || {}).id || '') : null; })()`);
+    const top = last && await ev(`(e => e ? e.tagName + '.' + e.className + ' in ' + ((e.closest('[id]') || {}).id || '') : null)(${at(last.x, last.y)})`);
     throw Error('link not still or covered: ' + text + ' ' + JSON.stringify(last) + ' top=' + top);
   };
+  const linksIn = frame => `(f => f && f.contentDocument && f.contentDocument.querySelectorAll('#msgs .msg a.msg-link').length >= 3)(${frame})`;
   try {
-    // In the dashboard: the PO chat docked, its whole chat shown.
+    // In the dashboard: the PO chat docked, the links' thread open beside it.
     const dock = async ({ev, until}) => {
       await until(`typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r => r.roomId === ${JSON.stringify(A.po)})`, 'rows');
       await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
-      await until(`document.body.classList.contains('po-dock') && ${PO} && ${PO}.contentWindow.toggleWhole && ${PO}.contentDocument.body.innerText.includes('Start.')`, 'PO chat');
+      await until(`document.body.classList.contains('po-dock') && ${PO} && ${PO}.contentWindow.openThread && ${PO}.contentDocument.body.innerText.includes('Start.')`, 'PO chat');
       // A task chat an earlier tab opened comes back beside it: closed, so each tab starts alike.
       await ev(`document.body.classList.contains('detail-open') && closeDetail(), 0`);
-      await ev(`${PO}.contentWindow.toggleWhole(); 0`);
-      await until(`${PO}.contentDocument.querySelectorAll('#msgs .msg a.msg-link').length >= 3`, 'links drawn');
+      await ev(`${PO}.contentWindow.openThread('', ${JSON.stringify(ROOT)}); 0`);
+      await until(linksIn(SIDE), 'links drawn in the thread');
       await sleep(500);
     };
     for (const [key, text] of [['card', 'auto or copilot'], ['task', 'the task message'], ['unknown', '26e81eed'], ['chip', 'Filler 3']]) {
       await tab(A.base + '/', async ({ev, until, click, targetId}) => {
         await dock({ev, until});
-        let a = await aim(ev, PO, text);
+        let a = await aim(ev, SIDE, text);
         await ev(RECORD);
         created.length = 0;
         // A busy machine can let a late redraw take the click: once more if nothing came of it.
@@ -114,7 +125,7 @@ async function main() {
           await click(a.x, a.y);
           for (let i = 0; i < 40; i++) { await sleep(100); if ((await ev('window.__landed')).length || created.length) break; }
           if ((await ev('window.__landed')).length || created.length || key === 'unknown') break;
-          a = await aim(ev, PO, text);
+          a = await aim(ev, SIDE, text);
         }
         await sleep(1000);
         out[key] = { link: a, created: created.length, open: (await pages(targetId)).map(t => t.url), landed: await ev('window.__landed'),
@@ -124,10 +135,10 @@ async function main() {
     // Ctrl-click: one tab, at this page's own address.
     await tab(A.base + '/', async ({ev, until, click, targetId}) => {
       await dock({ev, until});
-      let a = await aim(ev, PO, 'auto or copilot');
+      let a = await aim(ev, SIDE, 'auto or copilot');
       created.length = 0;
       for (let tries = 0; tries < 2 && !created.length; tries++) {
-        if (tries) a = await aim(ev, PO, 'auto or copilot');
+        if (tries) a = await aim(ev, SIDE, 'auto or copilot');
         await click(a.x, a.y, 2);
         for (let i = 0; i < 30 && !created.length; i++) await sleep(100);
       }
@@ -136,16 +147,17 @@ async function main() {
     });
     // A chat page of its own: the click stays in this window.
     await tab(A.base + '/session?id=' + A.po, async ({ev, until, click, targetId}) => {
-      await until(`typeof toggleWhole === 'function' && document.body.innerText.includes('Start.')`, 'standalone chat');
-      await ev('toggleWhole(); 0');
-      await until(`document.querySelectorAll('#msgs .msg a.msg-link').length >= 3`, 'standalone links');
+      const SIDE1 = `document.getElementById('ts-frame')`;
+      await until(`typeof openThread === 'function' && document.body.innerText.includes('Start.')`, 'standalone chat');
+      await ev(`openThread('', ${JSON.stringify(ROOT)}); 0`);
+      await until(linksIn(SIDE1), 'standalone links');
       await sleep(500);
-      const a = await ev(`(() => { const a = [...document.querySelectorAll('#msgs .msg a')].find(a => a.textContent.includes('auto or copilot')); a.scrollIntoView({block:'center'}); const b = a.getBoundingClientRect(); return { x: b.left + Math.min(8, b.width / 2), y: b.top + b.height / 2 }; })()`);
+      const a = await aim(ev, SIDE1, 'auto or copilot');
+      await ev(RECORD);
       created.length = 0;
       await click(a.x, a.y);
-      let landed = null;
-      for (let i = 0; i < 60 && !landed; i++) { await sleep(100); try { landed = await ev(`(() => { const e = document.querySelector('.landed'); const m = e && e.closest('.msg[data-mid]'); return m ? m.dataset.mid : null; })()`); } catch (e) {} }
-      out.standalone = { created: created.length, open: (await pages(targetId)).map(t => t.url), top: await ev('location.href'), landed };
+      for (let i = 0; i < 60 && !(await ev('window.__landed')).length; i++) await sleep(100);
+      out.standalone = { created: created.length, open: (await pages(targetId)).map(t => t.url), top: await ev('location.href'), landed: await ev('window.__landed') };
     });
     // A link in an HTML preview (fileview's frame): the chat at this origin, one tab, never a blank one.
     await tab(A.base + '/fileview?path=' + encodeURIComponent(A.html), async ({ev, until, click, targetId}) => {
@@ -230,7 +242,7 @@ class MessageLinksInPlace(unittest.TestCase):
         cls.sid, cls.po, cls.task, cls.port = sid, rid, task['id'], port
         html = home / 'links.html'
         html.write_text(f'<!doctype html><html><head><title>x</title></head><body><p><a id="m" href="http://127.0.0.1:{port}/session?room={rid}&amp;msg={sid}:3">the balloon</a></p></body></html>', encoding='utf-8')
-        args = {**chrome_profile.node_args(), 'tmp': str(base), 'base': f'http://localhost:{port}', 'proj': proj['id'], 'po': rid, 'html': str(html)}
+        args = {**chrome_profile.node_args(), 'tmp': str(base), 'base': f'http://localhost:{port}', 'proj': proj['id'], 'po': rid, 'sid': sid, 'html': str(html)}
         script = base / 'links.js'; script.write_text(CDP_JS, encoding='utf-8')
         r = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', errors='replace', timeout=400)
         if r.returncode:
@@ -299,7 +311,7 @@ class MessageLinksInPlace(unittest.TestCase):
         self.assertEqual(o['created'], 0, o)
         self.assertEqual(o['open'], [], o)
         self.assertTrue(o['top'].startswith(f'http://localhost:{self.port}/session?'), o)
-        self.assertEqual(o['landed'], f'{self.sid}:1', o)
+        self.assertTrue(any(k.endswith(f' {self.sid}:1') for k in o['landed']), o)
 
 
 if __name__ == '__main__':
