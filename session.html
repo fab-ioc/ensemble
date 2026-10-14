@@ -7541,7 +7541,7 @@ window.addEventListener('message', (e) => {
     let o = null;
     try { o = JSON.parse(localStorage.getItem(TS_KEY) || 'null'); } catch (err) {}
     TS = null;
-    if (o && (o.tid || o.mid)) sideOpen({ tid: o.tid || '', mid: o.mid || '', restore: true }); else sideMark();
+    if (o && (o.tid || o.mid)) sideOpen({ tid: o.tid || '', mid: o.mid || '', restore: true }); else sideClose();
   }
   else if (d.ensemble === 'thread-is' && e.source === window.parent && !THREAD_MODE && d.thread) {
     if (TS && TS.tid !== d.thread) { TS = { tid: String(d.thread), mid: '' }; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
