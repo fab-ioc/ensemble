@@ -9959,6 +9959,59 @@ def sessions_feed_answer(n: int, since: str) -> dict:
     return feed.answer(rows, since)
 
 
+# ---- A chat's latest messages, older ones on scroll (#228) ----------------------
+# A PO's room is 4-10 MB and thousands of messages; the chat shows the last
+# screenfuls. &n= asks for the latest n, &before=<mid> for the page before.
+# Without &n= the room is sent whole, as before (scripts, tests, the board).
+ROOM_WINDOW_MAX = 1000
+
+
+def room_window_size(q: dict) -> int:
+    try:
+        n = int(q.get("n", ["0"])[0] or 0)
+    except ValueError:
+        return 0
+    return max(0, min(n, ROOM_WINDOW_MAX))
+
+
+def _pm_summary(m: dict) -> dict:
+    """What a link to a PO message needs to name it (session.html pmName),
+    without its text."""
+    return {k: m[k] for k in ("id", "kind", "name", "ts", "from", "fromProject", "fromProjectName",
+                              "poKind", "to", "toProject", "toProjectName") if k in m}
+
+
+def room_window(out: dict, n: int) -> dict:
+    """Keep the latest ``n`` messages of an annotated room. What the page
+    needs from the older ones comes as a summary: how many there are, the PO
+    messages a link may name, whether the spec is already one of them."""
+    every = out.get("messages") or []
+    shown = every[-n:] if n else []
+    rest = every[:len(every) - len(shown)]
+    out["messages"] = shown
+    out["window"] = {"total": len(every), "before": len(rest)}
+    if rest:
+        out["pmIndex"] = [_pm_summary(m) for m in rest if m.get("kind") == "pomsg" and m.get("id")]
+        spec = (out.get("spec") or "").strip()
+        out["specInMessages"] = bool(spec) and any(
+            m.get("from") == "user" and (m.get("text") or "").strip() == spec for m in rest)
+    return out
+
+
+def room_older_page(messages: list, before: str, n: int, upto: str, revision: str) -> dict:
+    """The ``n`` messages before ``before`` (or from ``upto``, with a few
+    before it for context), oldest first, and how many are older still."""
+    idx = next((i for i, m in enumerate(messages) if m.get("id") == before), None)
+    if idx is None:
+        return {"messages": [], "before": 0, "missing": True, "revision": revision}
+    start = max(0, idx - (n or 100))
+    if upto:
+        j = next((i for i, m in enumerate(messages[:idx]) if m.get("id") == upto), None)
+        if j is not None:
+            start = min(start, max(0, j - 5))
+    return {"messages": messages[start:idx], "before": start, "revision": revision}
+
+
 def load_sessions(n: int = 200) -> list[dict]:
     lock = _SESS_LOCKS.setdefault(n, threading.Lock())
     with lock:
@@ -13655,6 +13708,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"id": room.get("id", rid), "spec": spec,
                                       "specRev": _spec_rev(spec)})
                 return
+            win = room_window_size(q)
+            older = q.get("before", [""])[0]
+            if older:
+                # &before=<mid>&n=: the page of messages before the oldest one the
+                # chat holds, as it scrolls up (#228); &upto=<mid>: down to that one.
+                self._send_json(200, room_older_page(room.get("messages") or [], older, win,
+                                                     q.get("upto", [""])[0], revision))
+                return
             out = _annotate_room_liveness(room, with_points=True)
             # The composer needs turn state, not recent terminal output: a
             # quiet long-running shell is still interruptible.
@@ -13679,13 +13740,17 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(200, {"refetch": True, "revision": revision})
                     return
                 revision, ids = change
-                messages = [m for m in out.pop("messages", []) if m.get("id") in ids]
+                every = out.pop("messages", [])
+                messages = [m for m in every if m.get("id") in ids]
                 same_status = q.get("statusSig", [""])[0] == status_sig
                 self._send_json(200, {"delta": True, "revision": revision,
                                       "statusSig": status_sig, "statusSame": same_status,
                                       **({} if same_status else {"room": out}),
+                                      **({"total": len(every)} if win else {}),
                                       "messages": messages})
                 return
+            if win:
+                room_window(out, win)
             out["revision"] = revision
             out["statusSig"] = status_sig
             self._send_json(200, out, conditional=True)
