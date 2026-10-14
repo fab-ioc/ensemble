@@ -352,7 +352,7 @@ class TheHubSide(unittest.TestCase):
 
     def test_the_sizes_noted_are_the_ones_the_hub_s_page_loads(self):
         self.assertEqual(dashboard.SESSION_FOLDER_SIZES, frozenset({300, 500}))
-        self.assertIn("api('/api/sessions?n=300'", INDEX, "the page's task list")
+        self.assertIn("SESS_FEED.get('/api/sessions?n=300'", INDEX, "the page's task list")
         src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
         grouping = src[src.index("def build_projects() -> dict:"):src.index("# ---- Workspace file browsing")]
         self.assertIn("rows = load_sessions(500)", grouping, "the project grouping")
