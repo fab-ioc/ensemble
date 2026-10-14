@@ -98,63 +98,73 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 """
 
 
+def page_hub(cls, messages: int = 6) -> dict:
+    """A hub in a thread serving a copy of the pages, with one two-agent room
+    of ``messages`` messages; undone at the class's cleanup. The node
+    launcher's arguments, with the room's id."""
+    cls.tmp = tempfile.TemporaryDirectory(prefix="ens-228-", ignore_cleanup_errors=True)
+    base = Path(cls.tmp.name)
+    static = base / "site"
+    (static / "static").mkdir(parents=True)
+    for rel in dashboard.PAGE_FILES:
+        (static / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / rel, static / rel)
+    for sub in ("vendor",):
+        if (ROOT / "static" / sub).is_dir():
+            shutil.copytree(ROOT / "static" / sub, static / "static" / sub, dirs_exist_ok=True)
+    (static / "static" / "t228-host.html").write_text(HOST, encoding="utf-8")
+    state = base / "state"
+    state.mkdir()
+    for d in ("transcripts", "cs", "EnsembleProjects"):
+        (base / d).mkdir()
+    patches = [
+        mock.patch.object(dashboard, "STATIC_DIR", static),
+        mock.patch.object(dashboard, "PROJECTS_ROOT", base / "EnsembleProjects"),
+        mock.patch.object(dashboard, "DASHBOARD_DIR", state),
+        mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
+        mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
+        mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
+        mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
+        mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
+        mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
+        mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+        mock.patch.object(dashboard, "load_live", lambda: []),
+        mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
+        mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
+        mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+        mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+    ]
+    for p in patches:
+        p.start()
+        cls.addClassCleanup(p.stop)
+    dashboard._STAMP_CACHE.clear()
+    cls.addClassCleanup(dashboard._STAMP_CACHE.clear)
+    cwd = str(base / "EnsembleProjects")
+    room = chatroom.create_room("Talk", [{"identity": "claude", "agent": "claude", "cwd": cwd},
+                                         {"identity": "codex", "agent": "codex", "cwd": cwd}])
+    # Written straight to the file: posting 400 messages one by one rewrites it 400 times.
+    r = chatroom._read(room["id"])
+    r["messages"] = [{"id": f"m{i}", "from": "user" if i % 2 else "claude", "to": "all",
+                      "text": f"message {i}", "ts": 1_700_000_000 + i} for i in range(messages)]
+    chatroom._write(r)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    cls.addClassCleanup(server.server_close)
+    cls.addClassCleanup(server.shutdown)
+    cls.addClassCleanup(cls.tmp.cleanup)
+    return {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{server.server_address[1]}",
+            "room": room["id"]}
+
+
 @unittest.skipUnless(NODE and chrome_profile.CHROME, "node and Chrome are needed")
 class HiddenChatPolling(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix="ens-228-", ignore_cleanup_errors=True)
-        base = Path(cls.tmp.name)
-        static = base / "site"
-        (static / "static").mkdir(parents=True)
-        for rel in dashboard.PAGE_FILES:
-            (static / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(ROOT / rel, static / rel)
-        for sub in ("vendor",):
-            if (ROOT / "static" / sub).is_dir():
-                shutil.copytree(ROOT / "static" / sub, static / "static" / sub, dirs_exist_ok=True)
-        (static / "static" / "t228-host.html").write_text(HOST, encoding="utf-8")
-        state = base / "state"
-        state.mkdir()
-        for d in ("transcripts", "cs", "EnsembleProjects"):
-            (base / d).mkdir()
-        patches = [
-            mock.patch.object(dashboard, "STATIC_DIR", static),
-            mock.patch.object(dashboard, "PROJECTS_ROOT", base / "EnsembleProjects"),
-            mock.patch.object(dashboard, "DASHBOARD_DIR", state),
-            mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
-            mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
-            mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
-            mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
-            mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
-            mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
-            mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
-            mock.patch.object(dashboard, "load_live", lambda: []),
-            mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
-            mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
-            mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
-            mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
-        ]
-        for p in patches:
-            p.start()
-            cls.addClassCleanup(p.stop)
-        dashboard._STAMP_CACHE.clear()
-        cls.addClassCleanup(dashboard._STAMP_CACHE.clear)
-        cwd = str(base / "EnsembleProjects")
-        room = chatroom.create_room("Talk", [{"identity": "claude", "agent": "claude", "cwd": cwd},
-                                             {"identity": "codex", "agent": "codex", "cwd": cwd}])
-        for i in range(6):
-            chatroom.post_message(room["id"], "user" if i % 2 else "claude", f"message {i}")
-        server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
-        server.daemon_threads = True
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        cls.addClassCleanup(server.server_close)
-        cls.addClassCleanup(server.shutdown)
-        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{server.server_address[1]}",
-                "room": room["id"], "count": COUNT}
+        args = {**page_hub(cls), "count": COUNT}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=240)
         assert out.returncode == 0, out.stderr[-3000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
-        cls.addClassCleanup(cls.tmp.cleanup)
 
     def test_a_shown_chat_is_on_screen_and_holds_one_observer(self):
         self.assertEqual(self.got["first"], {"off": False, "live": 1})
