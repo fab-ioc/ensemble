@@ -5748,7 +5748,7 @@ let WHOLE = false;         // PO chats start in the thread channel, including ol
 let WHOLE_FOR_LINK = false;   // opened on a link to a reply: the whole chat, for this visit
 let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
-let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;
+let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 50, THR_WAIT = 0;   // the latest 50 top-level messages first (#228)
 let THR_DRAWN = false;    // the channel or thread is what is drawn
 let THR_INFO = null;       // the thread shown (thread mode)
 let THR_SEEN_TS = 0;       // its newest message told as seen
@@ -7877,7 +7877,7 @@ $('#msgs').addEventListener('click', e => {
   if (to) { openThread(to.dataset.thr, ''); return; }
   const tr = e.target.closest && e.target.closest('.thr-reply');
   if (tr) { const t = THR_META && Object.values(THR_META).find(x => x.root === tr.dataset.mid); openThread(t ? t.id : '', t ? '' : tr.dataset.mid); return; }
-  if (e.target.closest && e.target.closest('.thr-more-btn')) { THR_N += 150; STICK = false; renderThreaded(true); return; }
+  if (e.target.closest && e.target.closest('.thr-more-btn')) { THR_N += 100; STICK = false; renderThreaded(true); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
@@ -7906,7 +7906,7 @@ $('#whole-chat').addEventListener('click', toggleWhole);
 $('#threads-view').addEventListener('click', () => { THR_LIST = !THR_LIST; $('#threads-view').setAttribute('aria-pressed', String(THR_LIST)); showThreadCatchup(); renderBubbles(LAST_ITEMS || []); });
 $('#activity-thread').addEventListener('click', () => openThread('team:activity', ''));
 $('#thread-catchup').addEventListener('click', e => { const b = e.target.closest('button[data-thr]'); if (b) openThread(b.dataset.thr, b.dataset.mid); });
-$('#earlier-threads').addEventListener('click', () => { THR_N += 150; STICK = false; renderThreaded(true); });
+$('#earlier-threads').addEventListener('click', () => { THR_N += 100; STICK = false; renderThreaded(true); });
 $('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h.postMessage({ type: 'thread-back', roomId: ROOM }, location.origin); });
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and

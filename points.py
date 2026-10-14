@@ -1277,8 +1277,12 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
     if _solo(room):
         live = [p["createdAt"] for p in led["points"] if p["state"] in LIVE]
         floor = (min(live) - SLACK_S) if live else None
+        # The agents' sessions now are looked at; the ones rotated out of
+        # (a PO has a hundred) as the hub's file table has them (#228).
+        now_sids = {(a.get("sessionId") or "").strip() for a in _agents(room)}
+        table = {} if force else _d.transcript_stats()
         for sid in _session_ids(room, led):
-            st = _session_stat(sid, immediate=force)
+            st = (None if sid in now_sids else table.get(sid)) or _session_stat(sid, immediate=force)
             if st is None or _SCANNED.get((room_id, sid)) == st:
                 continue
             if floor is None or st[1] < floor:

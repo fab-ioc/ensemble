@@ -1021,6 +1021,17 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
         return idx
 
 
+def transcript_stats() -> dict[str, list]:
+    """{session id: [size, mtime]} of every Claude transcript, from the file
+    table (a look up to 10 s old; the task list looks every refresh): a
+    past session's file is not stat'ed one by one (#228: a PO's 165 sessions
+    on every points sync). For sessions that ended: a live one is looked at."""
+    out: dict[str, list] = {}
+    for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
+        out.setdefault(filetable.as_path(p).stem, [size, round(mtime, 3)])
+    return out
+
+
 def find_transcript(session_id: str, *, immediate: bool = True) -> Path | None:
     """A session's transcript. Remembered once found, so the task list does not
     glob every project folder for every live session on every refresh; checked
@@ -13574,13 +13585,20 @@ class Handler(BaseHTTPRequestHandler):
         the bytes of an answer cost more than compressing it."""
         return not self._is_local()
 
-    def _send_json(self, code: int, payload, *, conditional: bool = False):
+    def _send_json(self, code: int, payload, *, conditional: bool = False, revalidate: bool = False):
+        """``revalidate``: the browser keeps the answer and asks again with
+        its ETag, so an unchanged one comes back as a bodiless 304 (#228:
+        a return to a PO chat fetched 330 KB of documents, git log and
+        roadmap that had not changed). ``conditional`` alone: the page sends
+        If-None-Match itself."""
         body = json.dumps(payload).encode()
+        conditional = conditional or revalidate
+        cache = "no-cache" if revalidate else "no-store"
         etag = '"' + hashlib.sha1(body).hexdigest() + '"' if conditional else ""
         if etag and self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -13592,7 +13610,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         if gz:
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Vary", "Accept-Encoding")
@@ -13984,7 +14002,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, project_documents(proj))
+            self._send_json(200, project_documents(proj), revalidate=True)
             return
         if p == "/api/projects/po-candidates":
             # ?project=<id>, or ?path=&kind=&name= for the project New project
@@ -14003,7 +14021,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, read_roadmap(proj))
+            self._send_json(200, read_roadmap(proj), revalidate=True)
             return
         if p == "/api/dir":
             q = parse_qs(u.query)
@@ -14059,7 +14077,7 @@ class Handler(BaseHTTPRequestHandler):
             n = q.get("n", ["30"])[0]
             self._send_json(*git_log((q.get("path", [""])[0] or "").strip(),
                                      int(n) if n.isdigit() else 30,
-                                     (q.get("project", [""])[0] or "").strip()))
+                                     (q.get("project", [""])[0] or "").strip()), revalidate=True)
             return
         if p == "/api/git/roots":
             q = parse_qs(u.query)
