@@ -9994,10 +9994,13 @@ BODY_DRAIN_MAX = 1 << 20        # an unread request body up to this is read befo
 BODY_DRAIN_S = 10
 # GET answers a browser may keep and revalidate get an ETag and "no-cache".
 # These stay "no-store", never written to a browser's cache: settings, the
-# hub's own paths, a file's contents and what the agents' hooks said.
+# hub's own paths, what the agents' hooks said, and code: a file's contents,
+# diffs, search hits and the agents' transcripts. Chats, lists and documents
+# are kept: revalidating them is what saves a switch its bytes.
 NO_STORE_GETS = {"/api/settings", "/api/config", "/api/health", "/api/agent/hooks",
-                 "/api/ws/file", "/api/file", "/api/file/download"}
-NO_STORE_GET_PREFIXES = ("/api/history/", "/api/file-at/")
+                 "/api/ws/file", "/api/file", "/api/file/download", "/api/ws/search",
+                 "/api/git/diff", "/api/checkpoints/diff", "/api/checkpoints/preview"}
+NO_STORE_GET_PREFIXES = ("/api/history/", "/api/file-at/", "/api/session/")
 # A poll that names the copy it holds (a cursor) asks a URL of its own each
 # time: nothing to revalidate, and every answer would only fill the cache.
 DELTA_PARAMS = ("since", "cursor", "before", "after")
@@ -13553,6 +13556,7 @@ class Handler(BaseHTTPRequestHandler):
     _rsp = None                 # the answer being written: what its headers said
     close_connection = False    # set per request by handle(); tests drive handlers without it
     command = ""                # likewise set by parse_request
+    server = None               # likewise set by the server that made the handler
 
     def setup(self):
         super().setup()
@@ -13575,6 +13579,10 @@ class Handler(BaseHTTPRequestHandler):
     # --- HTTP/1.1 framing (#231) ------------------------------------------------
     def handle_one_request(self):
         self._waiting, self._responded = True, False
+        if getattr(self.server, "stopping", False):
+            # Answered just after close_idle looked: do not wait KEEPALIVE_IDLE_S.
+            self.close_connection = True
+            return
         try:
             self.connection.settimeout(KEEPALIVE_IDLE_S)
         except OSError:
@@ -18705,7 +18713,10 @@ class HubServer(ThreadingHTTPServer):
 
     def close_idle(self) -> int:
         """Close the kept-alive connections that wait for a request (their
-        threads end); one being answered closes after its answer. How many."""
+        threads end); one being answered closes after its answer. How many.
+        Only for a stopping server (tests, an embedded hub: a restart ends the
+        process): a handler whose request line arrived as this looks can be
+        cut mid-request, which is what stopping means anyway."""
         n = 0
         for h in list(self.open_handlers):
             if h._waiting:

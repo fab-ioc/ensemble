@@ -195,6 +195,15 @@ class KeepAlive(Base):
         r, _ = self.ask(c, "GET", "/api/projects?fields=po")
         self.assertEqual(r.headers["Cache-Control"], "no-cache")
         self.assertTrue(r.headers.get("ETag"))
+        # Code stays out too: contents, diffs, search hits, transcripts.
+        h = dashboard.Handler.__new__(dashboard.Handler)
+        h.command = "GET"
+        for path, kept in (("/api/git/diff?project=p", False), ("/api/checkpoints/preview?x=1", False),
+                           ("/api/ws/search?q=a", False), ("/api/session/abc", False),
+                           ("/api/file-at/x", False), ("/api/room?id=r&n=50", True),
+                           ("/api/projects/documents?project=p", True)):
+            h.path = path
+            self.assertEqual(h._revalidates(200), kept, path)
 
 
 class IdleAndShutdown(Base):
