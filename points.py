@@ -472,11 +472,13 @@ def _read_file(p: Path):
     return d if _valid(d) else None
 
 
-def load(room_id: str) -> dict:
+def load(room_id: str, *, shared: bool = False) -> dict:
     """A room's ledger (a fresh one when it has none). A damaged file falls
     back to the version before it, kept as ``.prev``; if both are gone the
     ledger starts again, numbering after the last it can still see, and
-    ``damaged`` says when."""
+    ``damaged`` says when. ``shared``: the cached ledger itself, to read and
+    never change (a chat's poll: copying hundreds of points cost it more than
+    the rest of the points' view, #228)."""
     with _LOCK:
         p = _path(room_id)
         try:
@@ -485,7 +487,7 @@ def load(room_id: str) -> dict:
             mt = None
         hit = _CACHE.get(room_id)
         if hit and hit[0] == mt and mt is not None:
-            return json.loads(json.dumps(hit[1]))
+            return hit[1] if shared else json.loads(json.dumps(hit[1]))
         if mt is None:
             prev = _read_file(p.with_suffix(".json.prev"))
             return _clean(prev, room_id) if prev else _empty(room_id)
@@ -1253,17 +1255,18 @@ def _adopt(led: dict, room: dict, pre: list | None = None) -> bool:
     return True
 
 
-def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
+def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared: bool = False) -> dict:
     """Look for new answers in the room's conversations (only those that
-    changed since last time), and return the ledger."""
+    changed since last time), and return the ledger (``shared``: see
+    :func:`load`)."""
     now = time.time()
     if not force and now - _SYNCED.get(room_id, 0) < SYNC_EVERY_S:
-        return load(room_id)
+        return load(room_id, shared=shared)
     _SYNCED[room_id] = now
     if room is None:
         room = _d.chatroom.get_room(room_id)
     if room is None:
-        return load(room_id)
+        return load(room_id, shared=shared)
     # The transcripts are read first, without the lock: a long one takes a
     # while, and every poll and send waits on the lock. Only a session that
     # changed since it was last read, and after the oldest point still
@@ -1921,6 +1924,8 @@ def task_lookup(room_id: str, room: dict | None = None):
 def _item(p: dict, task=None) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
                                  "parent", "comment", "followedBy", "replyTo") if p.get(k) not in (None, "", [])}
+    if "followUps" in out:          # the ledger's own list (view reads the cached ledger)
+        out["followUps"] = json.loads(json.dumps(out["followUps"]))
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
     if p.get("replyTo"):
         # The passage of the answer a follow-up quotes, as written, so a link
@@ -1962,11 +1967,12 @@ def view(room_id: str, room: dict | None = None) -> dict:
     """What the chat page shows: the points (newest first, capped), how many
     wait for an answer, are in progress and wait for an acknowledgement, and
     the decisions approved. A planned point carries its task and where it is."""
+    # Read, never changed here: the cached ledger, not a copy of it.
     try:
-        led = sync(room_id, room=room)
+        led = sync(room_id, room=room, shared=True)
     except Exception as e:
         _log(f"{room_id}: answers not read: {e!r}")
-        led = load(room_id)
+        led = load(room_id, shared=True)
     order = lambda p: (p["createdAt"], p["id"])     # noqa: E731
     pts = sorted(led["points"], key=order, reverse=True)
     # Every point still waiting on someone, however old, with the points it
@@ -1984,7 +1990,8 @@ def view(room_id: str, room: dict | None = None) -> dict:
     task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
     return {"items": [_item(p, task) for p in pts], **_counts(led),
             "approvals": sorted(led.get("approvals") or {}),
-            "asks": led.get("asks") or {}, "asksSettledAt": float(led.get("asksSettledAt") or 0),
+            "asks": json.loads(json.dumps(led.get("asks") or {})),
+            "asksSettledAt": float(led.get("asksSettledAt") or 0),
             "needs": _needs_view(room_id, room, led)}
 
 

@@ -153,10 +153,13 @@ def room_revision(room_id: str) -> str:
 
 
 def get_room_snapshot(room_id: str) -> tuple[dict | None, str]:
-    """Read the room and its cursor under the same index lock."""
+    """Read the room and its cursor under the same index lock. The room is
+    its own copy but for the message dicts, which are the indexed ones (read
+    them, never change them): deep-copying a 10 MB chat on every poll cost
+    ~40 ms, ~130 ms at five times the history (#228)."""
     with _INDEX_LOCK:
-        room = get_room(room_id)
-        return room, room_revision(room_id)
+        room = get_room(room_id, copy_room=False)
+        return (_listed_copy(room) if room is not None else None), room_revision(room_id)
 
 
 def _now() -> float:
