@@ -20,7 +20,8 @@ POs absent after a reboot). This file is that note, kept all the time:
   A room whose agent ended on its own while no other room ran (``/exit`` in
   the only running task) cannot be told from a crash, so it stays and comes
   back at the next cold start: bringing back one room too many is cheap,
-  losing one is what P190 is about;
+  losing one is what P190 is about. It is not kept for ever: a room not seen
+  running for ``MAX_AGE_S`` (a day) leaves, and is not brought back;
 * ``boot_entries`` is what a hub that starts with none of them running brings
   back, in the snapshot's shape (``dashboard._bring_back_rooms``).
 
@@ -41,6 +42,8 @@ from pathlib import Path
 _d = None  # the dashboard module, set by bind()
 NAME = "running-rooms.json"
 REFRESH_S = 30.0
+MAX_AGE_S = 24 * 3600.0     # not seen running for longer: left stopped
+SEEN_EVERY_S = 600.0        # how often a running room's "seen" is written down
 _LOCK = threading.RLock()
 
 
@@ -107,7 +110,20 @@ def _merge(old: dict | None, new: dict) -> dict:
                 a = dict(prev, stoppedSeen=seen)
         agents.append(a)
     return {"roomId": new["roomId"], "title": new.get("title", ""),
-            "since": (old or {}).get("since") or time.time(), "agents": agents}
+            "since": (old or {}).get("since") or time.time(), "seen": time.time(),
+            "agents": agents}
+
+
+def _seen(entry: dict) -> float:
+    """When the room was last seen running."""
+    try:
+        return float(entry.get("seen") or entry.get("since") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def stale(entry: dict, now: float | None = None) -> bool:
+    return (time.time() if now is None else now) - _seen(entry) > MAX_AGE_S
 
 
 def note_started(rid: str) -> None:
@@ -159,7 +175,7 @@ def refresh() -> bool:
                 # Gone while other rooms ran (twice): ended on its own. Gone
                 # with everything else: the host or the machine; kept.
                 gone = int((old or {}).get("goneSeen") or 0) + 1 if live else 0
-                if gone >= 2:
+                if gone >= 2 or stale(old or {}):
                     rooms.pop(rid, None)
                     changed = True
                 elif gone != int((old or {}).get("goneSeen") or 0):
@@ -173,7 +189,8 @@ def refresh() -> bool:
                     changed = True
                 continue
             merged = _merge(old, entry)
-            if old is None or _comparable(merged) != _comparable(old):
+            if old is None or _comparable(merged) != _comparable(old) \
+                    or merged["seen"] - _seen(old) >= SEEN_EVERY_S:
                 rooms[rid] = merged
                 changed = True
         if changed:
@@ -188,9 +205,16 @@ def _comparable(entry: dict) -> list:
 
 
 def boot_entries() -> list[dict]:
-    """The recorded rooms, in the restart snapshot's shape."""
+    """The recorded rooms seen running within MAX_AGE_S, in the restart
+    snapshot's shape."""
     return [dict(e, roomId=rid) for rid, e in sorted(read()["rooms"].items())
-            if isinstance(e, dict)]
+            if isinstance(e, dict) and not stale(e)]
+
+
+def stale_rooms() -> list[str]:
+    """The recorded rooms not seen running for over MAX_AGE_S."""
+    return [rid for rid, e in sorted(read()["rooms"].items())
+            if isinstance(e, dict) and stale(e)]
 
 
 def start_heartbeat() -> None:

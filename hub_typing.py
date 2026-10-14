@@ -42,7 +42,9 @@ CAUSES = {
     "seat": "the task records another terminal for the agent than the one typed into",
     "refused": "the hub refused to type the line",
 }
-NEVER = {"own-seat", "write"}            # an alarm at the first one
+# An alarm at the first one. A write error ("write") is not: one can be a
+# passing hiccup of a live terminal, so it needs REPEATS like the rest.
+NEVER = {"own-seat"}
 NOT_FAULTS = {"gone", "rotating"}       # not counted at all
 
 _LOCK = threading.Lock()

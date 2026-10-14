@@ -33,7 +33,8 @@ class _Boot(_Hub):
         for p in (mock.patch.object(running_rooms, "_ACTIVE", True),
                   mock.patch.object(dashboard, "_BOOT_HOST_ROOMS", None),
                   mock.patch.object(dashboard, "_RESTART_RESTORING", False),
-                  mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", False)):
+                  mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", False),
+                  mock.patch.object(dashboard, "_BOOT_HOST_EXISTED", False)):
             p.start()
             self.addCleanup(p.stop)
         os.environ.pop("ENSEMBLE_PTY_PREFLIGHT", None)
@@ -153,6 +154,90 @@ class BootRestore(_Boot):
         self.assertEqual((out["rooms"], self.starts), ([], 0))
         self.assertIn("could not be listed when the hub attached", self.log())
         self.assertIn("no room is brought back on this start", self.log())
+
+    def attach(self, prior_pid, prior_alive, connect):
+        """main's attach_pty_host with the host's descriptor (the pid it
+        names, alive or not) and ``connect`` faked."""
+        with mock.patch.object(dashboard.ptyhost, "descriptor",
+                               lambda d: {"pid": prior_pid} if prior_pid else None), \
+                mock.patch.object(dashboard.ptyhost, "_pid_alive", lambda pid: prior_alive), \
+                mock.patch.object(dashboard.ptyhost, "connect", connect), \
+                mock.patch.object(dashboard, "OneProxyPerPty", lambda c: c), \
+                mock.patch.object(dashboard.ptyrun, "use_host", lambda c: None), \
+                mock.patch.object(dashboard.ptyrun, "use_local", lambda: None), \
+                mock.patch.object(dashboard, "_PTY_HOST_MODE", "unknown"):
+            dashboard.attach_pty_host()
+        dashboard.note_host_at_attach()
+
+    def recorded_then_host_empty(self):
+        rid = self.room()
+        self.running(rid, "claude", "idle")
+        running_rooms.refresh()
+        self.hub_stops()
+        return rid
+
+    def test_a_host_of_another_version_or_not_answering_restores_nothing(self):
+        """attach falls back to in-process PTYs while the old host may still run
+        every agent: its empty local list is no cold start (pre-merge finding 2)."""
+        self.recorded_then_host_empty()
+        for exc in (dashboard.ptyhost.HostVersionMismatch("existing PTY host version differs"),
+                    RuntimeError("existing PTY host is alive but not answering")):
+            with self.subTest(exc=str(exc)), \
+                    mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", False):
+                def connect(*a, **k):
+                    raise exc
+                self.attach(4242, True, connect)
+                out = self.boot()
+                self.assertEqual((out["rooms"], self.starts), ([], 0))
+                self.assertIn(f"using in-process PTYs: {exc}; no room is brought back", self.log())
+
+    def test_a_host_that_was_already_running_brings_nothing_back(self):
+        """A hub-only restart onto a host whose rooms all ended on their own
+        (an agent's /exit) is not a cold start (pre-merge finding 3)."""
+        rid = self.recorded_then_host_empty()
+        self.attach(4242, True, lambda *a, **k: types.SimpleNamespace(pid=4242, version="v"))
+        out = self.boot()
+        self.assertEqual((out["rooms"], self.starts), ([], 0))
+        self.assertIn("(it was already running)", self.log())
+        self.assertIn("the PTY host was already running when the hub started: the 1 recorded "
+                      "room(s) it no longer runs are left stopped", self.log())
+        self.assertIn(rid, self.record())
+
+    def test_a_host_started_anew_brings_them_back(self):
+        """The descriptor names a host that died with the machine: the hub
+        starts a new one, and that is the cold start."""
+        rid = self.recorded_then_host_empty()
+        self.attach(4242, False, lambda *a, **k: types.SimpleNamespace(pid=5151, version="v"))
+        out = self.boot()
+        self.assertEqual([r["roomId"] for r in out["rooms"]], [rid])
+        self.assertIn("(started now)", self.log())
+
+    def test_a_room_not_seen_running_for_a_day_is_left_stopped(self):
+        old, fresh = self.room(title="old"), self.room(title="fresh")
+        self.running(old, "claude", "idle")
+        self.running(fresh, "claude", "idle")
+        running_rooms.refresh()
+        self.hub_stops()
+        rec = running_rooms.read()                  # old: last seen running 25 h ago
+        rec["rooms"][old]["seen"] = time.time() - 25 * 3600
+        running_rooms._write(rec)
+        out = self.boot()
+        self.assertEqual([r["roomId"] for r in out["rooms"]], [fresh])
+        self.assertIn(f"boot: 1 recorded room(s) not seen running for over 24 h are left "
+                      f"stopped ({old})", self.log())
+        running_rooms.refresh()                     # and the heartbeat drops it
+        self.assertNotIn(old, self.record())
+
+    def test_a_running_room_s_seen_is_kept_current(self):
+        rid = self.room()
+        self.running(rid, "claude", "idle")
+        running_rooms.refresh()
+        first = self.record()[rid]["seen"]
+        self.assertFalse(running_rooms.refresh())   # nothing changed, just now seen
+        real = time.time
+        with mock.patch.object(running_rooms.time, "time", lambda: real() + 700):
+            self.assertTrue(running_rooms.refresh())
+        self.assertGreater(self.record()[rid]["seen"], first + 600)
 
     def test_one_agent_ended_from_the_page_leaves_the_alarm(self):
         hub_typing.reset()
@@ -351,6 +436,15 @@ class TypingAlarm(_Hub):
             self.refuse("busy")
         self.assertEqual(hub_typing.by_room(), {})
 
+    def test_one_write_error_on_a_live_terminal_is_not_an_alarm(self):
+        """A single OSError on a write can be a hiccup: it needs repeats like
+        the other causes (pre-merge finding 5)."""
+        self.refuse("write")
+        self.assertEqual(hub_typing.by_room(), {})
+        self.assertEqual(self.notices(self.po), [])
+        self.refuse("write", n=2)
+        self.assertIn("refused the typed text", hub_typing.by_room()[self.task]["reason"])
+
     def test_what_is_not_a_fault_is_not_counted(self):
         self.refuse("gone", n=5)
         self.refuse("rotating", n=5)
@@ -410,6 +504,22 @@ class PreflightTypingCheck(unittest.TestCase):
             out = dashboard.preflight_typing_check(timeout=30)
         self.assertFalse(out["ok"])
         self.assertIn("seat check refuses the agent's own terminal (own-seat)", out["detail"])
+
+    @unittest.skipUnless(os.name == "nt", "pythonw.exe is Windows only")
+    def test_a_hub_under_pythonw_runs_the_agent_with_python_exe(self):
+        """The scheduled-task hub runs under pythonw.exe, whose child prints
+        nothing: the throwaway agent runs the python.exe beside it
+        (pre-merge finding 1)."""
+        base = os.path.dirname(dashboard.sys.executable)
+        pythonw = os.path.join(base, "pythonw.exe")
+        if not os.path.exists(pythonw):
+            self.skipTest("no pythonw.exe beside this interpreter")
+        self.assertEqual(dashboard._console_python(pythonw), os.path.join(base, "python.exe"))
+        self.assertEqual(dashboard._console_python(os.path.join(base, "python.exe")),
+                         os.path.join(base, "python.exe"))
+        with mock.patch.object(dashboard.sys, "executable", pythonw):
+            out = dashboard.preflight_typing_check(timeout=30)
+        self.assertEqual(out, {"ok": True, "detail": "a hub line reached a throwaway agent"})
 
 
 if __name__ == "__main__":

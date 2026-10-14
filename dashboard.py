@@ -11283,16 +11283,29 @@ class OneProxyPerPty:
 
 def attach_pty_host() -> None:
     """The web hub must serve even when the detached PTY owner fails."""
-    global _PTY_HOST_MODE
+    global _PTY_HOST_MODE, _BOOT_HOST_UNKNOWN, _BOOT_HOST_EXISTED
+    # A host that ran before this hub (alive at its descriptor's pid) is not
+    # a cold start, whatever it runs now (P190 pre-merge, finding 3).
+    prior = None
+    with contextlib.suppress(Exception):
+        d = ptyhost.descriptor(pty_host_state_dir())
+        if d and isinstance(d.get("pid"), int) and ptyhost._pid_alive(d["pid"]):
+            prior = d["pid"]
     try:
         host_client = OneProxyPerPty(ptyhost.connect(pty_host_state_dir(), BACKEND))
         ptyrun.use_host(host_client)
         _PTY_HOST_MODE = "attached"
-        _restart_log(f"PTY host attached: pid {host_client.pid}, version {host_client.version}")
+        _BOOT_HOST_EXISTED = prior is not None and host_client.pid == prior
+        _restart_log(f"PTY host attached: pid {host_client.pid}, version {host_client.version}"
+                     f"{' (it was already running)' if _BOOT_HOST_EXISTED else ' (started now)'}")
     except Exception as exc:
         ptyrun.use_local()
         _PTY_HOST_MODE = "local"
-        _restart_log(f"PTY host unavailable; using in-process PTYs: {exc}")
+        # The host may still run every agent (another version, not answering):
+        # an empty local list says nothing, so nothing is brought back (finding 2).
+        _BOOT_HOST_UNKNOWN = True
+        _restart_log(f"PTY host unavailable; using in-process PTYs: {exc}; "
+                     f"no room is brought back on this start")
 
 
 TYPING_CHECK_LINE = "[preflight] a harmless line typed by the hub"
@@ -11304,6 +11317,19 @@ _TYPING_CHECK_CHILD = (
     "    except EOFError:\n"
     "        break\n"
     "    print('got:' + line.strip(), flush=True)\n")
+
+
+def _console_python(executable: str | None = None) -> str:
+    """The interpreter for a child that has to print into its terminal. The
+    scheduled-task hub runs under pythonw.exe, whose children write nothing to
+    a console, so it is mapped to the python.exe beside it (ptyhost maps the
+    other way, for the host itself)."""
+    executable = executable or sys.executable
+    if os.name == "nt" and executable.lower().endswith("pythonw.exe"):
+        maybe = executable[:-len("pythonw.exe")] + "python.exe"
+        if Path(maybe).exists():
+            return maybe
+    return executable
 
 
 def preflight_typing_check(timeout: float = 20.0) -> dict:
@@ -11325,7 +11351,7 @@ def preflight_typing_check(timeout: float = 20.0) -> dict:
             time.sleep(0.2)
         return False
     try:
-        sess = ptyrun.create([sys.executable, "-u", "-c", _TYPING_CHECK_CHILD],
+        sess = ptyrun.create([_console_python(), "-u", "-c", _TYPING_CHECK_CHILD],
                              cwd=str(DASHBOARD_DIR), label="preflight typing check",
                              meta={"preflight": True})
         end = time.time() + timeout
@@ -11368,6 +11394,9 @@ _RESTART_RESTORING = False
 
 
 _BOOT_HOST_UNKNOWN = False      # that lookup failed: no boot restore this start
+# The hub attached to a host that was already running (not started by it): only
+# a host started anew means the agents died with the machine or the host.
+_BOOT_HOST_EXISTED = False
 
 
 def note_host_at_attach() -> None:
@@ -11402,6 +11431,11 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
     if _BOOT_HOST_UNKNOWN:
         return done("the PTY host could not be listed when the hub attached: nothing "
                     "brought back", log=False)
+    old = running_rooms.stale_rooms()
+    if old:
+        _restart_log(f"boot: {len(old)} recorded room(s) not seen running for over "
+                     f"{int(running_rooms.MAX_AGE_S // 3600)} h are left stopped "
+                     f"({', '.join(old)})")
     entries = running_rooms.boot_entries()
     if not entries:
         return done("no room was running", log=False)
@@ -11411,6 +11445,10 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
         # The host outlived the last hub (a hub-only restart): nothing died.
         return done(f"the PTY host ran {len(at_attach)} room(s) when the hub started: "
                     f"nothing to bring back", log=False)
+    if _BOOT_HOST_EXISTED:
+        # Its rooms ended on their own (an agent's /exit), not with the machine.
+        return done(f"the PTY host was already running when the hub started: the "
+                    f"{len(entries)} recorded room(s) it no longer runs are left stopped")
     lease = _restart_lease_path()
     if lease.exists() and 0 <= _restart_lease_age(lease) < RESTART_BUSY_S:
         return done("a restart is under way: its helper brings the rooms back")
