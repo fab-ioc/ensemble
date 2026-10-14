@@ -220,8 +220,9 @@ async function main() {
     const { targetId: coldTarget } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId: coldSession } = await c.send('Target.attachToTarget', { targetId: coldTarget, flatten: true });
     await c.send('Page.enable', {}, coldSession);
+    // The thread opens in this window (#235), never in a second one.
     await c.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: 'window.open = url => { window.__openedThread = String(url); return null; };'
+      source: 'window.open = url => { sessionStorage.setItem("__secondWindow", String(url)); return null; };'
     }, coldSession);
     const coldEval = async expr => { const r = await c.send('Runtime.evaluate',
       { expression: expr, returnByValue: true }, coldSession); return r.result.value; };
@@ -229,8 +230,9 @@ async function main() {
     for (let i = 0; i < 100 && !(await coldEval('!!document.getElementById("ens-progress") && !document.getElementById("ens-progress").hidden')); i++) await sleep(100);
     const coldRowsDuring = await coldEval('document.querySelectorAll("#msgs .msg, #msgs .msg-fold").length');
     let opened = '';
-    for (let i = 0; i < 100 && !opened; i++) { opened = await coldEval('window.__openedThread || ""'); if (!opened) await sleep(150); }
-    out.coldLink = { coldRowsDuring, opened };
+    for (let i = 0; i < 100 && !opened; i++) { opened = await coldEval('/[?&]thread=/.test(location.search) ? location.href : ""').catch(() => ''); if (!opened) await sleep(150); }
+    const second = await coldEval('sessionStorage.getItem("__secondWindow") || ""');
+    out.coldLink = { coldRowsDuring, opened, second };
     await c.send('Target.closeTarget', { targetId: coldTarget });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -470,6 +472,7 @@ class ThreadsPage(unittest.TestCase):
         self.assertEqual(self.got["coldLink"]["coldRowsDuring"], 0)
         self.assertIn("tmid=coldlink%3A3", self.got["coldLink"]["opened"])
         self.assertIn("msg=coldlink%3A3", self.got["coldLink"]["opened"])
+        self.assertEqual(self.got["coldLink"]["second"], "")
 
     def test_a_thread_has_all_its_messages_and_a_reply_lands_in_it(self):
         for w, o in self._each():
