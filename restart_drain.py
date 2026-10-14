@@ -35,6 +35,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+import durable
 
 _d = None  # the dashboard module, set by bind()
 
@@ -338,7 +339,7 @@ def save(st: dict | None) -> None:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(st, indent=1), encoding="utf-8")
+            durable.write_tmp(tmp, json.dumps(st, indent=1))
             os.replace(tmp, path)
         _CACHE = (str(path), st)
 

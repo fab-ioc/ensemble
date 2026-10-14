@@ -55,6 +55,7 @@ import time
 from pathlib import Path
 
 import points
+import durable
 
 _d = None   # the dashboard module, set by bind()
 
@@ -201,7 +202,7 @@ def _save_side(room_id: str, side: dict) -> None:
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     side["also"] = side.get("also", [])[-SIDE_KEEP:]
     try:
-        tmp.write_text(json.dumps(side, indent=1, ensure_ascii=True), encoding="utf-8")
+        durable.write_tmp(tmp, json.dumps(side, indent=1, ensure_ascii=True))
         os.replace(tmp, p)
     finally:
         try:

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- What the page was opened by: the hub ("starting"), or the service
+     worker (static/sw.js) when the hub did not answer ("down") or not in
+     time ("slow"). The worker rewrites this line. -->
+<meta name="sw-state" content="starting">
+<title>Ensemble</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icons/icon-192.png">
+<script>
+// The theme's ground, from the same first-paint cache as the board's pages
+// (localStorage 'cd-theme'). This page carries the Light and Dark token sets
+// only: every light theme shows as Light, every dark one as Dark. It loads
+// before the hub can answer, so it cannot read the theme's own tokens.
+(function () {
+  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark', 'intellij-dark': 'dark' };
+  var pref = 'light';
+  try { pref = localStorage.getItem('cd-theme') || 'light'; } catch (e) {}
+  var ground = pref === 'system'
+    ? (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : (SCHEME[pref] || 'light');
+  document.documentElement.dataset.scheme = ground;
+})();
+</script>
+<style>
+  :root {
+    --bg: #F7F8F9; --surface: #FFFFFF; --surface-sunken: #F1F2F4;
+    --fg: #172B4D; --fg-subtle: #44546F; --fg-muted: #626F86;
+    --border: #DCDFE4; --border-strong: #B3B9C4; --hover: rgba(9, 30, 66, .06);
+    --accent: #0C66E4; --accent-hover: color-mix(in srgb, var(--accent) 86%, black); --accent-fg: #FFFFFF;
+    --link: var(--accent); --focus-ring: #2684FF;
+    --c-progress-bold: #1D7AFC;
+    --c-warning-bg: #FFF7D6; --c-warning-fg: #7F5F01;
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --fs-100: 11px; --fs-200: 12px; --fs-300: 14px; --fs-400: 16px; --fs-500: 20px;
+    --s-100: 4px; --s-200: 8px; --s-300: 12px; --s-400: 16px; --s-600: 24px; --s-800: 32px;
+    --r-200: 6px; --r-300: 8px;
+    --e-100: 0 1px 1px rgba(9,30,66,.25), 0 0 1px rgba(9,30,66,.31);
+    --touch-min: 44px;
+  }
+  :root[data-scheme="dark"] {
+    --bg: #1D2125; --surface: #22272B; --surface-sunken: #1D2125;
+    --fg: #C7D1DB; --fg-subtle: #9FADBC; --fg-muted: #94A2B2;
+    --border: #38414A; --border-strong: #596773; --hover: rgba(166, 197, 226, .10);
+    --accent: #579DFF; --accent-hover: color-mix(in srgb, var(--accent) 86%, white); --accent-fg: #1D2125;
+    --focus-ring: #579DFF;
+    --c-progress-bold: #579DFF;
+    --c-warning-bg: #533F04; --c-warning-fg: #F5CD47;
+    --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { min-height: 100vh; display: grid; place-items: center; padding: var(--s-400);
+         background: var(--bg); color: var(--fg); font: var(--fs-300)/20px var(--font-sans); }
+  main { width: min(440px, 100%); background: var(--surface); border-radius: var(--r-300);
+         box-shadow: var(--e-100); padding: var(--s-600); }
+  .brand { display: flex; align-items: center; gap: var(--s-200); color: var(--fg-subtle);
+           font-size: var(--fs-200); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  .brand img { width: 24px; height: 24px; border-radius: var(--r-200); }
+  h1 { margin: var(--s-400) 0 var(--s-100); font-size: var(--fs-500); line-height: 24px; font-weight: 600; }
+  #detail { margin: 0; color: var(--fg-subtle); min-height: 20px; font-variant-numeric: tabular-nums; }
+  .track { display: block; height: 4px; margin: var(--s-400) 0 0; border-radius: 2px; overflow: hidden;
+           background: color-mix(in srgb, var(--c-progress-bold) 20%, transparent); }
+  .fill { display: block; height: 100%; width: 0; background: var(--c-progress-bold); border-radius: inherit;
+          transition: width .25s ease; }
+  .track.indeterminate .fill { width: 35%; animation: slide 1.5s ease-in-out infinite; }
+  .track[hidden] { display: none; }
+  @keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+  #help { margin: var(--s-400) 0 0; padding: var(--s-300); border-radius: var(--r-200);
+          background: var(--c-warning-bg); color: var(--c-warning-fg); }
+  #help[hidden] { display: none; }
+  #help p { margin: 0; }
+  #help p + p { margin-top: var(--s-200); }
+  .actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-300); margin-top: var(--s-600); }
+  button { height: 32px; padding: 0 var(--s-300); border: 0; border-radius: var(--r-200);
+           background: var(--accent); color: var(--accent-fg); font: 500 var(--fs-300)/20px var(--font-sans); cursor: pointer; }
+  button:hover { background: var(--accent-hover); }
+  button:focus-visible, a:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  a { color: var(--link); }
+  #skip[hidden] { display: none; }
+  .foot { margin: var(--s-400) 0 0; color: var(--fg-muted); font-size: var(--fs-200); line-height: 16px; }
+  @media (prefers-reduced-motion: reduce) {
+    .fill { transition: none; }
+    .track.indeterminate .fill { animation: none; width: 100%; }
+  }
+  @media (pointer: coarse) {
+    button { height: var(--touch-min); }
+    #skip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
+  }
+</style>
+</head>
+<body>
+<main aria-labelledby="title">
+  <div class="brand"><img src="/static/icons/icon-192.png" alt=""><span>Ensemble</span></div>
+  <h1 id="title">Ensemble is starting</h1>
+  <p id="detail" role="status" aria-live="polite">Waiting for the hub</p>
+  <span class="track indeterminate" id="track" role="progressbar" aria-labelledby="detail"><span class="fill" id="fill"></span></span>
+  <div id="help" hidden>
+    <p id="help-local">On the machine that runs it, start <b>Ensemble</b> from the Start menu (or its scheduled task, “Ensemble”).</p>
+    <p id="help-remote">From another device: check that the hub’s machine is on and connected to Tailscale.</p>
+  </div>
+  <div class="actions">
+    <button type="button" id="retry">Retry now</button>
+    <a id="skip" href="/?startup=skip" hidden>Open the board now</a>
+  </div>
+  <p class="foot" id="foot">Opens the board by itself when it is ready.</p>
+</main>
+<script>
+(function () {
+  var POLL_MS = 1000, TIMEOUT_MS = 3000, MAX_WAIT_MS = 5000;
+  var $ = function (id) { return document.getElementById(id); };
+  var meta = document.querySelector('meta[name="sw-state"]');
+  var state = (meta && meta.content) || 'starting';
+  var timer = 0, delay = POLL_MS, busy = false, leaving = false;
+
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function eta(s) {
+    if (!s) return '';
+    if (s < 60) return 'under a minute left';
+    var m = Math.round(s / 60);
+    return 'about ' + plural(m, 'min', 'min') + ' left';
+  }
+  function show(kind, h) {
+    state = kind;
+    var title = { starting: 'Ensemble is starting', down: 'The hub is not running', slow: 'The hub is answering slowly' }[kind];
+    if ($('title').textContent !== title) $('title').textContent = title;
+    document.title = kind === 'down' ? 'Ensemble · not running' : 'Ensemble · starting';
+    var track = $('track'), fill = $('fill');
+    $('help').hidden = kind !== 'down';
+    track.hidden = kind === 'down';
+    $('skip').hidden = !(h && h.phase === 'warming');
+    var detail;
+    if (kind === 'down') detail = 'Nothing answers at ' + location.host + '. Trying again by itself.';
+    else if (kind === 'slow') detail = 'It is busy; this page keeps trying.';
+    else if (!h) detail = 'Waiting for the hub';
+    else {
+      detail = h.step || 'Starting';
+      if (h.total) {
+        detail += (h.unit === 'steps' ? ' · step ' + Math.min(h.done + 1, h.total) + ' of ' + h.total
+                  : ' · ' + Number(h.done).toLocaleString() + ' / ' + Number(h.total).toLocaleString());
+      }
+      var left = eta(h.eta);
+      if (left) detail += ' · ' + left;
+    }
+    $('detail').textContent = detail;
+    var known = h && h.total && h.unit !== 'steps';
+    track.classList.toggle('indeterminate', !known);
+    fill.style.width = known ? Math.max(2, Math.min(100, 100 * h.done / h.total)).toFixed(1) + '%' : '';
+    if (known) { track.setAttribute('aria-valuenow', String(h.done)); track.setAttribute('aria-valuemax', String(h.total)); }
+    else { track.removeAttribute('aria-valuenow'); track.removeAttribute('aria-valuemax'); }
+  }
+  function open() {
+    if (leaving) return;
+    leaving = true;
+    $('detail').textContent = 'Ready · opening the board';
+    // Tell the service worker the hub is up, so the reload waits for it
+    // rather than showing this page again after 0.7 s.
+    try {
+      var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+      if (sw) sw.postMessage({ grace: 15000 });
+    } catch (e) {}
+    setTimeout(function () {
+      if (location.pathname === '/startup') location.replace('/');
+      else location.reload();
+    }, 150);
+  }
+  function later(ms) {
+    clearTimeout(timer);
+    timer = setTimeout(poll, ms);
+  }
+  async function get(path) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, TIMEOUT_MS);
+    try { return await fetch(path, { cache: 'no-store', credentials: 'same-origin', signal: ctl.signal }); }
+    finally { clearTimeout(t); }
+  }
+  async function poll() {
+    if (busy || leaving) return;
+    busy = true;
+    try {
+      var res = await get('/api/health');
+      if (res.status === 401) { location.reload(); return; }
+      if (res.status === 404) {
+        // A hub from before /api/health: it answers, so it is up.
+        var old = await get('/api/platform');
+        if (old.ok) { open(); return; }
+      }
+      if ([502, 503, 504].indexOf(res.status) >= 0 && !(res.headers.get('content-type') || '').includes('json')) {
+        throw new Error('proxy');
+      }
+      var h = await res.json();
+      delay = POLL_MS;
+      if (h.phase === 'ready') { open(); return; }
+      show('starting', h);
+    } catch (e) {
+      if (e && e.name === 'AbortError') show('slow');
+      else show('down');
+      delay = Math.min(MAX_WAIT_MS, delay * 1.5);
+    } finally {
+      busy = false;
+      if (!leaving) later(delay);
+    }
+  }
+  $('retry').addEventListener('click', function () { delay = POLL_MS; poll(); });
+  window.addEventListener('online', function () { delay = POLL_MS; poll(); });
+  show(state === 'down' || state === 'slow' ? state : 'starting');
+  poll();
+})();
+</script>
+</body>
+</html>

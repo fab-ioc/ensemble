@@ -131,6 +131,8 @@ import board_brief
 # background so no request path ever waits on the network.
 import usage
 import warm_cache
+import durable
+import startup
 # Go to file and search in files for a Workspace; a search runs as a child.
 import workspace_search
 import global_search
@@ -219,6 +221,13 @@ def _host_is_loopback(host_header: str) -> bool:
 # Nothing in them is private.
 UNGATED_PATHS = ("/manifest.webmanifest",)
 UNGATED_PREFIXES = ("/static/icons/",)
+# A hub that is starting (startup.py, ED-227) answers these as ever; the
+# pages below get the start-up page instead; any other GET /api/... is a 503
+# the page tries again, and a write waits until the hub is booted.
+STARTUP_OPEN_PATHS = ("/api/health", "/api/version", "/api/platform", "/sw.js", "/startup",
+                      "/manifest.webmanifest", "/ui-key")
+STARTUP_PAGES = ("/", "/index.html", "/session", "/fileview")
+STARTUP_WRITE_WAIT_S = 150
 # What a page opened without the token cookie gets: a field for the token. Its
 # colours are the Light theme's tokens (--bg, --surface, --fg, --fg-subtle,
 # --border-strong, --accent, --focus-ring), written out: nothing else loads.
@@ -1595,7 +1604,7 @@ def load_labels() -> dict[str, str]:
 def save_labels(labels: dict[str, str]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = LABELS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(labels, indent=2, sort_keys=True), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(labels, indent=2, sort_keys=True))
     tmp.replace(LABELS_FILE)
 
 
@@ -1612,7 +1621,7 @@ def load_archived() -> set[str]:
 def save_archived(arch: set[str]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = ARCHIVED_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(sorted(arch), indent=2), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(sorted(arch), indent=2))
     tmp.replace(ARCHIVED_FILE)
 
 
@@ -2469,7 +2478,7 @@ def _save_settings_locked(settings: dict) -> dict:
     # A temp file of its own, and a few tries at the swap: on Windows another
     # process reading settings.json (a preflight hub) makes a replace fail.
     tmp = SETTINGS_FILE.with_name(f"{SETTINGS_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(current, indent=2, sort_keys=True))
     try:
         for attempt in range(10):
             try:
@@ -2742,7 +2751,7 @@ def _write_settings_file(path: Path, settings: dict) -> Path:
         if current != text:
             tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
             try:
-                tmp.write_text(text, encoding="utf-8")
+                durable.write_tmp(tmp, text)
                 tmp.replace(path)
             finally:
                 tmp.unlink(missing_ok=True)
@@ -4897,7 +4906,7 @@ def load_projects() -> list[dict]:
 def save_projects(projects: list[dict]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PROJECTS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(projects, indent=2), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(projects, indent=2))
     tmp.replace(PROJECTS_FILE)
 
 
@@ -6297,7 +6306,7 @@ def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
             meta[key] = value
         try:
             tmp = pj.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            durable.write_tmp(tmp, json.dumps(meta, indent=2))
             _replace_retrying(tmp, pj)
         except OSError as e:
             return False, f"cannot write {pj}: {e}"
@@ -7051,7 +7060,7 @@ def load_session_projects() -> dict[str, str]:
 def save_session_projects(m: dict[str, str]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = SESSION_PROJECTS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(m, indent=2, sort_keys=True), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(m, indent=2, sort_keys=True))
     tmp.replace(SESSION_PROJECTS_FILE)
 
 
@@ -8073,7 +8082,7 @@ def load_parents() -> dict[str, str]:
 def save_parents(p: dict[str, str]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PARENTS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(p, indent=2, sort_keys=True), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(p, indent=2, sort_keys=True))
     tmp.replace(PARENTS_FILE)
 
 
@@ -8094,7 +8103,7 @@ def load_jira_links() -> dict[str, list[str]]:
 def save_jira_links(links: dict[str, list[str]]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = JIRA_LINKS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(links, indent=2, sort_keys=True), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(links, indent=2, sort_keys=True))
     tmp.replace(JIRA_LINKS_FILE)
 
 
@@ -8115,7 +8124,7 @@ def load_jira_unlinks() -> dict[str, list[str]]:
 def save_jira_unlinks(unlinks: dict[str, list[str]]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = JIRA_UNLINKS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(unlinks, indent=2, sort_keys=True), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(unlinks, indent=2, sort_keys=True))
     tmp.replace(JIRA_UNLINKS_FILE)
 
 
@@ -8132,7 +8141,7 @@ def load_favorite_themes() -> list[str]:
 def save_favorite_themes(favs: list[str]) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = FAVORITE_THEMES_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(favs, indent=2), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(favs, indent=2))
     tmp.replace(FAVORITE_THEMES_FILE)
 
 
@@ -8159,7 +8168,7 @@ def set_chat_scheme(cwd: str, on: bool) -> bool:
         cwds.discard(key)
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CHAT_SCHEME_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(sorted(cwds), indent=2), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(sorted(cwds), indent=2))
     tmp.replace(CHAT_SCHEME_FILE)
     return key in cwds
 
@@ -9885,13 +9894,19 @@ def _points_discard(rid: str, ids: list, key: str) -> None:
 
 def load_sessions(n: int = 200) -> list[dict]:
     lock = _SESS_LOCKS.setdefault(n, threading.Lock())
-    with lock:
+    # Someone is reading the list already: the rows from before answer at
+    # once (ED-227), unless something changed them since (an archive, a
+    # label), which waits for the fresh list as before. The rows of the
+    # start-up snapshot (_SESS_BOOT) are such rows until the first read.
+    if not lock.acquire(blocking=False):
         hit = _SESS_CACHE.get(n)
-        if hit and hit[1] == _SESS_GEN and (n in _SESS_BOOT or time.time() - hit[0] < _SESS_TTL):
+        if hit and (hit[1] == _SESS_GEN or n in _SESS_BOOT):
+            return [dict(r) for r in hit[2]]
+        lock.acquire()
+    try:
+        hit = _SESS_CACHE.get(n)
+        if hit and hit[1] == _SESS_GEN and n not in _SESS_BOOT and time.time() - hit[0] < _SESS_TTL:
             rows = hit[2]
-            if n in _SESS_BOOT:
-                _SESS_BOOT.discard(n)
-                _SESS_CACHE[n] = (time.time(), hit[1], rows)
         else:
             gen = _SESS_GEN
             key = f"sessions:{n}" if hit is None else ""
@@ -9903,6 +9918,7 @@ def load_sessions(n: int = 200) -> list[dict]:
                 if key:
                     progress.clear(key)
             _SESS_CACHE[n] = (time.time(), gen, rows)
+            _SESS_BOOT.discard(n)
             global _SESS_FIRST_SAVED
             if not _SESS_FIRST_SAVED:
                 # The first list of a start read everything that changed:
@@ -9910,6 +9926,8 @@ def load_sessions(n: int = 200) -> list[dict]:
                 # seconds after its first answer).
                 _SESS_FIRST_SAVED = True
                 filefacts.save_soon()
+    finally:
+        lock.release()
     return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
 
 
@@ -10944,31 +10962,81 @@ def _restart_log(msg: str) -> None:
             time.sleep(0.2)
 
 
-def save_restart_caches() -> None:
-    """Rebuild warm reads and save only if their sources stayed fixed."""
+WARM_SAVE_EVERY_S = 300
+_WARM_SAVED_SIG = None
+
+
+def _warm_parts() -> tuple[dict, dict, dict]:
+    """What the next hub starts from: copies of what this one holds now,
+    nothing read again (ED-227). Each part is a first answer there."""
+    sessions = {str(n): rows for n, (_, _, rows) in list(_SESS_CACHE.items())
+                if n not in _SESS_BOOT}
+    with _TRANSCRIPT_INDEX_LOCK:
+        transcript = dict(_TRANSCRIPT_INDEX[2]) if _TRANSCRIPT_INDEX[0] == str(PROJ_DIR) else {}
+    with threads._LOCK:
+        thread_indexes = dict(threads._INDEX)
+        thread_saves = dict(threads.SAVES)
+    return sessions, transcript, {"index": thread_indexes, "threadSaves": thread_saves,
+                                  "pointSaves": dict(points.SAVES)}
+
+
+def _warm_sig(sessions: dict, transcript: dict, thread_cache: dict) -> tuple:
+    """Whether the parts changed enough since the last save to write 20 MB
+    again: the rows' count and newest change, the index's size, and the
+    signature each thread build was made from."""
+    rows = tuple(sorted((n, len(r), max((x.get("updatedAt") or 0 for x in r), default=0))
+                        for n, r in sessions.items()))
+    builds = hash(tuple(sorted((rid, repr(v[0]) if isinstance(v, tuple) and v else "")
+                               for rid, v in thread_cache["index"].items())))
+    return rows, len(transcript), builds
+
+
+def save_restart_caches(*, why: str = "restart") -> bool:
+    """Save the warm parts; False when there was nothing new or it failed."""
+    global _WARM_SAVED_SIG
     try:
-        before = warm_cache._fingerprint(HOME, DASHBOARD_DIR)
-        sizes = [n for n, (_, gen, _) in _SESS_CACHE.items() if gen == _SESS_GEN]
-        sessions = {str(n): _load_sessions_uncached(n) for n in sizes}
-        global _TRANSCRIPT_INDEX
-        with _TRANSCRIPT_INDEX_LOCK:
-            _TRANSCRIPT_INDEX = ("", 0.0, {})
-        transcript = _transcript_index(fresh=True).copy()
-        with threads._LOCK:
-            room_ids = list(threads._INDEX)
-            for room_id in room_ids:
-                threads._INDEX.pop(room_id, None)
-        for room_id in room_ids:
-            threads.build(room_id, show_progress=False)
-        with threads._LOCK:
-            thread_indexes = dict(threads._INDEX)
-        warm_cache.save(HOME, DASHBOARD_DIR, sessions, transcript,
-                        {"index": thread_indexes, "threadSaves": dict(threads.SAVES),
-                         "pointSaves": dict(points.SAVES)}, expected_sources=before)
-        _restart_log(f"warm caches saved: {len(sessions)} session lists, "
-                     f"{len(transcript)} transcripts, {len(thread_indexes)} thread builds")
+        sessions, transcript, thread_cache = _warm_parts()
+        if not sessions:
+            return False
+        sig = _warm_sig(sessions, transcript, thread_cache)
+        if why != "restart" and sig == _WARM_SAVED_SIG:
+            return False
+        t0 = time.time()
+        warm_cache.save(HOME, DASHBOARD_DIR, sessions, transcript, thread_cache)
+        _WARM_SAVED_SIG = sig
+        _restart_log(f"warm caches saved ({why}, {time.time() - t0:.1f}s): {len(sessions)} session lists, "
+                     f"{len(transcript)} transcripts, {len(thread_cache['index'])} thread builds")
+        return True
     except (OSError, ValueError, TypeError) as exc:
         _restart_log(f"warm caches not saved: {exc}")
+        return False
+
+
+def _warm_first_lists() -> None:
+    """The first task list and the boards' list, read once the hub is
+    booted (ED-227). The board's page is the start-up page until there are
+    rows to show: the saved rows of the last hub at once, or the first read
+    with its count of files on /api/health."""
+    try:
+        for n, what in ((300, "Reading the task list"), (500, "Reading the boards")):
+            if n not in _SESS_CACHE:
+                startup.warming(what, f"sessions:{n}")
+            elif all(k in _SESS_CACHE for k in (300, 500)):
+                startup.ready()
+            load_sessions(n)
+    except Exception as e:      # noqa: BLE001 — the page reads it again itself
+        print(f"[startup] first task list failed: {e!r}", flush=True)
+    finally:
+        startup.ready()
+
+
+def _warm_saver() -> None:
+    """Every WARM_SAVE_EVERY_S, once the first list is read: a crash or a
+    power cut then costs the next start at most these minutes of reading."""
+    while True:
+        time.sleep(WARM_SAVE_EVERY_S)
+        if startup.is_ready():
+            save_restart_caches(why="periodic")
 
 
 def load_restart_caches() -> None:
@@ -10982,7 +11050,8 @@ def load_restart_caches() -> None:
         _SESS_CACHE[n] = (time.time(), _SESS_GEN, rows)
         _SESS_BOOT.add(n)
     with _TRANSCRIPT_INDEX_LOCK:
-        _TRANSCRIPT_INDEX = (str(PROJ_DIR), time.time(), cached["transcripts"])
+        # Listed again on its first miss: it may predate files made since.
+        _TRANSCRIPT_INDEX = (str(PROJ_DIR), 0.0, cached["transcripts"])
     thread_cache = cached["threads"]
     with threads._LOCK:
         threads._INDEX.update(thread_cache.get("index", {}))
@@ -11046,7 +11115,7 @@ def take_restart_snapshot(lease: str, wake_room: str | None = None) -> dict:
     path = _restart_snapshot_path()
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(snap, indent=1), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(snap, indent=1))
     os.replace(tmp, path)
     return snap
 
@@ -13003,6 +13072,90 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return self._agent_sender() is None
 
+    def _startup_hold(self) -> bool:
+        """True when the request was answered for a hub still starting (or
+        held until it was booted and then refused). See STARTUP_OPEN_PATHS."""
+        if startup.is_ready():
+            return False
+        u = urlparse(self.path)
+        p = u.path
+        if self.command == "GET":
+            if p in STARTUP_OPEN_PATHS or p.startswith("/static/"):
+                return False
+            # Any GET of a page, not only a navigation: the service worker's
+            # fetch of one is not sent as a navigation (static/sw.js).
+            if p in STARTUP_PAGES:
+                # Once booted only the board waits for its first list; a
+                # chat or a file opens. ?startup=skip opens the board anyway.
+                if startup.is_booted() and (p not in ("/", "/index.html")
+                                            or "startup=skip" in u.query):
+                    return False
+                self._send_startup_page()
+                return True
+            if startup.is_booted():
+                return False
+            if p.startswith("/api/"):
+                self._send_starting(503)
+                return True
+        elif p == "/api/agent/hook" and not startup.is_booted():
+            # Never held: the agent's tool call waits for its hook.
+            self._send_starting(503)
+            return True
+        if startup.wait_booted(STARTUP_WRITE_WAIT_S):
+            return False
+        self._send_starting(503)
+        return True
+
+    def _send_starting(self, code: int) -> None:
+        body = json.dumps({"error": "starting", **startup.health()}).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Retry-After", "2")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except OSError:
+            pass
+
+    def _send_startup_page(self) -> None:
+        """The page that says what the hub is doing; it opens the page that
+        was asked for by itself when the hub is ready (static/startup.html)."""
+        try:
+            body = (STATIC_DIR / "static" / "startup.html").read_bytes()
+        except OSError:
+            body = b"<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=2><title>Ensemble</title>Ensemble is starting"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Ensemble-Startup", "1")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except OSError:
+            pass
+
+    def _send_service_worker(self) -> None:
+        """static/sw.js at the root, so it may answer for every page. Its
+        stamp follows the start-up page, so a changed page installs again."""
+        try:
+            js = (STATIC_DIR / "static" / "sw.js").read_bytes()
+            page = (STATIC_DIR / "static" / "startup.html").read_bytes()
+        except OSError:
+            self.send_error(404)
+            return
+        stamp = hashlib.sha1(js + page).hexdigest()[:12].encode()
+        body = js.replace(b"__STARTUP_STAMP__", stamp)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Service-Worker-Allowed", "/")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _gate(self) -> bool:
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
         non-loopback requests must present it; a matching ?token= on a GET is
@@ -13125,8 +13278,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._gate():
             return
+        if self._startup_hold():
+            return
         u = urlparse(self.path)
         p = u.path
+        if p == "/api/health":
+            # Where a starting hub is (startup.py); cheap at any time.
+            self._send_json(200, {**startup.health(), "version": app_version.VERSION,
+                                  "pid": os.getpid()})
+            return
+        if p == "/startup":
+            self._send_startup_page()
+            return
+        if p == "/sw.js":
+            self._send_service_worker()
+            return
         if p == "/mcp":
             # We don't offer a server-initiated SSE stream (the "doorbell" is a
             # terminal keystroke instead); tell clients the GET stream is absent.
@@ -13820,6 +13986,8 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_PUT(self):
+        if self._startup_hold():
+            return
         try:
             self._do_PUT()
         finally:
@@ -13901,6 +14069,8 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_DELETE(self):
+        if self._startup_hold():
+            return
         try:
             self._do_DELETE()
         finally:
@@ -16025,6 +16195,8 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_POST(self):
+        if self._startup_hold():
+            return
         if urlparse(self.path).path == "/api/agent/hook":
             # Several per tool call, and none changes a session listing.
             self._agent_hook()
@@ -17581,17 +17753,6 @@ def main():
     # the keyboard focus for a few ms -- a desktop-wide flicker on every poll,
     # until the first agent start allocated the console as a side effect.
     ptyrun.ensure_windows_console()
-    # Moving from claude-dashboard: copy its state in once, and say so in the
-    # log, however this hub was started (see legacy_install).
-    try:
-        note = legacy_install.migrate(HOME, DASHBOARD_DIR)
-        if note:
-            print(note, flush=True)
-    except Exception as e:
-        print(f"claude-dashboard migration skipped: {e}", flush=True)
-    # What earlier hubs read of each transcript: the first task list reads
-    # only what changed since (ED-200).
-    filefacts.use_file(DASHBOARD_DIR / "cache" / "file-facts.json")
     # Remote bind, if any. Loopback is always served (agents reach /mcp on
     # 127.0.0.1, and so does the local browser) — a non-loopback bind adds a
     # SECOND, token-gated listener on that interface only (e.g. the tailnet IP),
@@ -17621,40 +17782,6 @@ def main():
                 tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
             except OSError:
                 pass
-
-    # The PTY owner is outside the hub's process tree. A new web process
-    # attaches to the same host and the same terminal IDs after a restart.
-    attach_pty_host()
-
-    cleaned = cleanup_rename_artifacts()
-    if cleaned:
-        print(f"cleaned up {cleaned} rename artifact session(s)", flush=True)
-    # Refresh the agent skills (the 'ensemble' skill teaches agents the task
-    # tools) into each installed agent's user-level skills folder.
-    try:
-        for pth in install_agent_skills():
-            print(f"installed agent skill: {pth}", flush=True)
-    except Exception as e:
-        print(f"agent skill install skipped: {e}", flush=True)
-    # Tasks from before numbers existed get theirs, and every project a key.
-    try:
-        done = backfill_task_numbers()
-        if done["numbered"] or done["keys"]:
-            print(f"task numbers: {done['numbered']} task(s) numbered, {done['keys']} project key(s) set", flush=True)
-        for r in done["renumbered"]:
-            was = f"#{r['old']} -> " if r["old"] else ""
-            print(f"task numbers: {r['project']}: {r['id']} \u201c{r['title'][:60]}\u201d {was}#{r['no']} ({r['why']})",
-                  flush=True)
-    except Exception as e:
-        print(f"task numbers backfill skipped: {e}", flush=True)
-
-    # Answers recorded before an ask of two questions became two asks (#195)
-    # move to the ask they answer, before any answer can come in.
-    asks.realign_all()
-    # Needs you (#209): answers older than three days, and than the person's
-    # latest message, close once (the backlog of ticks the old list held).
-    points.migrate_all()
-    load_restart_caches()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
@@ -17704,6 +17831,74 @@ def main():
             print("gave up waiting for Tailscale; serving loopback only", flush=True)
         threading.Thread(target=_await_tailnet, daemon=True).start()
 
+    # Listen first (ED-227): a page opened while the hub starts gets the
+    # start-up page and /api/health says how far it is, instead of a browser
+    # error page while the steps below run (37 s on a cold disk, minutes
+    # when the caches were lost). Requests that need the state wait for
+    # startup.booted(); see Handler._startup_hold.
+    for s in servers:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+
+    startup.begin(steps=7)
+    startup.step("Opening the saved state")
+    # Moving from claude-dashboard: copy its state in once, and say so in the
+    # log, however this hub was started (see legacy_install).
+    try:
+        note = legacy_install.migrate(HOME, DASHBOARD_DIR)
+        if note:
+            print(note, flush=True)
+    except Exception as e:
+        print(f"claude-dashboard migration skipped: {e}", flush=True)
+    # What earlier hubs read of each transcript: the first task list reads
+    # only what changed since (ED-200).
+    filefacts.use_file(DASHBOARD_DIR / "cache" / "file-facts.json")
+    # The PTY owner is outside the hub's process tree. A new web process
+    # attaches to the same host and the same terminal IDs after a restart.
+    startup.step("Connecting to the agents' terminals")
+    attach_pty_host()
+
+    startup.step("Tidying renamed sessions")
+    cleaned = cleanup_rename_artifacts()
+    if cleaned:
+        print(f"cleaned up {cleaned} rename artifact session(s)", flush=True)
+    startup.step("Installing the agent skills")
+    # Refresh the agent skills (the 'ensemble' skill teaches agents the task
+    # tools) into each installed agent's user-level skills folder.
+    try:
+        for pth in install_agent_skills():
+            print(f"installed agent skill: {pth}", flush=True)
+    except Exception as e:
+        print(f"agent skill install skipped: {e}", flush=True)
+    startup.step("Numbering tasks")
+    # Tasks from before numbers existed get theirs, and every project a key.
+    try:
+        done = backfill_task_numbers()
+        if done["numbered"] or done["keys"]:
+            print(f"task numbers: {done['numbered']} task(s) numbered, {done['keys']} project key(s) set", flush=True)
+        for r in done["renumbered"]:
+            was = f"#{r['old']} -> " if r["old"] else ""
+            print(f"task numbers: {r['project']}: {r['id']} \u201c{r['title'][:60]}\u201d {was}#{r['no']} ({r['why']})",
+                  flush=True)
+    except Exception as e:
+        print(f"task numbers backfill skipped: {e}", flush=True)
+
+    startup.step("Updating questions and points")
+    # Answers recorded before an ask of two questions became two asks (#195)
+    # move to the ask they answer, before any answer can come in.
+    asks.realign_all()
+    # Needs you (#209): answers older than three days, and than the person's
+    # latest message, close once (the backlog of ticks the old list held).
+    points.migrate_all()
+    startup.step("Loading the last task list")
+    load_restart_caches()
+    # A restart at a safe point (restart_drain.py): a drain on file from the
+    # hub before this one is closed or waits for its restore, before any
+    # request may act on it.
+    restart_drain.on_startup()
+    startup.booted()
+    threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
+    threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
+
     # Projects backup: the app owns the projects-root repo. Init it now
     # (idempotent; remote only if configured) and start the scheduler, which
     # re-reads settings every tick so changes apply without a restart.
@@ -17740,19 +17935,17 @@ def main():
     # it is idle, then shown as not delivered (sends.py).
     sends.start_redeliverer()
 
-    # A restart at a safe point (restart_drain.py): a drain on file from the
-    # hub before this one is closed or waits for its restore; the monitor
-    # tells working agents, watches them and restarts when all are ready.
-    restart_drain.on_startup()
+    # The restart monitor tells working agents, watches them and restarts
+    # when all are ready.
     restart_drain.start_monitor(restart_drain.drain_tick)
 
-    # Serve every listener; extra ones run in daemon threads, the last inline.
-    for s in servers[:-1]:
-        threading.Thread(target=s.serve_forever, daemon=True).start()
+    # The listeners serve on their threads; this one waits for Ctrl+C.
     try:
-        servers[-1].serve_forever()
+        while True:
+            time.sleep(3600)
     except KeyboardInterrupt:
         print()
+
 
 
 if __name__ == "__main__":

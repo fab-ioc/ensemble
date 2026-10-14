@@ -60,8 +60,15 @@
     if (!offline || probing) return;
     probing = true;
     try {
-      const res = await raw('/api/platform', { cache: 'no-store' });
+      // Back once the hub is past its first steps (/api/health, ED-227);
+      // a hub from before that answers /api/platform only.
+      let res = await raw('/api/health', { cache: 'no-store' });
+      if (res.status === 404) res = await raw('/api/platform', { cache: 'no-store' });
       if (!res.ok) throw new Error('hub unavailable');
+      if (res.url.endsWith('/api/health')) {
+        const h = await res.json();
+        if (h.phase === 'starting') throw new Error('hub starting');
+      }
       offline = false;
       delay = 500;
       line();
@@ -121,4 +128,15 @@
   };
   window.HubResilience = { get offline() { return offline; }, get queued() { return pending.length; }, probe };
   document.addEventListener('DOMContentLoaded', line);
+  // The service worker that shows the start-up page while the hub starts or
+  // is not running (static/sw.js, served at /sw.js for the whole site). A
+  // browser without one (plain http over the tailnet) has the hub's own
+  // start-up page while it starts, and the browser's error page while it is down.
+  try {
+    if ('serviceWorker' in navigator && window.isSecureContext && window.top === window) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+      });
+    }
+  } catch {}
 })();
