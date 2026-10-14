@@ -5316,7 +5316,7 @@ CHAT_NAMES.taskNo = rid => {
 // Whether this chat is a project's PO, and which of its agents is the PO: in a
 // solo chat its agent; in a room the one tasks report to, else its first agent.
 let PO_ROOMS = null;
-fetch('/api/projects').then(r => r.json()).then(d => {
+fetch('/api/projects?fields=po').then(r => r.json()).then(d => {
   const projects = ((d && d.projects) || []);
   PO_ROOMS = new Set(projects.map(p => p.poRoomId).filter(Boolean));
   ASK_CACHE.clear();
@@ -8061,21 +8061,41 @@ function updPutBack(box) {
 // Embedded in the dashboard (#150): a chat off screen (the page's tab in the
 // background, or its panel behind another tab, parked or hidden: the host's
 // own classes on the frame's ancestors, same origin) polls the room every
-// 30 s as a keep-alive; a chat panel of its own that is not being typed in
+// 60 s as a keep-alive; a chat panel of its own that is not being typed in
 // (data-chat-slow on its frame, no focus here) every 10 s; the one in use
 // every 2 s. Coming back on screen, or into focus, it polls at once.
 let TICK = 0;
 function chatOffScreen() {
   if (document.hidden) return true;
-  try { const f = window.frameElement; return !!(f && f.closest('.dk-off, .dk-parking, .pd-off')); } catch (e) { return false; }
+  try { const f = window.frameElement; if (f && f.closest('.dk-off, .dk-parking, .pd-off')) return true; } catch (e) { return false; }
+  return frameHidden() || chatOffScreen.inView === false;
 }
+// #228: a frame the dashboard keeps hidden (a cached chat behind another
+// page: display:none, or out of the viewport) used to poll every 2 s, and ten
+// of them made ~1,600 requests a minute. Hidden, it polls once a minute; the
+// moment it comes into view again it polls at once. (Whether the frame is in
+// view lives on chatOffScreen itself, so the function stands on its own.)
+try {
+  const f = window.frameElement, IO = f && window.parent.IntersectionObserver;
+  if (IO) {
+    const io = new IO(es => {
+      const vis = es[es.length - 1].isIntersecting, was = chatOffScreen.inView;
+      chatOffScreen.inView = vis;
+      if (vis && was === false && typeof tickNow === 'function') tickNow();
+    });
+    io.observe(f);
+    // The observer is the dashboard's and the frame outlives this page: a
+    // reload would leave it holding the old page, so it goes with the page.
+    window.addEventListener('pagehide', () => io.disconnect());
+  }
+} catch (e) {}
 function chatSlow() {
   try { const f = window.frameElement; return !!(f && f.hasAttribute('data-chat-slow')) && !document.hasFocus(); } catch (e) { return false; }
 }
 function tick() {
   TICK++;
   ensUpd.poll();
-  if (chatOffScreen()) { if (TICK % 15) return; }
+  if (chatOffScreen()) { if (TICK % 30) return; }
   else if (chatSlow() && TICK % 5) return;
   refresh();
 }

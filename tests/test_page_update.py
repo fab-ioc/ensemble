@@ -151,7 +151,9 @@ class HubStamps(unittest.TestCase):
             self.assertTrue(m, path)
             self.assertEqual(dict(kv.split("=") for kv in m.group(1).decode().split(" ")), stamps, path)
             self.assertEqual(hdrs.get("content-length"), str(len(body)), "the length is the served body's")
-            self.assertEqual(hdrs.get("cache-control"), "no-store")
+            # Asked again on every load, sent again only when changed (#228).
+            self.assertEqual(hdrs.get("cache-control"), "no-cache")
+            self.assertTrue(hdrs.get("etag"), path)
 
     def test_the_header_stamps_the_bytes_served_not_the_meta_filled_page(self):
         status, hdrs, body = self.get("/session?room=room-1")
