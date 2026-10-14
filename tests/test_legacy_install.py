@@ -215,6 +215,26 @@ class OldService(unittest.TestCase):
             self.assertIsNone(legacy_install.old_service(self.home, "win32"))
 
 
+def _no_listener(test, dashboard):
+    """dashboard.main() through its first step, without a socket: these
+    tests once listened on the live hub's port for the rest of the run and
+    left the start-up phase at "starting", so later modules' requests got
+    503s or waited (ED-230). The callers stop at the
+    first step after the migration, before any state or the PTY host."""
+    import startup
+    test.addCleanup(startup.ready)
+
+    class NoServer:
+        def __init__(self, addr, handler):
+            self.server_address = addr
+
+        def serve_forever(self):
+            pass
+    return mock.patch.multiple(dashboard, HubServer=NoServer, HUB_PORT=dashboard.HUB_PORT,
+                               ACCESS_TOKEN=dashboard.ACCESS_TOKEN,
+                               _detect_tailscale_ip=mock.Mock(return_value=None))
+
+
 class EveryEntryPoint(unittest.TestCase):
     def test_launchers_all_run_dashboard_main(self):
         for rel in ("ensemble", "install-launchd.sh", "ensemble.ps1", "install-task.ps1"):
@@ -240,15 +260,24 @@ class EveryEntryPoint(unittest.TestCase):
 
         calls = []
         with mock.patch.object(sys, "argv", ["dashboard.py", "--port", "8765"]), \
+                _no_listener(self, dashboard), \
                 mock.patch.object(dashboard.ptyrun, "ensure_windows_console"), \
                 mock.patch.object(dashboard.legacy_install, "migrate",
                                   side_effect=lambda h, d: calls.append((h, d)) or "claude-dashboard: note"), \
-                mock.patch.object(dashboard, "cleanup_rename_artifacts", side_effect=Stop), \
+                mock.patch.object(dashboard.filefacts, "use_file", side_effect=Stop), \
                 mock.patch("builtins.print") as pr:
             with self.assertRaises(Stop):
                 dashboard.main()
         self.assertEqual(calls, [(dashboard.HOME, dashboard.DASHBOARD_DIR)])
         pr.assert_any_call("claude-dashboard: note", flush=True)
+
+    def test_no_test_runs_main_with_a_real_listener(self):
+        # ED-230: a test's dashboard.main() held the live hub's port for an
+        # hour. Every test module that runs it replaces the listener.
+        for f in sorted((ROOT / "tests").glob("test_*.py")):
+            src = f.read_text(encoding="utf-8")
+            if "dashboard.main()" in src:
+                self.assertIn("_no_listener(self, dashboard)", src, f.name)
 
     def test_main_survives_a_migration_error(self):
         import dashboard
@@ -257,9 +286,10 @@ class EveryEntryPoint(unittest.TestCase):
             pass
 
         with mock.patch.object(sys, "argv", ["dashboard.py"]), \
+                _no_listener(self, dashboard), \
                 mock.patch.object(dashboard.ptyrun, "ensure_windows_console"), \
                 mock.patch.object(dashboard.legacy_install, "migrate", side_effect=RuntimeError("boom")), \
-                mock.patch.object(dashboard, "cleanup_rename_artifacts", side_effect=Stop), \
+                mock.patch.object(dashboard.filefacts, "use_file", side_effect=Stop), \
                 mock.patch("builtins.print") as pr:
             with self.assertRaises(Stop):
                 dashboard.main()

@@ -66,6 +66,15 @@ function HubProcs([int]$onPort) {
   $ids += @($procs | Where-Object { $_.CommandLine -match "--port\s+$onPort(\s|$)" } | Select-Object -ExpandProperty ProcessId)
   $procs | Where-Object { $ids -contains $_.ProcessId }
 }
+# Who listens on a port, for the log: "pid 9120 python.exe: python -m unittest ...".
+function Listeners([int]$onPort) {
+  $ids = @()
+  try { $ids = @(Get-NetTCPConnection -LocalPort $onPort -State Listen -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique) } catch {}
+  @($ids | ForEach-Object {
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$_)" -ErrorAction SilentlyContinue
+    if ($p) { "pid $($p.ProcessId) $($p.Name): $($p.CommandLine)" } else { "pid $_" }
+  })
+}
 function Head { try { return (& git -C $cfg.repo rev-parse HEAD 2>$null) } catch { return '?' } }
 # The hub's restart lease refuses a second restart while this one runs. When the
 # hub is left alone (a failed preflight) it is dropped, so trying again is fine;
@@ -96,11 +105,21 @@ function Nap([int]$s) { Start-Sleep -Seconds $s; RenewLease }
 trap {
   try { L "HELPER ERROR - $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber)); stopped here" } catch {}
   try { DropLease } catch {}
-  # Past the stop the hub is down: start it the plain way rather than leave it so.
-  if ($hubStopped) { try { L "HUB DOWN after the error; starting it directly"; StartDirect } catch {} }
+  # Past the stop the hub is down: start it the plain way rather than leave it
+  # so. Never a second hub (ED-230): not when this script already started one
+  # (the task or directly), nor when something listens on the port.
+  if ($hubStopped) {
+    try {
+      $held = @(Listeners $port)
+      if ($hubStarted) { L "a hub was already started; not starting another" }
+      elseif ($held.Count) { L "port $port is held ($($held -join '; ')); not starting a hub" }
+      else { L "HUB DOWN after the error; starting it directly"; StartDirect }
+    } catch {}
+  }
   exit 1
 }
 $hubStopped = $false
+$hubStarted = $false
 
 $t0 = Get-Date
 $head0 = Head
@@ -213,6 +232,7 @@ $hubArgs += @($cfg.args | ForEach-Object { Q $_ })
 function StartDirect {
   try {
     Start-Process -FilePath $cfg.python -ArgumentList $hubArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    $script:hubStarted = $true
     L "started $($cfg.python) $($hubArgs -join ' ')"
   } catch { L "start err: $_" }
 }
@@ -246,9 +266,12 @@ for ($i = 0; $i -lt 15 -and -not ($free -and $oldGone); $i++) {
 }
 if (-not ($free -and $oldGone)) {
   L "old hub PID or port $port is still active; PTY host left running"
-  if ($useTask) { try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop } catch {} }
+  foreach ($h in @(Listeners $port)) { L "port $port is held by $h" }
+  # The task's hub exits at once while the port is taken (it binds it
+  # exclusively), and the task tries again later.
+  if ($useTask) { try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop; $hubStarted = $true; L "started task" } catch { L "start-task err: $_" } }
   DropLease
-  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
+  if ($hostPin) { Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue }
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
   exit 1
 }
@@ -276,11 +299,11 @@ if (-not $cfg.keepAgents) {
   } else {
     L "classic PTY host process confirmed gone"
   }
-  Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue
+  if ($hostPin) { Remove-Item -LiteralPath $hostPin -Force -ErrorAction SilentlyContinue }
 }
 $up = $false
 if ($useTask) {
-  try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop; L "started task" } catch { L "start-task err: $_" }
+  try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop; $hubStarted = $true; L "started task" } catch { L "start-task err: $_" }
   for ($i = 0; $i -lt 20 -and -not $up; $i++) { Nap 2; $up = Started $base }
   if (-not $up) { L "not up after the task; starting it directly the way it ran"; StartDirect }
 } else {

@@ -459,5 +459,91 @@ ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
             self.assertNotIn("preflight passed", log)
 
 
+    def test_a_held_port_leaves_the_one_listener_and_starts_no_hub(self):
+        # ED-230, the 10-14 restart: a hub-only restart whose port stays held
+        # after the stop (by a test run, not a hub). It used to throw on an
+        # empty host pin path, and the trap then started a hub on top of the
+        # one the task had just started. Now it names the holder, ends
+        # without an error and starts nothing: the holder stays the only
+        # listener. The preflight passes on a stand-in on a spare port.
+        shell = __import__("shutil").which("powershell")
+        if not shell:
+            self.skipTest("powershell not found")
+        server = (
+            "import sys\n"
+            "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+            "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
+            "class H(BaseHTTPRequestHandler):\n"
+            "    def do_GET(self):\n"
+            "        self.send_response(200); self.end_headers(); self.wfile.write(b'{}')\n"
+            "    def log_message(self, *a): pass\n"
+            "ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()\n")
+        ports = []
+        for _ in range(2):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 0))
+                ports.append(s.getsockname()[1])
+        port, pf_port = ports
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "stand_in.py").write_text(server, encoding="utf-8")
+            (d / "holder.py").write_text(server, encoding="utf-8")
+            holder = subprocess.Popen([sys.executable, str(d / "holder.py"), "--port", str(port)])
+            self.addCleanup(holder.wait)
+            self.addCleanup(holder.kill)
+            for _ in range(100):
+                try:
+                    socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            lease = d / "restart.lease"
+            lease.write_text(json.dumps({"id": "mine", "at": time.time()}), encoding="utf-8")
+            script = d / "restart-copy.ps1"
+            script.write_bytes(SCRIPT)
+            plan = d / "plan.json"
+            plan.write_text(json.dumps({
+                "repo": str(d), "python": sys.executable, "script": str(d / "stand_in.py"),
+                "args": ["--port", str(port)], "port": port, "hubPid": 0, "preflightPort": pf_port,
+                "taskName": "none", "noTask": True, "keepAgents": True, "graceSeconds": 0,
+                "resumeRooms": [], "wakeRoom": "", "wakeText": "", "log": str(d / "restart.log"),
+                "preflightLog": str(d / "preflight.log"), "env": {},
+                "leasePath": str(lease), "leaseId": "mine"}), encoding="utf-8")
+            out = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                  str(script), "-Plan", str(plan)],
+                                 capture_output=True, text=True, encoding="utf-8", timeout=120)
+            log = (d / "restart.log").read_text(encoding="utf-8-sig")
+            self.assertEqual(out.returncode, 1, log + out.stdout + out.stderr)
+            self.assertIn("preflight passed", log)
+            self.assertIn(f"old hub PID or port {port} is still active", log)
+            self.assertIn(f"port {port} is held by pid {holder.pid} ", log)
+            self.assertNotIn("HELPER ERROR", log)
+            self.assertNotIn("starting it directly", log)
+            self.assertNotIn("started ", log)
+            self.assertIsNone(holder.poll())
+            self.assertFalse(lease.exists())
+            self.assertFalse(script.exists())
+            ps = ("@(Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue |"
+                  " Select-Object -ExpandProperty OwningProcess -Unique) -join ','" % port)
+            owners = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True,
+                                    text=True, encoding="utf-8", timeout=60).stdout.strip()
+            self.assertEqual(owners, str(holder.pid))
+
+    def test_the_trap_never_starts_a_second_hub(self):
+        text = SCRIPT.decode("ascii").replace("\r\n", "\n")
+        trap = text[text.index("\ntrap {"):]
+        trap = trap[:trap.index("\n}\n")]
+        # StartDirect only when nothing was started and nothing listens.
+        self.assertLess(trap.index("if ($hubStarted)"), trap.index("StartDirect"))
+        self.assertLess(trap.index("elseif ($held.Count)"), trap.index("StartDirect"))
+        self.assertIn("$hubStarted = $false", text[:text.index("# --- 1. Preflight")])
+        # Every start sets it: the task (twice) and StartDirect.
+        self.assertEqual(text.count("Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop; $hubStarted = $true"), 2)
+        self.assertIn("$script:hubStarted = $true", text[text.index("function StartDirect"):])
+        # A path that may be empty is never handed to Remove-Item.
+        for line in text.splitlines():
+            if "Remove-Item -LiteralPath $hostPin" in line:
+                self.assertIn("if ($hostPin) {", line)
+
 if __name__ == "__main__":
     unittest.main()
