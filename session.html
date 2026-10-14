@@ -1705,11 +1705,12 @@ const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${
 // holds it (the page's click handler for a.msg-link), never in a window of its
 // own. Its href is this page's origin, so Ctrl-click or a middle click opens it
 // in a tab from any computer. A link to a chat alone (no msg) is the task's
-// link. A loopback address on another port is another hub's and stays a link.
+// link; one to a thread stays the link it is. A loopback address on another
+// port is another hub's and stays a link.
 function msgLinkOf(x) {
   if (x.pathname !== '/session') return null;
   const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
-  if (!/^room-[0-9a-f]{8}$/.test(room)) return null;
+  if (!/^room-[0-9a-f]{8}$/.test(room) || x.searchParams.has('thread')) return null;
   return { room, msg: (x.searchParams.get('msg') || '').trim(), part: (x.searchParams.get('part') || '').trim() };
 }
 const msgHref = r => '/session?room=' + encodeURIComponent(r.room) + '&msg=' + encodeURIComponent(r.msg).replace(/%3A/gi, ':')
@@ -8092,7 +8093,7 @@ function refClickHandler(ev) {
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.askMid || a.dataset.refMsg, part = a.dataset.askN !== undefined ? 'ask:' + a.dataset.askN : a.dataset.refPart || '';
-  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED) { openThread('', msg, part, true); return; }
+  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED && !THREAD_MODE) { openThread('', msg, part, true); return; }
   if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}

@@ -138,6 +138,7 @@ CASES = [
     "[no scheme](localhost:8765/session?room=room-75a3668e&msg=abc:3)",
     "[another hub](http://127.0.0.1:8797/session?room=room-75a3668e&msg=abc:3)",
     "`http://127.0.0.1:8765/session?room=room-75a3668e&msg=abc:3`",
+    "[a thread](http://127.0.0.1:8765/session?id=room-75a3668e&thread=t-1)",
 ]
 
 
@@ -263,6 +264,10 @@ class GeneratedLinks(unittest.TestCase):
                 self.assertNotIn("fileview", html, (loc, c))
             # A loopback address on another port is another hub's: not taken for this one's.
             self.assertNotIn("msg-link", r[CASES[54]], loc)
+            # A thread's link keeps its thread.
+            self.assertNotIn("msg-link", r[CASES[56]], loc)
+            self.assertNotIn("task-link", r[CASES[56]], loc)
+            self.assertIn("thread=t-1", r[CASES[56]], loc)
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")

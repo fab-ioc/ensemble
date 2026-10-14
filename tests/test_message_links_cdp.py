@@ -135,6 +135,19 @@ async function main() {
       for (let i = 0; i < 60 && !landed; i++) { await sleep(100); try { landed = await ev(`(() => { const e = document.querySelector('.landed'); const m = e && e.closest('.msg[data-mid]'); return m ? m.dataset.mid : null; })()`); } catch (e) {} }
       out.standalone = { created: created.length, open: (await pages(targetId)).map(t => t.url), top: await ev('location.href'), landed };
     });
+    // A link in an HTML preview (fileview's frame): the chat at this origin, one tab, never a blank one.
+    await tab(A.base + '/fileview?path=' + encodeURIComponent(A.html), async ({ev, until, click, targetId}) => {
+      const F = `document.querySelector('iframe.file')`;
+      await until(`${F} && ${F}.contentDocument && ${F}.contentDocument.querySelector('a#m')`, 'preview');
+      await sleep(500);
+      const a = await ev(`(() => { const f = ${F}, b = f.contentDocument.querySelector('a#m').getBoundingClientRect(), fb = f.getBoundingClientRect(); return { x: fb.left + b.left + 4, y: fb.top + b.top + b.height / 2 }; })()`);
+      created.length = 0;
+      await click(a.x, a.y);
+      let open = [];
+      for (let i = 0; i < 40 && !open.length; i++) { await sleep(150); open = (await pages(targetId)).map(t => t.url); }
+      await sleep(500);
+      out.preview = { created: created.length, open: (await pages(targetId)).map(t => t.url), top: await ev('location.href') };
+    });
   } finally { try { await send('Browser.close'); } catch (e) {} ch.kill(); }
   console.log(JSON.stringify(out));
 }
@@ -201,7 +214,9 @@ class MessageLinksInPlace(unittest.TestCase):
         tdir = base / 'transcripts' / 'C--po'; tdir.mkdir()
         (tdir / f'{sid}.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in lines), encoding='utf-8')
         cls.sid, cls.po, cls.task, cls.port = sid, rid, task['id'], port
-        args = {**chrome_profile.node_args(), 'tmp': str(base), 'base': f'http://localhost:{port}', 'proj': proj['id'], 'po': rid}
+        html = home / 'links.html'
+        html.write_text(f'<!doctype html><html><head><title>x</title></head><body><p><a id="m" href="http://127.0.0.1:{port}/session?room={rid}&amp;msg={sid}:3">the balloon</a></p></body></html>', encoding='utf-8')
+        args = {**chrome_profile.node_args(), 'tmp': str(base), 'base': f'http://localhost:{port}', 'proj': proj['id'], 'po': rid, 'html': str(html)}
         script = base / 'links.js'; script.write_text(CDP_JS, encoding='utf-8')
         r = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', errors='replace', timeout=400)
         if r.returncode:
@@ -256,6 +271,14 @@ class MessageLinksInPlace(unittest.TestCase):
         self.assertIn(self.po, o['open'][0])
         self.assertIn('ask', o['open'][0])
         self.assertEqual(o['top'], f'http://localhost:{self.port}/', o)
+
+    def test_link_in_an_html_preview_opens_the_chat(self):
+        o = self.out['preview']
+        self.assertEqual(o['created'], 1, o)
+        self.assertEqual(len(o['open']), 1, o)
+        self.assertTrue(o['open'][0].startswith(f'http://localhost:{self.port}/session?'), o)
+        self.assertIn(self.po, o['open'][0])
+        self.assertTrue(o['top'].startswith(f'http://localhost:{self.port}/fileview?'), o)
 
     def test_standalone_chat_stays_in_its_window(self):
         o = self.out['standalone']
