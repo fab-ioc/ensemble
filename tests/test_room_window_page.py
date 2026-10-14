@@ -41,6 +41,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const out = {};
     out.open = await ev(`({ held: ${held}, before: ROOM_OBJ.window.before, header: document.getElementById('info').textContent,
       first: ROOM_OBJ.messages[0].id, firstFetch: ${roomBytes}[0] })`);
+    // A window that does not fill the chat gets the pages before it until it does.
+    await until(`(b => b.scrollHeight > b.clientHeight || !roomHasOlder())(document.getElementById('msgs')) && !OLDER_BUSY`);
+    out.filled = await ev(`(b => ({ held: ${held}, before: ROOM_OBJ.window.before, overflow: b.scrollHeight > b.clientHeight }))(document.getElementById('msgs'))`);
     // Scrolled to the top: the page before comes in, the place is kept.
     await ev(`(() => { const b = document.getElementById('msgs'); b.scrollTop = 0; b.dispatchEvent(new Event('scroll')); return 0; })()`);
     await until(`${held} > ${out.open.held}`);
@@ -91,16 +94,22 @@ class RoomWindowPage(unittest.TestCase):
 
     def test_opens_with_the_latest_messages_only(self):
         o = self.got["open"]
-        self.assertEqual(o["held"], 150)
-        self.assertEqual(o["before"], 250)
+        self.assertIn("n=50", o["firstFetch"][0])
+        self.assertLess(o["firstFetch"][1], 30000, "50 short messages, not the room")
+        self.assertGreaterEqual(o["held"], 50)
+        self.assertEqual(o["held"] + o["before"], 400)
         self.assertIn("400 messages", o["header"])
-        self.assertEqual(o["first"], "m250")
-        self.assertIn("n=150", o["firstFetch"][0])
+        self.assertEqual(o["first"], "m%d" % o["before"])
+
+    def test_a_window_that_does_not_fill_the_chat_loads_more(self):
+        f = self.got["filled"]
+        self.assertTrue(f["overflow"] or f["before"] == 0, f)
+        self.assertEqual(f["held"] + f["before"], 400)
 
     def test_scrolling_up_loads_the_page_before(self):
         s = self.got["scrolled"]
         # Pages of 100 until a screen of it is above the reader (older balloons fold short).
-        self.assertGreater(s["held"], 150)
+        self.assertGreater(s["held"], self.got["filled"]["held"])
         self.assertEqual(s["held"] + s["before"], 400)
         self.assertEqual(s["first"], "m%d" % s["before"])
         self.assertGreater(s["top"], 0, "the place is kept, not left at the top")

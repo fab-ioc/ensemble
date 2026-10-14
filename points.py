@@ -99,6 +99,7 @@ LIVE = ("open", "planned", "delivered")    # still waiting on someone
 SYNC_EVERY_S = 3.0              # a room's answers are looked for at most this often
 SLACK_S = 120                   # a transcript's clock and the hub's may differ this much
 VIEW_MAX = 200                  # points a page is sent, newest first
+WORDS_MAX = 201                 # an answer's words a page is sent: it shows 200 (one more says "…")
 TEXT_MAX = 2000                 # a point's words kept
 _WAKE_MAX = 900                 # a typed line: a TUI takes one line
 _PROMPT_MAX = 2500              # the open points in a first prompt (a command line)
@@ -471,11 +472,13 @@ def _read_file(p: Path):
     return d if _valid(d) else None
 
 
-def load(room_id: str) -> dict:
+def load(room_id: str, *, shared: bool = False) -> dict:
     """A room's ledger (a fresh one when it has none). A damaged file falls
     back to the version before it, kept as ``.prev``; if both are gone the
     ledger starts again, numbering after the last it can still see, and
-    ``damaged`` says when."""
+    ``damaged`` says when. ``shared``: the cached ledger itself, to read and
+    never change (a chat's poll: copying hundreds of points cost it more than
+    the rest of the points' view, #228)."""
     with _LOCK:
         p = _path(room_id)
         try:
@@ -484,7 +487,7 @@ def load(room_id: str) -> dict:
             mt = None
         hit = _CACHE.get(room_id)
         if hit and hit[0] == mt and mt is not None:
-            return json.loads(json.dumps(hit[1]))
+            return hit[1] if shared else json.loads(json.dumps(hit[1]))
         if mt is None:
             prev = _read_file(p.with_suffix(".json.prev"))
             return _clean(prev, room_id) if prev else _empty(room_id)
@@ -1252,17 +1255,18 @@ def _adopt(led: dict, room: dict, pre: list | None = None) -> bool:
     return True
 
 
-def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
+def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared: bool = False) -> dict:
     """Look for new answers in the room's conversations (only those that
-    changed since last time), and return the ledger."""
+    changed since last time), and return the ledger (``shared``: see
+    :func:`load`)."""
     now = time.time()
     if not force and now - _SYNCED.get(room_id, 0) < SYNC_EVERY_S:
-        return load(room_id)
+        return load(room_id, shared=shared)
     _SYNCED[room_id] = now
     if room is None:
         room = _d.chatroom.get_room(room_id)
     if room is None:
-        return load(room_id)
+        return load(room_id, shared=shared)
     # The transcripts are read first, without the lock: a long one takes a
     # while, and every poll and send waits on the lock. Only a session that
     # changed since it was last read, and after the oldest point still
@@ -1276,8 +1280,12 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
     if _solo(room):
         live = [p["createdAt"] for p in led["points"] if p["state"] in LIVE]
         floor = (min(live) - SLACK_S) if live else None
+        # The agents' sessions now are looked at; the ones rotated out of
+        # (a PO has a hundred) as the hub's file table has them (#228).
+        now_sids = {(a.get("sessionId") or "").strip() for a in _agents(room)}
+        table = {} if force else _d.transcript_stats()
         for sid in _session_ids(room, led):
-            st = _session_stat(sid, immediate=force)
+            st = (None if sid in now_sids else table.get(sid)) or _session_stat(sid, immediate=force)
             if st is None or _SCANNED.get((room_id, sid)) == st:
                 continue
             if floor is None or st[1] < floor:
@@ -1916,6 +1924,8 @@ def task_lookup(room_id: str, room: dict | None = None):
 def _item(p: dict, task=None) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
                                  "parent", "comment", "followedBy", "replyTo") if p.get(k) not in (None, "", [])}
+    if "followUps" in out:          # the ledger's own list (view reads the cached ledger)
+        out["followUps"] = json.loads(json.dumps(out["followUps"]))
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
     if p.get("replyTo"):
         # The passage of the answer a follow-up quotes, as written, so a link
@@ -1925,7 +1935,15 @@ def _item(p: dict, task=None) -> dict:
             out["quote"] = rq[0][:200]
     if p.get("follows"):
         out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
-    out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task", "said") if a.get(k)}
+    # A page shows the words of an answered point's newest answer and of an
+    # in-progress one's plan, cut to 200 characters (ptSaid): the others go
+    # without theirs (#228: a PO's 200 points were 270 KB of a chat's first read).
+    cur = next((a for a in reversed(p["answers"]) if a.get("kind") != "plan"), None) \
+        if p["state"] == "delivered" else None
+    out["answers"] = [{k: (a[k][:WORDS_MAX] if k in ("said", "summary") else a[k])
+                       for k in ("mid", "at", "how", "summary", "kind", "task", "said")
+                       if a.get(k) and (k not in ("said", "summary") or a is cur
+                                        or (a.get("kind") == "plan" and p["state"] == "planned"))}
                       for a in p["answers"]]
     if p["state"] == "delivered":
         # Needs you (#209): "try" (the answer asks them to try something),
@@ -1949,11 +1967,12 @@ def view(room_id: str, room: dict | None = None) -> dict:
     """What the chat page shows: the points (newest first, capped), how many
     wait for an answer, are in progress and wait for an acknowledgement, and
     the decisions approved. A planned point carries its task and where it is."""
+    # Read, never changed here: the cached ledger, not a copy of it.
     try:
-        led = sync(room_id, room=room)
+        led = sync(room_id, room=room, shared=True)
     except Exception as e:
         _log(f"{room_id}: answers not read: {e!r}")
-        led = load(room_id)
+        led = load(room_id, shared=True)
     order = lambda p: (p["createdAt"], p["id"])     # noqa: E731
     pts = sorted(led["points"], key=order, reverse=True)
     # Every point still waiting on someone, however old, with the points it
@@ -1971,7 +1990,8 @@ def view(room_id: str, room: dict | None = None) -> dict:
     task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
     return {"items": [_item(p, task) for p in pts], **_counts(led),
             "approvals": sorted(led.get("approvals") or {}),
-            "asks": led.get("asks") or {}, "asksSettledAt": float(led.get("asksSettledAt") or 0),
+            "asks": json.loads(json.dumps(led.get("asks") or {})),
+            "asksSettledAt": float(led.get("asksSettledAt") or 0),
             "needs": _needs_view(room_id, room, led)}
 
 

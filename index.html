@@ -4850,6 +4850,29 @@ async function api(path, opts) {
   }
   return r.json();
 }
+// A list the hub sends with an ETag (documents, git log, roadmap): asked again
+// with it, an unchanged one is a 304 with no body and the copy held here
+// answers (#228: a return to a PO chat moved 330 KB of them). Chrome does not
+// ask with the ETag by itself: the hub speaks HTTP/1.0, and Chrome revalidates
+// no HTTP/1.0 answer to a URL with a query.
+const API_HELD = new Map();
+async function apiHeld(path) {
+  const held = API_HELD.get(path);
+  const r = await fetch(path, held ? { headers: { 'If-None-Match': held.etag } } : undefined);
+  if (r.status === 304 && held) return structuredClone(held.data);
+  if (!r.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await r.json()); } catch {}
+    throw new Error(`${r.status} ${detail || r.statusText}`);
+  }
+  const data = await r.json(), etag = r.headers.get('ETag');
+  API_HELD.delete(path);
+  if (etag) {
+    API_HELD.set(path, { etag, data: structuredClone(data) });
+    if (API_HELD.size > 40) API_HELD.delete(API_HELD.keys().next().value);
+  }
+  return data;
+}
 
 // Platform metadata from the backend (/api/platform). Fetched once before the
 // first render so the UI can adapt terminal / file-manager names and hide
@@ -8146,7 +8169,10 @@ function wireScopeBar() {
 // selected file and the scroll position live in WS_VIEWS and outlive every
 // re-render of the chrome around them, every tab switch, and the refresh tick.
 const WS_VIEWS = new Map();          // key -> view
-const wsNorm = p => (p || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+// Remembered: a tree paint asks it per row and per task (#228: 290 ms of a
+// switch to a PO chat went on working the same paths out again). One line:
+// tests lift it out of the page by its line.
+const wsNorm = (m => p => { const k = p || ''; let n = m.get(k); if (n === undefined) { if (m.size >= 20000) m.clear(); m.set(k, n = k.replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase()); } return n; })(new Map());
 const wsSame = (a, b) => wsNorm(a) === wsNorm(b);
 
 // A task's folder, not its cwd. An `empty` task is just a folder; `copy` and
@@ -8940,8 +8966,12 @@ function wsPaintTree(v) {
   const keep = tree.scrollTop;
   tree._wsSig = html;
   tree.innerHTML = html;
-  tree.querySelectorAll('.wse.file[data-path]:not([data-file-unavailable])').forEach(row =>
-    wsDragMark(v, row, row.dataset.path, row.classList.contains('doc') ? 'document' : 'workspace'));
+  if (v.ctx.kind === 'task') v.taskRoom = wsRoomForPath(v, '');
+  else v.taskFolders = wsTaskFoldersOf(projectById(v.ctx.projectId));
+  try {
+    tree.querySelectorAll('.wse.file[data-path]:not([data-file-unavailable])').forEach(row =>
+      wsDragMark(v, row, row.dataset.path, row.classList.contains('doc') ? 'document' : 'workspace'));
+  } finally { v.taskFolders = null; v.taskRoom = undefined; }
   // A repaint must not scroll you back to the root. A fresh element should land
   // where this view was left — but the first paint into one is usually just the
   // roots and "loading…", too short to scroll, so the restore is retried on
@@ -8959,22 +8989,30 @@ function wsPaintTree(v) {
 // <task>/repo/... goes to that task and nothing else can claim it.
 function wsRoomForPath(v, path) {
   if (v.ctx.kind === 'task') {
+    if (v.taskRoom !== undefined) return v.taskRoom;
     const r = ALL_ROWS.find(x => x.sessionId === v.ctx.sid || x.roomId === v.ctx.sid);
     return (r && r.headless && r.roomId) ? { id: r.roomId, name: r.label || 'this task' } : null;
   }
   const pj = projectById(v.ctx.projectId);
   let best = null, bestLen = -1;
-  ((pj && pj.sessions) || []).forEach(sn => {
-    if (!sn.roomId) return;
-    const n = wsNorm(wsTaskFolder(sn));
-    if (n && wsNorm(path).startsWith(n + '/') && n.length > bestLen) {
-      best = { id: sn.roomId, name: sn.label || sn.sessionId || 'task' }; bestLen = n.length;
-    }
-  });
+  const p = wsNorm(path);
+  // A paint marks every row: the task folders are worked out once for it.
+  for (const t of v.taskFolders || wsTaskFoldersOf(pj)) {
+    if (t.n.length > bestLen && p.startsWith(t.n + '/')) { best = { id: t.id, name: t.name }; bestLen = t.n.length; }
+  }
   // A file no task owns (Documents, the roadmap, the project's own code)
   // is the project's: its comments go to the project's PO.
   if (!best && pj && pj.poRoomId) best = { id: pj.poRoomId, name: (pj.name || nounText('the {project}')) + ' PO' };
   return best;
+}
+function wsTaskFoldersOf(pj) {
+  const out = [];
+  ((pj && pj.sessions) || []).forEach(sn => {
+    if (!sn.roomId) return;
+    const n = wsNorm(wsTaskFolder(sn));
+    if (n) out.push({ n, id: sn.roomId, name: sn.label || sn.sessionId || 'task' });
+  });
+  return out;
 }
 function wsFileUrl(v, path) {
   const room = wsRoomForPath(v, path);
@@ -9669,11 +9707,20 @@ function wsDocsHas(v, path) {
   const d = v.docsList && v.docsList.data;
   return wsIsRoadmap(v, path) || !!(d && (d.items || []).some(it => wsSame(it.path, path)));
 }
+// One formatter each: toLocale*String builds a new one per call (#228: 133 ms
+// of a switch on the Documents rows).
+let WS_FMT_DATE = null, WS_FMT_WHEN = null;
 function wsDocsDate(t) {
-  try { return new Date(t * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; }
+  try {
+    WS_FMT_DATE = WS_FMT_DATE || new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+    return WS_FMT_DATE.format(new Date(t * 1000));
+  } catch (e) { return ''; }
 }
 function wsDocsWhen(t) {
-  try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; }
+  try {
+    WS_FMT_WHEN = WS_FMT_WHEN || new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    return WS_FMT_WHEN.format(new Date(t * 1000));
+  } catch (e) { return ''; }
 }
 // A document's tooltip: where it is under its folder, the task it came from
 // (or the code's docs folder), when it was written and its size.
@@ -9775,7 +9822,7 @@ async function wsDocsLoad(v, force) {
   if (st.inFlight || (!force && st.at && Date.now() - st.at < WS_DOCS_TTL)) return;
   st.inFlight = true;
   try {
-    st.data = await api('/api/projects/documents?project=' + encodeURIComponent(pj.id));
+    st.data = await apiHeld('/api/projects/documents?project=' + encodeURIComponent(pj.id));
     st.err = '';
   } catch (e) { st.err = (e && e.message) || 'failed'; }
   finally { st.inFlight = false; st.at = Date.now(); }
@@ -11529,7 +11576,7 @@ async function chLoadStatus() {
     const pid = box.dataset.project;
     const [st, log] = await Promise.all([
       api('/api/git/status?path=' + encodeURIComponent(CH_ROOT)),
-      api('/api/git/log?path=' + encodeURIComponent(CH_ROOT) + '&project=' + encodeURIComponent(pid) + '&n=30').catch(function (e) { return { error: e.message, commits: [] }; }),
+      apiHeld('/api/git/log?path=' + encodeURIComponent(CH_ROOT) + '&project=' + encodeURIComponent(pid) + '&n=30').catch(function (e) { return { error: e.message, commits: [] }; }),
     ]);
     if (stale()) return;
     CH_LIST = { pid, repoSel, files: st.files || [], log };
@@ -11760,7 +11807,7 @@ async function rmLoad(pid, force) {
   if (st.inFlight || (!force && Date.now() - st.polledAt < 4000)) return;
   st.inFlight = true; st.polledAt = Date.now();
   try {
-    const j = await api('/api/roadmap?project=' + encodeURIComponent(pid));
+    const j = await apiHeld('/api/roadmap?project=' + encodeURIComponent(pid));
     st.err = '';
     if (!st.editing) st.data = j;
     else if (j.version !== st.base && (!st.conflict || st.conflict.version !== j.version)) {

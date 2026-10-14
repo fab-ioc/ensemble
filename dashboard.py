@@ -1028,6 +1028,17 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
         return idx
 
 
+def transcript_stats() -> dict[str, list]:
+    """{session id: [size, mtime]} of every Claude transcript, from the file
+    table (a look up to 10 s old; the task list looks every refresh): a
+    past session's file is not stat'ed one by one (#228: a PO's 165 sessions
+    on every points sync). For sessions that ended: a live one is looked at."""
+    out: dict[str, list] = {}
+    for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
+        out.setdefault(filetable.as_path(p).stem, [size, round(mtime, 3)])
+    return out
+
+
 def find_transcript(session_id: str, *, immediate: bool = True) -> Path | None:
     """A session's transcript. Remembered once found, so the task list does not
     glob every project folder for every live session on every refresh; checked
@@ -10058,6 +10069,74 @@ def room_window(out: dict, n: int) -> dict:
     return out
 
 
+# A chat's status (the room without its messages) as last sent, by room and
+# statusSig: a poll that holds an older one gets what changed since (#228; a
+# PO's points and rotations were 370 KB on every change of any of it).
+_ROOM_STATUS: dict[tuple[str, str], str] = {}     # oldest use first
+_ROOM_STATUS_MAX = 32
+ROTATION_SHOWN = ("n", "at", "fromSessionId", "toSessionId", "tokens", "threshold")
+_ROOM_STATUS_LOCK = threading.Lock()
+
+
+def keep_room_status(rid: str, sig: str, text: str) -> None:
+    """Keep the status sent as ``sig`` (its JSON text, as the sig was made)."""
+    with _ROOM_STATUS_LOCK:
+        _ROOM_STATUS.pop((rid, sig), None)
+        _ROOM_STATUS[(rid, sig)] = text
+        while len(_ROOM_STATUS) > _ROOM_STATUS_MAX:
+            del _ROOM_STATUS[next(iter(_ROOM_STATUS))]
+
+
+def room_status_patch(rid: str, sig: str, status_text: str) -> dict | None:
+    """What changed in the status (its JSON text) since the one sent as
+    ``sig``, as :func:`status_patch` makes it; None when that one is not
+    kept. A status asked for again stays kept longest."""
+    with _ROOM_STATUS_LOCK:
+        text = _ROOM_STATUS.pop((rid, sig), None)
+        if text is not None:
+            _ROOM_STATUS[(rid, sig)] = text
+    if text is None:
+        return None
+    return status_patch(json.loads(text), json.loads(status_text))
+
+
+def _same(a, b) -> bool:
+    """Equal as the page sees them: Python's == takes 1 for true and 1.0,
+    the JSON (and the sig) does not."""
+    return a == b and json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def _id_list(v) -> bool:
+    return (isinstance(v, list) and len(v) > 1 and all(isinstance(x, dict) and "id" in x for x in v)
+            and len({json.dumps(x["id"]) for x in v}) == len(v))
+
+
+def status_patch(old: dict, new: dict) -> dict:
+    """``new`` as changes to ``old``: {"set": {key: value}, "del": [key],
+    "in": {key: patch}}, where a patch of a dict is the same again and one
+    of a list of rows with ids is {"ids": [the ids, in order], "rows": {id:
+    row}} with only the rows that are new or changed. The page applies it
+    with ``applyStatusPatch``."""
+    out: dict = {}
+    for k, v in new.items():
+        if k in old and _same(old[k], v):
+            continue
+        o = old.get(k)
+        if isinstance(o, dict) and isinstance(v, dict):
+            out.setdefault("in", {})[k] = status_patch(o, v)
+        elif _id_list(o) and _id_list(v):
+            was = {json.dumps(x["id"]): x for x in o}
+            out.setdefault("in", {})[k] = {
+                "ids": [x["id"] for x in v],
+                "rows": {str(x["id"]): x for x in v if not _same(was.get(json.dumps(x["id"])), x)}}
+        else:
+            out.setdefault("set", {})[k] = v
+    gone = [k for k in old if k not in new]
+    if gone:
+        out["del"] = gone
+    return out
+
+
 def room_older_page(messages: list, before: str, n: int, upto: str, revision: str) -> dict:
     """The ``n`` messages before ``before`` (or from ``upto``, with a few
     before it for context), oldest first, and how many are older still."""
@@ -10084,32 +10163,56 @@ def load_sessions(n: int = 200) -> list[dict]:
         if hit and hit[1] == _SESS_GEN:
             return [dict(r) for r in hit[2]]
         lock.acquire()
+    handed = False
     try:
         hit = _SESS_CACHE.get(n)
-        if hit and hit[1] == _SESS_GEN and n not in _SESS_BOOT and time.time() - hit[0] < _SESS_TTL:
+        if hit and hit[1] == _SESS_GEN and n not in _SESS_BOOT:
             rows = hit[2]
+            if time.time() - hit[0] >= _SESS_TTL:
+                # Only time has passed, nothing changed by a request: these
+                # rows answer now, and the list is worked out again behind
+                # them (#228: ~0.5 s that every refresh of a page waited for).
+                threading.Thread(target=_refresh_sessions, args=(n, lock),
+                                 name=f"sessions-{n}", daemon=True).start()
+                handed = True
         else:
-            gen = _SESS_GEN
-            key = f"sessions:{n}" if hit is None else ""
-            if key:
-                progress.set_progress(key, "Finding conversations")
-            try:
-                rows = _load_sessions_uncached(n, progress_key=key)
-            finally:
-                if key:
-                    progress.clear(key)
-            _SESS_CACHE[n] = (time.time(), gen, rows)
-            _SESS_BOOT.discard(n)
-            global _SESS_FIRST_SAVED
-            if not _SESS_FIRST_SAVED:
-                # The first list of a start read everything that changed:
-                # kept now, not half a minute on (a preflight hub is stopped
-                # seconds after its first answer).
-                _SESS_FIRST_SAVED = True
-                filefacts.save_soon()
+            rows = _refresh_sessions_locked(n, hit)
+    finally:
+        if not handed:
+            lock.release()
+    return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
+
+
+def _refresh_sessions(n: int, lock: threading.Lock) -> None:
+    """Work the list out again in the background; ``lock`` is held, and freed here."""
+    try:
+        _refresh_sessions_locked(n, _SESS_CACHE.get(n))
+    except Exception as e:      # noqa: BLE001 — the old rows stay; the next refresh tries again
+        print(f"[sessions] list not worked out: {e!r}", flush=True)
     finally:
         lock.release()
-    return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
+
+
+def _refresh_sessions_locked(n: int, hit) -> list:
+    global _SESS_FIRST_SAVED
+    gen = _SESS_GEN
+    key = f"sessions:{n}" if hit is None else ""
+    if key:
+        progress.set_progress(key, "Finding conversations")
+    try:
+        rows = _load_sessions_uncached(n, progress_key=key)
+    finally:
+        if key:
+            progress.clear(key)
+    _SESS_CACHE[n] = (time.time(), gen, rows)
+    _SESS_BOOT.discard(n)
+    if not _SESS_FIRST_SAVED:
+        # The first list of a start read everything that changed:
+        # kept now, not half a minute on (a preflight hub is stopped
+        # seconds after its first answer).
+        _SESS_FIRST_SAVED = True
+        filefacts.save_soon()
+    return rows
 
 
 def _past_row(sid: str, agent: str, found: dict | None) -> dict | None:
@@ -13726,6 +13829,8 @@ class Handler(BaseHTTPRequestHandler):
         return not self._is_local()
 
     def _send_json(self, code: int, payload, *, conditional: bool = False):
+        """``conditional``: with an ETag; a page that asks with it (If-None-Match)
+        gets a bodiless 304 while the answer has not changed."""
         body = json.dumps(payload).encode()
         etag = '"' + hashlib.sha1(body).hexdigest() + '"' if conditional else ""
         if etag and self.headers.get("If-None-Match") == etag:
@@ -14138,7 +14243,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, project_documents(proj))
+            self._send_json(200, project_documents(proj), conditional=True)
             return
         if p == "/api/projects/po-candidates":
             # ?project=<id>, or ?path=&kind=&name= for the project New project
@@ -14157,7 +14262,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, read_roadmap(proj))
+            self._send_json(200, read_roadmap(proj), conditional=True)
             return
         if p == "/api/dir":
             q = parse_qs(u.query)
@@ -14213,7 +14318,7 @@ class Handler(BaseHTTPRequestHandler):
             n = q.get("n", ["30"])[0]
             self._send_json(*git_log((q.get("path", [""])[0] or "").strip(),
                                      int(n) if n.isdigit() else 30,
-                                     (q.get("project", [""])[0] or "").strip()))
+                                     (q.get("project", [""])[0] or "").strip()), conditional=True)
             return
         if p == "/api/git/roots":
             q = parse_qs(u.query)
@@ -14272,9 +14377,14 @@ class Handler(BaseHTTPRequestHandler):
                 out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
             except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
                 print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
-            status_sig = hashlib.sha1(json.dumps(
-                {k: v for k, v in out.items() if k != "messages"}, sort_keys=True
-            ).encode("utf-8")).hexdigest()[:20]
+            # A solo chat's page needs of each rotation which sessions it
+            # joins and its line's words, not the handover's path (#228).
+            out["participants"] = [
+                {**p, "rotations": [{k: r[k] for k in ROTATION_SHOWN if k in r} for r in p["rotations"]]}
+                if p.get("rotations") else p for p in out.get("participants", [])]
+            status = {k: v for k, v in out.items() if k != "messages"}
+            status_text = json.dumps(status, sort_keys=True)
+            status_sig = hashlib.sha1(status_text.encode("utf-8")).hexdigest()[:20]
             cursor = q.get("cursor", [""])[0]
             if cursor:
                 change = chatroom.room_delta(rid, cursor, revision)
@@ -14284,13 +14394,19 @@ class Handler(BaseHTTPRequestHandler):
                 revision, ids = change
                 every = out.pop("messages", [])
                 messages = [m for m in every if m.get("id") in ids]
-                same_status = q.get("statusSig", [""])[0] == status_sig
+                had = q.get("statusSig", [""])[0]
+                same_status = had == status_sig
+                patch = None if same_status or not had else room_status_patch(rid, had, status_text)
+                if not same_status:
+                    keep_room_status(rid, status_sig, status_text)
                 self._send_json(200, {"delta": True, "revision": revision,
                                       "statusSig": status_sig, "statusSame": same_status,
-                                      **({} if same_status else {"room": out}),
+                                      **({} if same_status else
+                                         {"patch": patch} if patch is not None else {"room": out}),
                                       **({"total": len(every)} if win else {}),
                                       "messages": messages})
                 return
+            keep_room_status(rid, status_sig, status_text)
             if win:
                 room_window(out, win)
             out["revision"] = revision

@@ -79,8 +79,10 @@ class _World(unittest.TestCase):
             mock.patch.object(points, "_session_stat",
                               side_effect=lambda sid, **_kw: [len(self.turns.get(sid, [])), self.mtime + self.gen]
                               if sid in self.turns else None),
+            mock.patch.object(dashboard, "transcript_stats", side_effect=lambda: dict(self.table)),
             mock.patch.object(points, "_log"),
         ]
+        self.table: dict[str, list] = {}
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -464,6 +466,21 @@ class POCheck(_World):
         self.add("sid-1", turn("user", "launch", self.t0), turn("assistant", "ok", self.t0 + 1),
                  turn("user", "[Request interrupted by user]", self.t0 + 2))
         self.assertEqual(points.sync(rid, force=True)["points"], [])
+
+
+class SessionsLookedAt(_World):
+    def test_a_session_rotated_out_of_is_read_from_the_file_table(self):
+        """#228: a PO's past sessions (a hundred) are not stat'ed one by one;
+        the session it runs now is."""
+        rid = self.solo_room("sid-now")
+        room = chatroom.get_room(rid, public=False)
+        room["participants"][0]["rotations"] = [{"n": 1, "fromSessionId": "sid-old", "toSessionId": "sid-now"}]
+        chatroom.update_room(room)
+        self.turns["sid-old"] = []
+        self.table = {"sid-old": [0, 1.0], "sid-now": [0, 1.0]}
+        with mock.patch.object(points, "_session_stat", side_effect=lambda sid, **_kw: [0, 2.0]) as stat:
+            points.sync(rid)
+        self.assertEqual([c.args[0] for c in stat.call_args_list], ["sid-now"])
 
 
 class Storage(_World):
@@ -1122,6 +1139,8 @@ class FollowUps(_World):
     def test_a_comment_quoting_the_answer_closes_the_point(self):
         rid = self.solo_room()
         self.answered(rid)
+        said = lambda: {i["id"]: i for i in points.view(rid)["items"]}["P1"]["answers"][0].get("said")  # noqa: E731
+        self.assertEqual(said(), "A flaky test, in test_x; the build is green again.")
         out, ids = self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
                              at=self.t0 + 10)
         self.assertEqual(ids, ["P2"])
@@ -1133,7 +1152,9 @@ class FollowUps(_World):
         v = points.view(rid)
         items = {i["id"]: i for i in v["items"]}
         self.assertEqual((items["P1"]["followedBy"], items["P2"]["replyTo"]), ("P2", "P1"))
-        self.assertEqual(items["P1"]["answers"][0]["said"], "A flaky test, in test_x; the build is green again.")
+        # Followed up, its row no longer shows the answer's words: not sent (#228).
+        self.assertIsNone(said())
+        self.assertEqual(items["P1"]["answers"][0]["mid"], self.point(rid, "P1")["answers"][0]["mid"])
 
     def test_a_message_linking_the_answers_balloon_closes_it_too(self):
         rid = self.solo_room()

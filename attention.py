@@ -626,6 +626,27 @@ def analyse(tail: str) -> dict:
             "prompt": looks_like_prompt(tail), "ownWork": own_work(tail)}
 
 
+# A stopped terminal's last screen never changes: its verdict, by the screen
+# (#228: a hundred stopped agents were read again on every snapshot, ~0.15 s).
+_DEAD_ANALYSIS: dict[str, dict] = {}
+_DEAD_MAX = 1024
+
+
+def _analyse_dead(tail: str) -> dict:
+    with _ANALYSIS_LOCK:
+        hit = _DEAD_ANALYSIS.get(tail)
+    if hit is not None:
+        return hit
+    scan = analyse(tail)
+    if scan["block"] and scan["block"][1] == "model_limit":
+        return scan         # its words say until when, which the hub may learn later
+    with _ANALYSIS_LOCK:
+        if len(_DEAD_ANALYSIS) >= _DEAD_MAX:
+            _DEAD_ANALYSIS.clear()
+        _DEAD_ANALYSIS[tail] = scan
+    return scan
+
+
 def _analyse_live(sess) -> tuple[str, dict]:
     """Read and classify a live terminal's screen, reusing the last verdict
     while it has printed nothing new."""
@@ -1050,7 +1071,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
                 death = saved
         if death:
             tail = death.get("tail", "") or ""
-            scan = analyse(tail)
+            scan = _analyse_dead(tail)
     # The session the hub launched, else the one the agent's hooks name: a
     # /clear or a resume can continue under a new id.
     said = (statuses.get((part.get("sessionId") or "").strip())
