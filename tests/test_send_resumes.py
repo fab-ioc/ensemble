@@ -781,7 +781,10 @@ console.log(JSON.stringify({ posts, same: ctx.key1 === ctx.key2 && !!ctx.key1 })
         fv = fv[:fv.index("\n}\n")]
         self.assertIn("fetch('/api/room/resume'", fv)
         self.assertNotIn("fetch('/api/room/say'", fv)
-        self.assertIn("const key = 'fv:' + FV_MARK + ':' + CMTS.map(c => c.cid).join(',');", fv)
+        # The comments' ids are random and kept with them (#233): the same
+        # batch sent again after a reload has the same key and counts once.
+        self.assertIn("const sent = CMTS.map(c => c.cid);", fv)
+        self.assertIn("const key = 'fv:' + sent.join(',');", fv)
         self.assertIn("showFallback('Couldn’t send to the chat. Copy your comments:', body)", fv)
 
     def test_retry_and_discard_are_a_fingers_size_on_a_phone(self):

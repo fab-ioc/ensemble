@@ -20,6 +20,11 @@
 // Its listeners go on `document`: index.html copies those to a panel popped out
 // into a window of its own, so each handler works on the document its event
 // came from. CSS stays in the pages (.sel-bar, .sel-cmt, .sel-copy).
+//
+// A page shown in a frame of this one (fileview.html's HTML preview, #233)
+// has a document and a selection of its own, whose events never reach this
+// page: `watch(frame)` listens there too. The bar is still this page's, laid
+// over the frame at the selection, so the frame's own styles never touch it.
 window.SelBar = (function () {
   const COARSE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   // A phone's selection handles hang under the words: the bar clears them.
@@ -39,7 +44,12 @@ window.SelBar = (function () {
     let L = 0, T = 0, R = win.innerWidth, B = win.innerHeight;
     let el = range.commonAncestorContainer;
     if (el && el.nodeType !== 1) el = el.parentElement;
+    // The root's overflow, and the body's while the root's is visible, belong
+    // to the window (the browser hands them on): they cut nothing more.
+    const doc = win.document, root = doc.documentElement;
+    const bodyIsWin = !!doc.body && win.getComputedStyle(root).overflowX === 'visible' && win.getComputedStyle(root).overflowY === 'visible';
     for (; el && el.nodeType === 1; el = el.parentElement) {
+      if (el === root || (el === doc.body && bodyIsWin)) continue;
       const cs = win.getComputedStyle(el);
       if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
       const c = el.getBoundingClientRect();
@@ -54,6 +64,15 @@ window.SelBar = (function () {
                 : { left: l, top: t, right: rr, bottom: b };
     }
     return out;
+  }
+
+  // A rect in a frame's window as this page sees it: moved by where the frame
+  // sits and cut to the frame's own box. Null when none of it is in view.
+  function inFrame(rect, frame) {
+    const b = frame.getBoundingClientRect(), x = b.left + frame.clientLeft, y = b.top + frame.clientTop;
+    const l = Math.max(x, rect.left + x), t = Math.max(y, rect.top + y);
+    const r = Math.min(x + frame.clientWidth, rect.right + x), btm = Math.min(y + frame.clientHeight, rect.bottom + y);
+    return r < l || btm < t ? null : { left: l, top: t, right: r, bottom: btm };
   }
 
   // Under the selection; above it when there is no room below; else at the
@@ -101,11 +120,13 @@ window.SelBar = (function () {
   // opts.comment(data, sel, doc): Comment was clicked.
   // opts.copyText(sel, info): the words Copy takes (default: the selection's).
   function mount(opts) {
-    let bar = null, cur = null, down = false, timer = 0, raf = 0, copiedT = 0;
+    let bar = null, barDoc = null, cur = null, down = false, timer = 0, raf = 0, copiedT = 0;
+    const frames = new Map();                             // a watched frame's document → its <iframe>
 
     function hide() {
       clearTimeout(copiedT);
       if (bar) { bar.remove(); bar = null; }
+      barDoc = null;
       cur = null;
     }
     // What the selection in `doc` is now, for this page.
@@ -155,9 +176,9 @@ window.SelBar = (function () {
     }
     function update(doc) {
       const now = read(doc);
-      if (!now) { if (!bar || bar.ownerDocument === doc) hide(); return; }
-      if (bar && bar.ownerDocument !== doc) hide();
-      if (!bar) bar = build(doc);
+      if (!now) { if (!bar || barDoc === doc) hide(); return; }
+      if (bar && barDoc !== doc) hide();
+      if (!bar) { const f = frames.get(doc); bar = build(f ? f.ownerDocument : doc); barDoc = doc; }
       const same = !!cur && cur.text === now.text;
       cur = now;
       bar.querySelector('.sel-cmt').hidden = !now.info.comment;
@@ -168,32 +189,36 @@ window.SelBar = (function () {
     }
     function position() {
       if (!bar || !cur) return;
-      const win = cur.doc.defaultView || window;
+      const win = cur.doc.defaultView || window, f = frames.get(cur.doc);
       let rect = null;
-      try { rect = visibleRect(cur.info.range, win); } catch (e) {}
+      try { rect = visibleRect(cur.info.range, win); if (rect && f) rect = inFrame(rect, f); } catch (e) {}
       bar.hidden = !rect;
-      if (rect) place(bar, rect, win);
+      if (rect) place(bar, rect, bar.ownerDocument.defaultView || window);
     }
     const soon = (doc, ms) => { clearTimeout(timer); timer = setTimeout(() => update(doc), ms); };
 
-    document.addEventListener('selectionchange', e => {
-      if (down) return;                                   // a drag: wait for the release
-      soon(docOf(e), COARSE ? 300 : 200);
-    });
-    document.addEventListener('mousedown', e => {
-      if (bar && bar.contains(e.target)) return;
-      if (e.button === 0) down = true;
-      if (bar) hide();
-    });
-    // Anywhere in the page, not only on the surface: a drag may end outside it.
-    document.addEventListener('mouseup', e => { down = false; soon(docOf(e), 10); });
-    // A release outside the window never reaches the page: the next move says so.
-    document.addEventListener('mousemove', e => { if (down && !(e.buttons & 1)) { down = false; soon(docOf(e), 10); } });
-    document.addEventListener('touchend', e => soon(docOf(e), 300));
-    document.addEventListener('scroll', () => {
-      if (!bar || raf) return;
-      raf = requestAnimationFrame(() => { raf = 0; position(); });
-    }, true);
+    // The same listeners on this page and on every watched frame's document.
+    function listen(doc) {
+      doc.addEventListener('selectionchange', e => {
+        if (down) return;                                   // a drag: wait for the release
+        soon(docOf(e), COARSE ? 300 : 200);
+      });
+      doc.addEventListener('mousedown', e => {
+        if (bar && bar.contains(e.target)) return;
+        if (e.button === 0) down = true;
+        if (bar) hide();
+      });
+      // Anywhere in the page, not only on the surface: a drag may end outside it.
+      doc.addEventListener('mouseup', e => { down = false; soon(docOf(e), 10); });
+      // A release outside the window never reaches the page: the next move says so.
+      doc.addEventListener('mousemove', e => { if (down && !(e.buttons & 1)) { down = false; soon(docOf(e), 10); } });
+      doc.addEventListener('touchend', e => soon(docOf(e), 300));
+      doc.addEventListener('scroll', () => {
+        if (!bar || raf) return;
+        raf = requestAnimationFrame(() => { raf = 0; position(); });
+      }, true);
+    }
+    listen(document);
     window.addEventListener('resize', () => position());
     if (window.visualViewport) window.visualViewport.addEventListener('resize', () => position());
 
@@ -201,7 +226,17 @@ window.SelBar = (function () {
       hide,
       shown: () => !!bar && bar.isConnected,
       // After the page redrew what the selection is in: read it again.
-      refresh: () => { if (bar) update(bar.ownerDocument); },
+      refresh: () => { if (bar) update(barDoc); },
+      // Selections in a same-origin frame's document too (once per document:
+      // a frame that loads again has a new one).
+      watch(frame) {
+        let d = null;
+        try { d = frame.contentDocument; } catch (e) {}
+        if (!d || frames.has(d)) return;
+        for (const [k, f] of frames) if (f === frame) frames.delete(k);
+        frames.set(d, frame);
+        listen(d);
+      },
     };
   }
 
@@ -239,5 +274,5 @@ window.SelBar = (function () {
     return r;
   }
 
-  return { mount, copyText, clampTo, rangeIn, textOffset, visibleRect, place };
+  return { mount, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
 })();
