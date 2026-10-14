@@ -316,6 +316,15 @@ class RecTest(unittest.TestCase):
         r = threads._rec("s", "s:1", {"role": "user", "kind": "human", "text": "please look at #12"})
         self.assertEqual(r["kind"], "human")
 
+    def test_a_plain_final_question_is_an_ask_as_the_page_draws_it(self):
+        # The page draws a card for it (asks.safety), so the chat shows it (#234).
+        ask = lambda text: threads._rec("s", "s:2", {"role": "assistant", "text": text})["ask"]
+        self.assertTrue(ask("Ask: Should I deploy?"))
+        self.assertTrue(ask("Done and merged.\n\nShall I deploy?"))
+        self.assertTrue(ask("Nothing runs.\n\nDecision needed: which draft next\n- **#19:** a fix\n- **#23:** a button"))
+        self.assertFalse(ask("Done and merged."))
+        self.assertFalse(ask("You asked whether it is merged?"))
+
 
 class SideTest(unittest.TestCase):
     def setUp(self):

@@ -246,7 +246,10 @@ def _rec(sid: str, mid: str, t: dict) -> dict:
     r = {"mid": mid, "sid": sid, "role": role, "ts": _d._turn_epoch(t.get("timestamp")), "turn": t}
     if role == "agent":
         r["re"] = points.re_ids(text)
-        r["ask"] = bool(_ASK_HINT.search(text)) and bool(_d.asks.parse(text))
+        # An "Ask:" line, or the plain final question the page draws a card
+        # for too (asks.safety): either is in the chat, not only in a thread.
+        r["ask"] = bool(_ASK_HINT.search(text)) and bool(_d.asks.parse(text)) \
+            or ("?" in text or "decision needed:" in text.lower()) and bool(_d.asks.safety(text))
         r["live"] = bool(_LIVE.search(points._prose(text)))
         return r
     kind = t.get("kind") or "human"
