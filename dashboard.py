@@ -18348,6 +18348,10 @@ def _listen_or_exit(host: str, port: int) -> HubServer:
     try:
         return HubServer((host, port), Handler)
     except OSError as e:
+        # WinError 10013 is what a port bound exclusively by another answers.
+        if e.errno != errno.EADDRINUSE and getattr(e, "winerror", None) != 10013:
+            print(f"cannot listen on {host}:{port} ({e})", flush=True)
+            raise
         msg = (f"port {port} on {host} is taken ({e}): another hub or program listens there; "
                f"this hub exits without touching the agents' terminals or the state")
         print(msg, flush=True)

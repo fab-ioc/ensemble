@@ -101,6 +101,13 @@ class ExclusiveBind(unittest.TestCase):
         self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
         self.assertIn(f"port {port} on 127.0.0.1 is taken", str(cm.exception))
 
+    def test_an_address_not_on_this_machine_is_not_a_taken_port(self):
+        # 192.0.2.1 (TEST-NET-1) is never a local address: a bad --bind,
+        # not another listener, so not reported as "port taken".
+        with unittest.mock.patch("builtins.print"), self.assertRaises(OSError) as cm:
+            dashboard._listen_or_exit("192.0.2.1", free_port())
+        self.assertNotIsInstance(cm.exception, dashboard.PortTaken)
+
 
 class SecondHubProcess(unittest.TestCase):
     def test_a_hub_on_a_busy_port_exits_with_a_clear_line(self):
