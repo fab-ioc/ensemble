@@ -14720,7 +14720,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p in ("/api/room/channel", "/api/room/thread"):
             # A PO chat as threads (threads.py): ?id=&n= the channel (its
-            # last n entries, each thread's parent with its reply line);
+            # last n entries, each thread's parent with its reply line;
+            # &upto=<balloon> as many more as reach it when it is there);
             # ?id=&t=<thread> or &mid=<balloon> one thread with all its
             # messages. &sig= the page's: the same chat answers {same: true}.
             # {pending: true} while the chat is first read.
@@ -14736,7 +14737,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if p == "/api/room/channel":
                     n = int(q.get("n", [""])[0] or threads.CHANNEL_MAX)
-                    out = threads.channel_view(rid, room, n)
+                    out = threads.channel_view(rid, room, n, q.get("upto", [""])[0].strip())
                 else:
                     out = threads.thread_view(rid, room, q.get("t", [""])[0].strip(), q.get("mid", [""])[0].strip())
             except Exception as e:      # noqa: BLE001 — the page shows the whole chat

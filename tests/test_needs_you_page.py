@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 import points  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -86,9 +87,6 @@ async function main() {
       const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
       await c.send('Page.enable', {}, sessionId);
       await c.send('Network.enable', {}, sessionId);
-      // The flat chat (#210's "Whole chat"): the answers on screen are what this is about;
-      // in the threads view they are in their threads (tests/test_threads_page.py).
-      await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'try { localStorage.setItem("cd-chat-whole", "1"); } catch (e) {}' }, sessionId);
       // The page is in front, as the person's window is.
       await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
       await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: mob }, sessionId);
@@ -99,8 +97,7 @@ async function main() {
       const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, `needs-you-${w}-${name}.png`), Buffer.from(r.data, 'base64')); };
       const load = async () => {
         await c.send('Page.navigate', { url: A.base + '/session?room=' + room }, sessionId);
-        await until('document.querySelector("#whole-chat") && !document.querySelector("#whole-chat").hidden');
-        await evalIn('document.querySelector("#whole-chat").click()');
+        // The whole conversation but thread replies (#234).
         await until('typeof CHAT_DRAWN !== "undefined" && CHAT_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0 && typeof POINTS !== "undefined" && POINTS.items.length >= 3', 30000);
         await sleep(300);
         await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
@@ -207,6 +204,9 @@ class NeedsYouPage(unittest.TestCase):
             mock.patch.object(dashboard, "operator_name", return_value="sam"),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+            # The answers on screen are what this is about: a flat chat. A PO chat keeps
+            # them in their threads (#234, tests/test_threads_page.py).
+            mock.patch.object(threads, "is_threaded", lambda rid, projects=None: False),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
         ]
         for p in cls.patches:

@@ -135,9 +135,8 @@ async function main() {
       await until('window.ensBooted === true');
       await evalIn(`(() => { try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs', 'cd-ws-panels', 'cd-chat-panels'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
         VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
-      // A PO's chat opens on its threads: the whole chat shows the balloons.
+      // A PO's chat is the whole conversation (#234): its balloons show at once.
       await until('(() => { try { return pdChatFrame().contentWindow.eval("!!ROOM_OBJ && THR_DRAWN"); } catch (e) { return false; } })()', 60000);
-      await evalIn('pdChatFrame().contentWindow.eval("WHOLE || toggleWhole()"); 0');
       await until('(() => { const f = pdChatFrame(); try { return f.contentDocument.querySelectorAll("#msgs .msg .who").length > 0 && f.contentDocument.getElementById("status").classList.contains("on"); } catch (e) { return false; } })()');
       await sleep(800);
       o.po = await evalIn(LOOK(A.po));
