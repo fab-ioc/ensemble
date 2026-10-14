@@ -2089,6 +2089,7 @@ let PM_SIG = '';            // which ids are known, for the markdown cache
 function pmIndex(items, room) {
   PM_IDX = new Map();
   const add = m => { if (m && m.kind === 'pomsg' && m.id) PM_IDX.set(m.id, m); };
+  ((room && room.pmIndex) || []).forEach(add);   // the summary of those not loaded (#228)
   ((room && room.messages) || []).forEach(add);
   (items || []).forEach(add);
   PM_SIG = [...PM_IDX.keys()].join(',');
@@ -4871,6 +4872,40 @@ function openGroupOf(box, mid) {
   }
 }
 function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
+// ---- The latest messages, older ones as the chat scrolls up (#228): begin ----
+// A room opens with its latest ROOM_N messages (the hub's &n=); scrolled near
+// the top, or a link to a balloon not loaded, asks for the page before
+// (&before=<oldest held>, &upto=<the balloon>). What the page needs from the
+// rest, the hub sends as a summary: window.total, pmIndex, specInMessages.
+const ROOM_N = 150;
+let OLDER_BUSY = null;
+function roomHasOlder() { return !!(ROOM_OBJ && ROOM_OBJ.window && ROOM_OBJ.window.before > 0); }
+function loadOlder(upto = '') {
+  if (OLDER_BUSY) return OLDER_BUSY;
+  const shown = ROOM_OBJ, first = shown && (shown.messages || [])[0];
+  if (!roomHasOlder() || !first) return Promise.resolve(false);
+  OLDER_BUSY = (async () => {
+    try {
+      const d = await fetch('/api/room?id=' + encodeURIComponent(ROOM) + '&n=100&before=' + encodeURIComponent(first.id)
+        + (upto ? '&upto=' + encodeURIComponent(upto) : '')).then(r => r.json());
+      if (!d || !Array.isArray(d.messages) || d.missing) return false;
+      const add = rooms => {
+        if (!rooms || !rooms.messages || (rooms.messages[0] || {}).id !== first.id) return;
+        rooms.messages = d.messages.concat(rooms.messages);
+        rooms.window = {...(rooms.window || {}), before: d.before};
+      };
+      add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
+      if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      STICK = false;
+      if (SOLO_MODE) { if (!threadedView() && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
+      else if (ROOM_OBJ) renderMsgs(ROOM_OBJ);
+      return true;
+    } catch (e) { return false; }
+    finally { OLDER_BUSY = null; }
+  })();
+  return OLDER_BUSY;
+}
+// ---- The latest messages, older ones as the chat scrolls up: end ----
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
 let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
@@ -4951,6 +4986,11 @@ function gotoMsg(mid, part) {
     GOTO = ''; GOTO_PART = '';
     openThread('', target, passage);
     const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
+    return;
+  }
+  const held = ROOM_OBJ && ROOM_OBJ.messages || [];
+  if (!SOLO_MODE && roomHasOlder() && GOTO && !held.some(m => m.id === GOTO)) {
+    loadOlder(GOTO).then(() => landPending());
     return;
   }
   landPending();
@@ -5104,6 +5144,7 @@ function markLanded(el) {
 function withTaskBubble(items, spec, key) {
   const t = (spec || '').trim();
   if (!t) return items;
+  if (!SOLO_MODE && roomHasOlder()) return items;   // its start is not loaded yet (#228)
   if (items.some(m => m[key] === 'user' && (m.text || '').trim() === t)) return items;
   return [{ id: 'task', from: 'user', who: 'ensemble', to: '', text: spec,
     kind: 'brief', senderType: 'hub', senderId: 'ensemble', senderLabel: 'Hub' }].concat(items);
@@ -5501,6 +5542,10 @@ document.addEventListener('click', e => {
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
 function withHubRows(items, room) {
+  if (room === ROOM_OBJ && roomHasOlder() && items.length) {
+    const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
+    if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
+  }
   const rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks));
   if (!rows.length) return items;
   if (!items.length) return rows;
@@ -5893,7 +5938,7 @@ async function refreshRoom() {
   const ticket = ptTicket();
   const sendsGen = ++SENDS_GEN;
   try {
-    const url = '/api/room?id=' + encodeURIComponent(ROOM);
+    const url = '/api/room?id=' + encodeURIComponent(ROOM) + '&n=' + ROOM_N;
     let r = await fetch(ROOM_LAST?.revision
       ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
         + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '') : url,
@@ -5909,9 +5954,17 @@ async function refreshRoom() {
         const changed = new Map((patch.messages || []).map(m => [m.id, m]));
         const messages = old.map(m => changed.get(m.id) || m);
         const known = new Set(old.map(m => m.id));
-        for (const m of patch.messages || []) if (!known.has(m.id)) messages.push(m);
+        const win = ROOM_LAST.room.window, first = old.length ? old[0].ts || 0 : 0;
+        for (const m of patch.messages || []) {
+          if (known.has(m.id)) continue;
+          if (win && win.before && first && (m.ts || 0) < first) continue;   // not loaded yet (#228)
+          messages.push(m);
+        }
         room = {...(patch.statusSame ? ROOM_LAST.room : patch.room), messages,
           revision: patch.revision, statusSig: patch.statusSig};
+        for (const k of ['window', 'pmIndex', 'specInMessages'])
+          if (room[k] === undefined && ROOM_LAST.room[k] !== undefined) room[k] = ROOM_LAST.room[k];
+        if (room.window && patch.total != null) room.window = {...room.window, total: patch.total};
         ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig,
           room: structuredClone(room)};
       } else {
@@ -5991,7 +6044,7 @@ function refreshShow(room, ticket, sendsGen) {
   setHtml($('#info'),
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.onMention ? ' — started fresh for each review request' : ''}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}${m.onMention ? ' · on mention' : ''}</span>`).join('')
-    + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`));
+    + (soloMode ? '' : `<span>${room.window ? room.window.total : room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`));
   const showTerms = !document.body.classList.contains('term-hidden');
   $('#terms').classList.toggle('on', showTerms);
   // The header's actions: the dashboard's model (static/actions.js), so the
@@ -7814,6 +7867,7 @@ function msgsScrolled() {
   STICK = at;
   showLatest();
   readTick(true);
+  if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE) loadOlder();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the

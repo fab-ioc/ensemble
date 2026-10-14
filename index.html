@@ -5463,10 +5463,12 @@ async function loadConversation(r) {
   try {
     let items, specText = typeof r.spec === 'string' ? r.spec : '';
     if (r.headless && r.roomId) {
-      const room = await api('/api/room?id=' + encodeURIComponent(r.roomId));
+      // The latest messages, not a PO's megabytes (#228).
+      const room = await api('/api/room?id=' + encodeURIComponent(r.roomId) + '&n=200');
       items = (room.messages || []).map(m => ({ who: m.from, to: m.to, text: m.text, ts: m.ts }));
       // The polled row carries only specRev; the room read here has the text.
-      if (typeof room.spec === 'string') specText = room.spec;
+      // Its start not shown, the spec is not put above what is.
+      if (typeof room.spec === 'string' && !(room.window && room.window.before)) specText = room.spec;
     } else {
       const d = await api('/api/session/' + encodeURIComponent(sid) + '?full=1');
       items = (d.turns || []).map(t => ({ who: t.role || 'user', text: t.text, ts: t.timestamp }));
