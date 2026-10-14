@@ -4658,6 +4658,8 @@ function catchUpOpen() {
   const box = $('#msgs');
   CU_OPENED = true;
   if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE) {
+    // Opened on a link to a reply: the landing wins (review 3).
+    if (GOTO || GOTO_OPEN || (LANDED && Date.now() - LANDED.at < 2600)) { GOTO_OPEN = false; STICK = nearEnd(box); return; }
     // Beside the chat (#234) a thread up to a screen and a half tall opens
     // on its first message, as Slack's; a longer one at its latest reply.
     const top = document.body.classList.contains('side') && box.scrollHeight <= box.clientHeight * 1.5;
