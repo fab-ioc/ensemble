@@ -99,6 +99,7 @@ LIVE = ("open", "planned", "delivered")    # still waiting on someone
 SYNC_EVERY_S = 3.0              # a room's answers are looked for at most this often
 SLACK_S = 120                   # a transcript's clock and the hub's may differ this much
 VIEW_MAX = 200                  # points a page is sent, newest first
+WORDS_MAX = 201                 # an answer's words a page is sent: it shows 200 (one more says "…")
 TEXT_MAX = 2000                 # a point's words kept
 _WAKE_MAX = 900                 # a typed line: a TUI takes one line
 _PROMPT_MAX = 2500              # the open points in a first prompt (a command line)
@@ -1925,7 +1926,15 @@ def _item(p: dict, task=None) -> dict:
             out["quote"] = rq[0][:200]
     if p.get("follows"):
         out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
-    out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task", "said") if a.get(k)}
+    # A page shows the words of an answered point's newest answer and of an
+    # in-progress one's plan, cut to 200 characters (ptSaid): the others go
+    # without theirs (#228: a PO's 200 points were 270 KB of a chat's first read).
+    cur = next((a for a in reversed(p["answers"]) if a.get("kind") != "plan"), None) \
+        if p["state"] == "delivered" else None
+    out["answers"] = [{k: (a[k][:WORDS_MAX] if k in ("said", "summary") else a[k])
+                       for k in ("mid", "at", "how", "summary", "kind", "task", "said")
+                       if a.get(k) and (k not in ("said", "summary") or a is cur
+                                        or (a.get("kind") == "plan" and p["state"] == "planned"))}
                       for a in p["answers"]]
     if p["state"] == "delivered":
         # Needs you (#209): "try" (the answer asks them to try something),

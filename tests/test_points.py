@@ -1122,6 +1122,8 @@ class FollowUps(_World):
     def test_a_comment_quoting_the_answer_closes_the_point(self):
         rid = self.solo_room()
         self.answered(rid)
+        said = lambda: {i["id"]: i for i in points.view(rid)["items"]}["P1"]["answers"][0].get("said")  # noqa: E731
+        self.assertEqual(said(), "A flaky test, in test_x; the build is green again.")
         out, ids = self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
                              at=self.t0 + 10)
         self.assertEqual(ids, ["P2"])
@@ -1133,7 +1135,9 @@ class FollowUps(_World):
         v = points.view(rid)
         items = {i["id"]: i for i in v["items"]}
         self.assertEqual((items["P1"]["followedBy"], items["P2"]["replyTo"]), ("P2", "P1"))
-        self.assertEqual(items["P1"]["answers"][0]["said"], "A flaky test, in test_x; the build is green again.")
+        # Followed up, its row no longer shows the answer's words: not sent (#228).
+        self.assertIsNone(said())
+        self.assertEqual(items["P1"]["answers"][0]["mid"], self.point(rid, "P1")["answers"][0]["mid"])
 
     def test_a_message_linking_the_answers_balloon_closes_it_too(self):
         rid = self.solo_room()

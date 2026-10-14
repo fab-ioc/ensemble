@@ -4871,13 +4871,20 @@ function openGroupOf(box, mid) {
     renderBubbles(LAST_ITEMS, row ? { anchor: row } : {});
   }
 }
-function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
+function renderMsgs(room) {
+  CHAT_DRAWN = true; renderBubbles(room.messages);
+  // A window that does not fill the chat (most of a PO's rows are hub
+  // traffic it folds) gets the page before at once: there is no scroll to ask.
+  const box = $('#msgs');
+  if (box && box.clientHeight && box.scrollHeight <= box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD)
+    setTimeout(() => loadOlder(), 0);
+}
 // ---- The latest messages, older ones as the chat scrolls up (#228): begin ----
 // A room opens with its latest ROOM_N messages (the hub's &n=); scrolled near
 // the top, or a link to a balloon not loaded, asks for the page before
 // (&before=<oldest held>, &upto=<the balloon>). What the page needs from the
 // rest, the hub sends as a summary: window.total, pmIndex.
-const ROOM_N = 150;
+const ROOM_N = 50;
 let OLDER_BUSY = null;
 function roomHasOlder() { return !!(ROOM_OBJ && ROOM_OBJ.window && ROOM_OBJ.window.before > 0); }
 function loadOlder(upto = '') {
@@ -5968,6 +5975,21 @@ async function refresh() {
     if (REFRESH_AGAIN) { REFRESH_AGAIN = false; refresh(); }
   }
 }
+// What changed in a chat's status since the one this page holds (#228), as
+// the hub's status_patch makes it: keys set or dropped, and inside a key the
+// same again, or of a list of rows with ids their order and the rows changed.
+function applyStatusPatch(old, p) {
+  const out = {...old};
+  for (const [k, v] of Object.entries(p.set || {})) out[k] = v;
+  for (const k of p.del || []) delete out[k];
+  for (const [k, q] of Object.entries(p.in || {})) {
+    if (q.ids) {
+      const was = new Map((Array.isArray(out[k]) ? out[k] : []).map(x => [String(x.id), x]));
+      out[k] = q.ids.map(id => (q.rows || {})[String(id)] || was.get(String(id)));
+    } else out[k] = applyStatusPatch(out[k] && typeof out[k] === 'object' ? out[k] : {}, q);
+  }
+  return out;
+}
 async function refreshRoom() {
   let room;
   const ticket = ptTicket();
@@ -5984,7 +6006,7 @@ async function refreshRoom() {
         ROOM_LAST = null;
         ROOM_ETAG = '';
         r = await fetch(url);
-      } else if (patch.delta && patch.revision && (patch.statusSame || patch.room)) {
+      } else if (patch.delta && patch.revision && (patch.statusSame || patch.room || patch.patch)) {
         const old = ROOM_LAST.room.messages || [];
         const changed = new Map((patch.messages || []).map(m => [m.id, m]));
         const messages = old.map(m => changed.get(m.id) || m);
@@ -5995,7 +6017,8 @@ async function refreshRoom() {
           if (win && win.before && first && (m.ts || 0) < first) continue;   // not loaded yet (#228)
           messages.push(m);
         }
-        room = {...(patch.statusSame ? ROOM_LAST.room : patch.room), messages,
+        room = {...(patch.statusSame ? ROOM_LAST.room
+          : patch.patch ? applyStatusPatch(ROOM_LAST.room, patch.patch) : patch.room), messages,
           revision: patch.revision, statusSig: patch.statusSig};
         for (const k of ['window', 'pmIndex'])
           if (room[k] === undefined && ROOM_LAST.room[k] !== undefined) room[k] = ROOM_LAST.room[k];
