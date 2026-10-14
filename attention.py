@@ -1619,6 +1619,10 @@ def _items() -> list[dict]:
         not_taken = _d.sends.not_taken_by_room()
     except Exception:
         not_taken = {}
+    try:
+        typing_alarms = _d.hub_typing.by_room()
+    except Exception:
+        typing_alarms = {}
 
     for room in rooms:
         if not room.get("launched", True):
@@ -1684,6 +1688,12 @@ def _items() -> list[dict]:
                           f"{k} message{'s' if k != 1 else ''} you sent {'were' if k != 1 else 'was'} "
                           f"not taken in by the agent: “{lost['text']}”",
                           {"since": lost["since"], "quote": lost["text"], "notDelivered": k}, {}))
+        typing = typing_alarms.get(room["id"])
+        if typing:
+            # Lines the hub types into an idle agent keep being refused
+            # (hub_typing, P190): it hears nothing the hub tells it.
+            found.append(("blocked", typing["reason"], {"since": typing["since"]},
+                          next((p for p in agents if p.get("identity") == typing["identity"]), {})))
         if not found:
             continue
         # One item per task: the worst thing wrong with it.

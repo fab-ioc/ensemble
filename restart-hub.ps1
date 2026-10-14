@@ -141,6 +141,21 @@ if ($env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S) {
   try { $sessTimeoutSec = [int]$env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S } catch {}
 }
 $pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec) -and (Ok "http://127.0.0.1:$pf/?startup=skip") -and (Ok "http://127.0.0.1:$pf/api/projects")
+# A hub line must reach an agent: the preflight hub types one into a throwaway
+# agent on its own PTY host (P190: from 10-13 18:11 to 10-14 07:31 every line
+# the hub typed was refused, and nothing said so).
+if ($pfOk) {
+  $typed = $false
+  RenewLease   # /api/sessions may have taken most of the lease
+  try {
+    $bytes = [Text.Encoding]::UTF8.GetBytes((@{ lease = [string]$cfg.leaseId } | ConvertTo-Json -Compress))
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:$pf/api/restart/typing-check" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 60
+    $tc = $r.Content | ConvertFrom-Json
+    $typed = [bool]$tc.ok
+    L "preflight typing check: $($tc.detail)"
+  } catch { L "preflight typing check could not run: $_" }
+  $pfOk = $typed
+}
 try {
   $bytes = [Text.Encoding]::UTF8.GetBytes((@{ lease = [string]$cfg.leaseId } | ConvertTo-Json -Compress))
   Invoke-WebRequest -Uri "http://127.0.0.1:$pf/api/restart/host-stop" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 10 | Out-Null
