@@ -8077,11 +8077,17 @@ function chatOffScreen() {
 // view lives on chatOffScreen itself, so the function stands on its own.)
 try {
   const f = window.frameElement, IO = f && window.parent.IntersectionObserver;
-  if (IO) new IO(es => {
-    const vis = es[es.length - 1].isIntersecting, was = chatOffScreen.inView;
-    chatOffScreen.inView = vis;
-    if (vis && was === false && typeof tickNow === 'function') tickNow();
-  }).observe(f);
+  if (IO) {
+    const io = new IO(es => {
+      const vis = es[es.length - 1].isIntersecting, was = chatOffScreen.inView;
+      chatOffScreen.inView = vis;
+      if (vis && was === false && typeof tickNow === 'function') tickNow();
+    });
+    io.observe(f);
+    // The observer is the dashboard's and the frame outlives this page: a
+    // reload would leave it holding the old page, so it goes with the page.
+    window.addEventListener('pagehide', () => io.disconnect());
+  }
 } catch (e) {}
 function chatSlow() {
   try { const f = window.frameElement; return !!(f && f.hasAttribute('data-chat-slow')) && !document.hasFocus(); } catch (e) { return false; }

@@ -48,14 +48,19 @@ class Feed:
             if not k or k in snap:
                 return "", None
             if self.sub and isinstance(it.get(self.sub), list):
-                top = _h({f: v for f, v in it.items() if f != self.sub})
-                subs: dict = {}
+                subs: dict | None = {}
                 for s in it[self.sub]:
                     sk = self._kid(s, self.sub_key)
                     if not sk or sk in subs:
                         subs = None
                         break
                     subs[sk] = _h(s)
+                if subs is None:
+                    # Repeated keys: the item goes whole, so it is fingerprinted whole.
+                    snap[k] = (_h(it), None)
+                    continue
+                # The order of the entries is part of the item: a reorder alone sends it.
+                top = _h([{f: v for f, v in it.items() if f != self.sub}, list(subs)])
                 snap[k] = (top, subs)
             else:
                 snap[k] = (_h(it), None)

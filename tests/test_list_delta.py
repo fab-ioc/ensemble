@@ -99,6 +99,25 @@ class FeedTest(unittest.TestCase):
         self.assertEqual(it["sessionsOrder"], ["s3", "s1", "s2"])
         self.assertEqual(merge(p1, d2, "id", "sessions", "sessionId"), p2)
 
+    def test_a_reorder_of_the_nested_list_alone_is_sent(self):
+        f = listdelta.Feed("id", "sessions", "sessionId")
+        p1 = [{"id": "p", "sessions": [{"sessionId": "s1"}, {"sessionId": "s2"}, {"sessionId": "s3"}]}]
+        d1 = f.answer(p1, "")
+        p2 = [{"id": "p", "sessions": [{"sessionId": "s2"}, {"sessionId": "s3"}, {"sessionId": "s1"}]}]
+        d2 = f.answer(p2, d1["rev"])
+        self.assertNotEqual(d2["rev"], d1["rev"])
+        self.assertEqual(merge(p1, d2, "id", "sessions", "sessionId"), p2)
+
+    def test_a_nested_list_with_repeated_keys_still_updates(self):
+        f = listdelta.Feed("id", "sessions", "sessionId")
+        p1 = [{"id": "q", "sessions": [{"sessionId": "s", "v": 1}, {"sessionId": "s", "v": 1}]}]
+        d1 = f.answer(p1, "")
+        p2 = [{"id": "q", "sessions": [{"sessionId": "s", "v": 2}, {"sessionId": "s", "v": 1}]}]
+        d2 = f.answer(p2, d1["rev"])
+        self.assertNotEqual(d2["rev"], d1["rev"])
+        self.assertEqual(d2["items"], p2, "sent whole")
+        self.assertEqual(merge(p1, d2, "id", "sessions", "sessionId"), p2)
+
     def test_same_list_object_is_answered_from_the_memo(self):
         f = listdelta.Feed("id")
         rows = [{"id": "a"}]

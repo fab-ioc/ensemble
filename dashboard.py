@@ -13196,6 +13196,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(304)
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "no-cache")
+            self.send_header("Vary", "Accept-Encoding")
             if stamp:
                 self.send_header("X-Ensemble-Stamp", stamp)
             for name, value in extra_headers:
