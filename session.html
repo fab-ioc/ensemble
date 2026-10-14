@@ -6058,6 +6058,13 @@ function sideOpen(o) {
     + (TS.tid ? '&thread=' + encodeURIComponent(TS.tid) : '&thread=&tmid=' + encodeURIComponent(TS.mid))
     + (o.msg ? '&msg=' + encodeURIComponent(o.msg) : '') + (o.part ? '&part=' + encodeURIComponent(o.part) : '');
   const title = (TS.tid && THR_META[TS.tid] && THR_META[TS.tid].title) || 'Thread';
+  // In the dashboard's Dock the thread is a panel of its own beside this chat
+  // (#236); else (a phone, a window of its own, a popped-out chat) it is here.
+  if (sidePanel(o, title)) {
+    if (!side.hidden) { side.hidden = true; f.setAttribute('src', 'about:blank'); }
+    sideMark();
+    return;
+  }
   setText($('#ts-title'), title);
   side.hidden = false;
   tsLayout();
@@ -6066,6 +6073,15 @@ function sideOpen(o) {
     try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {}
   } else if (!same) f.setAttribute('src', u);
   sideMark();
+}
+// The page framing this chat shows the thread as a Dock panel when it can
+// (index.html's pdThreadPanel, synchronous): true when it did.
+function sidePanel(o, title) {
+  const host = dashboardHost();
+  if (!host || typeof host.pdThreadPanel !== 'function' || !window.frameElement) return false;
+  try {
+    return !!host.pdThreadPanel(window.frameElement, { room: ROOM, tid: TS.tid, mid: TS.mid, msg: o.msg || '', part: o.part || '', title, restore: !!o.restore });
+  } catch (e) { return false; }
 }
 function sideClose() {
   const side = $('#thr-side'), f = $('#ts-frame');
@@ -6078,7 +6094,7 @@ function sideClose() {
 function sideRestore() {
   let o = null;
   try { o = JSON.parse(localStorage.getItem(TS_KEY) || 'null'); } catch (e) {}
-  if (o && (o.tid || o.mid) && !TS) sideOpen({ tid: o.tid || '', mid: o.mid || '' });
+  if (o && (o.tid || o.mid) && !TS) sideOpen({ tid: o.tid || '', mid: o.mid || '', restore: true });
 }
 // The line of the open thread is marked; the next draw keeps it (its key).
 function sideMark() {
@@ -7505,6 +7521,20 @@ window.addEventListener('message', (e) => {
     if (d.thread && THREADED && !THREAD_MODE) openThread(d.thread, d.msg || '', d.part || '');
     else gotoMsg(d.msg, d.part || '');
     try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
+  }
+  // The thread's Dock panel (#236): closed there, so none is open here; this
+  // chat shown again, its thread comes back; a thread started on a balloon
+  // has its id now.
+  else if (d.ensemble === 'thread-closed' && e.source === window.parent && !THREAD_MODE) {
+    TS = null;
+    try { localStorage.removeItem(TS_KEY); } catch (err) {}
+    sideMark();
+  }
+  else if (d.ensemble === 'thread-again' && e.source === window.parent && !THREAD_MODE) {
+    if (TS) { const o = TS; TS = null; sideOpen({ tid: o.tid, mid: o.mid, restore: true }); }
+  }
+  else if (d.ensemble === 'thread-is' && e.source === window.parent && !THREAD_MODE && d.thread) {
+    if (TS && TS.tid !== d.thread) { TS = { tid: String(d.thread), mid: '' }; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
   }
 });
 // Inside the dashboard, say this chat has started: a balloon link opened while
