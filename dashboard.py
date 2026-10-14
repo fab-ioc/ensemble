@@ -14877,7 +14877,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/config":
             # Bound port comes from the actual listener — what was passed on
             # the CLI may differ from what we end up on after fallback.
-            actual_port = self.server.server_address[1] if hasattr(self, "server") else None
+            actual_port = getattr(self.server, "server_address", (None, None))[1]
             self._send_json(200, {
                 "instance": INSTANCE,
                 "port": actual_port,
