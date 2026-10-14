@@ -84,11 +84,12 @@ async function main() {
     let last = null;
     for (let i = 0; i < 40; i++) {
       const a = await ev(where(frame, text));
-      const hit = a && await ev(`(() => { const f = ${frame}, fb = f.getBoundingClientRect(); const e = f.contentDocument.elementFromPoint(${a.x} - fb.left, ${a.y} - fb.top); return !!(e && e.closest('a') && e.closest('a').textContent.includes(${JSON.stringify(text)})); })()`);
+      const hit = a && await ev(`(() => { const f = ${frame}, fb = f.getBoundingClientRect(); const e = f.contentDocument.elementFromPoint(${a.x} - fb.left, ${a.y} - fb.top); return !!(e && e.closest('a') && e.closest('a').textContent.includes(${JSON.stringify(text)})) && document.elementFromPoint(${a.x}, ${a.y}) === f; })()`);
       if (a && hit && last && last.x === a.x && last.y === a.y) return a;
       last = a; await sleep(250);
     }
-    throw Error('link not still: ' + text);
+    const top = last && await ev(`(() => { const e = document.elementFromPoint(${last.x}, ${last.y}); return e ? e.tagName + '.' + e.className + ' in ' + ((e.closest('[id]') || {}).id || '') : null; })()`);
+    throw Error('link not still or covered: ' + text + ' ' + JSON.stringify(last) + ' top=' + top);
   };
   try {
     // In the dashboard: the PO chat docked, its whole chat shown.
@@ -96,6 +97,8 @@ async function main() {
       await until(`typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r => r.roomId === ${JSON.stringify(A.po)})`, 'rows');
       await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
       await until(`document.body.classList.contains('po-dock') && ${PO} && ${PO}.contentWindow.toggleWhole && ${PO}.contentDocument.body.innerText.includes('Start.')`, 'PO chat');
+      // A task chat an earlier tab opened comes back beside it: closed, so each tab starts alike.
+      await ev(`document.body.classList.contains('detail-open') && closeDetail(), 0`);
       await ev(`${PO}.contentWindow.toggleWhole(); 0`);
       await until(`${PO}.contentDocument.querySelectorAll('#msgs .msg a.msg-link').length >= 3`, 'links drawn');
       await sleep(500);
@@ -103,11 +106,16 @@ async function main() {
     for (const [key, text] of [['card', 'auto or copilot'], ['task', 'the task message'], ['unknown', '26e81eed'], ['chip', 'Filler 3']]) {
       await tab(A.base + '/', async ({ev, until, click, targetId}) => {
         await dock({ev, until});
-        const a = await aim(ev, PO, text);
+        let a = await aim(ev, PO, text);
         await ev(RECORD);
         created.length = 0;
-        if (a) await click(a.x, a.y);
-        for (let i = 0; i < 60; i++) { await sleep(100); if ((await ev('window.__landed')).length) break; }
+        // A busy machine can let a late redraw take the click: once more if nothing came of it.
+        for (let tries = 0; tries < 2; tries++) {
+          await click(a.x, a.y);
+          for (let i = 0; i < 40; i++) { await sleep(100); if ((await ev('window.__landed')).length || created.length) break; }
+          if ((await ev('window.__landed')).length || created.length || key === 'unknown') break;
+          a = await aim(ev, PO, text);
+        }
         await sleep(1000);
         out[key] = { link: a, created: created.length, open: (await pages(targetId)).map(t => t.url), landed: await ev('window.__landed'),
           top: await ev('location.href'), fileview: await ev(FILEVIEW) };
@@ -116,10 +124,14 @@ async function main() {
     // Ctrl-click: one tab, at this page's own address.
     await tab(A.base + '/', async ({ev, until, click, targetId}) => {
       await dock({ev, until});
-      const a = await aim(ev, PO, 'auto or copilot');
+      let a = await aim(ev, PO, 'auto or copilot');
       created.length = 0;
-      await click(a.x, a.y, 2);
-      await sleep(2500);
+      for (let tries = 0; tries < 2 && !created.length; tries++) {
+        if (tries) a = await aim(ev, PO, 'auto or copilot');
+        await click(a.x, a.y, 2);
+        for (let i = 0; i < 30 && !created.length; i++) await sleep(100);
+      }
+      await sleep(1500);
       out.ctrl = { created: created.length, open: (await pages(targetId)).map(t => t.url), top: await ev('location.href') };
     });
     // A chat page of its own: the click stays in this window.
@@ -211,6 +223,8 @@ class MessageLinksInPlace(unittest.TestCase):
         lines = [turn('user', 'Start.', 0), turn('assistant', 'The question card balloon.', 1)]
         lines += [turn('user' if i % 2 else 'assistant', f'Filler {i} ' + 'words ' * 30, i + 2) for i in range(2, 30)]
         lines += [turn('assistant', last, 40)]
+        # Below the links, so they can scroll clear of the message box.
+        lines += [turn('user' if i % 2 else 'assistant', f'After {i} ' + 'words ' * 30, 41 + i) for i in range(6)]
         tdir = base / 'transcripts' / 'C--po'; tdir.mkdir()
         (tdir / f'{sid}.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in lines), encoding='utf-8')
         cls.sid, cls.po, cls.task, cls.port = sid, rid, task['id'], port
