@@ -33,6 +33,19 @@ $base = "http://127.0.0.1:$port"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $log) | Out-Null
 function L($m) { "$((Get-Date).ToString('s')) [restart] $m" | Out-File -FilePath $log -Append -Encoding utf8 }
 function Ok($u, [int]$timeoutSec = 30) { try { $r = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec $timeoutSec; return ($r.StatusCode -eq 200) } catch { return $false } }
+# Up and past its start-up steps (ED-227): a hub listens before them, so
+# /api/platform alone no longer says the code starts. A hub from before
+# /api/health is up once /api/platform answers.
+function Started($b) {
+  try {
+    $r = Invoke-WebRequest -Uri "$b/api/health" -UseBasicParsing -TimeoutSec 5
+    return ((($r.Content | ConvertFrom-Json).phase) -ne 'starting')
+  } catch {
+    $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+    if ($code -eq 404) { return (Ok "$b/api/platform") }
+    return $false
+  }
+}
 function Q($s) { '"' + ([string]$s -replace '"', '\"') + '"' }
 function Post($path, $obj) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress))
@@ -78,6 +91,13 @@ function RenewLease {
   } catch {}
 }
 function Nap([int]$s) { Start-Sleep -Seconds $s; RenewLease }
+# An error nothing catches ends this script: say so in the log first, and let
+# go of the lease so the hub (which watches this process) and a retry are free.
+trap {
+  try { L "HELPER ERROR - $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber)); stopped here" } catch {}
+  try { DropLease } catch {}
+  exit 1
+}
 
 $t0 = Get-Date
 $head0 = Head
@@ -100,7 +120,7 @@ try {
   exit 1
 }
 $pfUp = $false
-for ($i = 0; $i -lt 30 -and -not $pfUp; $i++) { Nap 2; $pfUp = Ok "http://127.0.0.1:$pf/api/platform" }
+for ($i = 0; $i -lt 60 -and -not $pfUp -and -not $pfp.HasExited; $i++) { Nap 2; $pfUp = Started "http://127.0.0.1:$pf" }
 # /api/sessions walks every held transcript on a cold process (its cost/turn
 # caches are empty); measured live at 30-32s against this hub's real history,
 # right on top of the old 30s cap - the exact cause of "PREFLIGHT FAILED" on an
@@ -117,7 +137,7 @@ $sessTimeoutSec = 170
 if ($env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S) {
   try { $sessTimeoutSec = [int]$env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S } catch {}
 }
-$pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec) -and (Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")
+$pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec) -and (Ok "http://127.0.0.1:$pf/?startup=skip") -and (Ok "http://127.0.0.1:$pf/api/projects")
 try {
   $bytes = [Text.Encoding]::UTF8.GetBytes((@{ lease = [string]$cfg.leaseId } | ConvertTo-Json -Compress))
   Invoke-WebRequest -Uri "http://127.0.0.1:$pf/api/restart/host-stop" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 10 | Out-Null
@@ -135,6 +155,7 @@ L "preflight passed on port $pf"
 # --- 2. Give the caller's reply time to reach the user before the hub goes down. ---
 $left = [double]$cfg.graceSeconds - ((Get-Date) - $t0).TotalSeconds
 RenewLease
+if ($left -gt 0) { L "waiting $([int][math]::Ceiling($left))s so the reply reaches the user" }
 while ($left -gt 0) { $s = [int][math]::Min(10, [math]::Ceiling($left)); Nap $s; $left -= $s }
 
 # --- 3. Stop the hub and start it again the way it was started. ---
@@ -142,6 +163,7 @@ while ($left -gt 0) { $s = [int][math]::Min(10, [math]::Ceiling($left)); Nap $s;
 # before this existed answers 404: the rooms of the plan are then resumed the
 # old way in step 4.
 if ($cfg.keepAgents) {
+  L "asking the hub to save its warm caches before the stop"
   try {
     $r = Post '/api/restart/prepare' @{ lease = [string]$cfg.leaseId }
     L "warm caches prepared before the stop: HTTP $($r.StatusCode)"
@@ -254,12 +276,12 @@ if (-not $cfg.keepAgents) {
 $up = $false
 if ($useTask) {
   try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop; L "started task" } catch { L "start-task err: $_" }
-  for ($i = 0; $i -lt 20 -and -not $up; $i++) { Nap 2; $up = Ok "$base/api/platform" }
+  for ($i = 0; $i -lt 20 -and -not $up; $i++) { Nap 2; $up = Started $base }
   if (-not $up) { L "not up after the task; starting it directly the way it ran"; StartDirect }
 } else {
   StartDirect
 }
-for ($i = 0; $i -lt 30 -and -not $up; $i++) { Nap 2; $up = Ok "$base/api/platform" }
+for ($i = 0; $i -lt 30 -and -not $up; $i++) { Nap 2; $up = Started $base }
 if ($up) { RenewLease }
 L "hub up: $up; code at $(Head) (was $head0)"
 if (-not $up) {

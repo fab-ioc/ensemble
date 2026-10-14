@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -34,7 +35,8 @@ def write_text(path: Path, text: str, *, keep_prev: bool = False, tries: int = 8
     Windows refuses for a moment (a scanner or the indexer holding the file)
     is tried again."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # Per thread too: two saves of one file at once must not share a temp file.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     write_tmp(tmp, text)
     for attempt in range(tries):
         try:

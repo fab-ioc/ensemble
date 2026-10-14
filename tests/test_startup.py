@@ -4,6 +4,7 @@ import json
 import threading
 import time
 import unittest
+import urllib.error
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
@@ -130,6 +131,47 @@ class StartupHubTest(unittest.TestCase):
         self.assertNotIn(b"__STARTUP_STAMP__", data)
         self.assertRegex(data, rb"const STAMP = '[0-9a-f]{12}'")
 
+    def test_restart_and_update_waits_hold_until_the_steps_are_done(self):
+        # A hub listens before its steps: the restart preflight, the waits
+        # after a restart and the update's must not take that for "up".
+        import app_update
+        import restart_helper
+
+        def get(endpoint):
+            res, data = self.req("GET", endpoint)
+            if res.status != 200:
+                raise urllib.error.HTTPError(endpoint, res.status, "", res.headers, None)
+            return data
+
+        startup.begin(steps=7)
+        startup.step("Connecting to the agents' terminals")
+        self.assertFalse(restart_helper.started(get))
+        self.assertIsNone(app_update._served_started(self.port))
+        self.assertIsNotNone(app_update._served(self.port))   # still found to stop it
+        startup.booted()
+        startup.warming("Reading the task list", "sessions:300")
+        self.assertTrue(restart_helper.started(get))
+        self.assertIsNotNone(app_update._served_started(self.port))
+        # While warming "/" is the start-up page; the preflight skips it.
+        res, _ = self.req("GET", "/", NAV)
+        self.assertEqual(res.getheader("X-Ensemble-Startup"), "1")
+        res, _ = self.req("GET", "/?startup=skip", NAV)
+        self.assertIsNone(res.getheader("X-Ensemble-Startup"))
+
+    def test_a_hub_from_before_health_counts_as_started(self):
+        import restart_helper
+
+        def old_hub(endpoint):
+            if endpoint == "/api/health":
+                raise urllib.error.HTTPError(endpoint, 404, "", None, None)
+            return b"{}"
+
+        def down(endpoint):
+            raise ConnectionRefusedError()
+
+        self.assertTrue(restart_helper.started(old_hub))
+        self.assertFalse(restart_helper.started(down))
+
 
 class StartupHealthTest(unittest.TestCase):
     def tearDown(self):
@@ -189,6 +231,7 @@ class SessionsAnswerWhileReadTest(unittest.TestCase):
         n = 9303
         lock = dashboard._SESS_LOCKS.setdefault(n, threading.Lock())
         dashboard._SESS_CACHE[n] = (0.0, dashboard._SESS_GEN - 1, [{"sessionId": "before archive"}])
+        dashboard._SESS_BOOT.add(n)     # saved rows too: not past a change
         lock.acquire()
         got = {}
         t = threading.Thread(target=lambda: got.setdefault("rows", dashboard.load_sessions(n)))
@@ -204,6 +247,7 @@ class SessionsAnswerWhileReadTest(unittest.TestCase):
         finally:
             if lock.locked():
                 lock.release()
+            dashboard._SESS_BOOT.discard(n)
             dashboard._SESS_CACHE.pop(n, None)
             dashboard._SESS_LOCKS.pop(n, None)
 

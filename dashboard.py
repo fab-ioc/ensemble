@@ -9973,10 +9973,11 @@ def load_sessions(n: int = 200) -> list[dict]:
     # Someone is reading the list already: the rows from before answer at
     # once (ED-227), unless something changed them since (an archive, a
     # label), which waits for the fresh list as before. The rows of the
-    # start-up snapshot (_SESS_BOOT) are such rows until the first read.
+    # start-up snapshot (_SESS_BOOT) are such rows until the first read,
+    # and until the first change.
     if not lock.acquire(blocking=False):
         hit = _SESS_CACHE.get(n)
-        if hit and (hit[1] == _SESS_GEN or n in _SESS_BOOT):
+        if hit and hit[1] == _SESS_GEN:
             return [dict(r) for r in hit[2]]
         lock.acquire()
     try:
@@ -11058,17 +11059,25 @@ def _warm_parts() -> tuple[dict, dict, dict]:
 
 def _warm_sig(sessions: dict, transcript: dict, thread_cache: dict) -> tuple:
     """Whether the parts changed enough since the last save to write 20 MB
-    again: the rows' count and newest change, the index's size, and the
+    again: the rows (a label or an archive too), the index's size, and the
     signature each thread build was made from."""
-    rows = tuple(sorted((n, len(r), max((x.get("updatedAt") or 0 for x in r), default=0))
-                        for n, r in sessions.items()))
+    rows = tuple(sorted((n, hash(repr(r))) for n, r in sessions.items()))
     builds = hash(tuple(sorted((rid, repr(v[0]) if isinstance(v, tuple) and v else "")
                                for rid, v in thread_cache["index"].items())))
     return rows, len(transcript), builds
 
 
+_WARM_SAVE_LOCK = threading.Lock()
+
+
 def save_restart_caches(*, why: str = "restart") -> bool:
-    """Save the warm parts; False when there was nothing new or it failed."""
+    """Save the warm parts; False when there was nothing new or it failed.
+    One save at a time: the 5-minute save and a restart's may meet."""
+    with _WARM_SAVE_LOCK:
+        return _save_restart_caches(why)
+
+
+def _save_restart_caches(why: str) -> bool:
     global _WARM_SAVED_SIG
     try:
         sessions, transcript, thread_cache = _warm_parts()
@@ -11351,10 +11360,56 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
     }
 
 
-def trigger_restart(room_id: str = "", drain: bool = False) -> dict:
+RESTART_HELPER_POLL_S = 3
+
+
+def _last_helper_step() -> str:
+    """The restart helper's last line in restart.log, without its stamp."""
+    try:
+        lines = (DASHBOARD_DIR / "logs" / "restart.log").read_text(
+            encoding="utf-8", errors="replace").splitlines()[-40:]
+    except OSError:
+        return "(restart.log unreadable)"
+    for ln in reversed(lines):
+        if "[restart] " in ln and "PTY host attached" not in ln:
+            return ln.split("[restart] ", 1)[1][:200]
+    return "(none logged)"
+
+
+def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str = "") -> None:
+    """The helper runs detached from the hub. When it ends with its lease
+    still held it stopped before the hub did (ED-227: one ended silently
+    after its preflight and the old hub ran on for 19 minutes): say so, let
+    go of the lease and tell whoever asked (a drain's restart: the drain
+    sees the lease go and tells its requesters itself)."""
+    while True:
+        time.sleep(RESTART_HELPER_POLL_S)
+        if _current_restart_lease() != lease:
+            return                              # finished, or gave up and said so
+        if BACKEND.process_alive(pid):
+            continue
+        time.sleep(RESTART_HELPER_POLL_S)       # its last lease write may be landing
+        if _current_restart_lease() != lease:
+            return
+        why = (f"the restart helper (pid {pid}) ended without finishing; its last step was "
+               f"“{_last_helper_step()}”. This hub was not restarted and still runs "
+               f"the code it started with")
+        _restart_log(f"HELPER GONE - {why}")
+        _drop_restart_lease(lease)
+        room = chatroom.get_room(room_id) if room_id else None
+        if room:
+            who = identity or next((p.get("identity", "") for p in room.get("participants") or []), "")
+            restart_drain.release([{"kind": "wake", "roomId": room_id, "identity": who,
+                                    "text": f"{restart_drain.DRAIN_PREFIX}The restart did not "
+                                            f"happen: {why}. Ask for it again."}])
+        return
+
+
+def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "") -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
     ``drain``: the restart a drain led to (restart_drain.py): its PO's note
-    says why, and who paused.
+    says why, and who paused. ``identity``: the agent in ``room_id`` that
+    asked, told if the helper ends before the restart.
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -11387,6 +11442,10 @@ def trigger_restart(room_id: str = "", drain: bool = False) -> dict:
     if not result.get("started"):
         _drop_restart_lease(lease)
         return {**result, "status": 500}
+    if result.get("helperPid"):
+        threading.Thread(target=_watch_restart_helper,
+                         args=(int(result["helperPid"]), lease, "" if drain else room_id, identity),
+                         daemon=True, name="restart-helper-watch").start()
     return {**result, "status": 202, "leaseId": lease, "graceSeconds": plan["graceSeconds"],
             "keepAgents": plan["keepAgents"],
             "preflightPort": plan["preflightPort"], "resumeRooms": plan["resumeRooms"],

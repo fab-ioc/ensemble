@@ -193,7 +193,10 @@
       }
       var h = await res.json();
       delay = POLL_MS;
-      if (h.phase === 'ready') { open(); return; }
+      // A chat or file page is served once the steps are done; only the
+      // board waits for its first list.
+      var board = location.pathname === '/' || location.pathname === '/index.html' || location.pathname === '/startup';
+      if (h.phase === 'ready' || (!board && h.phase !== 'starting')) { open(); return; }
       show('starting', h);
     } catch (e) {
       if (e && e.name === 'AbortError') show('slow');

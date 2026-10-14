@@ -593,7 +593,7 @@ def request_restart(reason: str, by: dict, action: str = "restart",
     # safe point to wait for and no agent needs a resume line.
     if action == "restart" and not holding() and _d.pty_host_compatible():
         _log(f"hub-only mode by {by.get('label') or 'someone'}: {reason or '(no reason)'}")
-        return _d.trigger_restart(by.get("roomId", ""))
+        return _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""))
     if action == "update" and not holding() and not external:
         if _d.app_version.packaged():
             _log("packaged update staging; helper will select hub-only or classic mode")
@@ -604,7 +604,7 @@ def request_restart(reason: str, by: dict, action: str = "restart",
             if err:
                 return {"status": 500, "started": False, "error": err}
             _log("source update: PTY host unchanged; hub-only mode")
-            res = _d.trigger_restart(by.get("roomId", ""))
+            res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""))
             return {"status": 202 if res.get("started") else 500, **res}
     now = time.time()
     with LOCK:
@@ -832,7 +832,7 @@ def _tick_restarting() -> None:
     # touched, the restart is off.
     if st.get("lease") and now - st["startedAt"] > LEASE_GONE_S \
             and _d._current_restart_lease() != st["lease"]:
-        end_drain("failed", "the preflight failed: " + _preflight_why())
+        end_drain("failed", _preflight_why())
 
 
 def _preflight_why() -> str:
@@ -843,8 +843,10 @@ def _preflight_why() -> str:
         lines = []
     for ln in reversed(lines[-200:]):
         if "preflight failed" in ln.lower():
-            return ln.split("] ", 1)[-1][:300]
-    return "the code on disk did not serve on the spare port (see restart.log)"
+            return "the preflight failed: " + ln.split("] ", 1)[-1][:300]
+        if "HELPER GONE - " in ln:
+            return ln.split("HELPER GONE - ", 1)[-1][:400]
+    return "the preflight failed: the code on disk did not serve on the spare port (see restart.log)"
 
 
 def end_drain(state: str, why: str, tell: bool = True, after_s: float = 0.0) -> None:

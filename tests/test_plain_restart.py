@@ -70,7 +70,7 @@ class HelperScript(unittest.TestCase):
         i = text.index("$pfOk = ")
         line = text[i:text.index("\n", i)]
         self.assertIn('Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec', line)
-        self.assertIn('(Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")', line)
+        self.assertIn('(Ok "http://127.0.0.1:$pf/?startup=skip") -and (Ok "http://127.0.0.1:$pf/api/projects")', line)
 
 
 class Plan(unittest.TestCase):
@@ -261,7 +261,7 @@ class Lock(unittest.TestCase):
                                return_value={"started": True, "status": 202, "message": "m"}) as trig:
             text, is_err = ensemble_tools.call("ensemble_restart_hub", {"when": "now"}, "room-po",
                                                "claude", None)
-        trig.assert_called_once_with("room-po")
+        trig.assert_called_once_with("room-po", identity="claude")
         self.assertFalse(is_err, text)
         self.assertNotIn("status", text)
 
