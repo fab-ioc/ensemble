@@ -1227,9 +1227,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* ---- The middle (layout A, a desktop: body.mid) --------------------------
      One conversation, full height, between the task list on the left
      (--list-w: the task switcher's width while it shows, #123) and the right edge: a task's, in
-     #detail-panel, or a project's PO, in its screen (#po-dock, below). The
-     text keeps to a centred column (--conv-w); a task's tools (Changes,
-     Workspace) take the whole width when their tab is on. */
+     #detail-panel, or a project's PO, in its screen (#po-dock, below). A
+     chat fills the width (#236); only a task's Spec and Details prose keeps
+     to a centred column (--conv-w). */
   body { --list-w: 0px; --conv-w: 880px; }
   body.mid.detail-open { overflow: hidden; }
   body.mid.detail-open main { padding-right: 20px; }
@@ -1238,9 +1238,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border-left: 0; padding: var(--s-300) var(--s-400) 0; gap: var(--s-300);
   }
   body.mid #detail-panel-resize, body.mid.detail-open #detail-panel-resize { display: none; }
-  body.mid #detail-panel .dp-top, body.mid #detail-panel > .dp-tabs { width: 100%; max-width: var(--conv-w); margin-inline: auto; }
+  body.mid #detail-panel .dp-top, body.mid #detail-panel > .dp-tabs { width: 100%; }
   body.mid #detail-panel:has(iframe.dp-session) .dp-head { padding: 0; }
-  body.mid #detail-panel .dp-pane[data-pane="activity"] > *,
+  body.mid #detail-panel .dp-pane[data-pane="activity"] > * { width: 100%; }
   body.mid #detail-panel .dp-pane[data-pane="spec"],
   body.mid #detail-panel .dp-pane[data-pane="details"] { width: 100%; max-width: var(--conv-w); margin-inline: auto; }
   body.mid #detail-panel.is-live .dp-pane[data-pane="activity"] { align-items: center; }
@@ -1253,13 +1253,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.mid #detail-panel .dp-pane[data-pane="changes"] { padding: 0 0 var(--s-300); }
   body.mid .tch { height: max(420px, calc(var(--dp-fill, 100vh) - var(--s-300))); }
   /* The dock (a PO's conversation, or an open task's, and the tool strip,
-     #125) fills the middle; the PO's conversation keeps to the column, its
-     header lined up with it. */
+     #125) fills the middle; the PO's conversation fills its panel (#236). */
   body.mid.po-dock main { margin-left: var(--list-w); padding: 0; height: calc(100dvh - var(--top-h)); }
   body.mid.po-dock #po-dock-host { border: 0; border-radius: 0; }
-  body.mid #po-dock .pd-chat > #po-panel .po-frames { background: var(--bg); justify-content: center; }
-  body.mid #po-dock .pd-chat > #po-panel .po-frames iframe { max-width: var(--conv-w); }
-  body.mid #po-dock .pd-chat > #po-panel .po-head { padding-inline: max(var(--s-300), calc((100% - var(--conv-w)) / 2)); }
+  body.mid #po-dock .pd-chat > #po-panel .po-frames { background: var(--bg); }
   /* The PO drawer (openPoOf, over a task that is not in a PO's project)
      sits at the right edge of the middle. */
   body.mid.po-peek.detail-open #po-panel { right: 0; }
@@ -3735,7 +3732,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      height). */
   .pd-chat > #po-panel { position: absolute; inset: 0; border: 0; border-radius: 0; }
   /* Task chats and threads use the same session frame and fill their panel. */
-  .pd-chat > iframe.dp-session { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .pd-chat > iframe.dp-session, .pd-chat > iframe.po-thread { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
   /* A file as a panel of its own (#150): the path bar over its viewer, the
      note where the viewer would be when the file is gone, the history box
      over it for a documents project. The Files pane is then the tree alone
@@ -12341,6 +12338,7 @@ function renderPo() {
   }
   frames.querySelectorAll('iframe.po-session').forEach(f => { f.hidden = f !== cur; });
   if (dock) {
+    pdThreadFollow(row.roomId, cur);
     if (PD.chatKey !== row.roomId) { PD.chatKey = row.roomId; PD.ptSig = ''; }
     pdPointsFrame();
     pdPaintPoints();
@@ -13045,7 +13043,8 @@ function pdEnsure() {
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
-  PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
+  // The chat back in the page brings back the thread its window had open (#236).
+  PD.dock.onPopIn(id => { if (id === 'po-chat') { pdPopChat(false); setTimeout(() => { if (PD.thrRoom) pdThreadTell(PD.thrRoom, 'thread-again'); }, 300); } });
   pdKeepMiddle();
   pdPlaceChat();
   pdToolRestore();
@@ -13057,7 +13056,9 @@ function pdEnsure() {
 // the conversation's; a file panel a reading width.
 function pdMinOf(id) {
   if (PD_MIN[id]) return PD_MIN[id];
-  return /^(chat|thread):/.test(String(id)) ? PD_MIN['po-chat'] : { w: 280, h: 160 };
+  // A thread panel: a reply box's width; its default while it is added (pdThreadPanel).
+  if (/^thread:/.test(String(id))) return { w: PD.thrAdding ? PD_THREAD_W : 300, h: 160 };
+  return /^chat:/.test(String(id)) ? PD_MIN['po-chat'] : { w: 280, h: 160 };
 }
 // A file panel's tab says the file's path when hovered (Dock's tooltip is the
 // title, the name alone; the path would not fit a tab). Cheap and idempotent,
@@ -13182,26 +13183,115 @@ function pdChatRemoved(id) {
 // A thread of a PO chat (#210, #234): the chat page opens it beside its
 // channel, so the chat framed here is told which thread (or balloon) to open,
 // as a balloon link is (GOTO_MSG); one still loading is told when it starts.
-const pdThreadId = roomId => 'thread:' + roomId;
 function pdThreadOpen(roomId, thread, mid, source, part = '') {
   if (!roomId) return false;
   GOTO_MSG.set(roomId, { msg: mid || '', part: part || '', thread: thread || '' });
   sendGotoMsg(roomId);
   return true;
 }
-// The thread's page names its thread: the panel's tab follows.
-function pdThreadTitle(roomId, title) {
-  const e = PD.rt.get(pdThreadId(roomId));
+// The thread as a Dock panel of its own (#236), as Slack's thread pane: one
+// for the page (PD_THREAD), beside the PO chat, showing the thread last
+// opened; another thread opened replaces it. The PO chat's page asks for it
+// (session.html's sideOpen, synchronously) and shows the thread itself when
+// this says no: a phone (narrow), no panels, a chat that is not the PO's in
+// its panel here (a popped-out one, a hidden one). Where it goes: its kept
+// place (a reload, or closed and opened again), else at the dock's right edge
+// while it fits (PD_THREAD_W wide), else a tab of the chat's stack.
+const PD_THREAD = 'thread:po';
+const PD_THREAD_W = 440;
+function pdThreadPanel(frameEl, o) {
+  const d = PD.dock;
+  if (!d || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;
+  if (!frameEl || frameEl.hidden || !frameEl.classList.contains('po-session')) return false;
+  // The chat shows the thread itself (a phone, its own window): one thread on
+  // screen, so the panel goes, quietly (its place is kept).
+  if (d.narrow() || frameEl.classList.contains('pd-own') || d.popWindow('po-chat')) {
+    if (PD.rt.has(PD_THREAD)) { PD.thrQuiet = true; try { d.removePanel(PD_THREAD); } catch (e) {} finally { PD.thrQuiet = false; } }
+    return false;
+  }
+  if (PO_PANEL.parentNode !== PD.els['po-chat'] || !PO_PANEL.contains(frameEl)) return false;
+  const src = '/session?id=' + encodeURIComponent(o.room) + '&embed=1&side=1'
+    + (o.tid ? '&thread=' + encodeURIComponent(o.tid) : '&thread=&tmid=' + encodeURIComponent(o.mid))
+    + (o.msg ? '&msg=' + encodeURIComponent(o.msg) : '') + (o.part ? '&part=' + encodeURIComponent(o.part) : '');
+  const title = o.title || 'Thread';
+  const had = PD.rt.get(PD_THREAD);
+  if (had) {
+    const f = had.el.querySelector('iframe');
+    const same = had.room === o.room && (o.tid ? had.tid === o.tid : !had.tid && had.mid === o.mid);
+    if (same && f && f.contentWindow) {
+      if (o.msg) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {} }
+    } else if (f) {
+      // Another chat's thread goes from that chat (it is told, as by its ×).
+      if (had.room !== o.room) pdThreadTell(had.room, 'thread-closed');
+      f.setAttribute('src', src);
+    }
+    Object.assign(had, { room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid });
+    pdThreadSetTitle(title);
+    // A restore at the chat's load leaves the panel where it is, unseen if so.
+    if (!o.restore) { try { d.reveal(PD_THREAD); } catch (e) {} }
+    return true;
+  }
+  const el = document.createElement('div');
+  el.className = 'pd-chat pd-chat-x pd-thread';
+  el.dataset.room = o.room;
+  // Not iframe.dp-session / .po-session: balloon links (sendGotoMsg) go to the chat.
+  el.innerHTML = `<iframe class="po-thread" data-room="${esc(o.room)}" src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write"></iframe>`;
+  PD.rt.set(PD_THREAD, { kind: 'thread', room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, el, title });
+  // Dock sizes a panel docked at an edge by its least width (or a quarter of
+  // the dock): while it is added, the thread's least width is its default.
+  const kept = (d.slots ? d.slots() : []).includes(PD_THREAD);
+  const where = kept ? undefined : pdFits(PD_THREAD_W) ? 'right' : { kind: 'stack', stack: 'po-chat' };
+  let res = null;
+  PD.thrAdding = true;
+  try { res = d.addPanel({ id: PD_THREAD, title, el, closable: true }, where); } catch (e) { res = null; } finally { PD.thrAdding = false; }
+  if (res !== 'added') { PD.rt.delete(PD_THREAD); return res === 'exists'; }
+  // Back in the chat's own stack after a reload: the chat stays in front.
+  if (o.restore && d.frontOf && d.frontOf('po-chat') === PD_THREAD) { try { d.activate('po-chat'); } catch (e) {} }
+  pdToolsFit();
+  return true;
+}
+// The PO chats of a room are told about their thread's panel (thread-closed,
+// thread-again, thread-is: session.html).
+function pdThreadTell(roomId, what, extra) {
+  PO_PANEL.querySelectorAll('iframe.po-session').forEach(f => {
+    if (f.dataset.room !== roomId || !f.contentWindow) return;
+    try { f.contentWindow.postMessage(Object.assign({ ensemble: what }, extra || {}), location.origin); } catch (e) {}
+  });
+}
+function pdThreadSetTitle(title) {
+  const e = PD.rt.get(PD_THREAD);
   if (!e || !title || e.title === title) return;
   e.title = title;
-  try { PD.dock.setTitle(pdThreadId(roomId), title); } catch (err) {}
+  try { PD.dock.setTitle(PD_THREAD, title); } catch (err) {}
+}
+// Another PO shown: the panel is that chat's, so the last one's thread goes
+// quietly (its chat keeps it open, for when it is shown again) and the chat
+// now shown brings its own back, if it had one.
+function pdThreadFollow(roomId, frame) {
+  const e = PD.rt.get(PD_THREAD);
+  if (PD.thrRoom === roomId) return;
+  const first = PD.thrRoom === undefined;
+  PD.thrRoom = roomId;
+  if (e && e.room !== roomId) { PD.thrQuiet = true; try { PD.dock.removePanel(PD_THREAD); } catch (err) {} finally { PD.thrQuiet = false; } }
+  if (!first && frame && frame.contentWindow) { try { frame.contentWindow.postMessage({ ensemble: 'thread-again' }, location.origin); } catch (err) {} }
+}
+// The thread's page names its thread: the panel's tab follows; a thread
+// started on a balloon has its id once its first reply is in.
+function pdThreadTitle(roomId, title, thread) {
+  const e = PD.rt.get(PD_THREAD);
+  if (!e || e.room !== roomId) return;
+  if (thread && e.tid !== thread) { e.tid = thread; e.mid = ''; pdThreadTell(roomId, 'thread-is', { thread }); }
+  pdThreadSetTitle(title);
 }
 // A panel added at runtime was taken out of the dock (its ×, ⋯ › Close, a
 // middle click, Ctrl+F4, or removePanel): disposed here.
 function pdRuntimeRemoved(id) {
   const e = PD.rt.get(id);
   if (!e) return;
-  if (e.kind === 'thread') { PD.rt.delete(id); e.el.innerHTML = ''; }
+  if (e.kind === 'thread') {
+    PD.rt.delete(id); e.el.innerHTML = '';
+    if (!PD.thrQuiet) pdThreadTell(e.room, 'thread-closed');
+  }
   else if (e.kind === 'file') wsPanelRemoved(id); else pdChatRemoved(id);
   pdToolsFit();
 }
@@ -18962,7 +19052,7 @@ window.addEventListener('message', (ev) => {
       window.open('/session?id=' + encodeURIComponent(roomId) + q, '_blank', 'noopener');
     }
   }
-  if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''));
+  if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''), String(d.thread || ''));
   if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {
     const cid = pdChatId(String(d.roomId));
     try { PD.dock.reveal(PD.rt.has(cid) ? cid : 'po-chat'); } catch (e) {}

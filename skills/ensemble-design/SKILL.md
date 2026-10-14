@@ -269,7 +269,8 @@ theme block, with the same values, and its own `.tk-*` rules.
 `--header-h` (49px: 48px bar + 1px border) · `--chrome-h` · `--sidebar-w` · `--detail-w` (a phone's
 task, only) · `--list-w` (the task list on the left in layout A: `--sw-w` while `body.sw-on`, else 0; with the list in its dock,
 #137, where the page starts, and `--list-r` / `--list-t` / `--list-b` the other sides, set by `ldInsets`) · `--conv-w`
-(880px, the conversation's column in the middle; see *The middle* in §5).
+(880px, the reading column of a task's Spec and Details in the middle; a chat is not held to it, #236:
+see *The middle* in §5).
 
 **Never hard-code a header offset.** Nine literal `49px`/`56px`/`266px` values used to tie the sticky
 table head, the sidebar, the detail panel, the notifications tray, the settings panel and the
@@ -1040,7 +1041,24 @@ dropped; a runtime panel that came back in front of the conversation's stack goe
 tab the person left in front, a tool or the conversation). The PO's chat, out of sight while a
 task is in the middle, is told it is shown when the task leaves (`pdWakeChat`), so it catches up
 at once rather than at its next 30 s tick. File and chat panels are the runtime panels (`PD.rt`; `pdMinOf` their least size:
-a chat the conversation's, a file 280 × 160); `dock-removed` disposes them (`pdRuntimeRemoved`).
+a chat the conversation's, a file 280 × 160, a thread 300 × 160); `dock-removed` disposes them (`pdRuntimeRemoved`).
+**A thread of the PO chat is a panel of its own** (#236, Slack's thread pane): one for the page
+(`thread:po`, `pdThreadPanel`), named after the thread (`setTitle` from the thread page's
+`thread-title`), closable and with the usual ⋯ (resize, move, pop out, maximise). The chat's page
+asks for it when a thread opens (`sideOpen` → the host's `pdThreadPanel`, synchronous) and shows
+the thread itself (#234's side column, or over the chat with Back) when the host says no: a phone
+(narrow dock), no panels, a popped-out or hidden PO chat. It goes back to its kept place (a reload,
+or closed and opened again), else at the dock's right edge, 440 px wide (`PD_THREAD_W`; Dock sizes
+an edge panel by its least width, so `pdMinOf` gives 440 while it is added: a stopgap until Dock's
+`addPanel` takes a size), while it fits (`pdFits`), else a tab of the chat's stack. Another thread
+opened replaces it; its × tells the chat (`thread-closed`); another PO shown takes it quietly and
+that PO's chat brings its own back (`thread-again`). When the chat shows the thread itself (a
+phone, its own window, which asks the page through its opener), the panel goes quietly: one thread
+on screen; the chat docked back brings it back. In the panel's own window, a link inside the
+thread that the page handles (a task, "Also in" another thread) reaches the window, not the page,
+as in a task chat's window: a known limit. Its frame is `iframe.po-thread`, never
+`.dp-session` / `.po-session`, so a balloon link (`sendGotoMsg`) goes to the chat, which opens the
+thread here.
 On a phone both are tabs of the one column, as everything is. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
@@ -1204,8 +1222,10 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
 With a mouse (layout A, #126, from the mockup; the same media gate as the box's card), a chat reads
 as a conversation: **your balloon is a bubble on the right** (`align-self: flex-end`, at most 85% of
 the column, `--hover`, no edge), and **an agent's is plain text** on the page's ground, no box,
-under its header. This reverses the old left-aligned balloons with an edge: in the 880px column of
-the middle, the width they saved is not missed, and who said what reads at a glance.
+under its header. This reverses the old left-aligned balloons with an edge: who said what reads at
+a glance. **A chat fills its panel** (#236): no column, no line-length cap in a balloon; the panel
+the person sizes is the measure (a cap that keeps prose readable on a wide screen would leave a
+third of the panel empty).
 
 - **A balloon is authored by whoever supplied its input, not by the transcript role.** Agent
   transcripts call every input `user`, including lines and first prompts typed by the hub. The
@@ -1519,8 +1539,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    tools (`dpPlacePanes`; a tool holding a task's pane shows it instead of the PO's, `.pd-for-task`).
    Opening a task on a desktop makes its project the page's (so Needs you and the Board are its
    project's; closing it lands there), also for a project without a PO, whose open task gets the
-   strip too. Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the
-   task's header. Opening a task replaces what the middle showed; closing it (×, Esc, the project's
+   strip too. **The conversation fills it** (#236): the PO chat's header, Open questions, Needs you,
+   balloons and message box, and a task's header, tabs and chat, are as wide as the panel; only a
+   task's Spec and Details prose keeps to `--conv-w` (880px). Opening a task replaces what the middle showed; closing it (×, Esc, the project's
    crumb, the PO's row) gives it back. The page does not scroll; each pane scrolls inside itself.
    Where the dock cannot load, the task panel has its tabs as in step 2 (`Activity · Changes ·
    Workspace · Spec · Details`, see *Tabs*).
