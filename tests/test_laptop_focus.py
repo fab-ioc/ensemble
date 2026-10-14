@@ -19,7 +19,7 @@ class LaptopFocus(focus.PhoneFocus):
 """)
               .replace("const highlighted=marked.classList", "if(!marked)throw Error('missing fixture '+location.href+' '+w.location.href+' '+w.eval('JSON.stringify(LAST_ITEMS)')); const highlighted=marked.classList")
               .replace("d.querySelector('.copy-link').focus()", "d.getElementById('input').focus()")
-              .replace("document.getElementById('chatbar').hidden=false;", "document.getElementById('hint').textContent=''; document.getElementById('activity').hidden=false; document.getElementById('activity').innerHTML='<span class=act>codex idle</span>'; document.getElementById('chatbar').hidden=false;")
+              .replace("document.getElementById('chatbar').hidden=false;", "document.getElementById('hint').textContent=''; document.getElementById('chatbar').hidden=false;")
               .replace("r.attention={state:'blocked'", "r.attention={state:'waiting_for_you'")
               .replace('const top=document.querySelector', "r.lastAgent='**Report — completed** Reviewed D:/work/projects/security_audit/evidence/plans/codex/LOCKDOWN-PLAN.md and the next steps. Full evidence below.'; const top=document.querySelector")
               .replace('renderBubbles(fixtureItems);', "POINTS=pointMaps({delivered:1,items:[{id:'P1',mid:'focus-1',text:'Confirm the next step',state:'delivered',answers:[{mid:'focus-ask',said:'Ready to check'}]}]}); showPointsLine(); LAST_ITEMS=fixtureItems; renderBubbles(fixtureItems);")

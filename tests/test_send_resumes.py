@@ -677,8 +677,12 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("$('#send').disabled = notRunning", body)
         self.assertIn("$('#input').disabled = false;", body)
         self.assertNotIn("$('#input').disabled = notRunning", body)
-        self.assertIn("'Not running: sending will resume it.'", body)
-        self.assertIn("'Resuming: your message goes in once it is up.'", body)
+        # The box says only what happens to a send; the state is said once,
+        # in the header (#232): "stopped — reply resumes", "resuming…".
+        self.assertNotIn("sending will resume it", body)
+        self.assertIn("showState();", body)
+        self.assertIn("word: 'stopped — reply resumes'", SESSION)
+        self.assertIn("word: 'resuming…'", SESSION)
         # Resume is the header's primary action (static/actions.js), off while resuming.
         self.assertIn("ROOM_RESUMING = resuming;", body)
         self.assertIn("renderActions();", body)
@@ -777,7 +781,10 @@ console.log(JSON.stringify({ posts, same: ctx.key1 === ctx.key2 && !!ctx.key1 })
         fv = fv[:fv.index("\n}\n")]
         self.assertIn("fetch('/api/room/resume'", fv)
         self.assertNotIn("fetch('/api/room/say'", fv)
-        self.assertIn("const key = 'fv:' + FV_MARK + ':' + CMTS.map(c => c.cid).join(',');", fv)
+        # The comments' ids are random and kept with them (#233): the same
+        # batch sent again after a reload has the same key and counts once.
+        self.assertIn("const sent = CMTS.map(c => c.cid);", fv)
+        self.assertIn("const key = 'fv:' + sent.join(',');", fv)
         self.assertIn("showFallback('Couldn’t send to the chat. Copy your comments:', body)", fv)
 
     def test_retry_and_discard_are_a_fingers_size_on_a_phone(self):
