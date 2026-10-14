@@ -255,6 +255,17 @@ class AssignTest(unittest.TestCase):
         out = self.run_(recs, [point("P1", "s:0", "a")], sd)
         self.assertIn("s:3", threads._channel({**out, "recs": recs}))
 
+    def test_a_reply_with_no_point_in_a_team_activity_balloons_thread_stays_there(self):
+        # A digest's side thread (m:s:0): the reply is in that thread, not
+        # back in Team activity.
+        recs = [note("s:0", 0), human("s:1", 100, "ok thanks")]
+        sd = side(sent=[{"thread": "m:s:0", "key": "k", "at": T0 + 100, "words": "ok thanks", "also": False}])
+        out = self.run_(recs, [], sd)
+        self.assertEqual(out["of"]["s:1"], ["m:s:0"])
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1"])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:0"])
+        self.assertNotIn("s:1", threads._channel({**out, "recs": recs}))
+
     def test_a_word_said_again_in_the_chat_is_not_the_thread_reply_before_it(self):
         # Review 1 (#234): "ok" from P1's box, then "ok" typed in the chat 3
         # min later. A send is one balloon: the second "ok" is in the chat.

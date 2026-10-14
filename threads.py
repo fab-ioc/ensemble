@@ -494,8 +494,11 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     # keeps no point of) sent from a thread's box.
                     t = sent["thread"]
                     if t.startswith("m:") and t not in threads and t[2:] in done:
+                        # Its balloon's thread, or one of its own: Team
+                        # activity is not a thread (as a point's anchor above).
                         root = done[t[2:]]
-                        t = of[root["mid"]][-1] if of.get(root["mid"]) else \
+                        homes = [x for x in of.get(root["mid"]) or [] if x != activity]
+                        t = homes[-1] if homes else \
                             new(t, root, _words(root["turn"].get("text") or "") or "Thread")["id"]
                     if t in threads:
                         tids = [t]
