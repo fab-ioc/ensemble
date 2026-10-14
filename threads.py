@@ -163,7 +163,7 @@ def _path(room_id: str) -> Path:
 
 
 def _empty_side() -> dict:
-    return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": []}
+    return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": []}
 
 
 def load_side(room_id: str) -> dict:
@@ -190,8 +190,9 @@ def load_side(room_id: str) -> dict:
             for k in ("seen", "anchors"):
                 if isinstance(d.get(k), dict):
                     side[k] = d[k]
-            if isinstance(d.get("also"), list):
-                side["also"] = [x for x in d["also"] if isinstance(x, dict)]
+            for k in ("also", "sent"):
+                if isinstance(d.get(k), list):
+                    side[k] = [x for x in d[k] if isinstance(x, dict)]
         _SIDE[room_id] = (mt, side)
         return json.loads(json.dumps(side))
 
@@ -201,6 +202,7 @@ def _save_side(room_id: str, side: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     side["also"] = side.get("also", [])[-SIDE_KEEP:]
+    side["sent"] = side.get("sent", [])[-SIDE_KEEP:]
     try:
         durable.write_tmp(tmp, json.dumps(side, indent=1, ensure_ascii=True))
         os.replace(tmp, p)
@@ -406,8 +408,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 # Started from a balloon's "Reply in thread": that balloon is
                 # its parent, or the thread it is in by now.
                 root = done.get(anc[2:])
-                if root is not None and of.get(root["mid"]):
-                    anc = of[root["mid"]][-1]
+                if root is not None and any(t != activity for t in of.get(root["mid"]) or []):
+                    anc = [t for t in of[root["mid"]] if t != activity][-1]
                 elif root is not None:
                     new(anc, root, _words(root["turn"].get("text") or "") or "Thread")
             # Team activity is a shared inbox for hub and task traffic. A
@@ -482,6 +484,17 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     if t:
                         tids.append(t)
                 tids = list(dict.fromkeys(tids))
+                sent = _sent_from(r, side)
+                if not tids and sent and sent.get("thread"):
+                    # A reply with no point (an image, a word the ledger
+                    # keeps no point of) sent from a thread's box.
+                    t = sent["thread"]
+                    if t.startswith("m:") and t not in threads and t[2:] in done:
+                        root = done[t[2:]]
+                        t = of[root["mid"]][-1] if of.get(root["mid"]) else \
+                            new(t, root, _words(root["turn"].get("text") or "") or "Thread")["id"]
+                    if t in threads:
+                        tids = [t]
                 if not tids:
                     # A message the ledger has no point of (sent before the
                     # ledger, a point taken back, or an image): a thread of its own.
@@ -494,6 +507,12 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 last = tids[-1] if tids else None
                 if tids and not starts:
                     _also_mark(r, tids, side, also)
+                    # Slack (#234): what is typed in the channel is in the
+                    # channel. Only a reply sent from a thread's own box stays
+                    # in the thread alone, unless it was sent to the chat too.
+                    boxed = bool(sent) or (bool(made) and all(anchors.get(i) for i in made))
+                    if not boxed and mid not in also:
+                        also[mid] = tids[-1]
             elif kind == "report":
                 ref = r.get("task") or ""
                 tid = task_thread.get(ref) if ref else None
@@ -532,14 +551,34 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             tids = [tid]
         for t in tids:
             join(t, r)
-        if tids and (len(tids) > 1 or r.get("ask") or r.get("live")):
-            # Never hidden in a thread (an ask, "is live"), and an answer to
-            # several points shown once: under the newest of its threads.
+        if tids and (r.get("ask") or r.get("live")) and activity not in tids:
+            # Never hidden in a thread (an ask, "is live"): in the chat too,
+            # marked with the newest of its threads. An answer to several
+            # points is a reply in each of them (#234), as any answer is.
             also[mid] = max(tids, key=lambda t: (threads[t]["rootTs"], order.index(t)))
         # Several PO balloons may be one answer with no new input between
         # them. Keep the same home until the next human or hub input.
         last = tids[-1]
     return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
+
+
+def _sent_from(r: dict, side: dict) -> dict | None:
+    """The thread box send this person's balloon is (:func:`note_send`), if any."""
+    words = _send_words(r.get("words") or "")
+    if not words:
+        return None
+    for a in reversed(side.get("sent") or []):
+        at = _num(a.get("at"))
+        if r["ts"] and not (at - ALSO_SLACK_S <= r["ts"] <= at + ALSO_SLACK_S):
+            continue
+        if a.get("words") == words:
+            return a
+    return None
+
+
+def _send_words(norm: str) -> str:
+    """A send's words as both sides keep them: no ``Re Pn:``, at most 80."""
+    return re.sub(r"^re p\d{1,5}[a-z]?\s*:?\s*", "", norm or "")[:80]
 
 
 def _also_mark(r: dict, tids: list[str], side: dict, also: dict) -> None:
@@ -724,10 +763,21 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
 
 
 def _channel(idx: dict) -> list[str]:
-    """Only top-level human and PO messages; each topic is a thread line."""
-    parent = idx["parent"]
-    return [r["mid"] for r in idx["recs"] if r["mid"] in parent
-            and (r["role"] == "agent" or r.get("kind") == "human")]
+    """The whole conversation, as Slack's channel (#234): every message in
+    time order except a thread's replies. A thread's first message stays
+    where it was posted (the page draws its thread line under it), a reply
+    sent to the chat too is there at its own time, and the hub's and the
+    tasks' traffic nobody's thread claimed (Team activity) is there as in
+    the whole chat, for the page to fold."""
+    parent, of, also = idx["parent"], idx["of"], idx["also"]
+    out = []
+    for r in idx["recs"]:
+        mid = r["mid"]
+        if mid in parent and any(t != "team:activity" for t in parent[mid]) or mid in also:
+            out.append(mid)
+        elif all(t == "team:activity" for t in of.get(mid) or []):
+            out.append(mid)
+    return out
 
 
 def ready(room_id: str, room: dict) -> dict | None:
@@ -782,8 +832,9 @@ def _meta(th: dict) -> dict:
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     r = idx["by_mid"][mid]
     out = {**r["turn"], "mid": mid}
-    if mid in idx["parent"]:
-        out["thr"] = idx["parent"][mid]
+    thr = [t for t in idx["parent"].get(mid) or [] if t != "team:activity"]
+    if thr:
+        out["thr"] = thr
     if mid in idx["also"]:
         out["inThr"] = idx["also"][mid]
     tids = idx["of"].get(mid) or []
@@ -805,12 +856,14 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
     ch = idx["channel"]
     shown = ch[-n:]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
+    # A reply also in the chat names its thread ("replied to a thread: …").
+    tids |= {t for m in shown if m in idx["also"] for t in idx["of"].get(m) or []}
     return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
             "items": [_turn(idx, m) for m in shown],
             "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
             "activity": _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None,
             "unreadThreads": sorted((_meta(t) for t in idx["threads"].values()
-                                    if (t.get("poUnread") if t["id"] == "team:activity" else t.get("unread"))),
+                                    if t["id"] != "team:activity" and t.get("unread")),
                                     key=lambda t: t.get("lastAt") or 0, reverse=True),
             "before": max(0, len(ch) - n), "balloons": len(idx["recs"]), "channel": len(ch)}
 
@@ -825,7 +878,9 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:
     if idx is None:
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     if not tid and mid:
-        tids = idx["of"].get(mid) or []
+        # Team activity is the chat's own traffic, not a thread (#234): a
+        # balloon of it starts a thread of its own.
+        tids = [t for t in idx["of"].get(mid) or [] if t != "team:activity"]
         tid = tids[-1] if tids else ("m:" + mid if mid in idx["by_mid"] else "")
     th = idx["threads"].get(tid)
     if th is None and tid.startswith("m:") and tid[2:] in idx["by_mid"]:
@@ -850,7 +905,7 @@ def unread_threads(room_id: str, room: dict) -> list[dict] | None:
     if idx is None:
         return None
     out = [_meta(th) for th in idx["threads"].values()
-           if (th.get("poUnread") if th["id"] == "team:activity" else th.get("unread"))]
+           if th["id"] != "team:activity" and th.get("unread")]
     out.sort(key=lambda t: (t["lastAt"] or 0, t["id"]), reverse=True)
     return out
 
@@ -922,11 +977,17 @@ def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, tex
                 if side["anchors"].get(pid) != tid:
                     side["anchors"][pid] = tid
                     changed = True
+        words = _send_words(points.norm_text(points.strip_point_lines(text or "")))
         if also:
-            words = points.norm_text(points.strip_point_lines(text or ""))
-            words = re.sub(r"^re p\d{1,5}[a-z]?\s*:?\s*", "", words)[:80]
             side["also"] = [a for a in side["also"] if not (key and a.get("key") == key)]
             side["also"].append({"thread": tid, "key": key, "at": time.time(), "words": words})
+            changed = True
+        if not pids and words:
+            # A reply with no point: matched to its balloon by its words (#234).
+            mine = _send_words(points.norm_text(points.strip_point_lines(
+                _d.message_refs.strip_message_refs(text or "")))) if _d else words
+            side["sent"] = [a for a in side["sent"] if not (key and a.get("key") == key)]
+            side["sent"].append({"thread": tid, "key": key, "at": time.time(), "words": mine, "also": bool(also)})
             changed = True
         if changed:
             _save_side(room_id, side)

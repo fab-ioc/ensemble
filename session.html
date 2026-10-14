@@ -4288,9 +4288,11 @@ function renderBubbles(items, opt = {}) {
   const quiet = (m, i) => quietItem(m, false);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
-  // A PO chat's channel (#210) shows a thread's first message without its
-  // replies: whether it was answered is its thread line's to say.
+  // A PO chat's channel (#210, #234) shows a thread's first message without
+  // its replies: whether it was answered is its thread line's to say. Its
+  // Threads view (THR_LIST) is a list of the threads with new replies.
   const channel = typeof threadedView === 'function' && threadedView() && !THREAD_MODE;
+  const threadList = channel && THR_LIST;
   const unanswered = channel ? new Map() : foldUnanswered(items);
   // The person's view (#146): over a transcript the hub types into, and
   // unless Team activity is on, each run of what is not theirs is one gap
@@ -4371,7 +4373,7 @@ function renderBubbles(items, opt = {}) {
   const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',') + '|' + [...(POINTS.askMids || [])].join(',');
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
-  CU_SHOWN = !!cu && !channel;
+  CU_SHOWN = !!cu && !threadList;
   // What you sent that the conversation does not show yet, as the hub keeps
   // it (sends.py): queued, typed in and waiting for the agent to take it, or
   // not delivered with the reason, Retry and Discard. Held by the hub, so it
@@ -4381,11 +4383,10 @@ function renderBubbles(items, opt = {}) {
   // bottom with no time, under the answers that came after it).
   const shown = sendsToShow(given);
   const due = shown.slice();
-  if (channel) {
-    const tids = THR_LIST ? THR_UNREAD.map(t => t.id)
-      : items.flatMap(m => m.thr || []).filter(t => t !== 'team:activity');
+  if (threadList) {
+    const tids = THR_UNREAD.map(t => t.id).filter(t => t !== 'team:activity');
     for (const tid of tids) rows.push(threadCardHtml(tid));
-    if (THR_LIST && !tids.length) rows.push('<div class="thr-empty">No threads with new replies</div>');
+    if (!tids.length) rows.push('<div class="thr-empty">No threads with new replies</div>');
   } else items.forEach((m, i) => {
     while (due.length && m.ts && m.ts > (due[0].at || 0)) rows.push(sendHtml(due.shift(), md));
     const k = foldKey(m, i);
@@ -4425,7 +4426,7 @@ function renderBubbles(items, opt = {}) {
     }
   });
   // A channel shows its latest entries: the way to those before.
-  if (thr && !THREAD_MODE && THR_BEFORE && !channel) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
+  if (thr && !THREAD_MODE && THR_BEFORE && !threadList) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
@@ -5891,19 +5892,39 @@ function threadCardHtml(tid) {
     ${open ? `<span class="thr-asks" title="${open} open question${open === 1 ? '' : 's'}" aria-label="${open} open question${open === 1 ? '' : 's'}">?${open}</span>` : ''}
   </button>`;
 }
+// Slack's line under a message with replies (#234): who replied, how many,
+// "Last reply 12 min ago", a dot while some are new; the whole line opens the
+// thread beside the chat. The age is patched in place (thrAgoTick).
+function thrAgo(ts) {
+  if (!ts) return '';
+  const s = Date.now() / 1000 - ts;
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  const d = new Date(ts * 1000), now = new Date(), hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (d.toDateString() === now.toDateString()) return 'today at ' + hm;
+  if (d.toDateString() === new Date(now - 864e5).toDateString()) return 'yesterday at ' + hm;
+  return sendWhen(ts);
+}
+function thrAgoTick() {
+  document.querySelectorAll('.thr-ago[data-ts]').forEach(el => setText(el, 'Last reply ' + thrAgo(+el.dataset.ts)));
+}
+setInterval(thrAgoTick, 30000);
 function threadLineHtml(tid, mine) {
   const t = THR_META[tid];
   if (!t) return '';
   const n = +t.replies || 0, unread = +t.unread || 0;
-  const who = (t.who || []).map(w => THR_WHO[w] || w).join(', ');
-  const when = n ? 'last reply ' + sendWhen(t.lastAt) : '';
+  if (!n) return '';
+  const who = (t.who || []).map(w => THR_WHO[w] || w);
   const st = THR_STATE[t.state] || '';
-  const label = n ? `${n} repl${n === 1 ? 'y' : 'ies'}` : 'Open thread';
-  const parts = [who, when].filter(Boolean).map(esc).join(' · ');
-  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}">`
+  const label = `${n} repl${n === 1 ? 'y' : 'ies'}`;
+  const on = TS && TS.tid === tid;
+  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
+    + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
+    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="thr-av thr-av-${esc(w === 'PO' ? 'po' : w === 'you' ? 'you' : 'task')}">${esc(w === 'you' ? (OPERATOR || 'you').slice(0, 1).toUpperCase() : w.slice(0, 1).toUpperCase())}</span>`).join('')}</span>` : '')
+    + `<span class="thr-count">${label}</span>`
+    + `<span class="thr-ago" data-ts="${+t.lastAt || 0}">Last reply ${esc(thrAgo(t.lastAt))}</span>`
     + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')
-    + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread “${esc(t.title || '')}”">${label}</button>`
-    + (parts ? `<span class="thr-meta">${parts}</span>` : '')
+    + '</button>'
     + (st ? `<span class="thr-state st-${esc(t.state)}">${esc(st)}</span>` : '')
     + '</div>';
 }
@@ -5914,10 +5935,11 @@ function threadMarkHtml(m) {
     return also.length ? `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(also.join(','))}">Also in ${also.map(t => `<button type="button" class="thr-open" data-thr="${esc(t)}">${esc(/^P\d/.test(t) ? t : 'another thread')}</button>`).join(', ')}</div>` : '';
   }
   if (!m.inThr) return '';
+  // A reply that is in the chat too (Slack's "Also send to #channel", #234):
+  // over it, the thread it replied to, which opens it.
   const t = THR_META[m.inThr];
-  // An answer to several points: shown once, under the newest of its threads.
-  const also = (m.alsoIn || []).map(x => `<button type="button" class="thr-open" data-thr="${esc(x)}">${esc(/^P\d/.test(x) ? x : (THR_META[x] || {}).title || 'another thread')}</button>`);
-  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc((m.alsoIn || []).join(','))}">Replied in <button type="button" class="thr-open" data-thr="${esc(m.inThr)}">${esc(t ? t.title || 'a thread' : 'a thread')}</button>${also.length ? ', also in ' + also.join(', ') : ''}</div>`;
+  const title = t ? t.title || 'a thread' : 'a thread';
+  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc(title)}">replied to a thread: <button type="button" class="thr-open" data-thr="${esc(m.inThr)}" title="Open the thread">${esc(title)}</button></div>`;
 }
 // A thread opens beside the chat (the dashboard's panel), or in this window.
 function openThread(tid, mid, part = '') {
