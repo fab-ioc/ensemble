@@ -178,6 +178,7 @@ async function main() {
       return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null,
         emptyBelow:cb&&sb&&fb?sb.b-fb.y-cb.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
         scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
+        scrollTop:list?list.scrollTop:null, screens:list?list.scrollHeight/list.clientHeight:null,
         ratio:lb&&sb?lb.h/sb.h:null, layer:!!side?.classList.contains('layer')};
     })()`;
     const sideReady = `!!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.getElementById('ts-frame')?.contentDocument?.querySelector('#msgs .msg[data-mid]')`;
@@ -287,7 +288,13 @@ class ChatHeight(unittest.TestCase):
         for name in ('threadLaptop', 'threadTall', 'threadReload'):
             with self.subTest(name=name):
                 g = self.got[name]
-                self.assertLessEqual(g['scrollRemaining'], 16, g)
+                # Up to a screen and a half tall it opens on its first
+                # message (Slack's), a longer one at its latest reply; made
+                # taller once open (threadTall), it stays where it was.
+                if g['screens'] <= 1.5 and name != 'threadTall':
+                    self.assertEqual(g['scrollTop'], 0, g)
+                else:
+                    self.assertLessEqual(g['scrollRemaining'], 16, g)
                 self.assertFalse(g['layer'], 'a laptop: the thread beside the chat')
                 self.assertGreaterEqual(g['sideOfMain'], .99, g)
 

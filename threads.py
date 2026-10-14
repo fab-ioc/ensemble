@@ -442,6 +442,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
 
     last: str | None = None         # the thread of the last input: what a PO message answers
     activity = "team:activity"
+    sent_of = _pair_sent(recs, side)
 
     def team(r: dict) -> str:
         # Hub and unclaimed task traffic has one home outside the channel.
@@ -484,7 +485,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     if t:
                         tids.append(t)
                 tids = list(dict.fromkeys(tids))
-                sent = _sent_from(r, side)
+                sent = sent_of.get(mid)
                 if not tids and sent and sent.get("thread"):
                     # A reply with no point (an image, a word the ledger
                     # keeps no point of) sent from a thread's box.
@@ -562,18 +563,35 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
 
 
-def _sent_from(r: dict, side: dict) -> dict | None:
-    """The thread box send this person's balloon is (:func:`note_send`), if any."""
-    words = _send_words(r.get("words") or "")
-    if not words:
-        return None
-    for a in reversed(side.get("sent") or []):
-        at = _num(a.get("at"))
-        if r["ts"] and not (at - ALSO_SLACK_S <= r["ts"] <= at + ALSO_SLACK_S):
+def _pair_sent(recs: list[dict], side: dict) -> dict[str, dict]:
+    """The thread box send (:func:`note_send`) each person's balloon is:
+    ``{mid: send}``. A send is one balloon and a balloon one send, the
+    nearest in time with the same words first, so a short word said again
+    in the channel ("ok") is not taken for an earlier reply in a thread."""
+    sends = side.get("sent") or []
+    if not sends:
+        return {}
+    pairs = []
+    for r in recs:
+        if r.get("role") != "user" or r.get("kind") != "human":
             continue
-        if a.get("words") == words:
-            return a
-    return None
+        words = _send_words(r.get("words") or "")
+        if not words:
+            continue
+        for n, a in enumerate(sends):
+            if a.get("words") != words:
+                continue
+            at = _num(a.get("at"))
+            if r["ts"] and not (at - ALSO_SLACK_S <= r["ts"] <= at + ALSO_SLACK_S):
+                continue
+            pairs.append((abs((r["ts"] or at) - at), n, r["mid"]))
+    out: dict[str, dict] = {}
+    taken: set[int] = set()
+    for _, n, mid in sorted(pairs):
+        if n not in taken and mid not in out:
+            taken.add(n)
+            out[mid] = sends[n]
+    return out
 
 
 def _send_words(norm: str) -> str:
@@ -844,16 +862,24 @@ def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     return out
 
 
-def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
+def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "") -> dict:
     """The channel: its last ``n`` entries (turns as /api/session gives
     them, each with its balloon id, ``thr`` on a parent, ``inThr`` on a reply
     also sent to the chat), the threads they show, and how many came before.
-    ``{pending: true}`` while the chat is first read."""
+    ``upto``: a balloon a link lands on; when the channel has it, as many
+    more as reach it (``n`` says how many were sent). ``{pending: true}``
+    while the chat is first read."""
     idx = ready(room_id, room)
     if idx is None:
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
-    n = max(1, min(int(n or CHANNEL_MAX), CHANNEL_LIMIT))
+    n = int(n or CHANNEL_MAX)
     ch = idx["channel"]
+    if upto and upto in idx["by_mid"]:
+        try:
+            n = max(n, len(ch) - ch.index(upto) + 20)
+        except ValueError:
+            pass
+    n = max(1, min(n, CHANNEL_LIMIT))
     shown = ch[-n:]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     # A reply also in the chat names its thread ("replied to a thread: …").
@@ -865,7 +891,7 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX) -> dict:
             "unreadThreads": sorted((_meta(t) for t in idx["threads"].values()
                                     if t["id"] != "team:activity" and t.get("unread")),
                                     key=lambda t: t.get("lastAt") or 0, reverse=True),
-            "before": max(0, len(ch) - n), "balloons": len(idx["recs"]), "channel": len(ch)}
+            "before": max(0, len(ch) - n), "n": n, "balloons": len(idx["recs"]), "channel": len(ch)}
 
 
 def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:

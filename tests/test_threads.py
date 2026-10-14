@@ -255,6 +255,35 @@ class AssignTest(unittest.TestCase):
         out = self.run_(recs, [point("P1", "s:0", "a")], sd)
         self.assertIn("s:3", threads._channel({**out, "recs": recs}))
 
+    def test_a_word_said_again_in_the_chat_is_not_the_thread_reply_before_it(self):
+        # Review 1 (#234): "ok" from P1's box, then "ok" typed in the chat 3
+        # min later. A send is one balloon: the second "ok" is in the chat.
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."), human("s:2", 100, "ok"),
+                po("s:3", 120, "Separately: deploy is live?"), human("s:4", 280, "ok")]
+        sd = side(sent=[{"thread": "P1", "key": "k", "at": T0 + 101, "words": "ok", "also": False}])
+        out = self.run_(recs, [point("P1", "s:0", "make the chart wider")], sd)
+        self.assertIn("s:2", out["threads"]["P1"]["members"])
+        self.assertNotIn("s:4", out["threads"]["P1"]["members"])
+        self.assertIn("s:4", threads._channel({**out, "recs": recs}))
+        self.assertNotIn("s:2", threads._channel({**out, "recs": recs}))
+
+    def test_a_link_to_an_older_message_gets_the_channel_back_to_it(self):
+        # Review 1 (#234): a link to a message before the last 150 lands in
+        # the channel; the hub sends as many as reach it, and says how many.
+        recs = [human(f"s:{i}", i * 10, f"message {i}") for i in range(400)]
+        out = self.run_(recs, [], side())
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}, "sig": 1,
+               "channel": threads._channel({**out, "recs": recs})}
+        with mock.patch.object(threads, "ready", return_value=idx):
+            plain = threads.channel_view("r", {})
+            linked = threads.channel_view("r", {}, upto="s:50")
+            gone = threads.channel_view("r", {}, upto="s:nope")
+        self.assertEqual((len(plain["items"]), plain["n"]), (threads.CHANNEL_MAX, threads.CHANNEL_MAX))
+        self.assertIn("s:50", [t["mid"] for t in linked["items"]])
+        self.assertEqual(linked["n"], 400 - 50 + 20)
+        self.assertEqual(linked["before"], 30)
+        self.assertEqual(gone["n"], threads.CHANNEL_MAX)
+
 
 class PoRoomsTest(unittest.TestCase):
     def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):
