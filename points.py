@@ -81,6 +81,7 @@ from datetime import datetime
 from pathlib import Path
 
 import message_refs
+import durable
 
 _d = None  # the dashboard module, set by bind()
 
@@ -515,7 +516,7 @@ def _save(room_id: str, led: dict) -> None:
     # ASCII: a lone surrogate from a request body cannot fail the write.
     body = json.dumps(led, indent=1, ensure_ascii=True)
     try:
-        tmp.write_text(body, encoding="utf-8")
+        durable.write_tmp(tmp, body)
         for attempt in range(5):
             try:
                 if p.exists():
