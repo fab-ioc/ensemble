@@ -118,6 +118,13 @@ class RoomDeltaHttpTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout), new)
 
+    def test_a_change_python_calls_equal_is_still_sent(self):
+        # 1 == True == 1.0 in Python, not in the JSON the sig is made of.
+        p = dashboard.status_patch({"a": 1, "b": 0, "c": 1, "rows": [{"id": 1, "x": 1}, {"id": 2, "x": 0}]},
+                                   {"a": True, "b": False, "c": 1.0, "rows": [{"id": 1, "x": True}, {"id": 2, "x": 0}]})
+        self.assertEqual(p["set"], {"a": True, "b": False, "c": 1.0})
+        self.assertEqual(p["in"]["rows"]["rows"], {"1": {"id": 1, "x": True}})
+
     @unittest.skipUnless(shutil.which("node"), "needs Node")
     def test_local_render_edits_do_not_change_delta_cursor_cache(self):
         page = (Path(__file__).resolve().parent.parent / "session.html").read_text(encoding="utf-8")

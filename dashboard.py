@@ -10057,8 +10057,8 @@ ROTATION_SHOWN = ("n", "at", "fromSessionId", "toSessionId", "tokens", "threshol
 _ROOM_STATUS_LOCK = threading.Lock()
 
 
-def keep_room_status(rid: str, sig: str, status: dict) -> None:
-    text = json.dumps(status, sort_keys=True)
+def keep_room_status(rid: str, sig: str, text: str) -> None:
+    """Keep the status sent as ``sig`` (its JSON text, as the sig was made)."""
     with _ROOM_STATUS_LOCK:
         _ROOM_STATUS.pop((rid, sig), None)
         _ROOM_STATUS[(rid, sig)] = text
@@ -10066,14 +10066,23 @@ def keep_room_status(rid: str, sig: str, status: dict) -> None:
             del _ROOM_STATUS[next(iter(_ROOM_STATUS))]
 
 
-def room_status_patch(rid: str, sig: str, status: dict) -> dict | None:
-    """What changed in ``status`` since the one sent as ``sig``, as
-    :func:`status_patch` makes it; None when that one is not kept."""
+def room_status_patch(rid: str, sig: str, status_text: str) -> dict | None:
+    """What changed in the status (its JSON text) since the one sent as
+    ``sig``, as :func:`status_patch` makes it; None when that one is not
+    kept. A status asked for again stays kept longest."""
     with _ROOM_STATUS_LOCK:
-        text = _ROOM_STATUS.get((rid, sig))
+        text = _ROOM_STATUS.pop((rid, sig), None)
+        if text is not None:
+            _ROOM_STATUS[(rid, sig)] = text
     if text is None:
         return None
-    return status_patch(json.loads(text), json.loads(json.dumps(status, sort_keys=True)))
+    return status_patch(json.loads(text), json.loads(status_text))
+
+
+def _same(a, b) -> bool:
+    """Equal as the page sees them: Python's == takes 1 for true and 1.0,
+    the JSON (and the sig) does not."""
+    return a == b and json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
 def _id_list(v) -> bool:
@@ -10089,7 +10098,7 @@ def status_patch(old: dict, new: dict) -> dict:
     with ``applyStatusPatch``."""
     out: dict = {}
     for k, v in new.items():
-        if k in old and old[k] == v:
+        if k in old and _same(old[k], v):
             continue
         o = old.get(k)
         if isinstance(o, dict) and isinstance(v, dict):
@@ -10098,7 +10107,7 @@ def status_patch(old: dict, new: dict) -> dict:
             was = {json.dumps(x["id"]): x for x in o}
             out.setdefault("in", {})[k] = {
                 "ids": [x["id"] for x in v],
-                "rows": {str(x["id"]): x for x in v if was.get(json.dumps(x["id"])) != x}}
+                "rows": {str(x["id"]): x for x in v if not _same(was.get(json.dumps(x["id"])), x)}}
         else:
             out.setdefault("set", {})[k] = v
     gone = [k for k in old if k not in new]
@@ -14150,9 +14159,9 @@ class Handler(BaseHTTPRequestHandler):
                 messages = [m for m in every if m.get("id") in ids]
                 had = q.get("statusSig", [""])[0]
                 same_status = had == status_sig
-                patch = None if same_status or not had else room_status_patch(rid, had, status)
+                patch = None if same_status or not had else room_status_patch(rid, had, status_text)
                 if not same_status:
-                    keep_room_status(rid, status_sig, status)
+                    keep_room_status(rid, status_sig, status_text)
                 self._send_json(200, {"delta": True, "revision": revision,
                                       "statusSig": status_sig, "statusSame": same_status,
                                       **({} if same_status else
@@ -14160,7 +14169,7 @@ class Handler(BaseHTTPRequestHandler):
                                       **({"total": len(every)} if win else {}),
                                       "messages": messages})
                 return
-            keep_room_status(rid, status_sig, status)
+            keep_room_status(rid, status_sig, status_text)
             if win:
                 room_window(out, win)
             out["revision"] = revision

@@ -4877,7 +4877,9 @@ function renderMsgs(room) {
   // traffic it folds) gets the page before at once: there is no scroll to ask.
   const box = $('#msgs');
   if (box && box.clientHeight && box.scrollHeight <= box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD)
-    setTimeout(() => loadOlder(), 0);
+    // Filled without a scroll (the history ran out first, or it now fits), no
+    // scroll event says the reader is at the end: the chat still follows.
+    setTimeout(() => loadOlder().then(() => { const b = $('#msgs'); if (b && nearEnd(b)) STICK = true; }), 0);
 }
 // ---- The latest messages, older ones as the chat scrolls up (#228): begin ----
 // A room opens with its latest ROOM_N messages (the hub's &n=); scrolled near
