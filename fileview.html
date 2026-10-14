@@ -1657,7 +1657,7 @@ window.addEventListener('storage', e => {
 // a passage's offsets count through, is unchanged. Passages are painted with
 // the CSS Custom Highlight API, which changes no node.
 const FC = (() => {
-  let ifr = null, doc = null, src = '', masked = '', host = null, root = null, pins = null, hov = null, cat = null;
+  let ifr = null, doc = null, src = '', masked = '', host = null, root = null, pins = null, hov = null, cat = null, hlSheet = null;
   let picking = false, held = null, raf = 0, hoverEl = null;
   const where = new Map();                       // cid → Range | Element
   const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -1775,10 +1775,13 @@ const FC = (() => {
     root.innerHTML = `<style>${style()}</style><div class="cat"></div><div class="pins"></div><div class="hov"><span class="tag"></span></div>`;
     cat = root.querySelector('.cat'); pins = root.querySelector('.pins'); hov = root.querySelector('.hov');
     d.documentElement.appendChild(host);
-    const hl = d.createElement('style');
-    hl.id = 'ens-comments-hl';
-    hl.textContent = `::highlight(ens-cmt) { background-color: ${tok('--match-bg')}; color: ${tok('--match-fg')}; text-decoration: underline 2px ${tok('--c-warning-bold')}; }`;
-    (d.head || d.documentElement).appendChild(hl);
+    // The passages' colour: a sheet adopted by the page's document, so its own
+    // DOM and document.styleSheets stay as the file made them.
+    try {
+      hlSheet = new d.defaultView.CSSStyleSheet();
+      hlSheet.replaceSync(`::highlight(ens-cmt) { background-color: ${tok('--match-bg')}; color: ${tok('--match-fg')}; text-decoration: underline 2px ${tok('--c-warning-bold')}; }`);
+      d.adoptedStyleSheets = [...d.adoptedStyleSheets, hlSheet];
+    } catch (e) { hlSheet = null; }
     // Pointing: the layer takes the pointer, so a click on the page's own link
     // or button picks it instead of following it.
     const pickAt = (x, y) => {
@@ -1791,6 +1794,7 @@ const FC = (() => {
     // its own: the nearest one under the pointer that can still go that way
     // gets it. Otherwise the window scrolls, as it does by itself.
     cat.addEventListener('wheel', e => {
+      if (e.ctrlKey) return;                                 // Ctrl+wheel, a pinch: the browser's zoom
       const W = d.defaultView, k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? W.innerHeight : 1;
       const dx = e.deltaX * k, dy = e.deltaY * k;
       // A body whose overflow the window took (the root's is visible) is the window.
@@ -1823,7 +1827,8 @@ const FC = (() => {
     setPick(false);
     if (host) host.remove();
     try { if (doc) { doc.removeEventListener('keydown', onKey, true); const W = doc.defaultView; if (W && W.CSS && W.CSS.highlights) W.CSS.highlights.delete('ens-cmt'); } } catch (e) {}
-    ifr = doc = host = root = pins = hov = cat = null; held = hoverEl = null; src = masked = '';
+    try { if (doc && hlSheet) doc.adoptedStyleSheets = doc.adoptedStyleSheets.filter(x => x !== hlSheet); } catch (e) {}
+    ifr = doc = host = root = pins = hov = cat = hlSheet = null; held = hoverEl = null; src = masked = '';
     where.clear();
     const b = btn(); if (b) b.hidden = true;
   }
