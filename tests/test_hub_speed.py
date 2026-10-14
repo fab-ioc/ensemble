@@ -71,11 +71,12 @@ class ConditionalRoomResponseTests(unittest.TestCase):
         def send(headers):
             h = dashboard.Handler.__new__(dashboard.Handler)
             h.headers, h.wfile = headers, io.BytesIO()
+            h.command, h.path = "GET", "/api/room?id=room-x&n=50"
             result = {"status": None, "headers": {}}
             h.send_response = lambda code: result.update(status=code)
             h.send_header = lambda key, value: result["headers"].update({key: value})
             h.end_headers = lambda: None
-            h._send_json(200, {"messages": ["same"]}, conditional=True)
+            h._send_json(200, {"messages": ["same"]})
             return result, h.wfile.getvalue()
 
         first, body = send({})
@@ -84,7 +85,9 @@ class ConditionalRoomResponseTests(unittest.TestCase):
         second, body = send({"If-None-Match": first["headers"]["ETag"]})
         self.assertEqual(second["status"], 304)
         self.assertEqual(body, b"")
-        self.assertEqual(second["headers"]["Content-Length"], "0")
+        # A 304 has no body by definition, and says no length (#231).
+        self.assertNotIn("Content-Length", second["headers"])
+        self.assertEqual(second["headers"]["Cache-Control"], "no-cache")
 
 
 if __name__ == "__main__":

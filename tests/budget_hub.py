@@ -13,6 +13,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 MESSAGES = 4000          # x scale; ~2.5 KB each: a 10 MB chat at scale 1
@@ -83,15 +84,29 @@ def main() -> None:
         runs = [get(path) for _ in range(3)]
         return {"bytes": len(runs[-1][0]), "ms": round(min(ms for _, ms in runs), 1)}
 
+    def again(path: str) -> dict:
+        """#231: the same first read once more, asked with the ETag of the
+        copy the browser keeps: a bodiless 304 while nothing changed."""
+        with urlopen(Request(base + path), timeout=120) as r:
+            etag = r.headers["ETag"]
+            r.read()
+        try:
+            with urlopen(Request(base + path, headers={"If-None-Match": etag}), timeout=120) as r:
+                return {"status": r.status, "bytes": len(r.read())}
+        except HTTPError as e:
+            return {"status": e.code, "bytes": len(e.read())}
+
     out: dict = {"scale": scale}
     # A list's first read (opening the app), then what a switch asks for: what
     # changed since the copy the page holds.
     for name in ("sessions", "projects"):
         out[name] = warm(f"/api/{name}?since=")
+        out[name + "Again"] = again(f"/api/{name}?since=")
         rev = json.loads(get(f"/api/{name}?since=")[0])["rev"]
         out[name + "Delta"] = warm(f"/api/{name}?since={quote(str(rev))}")
     first, _ = get(f"/api/room?id={ROOM}&n=50")
     out["room"] = warm(f"/api/room?id={ROOM}&n=50")
+    out["roomAgain"] = again(f"/api/room?id={ROOM}&n=50")
     room = json.loads(first)
     out["roomPointsBytes"] = len(json.dumps(room.get("points"), separators=(",", ":")))
     out["roomDelta"] = warm(f"/api/room?id={ROOM}&n=50&cursor={quote(room['revision'])}"

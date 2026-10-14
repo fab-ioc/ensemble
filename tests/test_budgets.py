@@ -49,6 +49,13 @@ class SwitchBudgets(unittest.TestCase):
                 self.assertLessEqual(m["room"]["bytes"] - m["roomPointsBytes"], ROOM_BUT_POINTS)
                 self.assertLessEqual(m["roomPointsBytes"], POINTS)
 
+    def test_a_first_read_asked_again_unchanged_moves_no_body(self):
+        # #231: the browser revalidates the copy it keeps (HTTP/1.1, ETag).
+        for s, m in self.at.items():
+            for name in ("sessionsAgain", "projectsAgain", "roomAgain"):
+                with self.subTest(scale=s, endpoint=name):
+                    self.assertEqual(m[name], {"status": 304, "bytes": 0})
+
     def test_the_chat_poll_leaves_the_indexed_messages_as_they_are(self):
         for s, m in self.at.items():
             self.assertTrue(m["messagesUntouched"], s)
