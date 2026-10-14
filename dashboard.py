@@ -11093,24 +11093,34 @@ WARM_SAVE_EVERY_S = 300
 _WARM_SAVED_SIG = None
 
 
-def _warm_parts() -> tuple[dict, dict, dict]:
-    """What the next hub starts from: copies of what this one holds now,
-    nothing read again (ED-227). Each part is a first answer there."""
+def _warm_lists() -> tuple[dict, dict]:
+    """The task lists and the transcript index the next hub starts from:
+    copies of what this one holds now, nothing read again (ED-227)."""
     # Only lists still current: one a change made stale (an archive, a label)
     # would come back as valid and the board would open on it.
     sessions = {str(n): [dict(r) for r in rows] for n, (_, gen, rows) in list(_SESS_CACHE.items())
                 if n not in _SESS_BOOT and gen == _SESS_GEN}
-    # Deep copies under their owners' locks: the save walks them unlocked
-    # while the hub keeps changing the originals.
+    # Copies under their owners' locks: the save walks them unlocked while
+    # the hub keeps changing the originals.
     with _TRANSCRIPT_INDEX_LOCK:
         transcript = dict(_TRANSCRIPT_INDEX[2]) if _TRANSCRIPT_INDEX[0] == str(PROJ_DIR) else {}
+    return sessions, transcript
+
+
+def _warm_threads() -> dict:
+    """Deep copies of the thread builds (some 20 MB: a quarter second under
+    the lock), so only taken for a save that will be written."""
     with threads._LOCK:
         thread_indexes = copy.deepcopy(threads._INDEX)
         thread_saves = dict(threads.SAVES)
     with points._LOCK:
         point_saves = dict(points.SAVES)
-    return sessions, transcript, {"index": thread_indexes, "threadSaves": thread_saves,
-                                  "pointSaves": point_saves}
+    return {"index": thread_indexes, "threadSaves": thread_saves, "pointSaves": point_saves}
+
+
+def _warm_parts() -> tuple[dict, dict, dict]:
+    """What the next hub starts from. Each part is a first answer there."""
+    return *_warm_lists(), _warm_threads()
 
 
 # Row fields that change on their own (time, live state): not a reason to
@@ -11118,15 +11128,22 @@ def _warm_parts() -> tuple[dict, dict, dict]:
 _WARM_SIG_SKIP = frozenset({"idleSeconds", "isLive", "status", "pid", "attention", "resuming"})
 
 
-def _warm_sig(sessions: dict, transcript: dict, thread_cache: dict) -> tuple:
+def _builds_sig(index: dict) -> int:
+    """The signature each thread build was made from: cheap next to a copy."""
+    return hash(tuple(sorted((rid, repr(v[0]) if isinstance(v, tuple) and v else "")
+                             for rid, v in index.items())))
+
+
+def _warm_sig(sessions: dict, transcript: dict, thread_cache: dict, builds: int | None = None) -> tuple:
     """Whether the parts changed enough since the last save to write 20 MB
     again: the rows (a label or an archive too), the index's size, and the
-    signature each thread build was made from."""
+    signature each thread build was made from (``builds`` when already
+    taken from the live index)."""
     rows = tuple(sorted((n, hash(repr([{k: v for k, v in x.items() if k not in _WARM_SIG_SKIP}
                                        for x in r])))
                         for n, r in sessions.items()))
-    builds = hash(tuple(sorted((rid, repr(v[0]) if isinstance(v, tuple) and v else "")
-                               for rid, v in thread_cache["index"].items())))
+    if builds is None:
+        builds = _builds_sig(thread_cache["index"])
     return rows, len(transcript), builds
 
 
@@ -11143,14 +11160,20 @@ def save_restart_caches(*, why: str = "restart") -> bool:
 def _save_restart_caches(why: str) -> bool:
     global _WARM_SAVED_SIG
     try:
-        sessions, transcript, thread_cache = _warm_parts()
-        if not sessions:
-            return False
-        sig = _warm_sig(sessions, transcript, thread_cache)
+        sessions, transcript = _warm_lists()
+        # Nothing changed since the last save: say so before copying 20 MB.
+        with threads._LOCK:
+            builds = _builds_sig(threads._INDEX)
+        sig = _warm_sig(sessions, transcript, {}, builds)
         if why != "restart" and sig == _WARM_SAVED_SIG:
             return False
+        thread_cache = _warm_threads()
         t0 = time.time()
-        warm_cache.save(HOME, DASHBOARD_DIR, sessions, transcript, thread_cache)
+        # No list current now: the file is still written, with no lists, so
+        # the older rows on disk (an archived task among them) never come
+        # back as current; the transcripts and thread builds still help.
+        warm_cache.save(HOME, DASHBOARD_DIR, sessions, transcript, thread_cache,
+                        drop_prev=not sessions)
         _WARM_SAVED_SIG = sig
         _restart_log(f"warm caches saved ({why}, {time.time() - t0:.1f}s): {len(sessions)} session lists, "
                      f"{len(transcript)} transcripts, {len(thread_cache['index'])} thread builds")
@@ -11191,6 +11214,15 @@ def _warm_saver() -> None:
 
 
 def load_restart_caches() -> None:
+    """The last hub's warm parts. A bad cache never stops the hub starting:
+    anything it raises is logged, and the hub reads the files instead."""
+    try:
+        _load_restart_caches()
+    except Exception as exc:     # noqa: BLE001 — the files are read instead
+        _restart_log(f"warm caches not loaded: {exc!r}; reading current files")
+
+
+def _load_restart_caches() -> None:
     global _TRANSCRIPT_INDEX
     cached = warm_cache.load(HOME, DASHBOARD_DIR)
     if cached is None:

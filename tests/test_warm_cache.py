@@ -138,6 +138,55 @@ class WarmCacheTest(unittest.TestCase):
         build["items"].append("b")
         self.assertEqual(cache["index"]["room-one"][1]["items"], ["a"])
 
+    def test_no_current_list_overwrites_the_saved_one(self):
+        # PO item 2: older rows left on disk would load as current next start
+        # (an archived task comes back), from the file or from its .prev.
+        with tempfile.TemporaryDirectory(prefix="ensemble-warm-") as td:
+            home = Path(td)
+            state = home / ".ensemble"
+            with mock.patch.dict("os.environ", {"CODEX_HOME": str(home / "codex")}):
+                warm_cache.save(home, state, {"300": [{"id": "archived"}]}, {}, {})
+                warm_cache.save(home, state, {"300": [{"id": "archived"}]}, {}, {})
+                self.assertTrue(durable.prev_of(warm_cache.path(state)).exists())
+                gen = dashboard._SESS_GEN
+                with mock.patch.object(dashboard, "HOME", home), \
+                     mock.patch.object(dashboard, "DASHBOARD_DIR", state):
+                    ok, _, _ = self.parts_saved({300: (0, gen - 1, [{"id": "archived"}])},
+                                                wraps=warm_cache.save)
+                self.assertTrue(ok)
+                self.assertEqual(warm_cache.load(home, state)["sessions"], {})
+                self.assertFalse(durable.prev_of(warm_cache.path(state)).exists())
+
+    def test_unchanged_periodic_save_copies_no_thread_builds(self):
+        # PO item 4: the 20 MB deep copy only for a save that is written.
+        gen = dashboard._SESS_GEN
+        with mock.patch.object(dashboard, "_SESS_CACHE", {300: (0, gen, [{"id": "a"}])}), \
+             mock.patch.object(dashboard, "_SESS_BOOT", set()), \
+             mock.patch.object(dashboard, "_WARM_SAVED_SIG", None), \
+             mock.patch.object(dashboard.threads, "_INDEX", {"room-one": ((1,), {"items": []})}), \
+             mock.patch.object(dashboard, "_restart_log"), \
+             mock.patch.object(dashboard.warm_cache, "save"), \
+             mock.patch.object(dashboard, "_warm_threads", wraps=dashboard._warm_threads) as copies:
+            self.assertTrue(dashboard.save_restart_caches(why="periodic"))
+            self.assertFalse(dashboard.save_restart_caches(why="periodic"))
+            self.assertEqual(copies.call_count, 1)
+            dashboard.threads._INDEX["room-one"] = ((2,), {"items": ["new"]})
+            self.assertTrue(dashboard.save_restart_caches(why="periodic"))
+            self.assertEqual(copies.call_count, 2)
+
+    def test_a_bad_cache_never_stops_the_start(self):
+        # PO item 3: a .py locked while the code hash is read, or anything
+        # else the load raises, is logged and the hub reads the files.
+        with mock.patch.object(warm_cache, "_CODE_VERSION", ""), \
+             mock.patch.object(Path, "read_bytes", side_effect=PermissionError("locked")), \
+             mock.patch.object(warm_cache.durable, "read_json", return_value={"format": warm_cache.FORMAT,
+                               "codexHome": str(warm_cache._codex_home(Path.home()))}):
+            self.assertIsNone(warm_cache.load(Path.home(), Path("unused")))
+        with mock.patch.object(dashboard.warm_cache, "load", side_effect=RuntimeError("bad cache")), \
+             mock.patch.object(dashboard, "_restart_log") as log:
+            dashboard.load_restart_caches()
+        self.assertIn("bad cache", log.call_args.args[0])
+
     def test_signature_leaves_out_what_changes_by_itself(self):
         row = {"id": "a", "label": "x", "idleSeconds": 5, "isLive": True, "status": "busy", "pid": 1}
         sig = dashboard._warm_sig({"300": [row]}, {}, {"index": {}})

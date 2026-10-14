@@ -48,7 +48,13 @@ class HelperScript(unittest.TestCase):
         self.assertIn("$hubStopped = $false", text[:text.index("# --- 1. Preflight")])
         stop = text.index("foreach ($v in ($victims")
         self.assertLess(stop, text.index("$hubStopped = $true"))
-        self.assertLess(text.index("$hubStopped = $true"), text.index("function StartDirect"))
+        # StartDirect exists before the stop, so the trap can call it at once.
+        self.assertLess(text.index("function StartDirect"), stop)
+        self.assertLess(text.index("$hubArgs = @()"), stop)
+        # Once the hub is up again a later error must not start a second one.
+        up = text.index("if ($up) { $hubStopped = $false;")
+        self.assertLess(text.index("$hubStopped = $true"), up)
+        self.assertEqual(text.count("$hubStopped = $false"), 2)
 
     def test_no_git_that_changes_the_checkout(self):
         text = SCRIPT.decode("ascii")
@@ -345,7 +351,7 @@ class WindowsBackend(unittest.TestCase):
         main = text[text.index("# --- 1. Preflight"):text.index("# --- 4. Bring the rooms back")]
         self.assertNotIn("Start-Sleep -Seconds 2;", main)
         self.assertIn("Nap 2; $pfUp", main)
-        self.assertIn("if ($up) { RenewLease }", main)
+        self.assertIn("if ($up) { $hubStopped = $false; RenewLease }", main)
         with tempfile.TemporaryDirectory() as tmp:
             lease = Path(tmp) / "restart.lease"
             for owner, want_renewed in (("mine", True), ("someone-else", False)):

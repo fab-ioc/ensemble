@@ -206,6 +206,16 @@ if (-not $cfg.keepAgents) {
     exit 1
   }
 }
+# Defined before the stop: the trap may need it the moment the hub is down.
+$hubArgs = @()
+if ($cfg.script) { $hubArgs += (Q $cfg.script) }
+$hubArgs += @($cfg.args | ForEach-Object { Q $_ })
+function StartDirect {
+  try {
+    Start-Process -FilePath $cfg.python -ArgumentList $hubArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -ErrorAction Stop | Out-Null
+    L "started $($cfg.python) $($hubArgs -join ' ')"
+  } catch { L "start err: $_" }
+}
 $useTask = $false
 if (-not $cfg.noTask) {
   $task = Get-ScheduledTask -TaskName $cfg.taskName -ErrorAction SilentlyContinue
@@ -242,15 +252,6 @@ if (-not ($free -and $oldGone)) {
   Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
   exit 1
 }
-$hubArgs = @()
-if ($cfg.script) { $hubArgs += (Q $cfg.script) }
-$hubArgs += @($cfg.args | ForEach-Object { Q $_ })
-function StartDirect {
-  try {
-    Start-Process -FilePath $cfg.python -ArgumentList $hubArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -ErrorAction Stop | Out-Null
-    L "started $($cfg.python) $($hubArgs -join ' ')"
-  } catch { L "start err: $_" }
-}
 if (-not $cfg.keepAgents) {
   $stateDir = Split-Path -Parent ([string]$cfg.leasePath)
   $hostArgs = @()
@@ -286,7 +287,8 @@ if ($useTask) {
   StartDirect
 }
 for ($i = 0; $i -lt 30 -and -not $up; $i++) { Nap 2; $up = Started $base }
-if ($up) { RenewLease }
+# Up again: from here an error must not make the trap start a second hub.
+if ($up) { $hubStopped = $false; RenewLease }
 L "hub up: $up; code at $(Head) (was $head0)"
 if (-not $up) {
   L "HUB STILL DOWN - start the '$($cfg.taskName)' scheduled task by hand"

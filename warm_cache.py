@@ -78,15 +78,18 @@ def path(state: Path) -> Path:
 
 
 def save(home: Path, state: Path, sessions: dict, transcript_index: dict,
-         thread_indexes: dict) -> None:
+         thread_indexes: dict, *, drop_prev: bool = False) -> None:
     """On the disk before the rename; the copy it replaces is kept as
-    ``.prev`` for a save that a power cut tore."""
+    ``.prev`` for a save that a power cut tore. ``drop_prev``: that copy
+    holds rows this save says are stale, so it goes."""
     body = {"format": FORMAT, "codexHome": str(_codex_home(home)),
             "codeVersion": _code_version(),
             "sessions": _encode(sessions),
             "transcripts": _encode(transcript_index),
             "threads": _encode(thread_indexes)}
     durable.write_text(path(state), json.dumps(body, separators=(",", ":")), keep_prev=True)
+    if drop_prev:
+        durable.prev_of(path(state)).unlink(missing_ok=True)
 
 
 def load(home: Path, state: Path) -> dict | None:
@@ -97,5 +100,5 @@ def load(home: Path, state: Path) -> dict | None:
                 data.get("codeVersion") != _code_version()):
             return None
         return {k: _decode(data[k]) for k in ("sessions", "transcripts", "threads")}
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OSError):   # OSError: a .py locked while hashed
         return None
