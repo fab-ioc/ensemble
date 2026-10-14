@@ -444,7 +444,7 @@ class LaunchKinds(unittest.TestCase):
         with mock.patch.object(chatroom, "list_rooms", side_effect=AssertionError("listed")):
             self.assertEqual(dashboard._session_input_context("sid-one"),
                              ("room-one", "codex"))
-        listed.assert_called_once_with()
+        listed.assert_called_once_with(copy_rooms=False)
 
     def test_type_input_records_only_after_a_successful_submit(self):
         class Session:

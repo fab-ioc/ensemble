@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 import filefacts
+import filetable
 
 from .base import AgentSession, AgentType
 
@@ -157,17 +158,33 @@ def _mtime(path: Path) -> float:
 
 _ROLLOUT_CACHE: dict[str, tuple] = {}
 
+_TABLES: dict[str, filetable.FileTable] = {}
 
-def _parse_rollout(path: Path) -> AgentSession | None:
+
+def _rollout_table(root: Path, fresh_s: float = 0.0) -> dict[str, tuple[float, int, int]]:
+    """Every rollout under ``root`` with its time and size, from a file table
+    (#228): a refresh re-lists only day folders that moved and re-stats only
+    recent rollouts, not all of them."""
+    key = str(root)
+    t = _TABLES.get(key)
+    if t is None:
+        t = _TABLES[key] = filetable.FileTable(
+            lambda: key, 3, lambda n: n.startswith("rollout-") and n.endswith(".jsonl"))
+    return t.files(fresh_s=fresh_s)
+
+
+def _parse_rollout(path: Path, sig: tuple | None = None) -> AgentSession | None:
     """One rollout file as an AgentSession, remembered per file on its size and
     modification time: the task list asks for every rollout on every refresh,
     and an unchanged file always parses the same. A copy is returned, so a
-    caller marking a session live can never change the remembered one."""
-    try:
-        stt = path.stat()
-        sig = (stt.st_mtime_ns, stt.st_size)
-    except OSError:
-        sig = None
+    caller marking a session live can never change the remembered one.
+    ``sig`` (mtime_ns, size), when the caller has it, saves the stat."""
+    if sig is None:
+        try:
+            stt = path.stat()
+            sig = (stt.st_mtime_ns, stt.st_size)
+        except OSError:
+            sig = None
     if sig is not None:
         hit = _ROLLOUT_CACHE.get(str(path))
         if hit and hit[0] == sig:
@@ -280,13 +297,10 @@ class CodexAgent(AgentType):
         root = self.sessions_dir()
         if not root.exists():
             return []
-        files = list(root.glob("*/*/*/rollout-*.jsonl"))
+        table = _rollout_table(root)
         # Newest first by mtime. A parsed rollout is remembered per file, so
-        # walking past `limit` files costs a stat each, not a read.
-        try:
-            files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        except OSError:
-            files.sort(key=lambda p: p.name, reverse=True)
+        # walking past `limit` files costs nothing more than the table.
+        files = [p for _, p in filetable.newest_first(table)]
         if dropped is None:
             files = files[:limit]
         oldest = (time.time() - max_age) if max_age else 0.0
@@ -296,7 +310,8 @@ class CodexAgent(AgentType):
         for i, f in enumerate(files):
             if kept >= limit:
                 break
-            s = _parse_rollout(f)
+            st = table.get(str(f))
+            s = _parse_rollout(f, (st[2], st[1]) if st else None)
             if s is None:
                 continue
             if i >= limit and s.updated_at < oldest:
@@ -325,22 +340,26 @@ class CodexAgent(AgentType):
         root = self.sessions_dir()
         if not root.exists():
             return []
-        files = list(root.glob("*/*/*/rollout-*.jsonl"))
-        files.sort(key=_mtime, reverse=True)
-        return files
+        return [p for _, p in filetable.newest_first(_rollout_table(root))]
 
     def rollouts_for_session(self, session_id: str) -> list[Path]:
         """Every rollout belonging to ``session_id``, oldest first.
 
-        The id is the uuid in the filename, so a targeted glob finds it without
-        touching the rest of the history — this runs on the dashboard's poll
-        loop, so it must not cost a full scan. Only when that misses (older
+        The id is the uuid in the filename, so the rollout table (a second
+        old at most: one refresh asks for many sessions), else a targeted glob
+        (a rollout written since), finds it without touching the rest of the
+        history — this runs on the dashboard's poll loop, so it must not cost
+        a full scan. Only when both miss (older
         layouts, or a resume that forked a file under a different name) do we
         fall back to reading each rollout's `session_meta` line."""
         root = self.sessions_dir()
         if not session_id or not root.exists():
             return []
-        hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
+        tail = f"-{session_id}.jsonl"
+        hits = [filetable.as_path(p) for p in _rollout_table(root, 1.0)
+                if p.endswith(tail) and os.path.basename(p).startswith("rollout-")]
+        if not hits:
+            hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
         if not hits:
             # A missing old solo-session ID is common. Do not scan every
             # rollout's metadata per ID or every minute; the fallback index

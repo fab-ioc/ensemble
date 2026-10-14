@@ -82,6 +82,7 @@ import permission_mode
 import attention
 # What the task list read from each transcript, kept across hub starts (ED-200).
 import filefacts
+import filetable
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import backup
 # A session's files copied into the documents project it becomes the PO of.
@@ -990,6 +991,9 @@ _TRANSCRIPT_MISSES: dict[tuple[str, str], float] = {}
 # (a miss on a younger one globs for that id alone).
 # A glob for one id stats every project folder (18 ms each, 33 s for a cold
 # task list's 1,800 lookups, ED-200); one listing costs about as much as ten.
+# Every Claude transcript (PROJ_DIR/<folder>/<session>.jsonl), kept by what
+# changed (filetable, #228): the task list and this index share one walk.
+CLAUDE_FILES = filetable.FileTable(lambda: PROJ_DIR, 1, lambda name: name.endswith(".jsonl"))
 _TRANSCRIPT_INDEX: tuple[str, float, dict[str, Path]] = ("", 0.0, {})
 _TRANSCRIPT_INDEX_TTL_S = 2.0
 _TRANSCRIPT_INDEX_LOCK = threading.Lock()
@@ -1009,7 +1013,9 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
         if fresh and time.time() - at >= _TRANSCRIPT_INDEX_TTL_S:
             at = time.time()
             idx = {}
-            for f in PROJ_DIR.glob("*/*.jsonl"):
+            # The task list's own walk when it is a second old: a refresh walks once.
+            for p in CLAUDE_FILES.files(fresh_s=_TRANSCRIPT_INDEX_TTL_S / 2):
+                f = filetable.as_path(p)
                 idx.setdefault(f.stem, f)
             _TRANSCRIPT_INDEX = (root, at, idx)
         return idx
@@ -2282,7 +2288,7 @@ def _checkpoint_codex_tick() -> None:
 def _checkpoint_sweep() -> None:
     """Checkpoints of a task deleted, or Done 14 days ago, go."""
     now = time.time()
-    rooms = {r["id"]: r for r in chatroom.list_rooms()}
+    rooms = {r["id"]: r for r in chatroom.list_rooms(copy_rooms=False)}
     if not rooms:
         return              # never read as "every task is gone"
     for rid, room in rooms.items():
@@ -3810,7 +3816,7 @@ def _session_input_context(sid: str) -> tuple[str, str]:
         hit = _SESSION_INPUT_CONTEXT_CACHE.get(cache_key)
         if hit is not None:
             return hit
-    for room in chatroom.list_rooms():
+    for room in chatroom.list_rooms(copy_rooms=False):
         found = None
         for part in chatroom.agent_participants(room):
             if sid in chatroom.agent_conversations(part):
@@ -3849,7 +3855,7 @@ def note_session_owners(room: dict) -> None:
 
 def _linked_input_context(pid: int) -> tuple[str, str, str]:
     """Room, seat and session for a visible terminal adopted by a room."""
-    for room in chatroom.list_rooms():
+    for room in chatroom.list_rooms(copy_rooms=False):
         for part in chatroom.agent_participants(room):
             try:
                 matches = int(part.get("pid") or 0) == int(pid)
@@ -5238,7 +5244,7 @@ def made_po_fresh_input(project: dict) -> str:
 
 def _session_room(sid: str) -> dict | None:
     """The hub's task that already holds this conversation, if any."""
-    for room in chatroom.list_rooms():
+    for room in chatroom.list_rooms(copy_rooms=False):
         for part in room.get("participants") or []:
             if part.get("kind") == "agent" and (part.get("sessionId") or "") == sid:
                 return room
@@ -5510,7 +5516,8 @@ def make_po_facts(data: dict) -> dict:
     projects = load_projects()
     po_of = {(p.get("poRoomId") or "").strip(): p for p in projects if (p.get("poRoomId") or "").strip()}
     if rid:
-        room = chatroom.get_room(rid, public=False)
+        # Read only: the indexed room, not a copy of every message (#228).
+        room = chatroom.get_room(rid, public=False, copy_room=False)
         if room is None:
             return {"kind": "gone"}
         agents_in = chatroom.agent_participants(room)
@@ -6446,7 +6453,7 @@ def backfill_task_numbers() -> dict:
         po_rooms = _po_room_ids(projects)
         ids = {p["id"] for p in projects}
         by_project: dict[str, list[dict]] = {}
-        for room in chatroom.list_rooms():
+        for room in chatroom.list_rooms(copy_rooms=False):
             pid = _task_project(room, links, projects)
             if pid in ids and room["id"] not in po_rooms:
                 by_project.setdefault(pid, []).append(room)
@@ -6486,19 +6493,11 @@ def _task_index() -> list[dict]:
     """Every room's numbering and the little a reference shows of it, reading
     again only the room files that changed since the last call."""
     out: list[dict] = []
-    try:
-        paths = list(chatroom.ROOMS_DIR.glob("room-*.json"))
-    except OSError:
-        return out
     seen = set()
-    for p in paths:
-        rid = p.stem
+    for name, sig in chatroom.ROOM_FILES.files().items():
+        rid = filetable.as_path(name).stem
         seen.add(rid)
-        try:
-            st = p.stat()
-            mtime = (st.st_mtime_ns, st.st_size)
-        except OSError:
-            continue
+        mtime = (sig[2], sig[1])
         with _TASK_INDEX_LOCK:
             hit = _TASK_INDEX.get(rid)
         if hit and hit[0] == mtime:
@@ -7747,6 +7746,30 @@ def _main_line(root: str) -> str:
     return "HEAD"
 
 
+_GIT_LOG_CACHE: dict[tuple, tuple[str, str]] = {}   # (root, ref, n) → (tip, git log's output)
+
+
+def _main_line_tip(root: str) -> tuple[str, str]:
+    """_main_line and the commit it is at, in one git call ("" tip: unknown,
+    not cached). A Changes tab opened again asks git once, not four times."""
+    out = _git_out(root, "for-each-ref", "--format=%(refname)%09%(objectname)%09%(symref:short)",
+                   "refs/heads/main", "refs/heads/master", "refs/remotes/origin/HEAD")
+    tips, remote_head = {}, ""
+    for line in out.splitlines():
+        name, _, rest = line.partition("\t")
+        sha, _, sym = rest.partition("\t")
+        tips[name] = sha
+        if name == "refs/remotes/origin/HEAD":
+            remote_head = sym
+    if tips.get("refs/heads/main"):
+        return "main", tips["refs/heads/main"]
+    if tips.get("refs/heads/master"):
+        return "master", tips["refs/heads/master"]
+    if remote_head and tips.get("refs/remotes/origin/HEAD"):
+        return remote_head, tips["refs/remotes/origin/HEAD"]
+    return _main_line(root), ""
+
+
 def _project_task_index(project_id: str) -> dict:
     """What names a task of a project in a commit: its branch and its title,
     each to its number."""
@@ -7754,7 +7777,7 @@ def _project_task_index(project_id: str) -> dict:
     if not project_id:
         return idx
     links = load_session_projects()
-    for room in chatroom.list_rooms():
+    for room in chatroom.list_rooms(copy_rooms=False):
         no = room.get("no")
         br = ((room.get("workspace") or {}).get("branch") or "").strip()
         if _room_project_id(room["id"], room, links) != project_id:
@@ -7807,20 +7830,30 @@ def git_log(path: str, n: int = 30, project_id: str = "") -> tuple[int, dict]:
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "commits": []}
     n = max(1, min(GIT_LOG_MAX, n))
-    ref = _main_line(root)
-    try:
-        # --raw for each file's status, --numstat for its lines added and removed.
-        out = _run(["git", "-c", "core.quotepath=false", "-C", root, "log", ref, "--first-parent",
-                    "-n", str(n), "--diff-merges=first-parent", "--raw", "--numstat", "--no-renames",
-                    "--format=%x1e%H%x1f%ct%x1f%an%x1f%s"],
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
-    except (OSError, subprocess.SubprocessError) as e:
-        return 500, {"error": f"git_log_failed: {e}"}
-    if out.returncode != 0:
-        return 200, {"root": root, "isGit": True, "ref": ref, "commits": []}
+    ref, tip = _main_line_tip(root)
+    key = (root, ref, n)
+    hit = _GIT_LOG_CACHE.get(key)
+    if tip and hit and hit[0] == tip:
+        stdout = hit[1]      # the main line has not moved: its log is the same (#228)
+    else:
+        try:
+            # --raw for each file's status, --numstat for its lines added and removed.
+            out = _run(["git", "-c", "core.quotepath=false", "-C", root, "log", ref, "--first-parent",
+                        "-n", str(n), "--diff-merges=first-parent", "--raw", "--numstat", "--no-renames",
+                        "--format=%x1e%H%x1f%ct%x1f%an%x1f%s"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        except (OSError, subprocess.SubprocessError) as e:
+            return 500, {"error": f"git_log_failed: {e}"}
+        if out.returncode != 0:
+            return 200, {"root": root, "isGit": True, "ref": ref, "commits": []}
+        stdout = out.stdout or ""
+        if tip:
+            _GIT_LOG_CACHE[key] = (tip, stdout)
+            while len(_GIT_LOG_CACHE) > 64:
+                _GIT_LOG_CACHE.pop(next(iter(_GIT_LOG_CACHE)))
     idx = _project_task_index(project_id)
     commits = []
-    for rec in (out.stdout or "").split("\x1e"):
+    for rec in stdout.split("\x1e"):
         if not rec.strip():
             continue
         head, _, body = rec.partition("\n")
@@ -8855,7 +8888,7 @@ def attach_search_rooms(results: list[dict], rooms: list[dict] | None = None) ->
     room id the page could not show a single task among the matches."""
     if rooms is None:
         try:
-            rooms = chatroom.list_rooms()
+            rooms = chatroom.list_rooms(copy_rooms=False)
         except Exception:
             rooms = []
     room_of: dict[str, str] = {}
@@ -10164,14 +10197,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     `n` bounds the task rows (_cut_task_rows); the sessions no task holds have
     their own window (SESSION_LIST_OWN_CAP), so tasks never push one out."""
     live_by_sid = {s["sessionId"]: s for s in load_live()}
-    rows = []
-    for jsonl in PROJ_DIR.glob("*/*.jsonl"):
-        try:
-            mtime = jsonl.stat().st_mtime
-        except OSError:
-            continue
-        rows.append((mtime, jsonl))
-    rows.sort(reverse=True)
+    # Newest first; a live session's transcript is looked at on every load.
+    rows = filetable.newest_first(CLAUDE_FILES.files(hot_names=live_by_sid))
     if progress_key:
         progress.set_progress(progress_key, "Reading session files", 0, len(rows))
     labels = load_labels()
