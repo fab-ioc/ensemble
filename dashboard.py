@@ -9985,6 +9985,100 @@ def _gzip_cached(etag: str, data: bytes) -> bytes:
     return hit
 
 
+# ---- HTTP/1.1 (#231) ----------------------------------------------------------
+# The hub speaks HTTP/1.1: a browser keeps its connections open between
+# requests, and revalidates an answer it holds (If-None-Match) by itself, which
+# it does not do for an HTTP/1.0 answer to a URL with a query string.
+KEEPALIVE_IDLE_S = 15           # a connection with no request for this long is closed
+BODY_DRAIN_MAX = 1 << 20        # an unread request body up to this is read before the answer
+BODY_DRAIN_S = 10
+# GET answers a browser may keep and revalidate get an ETag and "no-cache".
+# These stay "no-store", never written to a browser's cache: settings, the
+# hub's own paths, a file's contents and what the agents' hooks said.
+NO_STORE_GETS = {"/api/settings", "/api/config", "/api/health", "/api/agent/hooks",
+                 "/api/ws/file", "/api/file", "/api/file/download"}
+NO_STORE_GET_PREFIXES = ("/api/history/", "/api/file-at/")
+# A poll that names the copy it holds (a cursor) asks a URL of its own each
+# time: nothing to revalidate, and every answer would only fill the cache.
+DELTA_PARAMS = ("since", "cursor", "before", "after")
+
+
+def weak_etag(body: bytes) -> str:
+    """The ETag of an answer whose plain and gzip forms share one (weak)."""
+    return 'W/"' + hashlib.sha1(body).hexdigest()[:24] + '"'
+
+
+def etag_matches(header: str | None, etag: str) -> bool:
+    """Whether an If-None-Match header names ``etag`` (weak comparison, a
+    list of tags or *)."""
+    if not header or not etag:
+        return False
+    want = etag[2:] if etag.startswith("W/") else etag
+    for tag in header.split(","):
+        tag = tag.strip()
+        if tag == "*" or (tag[2:] if tag.startswith("W/") else tag) == want:
+            return True
+    return False
+
+
+class _RequestBody:
+    """A request's body as a handler reads it: never past its Content-Length,
+    so the next request on a kept-alive connection starts where it should.
+    ``left`` is what has not been read yet."""
+
+    def __init__(self, raw, length: int):
+        self.raw, self.left = raw, length
+
+    def read(self, n=-1):
+        if n is None or n < 0 or n > self.left:
+            n = self.left
+        if n <= 0:
+            return b""
+        data = self.raw.read(n)
+        self.left -= len(data)
+        return data
+
+    def readline(self, limit=-1):
+        if limit is None or limit < 0 or limit > self.left:
+            limit = self.left
+        if limit <= 0:
+            return b""
+        data = self.raw.readline(limit)
+        self.left -= len(data)
+        return data
+
+    def readinto(self, b):
+        data = self.read(len(b))
+        b[:len(data)] = data
+        return len(data)
+
+    def drain(self) -> bool:
+        """Read and drop the rest; whether all of it came."""
+        while self.left > 0:
+            if not self.read(min(self.left, 1 << 16)):
+                return False
+        return True
+
+    def __getattr__(self, name):
+        return getattr(self.raw, name)
+
+
+class _HeadSink:
+    """The body of an answer to HEAD: written by the GET handler, never sent."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def write(self, data) -> int:
+        return len(data)
+
+    def flush(self) -> None:
+        self.raw.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.raw, name)
+
+
 # ---- The polled lists as deltas (#228) ----------------------------------------
 # A list row carries what the list and the open task's panel show. The seat
 # allocation's full record (every usage window, the pace settings: 650 KB of a
@@ -13452,6 +13546,14 @@ def install_agent_skills() -> list[str]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Kept-alive connections and revalidated answers (#231). Every answer
+    # says where it ends (Content-Length), or closes the connection after it.
+    protocol_version = "HTTP/1.1"
+    _waiting = False            # between requests: the idle timeout applies
+    _rsp = None                 # the answer being written: what its headers said
+    close_connection = False    # set per request by handle(); tests drive handlers without it
+    command = ""                # likewise set by parse_request
+
     def setup(self):
         super().setup()
         # Disable Nagle's algorithm — tiny terminal-keystroke packets must go out
@@ -13460,11 +13562,141 @@ class Handler(BaseHTTPRequestHandler):
             self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError:
             pass
+        held = getattr(self.server, "open_handlers", None)
+        if held is not None:
+            held.add(self)
+
+    def finish(self):
+        held = getattr(self.server, "open_handlers", None)
+        if held is not None:
+            held.discard(self)
+        super().finish()
+
+    # --- HTTP/1.1 framing (#231) ------------------------------------------------
+    def handle_one_request(self):
+        self._waiting, self._responded = True, False
+        try:
+            self.connection.settimeout(KEEPALIVE_IDLE_S)
+        except OSError:
+            pass
+        try:
+            super().handle_one_request()
+        except OSError:
+            # The browser dropped a connection it kept: nothing was asked.
+            if not self._waiting:
+                raise
+            self.close_connection = True
+        finally:
+            self._waiting = False
+            body = self.rfile
+            if isinstance(body, _RequestBody):
+                self.rfile = body.raw
+                if body.left:
+                    self.close_connection = True    # the next request would start mid-body
+            if isinstance(self.wfile, _HeadSink):
+                self.wfile = self.wfile.raw
+            if not self._responded:
+                self.close_connection = True        # nothing says where an answer ends
+            if getattr(self.server, "stopping", False):
+                self.close_connection = True
+
+    def parse_request(self):
+        self._waiting = False
+        try:
+            self.connection.settimeout(None)
+        except OSError:
+            pass
+        if not super().parse_request():
+            return False
+        raw = self.headers.get("Content-Length")
+        try:
+            length = int(raw) if raw is not None else 0
+        except ValueError:
+            length = -1
+        if length < 0 or self.headers.get("Transfer-Encoding"):
+            # A body this hub cannot measure: read as before, then closed.
+            self.close_connection = True
+            return True
+        self.rfile = _RequestBody(self.rfile, length)
+        return True
+
+    def send_response_only(self, code, message=None):
+        if code >= 200:
+            self._responded = True
+            self._rsp = {"code": code, "length": False, "cache": False, "conn": False}
+            body = self.rfile
+            if isinstance(body, _RequestBody) and body.left:
+                # Answered without reading the body (a refusal): read it first,
+                # so the next request on this connection is not taken from it.
+                drained = False
+                if body.left <= BODY_DRAIN_MAX:
+                    try:
+                        self.connection.settimeout(BODY_DRAIN_S)
+                        drained = body.drain()
+                    except OSError:
+                        pass
+                    finally:
+                        try:
+                            self.connection.settimeout(None)
+                        except OSError:
+                            pass
+                if not drained:
+                    self.close_connection = True
+        super().send_response_only(code, message)
+
+    def send_error(self, code, message=None, explain=None):
+        # The stdlib closes the connection after every error, not knowing
+        # whether the body was read; once a request was read whole (its body
+        # measured, see parse_request) an error keeps it like any answer.
+        self._error_keeps = isinstance(self.rfile, _RequestBody)
+        try:
+            super().send_error(code, message, explain)
+        finally:
+            self._error_keeps = False
+
+    def send_header(self, keyword, value):
+        if (getattr(self, "_error_keeps", False) and keyword.lower() == "connection"
+                and str(value).lower() == "close"):
+            return
+        r = self._rsp
+        if r is not None:
+            k = keyword.lower()
+            if k in ("content-length", "transfer-encoding"):
+                r["length"] = True
+            elif k == "cache-control":
+                r["cache"] = True
+            elif k == "connection":
+                r["conn"] = True
+        super().send_header(keyword, value)
+
+    def end_headers(self):
+        r, self._rsp = self._rsp, None
+        if r is not None:
+            if not r["length"] and r["code"] not in (204, 304) and self.command != "HEAD":
+                self.close_connection = True        # the body ends with the connection
+            if not r["cache"]:
+                super().send_header("Cache-Control", "no-store")
+            if getattr(self.server, "stopping", False):
+                self.close_connection = True
+            if self.close_connection and not r["conn"]:
+                super().send_header("Connection", "close")
+        super().end_headers()
+        if r is not None and self.command == "HEAD":
+            self.wfile = _HeadSink(self.wfile)
+
+    def do_HEAD(self):
+        if urlparse(self.path).path == "/api/pty/stream":
+            self._send_json(405, {"error": "stream_only"})
+            return
+        self.do_GET()
 
     def log_message(self, fmt, *args):
         # Guard against a missing/closed stderr — under pythonw.exe (Windows,
         # windowless) there is no console stream, and writes would raise.
         if not sys.stderr:
+            return
+        # A kept-alive connection closed after KEEPALIVE_IDLE_S: not an error.
+        if self._waiting and fmt.startswith("Request timed out"):
             return
         # Every tool call of every Claude agent posts a hook: not worth a line each.
         if str(getattr(self, "path", "")).split("?", 1)[0] == "/api/agent/hook":
@@ -13685,7 +13917,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
         u = urlparse(self.path)
         p = u.path
-        if self.command == "GET":
+        if self.command in ("GET", "HEAD"):
             if p in STARTUP_OPEN_PATHS or p.startswith("/static/"):
                 return False
             # Any GET of a page, not only a navigation: the service worker's
@@ -13829,16 +14061,27 @@ class Handler(BaseHTTPRequestHandler):
         the bytes of an answer cost more than compressing it."""
         return not self._is_local()
 
-    def _send_json(self, code: int, payload, *, conditional: bool = False):
-        """``conditional``: with an ETag; a page that asks with it (If-None-Match)
-        gets a bodiless 304 while the answer has not changed."""
+    def _revalidates(self, code: int) -> bool:
+        """Whether this answer goes with an ETag and "no-cache" (#231): a GET's
+        200, not one of NO_STORE_GETS, not a poll that names the copy it holds.
+        The browser keeps it and asks again with If-None-Match; an unchanged
+        answer is then a bodiless 304."""
+        if code != 200 or self.command not in ("GET", "HEAD"):
+            return False
+        u = urlparse(self.path)
+        if u.path in NO_STORE_GETS or u.path.startswith(NO_STORE_GET_PREFIXES):
+            return False
+        q = parse_qs(u.query)
+        return not any(q.get(k) for k in DELTA_PARAMS)
+
+    def _send_json(self, code: int, payload):
         body = json.dumps(payload).encode()
-        etag = '"' + hashlib.sha1(body).hexdigest() + '"' if conditional else ""
-        if etag and self.headers.get("If-None-Match") == etag:
+        etag = weak_etag(body) if self._revalidates(code) else ""
+        if etag and etag_matches(self.headers.get("If-None-Match"), etag):
             self.send_response(304)
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Vary", "Accept-Encoding")
             self.end_headers()
             return
         # Not to a browser on this machine: over loopback the bytes cost
@@ -13849,10 +14092,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache" if etag else "no-store")
+        if gz or etag:
+            self.send_header("Vary", "Accept-Encoding")
         if gz:
             self.send_header("Content-Encoding", "gzip")
-            self.send_header("Vary", "Accept-Encoding")
         if etag:
             self.send_header("ETag", etag)
         self.end_headers()
@@ -13876,8 +14120,8 @@ class Handler(BaseHTTPRequestHandler):
         # time, so a merged page shows on the next load as before.
         # Only the hub's own files: a workspace file is sent as before.
         own = bool(page) or _is_own_static(path)
-        etag = '"' + hashlib.sha1(data).hexdigest()[:24] + '"' if own else ""
-        if etag and self.headers.get("If-None-Match") == etag:
+        etag = weak_etag(data) if own else ""
+        if etag and etag_matches(self.headers.get("If-None-Match"), etag):
             self.send_response(304)
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "no-cache")
@@ -13886,7 +14130,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("X-Ensemble-Stamp", stamp)
             for name, value in extra_headers:
                 self.send_header(name, value)
-            self.send_header("Content-Length", "0")
             self.end_headers()
             return
         gz = own and self._gzip_ok(data) and not content_type.startswith("image/png")
@@ -14244,7 +14487,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, project_documents(proj), conditional=True)
+            self._send_json(200, project_documents(proj))
             return
         if p == "/api/projects/po-candidates":
             # ?project=<id>, or ?path=&kind=&name= for the project New project
@@ -14263,7 +14506,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, read_roadmap(proj), conditional=True)
+            self._send_json(200, read_roadmap(proj))
             return
         if p == "/api/dir":
             q = parse_qs(u.query)
@@ -14319,7 +14562,7 @@ class Handler(BaseHTTPRequestHandler):
             n = q.get("n", ["30"])[0]
             self._send_json(*git_log((q.get("path", [""])[0] or "").strip(),
                                      int(n) if n.isdigit() else 30,
-                                     (q.get("project", [""])[0] or "").strip()), conditional=True)
+                                     (q.get("project", [""])[0] or "").strip()))
             return
         if p == "/api/git/roots":
             q = parse_qs(u.query)
@@ -14412,7 +14655,7 @@ class Handler(BaseHTTPRequestHandler):
                 room_window(out, win)
             out["revision"] = revision
             out["statusSig"] = status_sig
-            self._send_json(200, out, conditional=True)
+            self._send_json(200, out)
             return
         if p == "/api/task/ref":
             # The task a number in a chat names, for the chip that shows it:
@@ -16304,7 +16547,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "keep-alive")
+        # No length: the stream ends with its connection (end_headers says so).
         self.end_headers()
         try:
             from_offset = int(self.headers.get("Last-Event-ID", ""))
@@ -18448,10 +18691,48 @@ class HubServer(ThreadingHTTPServer):
     # exclusively there; elsewhere SO_REUSEADDR never lets two listeners share.
     allow_reuse_address = sys.platform != "win32"
 
+    def __init__(self, *args, **kwargs):
+        # The connections being served (#231): a kept-alive one waits for its
+        # next request on a thread of its own until KEEPALIVE_IDLE_S.
+        self.open_handlers: set = set()
+        self.stopping = False
+        super().__init__(*args, **kwargs)
+
     def server_bind(self):
         if sys.platform == "win32":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
+
+    def close_idle(self) -> int:
+        """Close the kept-alive connections that wait for a request (their
+        threads end); one being answered closes after its answer. How many."""
+        n = 0
+        for h in list(self.open_handlers):
+            if h._waiting:
+                try:
+                    h.connection.shutdown(socket.SHUT_RDWR)
+                    n += 1
+                except OSError:
+                    pass
+                if sys.platform == "win32":
+                    # A shutdown does not wake a recv waiting on Windows; closing
+                    # the handle does. The handler's reader keeps the socket
+                    # object open (its makefile), so close the handle itself.
+                    try:
+                        socket.close(h.connection.detach())
+                    except OSError:
+                        pass
+        return n
+
+    def shutdown(self):
+        self.stopping = True
+        super().shutdown()
+        self.close_idle()
+
+    def server_close(self):
+        self.stopping = True
+        super().server_close()
+        self.close_idle()
 
 
 class PortTaken(OSError):
