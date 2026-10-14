@@ -96,8 +96,11 @@ function Nap([int]$s) { Start-Sleep -Seconds $s; RenewLease }
 trap {
   try { L "HELPER ERROR - $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber)); stopped here" } catch {}
   try { DropLease } catch {}
+  # Past the stop the hub is down: start it the plain way rather than leave it so.
+  if ($hubStopped) { try { L "HUB DOWN after the error; starting it directly"; StartDirect } catch {} }
   exit 1
 }
+$hubStopped = $false
 
 $t0 = Get-Date
 $head0 = Head
@@ -222,6 +225,7 @@ $victims = @(HubProcs $port) + @(Get-CimInstance Win32_Process -Filter "ProcessI
 foreach ($v in ($victims | Where-Object { $_ } | Sort-Object ProcessId -Unique)) {
   try { Stop-Process -Id $v.ProcessId -Force -ErrorAction Stop; L "stopped pid $($v.ProcessId)" } catch { L "stop pid $($v.ProcessId): $_" }
 }
+$hubStopped = $true
 $free = $false
 $oldGone = $false
 for ($i = 0; $i -lt 15 -and -not ($free -and $oldGone); $i++) {

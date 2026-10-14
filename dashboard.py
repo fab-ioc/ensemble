@@ -11382,14 +11382,22 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
     after its preflight and the old hub ran on for 19 minutes): say so, let
     go of the lease and tell whoever asked (a drain's restart: the drain
     sees the lease go and tells its requesters itself)."""
+    def ours() -> bool:
+        # Read twice on nothing: a renewal truncates the file before it writes.
+        got = _current_restart_lease()
+        if not got:
+            time.sleep(0.2)
+            got = _current_restart_lease()
+        return got == lease
+
     while True:
         time.sleep(RESTART_HELPER_POLL_S)
-        if _current_restart_lease() != lease:
+        if not ours():
             return                              # finished, or gave up and said so
         if BACKEND.process_alive(pid):
             continue
         time.sleep(RESTART_HELPER_POLL_S)       # its last lease write may be landing
-        if _current_restart_lease() != lease:
+        if not ours():
             return
         why = (f"the restart helper (pid {pid}) ended without finishing; its last step was "
                f"“{_last_helper_step()}”. This hub was not restarted and still runs "

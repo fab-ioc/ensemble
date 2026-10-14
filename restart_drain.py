@@ -842,6 +842,8 @@ def _preflight_why() -> str:
     except OSError:
         lines = []
     for ln in reversed(lines[-200:]):
+        if "=== plain restart" in ln:
+            break                               # an earlier restart's lines
         if "preflight failed" in ln.lower():
             return "the preflight failed: " + ln.split("] ", 1)[-1][:300]
         if "HELPER GONE - " in ln:

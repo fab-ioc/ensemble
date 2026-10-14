@@ -36,6 +36,20 @@ SCRIPT = (ROOT / "restart-hub.ps1").read_bytes()
 
 
 class HelperScript(unittest.TestCase):
+    def test_an_error_after_the_stop_starts_the_hub_again(self):
+        # ED-227: the trap that logs an error ending the script starts the
+        # hub directly once it was stopped, so a throw never leaves it down.
+        text = SCRIPT.decode("ascii").replace("\r\n", "\n")
+        trap = text[text.index("\ntrap {"):]
+        trap = trap[:trap.index("\n}\n")]
+        self.assertIn("if ($hubStopped) {", trap)
+        self.assertLess(trap.index("StartDirect"), len(trap))
+        self.assertIn("exit 1", trap)
+        self.assertIn("$hubStopped = $false", text[:text.index("# --- 1. Preflight")])
+        stop = text.index("foreach ($v in ($victims")
+        self.assertLess(stop, text.index("$hubStopped = $true"))
+        self.assertLess(text.index("$hubStopped = $true"), text.index("function StartDirect"))
+
     def test_no_git_that_changes_the_checkout(self):
         text = SCRIPT.decode("ascii")
         gits = re.findall(r"\bgit\b[^\n]*", text)
