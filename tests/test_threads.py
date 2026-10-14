@@ -361,7 +361,8 @@ class Endpoints(tp._World):
         self.assertEqual(http_get(f"/api/room/channel?id={self.rid}&sig={ch['sig']}")[1], {"sig": ch["sig"], "same": True})
         status, th = http_get(f"/api/room/thread?id={self.rid}&t=P1")
         self.assertEqual([i["mid"] for i in th["items"]], ["sid-1:0", "sid-1:1"])
-        self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&mid=sid-1:3")[1]["thread"]["id"], "team:activity")
+        self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&mid=sid-1:3")[1]["thread"]["id"], "m:sid-1:3",
+                         "Reply in thread on Team activity starts a thread of its own")
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
 
     def test_team_activity_unread_points_to_latest_po_reply_not_hub_traffic(self):
@@ -372,7 +373,8 @@ class Endpoints(tp._World):
         ch = http_get(f"/api/room/channel?id={self.rid}")[1]
         self.assertEqual(ch["activity"]["unread"], 1)
         self.assertEqual(ch["activity"]["lastMid"], "sid-1:4")
-        self.assertIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
+        # Team activity is in the channel itself (#234): never in the Threads list.
+        self.assertNotIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
         self.assertEqual(ch["activity"]["lastWho"], "po")
 
     def test_a_reply_from_a_thread_names_its_point_and_new_replies_are_unread(self):

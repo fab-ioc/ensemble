@@ -46,7 +46,7 @@ async function main() {
   const measure = `(() => {
     const b=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom};};
     const rid=${JSON.stringify(A.task)};
-    const panel=PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el || PD.rt.get('chat:'+rid)?.el || null;
+    const panel=PD.rt.get('chat:'+rid)?.el || null;
     const host=PD.els['po-chat'];
     const frame=panel?.querySelector('iframe.dp-session') || (document.body.classList.contains('detail-open') && host.querySelector('#detail-panel iframe.dp-session')) || host.querySelector('#po-panel iframe.po-session:not([hidden])');
     const d=frame?.contentDocument, list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
@@ -56,7 +56,7 @@ async function main() {
       listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null, emptyBelow:cb&&pb?pb.b-(fb?.y||0)-cb.b:null,
       scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
       ratio:lb&&pb?lb.h/pb.h:null, bodyHeight:d?.body?.getBoundingClientRect().height,
-      frameClientHeight:frame?.clientHeight, mode:panel?(panel.classList.contains('pd-thread')?'thread':PD.dock.viewMode('chat:'+rid)):'middle',
+      frameClientHeight:frame?.clientHeight, mode:panel?PD.dock.viewMode('chat:'+rid):'middle',
       frameInnerHeight:frame?.contentWindow?.innerHeight, frameVisualHeight:frame?.contentWindow?.visualViewport?.height,
       activityFlex:host.querySelector('#detail-panel .dp-pane[data-pane="activity"]') && getComputedStyle(host.querySelector('#detail-panel .dp-pane[data-pane="activity"]')).flexGrow,
       parentStyle:parent?getComputedStyle(parent).height:null};
@@ -167,36 +167,32 @@ async function main() {
     await untilT(`typeof ALL_ROWS!=='undefined' && !!PROJECTS`);
     await evT(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
     await untilT(`!!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
-    const threadId=await evT(`(() => { const t=PD.els['po-chat'].querySelector('iframe.po-session').contentDocument.querySelector('#msgs .thr-open[data-thr]').dataset.thr;
+    // A PO chat's thread opens beside its channel, in the chat's own page (#234):
+    // the side column, its frame and the thread's box fill the chat's height.
+    const sideMeasure = `(() => {
+      const b=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom};};
+      const po=PD.els['po-chat'].querySelector('iframe.po-session'), pd=po?.contentDocument;
+      const side=pd?.getElementById('thr-side'), f=pd?.getElementById('ts-frame'), d=f?.contentDocument;
+      const list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
+      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(pd?.querySelector('main'));
+      return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null,
+        emptyBelow:cb&&sb&&fb?sb.b-fb.y-cb.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
+        scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
+        ratio:lb&&sb?lb.h/sb.h:null, layer:!!side?.classList.contains('layer')};
+    })()`;
+    const sideReady = `!!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.getElementById('ts-frame')?.contentDocument?.querySelector('#msgs .msg[data-mid]')`;
+    await evT(`(() => { const t=PD.els['po-chat'].querySelector('iframe.po-session').contentDocument.querySelector('#msgs .thr-open[data-thr]').dataset.thr;
       if(!pdThreadOpen(${JSON.stringify(A.po)},t))throw Error('thread not opened'); return t; })()`);
-    await untilT(`!!PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
-    await sleep(400); out.threadLaptop=await evT(measure);
-    out.threadShotLaptop=await evT(`(async()=>{const b=await PD.dock.screenshot('thread:'+${JSON.stringify(A.po)});const i=await createImageBitmap(b);return {width:i.width,height:i.height,bytes:b.size};})()`);
+    await untilT(sideReady);
+    await sleep(400); out.threadLaptop=await evT(sideMeasure);
     await send('Emulation.setDeviceMetricsOverride',{width:1728,height:2000,deviceScaleFactor:1,mobile:false},ts);
-    await sleep(300); out.threadTall=await evT(measure);
-    await evT(`PD.dock.toggleMax('thread:'+${JSON.stringify(A.po)}); 0`);
-    await sleep(250); out.threadMax=await evT(measure);
-    await evT(`PD.dock.restoreMax(); 0`);
-    await sleep(250); out.threadMaxRestored=await evT(measure);
+    await sleep(300); out.threadTall=await evT(sideMeasure);
+    // A reload shows it again by itself (kept per browser and chat).
     await evT('window.__chatHeightBeforeReload = 1; 0');
     await send('Page.reload',{},ts);
-    await untilT(`!window.__chatHeightBeforeReload && typeof window.pdThreadOpen === 'function' && !!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
-    await evT(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(threadId)}); 0`);
-    await untilT(`!!PD.rt.get('thread:'+${JSON.stringify(A.po)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
-    await sleep(400); out.threadReload=await evT(measure);
-    await evT(`PD.dock.setViewMode('thread:'+${JSON.stringify(A.po)},'window'); 0`);
-    await untilT(`!!PD.dock.popWindow('thread:'+${JSON.stringify(A.po)})`);
-    let tp;
-    for(let i=0;i<30;i++){const t=await send('Target.getTargets');tp=t.targetInfos.find(x=>x.type==='page'&&x.targetId!==targetId&&x.targetId!==popId&&x.targetId!==mainPop&&x.targetId!==tt&&x.url.startsWith(A.base))?.targetId;if(tp)break;await sleep(100);}
-    if(!tp)throw Error('thread popup target absent');
-    const {sessionId:tps}=await send('Target.attachToTarget',{targetId:tp,flatten:true});
-    await send('Emulation.setDeviceMetricsOverride',{width:625,height:2000,deviceScaleFactor:1,mobile:false},tps);
-    await sleep(400); out.threadPopTall=await evT(measure);
-    out.threadShotPop=await evT(`(async()=>{const b=await PD.dock.screenshot('thread:'+${JSON.stringify(A.po)});const i=await createImageBitmap(b);return {width:i.width,height:i.height,bytes:b.size};})()`);
-    await send('Emulation.setDeviceMetricsOverride',{width:625,height:900,deviceScaleFactor:1,mobile:false},tps);
-    await sleep(300); out.threadPopShort=await evT(measure);
-    await evT(`PD.dock.setViewMode('thread:'+${JSON.stringify(A.po)},'pinned'); 0`);
-    await sleep(300); out.threadRestored=await evT(measure);
+    await untilT(`!window.__chatHeightBeforeReload && !!PD.dock`);
+    await untilT(sideReady);
+    await sleep(400); out.threadReload=await evT(sideMeasure);
     console.log(JSON.stringify(out));
   } finally { await send('Browser.close').catch(()=>{}); ch.kill(); }
 }
@@ -274,8 +270,7 @@ class ChatHeight(unittest.TestCase):
             'bottomGap': round(g['bottomGap']) if g['bottomGap'] is not None else None,
             'emptyBelow': round(g['emptyBelow']) if g['emptyBelow'] is not None else None,
             'ratio': round(g['ratio'], 3) if g['ratio'] is not None else None,
-        } for name, g in cls.got.items() if name not in ('tools', 'threadShotLaptop', 'threadShotPop')}, indent=2))
-        print('thread screenshots CDP: '+json.dumps({name:cls.got[name] for name in ('threadShotLaptop', 'threadShotPop')}))
+        } for name, g in cls.got.items() if name != 'tools'}, indent=2))
         print('tool panels CDP: '+json.dumps(cls.got['tools']))
 
     @classmethod
@@ -284,15 +279,17 @@ class ChatHeight(unittest.TestCase):
 
     def test_chat_fills_height(self):
         for name, g in self.got.items():
-            if name in ('tools', 'threadShotLaptop', 'threadShotPop'):
+            if name == 'tools':
                 continue
             with self.subTest(name=name):
                 self.assertLessEqual(g['emptyBelow'], 16, g)
                 self.assertGreaterEqual(g['ratio'], .7, g)
-        for name in ('threadLaptop', 'threadTall', 'threadMax', 'threadMaxRestored', 'threadReload', 'threadPopTall', 'threadPopShort'):
-            self.assertLessEqual(self.got[name]['scrollRemaining'], 16, (name, self.got[name]))
-        for name, panel in (('threadShotLaptop', 'threadLaptop'), ('threadShotPop', 'threadPopTall')):
-            self.assertGreaterEqual(self.got[name]['height'], self.got[panel]['panel']['h'] - 2)
+        for name in ('threadLaptop', 'threadTall', 'threadReload'):
+            with self.subTest(name=name):
+                g = self.got[name]
+                self.assertLessEqual(g['scrollRemaining'], 16, g)
+                self.assertFalse(g['layer'], 'a laptop: the thread beside the chat')
+                self.assertGreaterEqual(g['sideOfMain'], .99, g)
 
     def test_live_chat_grows_with_flex(self):
         self.assertEqual(self.got['middleStaleTall']['activityFlex'], '1')
