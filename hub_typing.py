@@ -106,17 +106,17 @@ def _record(sess, ok: bool, cause: str) -> None:
     with _LOCK:
         c = _COUNTS.setdefault(key, {"ok": 0, "refused": 0, "last": 0.0, "lastCause": ""})
         c["last"] = now
+        if ok or cause == "gone":
+            # A line that arrived, or an agent no longer there: either way
+            # no alarm names it any more.
+            _FAILS.pop(key, None)
+            cleared = [(n, a, not ok) for n, a in _settle(lambda k: k == key)]
         if ok:
             c["ok"] += 1
-            _FAILS.pop(key, None)
-            for name, alarm in list(_ALARMS.items()):
-                if alarm["agents"].pop(key, None) is not None and not alarm["agents"]:
-                    cleared.append((name, _ALARMS.pop(name)))
         else:
             c["refused"] += 1
             c["lastCause"] = cause or "refused"
-            if cause in NOT_FAULTS or not idle:
-                return
+        if not ok and cause not in NOT_FAULTS and idle:
             cause = cause if cause in CAUSES else "refused"
             fails = _FAILS.setdefault(key, deque())
             fails.append((now, cause))
@@ -135,8 +135,36 @@ def _record(sess, ok: bool, cause: str) -> None:
                     raised = (cause, alarm, False)  # the same cause, another task
     if raised:
         _raise(*raised, key, idle_fails=len(_FAILS.get(key) or ()))
-    for name, alarm in cleared:
-        _clear(name, alarm)
+    for name, alarm, ended in cleared:
+        _clear(name, alarm, ended)
+
+
+def _settle(gone) -> list:
+    """Take the agents ``gone(key)`` names out of every alarm (under _LOCK);
+    the alarms left with none, removed and returned for _clear."""
+    cleared = []
+    for name, alarm in list(_ALARMS.items()):
+        for k in [k for k in alarm["agents"] if gone(k)]:
+            alarm["agents"].pop(k)
+            if not alarm["agents"]:
+                cleared.append((name, _ALARMS.pop(name)))
+    return cleared
+
+
+def forget_room(rid: str) -> None:
+    """A task stopped or deleted: its agents leave every alarm (an alarm
+    left naming nobody clears) and their refusals are dropped."""
+    if not rid:
+        return
+    try:
+        with _LOCK:
+            for k in [k for k in _FAILS if k[0] == rid]:
+                _FAILS.pop(k)
+            cleared = _settle(lambda k: k[0] == rid)
+        for name, alarm in cleared:
+            _clear(name, alarm, ended=True)
+    except Exception as exc:    # noqa: BLE001 — a Stop never fails on it
+        print(f"[hub-typing] {rid}: not forgotten: {exc!r}", flush=True)
 
 
 def _who(key: tuple) -> str:
@@ -182,15 +210,19 @@ def _raise(cause: str, alarm: dict, first: bool, key: tuple, idle_fails: int = 0
         _d.chatroom.post_notice(po, _d.digest.SENDER, text, {"noticeKind": NOTICE_KIND})
 
 
-def _clear(cause: str, alarm: dict) -> None:
+def _clear(cause: str, alarm: dict, ended: bool = False) -> None:
+    """``ended``: the last agent it named stopped (or its task went), so
+    nothing showed the lines arriving again."""
     why = CAUSES.get(cause, cause)
-    log(f"cleared ({cause}): hub lines reach every agent it named again "
-        f"(raised {time.strftime('%H:%M', time.localtime(alarm['since']))})")
+    raised = time.strftime('%H:%M', time.localtime(alarm['since']))
+    if ended:
+        log(f"cleared ({cause}): the agents it named are no longer running (raised {raised})")
+        text = f"The hub-typing alarm is over: the agent it named is no longer running (it was: {why})."
+    else:
+        log(f"cleared ({cause}): hub lines reach every agent it named again (raised {raised})")
+        text = f"Hub lines reach the agents again (it was: {why})."
     for po in alarm.get("told") or ():
-        _d.chatroom.post_notice(
-            po, _d.digest.SENDER,
-            f"Hub lines reach the agents again (it was: {why}).",
-            {"noticeKind": NOTICE_KIND})
+        _d.chatroom.post_notice(po, _d.digest.SENDER, text, {"noticeKind": NOTICE_KIND})
 
 
 def by_room() -> dict[str, dict]:

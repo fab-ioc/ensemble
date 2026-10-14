@@ -30,9 +30,11 @@ from test_send_resumes import FakePty
 class _Boot(_Hub):
     def setUp(self):
         super().setUp()
-        p = mock.patch.object(running_rooms, "_ACTIVE", True)
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(running_rooms, "_ACTIVE", True),
+                  mock.patch.object(dashboard, "_BOOT_HOST_ROOMS", None),
+                  mock.patch.object(dashboard, "_RESTART_RESTORING", False)):
+            p.start()
+            self.addCleanup(p.stop)
         os.environ.pop("ENSEMBLE_PTY_PREFLIGHT", None)
 
     def record(self) -> dict:
@@ -116,7 +118,37 @@ class BootRestore(_Boot):
         running_rooms.refresh()
         out = self.boot()                       # the host kept it running
         self.assertEqual((out["rooms"], self.starts), ([], 0))
-        self.assertIn("the PTY host kept 1 of the 1", out["note"])
+        self.assertIn("the PTY host ran 1 room(s) when the hub started", out["note"])
+
+    def test_a_room_started_before_the_restore_does_not_stop_the_others(self):
+        """A replayed page action or a message starts one recorded room in the
+        hub's first seconds: the host was empty at attach, so the others still
+        come back (review 1, finding 1)."""
+        early, other = self.room(title="early"), self.room(title="other")
+        self.running(early, "claude", "idle")
+        self.running(other, "claude", "idle")
+        running_rooms.refresh()
+        self.hub_stops()
+        dashboard.note_host_at_attach()             # main: the host is empty
+        self.running(early, "claude", "idle")       # started by a message meanwhile
+        out = self.boot()
+        self.assertEqual([r["roomId"] for r in out["rooms"]], [other])
+        self.assertEqual(self.starts, 1)
+        self.assertIn(f"1 recorded room(s) already started again since the hub came up: "
+                      f"left as they are ({early})", self.log())
+        self.assertEqual(sorted(self.record()), sorted([early, other]))
+
+    def test_a_host_that_outlived_the_hub_is_a_warm_start(self):
+        """At attach the host runs a room the (stale) record does not name:
+        the host did not die, so nothing is brought back."""
+        rec, unrec = self.room(title="recorded"), self.room(title="unrecorded")
+        self.running(rec, "claude", "idle")
+        running_rooms.refresh()
+        self.hub_stops()
+        self.running(unrec, "claude", "idle")
+        dashboard.note_host_at_attach()
+        out = self.boot()
+        self.assertEqual((out["rooms"], self.starts), ([], 0))
 
     def test_a_restart_under_way_is_left_to_its_helper(self):
         rid = self.room()
@@ -127,6 +159,18 @@ class BootRestore(_Boot):
         out = self.boot()
         self.assertEqual((out["rooms"], self.starts), ([], 0))
         self.assertIn("a restart is under way", self.log())
+
+    def test_a_restart_whose_restore_began_is_left_to_it(self):
+        """The lease aged past RESTART_BUSY_S and the snapshot was already
+        renamed by /api/restart/restore: still not brought back twice."""
+        rid = self.room()
+        self.running(rid, "claude", "idle")
+        running_rooms.refresh()
+        self.hub_stops()
+        with mock.patch.object(dashboard, "_RESTART_RESTORING", True):
+            out = self.boot()
+        self.assertEqual((out["rooms"], self.starts), ([], 0))
+        self.assertIn("the restart's restore is bringing the rooms back", self.log())
 
     def test_the_first_start_with_this_code_only_starts_the_record(self):
         rid = self.room()
@@ -251,6 +295,25 @@ class TypingAlarm(_Hub):
         self.assertIn("cleared (busy)",
                       (self.dir / "logs" / "hub-typing.log").read_text(encoding="utf-8"))
 
+    def test_an_alarm_on_an_agent_that_is_gone_clears(self):
+        self.refuse("busy", n=3)
+        self.assertIn(self.task, hub_typing.by_room())
+        self.refuse("gone")                             # its terminal ended
+        self.assertEqual(hub_typing.by_room(), {})
+        self.assertIn("no longer running", self.notices(self.po)[-1])
+        self.assertIn("cleared (busy): the agents it named are no longer running",
+                      (self.dir / "logs" / "hub-typing.log").read_text(encoding="utf-8"))
+
+    def test_a_stopped_task_leaves_the_alarm(self):
+        self.refuse("own-seat")
+        self.assertIn(self.task, hub_typing.by_room())
+        with mock.patch.object(dashboard.ptyrun, "kill", lambda pid: True), \
+                mock.patch.object(dashboard.ptyrun, "forget_death", lambda pid: None, create=True):
+            dashboard.stop_task(self.task)
+        self.assertEqual(hub_typing.by_room(), {})
+        self.assertEqual(hub_typing.view()["alarms"], [])
+        self.assertIn("no longer running", self.notices(self.po)[-1])
+
     def test_old_refusals_age_out(self):
         self.refuse("busy", n=2)
         real = time.time
@@ -310,6 +373,13 @@ class PreflightTypingCheck(unittest.TestCase):
             out = dashboard.preflight_typing_check(timeout=30)
         self.assertFalse(out["ok"])
         self.assertIn("two session objects", out["detail"])
+
+    def test_a_seat_check_that_refuses_the_own_terminal_fails_it(self):
+        # The lookup itself is sound; the seat match is what regressed.
+        with mock.patch.object(dashboard.rotation, "_pty", lambda part: None):
+            out = dashboard.preflight_typing_check(timeout=30)
+        self.assertFalse(out["ok"])
+        self.assertIn("seat check refuses the agent's own terminal (own-seat)", out["detail"])
 
 
 if __name__ == "__main__":

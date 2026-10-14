@@ -123,6 +123,7 @@ $pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec) 
 # the hub typed was refused, and nothing said so).
 if ($pfOk) {
   $typed = $false
+  RenewLease   # /api/sessions may have taken most of the lease
   try {
     $bytes = [Text.Encoding]::UTF8.GetBytes((@{ lease = [string]$cfg.leaseId } | ConvertTo-Json -Compress))
     $r = Invoke-WebRequest -Uri "http://127.0.0.1:$pf/api/restart/typing-check" -Method POST -ContentType 'application/json; charset=utf-8' -Body $bytes -UseBasicParsing -TimeoutSec 60

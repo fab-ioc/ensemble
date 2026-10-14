@@ -11183,9 +11183,11 @@ _TYPING_CHECK_CHILD = (
 def preflight_typing_check(timeout: float = 20.0) -> dict:
     """The restart preflight's check that a hub line arrives (P190): start a
     throwaway agent on this hub's PTY host (a preflight hub has its own), look
-    it up again the way every hub line does, type TYPING_CHECK_LINE through
-    ``_type_input`` and see it echoed. The 10-13 fault (a fresh session object
-    per lookup, so every hub line was refused) fails it. {ok, detail}."""
+    it up again and run the seat check every hub line passes
+    (``rotation.seat_refusal``, for a participant seated on it), type
+    TYPING_CHECK_LINE through ``_type_input`` and see it echoed. The 10-13
+    fault (a fresh session object per lookup, so every hub line was refused)
+    fails it. {ok, detail}."""
     if app_version.packaged():
         return {"ok": True, "detail": "skipped: the built app has no interpreter to run"}
     sess = None
@@ -11209,6 +11211,12 @@ def preflight_typing_check(timeout: float = 20.0) -> dict:
         if ptyrun.get(sess.id) is not again:
             return {"ok": False, "detail": "two lookups of one terminal gave two session objects: "
                                            "what the hub marks on a session is lost between them"}
+        # No room is made (the preflight shares the live state): the check
+        # gets a participant seated on the throwaway terminal.
+        cause = rotation.seat_refusal({"ptyId": sess.id}, again)
+        if cause:
+            return {"ok": False, "detail": f"the seat check refuses the agent's own terminal "
+                                           f"({cause}): every hub line would be refused"}
         if not _type_input(again, TYPING_CHECK_LINE, record=False):
             return {"ok": False, "detail": "the hub refused to type into the throwaway agent"}
         if not wait_for("got:" + TYPING_CHECK_LINE, end):
@@ -11224,6 +11232,19 @@ def preflight_typing_check(timeout: float = 20.0) -> dict:
 
 BOOT_RESTORE_DELAY_S = 5.0      # after the listeners are up: the page answers first
 BOOT_RESTORE_GAP_S = 2.0        # between rooms, so 27 rooms do not start at once
+# The rooms the PTY host ran when this hub attached to it (main, before any
+# listener): whether this start is cold is decided there, not BOOT_RESTORE_DELAY_S
+# later, when a replayed page action or a message may already have started one.
+_BOOT_HOST_ROOMS: set | None = None
+# A restart's own restore (/api/restart/restore) began in this process: it
+# brings the rooms back, even when its lease has aged past RESTART_BUSY_S.
+_RESTART_RESTORING = False
+
+
+def note_host_at_attach() -> None:
+    global _BOOT_HOST_ROOMS
+    _BOOT_HOST_ROOMS = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions()
+                        if i.get("alive")} - {None, ""}
 
 
 def restore_after_boot(handler=None, gap: float | None = None) -> dict:
@@ -11246,17 +11267,28 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
     if not entries:
         return done("no room was running", log=False)
     live = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions() if i.get("alive")}
-    kept = [e["roomId"] for e in entries if e["roomId"] in live]
-    if kept:
-        return done(f"the PTY host kept {len(kept)} of the {len(entries)} running room(s): "
+    at_attach = (live if _BOOT_HOST_ROOMS is None else _BOOT_HOST_ROOMS) - {None, ""}
+    if at_attach:
+        # The host outlived the last hub (a hub-only restart): nothing died.
+        return done(f"the PTY host ran {len(at_attach)} room(s) when the hub started: "
                     f"nothing to bring back", log=False)
     lease = _restart_lease_path()
     if lease.exists() and 0 <= _restart_lease_age(lease) < RESTART_BUSY_S:
         return done("a restart is under way: its helper brings the rooms back")
+    if _RESTART_RESTORING:
+        return done("the restart's restore is bringing the rooms back: left to it")
     snap = _read_restart_snapshot()
     if (snap and snap.get("hubPid") != os.getpid()
             and 0 <= time.time() - float(snap.get("at") or 0) <= RESTART_SNAPSHOT_MAX_AGE_S):
         return done("a restart's snapshot waits for its restore: left to the helper")
+    # Started since the hub came up (a replayed action, a message): left as is.
+    early = [e["roomId"] for e in entries if e["roomId"] in live]
+    if early:
+        _restart_log(f"boot: {len(early)} recorded room(s) already started again since the "
+                     f"hub came up: left as they are ({', '.join(early)})")
+        entries = [e for e in entries if e["roomId"] not in live]
+        if not entries:
+            return done("every recorded room is already running again", log=False)
     gap = BOOT_RESTORE_GAP_S if gap is None else gap
     age = time.time() - float(running_rooms.read().get("at") or 0)
     _restart_log(f"boot: the PTY host runs none of the {len(entries)} room(s) that were "
@@ -12814,6 +12846,7 @@ def stop_task(rid: str) -> bool:
     chatroom.patch_room(rid, stoppedAt=time.time())
     chatroom.clear_exits(rid)
     running_rooms.note_stopped(rid)     # stopped on purpose: a cold start leaves it
+    hub_typing.forget_room(rid)         # and no hub-typing alarm names it any more
     return True
 
 
@@ -15110,6 +15143,8 @@ class Handler(BaseHTTPRequestHandler):
             _restart_log(f"restore: {note}; nothing done")
             restart_drain.not_restarted(lease)
             return {"ok": True, "rooms": [], "note": note}
+        global _RESTART_RESTORING
+        _RESTART_RESTORING = True       # the boot restore leaves the rooms to this
         path = _restart_snapshot_path()
         with contextlib.suppress(OSError):
             os.replace(path, path.with_name("restart-snapshot.last.json"))
@@ -16510,6 +16545,7 @@ class Handler(BaseHTTPRequestHandler):
             ok = ptyrun.kill(pty_id)
             if ok and rid and not _room_has_live_pty(rid):
                 running_rooms.note_stopped(rid)     # its last terminal ended on purpose
+                hub_typing.forget_room(rid)
             self._send_json(200, {"ok": ok})
             return
         if p in ("/api/update", "/api/restart") and str(data.get("when") or "safe").lower() != "now":
@@ -17809,6 +17845,7 @@ def main():
     # The PTY owner is outside the hub's process tree. A new web process
     # attaches to the same host and the same terminal IDs after a restart.
     attach_pty_host()
+    note_host_at_attach()        # cold or warm start, before anything can launch
     running_rooms.activate()     # this process keeps the running-rooms record
 
     cleaned = cleanup_rename_artifacts()

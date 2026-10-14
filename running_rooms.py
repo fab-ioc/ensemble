@@ -16,7 +16,11 @@ POs absent after a reboot). This file is that note, kept all the time:
   is the machine going down or the host dying, which is exactly what has to be
   brought back. A room whose terminals ended on their own while other rooms
   kept running, seen so on two heartbeats in a row, leaves (as a hub restart
-  would not bring it back either); an agent of a team likewise turns stopped;
+  would not bring it back either); an agent of a team likewise turns stopped.
+  A room whose agent ended on its own while no other room ran (``/exit`` in
+  the only running task) cannot be told from a crash, so it stays and comes
+  back at the next cold start: bringing back one room too many is cheap,
+  losing one is what P190 is about;
 * ``boot_entries`` is what a hub that starts with none of them running brings
   back, in the snapshot's shape (``dashboard._bring_back_rooms``).
 
