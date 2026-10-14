@@ -90,7 +90,7 @@ const registeredProjects = () => PROJECTS.projects.filter(p => p.registered);
 const isPhone = () => PHONE;
 // The PO screen's panels, loaded: a project with a PO is a Dock with the PO chat among them.
 var PD = { failed: '', lib: {} };
-const pdReveal = id => calls.push('reveal:' + id), pdPointsFrame = () => {}, pdPaintPoints = () => {}, pdPlaceChat = () => {}, pdTaskWanted = () => false;
+const pdReveal = id => calls.push('reveal:' + id), pdPointsFrame = () => {}, pdPaintPoints = () => {}, pdPlaceChat = () => {}, pdTaskWanted = () => false, pdThreadFollow = () => {};
 const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
   querySelectorAll() { return this.kids; }, querySelector() { return null; }, appendChild(k) { this.kids.push(k); }, remove() {} });
 let head, frames, panel;

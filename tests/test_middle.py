@@ -534,7 +534,7 @@ class TheMiddle(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def full_height(self, g, what):
+    def full_height(self, g, what, fills=False):
         self.assertTrue(g["mid"], what)
         # The middle is the conversation's Dock stack (#148): its title bar sits right under the page bar.
         self.assertLessEqual(abs(g["panel"]["y"] - g["top"]), 1, f"{what}: starts under the bar")
@@ -545,7 +545,14 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(g["panel"]["r"], g["vw"] - g["strip"] - g["flyW"], f"{what}: to the tool strip (or the tool open beside it)")
         self.assertEqual(g["strip"], 44 if g["open"] or g["front"] else 0, f"{what}: the strip is 44px")
         self.assertIsNotNone(g["chat"], f"{what}: the conversation shows")
-        self.assertLessEqual(g["chat"]["w"], g["convW"] + 1, f"{what}: a column")
+        if fills:
+            # A chat fills its panel (#236), inside the panel's own padding; only Spec and Details prose keeps the column.
+            pw = g["panel"]["r"] - g["panel"]["x"]
+            self.assertGreater(g["chat"]["w"], g["convW"] + 1, f"{what}: no column")
+            self.assertLessEqual(g["chat"]["w"], pw, f"{what}: inside the panel")
+            self.assertGreaterEqual(g["chat"]["w"], pw - 64, f"{what}: the panel's width")
+        else:
+            self.assertLessEqual(g["chat"]["w"], g["convW"] + 1, f"{what}: a column")
         left, right = g["chat"]["x"] - g["panel"]["x"], g["panel"]["r"] - g["chat"]["r"]
         self.assertLessEqual(abs(left - right), 2, f"{what}: centred")
         self.assertGreater(g["chat"]["h"], g["vh"] * 0.6, f"{what}: the chat takes the height")
@@ -556,8 +563,8 @@ class TheMiddle(unittest.TestCase):
     def test_the_po_and_a_task_open_full_height_in_the_middle(self):
         for w in (1280, 1440, 1728):
             with self.subTest(w=w):
-                self.full_height(self.got[f"po{w}"], f"PO at {w}")
-                self.full_height(self.got[f"task{w}"], f"task at {w}")
+                self.full_height(self.got[f"po{w}"], f"PO at {w}", fills=True)
+                self.full_height(self.got[f"task{w}"], f"task at {w}", fills=True)
 
     def test_the_breadcrumb_names_where_you_are(self):
         po, task = self.got["po1440"], self.got["task1440"]
@@ -595,7 +602,7 @@ class TheMiddle(unittest.TestCase):
         g = self.got["poRow"]
         self.assertFalse(g["open"])
         self.assertEqual(g["front"], "po-chat")
-        self.full_height(g, "PO from its row")
+        self.full_height(g, "PO from its row", fills=True)
 
     def test_a_desktop_opens_on_the_last_conversation(self):
         g = self.got["bootLast"]
