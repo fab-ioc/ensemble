@@ -132,6 +132,8 @@ import board_brief
 # background so no request path ever waits on the network.
 import usage
 import warm_cache
+import gzip
+import listdelta
 # Go to file and search in files for a Workspace; a search runs as a child.
 import workspace_search
 import global_search
@@ -7200,7 +7202,7 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "lastAgent", "attention", "allocation", "reviewAllocations", "no", "firstWords", "after", "onReady")
+            "attention", "no", "firstWords", "after", "onReady")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)
@@ -9902,6 +9904,130 @@ def _points_discard(rid: str, ids: list, key: str) -> None:
         points.discard(rid, ids, key)
     except Exception as e:  # noqa: BLE001
         print(f"[points] {rid}: not taken back: {e!r}", flush=True)
+
+
+# Answers this big or bigger go compressed to a browser that takes gzip (#228).
+GZIP_MIN = 8192
+_GZIP_FILES: dict[str, bytes] = {}      # a page file's ETag -> its gzip, made once
+_GZIP_FILES_LOCK = threading.Lock()
+
+
+def _is_own_static(path: Path) -> bool:
+    try:
+        return Path(path).resolve().is_relative_to((STATIC_DIR / "static").resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _gzip_cached(etag: str, data: bytes) -> bytes:
+    with _GZIP_FILES_LOCK:
+        hit = _GZIP_FILES.get(etag)
+    if hit is None:
+        hit = gzip.compress(data, compresslevel=6, mtime=0)
+        with _GZIP_FILES_LOCK:
+            if len(_GZIP_FILES) > 64:
+                _GZIP_FILES.clear()
+            _GZIP_FILES[etag] = hit
+    return hit
+
+
+# ---- The polled lists as deltas (#228) ----------------------------------------
+# A list row carries what the list and the open task's panel show. The seat
+# allocation's full record (every usage window, the pace settings: 650 KB of a
+# 1.5 MB list) is the room's; the panel shows only its notes.
+def _slim_allocation(a):
+    if not isinstance(a, dict):
+        return a
+    out = {k: a[k] for k in ("changed", "reason") if k in a}
+    h = a.get("handover")
+    if isinstance(h, dict):
+        out["handover"] = {k: h[k] for k in ("n", "reason", "changed", "alarm", "switchFailed") if k in h}
+    return out
+
+
+def slim_list_row(r: dict) -> dict:
+    if "allocation" not in r and "reviewAllocations" not in r:
+        return r
+    out = dict(r)
+    if "allocation" in out:
+        out["allocation"] = _slim_allocation(out["allocation"])
+    if "reviewAllocations" in out:
+        notes = [a for a in (out["reviewAllocations"] or []) if isinstance(a, dict) and a.get("changed") and a.get("reason")]
+        out["reviewAllocations"] = [{"changed": True, "reason": notes[-1]["reason"]}] if notes else []
+    return out
+
+
+SESSIONS_FEEDS: dict[int, listdelta.Feed] = {}
+PROJECTS_FEED = listdelta.Feed("id", "sessions", "sessionId")
+_SLIM_MEMO: dict[int, tuple] = {}
+_SLIM_LOCK = threading.Lock()
+
+
+def sessions_feed_answer(n: int, since: str) -> dict:
+    """/api/sessions?since=: the list's slim rows as a delta. The slim copy is
+    made once per cached load, so polls inside the cache's life hash nothing."""
+    load_sessions(n)
+    hit = _SESS_CACHE.get(n)
+    src = hit[2] if hit else []
+    with _SLIM_LOCK:
+        memo = _SLIM_MEMO.get(n)
+        if memo and memo[0] is src:
+            rows = memo[1]
+        else:
+            rows = [slim_list_row(r) for r in src]
+            _SLIM_MEMO[n] = (src, rows)
+        feed = SESSIONS_FEEDS.setdefault(n, listdelta.Feed("sessionId"))
+    return feed.answer(rows, since)
+
+
+# ---- A chat's latest messages, older ones on scroll (#228) ----------------------
+# A PO's room is 4-10 MB and thousands of messages; the chat shows the last
+# screenfuls. &n= asks for the latest n, &before=<mid> for the page before.
+# Without &n= the room is sent whole, as before (scripts, tests, the board).
+ROOM_WINDOW_MAX = 1000
+
+
+def room_window_size(q: dict) -> int:
+    try:
+        n = int(q.get("n", ["0"])[0] or 0)
+    except ValueError:
+        return 0
+    return max(0, min(n, ROOM_WINDOW_MAX))
+
+
+def _pm_summary(m: dict) -> dict:
+    """What a link to a PO message needs to name it (session.html pmName),
+    without its text."""
+    return {k: m[k] for k in ("id", "kind", "name", "ts", "from", "fromProject", "fromProjectName",
+                              "poKind", "to", "toProject", "toProjectName") if k in m}
+
+
+def room_window(out: dict, n: int) -> dict:
+    """Keep the latest ``n`` messages of an annotated room. What the page
+    needs from the older ones comes as a summary: how many there are, the PO
+    messages a link may name."""
+    every = out.get("messages") or []
+    shown = every[-n:] if n else []
+    rest = every[:len(every) - len(shown)]
+    out["messages"] = shown
+    out["window"] = {"total": len(every), "before": len(rest)}
+    if rest:
+        out["pmIndex"] = [_pm_summary(m) for m in rest if m.get("kind") == "pomsg" and m.get("id")]
+    return out
+
+
+def room_older_page(messages: list, before: str, n: int, upto: str, revision: str) -> dict:
+    """The ``n`` messages before ``before`` (or from ``upto``, with a few
+    before it for context), oldest first, and how many are older still."""
+    idx = next((i for i, m in enumerate(messages) if m.get("id") == before), None)
+    if idx is None:
+        return {"messages": [], "before": 0, "missing": True, "revision": revision}
+    start = max(0, idx - (n or 100))
+    if upto:
+        j = next((i for i, m in enumerate(messages[:idx]) if m.get("id") == upto), None)
+        if j is not None:
+            start = min(start, max(0, j - 5))
+    return {"messages": messages[start:idx], "before": start, "revision": revision}
 
 
 def load_sessions(n: int = 200) -> list[dict]:
@@ -13242,6 +13368,17 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return False
 
+    def _gzip_ok(self, body: bytes) -> bool:
+        """Whether to send ``body`` compressed (#228): a large answer to a
+        browser that takes gzip. On a phone over the tailnet the 1 MB lists
+        were seconds of transfer; compressing one costs milliseconds."""
+        return len(body) >= GZIP_MIN and "gzip" in (self.headers.get("Accept-Encoding") or "")
+
+    def _far_reader(self) -> bool:
+        """A reader not on this machine (a phone, tailscale serve), for whom
+        the bytes of an answer cost more than compressing it."""
+        return not self._is_local()
+
     def _send_json(self, code: int, payload, *, conditional: bool = False):
         body = json.dumps(payload).encode()
         etag = '"' + hashlib.sha1(body).hexdigest() + '"' if conditional else ""
@@ -13252,10 +13389,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        # Not to a browser on this machine: over loopback the bytes cost
+        # nothing, and compressing a 10 MB room costs ~300 ms (measured).
+        gz = self._gzip_ok(body) and self._far_reader()
+        if gz:
+            body = gzip.compress(body, compresslevel=1, mtime=0)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         if etag:
             self.send_header("ETag", etag)
         self.end_headers()
@@ -13273,10 +13418,37 @@ class Handler(BaseHTTPRequestHandler):
         stamp = page_stamp(page, data) if page else ""
         if page and page.endswith(".html"):
             data = stamp_page(data)
+        # A page or script is asked again on every load, but sent again only
+        # when it changed (#228): each chat panel is a 470 KB page of its own,
+        # and the board 1.1 MB. "no-cache" still makes the browser ask every
+        # time, so a merged page shows on the next load as before.
+        # Only the hub's own files: a workspace file is sent as before.
+        own = bool(page) or _is_own_static(path)
+        etag = '"' + hashlib.sha1(data).hexdigest()[:24] + '"' if own else ""
+        if etag and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Vary", "Accept-Encoding")
+            if stamp:
+                self.send_header("X-Ensemble-Stamp", stamp)
+            for name, value in extra_headers:
+                self.send_header(name, value)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        gz = own and self._gzip_ok(data) and not content_type.startswith("image/png")
+        if gz:
+            data = _gzip_cached(etag, data)
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache" if own else "no-store")
+        if etag:
+            self.send_header("ETag", etag)
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         if stamp:
             self.send_header("X-Ensemble-Stamp", stamp)
         for name, value in extra_headers:
@@ -13411,8 +13583,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, load_recent(n))
             return
         if p == "/api/sessions":
-            q = parse_qs(u.query)
+            # Blank values kept: the page's first poll is "since=" (#228).
+            q = parse_qs(u.query, keep_blank_values=True)
             n = int(q.get("n", ["200"])[0])
+            if "since" in q:
+                # The page's poll (#228): slim rows, and only what changed
+                # since the answer it holds (listdelta).
+                self._send_json(200, sessions_feed_answer(n, q["since"][0]))
+                return
             self._send_json(200, load_sessions(n))
             return
         if p == "/api/room/past":
@@ -13580,7 +13758,19 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, agents.agents_info())
             return
         if p == "/api/projects":
-            self._send_json(200, build_projects())
+            q = parse_qs(u.query, keep_blank_values=True)
+            if q.get("fields", [""])[0] == "po":
+                # A chat page asks only which rooms are POs (#228): not the
+                # project grouping, which carries every project's rows.
+                self._send_json(200, {"projects": [{"id": x["id"], "poRoomId": x.get("poRoomId", "")}
+                                                   for x in load_projects()]})
+                return
+            built = build_projects()
+            if "since" in q:
+                self._send_json(200, {**PROJECTS_FEED.answer(built["projects"], q["since"][0]),
+                                      "summary": built["summary"]})
+                return
+            self._send_json(200, built)
             return
         if p == "/api/projects/documents":
             # ?project=<id>: its Documents folder and docs/ in its code,
@@ -13701,6 +13891,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"id": room.get("id", rid), "spec": spec,
                                       "specRev": _spec_rev(spec)})
                 return
+            win = room_window_size(q)
+            older = q.get("before", [""])[0]
+            if older:
+                # &before=<mid>&n=: the page of messages before the oldest one the
+                # chat holds, as it scrolls up (#228); &upto=<mid>: down to that one.
+                self._send_json(200, room_older_page(room.get("messages") or [], older, win,
+                                                     q.get("upto", [""])[0], revision))
+                return
             out = _annotate_room_liveness(room, with_points=True)
             # The composer needs turn state, not recent terminal output: a
             # quiet long-running shell is still interruptible.
@@ -13725,13 +13923,17 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(200, {"refetch": True, "revision": revision})
                     return
                 revision, ids = change
-                messages = [m for m in out.pop("messages", []) if m.get("id") in ids]
+                every = out.pop("messages", [])
+                messages = [m for m in every if m.get("id") in ids]
                 same_status = q.get("statusSig", [""])[0] == status_sig
                 self._send_json(200, {"delta": True, "revision": revision,
                                       "statusSig": status_sig, "statusSame": same_status,
                                       **({} if same_status else {"room": out}),
+                                      **({"total": len(every)} if win else {}),
                                       "messages": messages})
                 return
+            if win:
+                room_window(out, win)
             out["revision"] = revision
             out["statusSig"] = status_sig
             self._send_json(200, out, conditional=True)

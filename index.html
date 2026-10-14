@@ -5463,10 +5463,12 @@ async function loadConversation(r) {
   try {
     let items, specText = typeof r.spec === 'string' ? r.spec : '';
     if (r.headless && r.roomId) {
-      const room = await api('/api/room?id=' + encodeURIComponent(r.roomId));
+      // The latest messages, not a PO's megabytes (#228).
+      const room = await api('/api/room?id=' + encodeURIComponent(r.roomId) + '&n=200');
       items = (room.messages || []).map(m => ({ who: m.from, to: m.to, text: m.text, ts: m.ts }));
       // The polled row carries only specRev; the room read here has the text.
-      if (typeof room.spec === 'string') specText = room.spec;
+      // Its start not shown, the spec is not put above what is.
+      if (typeof room.spec === 'string' && !(room.window && room.window.before)) specText = room.spec;
     } else {
       const d = await api('/api/session/' + encodeURIComponent(sid) + '?full=1');
       items = (d.turns || []).map(t => ({ who: t.role || 'user', text: t.text, ts: t.timestamp }));
@@ -7920,7 +7922,7 @@ function registeredProjects() { return (PROJECTS && PROJECTS.projects || []).fil
 async function refreshProjects() {
   const progressKey = 'projects:' + Date.now();
   globalThis.EnsembleProgress?.set(progressKey, {phase: 'Loading projects'});
-  try { PROJECTS = await api('/api/projects'); _projFailed = false; _projTs = Date.now(); }
+  try { PROJECTS = await apiProjects(); _projFailed = false; _projTs = Date.now(); }
   catch (e) { _projFailed = true; }
   finally { globalThis.EnsembleProgress?.clear(progressKey); }
 }
@@ -16381,6 +16383,53 @@ async function runTaskAction(rid, act) {
 
 let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
 
+// The polled lists as deltas (#228): the hub sends only what changed since the
+// answer the page holds (listdelta.py). The page keeps the hub's rows as they
+// came and hands the rest of the page fresh copies, as a whole answer did, so
+// nothing the page does to a row outlives the poll.
+function listFeed(key, sub = '', subKey = 'sessionId') {
+  const f = { rev: '', rows: [] };
+  const url = (base, since) => base + (base.includes('?') ? '&' : '?') + 'since=' + encodeURIComponent(since);
+  // Two answers in flight at once (a poll and an action's own refresh): a
+  // delta whose base the other one has moved on from is asked again whole.
+  f.get = async (base, opts, seen) => {
+    const since = f.rev;
+    let d = await api(url(base, since), opts);
+    if (!d.full && f.rev !== since) d = await api(url(base, ''), opts);
+    if (seen) seen(d);
+    return f.take(d);
+  };
+  f.take = d => {
+    if (!d || !Array.isArray(d.items)) throw new Error('bad list answer');
+    if (d.full) f.rows = d.items;
+    else {
+      const old = new Map(f.rows.map(r => [String(r[key]), r]));
+      for (const it of d.items) {
+        const k = String(it[key]);
+        if (sub && it.subDelta) {
+          const was = old.get(k);
+          const subs = new Map(((was && was[sub]) || []).map(x => [String(x[subKey]), x]));
+          for (const x of it[sub]) subs.set(String(x[subKey]), x);
+          const merged = { ...it, [sub]: (it[sub + 'Order'] || []).map(sk => subs.get(sk)).filter(Boolean) };
+          delete merged.subDelta; delete merged[sub + 'Order'];
+          old.set(k, merged);
+        } else old.set(k, it);
+      }
+      f.rows = d.order.map(k => old.get(k)).filter(Boolean);
+    }
+    f.rev = d.rev || '';
+    return structuredClone(f.rows);
+  };
+  f.reset = () => { f.rev = ''; f.rows = []; };
+  return f;
+}
+const SESS_FEED = listFeed('sessionId'), PROJ_FEED = listFeed('id', 'sessions');
+async function apiProjects() {
+  let summary = null;
+  const projects = await PROJ_FEED.get('/api/projects', undefined, d => { summary = d.summary; });
+  return { projects, summary };
+}
+
 // The task list used to be re-requested every 2.5 s whether or not the previous
 // answer had arrived. When an answer took longer than that, requests from every
 // open tab piled up on the hub and starved everything behind them — session
@@ -16406,7 +16455,7 @@ async function refresh({ now = false, until = 0 } = {}) {
   const showListProgress = !ALL_ROWS.length || now;
   if (showListProgress) globalThis.EnsembleProgress?.set('task-list', {phase: 'Loading task list'});
   try {
-    const data = await api('/api/sessions?n=300',
+    const data = await SESS_FEED.get('/api/sessions?n=300',
       until ? { signal: AbortSignal.timeout(Math.max(1, until - Date.now())) } : undefined);
     if (!now && selectInteracting()) return; // user opened a dropdown mid-fetch
     // If the mouse is inside the dashboard window, keep the existing row
@@ -16442,7 +16491,7 @@ async function refresh({ now = false, until = 0 } = {}) {
       const showProjectProgress = !PROJECTS;
       if (showProjectProgress) globalThis.EnsembleProgress?.set(projectProgressKey, {phase: 'Loading projects'});
       // Which attention item is a PO's is known only once the projects are.
-      api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); })
+      apiProjects().then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); })
         .catch(() => { if (typeof HubResilience === 'undefined' || !HubResilience.offline) { _projFailed = true; renderRows(); } })
         .finally(() => { if (showProjectProgress) globalThis.EnsembleProgress?.clear(projectProgressKey); _projInFlight = false; });
     }

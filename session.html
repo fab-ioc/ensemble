@@ -2089,6 +2089,7 @@ let PM_SIG = '';            // which ids are known, for the markdown cache
 function pmIndex(items, room) {
   PM_IDX = new Map();
   const add = m => { if (m && m.kind === 'pomsg' && m.id) PM_IDX.set(m.id, m); };
+  ((room && room.pmIndex) || []).forEach(add);   // the summary of those not loaded (#228)
   ((room && room.messages) || []).forEach(add);
   (items || []).forEach(add);
   PM_SIG = [...PM_IDX.keys()].join(',');
@@ -4871,6 +4872,65 @@ function openGroupOf(box, mid) {
   }
 }
 function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
+// ---- The latest messages, older ones as the chat scrolls up (#228): begin ----
+// A room opens with its latest ROOM_N messages (the hub's &n=); scrolled near
+// the top, or a link to a balloon not loaded, asks for the page before
+// (&before=<oldest held>, &upto=<the balloon>). What the page needs from the
+// rest, the hub sends as a summary: window.total, pmIndex.
+const ROOM_N = 150;
+let OLDER_BUSY = null;
+function roomHasOlder() { return !!(ROOM_OBJ && ROOM_OBJ.window && ROOM_OBJ.window.before > 0); }
+function loadOlder(upto = '') {
+  if (OLDER_BUSY) return OLDER_BUSY;
+  const shown = ROOM_OBJ, first = shown && (shown.messages || [])[0];
+  if (!roomHasOlder() || !first) return Promise.resolve(false);
+  OLDER_BUSY = (async () => {
+    try {
+      const d = await fetch('/api/room?id=' + encodeURIComponent(ROOM) + '&n=100&before=' + encodeURIComponent(first.id)
+        + (upto ? '&upto=' + encodeURIComponent(upto) : '')).then(r => r.json());
+      if (!d || !Array.isArray(d.messages) || d.missing) return false;
+      const add = rooms => {
+        if (!rooms || !rooms.messages || (rooms.messages[0] || {}).id !== first.id) return;
+        rooms.messages = d.messages.concat(rooms.messages);
+        rooms.window = {...(rooms.window || {}), before: d.before};
+      };
+      add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
+      if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      // The place is kept by the balloon read at the top: a page of older ones may
+      // fold the old first row into a group, so failing that, by the height added.
+      const box = $('#msgs'), place = readingPlace(box), h0 = box.scrollHeight, t0 = box.scrollTop;
+      const mid = place && (place.el.dataset.mid || (place.el.querySelector('[data-mid]') || {dataset: {}}).dataset.mid || '');
+      STICK = false;
+      if (SOLO_MODE) { if (!threadedView() && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
+      else if (ROOM_OBJ) renderMsgs(ROOM_OBJ);
+      if (!DRAW_HELD && place) {
+        const at = mid && [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid && e.offsetParent);
+        const row = at && [...box.children].find(k => k.contains(at));
+        box.scrollTop = row ? row.offsetTop - place.off : t0 + box.scrollHeight - h0;
+      }
+      return true;
+    } catch (e) { return false; }
+    finally { OLDER_BUSY = null; }
+  })();
+  return OLDER_BUSY;
+}
+// A new copy of the room (a full fetch after a restart, or a poll that crossed
+// a loadOlder) keeps the pages the reader loaded above its window.
+function carryOlder(room) {
+  const held = ROOM_OBJ && ROOM_OBJ !== room && ROOM_OBJ.messages, win = room && room.window;
+  const first = win && win.before && (room.messages || [])[0];
+  if (!held || !first) return;
+  const k = held.findIndex(m => m.id === first.id);
+  if (k <= 0) return;
+  const add = held.slice(0, k), before = Math.max(0, win.before - k);
+  const copies = [room, ROOM_LAST && ROOM_LAST.room !== room ? ROOM_LAST.room : null];
+  copies.forEach((r, i) => {
+    if (!r || !r.messages || (r.messages[0] || {}).id !== first.id) return;
+    r.messages = (i ? structuredClone(add) : add).concat(r.messages);
+    r.window = {...(r.window || {}), before};
+  });
+}
+// ---- The latest messages, older ones as the chat scrolls up: end ----
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
 let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
@@ -4951,6 +5011,11 @@ function gotoMsg(mid, part) {
     GOTO = ''; GOTO_PART = '';
     openThread('', target, passage);
     const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
+    return;
+  }
+  const held = ROOM_OBJ && ROOM_OBJ.messages || [];
+  if (!SOLO_MODE && roomHasOlder() && GOTO && !held.some(m => m.id === GOTO)) {
+    loadOlder(GOTO).then(() => landPending());
     return;
   }
   landPending();
@@ -5053,6 +5118,16 @@ function landPending() {
         if (!SOLO_WANT.loaded) return;   // not found only once the wider window is drawn
         failed = !!SOLO_WANT.failed;
       }
+      if (!failed && !SOLO_MODE && roomHasOlder() && !(ROOM_OBJ.messages || []).some(m => m.id === mid)) {
+        // Older than the messages held (#228): the pages down to it, then land.
+        loadOlder(mid).then(ok => {
+          if (ok) return landPending();
+          if (GOTO !== mid) return;
+          GOTO = '';
+          showGotoNote('The linked message was not found in this conversation.');
+        });
+        return;
+      }
       GOTO = '';
       showGotoNote(failed ? 'The linked message could not be loaded. Reload the page to try again.'
         : 'The linked message was not found in this conversation.');
@@ -5104,6 +5179,7 @@ function markLanded(el) {
 function withTaskBubble(items, spec, key) {
   const t = (spec || '').trim();
   if (!t) return items;
+  if (!SOLO_MODE && roomHasOlder()) return items;   // its start is not loaded yet (#228)
   if (items.some(m => m[key] === 'user' && (m.text || '').trim() === t)) return items;
   return [{ id: 'task', from: 'user', who: 'ensemble', to: '', text: spec,
     kind: 'brief', senderType: 'hub', senderId: 'ensemble', senderLabel: 'Hub' }].concat(items);
@@ -5316,7 +5392,7 @@ CHAT_NAMES.taskNo = rid => {
 // Whether this chat is a project's PO, and which of its agents is the PO: in a
 // solo chat its agent; in a room the one tasks report to, else its first agent.
 let PO_ROOMS = null;
-fetch('/api/projects').then(r => r.json()).then(d => {
+fetch('/api/projects?fields=po').then(r => r.json()).then(d => {
   const projects = ((d && d.projects) || []);
   PO_ROOMS = new Set(projects.map(p => p.poRoomId).filter(Boolean));
   ASK_CACHE.clear();
@@ -5501,6 +5577,10 @@ document.addEventListener('click', e => {
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
 function withHubRows(items, room) {
+  if (room === ROOM_OBJ && roomHasOlder() && items.length) {
+    const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
+    if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
+  }
   const rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks));
   if (!rows.length) return items;
   if (!items.length) return rows;
@@ -5893,7 +5973,7 @@ async function refreshRoom() {
   const ticket = ptTicket();
   const sendsGen = ++SENDS_GEN;
   try {
-    const url = '/api/room?id=' + encodeURIComponent(ROOM);
+    const url = '/api/room?id=' + encodeURIComponent(ROOM) + '&n=' + ROOM_N;
     let r = await fetch(ROOM_LAST?.revision
       ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
         + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '') : url,
@@ -5909,9 +5989,17 @@ async function refreshRoom() {
         const changed = new Map((patch.messages || []).map(m => [m.id, m]));
         const messages = old.map(m => changed.get(m.id) || m);
         const known = new Set(old.map(m => m.id));
-        for (const m of patch.messages || []) if (!known.has(m.id)) messages.push(m);
+        const win = ROOM_LAST.room.window, first = old.length ? old[0].ts || 0 : 0;
+        for (const m of patch.messages || []) {
+          if (known.has(m.id)) continue;
+          if (win && win.before && first && (m.ts || 0) < first) continue;   // not loaded yet (#228)
+          messages.push(m);
+        }
         room = {...(patch.statusSame ? ROOM_LAST.room : patch.room), messages,
           revision: patch.revision, statusSig: patch.statusSig};
+        for (const k of ['window', 'pmIndex'])
+          if (room[k] === undefined && ROOM_LAST.room[k] !== undefined) room[k] = ROOM_LAST.room[k];
+        if (room.window && patch.total != null) room.window = {...room.window, total: patch.total};
         ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig,
           room: structuredClone(room)};
       } else {
@@ -5939,6 +6027,7 @@ async function refreshRoom() {
   refreshShow(room, ticket, sendsGen);
 }
 function refreshShow(room, ticket, sendsGen) {
+  carryOlder(room);
   // A task is named by its number: "#18 · title" in the tab, #18 before the title.
   const tno = room.no ? '#' + room.no : '';
   const tabTitle = tno ? `${tno} · ${room.title}` : room.title + ' — session';
@@ -5991,7 +6080,7 @@ function refreshShow(room, ticket, sendsGen) {
   setHtml($('#info'),
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.onMention ? ' — started fresh for each review request' : ''}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}${m.onMention ? ' · on mention' : ''}</span>`).join('')
-    + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`));
+    + (soloMode ? '' : `<span>${room.window ? room.window.total : room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`));
   const showTerms = !document.body.classList.contains('term-hidden');
   $('#terms').classList.toggle('on', showTerms);
   // The header's actions: the dashboard's model (static/actions.js), so the
@@ -7814,6 +7903,7 @@ function msgsScrolled() {
   STICK = at;
   showLatest();
   readTick(true);
+  if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the
@@ -8061,21 +8151,41 @@ function updPutBack(box) {
 // Embedded in the dashboard (#150): a chat off screen (the page's tab in the
 // background, or its panel behind another tab, parked or hidden: the host's
 // own classes on the frame's ancestors, same origin) polls the room every
-// 30 s as a keep-alive; a chat panel of its own that is not being typed in
+// 60 s as a keep-alive; a chat panel of its own that is not being typed in
 // (data-chat-slow on its frame, no focus here) every 10 s; the one in use
 // every 2 s. Coming back on screen, or into focus, it polls at once.
 let TICK = 0;
 function chatOffScreen() {
   if (document.hidden) return true;
-  try { const f = window.frameElement; return !!(f && f.closest('.dk-off, .dk-parking, .pd-off')); } catch (e) { return false; }
+  try { const f = window.frameElement; if (f && f.closest('.dk-off, .dk-parking, .pd-off')) return true; } catch (e) { return false; }
+  return frameHidden() || chatOffScreen.inView === false;
 }
+// #228: a frame the dashboard keeps hidden (a cached chat behind another
+// page: display:none, or out of the viewport) used to poll every 2 s, and ten
+// of them made ~1,600 requests a minute. Hidden, it polls once a minute; the
+// moment it comes into view again it polls at once. (Whether the frame is in
+// view lives on chatOffScreen itself, so the function stands on its own.)
+try {
+  const f = window.frameElement, IO = f && window.parent.IntersectionObserver;
+  if (IO) {
+    const io = new IO(es => {
+      const vis = es[es.length - 1].isIntersecting, was = chatOffScreen.inView;
+      chatOffScreen.inView = vis;
+      if (vis && was === false && typeof tickNow === 'function') tickNow();
+    });
+    io.observe(f);
+    // The observer is the dashboard's and the frame outlives this page: a
+    // reload would leave it holding the old page, so it goes with the page.
+    window.addEventListener('pagehide', () => io.disconnect());
+  }
+} catch (e) {}
 function chatSlow() {
   try { const f = window.frameElement; return !!(f && f.hasAttribute('data-chat-slow')) && !document.hasFocus(); } catch (e) { return false; }
 }
 function tick() {
   TICK++;
   ensUpd.poll();
-  if (chatOffScreen()) { if (TICK % 15) return; }
+  if (chatOffScreen()) { if (TICK % 30) return; }
   else if (chatSlow() && TICK % 5) return;
   refresh();
 }
