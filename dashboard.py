@@ -13585,20 +13585,15 @@ class Handler(BaseHTTPRequestHandler):
         the bytes of an answer cost more than compressing it."""
         return not self._is_local()
 
-    def _send_json(self, code: int, payload, *, conditional: bool = False, revalidate: bool = False):
-        """``revalidate``: the browser keeps the answer and asks again with
-        its ETag, so an unchanged one comes back as a bodiless 304 (#228:
-        a return to a PO chat fetched 330 KB of documents, git log and
-        roadmap that had not changed). ``conditional`` alone: the page sends
-        If-None-Match itself."""
+    def _send_json(self, code: int, payload, *, conditional: bool = False):
+        """``conditional``: with an ETag; a page that asks with it (If-None-Match)
+        gets a bodiless 304 while the answer has not changed."""
         body = json.dumps(payload).encode()
-        conditional = conditional or revalidate
-        cache = "no-cache" if revalidate else "no-store"
         etag = '"' + hashlib.sha1(body).hexdigest() + '"' if conditional else ""
         if etag and self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", cache)
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -13610,7 +13605,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", cache)
+        self.send_header("Cache-Control", "no-store")
         if gz:
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Vary", "Accept-Encoding")
@@ -14002,7 +13997,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, project_documents(proj), revalidate=True)
+            self._send_json(200, project_documents(proj), conditional=True)
             return
         if p == "/api/projects/po-candidates":
             # ?project=<id>, or ?path=&kind=&name= for the project New project
@@ -14021,7 +14016,7 @@ class Handler(BaseHTTPRequestHandler):
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
                 return
-            self._send_json(200, read_roadmap(proj), revalidate=True)
+            self._send_json(200, read_roadmap(proj), conditional=True)
             return
         if p == "/api/dir":
             q = parse_qs(u.query)
@@ -14077,7 +14072,7 @@ class Handler(BaseHTTPRequestHandler):
             n = q.get("n", ["30"])[0]
             self._send_json(*git_log((q.get("path", [""])[0] or "").strip(),
                                      int(n) if n.isdigit() else 30,
-                                     (q.get("project", [""])[0] or "").strip()), revalidate=True)
+                                     (q.get("project", [""])[0] or "").strip()), conditional=True)
             return
         if p == "/api/git/roots":
             q = parse_qs(u.query)

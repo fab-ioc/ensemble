@@ -4850,6 +4850,29 @@ async function api(path, opts) {
   }
   return r.json();
 }
+// A list the hub sends with an ETag (documents, git log, roadmap): asked again
+// with it, an unchanged one is a 304 with no body and the copy held here
+// answers (#228: a return to a PO chat moved 330 KB of them). Chrome does not
+// ask with the ETag by itself: the hub speaks HTTP/1.0, and Chrome revalidates
+// no HTTP/1.0 answer to a URL with a query.
+const API_HELD = new Map();
+async function apiHeld(path) {
+  const held = API_HELD.get(path);
+  const r = await fetch(path, held ? { headers: { 'If-None-Match': held.etag } } : undefined);
+  if (r.status === 304 && held) return structuredClone(held.data);
+  if (!r.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await r.json()); } catch {}
+    throw new Error(`${r.status} ${detail || r.statusText}`);
+  }
+  const data = await r.json(), etag = r.headers.get('ETag');
+  API_HELD.delete(path);
+  if (etag) {
+    API_HELD.set(path, { etag, data: structuredClone(data) });
+    if (API_HELD.size > 40) API_HELD.delete(API_HELD.keys().next().value);
+  }
+  return data;
+}
 
 // Platform metadata from the backend (/api/platform). Fetched once before the
 // first render so the UI can adapt terminal / file-manager names and hide
@@ -9775,7 +9798,7 @@ async function wsDocsLoad(v, force) {
   if (st.inFlight || (!force && st.at && Date.now() - st.at < WS_DOCS_TTL)) return;
   st.inFlight = true;
   try {
-    st.data = await api('/api/projects/documents?project=' + encodeURIComponent(pj.id));
+    st.data = await apiHeld('/api/projects/documents?project=' + encodeURIComponent(pj.id));
     st.err = '';
   } catch (e) { st.err = (e && e.message) || 'failed'; }
   finally { st.inFlight = false; st.at = Date.now(); }
@@ -11529,7 +11552,7 @@ async function chLoadStatus() {
     const pid = box.dataset.project;
     const [st, log] = await Promise.all([
       api('/api/git/status?path=' + encodeURIComponent(CH_ROOT)),
-      api('/api/git/log?path=' + encodeURIComponent(CH_ROOT) + '&project=' + encodeURIComponent(pid) + '&n=30').catch(function (e) { return { error: e.message, commits: [] }; }),
+      apiHeld('/api/git/log?path=' + encodeURIComponent(CH_ROOT) + '&project=' + encodeURIComponent(pid) + '&n=30').catch(function (e) { return { error: e.message, commits: [] }; }),
     ]);
     if (stale()) return;
     CH_LIST = { pid, repoSel, files: st.files || [], log };
@@ -11760,7 +11783,7 @@ async function rmLoad(pid, force) {
   if (st.inFlight || (!force && Date.now() - st.polledAt < 4000)) return;
   st.inFlight = true; st.polledAt = Date.now();
   try {
-    const j = await api('/api/roadmap?project=' + encodeURIComponent(pid));
+    const j = await apiHeld('/api/roadmap?project=' + encodeURIComponent(pid));
     st.err = '';
     if (!st.editing) st.data = j;
     else if (j.version !== st.base && (!st.conflict || st.conflict.version !== j.version)) {
