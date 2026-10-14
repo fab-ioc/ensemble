@@ -146,7 +146,8 @@ class ConnectionsWhileBusy(unittest.TestCase):
         src = Path(dashboard.__file__).read_text(encoding='utf-8')
         main = src[src.index('\ndef main():'):]
         self.assertNotIn('ThreadingHTTPServer(', main)
-        self.assertEqual(main.count('HubServer(('), 4)
+        # The loopback (or wildcard) listener through _listen_or_exit (ED-230).
+        self.assertEqual(main.count('HubServer((') + main.count('_listen_or_exit('), 4)
 
 
 class FolderWithAHash(Hub):
