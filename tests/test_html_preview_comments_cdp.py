@@ -80,6 +80,7 @@ MOCKUP = """<!doctype html>
 <div class="panel">
   <p>A second panel with a short note.</p>
 </div>
+<div id="inner" style="height: 40px; overflow: auto"><p>one</p><p>two</p><p>three</p><p>four</p></div>
 </body>
 </html>
 """
@@ -150,6 +151,7 @@ async function page(c, W, H, phone) {
       await sleep(500);
     },
     key: async (key, code, vk) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: vk }, sessionId); await sleep(200); },
+    wheel: async (pt, dy) => { await c.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: pt[0], y: pt[1], deltaX: 0, deltaY: dy }, sessionId); await sleep(300); },
     type: async text => { await c.send('Input.insertText', { text }, sessionId); await sleep(100); },
     // The bar and the selection in the frame, both as the file view's window sees them.
     bar: () => ev(`(() => { const b = document.querySelector('.sel-bar'), f = document.querySelector('iframe.file');
@@ -196,6 +198,9 @@ async function desktop(c) {
   // Point at the Save button and click it.
   await p.click(await p.centre('#cmt-pick'));
   out.pickOn = await p.layer();
+  // A panel of the page that scrolls on its own still scrolls while pointing.
+  await p.wheel(await p.inFrame('#inner'), 40);
+  out.innerScrolled = await p.ev('document.querySelector("iframe.file").contentDocument.getElementById("inner").scrollTop');
   await p.move(await p.inFrame('#save'));
   out.hover = await p.layer();
   await p.shot('desktop-2-point');
@@ -219,6 +224,11 @@ async function desktop(c) {
   out.reloaded = await p.layer();
   await p.shot('desktop-4-reloaded');
   out.stored = await p.ev('Object.keys(localStorage).filter(k => k.startsWith("cd-fvc:")).length');
+  // The same file opened from another task: that task's list, empty.
+  const q = await page(c, 1728, 1117, false);
+  await q.go(A.url.replace(/room=[^&]+/, 'room=room-other'));
+  out.otherTask = await q.layer();
+  await q.close();
 
   // The file changes: the passage is gone, the button is still there.
   await p.ev(`fetch('/__edit', { method: 'POST' }).then(r => r.status)`);
@@ -265,6 +275,17 @@ async function phone(c) {
   out.composerBox = await p.ev('(() => { const r = document.querySelector(".cmt-composer").getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, vw: innerWidth }; })()');
   out.pickBtn = await p.ev('(() => { const r = document.getElementById("cmt-pick").getBoundingClientRect(); return { w: r.width, h: r.height }; })()');
   out.scrollW = await p.ev('document.documentElement.scrollWidth');
+  // A place found again is kept in this page only: storing it would set the
+  // other tabs on the file marking and storing their own place back.
+  out.reanchor = await p.ev(`(() => { const before = JSON.stringify(localStorage);
+    const c = { cid: 'zz', at: 1, start: 0, end: 3, quote: 'abc', note: 'n', view: 'preview' }; CMTS.push(c);
+    reanchored(c, { start: 5, end: 8 }); const i = CMTS.findIndex(x => x.cid === 'zz'), now = CMTS[i]; CMTS.splice(i, 1);
+    return { start: now.start, same: JSON.stringify(localStorage) === before }; })()`);
+  out.anchor = await p.ev(`[anchorText('xx the a the', { start: 0, end: 3, quote: 'the' }), anchorText('xxxx the', { start: 0, end: 3, quote: 'the' }),
+    anchorText('x a longer passage here', { start: 0, end: 20, quote: 'a longer passage here' })]`);
+  // A backtick in a class name cannot end the code span it is quoted in.
+  out.ticks = await p.ev(`(() => { CMTS.push({ cid: 'zt', at: 2, kind: 'el', note: 'n', view: 'preview', el: { tag: 'div', label: 'div.a\\\\\`b', path: 'div.a\\\\\`b', html: '<div>' } });
+    try { return buildBody(); } finally { CMTS.splice(CMTS.findIndex(x => x.cid === 'zt'), 1); } })()`);
   await p.close();
   return out;
 }
@@ -431,6 +452,7 @@ class InChrome(unittest.TestCase):
         self.assertTrue(g["afterEsc1"]["picking"], "the first Esc closes the composer")
         self.assertFalse(g["afterEsc2"]["picking"], "the second leaves Point")
         self.assertEqual(g["afterEsc2"]["pick"], "false")
+        self.assertGreater(g["innerScrolled"], 0, "the wheel reaches a panel that scrolls on its own")
 
     def test_comments_are_kept_and_marked_after_a_reload(self):
         g = self.got["desktop"]
@@ -440,6 +462,7 @@ class InChrome(unittest.TestCase):
         self.assertEqual(r["marks"], 1, "the element is outlined")
         self.assertEqual(r["highlight"], ["fixed ratio of seven to one"])
         self.assertEqual([t["lost"] for t in r["tray"]], [False, False])
+        self.assertEqual(g["otherTask"]["tray"], [], "the same path from another task is another list")
 
     def test_a_spot_gone_after_a_change_is_listed_not_lost(self):
         r = self.got["desktop"]["changed"]
@@ -485,6 +508,18 @@ class InChrome(unittest.TestCase):
         self.assertGreaterEqual(g["pickBtn"]["h"], 44)
         self.assertLessEqual(g["composerBox"]["r"], g["composerBox"]["vw"])
         self.assertLessEqual(g["scrollW"], 390)
+
+    def test_a_moved_place_is_not_stored(self):
+        g = self.got["phone"]
+        self.assertEqual(g["reanchor"], {"start": 5, "same": True})
+
+    def test_a_short_quote_found_twice_is_not_guessed(self):
+        self.assertEqual(self.got["phone"]["anchor"], [None, {"start": 5, "end": 8}, {"start": 2, "end": 23}])
+
+    def test_a_backtick_in_a_name_keeps_its_code_span(self):
+        t = self.got["phone"]["ticks"]
+        self.assertIn(r"On the element `` div.a\`b `` of the page", t)
+        self.assertIn(r"CSS path: `` div.a\`b ``", t)
 
 
     def test_a_real_mockup(self):

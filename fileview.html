@@ -1462,10 +1462,13 @@ function mdToHtml(src) {
 //
 // They are kept in this browser until the hub has them (static/comments.js,
 // one list per file): a reload, the page being made again or a second tab on
-// the same file never loses one.
+// the same file never loses one. A link's path may be relative to the task
+// that sent it (resolved with ?room= and ?cwd=), so the list is the one of
+// that path in that task and folder: the same "README.md" in two tasks is two
+// files, and two lists.
 //   text:    {cid, at, start, end, quote, note, view, line?}
 //   element: {cid, at, kind: 'el', el: {tag, label, text, hint, near, path, html, line, box}, note, view}
-const FVC = cmtStore('cd-fvc:' + encodeURIComponent(PATH_Q) + ':', c => typeof c.note === 'string'
+const FVC = cmtStore('cd-fvc:' + [ROOM, CWD, PATH_Q].map(encodeURIComponent).join(':') + ':', c => typeof c.note === 'string'
   && (c.kind === 'el' ? !!(c.el && c.el.tag) : typeof c.quote === 'string' && Number.isFinite(c.start)));
 FVC.sync();
 const CMTS = FVC.list;
@@ -1488,19 +1491,26 @@ function _mark(root, start, end, cid) {
 }
 function clearHl() { document.querySelectorAll('mark.cmt-hl').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); }); FC.clear(); }
 // Where a passage is in `full` now: where it was when its words are still
-// there, else the same words nearest to it, else null (they are gone).
+// there, else the same words nearest to it, else null (they are gone). A short
+// quote ("the") that is in the text more than once could land on another
+// passage: it is only followed when it is there once.
 function anchorText(full, c) {
   if (full.slice(c.start, c.end) === c.quote) return { start: c.start, end: c.end };
-  let best = -1;
+  let best = -1, n = 0;
   for (let i = full.indexOf(c.quote); i >= 0; i = full.indexOf(c.quote, i + 1)) {
+    n++;
     if (best < 0 || Math.abs(i - c.start) < Math.abs(best - c.start)) best = i;
   }
-  return best < 0 ? null : { start: best, end: best + c.quote.length };
+  if (best < 0 || (n > 1 && c.quote.trim().length < 12)) return null;
+  return { start: best, end: best + c.quote.length };
 }
-// A comment's place moved with its words: kept where it is now.
+// A comment's place moved with its words: kept where it is now, in this page
+// only. Saving it would tell every other tab on the file, which marks again
+// and, when its text differs, saves its own place back, without end.
 function reanchored(c, at) {
   if (at.start === c.start && at.end === c.end) return;
-  FVC.put({ ...c, start: at.start, end: at.end });
+  const i = CMTS.indexOf(c);
+  if (i >= 0) CMTS[i] = { ...c, start: at.start, end: at.end };
 }
 // A comment takes the file's words: a selection reaching past them (into the
 // header, a drag ending outside) is cut to the part in the file. In an HTML
@@ -1611,13 +1621,15 @@ function buildBody() {
   const path = new URLSearchParams(location.search).get('path') || '';
   const gone = c => LOST.has(c.cid) ? '\n_(The file changed since: this spot is not in it now.)_' : '';
   const fence = s => { let f = '```'; while (s.includes(f)) f += '`'; return f; };
-  return `## Review comments on \`${base}\` (${CMTS.length})\nFile: \`${path}\`\n\n` +
+  // A code span no backtick in its text can end early.
+  const code = s => { s = String(s); let f = '`'; while (s.includes(f)) f += '`'; return f.length > 1 || /^`|`$/.test(s) ? f + ' ' + s + ' ' + f : f + s + f; };
+  return `## Review comments on ${code(base)} (${CMTS.length})\nFile: ${code(path)}\n\n` +
     CMTS.map((c, i) => {
       if (c.kind === 'el') {
         const e = c.el, f = fence(e.html || '');
-        return `**${i + 1}.** On the element \`${e.label}\`${e.text ? ' “' + e.text + '”' : ''}${e.hint ? ' (' + e.hint + ')' : ''}${e.line ? ' at line ' + e.line : ''} of the page`
+        return `**${i + 1}.** On the element ${code(e.label)}${e.text ? ' “' + e.text + '”' : ''}${e.hint ? ' (' + e.hint + ')' : ''}${e.line ? ' at line ' + e.line : ''} of the page`
           + (e.near ? `, in “${e.near}”` : '') + `${gone(c)}\n`
-          + `CSS path: \`${e.path}\`` + (e.box ? `; on screen ${e.box.w}×${e.box.h} px at (${e.box.x}, ${e.box.y}) in a ${e.box.vw} px wide view` : '') + '\n'
+          + `CSS path: ${code(e.path)}` + (e.box ? `; on screen ${e.box.w}×${e.box.h} px at (${e.box.x}, ${e.box.y}) in a ${e.box.vw} px wide view` : '') + '\n'
           + `${f}html\n${e.html}\n${f}\n\n${c.note}`;
       }
       if (c.start < 0) return `**${i + 1}.** (on the file as a whole)\n\n${c.note}`;
@@ -1775,6 +1787,24 @@ const FC = (() => {
     };
     cat.addEventListener('pointermove', e => { if (picking && !_composerOpen) box(pickAt(e.clientX, e.clientY)); });
     cat.addEventListener('pointerdown', e => { if (picking && !_composerOpen) box(pickAt(e.clientX, e.clientY)); });
+    // The layer would take the wheel from a panel of the page that scrolls on
+    // its own: the nearest one under the pointer that can still go that way
+    // gets it. Otherwise the window scrolls, as it does by itself.
+    cat.addEventListener('wheel', e => {
+      const W = d.defaultView, k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? W.innerHeight : 1;
+      const dx = e.deltaX * k, dy = e.deltaY * k;
+      // A body whose overflow the window took (the root's is visible) is the window.
+      const rs = W.getComputedStyle(d.documentElement), bodyIsWin = rs.overflowX === 'visible' && rs.overflowY === 'visible';
+      for (let n = pickAt(e.clientX, e.clientY); n && n !== d.documentElement; n = n.parentElement) {
+        if (n === d.body && bodyIsWin) break;
+        const cs = W.getComputedStyle(n);
+        const can = (o, size, client, pos, delta) => /auto|scroll/.test(o) && size > client
+          && (delta > 0 ? pos + client < size - 1 : delta < 0 && pos > 0);
+        if (can(cs.overflowY, n.scrollHeight, n.clientHeight, n.scrollTop, dy) || can(cs.overflowX, n.scrollWidth, n.clientWidth, n.scrollLeft, dx)) {
+          e.preventDefault(); n.scrollBy(dx, dy); return;
+        }
+      }
+    }, { passive: false });
     cat.addEventListener('click', e => {
       if (!picking || _composerOpen) return;
       e.preventDefault(); e.stopPropagation();
