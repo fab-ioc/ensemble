@@ -553,9 +553,20 @@ def clear_exits(room_id: str) -> bool:
         return cleared
 
 
+def _listed_copy(room: dict) -> dict:
+    """A listed room: its own copy of everything but the messages, which come
+    as a new list of the indexed message dicts (read them, never change them).
+    Deep-copying every chat cost ~1.5 s a listing over ~580 rooms (#228)."""
+    msgs = room.get("messages")
+    out = copy.deepcopy({k: v for k, v in room.items() if k != "messages"})
+    if msgs is not None:
+        out["messages"] = list(msgs)
+    return out
+
+
 def list_rooms(*, copy_rooms: bool = True) -> list[dict]:
     """List rooms; read-only hot paths may borrow nested indexed values."""
-    out = [_public(copy.deepcopy(e["room"]) if copy_rooms else e["room"])
+    out = [_public(_listed_copy(e["room"]) if copy_rooms else e["room"])
            for e in room_index()]
     out.sort(key=lambda r: r.get("updatedAt", 0), reverse=True)
     return out
