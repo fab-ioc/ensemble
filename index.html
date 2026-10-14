@@ -9320,6 +9320,8 @@ const WS_PANELS_KEY = 'cd-ws-panels';
 // them again in their kept places (pdRuntimeRestore).
 function wsPanelsRemember() {
   const list = [...WS_VIEWS.values()].filter(v => v.panels && v.panels.size).map(v => v.ctx);
+  // Held while the hub warms (ED-227): still remembered, not dropped.
+  if (PD_HOLD) PD_HOLD.ctxs.forEach(c => { if (!list.some(x => wsCtxKey(x) === wsCtxKey(c))) list.push(c); });
   try { if (list.length) localStorage.setItem(WS_PANELS_KEY, JSON.stringify(list)); else localStorage.removeItem(WS_PANELS_KEY); } catch (e) {}
 }
 function wsPanelsSaved() {
@@ -13043,6 +13045,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 function pdChatsRemember() {
   const rooms = [...PD.rt.values()].filter(e => e.kind === 'chat').map(e => e.room);
+  if (PD_HOLD) PD_HOLD.rooms.forEach(r => { if (!rooms.includes(r)) rooms.push(r); });
   try { if (rooms.length) localStorage.setItem(PD_CHATS_KEY, JSON.stringify(rooms)); else localStorage.removeItem(PD_CHATS_KEY); } catch (e) {}
 }
 function pdChatsSaved() {
@@ -13161,15 +13164,28 @@ PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail 
 // room no longer listed, is dropped, its kept places with it; a file panel
 // whose viewer finds its file gone closes quietly (wsPanelMissing). A room
 // that is the task in the middle is dropped too: one chat per task.
-function pdRuntimeRestore() {
-  if (PD.restored || !PD.dock) return;
-  PD.restored = true;
-  let front0 = '';   // what is in front of the conversation's stack before the panels come
-  try { front0 = PD.dock.frontOf('po-chat'); } catch (e) {}
-  for (const ctx of wsPanelsSaved()) {
+// The hub's start-up phase as /api/health said it (ED-227): until it is
+// 'ready' the task list may be a saved or partial one, so a panel whose task
+// is not in it yet is held (kept in what is remembered), not forgotten.
+var HUB_PHASE = '';
+// {ctxs, rooms}: the saved panels not yet in the list while the hub warms.
+var PD_HOLD = null;
+async function hubPhase() {
+  try {
+    const r = await fetch('/api/health', { cache: 'no-store' });
+    if (r.status === 404) return 'ready';            // a hub from before /api/health
+    if (!r.ok) return HUB_PHASE || 'starting';
+    return (await r.json()).phase || 'ready';
+  } catch (e) { return HUB_PHASE || 'starting'; }
+}
+const HUB_PHASE_ASKED = hubPhase().then(p => { HUB_PHASE = p; return p; });
+function pdRestorePanels(ctxs, rooms, hold) {
+  const held = { ctxs: [], rooms: [] };
+  for (const ctx of ctxs) {
     const ok = ctx.kind === 'task' ? !!(ctx.sid && (rowBySid(ctx.sid) || ALL_ROWS.some(r => r.roomId === ctx.sid)))
       : ctx.kind === 'project' ? !!(ctx.projectId && projectById(ctx.projectId)) : false;
     if (!ok) {
+      if (hold) { held.ctxs.push(ctx); continue; }
       let s = {};
       try { s = JSON.parse(localStorage.getItem('cd-ws:' + wsCtxKey(ctx)) || '{}') || {}; } catch (e) {}
       wsTabsFrom(s).tabs.forEach(t => { try { PD.dock.forget(wsPanelId(t.path)); } catch (e) {} });
@@ -13182,10 +13198,34 @@ function pdRuntimeRestore() {
     if (v.panels) v.panels.forEach(P => { P.restored = now; });
   }
   const mid = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
-  for (const room of pdChatsSaved()) {
+  for (const room of rooms) {
     if (ALL_ROWS.some(r => r.roomId === room) && !(mid && mid.roomId === room)) pdChatOpen(room, { restore: true });
+    else if (hold && !(mid && mid.roomId === room)) held.rooms.push(room);
     else { try { PD.dock.forget(pdChatId(room)); } catch (e) {} }
   }
+  return held;
+}
+// Once the hub is ready and the list read again: the held panels whose task
+// is there now come back; the rest are forgotten as before.
+async function pdRestoreHeld() {
+  while ((HUB_PHASE = await hubPhase()) !== 'ready') await new Promise(r => setTimeout(r, 2000));
+  try { await refresh({ now: true }); } catch (e) {}
+  const hold = PD_HOLD;
+  PD_HOLD = null;
+  if (!hold) return;
+  pdRestorePanels(hold.ctxs, hold.rooms, false);
+  pdChatsRemember();
+  wsPanelsRemember();
+  pdTabTips();
+}
+function pdRuntimeRestore() {
+  if (PD.restored || !PD.dock) return;
+  PD.restored = true;
+  let front0 = '';   // what is in front of the conversation's stack before the panels come
+  try { front0 = PD.dock.frontOf('po-chat'); } catch (e) {}
+  const hold = HUB_PHASE !== 'ready';
+  const held = pdRestorePanels(wsPanelsSaved(), pdChatsSaved(), hold);
+  if (held.ctxs.length || held.rooms.length) { PD_HOLD = held; pdRestoreHeld(); }
   pdChatsRemember();
   wsPanelsRemember();
   pdTabTips();

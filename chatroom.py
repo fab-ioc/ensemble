@@ -43,6 +43,7 @@ import uuid
 from pathlib import Path
 
 from backends.base import DASHBOARD_DIR
+import durable
 
 ROOMS_DIR = DASHBOARD_DIR / "rooms"
 HUMAN_IDENTITY = "user"
@@ -163,7 +164,7 @@ def _write(room: dict) -> None:
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
     room["_revision"] = uuid.uuid4().hex
-    tmp.write_text(json.dumps(room, indent=2), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(room, indent=2))
     # Windows refuses the replace while another process (a virus scanner, a
     # backup, the indexer) has the file open for a moment: WinError 5 on
     # 2026-09-23 failed a PO resume after its terminal had started.

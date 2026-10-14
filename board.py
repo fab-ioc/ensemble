@@ -9,6 +9,7 @@ import threading
 import time
 
 import po_usage
+import durable
 
 _d = None
 _LOCK = threading.RLock()
@@ -118,7 +119,7 @@ def _save(state):
     path = _d.DASHBOARD_DIR / "boards.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state), encoding="utf-8")
+    durable.write_tmp(tmp, json.dumps(state))
     tmp.replace(path)
 
 

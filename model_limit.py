@@ -40,6 +40,7 @@ import re
 import threading
 import time
 from pathlib import Path
+import durable
 
 _d = None  # the dashboard module, set by bind()
 
@@ -241,7 +242,7 @@ def _save(d: dict) -> None:
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+        durable.write_tmp(tmp, json.dumps(d, indent=2, ensure_ascii=False))
         tmp.replace(f)
     except OSError:
         pass

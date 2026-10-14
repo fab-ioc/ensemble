@@ -7,6 +7,7 @@ import re
 import threading
 import time
 from pathlib import Path
+import durable
 
 _d = None
 _LOCK = threading.RLock()
@@ -160,7 +161,7 @@ def _save(data):
         path = _file()
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        durable.write_tmp(tmp, json.dumps(data, indent=2))
         tmp.replace(path)
 
 

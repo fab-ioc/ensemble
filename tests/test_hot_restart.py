@@ -34,6 +34,7 @@ class HotRestartTest(TestCase):
                     "leaseId": "ours", "leasePath": str(root / "lease.json"),
                     "ptyHostVersion": "old"}
             pf = mock.Mock()
+            pf.poll.return_value = None     # running
             port = mock.MagicMock()
             port.__enter__.return_value.connect_ex.return_value = 1
             def kill(pid, sig):
@@ -53,6 +54,27 @@ class HotRestartTest(TestCase):
             self.assertEqual(spawn.call_count, 2)  # preflight and replacement hub
             stop.assert_called_once_with(root, expected={"pid": 456, "port": 789})
             force.assert_called_once_with({"pid": 456, "port": 789})
+
+    def test_helper_preflight_fails_when_a_start_up_step_kills_the_hub(self):
+        # The hub listens before its steps (ED-227): /api/platform answers,
+        # then a step raises and the process exits. Not a pass.
+        with tempfile.TemporaryDirectory(prefix="ensemble-pf-starting-") as td:
+            root = Path(td)
+            plan = {"python": "python", "script": "dashboard.py", "repo": td,
+                    "port": 8798, "preflightPort": 8799, "hubPid": 123,
+                    "log": str(root / "restart.log"), "preflightLog": str(root / "pf.log"),
+                    "args": [], "env": {}, "keepAgents": False, "graceSeconds": 0,
+                    "leaseId": "ours", "leasePath": str(root / "lease.json"),
+                    "ptyHostVersion": "old"}
+            pf = mock.Mock()
+            pf.poll.side_effect = [None, None, 1]
+            with mock.patch.object(restart_helper.subprocess, "Popen", return_value=pf) as spawn, \
+                 mock.patch.object(restart_helper.urllib.request, "urlopen",
+                                   side_effect=lambda *a, **kw: io.BytesIO(b'{"phase":"starting"}')), \
+                 mock.patch.object(restart_helper.time, "sleep"):
+                self.assertEqual(restart_helper._run(plan), 1)
+            self.assertEqual(spawn.call_count, 1)  # the hub was left running
+            self.assertIn("preflight failed", (root / "restart.log").read_text(encoding="utf-8"))
 
     def test_update_keeps_old_host_when_hub_stop_fails(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-update-stop-") as td:
@@ -172,4 +194,45 @@ class HotRestartTest(TestCase):
             result = restart_drain.request_restart("test", {"label": "the dashboard"})
             self.assertTrue(result["keepAgents"])
             self.assertIsNone(restart_drain.current())
-            start.assert_called_once_with("")
+            start.assert_called_once_with("", identity="")
+
+
+class RestartHelperWatchTest(TestCase):
+    """ED-227: a helper that ends with its lease still held stopped before the
+    hub. The hub says so, lets go of the lease and tells whoever asked."""
+
+    def run_watch(self, alive, lease_after=None):
+        with tempfile.TemporaryDirectory(prefix="ensemble-helper-watch-") as td:
+            state = Path(td)
+            (state / "logs").mkdir()
+            (state / "logs" / "restart.log").write_text(
+                "2026-10-14T08:36:19 [restart] preflight passed on port 63571\n"
+                "2026-10-14T08:36:20 [restart] PTY host attached: pid 1, version x\n", encoding="utf-8")
+            (state / "restart.lease").write_text(json.dumps({"id": "ours", "at": 0}), encoding="utf-8")
+            logged, woken = [], []
+            room = {"id": "room-po", "participants": [{"identity": "claude"}]}
+            with mock.patch.object(dashboard, "DASHBOARD_DIR", state), \
+                 mock.patch.object(dashboard, "RESTART_HELPER_POLL_S", 0), \
+                 mock.patch.object(dashboard.BACKEND, "process_alive", side_effect=alive), \
+                 mock.patch.object(dashboard, "_restart_log", side_effect=logged.append), \
+                 mock.patch.object(dashboard.chatroom, "get_room", return_value=room), \
+                 mock.patch.object(restart_drain, "release", side_effect=woken.extend):
+                if lease_after:
+                    lease_after(state)
+                dashboard._watch_restart_helper(4242, "ours", "room-po")
+                return logged, woken, (state / "restart.lease").exists()
+
+    def test_a_helper_gone_mid_restart_is_said_and_lets_go(self):
+        logged, woken, lease = self.run_watch(alive=[True, False])
+        self.assertFalse(lease)
+        self.assertEqual(len(logged), 1)
+        self.assertIn("HELPER GONE", logged[0])
+        self.assertIn("preflight passed on port 63571", logged[0])
+        self.assertEqual([(w["roomId"], w["identity"]) for w in woken], [("room-po", "claude")])
+        self.assertIn("did not happen", woken[0]["text"])
+
+    def test_a_helper_that_finished_is_left_alone(self):
+        # It dropped (or handed on) its lease: nothing to say.
+        logged, woken, _ = self.run_watch(
+            alive=[False], lease_after=lambda st: (st / "restart.lease").unlink())
+        self.assertEqual((logged, woken), ([], []))

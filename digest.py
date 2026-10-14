@@ -99,6 +99,7 @@ import board
 import points
 import po_messages
 import stall
+import durable
 
 # Windows: the model call must not open a console window (a console-less host,
 # pythonw.exe, would otherwise give it one and lose the keyboard focus to it).
@@ -180,7 +181,7 @@ def _save_baseline(pid: str, entry: dict) -> None:
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(all_, indent=2, ensure_ascii=False), encoding="utf-8")
+        durable.write_tmp(tmp, json.dumps(all_, indent=2, ensure_ascii=False))
         tmp.replace(f)
     except OSError as e:
         _log(f"cannot save the digest baseline: {e}")

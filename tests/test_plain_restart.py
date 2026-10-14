@@ -36,6 +36,26 @@ SCRIPT = (ROOT / "restart-hub.ps1").read_bytes()
 
 
 class HelperScript(unittest.TestCase):
+    def test_an_error_after_the_stop_starts_the_hub_again(self):
+        # ED-227: the trap that logs an error ending the script starts the
+        # hub directly once it was stopped, so a throw never leaves it down.
+        text = SCRIPT.decode("ascii").replace("\r\n", "\n")
+        trap = text[text.index("\ntrap {"):]
+        trap = trap[:trap.index("\n}\n")]
+        self.assertIn("if ($hubStopped) {", trap)
+        self.assertLess(trap.index("StartDirect"), len(trap))
+        self.assertIn("exit 1", trap)
+        self.assertIn("$hubStopped = $false", text[:text.index("# --- 1. Preflight")])
+        stop = text.index("foreach ($v in ($victims")
+        self.assertLess(stop, text.index("$hubStopped = $true"))
+        # StartDirect exists before the stop, so the trap can call it at once.
+        self.assertLess(text.index("function StartDirect"), stop)
+        self.assertLess(text.index("$hubArgs = @()"), stop)
+        # Once the hub is up again a later error must not start a second one.
+        up = text.index("if ($up) { $hubStopped = $false;")
+        self.assertLess(text.index("$hubStopped = $true"), up)
+        self.assertEqual(text.count("$hubStopped = $false"), 2)
+
     def test_no_git_that_changes_the_checkout(self):
         text = SCRIPT.decode("ascii")
         gits = re.findall(r"\bgit\b[^\n]*", text)
@@ -70,7 +90,7 @@ class HelperScript(unittest.TestCase):
         i = text.index("$pfOk = ")
         line = text[i:text.index("\n", i)]
         self.assertIn('Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec', line)
-        self.assertIn('(Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")', line)
+        self.assertIn('(Ok "http://127.0.0.1:$pf/?startup=skip") -and (Ok "http://127.0.0.1:$pf/api/projects")', line)
 
 
 class Plan(unittest.TestCase):
@@ -261,7 +281,7 @@ class Lock(unittest.TestCase):
                                return_value={"started": True, "status": 202, "message": "m"}) as trig:
             text, is_err = ensemble_tools.call("ensemble_restart_hub", {"when": "now"}, "room-po",
                                                "claude", None)
-        trig.assert_called_once_with("room-po")
+        trig.assert_called_once_with("room-po", identity="claude")
         self.assertFalse(is_err, text)
         self.assertNotIn("status", text)
 
@@ -331,7 +351,7 @@ class WindowsBackend(unittest.TestCase):
         main = text[text.index("# --- 1. Preflight"):text.index("# --- 4. Bring the rooms back")]
         self.assertNotIn("Start-Sleep -Seconds 2;", main)
         self.assertIn("Nap 2; $pfUp", main)
-        self.assertIn("if ($up) { RenewLease }", main)
+        self.assertIn("if ($up) { $hubStopped = $false; RenewLease }", main)
         with tempfile.TemporaryDirectory() as tmp:
             lease = Path(tmp) / "restart.lease"
             for owner, want_renewed in (("mine", True), ("someone-else", False)):
