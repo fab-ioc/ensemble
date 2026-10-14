@@ -4896,9 +4896,18 @@ function loadOlder(upto = '') {
       };
       add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
       if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      // The place is kept by the balloon read at the top: a page of older ones may
+      // fold the old first row into a group, so failing that, by the height added.
+      const box = $('#msgs'), place = readingPlace(box), h0 = box.scrollHeight, t0 = box.scrollTop;
+      const mid = place && (place.el.dataset.mid || (place.el.querySelector('[data-mid]') || {dataset: {}}).dataset.mid || '');
       STICK = false;
       if (SOLO_MODE) { if (!threadedView() && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
       else if (ROOM_OBJ) renderMsgs(ROOM_OBJ);
+      if (!DRAW_HELD && place) {
+        const at = mid && [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid && e.offsetParent);
+        const row = at && [...box.children].find(k => k.contains(at));
+        box.scrollTop = row ? row.offsetTop - place.off : t0 + box.scrollHeight - h0;
+      }
       return true;
     } catch (e) { return false; }
     finally { OLDER_BUSY = null; }
