@@ -142,7 +142,7 @@ class WhoWritesToWhom(unittest.TestCase):
 
     def test_names(self):
         self.assertEqual(self.r["names"], [26, 7, None, "#26", "9abcdef0", "#60", "ED-18",
-                                           "sam", "Hub", "PO", "codex", "#26 codex-2"])
+                                           "sam", "Hub", "PO", "PO", "#26 codex-2"])
         self.assertEqual(self.r["task"], ["claude", "", "claude"])
 
     def test_what_each_message_is(self):

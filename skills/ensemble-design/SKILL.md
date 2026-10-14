@@ -1168,12 +1168,24 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
 - **With a mouse the box is one card** (layout A, #126; compacted in #169):
   `--surface`, a `--border-strong` edge (`--focus-ring` while you type), `--r-300`, 24px from the
   column's sides in the original layout; the compact layout uses 12px sides and 8px at its foot. The input, shared
-  **+** menu and **Send** occupy one row. The input grows with its text from a one-row minimum
-  to an 88px cap. Its height and Send's hit target must stay fixed between pointerdown and click;
+  **+** menu and **Send** occupy one row, and nothing else does: the words get the box's width
+  (at least 70% of it at 1728, #232). The input grows with its text from a one-row minimum
+  to an 88px cap; Send stays at the box's foot as it grows. Its height and Send's hit target must stay fixed between pointerdown and click;
   focus or blur must never shrink the box under a pressed Send.
-  The menu contains Attach, Add an ask and Team activity. Send remains visible. Activity is
-  inside the composer; an empty hint takes no room. Latest lives beside Send, never over a
+  The menu contains Attach, Add an ask and Team activity. Send remains visible. A thread's
+  "Also send to chat" is a quiet line under the input, never in its row. The hint says only what
+  happens to a send (sending, an error, a blocked reason); an empty hint takes no room. Latest lives beside Send, never over a
   balloon. The placeholder only names the recipient; routing and shortcuts remain in its title.
+- **The state is said once, never in the box** (#232): one dot and a word for the conversation,
+  working / waiting for you / idle / stopped — reply resumes / resuming…, its seats in the
+  tooltip ("claude (engineer): working · claude-2 (reviewer): idle"). The PO's is first on the
+  PO header's sub-line, a task's is `.dp-run` in its header, a pop-out's is beside its title
+  (`#status`). Every such header marks it `data-state-room="<room>"`; an embedded chat shows its
+  own one-line `#state-line` only while no marked header of its room is on screen and uncovered
+  (a docked chat panel, a phone's thread tab).
+- **The PO is called PO**: every seat of a PO's room (`claude`, `claude-2`, `codex` after a
+  switch) reads "PO" in balloons, the live tail, Stop and the terminal head; its kind and model
+  go in a tooltip. A task's seats keep their names.
 - **Sent as one message the hub reads:** `## Points (N)`, the head, then one `**N.**` item per point
   with its `[image] <name>` lines inside it (an empty point is dropped; no point at all sends the
   words alone). The hub gives each item its own `P` number, chip and reminder (`points.py`), puts each
@@ -1727,7 +1739,8 @@ desktop is untouched by construction.
     switching rooms starts a new disclosure.
 13. **A compact composer, always reachable.** One input row with Send, a 44px `+` menu for
     Attach / Add an ask / Team activity, and a 44px Latest arrow when needed. Team activity's
-    menu item states whether it is folded or shown. Activity belongs inside the composer;
+    menu item states whether it is folded or shown. The agents' state is not in the composer:
+    the header says it once (#232);
     focus adds a fixed `--focus-ring` inset; text content expands the input. Keep the placeholder short,
     fields at 16px, and every control 44px. Keep navigation visible; never hide it on scroll.
     A pointer press on Send, a quick answer's Send, or Retry starts that action before a Dock

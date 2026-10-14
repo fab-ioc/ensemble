@@ -5304,7 +5304,7 @@ function detailMeta(r, isLive, isRoom, now) {
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
     ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-narrow">${esc(attn.state === 'waiting_for_you' ? 'Reply' : attn.state === 'agent_gone' ? 'Gone' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
-  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}<span class="dp-run" title="${esc(r.isLive ? r.status || 'idle' : 'not running')}">${runChip(r, true)}</span>
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}<span class="dp-run">${isRoom ? stateChip(r, true, attn) : runChip(r, true)}</span>
     <span class="dp-when"><span class="dp-updated-label">updated </span>${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 
@@ -6262,6 +6262,28 @@ function runChip(r, compact = false) {
   // Calm on purpose: this is the whole board for a minute after every hub
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
   return `<span class="run off">${dot('off', 'stopped')}${compact ? '<span class="dp-state-full">not running</span><span class="dp-state-short">stopped</span>' : 'not running'}</span>`;
+}
+// A conversation's state in its header, the one place it is said (#232): the
+// chat under it says it only when no header with data-state-room="<room>"
+// is on screen (session.html, placeState). Words as the chat's own line.
+// compact is a task's header, whose lozenge says what needs you: there the chip
+// says the run state only. Elsewhere (the PO's header) it says that too.
+function stateChip(r, compact = false, attn = r.attention) {
+  if (r.draft || !r.roomId) return runChip(r, compact);
+  const st = (attn && attn.state) || '';
+  const a = compact ? null : attnDot({ attention: attn });
+  const words = (full, short) => compact && short ? `<span class="dp-state-full">${esc(full)}</span><span class="dp-state-short">${esc(short)}</span>` : esc(full);
+  const chip = (cls, tip, full, short, off = '') =>
+    `<span class="run${off}" data-state-room="${esc(r.roomId)}" title="${esc(a ? a.tip : tip)}"><span class="dot ${a ? a.tone : cls}"></span>${words(full, short)}</span>`;
+  if (r.resuming) return chip('working', 'resuming', 'resuming…');
+  if (a && a.tone === 'danger') return chip('danger', a.tip, a.tip);   // blocked, agent gone
+  if (!r.isLive) return chip('off', 'stopped: a reply resumes it', 'stopped — reply resumes', 'stopped', ' off');
+  if (r.status === 'busy') return chip('working', 'working', 'working');
+  if (r.runState === 'command') return chip('idle', commandTip(r), commandWords(r));
+  if (compact ? !st && (r.roomStatus === 'waiting_human' || r.roomStatus === 'paused')
+    : st === 'waiting_for_you' || r.roomStatus === 'waiting_human' || r.roomStatus === 'paused')
+    return chip('warning', 'waiting for you', 'waiting for you', 'your turn');
+  return chip('idle', 'idle: running, not working', 'idle');
 }
 
 // ---- Task numbers: begin ----------------------------------------------------
@@ -12187,11 +12209,11 @@ function poHeadHtml(pj, row, peek) {
   const open = poOpenCount(pj, ALL_ROWS);
   // One part a span, so a narrow header cuts a part (the project's name
   // first, then what needs you) rather than letting the line run past the edge.
+  // The PO is called PO; its kind and model are in the tooltip (#232).
   const who = [m.agent || '', model].filter(Boolean).join(' ');
-  const sub = (who ? `<span>${esc(who)}</span>` : '')
+  const sub = stateChip(row, false, ATTENTION_BY_ROOM.get(row.roomId) || row.attention)
     + `<span class="po-sub-proj">${esc(noun('one') + ' ' + pj.name)}</span>`
     + `<span>${open} task${open === 1 ? '' : 's'} open</span>`
-    + runChip(row)
     + (pts ? `<span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('needs you: ' + pts)}</span>` : '');
   const acts = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
@@ -12201,8 +12223,9 @@ function poHeadHtml(pj, row, peek) {
   acts.push(`<span class="po-more"><button class="po-btn" data-po="more" data-interim="dock-menu" title="${esc(DOCK_MENU_INTERIM)}" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>`
     + `<span class="po-menu" role="menu" hidden>${menu.join('')}</span></span>`);
   if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
-  return `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
-    + `<div class="po-who"><div class="po-name">${esc(pj.name)} · PO</div><div class="po-sub">${sub}</div></div>`
+  const tip = who ? ` title="PO · ${esc(who)}"` : '';
+  return `<span class="av ${cls}"${tip}>${esc((m.agent || '?')[0])}</span>`
+    + `<div class="po-who"><div class="po-name"${tip}>${esc(pj.name)} · PO</div><div class="po-sub">${sub}</div></div>`
     + `<div class="po-acts">${acts.join('')}</div>`;
 }
 function poMenuOpen(head, open) {

@@ -677,8 +677,12 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("$('#send').disabled = notRunning", body)
         self.assertIn("$('#input').disabled = false;", body)
         self.assertNotIn("$('#input').disabled = notRunning", body)
-        self.assertIn("'Not running: sending will resume it.'", body)
-        self.assertIn("'Resuming: your message goes in once it is up.'", body)
+        # The box says only what happens to a send; the state is said once,
+        # in the header (#232): "stopped — reply resumes", "resuming…".
+        self.assertNotIn("sending will resume it", body)
+        self.assertIn("showState();", body)
+        self.assertIn("word: 'stopped — reply resumes'", SESSION)
+        self.assertIn("word: 'resuming…'", SESSION)
         # Resume is the header's primary action (static/actions.js), off while resuming.
         self.assertIn("ROOM_RESUMING = resuming;", body)
         self.assertIn("renderActions();", body)
