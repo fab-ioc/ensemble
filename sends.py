@@ -44,6 +44,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+import durable
 
 _d = None  # the dashboard module, set by bind()
 
@@ -107,7 +108,7 @@ def _save(room_id: str, items: list[dict]) -> None:
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     body = json.dumps({"version": 1, "roomId": room_id, "sends": items}, indent=1, ensure_ascii=True)
     try:
-        tmp.write_text(body, encoding="utf-8")
+        durable.write_tmp(tmp, body)
         for attempt in range(5):
             try:
                 os.replace(tmp, p)

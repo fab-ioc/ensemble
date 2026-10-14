@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from backends import ptyhost
 
@@ -44,6 +45,24 @@ def run(plan_path: str) -> int:
             pass
 
 
+def started(get) -> bool:
+    """Up and past its start-up steps (ED-227): a hub listens before them,
+    so /api/platform alone no longer says the code on disk starts. A hub
+    from before /api/health is up once /api/platform answers."""
+    try:
+        return json.loads(get("/api/health")).get("phase") != "starting"
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            return False
+        try:
+            get("/api/platform")
+            return True
+        except OSError:
+            return False
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def _run(plan: dict) -> int:
     os.environ.update(plan["env"])
     log_path = Path(plan["log"])
@@ -74,24 +93,26 @@ def _run(plan: dict) -> int:
                                     stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                                     start_new_session=True, text=True, encoding="utf-8")
 
-    def wait(port, seconds):
+    def wait(port, seconds, proc=None):
         end = time.monotonic() + seconds
         while time.monotonic() < end:
-            try:
-                get(port, "/api/platform", timeout=3)
+            if proc is not None and proc.poll() is not None:
+                return False        # a start-up step failed and the hub exited
+            if started(lambda endpoint: get(port, endpoint, timeout=3)):
                 return True
-            except OSError:
-                time.sleep(1)
+            time.sleep(1)
         return False
 
     log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
                      else "classic drain and resume"))
     pf = spawn(plan["preflightPort"])
     try:
-        if not wait(plan["preflightPort"], 60):
+        if not wait(plan["preflightPort"], 120, pf):
             log("preflight failed; hub left running")
             return 1
-        for endpoint in ("/api/sessions?n=5", "/", "/api/projects"):
+        # "/" is the start-up page until the first list is read: skip it
+        # to load the board itself.
+        for endpoint in ("/api/sessions?n=5", "/?startup=skip", "/api/projects"):
             get(plan["preflightPort"], endpoint, timeout=170)
         # A hub line must reach a throwaway agent on the preflight's PTY host.
         req = urllib.request.Request(

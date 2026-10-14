@@ -418,8 +418,28 @@ def _served(port: int, timeout: float = 3) -> dict | None:
         return None
 
 
+def _served_started(port: int, timeout: float = 3) -> dict | None:
+    """``_served`` once the hub is past its start-up steps (ED-227): it
+    answers /api/version before them, so a version whose step fails would
+    otherwise pass. A hub from before /api/health (404) counts as started."""
+    got = _served(port, timeout)
+    if not got:
+        return None
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if json.loads(r.read().decode("utf-8")).get("phase") == "starting":
+                return None
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return None
+    except (OSError, ValueError, AttributeError):
+        return None
+    return got
+
+
 def wait_served(port: int, version: str | None, timeout: float, renew=lambda: None,
-                served=_served) -> dict | None:
+                served=_served_started) -> dict | None:
     """The first /api/version answer on ``port`` (of ``version``, when given)
     within ``timeout`` seconds; None if none."""
     end = time.time() + timeout

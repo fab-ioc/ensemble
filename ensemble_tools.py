@@ -2018,7 +2018,7 @@ def _restart_hub(ctx, args, handler):
     elif _d.restart_drain.holding():
         res = _d.restart_drain.restart_now(ctx["room"]["id"])
     else:
-        res = _d.trigger_restart(ctx["room"]["id"])
+        res = _d.trigger_restart(ctx["room"]["id"], identity=by.get("identity", ""))
     res.pop("status", None)
     if not res.get("started"):
         raise ToolError(res.get("error") or "the restart did not start")

@@ -50,6 +50,7 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import feedback
+import durable
 
 _d = None  # the dashboard module, set by bind()
 
@@ -120,7 +121,7 @@ def _save(state: dict) -> None:
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        durable.write_tmp(tmp, json.dumps(state, indent=2, ensure_ascii=False))
         tmp.replace(f)
     except OSError as e:
         _log(f"cannot save what was seen: {e}")
