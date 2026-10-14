@@ -28,6 +28,8 @@ sys.path.insert(0, str(ROOT))
 
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import points  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -111,7 +113,7 @@ async function main() {
       const until = async (expr, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, `box-${w}-${name}.png`), Buffer.from(r.data, 'base64')); };
       // Send's place while the box takes focus and the words wrap.
-      const steady = async (win) => {
+      const steady = async (win, name) => {
         const rect = `(() => { const b = ${win}.document.getElementById('send').getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; })()`;
         const s = { before: await evalIn(rect) };
         await evalIn(`${win}.document.getElementById('input').focus(); 0`);
@@ -122,7 +124,7 @@ async function main() {
         s.typed = await evalIn(rect);
         s.lines = await evalIn(`(() => { const i = ${win}.document.getElementById('input'); return Math.round(i.scrollHeight / parseFloat(${win}.getComputedStyle(i).lineHeight || 20)); })()`);
         s.value = await evalIn(`${win}.document.getElementById('input').value.length`);
-        await shot(win.includes('pdChat') ? 'po-typed' : 'pop-typed');
+        await shot(name || (win.includes('pdChat') ? 'po-typed' : 'pop-typed'));
         await evalIn(`(() => { const i = ${win}.document.getElementById('input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); i.blur(); return 0; })()`);
         return s;
       };
@@ -170,6 +172,30 @@ async function main() {
       await evalIn(`(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:60px;z-index:9;background:#888'; document.body.append(d); return 0; })()`);
       o.embedCovered = await evalIn(line);
       await shot('embed-covered');
+      // An embedded chat with no host page to ask (opened on its own): it says the state itself.
+      await c.send('Page.navigate', { url: A.base + '/session?id=' + A.po + '&embed=1' }, sessionId);
+      await until('typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && document.getElementById("status").classList.contains("on")');
+      await sleep(400);
+      o.embedNoHost = await evalIn(LOOK(A.po));
+      // 4. A thread of the PO open: "Also send to chat" sits under the words,
+      // which keep the room, and Send stays put.
+      await c.send('Page.navigate', { url: A.base + '/session?id=' + A.po + '&thread=P1' }, sessionId);
+      await until('typeof THREAD_MODE !== "undefined" && THREAD_MODE && !!ROOM_OBJ && document.getElementById("status").classList.contains("on") && !document.getElementById("thr-also-l").hidden');
+      await sleep(600);
+      o.thread = await evalIn(LOOK(A.po));
+      o.threadAlso = await evalIn(`(() => { const a = document.getElementById('thr-also-l').getBoundingClientRect(), i = document.getElementById('input').getBoundingClientRect(),
+        s = document.getElementById('send').getBoundingClientRect(), b = document.getElementById('compose').getBoundingClientRect();
+        return { shown: a.width > 0 && a.height > 0, under: a.top >= i.bottom - 1, inBox: a.bottom <= b.bottom + 1 && a.top >= b.top, besideSend: a.right <= s.left || a.top >= s.bottom - 1 || a.bottom <= s.top + 1 }; })()`);
+      await shot('thread');
+      o.threadSend = await steady('window', 'thread-typed');
+      // 5. A task docked in the dashboard: its header (.dp-run) says the state, its chat does not.
+      await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
+      await until('window.ensBooted === true && typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')');
+      await evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); openDetail(${JSON.stringify(A.task)}); return 0; })()`);
+      await until(`(() => { const L = ${LOOK(A.task)}; return L.boxes.length > 0 && !!document.querySelector('.dp-run [data-state-room]'); })()`, 30000);
+      await sleep(800);
+      o.docked = await evalIn(LOOK(A.task));
+      await shot('docked-task');
       await c.send('Target.closeTarget', { targetId });
     }
   } finally {
@@ -236,10 +262,17 @@ class MessageBoxRoom(unittest.TestCase):
         ok, why = dashboard.set_project_po(cls.proj, cls.po)
         assert ok, why
         t0 = time.time() - 3600
+        points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
+        threads.forget()
+        # The user's line is point P1, so the PO's chat has a thread to open.
+        q, ids = points.take(chatroom.get_room(cls.po, public=False), "Make the speed chart wider", key="P1", now=t0 + 10, sid=sid)
+        assert ids == ["P1"], ids
         lines = [_turn(sid, "assistant", "I'm the PO for Motors.", t0),
-                 _turn(sid, "user", "Make the speed chart wider", t0 + 10),
-                 _turn(sid, "assistant", "Done: it takes the whole width now.", t0 + 20)]
+                 _turn(sid, "user", q, t0 + 11),
+                 _turn(sid, "assistant", "Re P1: done, it takes the whole width now.", t0 + 20)]
         (tdir / f"{sid}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+        points.sync(cls.po, force=True)
+        threads._ensure_since(cls.po, t0 - 60)
         # A task: an engineer and a reviewer, each called by its own name.
         task = chatroom.create_room("Wider board", [{"identity": "claude", "agent": "claude", "model": "opus", "role": "engineer"},
                                                     {"identity": "claude-2", "agent": "claude", "model": "opus", "role": "reviewer"}])
@@ -304,6 +337,28 @@ class MessageBoxRoom(unittest.TestCase):
                 self.assertTrue(o["embedHosted"]["hidden"], o["embedHosted"])
                 self.assertEqual(len(o["embedHostedLook"]["states"]), 1, o["embedHostedLook"]["states"])
                 self.assertFalse(o["embedCovered"]["hidden"], "a panel over the header gives the line back")
+                self.assertEqual(len(o["embedNoHost"]["states"]), 1, "no host page: the chat's own line says it")
+
+    def test_a_thread_keeps_the_room(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                boxes = o["thread"]["boxes"]
+                self.assertEqual(len(boxes), 1, boxes)
+                self.assertGreaterEqual(boxes[0]["share"], 0.70, boxes[0])
+                self.assertEqual(o["threadAlso"], {"shown": True, "under": True, "inBox": True, "besideSend": True})
+                self.assertEqual(len(o["thread"]["states"]), 1, o["thread"]["states"])
+                s = o["threadSend"]
+                self.assertEqual(s["value"], len(WORDS))
+                self.assertEqual(s["before"], s["focused"], s)
+                self.assertEqual(s["before"], s["typed"], s)
+
+    def test_a_docked_task_says_it_in_its_header(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                states = o["docked"]["states"]
+                self.assertEqual(len(states), 1, states)
+                self.assertEqual(states[0]["where"], "top", "the task's header says it, not its chat")
+                self.assertEqual(len(o["docked"]["boxes"]), 1, o["docked"]["boxes"])
 
     def test_the_po_is_called_po(self):
         for w, o in self._each():

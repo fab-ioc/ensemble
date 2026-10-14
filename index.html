@@ -5281,7 +5281,7 @@ function detailMeta(r, isLive, isRoom, now) {
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
     ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}"><span class="dp-state-full">${esc(ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-short">${esc(attn.state === 'waiting_for_you' ? 'Your reply' : ATTN_LABEL[attn.state] || attn.state)}</span><span class="dp-state-narrow">${esc(attn.state === 'waiting_for_you' ? 'Reply' : attn.state === 'agent_gone' ? 'Gone' : ATTN_LABEL[attn.state] || attn.state)}</span></span>` : poWaitLoz(r, true);
-  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}<span class="dp-run">${isRoom ? stateChip(r, true) : runChip(r, true)}</span>
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}<span class="dp-run">${isRoom ? stateChip(r, true, attn) : runChip(r, true)}</span>
     <span class="dp-when"><span class="dp-updated-label">updated </span>${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 
@@ -6243,18 +6243,20 @@ function runChip(r, compact = false) {
 // A conversation's state in its header, the one place it is said (#232): the
 // chat under it says it only when no header with data-state-room="<room>"
 // is on screen (session.html, placeState). Words as the chat's own line.
-function stateChip(r, compact = false) {
+// compact is a task's header, whose lozenge says what needs you: there the chip
+// says the run state only. Elsewhere (the PO's header) it says that too.
+function stateChip(r, compact = false, attn = r.attention) {
   if (r.draft || !r.roomId) return runChip(r, compact);
-  const a = attnDot(r);
+  const st = (attn && attn.state) || '';
+  const a = compact ? null : attnDot({ attention: attn });
   const words = (full, short) => compact && short ? `<span class="dp-state-full">${esc(full)}</span><span class="dp-state-short">${esc(short)}</span>` : esc(full);
   const chip = (cls, tip, full, short, off = '') =>
     `<span class="run${off}" data-state-room="${esc(r.roomId)}" title="${esc(a ? a.tip : tip)}"><span class="dot ${a ? a.tone : cls}"></span>${words(full, short)}</span>`;
   if (r.resuming) return chip('working', 'resuming', 'resuming…');
+  if (a && a.tone === 'danger') return chip('danger', a.tip, a.tip);   // blocked, agent gone
   if (!r.isLive) return chip('off', 'stopped: a reply resumes it', 'stopped — reply resumes', 'stopped', ' off');
   if (r.status === 'busy') return chip('working', 'working', 'working');
   if (r.runState === 'command') return chip('idle', commandTip(r), commandWords(r));
-  // A task's header has its lozenge for what needs you: the chip does not say it again.
-  const st = (r.attention && r.attention.state) || '';
   if (compact ? !st && (r.roomStatus === 'waiting_human' || r.roomStatus === 'paused')
     : st === 'waiting_for_you' || r.roomStatus === 'waiting_human' || r.roomStatus === 'paused')
     return chip('warning', 'waiting for you', 'waiting for you', 'your turn');
@@ -12186,7 +12188,7 @@ function poHeadHtml(pj, row, peek) {
   // first, then what needs you) rather than letting the line run past the edge.
   // The PO is called PO; its kind and model are in the tooltip (#232).
   const who = [m.agent || '', model].filter(Boolean).join(' ');
-  const sub = stateChip(row)
+  const sub = stateChip(row, false, ATTENTION_BY_ROOM.get(row.roomId) || row.attention)
     + `<span class="po-sub-proj">${esc(noun('one') + ' ' + pj.name)}</span>`
     + `<span>${open} task${open === 1 ? '' : 's'} open</span>`
     + (pts ? `<span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('needs you: ' + pts)}</span>` : '');

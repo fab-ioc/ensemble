@@ -6354,14 +6354,16 @@ function hostShowsState(host) {
 function placeState() {
   const el = $('#status'), line = $('#state-line');
   if (!el || !line) return;
-  const host = document.body.classList.contains('embed') ? embedHost() : null;
-  if (!host) {
+  // Embedded, the page's own header is hidden, so the line holds the state; it
+  // hides only when a same-origin host says it on screen (no host: say it here).
+  if (!document.body.classList.contains('embed')) {
     if (el.parentNode === line) document.querySelector('header h1').after(el);
     if (!line.hidden) line.hidden = true;
     return;
   }
   if (el.parentNode !== line) line.append(el);
-  const own = !hostShowsState(host);
+  const host = embedHost();
+  const own = !(host && hostShowsState(host));
   if (line.hidden === own) line.hidden = !own;
 }
 window.addEventListener('resize', placeState);

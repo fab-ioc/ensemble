@@ -90,6 +90,8 @@ const po = { roomId: 'po-1', sessionId: 's', isLive: true, status: 'idle', label
 const log = {
   live: poHeadHtml(pj, po, false),
   stopped: poHeadHtml(pj, { ...po, isLive: false, points: {} }, true),
+  blocked: poHeadHtml(pj, { ...po, attention: { state: 'blocked' } }, false),
+  fresher: (ATTENTION_BY_ROOM.set('po-1', { state: 'agent_gone' }), poHeadHtml(pj, po, false)),
   count: poOpenCount(pj, ALL_ROWS),
 };
 console.log(JSON.stringify(log));
@@ -103,9 +105,10 @@ class ThePoHeader(unittest.TestCase):
         src = "\n".join([
             NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function pointsNeeds("), fn(INDEX, "function pointsCountText("),
-            fn(INDEX, "function pointsCountTip("), fn(INDEX, "function attnDot("), fn(INDEX, "function runChip("), fn(INDEX, "function stateChip("), fn(INDEX, "function shortModel("),
+            fn(INDEX, "function pointsCountTip("), fn(INDEX, "function attnDot("), fn(INDEX, "function swTone("), fn(INDEX, "function runChip("), fn(INDEX, "function stateChip("), fn(INDEX, "function shortModel("),
             fn(INDEX, "function poAgent("), fn(INDEX, "function poOpenCount("), fn(INDEX, "function poMenuItems("),
-            re.search(r"^const DOCK_MENU_INTERIM = .*$", INDEX, re.M).group(0), fn(INDEX, "function poHeadHtml(")])
+            re.search(r"^const DOCK_MENU_INTERIM = .*$", INDEX, re.M).group(0), fn(INDEX, "function poHeadHtml("),
+            re.search(r"^const ATTN_LABEL = \{.*?\};", INDEX, re.M | re.S).group(0), "const ATTENTION_BY_ROOM = new Map();"])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "pohead.cjs"
             script.write_text(JS % src, encoding="utf-8")
@@ -113,6 +116,13 @@ class ThePoHeader(unittest.TestCase):
         if proc.returncode:
             raise AssertionError(proc.stderr)
         cls.r = json.loads(proc.stdout)
+
+    def test_a_po_that_needs_you_says_so_not_idle(self):
+        # A red dot never sits beside "idle": the word says what is wrong (#232 review 1).
+        self.assertIn('<span class="dot danger"></span>blocked</span>', self.r["blocked"])
+        self.assertNotIn('>idle</span>', self.r["blocked"])
+        # The dashboard's attention list is fresher than the row's copy.
+        self.assertIn('<span class="dot danger"></span>agent gone</span>', self.r["fresher"])
 
     def test_open_tasks_are_the_projects_unfinished_ones(self):
         self.assertEqual(self.r["count"], 2)          # a and b: not the PO, done, draft, archived or another's
