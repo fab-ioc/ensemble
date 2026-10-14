@@ -63,7 +63,6 @@ class RoomWindowHttp(unittest.TestCase):
         self.assertEqual(d["pmIndex"], [{"id": "m5", "kind": "pomsg", "name": "opten PO's question of 09-25 18:57",
                                          "ts": 1005, "from": "claude", "fromProjectName": "opten",
                                          "poKind": "question", "to": "user"}], "named, without its text")
-        self.assertTrue(d["specInMessages"])
 
     def test_n_larger_than_the_room_is_the_whole_room_and_nothing_before(self):
         d = self.get("&n=1000")

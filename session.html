@@ -4914,6 +4914,22 @@ function loadOlder(upto = '') {
   })();
   return OLDER_BUSY;
 }
+// A new copy of the room (a full fetch after a restart, or a poll that crossed
+// a loadOlder) keeps the pages the reader loaded above its window.
+function carryOlder(room) {
+  const held = ROOM_OBJ && ROOM_OBJ !== room && ROOM_OBJ.messages, win = room && room.window;
+  const first = win && win.before && (room.messages || [])[0];
+  if (!held || !first) return;
+  const k = held.findIndex(m => m.id === first.id);
+  if (k <= 0) return;
+  const add = held.slice(0, k), before = Math.max(0, win.before - k);
+  const copies = [room, ROOM_LAST && ROOM_LAST.room !== room ? ROOM_LAST.room : null];
+  copies.forEach((r, i) => {
+    if (!r || !r.messages || (r.messages[0] || {}).id !== first.id) return;
+    r.messages = (i ? structuredClone(add) : add).concat(r.messages);
+    r.window = {...(r.window || {}), before};
+  });
+}
 // ---- The latest messages, older ones as the chat scrolls up: end ----
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
@@ -5101,6 +5117,16 @@ function landPending() {
         }
         if (!SOLO_WANT.loaded) return;   // not found only once the wider window is drawn
         failed = !!SOLO_WANT.failed;
+      }
+      if (!failed && !SOLO_MODE && roomHasOlder() && !(ROOM_OBJ.messages || []).some(m => m.id === mid)) {
+        // Older than the messages held (#228): the pages down to it, then land.
+        loadOlder(mid).then(ok => {
+          if (ok) return landPending();
+          if (GOTO !== mid) return;
+          GOTO = '';
+          showGotoNote('The linked message was not found in this conversation.');
+        });
+        return;
       }
       GOTO = '';
       showGotoNote(failed ? 'The linked message could not be loaded. Reload the page to try again.'
@@ -5971,7 +5997,7 @@ async function refreshRoom() {
         }
         room = {...(patch.statusSame ? ROOM_LAST.room : patch.room), messages,
           revision: patch.revision, statusSig: patch.statusSig};
-        for (const k of ['window', 'pmIndex', 'specInMessages'])
+        for (const k of ['window', 'pmIndex'])
           if (room[k] === undefined && ROOM_LAST.room[k] !== undefined) room[k] = ROOM_LAST.room[k];
         if (room.window && patch.total != null) room.window = {...room.window, total: patch.total};
         ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig,
@@ -6001,6 +6027,7 @@ async function refreshRoom() {
   refreshShow(room, ticket, sendsGen);
 }
 function refreshShow(room, ticket, sendsGen) {
+  carryOlder(room);
   // A task is named by its number: "#18 · title" in the tab, #18 before the title.
   const tno = room.no ? '#' + room.no : '';
   const tabTitle = tno ? `${tno} · ${room.title}` : room.title + ' — session';
@@ -7876,7 +7903,7 @@ function msgsScrolled() {
   STICK = at;
   showLatest();
   readTick(true);
-  if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE) loadOlder();
+  if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the

@@ -9984,7 +9984,7 @@ def _pm_summary(m: dict) -> dict:
 def room_window(out: dict, n: int) -> dict:
     """Keep the latest ``n`` messages of an annotated room. What the page
     needs from the older ones comes as a summary: how many there are, the PO
-    messages a link may name, whether the spec is already one of them."""
+    messages a link may name."""
     every = out.get("messages") or []
     shown = every[-n:] if n else []
     rest = every[:len(every) - len(shown)]
@@ -9992,9 +9992,6 @@ def room_window(out: dict, n: int) -> dict:
     out["window"] = {"total": len(every), "before": len(rest)}
     if rest:
         out["pmIndex"] = [_pm_summary(m) for m in rest if m.get("kind") == "pomsg" and m.get("id")]
-        spec = (out.get("spec") or "").strip()
-        out["specInMessages"] = bool(spec) and any(
-            m.get("from") == "user" and (m.get("text") or "").strip() == spec for m in rest)
     return out
 
 

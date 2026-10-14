@@ -45,6 +45,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await ev(`(() => { const b = document.getElementById('msgs'); b.scrollTop = 0; b.dispatchEvent(new Event('scroll')); return 0; })()`);
     await until(`${held} > ${out.open.held}`);
     out.scrolled = await ev(`({ held: ${held}, before: ROOM_OBJ.window.before, first: ROOM_OBJ.messages[0].id, top: document.getElementById('msgs').scrollTop })`);
+    // A full fetch (the cursor unknown, as after a hub restart) keeps the pages loaded.
+    await ev(`(ROOM_LAST.revision = 'gone', refreshRoom().then(() => 0))`);
+    out.refetched = await ev(`({ held: ${held}, before: ROOM_OBJ.window.before, first: ROOM_OBJ.messages[0].id,
+      lastHeld: ROOM_LAST.room.messages.length })`);
     // A link to a balloon not held: loaded down to it, landed on.
     await ev(`gotoMsg('m3'), 0`);
     await until(`!!document.querySelector('#msgs [data-key="m3"]')`);
@@ -53,6 +57,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     console.log('POST');   // the test posts it
     await until(`ROOM_OBJ.messages.some(m => m.id && m.text === 'the newest one')`, 15000);
     out.after = await ev(`({ held: ${held}, last: ROOM_OBJ.messages[ROOM_OBJ.messages.length - 1].text, header: document.getElementById('info').textContent })`);
+    // A page opened on a link to a balloon older than its window lands on it too.
+    await send('Page.navigate', { url: A.base + '/session?room=' + A.room + '&msg=m7' }, sessionId);
+    await until('typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && CHAT_DRAWN');
+    await until(`!!document.querySelector('#msgs .msg[data-mid="m7"]') || /not found/.test(document.body.innerText)`);
+    out.opened = await ev(`({ landed: !!document.querySelector('#msgs .msg[data-mid="m7"]'), notFound: /not found/.test(document.body.innerText),
+      first: ROOM_OBJ.messages[0].id })`);
     console.log(JSON.stringify(out));
   } finally { ch.kill(); }
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
@@ -94,6 +104,17 @@ class RoomWindowPage(unittest.TestCase):
         self.assertEqual(s["held"] + s["before"], 400)
         self.assertEqual(s["first"], "m%d" % s["before"])
         self.assertGreater(s["top"], 0, "the place is kept, not left at the top")
+
+    def test_a_full_fetch_keeps_the_pages_loaded(self):
+        s, r = self.got["scrolled"], self.got["refetched"]
+        self.assertEqual((r["held"], r["before"], r["first"]), (s["held"], s["before"], s["first"]))
+        self.assertEqual(r["lastHeld"], s["held"], "the poll's copy keeps them too, for the next delta")
+
+    def test_a_page_opened_on_an_old_link_lands_on_it(self):
+        o = self.got["opened"]
+        self.assertTrue(o["landed"])
+        self.assertFalse(o["notFound"])
+        self.assertEqual(o["first"], "m2", "the page from the link's balloon, with 5 before it")
 
     def test_a_link_loads_down_to_its_balloon(self):
         g = self.got["goto"]
