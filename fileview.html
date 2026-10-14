@@ -220,6 +220,7 @@
     --dim: var(--fg-muted);   /* legacy name, kept so existing rules still read */
     --selected-bg: color-mix(in srgb, var(--accent) 10%, var(--surface));
     --c-success-bg: #DCFFF1;
+    --c-warning-bg: #FFF7D6;
     --c-warning-fg: #7F5F01;
     --c-progress-bg: #E9F2FF;
     --c-progress-fg: #0055CC;
@@ -270,6 +271,7 @@
     --match-bg: #7F5F01;
     --match-fg: #FFF7D6;
     --c-success-bg: #164B35;
+    --c-warning-bg: #533F04;
     --c-warning-fg: #F5CD47;
     --c-progress-bg: #092957;
     --c-progress-fg: #85B8FF;
@@ -304,6 +306,7 @@
     --match-bg: #5E4A12;
     --match-fg: #F6E7B8;
     --c-success-bg: #1F3B2F;
+    --c-warning-bg: #41351A;
     --c-warning-fg: #E6C878;
     --c-progress-bg: #22324A;
     --c-progress-fg: #9DC0EC;
@@ -338,6 +341,7 @@
     --match-bg: #FBE39A;
     --match-fg: #2B2620;
     --c-success-bg: #DDF2E4;
+    --c-warning-bg: #FAEDC6;
     --c-warning-fg: #6B4F00;
     --c-progress-bg: #E5EDF9;
     --c-progress-fg: #1D4F9E;
@@ -373,6 +377,7 @@
     --match-bg: #FFE066;
     --match-fg: #000000;
     --c-success-bg: #D2F4E1;
+    --c-warning-bg: #FFEAA8;
     --c-warning-fg: #3F2D00;
     --c-progress-bg: #DCE7FF;
     --c-progress-fg: #002C85;
@@ -409,6 +414,7 @@
     --match-bg: #6B5A2E;
     --match-fg: #F6ECCF;
     --c-success-bg: #374838;
+    --c-warning-bg: #4D4531;
     --c-warning-fg: #EBCB8B;
     --c-progress-bg: #34445E;
     --c-progress-fg: #A9C7EC;
@@ -443,6 +449,7 @@
     --match-bg: #5E4D33;
     --match-fg: #FCEBA4;
     --c-success-bg: #253627;
+    --c-warning-bg: #3D3223;
     --c-warning-fg: #F2C55C;
     --c-progress-bg: #25324D;
     --c-progress-fg: #B5CEFF;
@@ -478,7 +485,7 @@
     header .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }
     header .grow { flex:1 1 0; min-width:0; }
     header .btn { flex:none; }
-    #cmt-file .lbl { display:none; }
+    #cmt-file .lbl, #cmt-pick .lbl { display:none; }
     /* Download, Copy and Share… fold into one menu button. */
     header .btn.out { display:none; }
     header #out-menu { display:inline-flex; }
@@ -653,6 +660,11 @@
   #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
   #cmt-tray .cmt-item-x:hover { color:var(--c-danger-fg); }
+  /* A comment whose spot the file no longer has (it changed since): still listed and sent. */
+  #cmt-tray .cmt-lost { display:inline-block; height:16px; padding:0 var(--s-100); border-radius:var(--r-100); vertical-align:baseline;
+    background:var(--c-warning-bg); color:var(--c-warning-fg); font:600 var(--fs-100)/16px var(--font-sans); text-transform:uppercase; letter-spacing:.05em; }
+  .cmt-composer .grow { flex:1; }
+  .cmt-composer button:disabled { color:var(--fg-muted); cursor:default; }
   .cmt-toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-300); padding:9px 16px; font-size:13px; box-shadow:var(--e-200); }
   /* ---- Phone (SKILL.md §8) ---------------------------------------------
      Keyed on a touch screen, not on width: on a desktop this page sits in the
@@ -700,6 +712,7 @@
   <span class="grow"></span>
   <span class="seg" id="views" hidden></span>
   <button class="btn" id="wrap" hidden aria-pressed="true" title="Wrap long lines to the width of the view">Wrap</button>
+  <button class="btn" id="cmt-pick" type="button" hidden aria-pressed="false" title="Comment on an element: point at a part of the page and click it (Esc leaves)"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l4 10 1.5-4L12.5 7.5z"/><path d="M9 9l4 4"/></svg><span class="lbl">&nbsp;Point</span></button>
   <button class="btn" id="cmt-file" title="Comment on this file as a whole">💬<span class="lbl">&nbsp;Comment</span></button>
   <a class="btn" id="raw" target="_blank">Raw</a>
   <a class="btn out" id="out-download" hidden title="Download the file, with its name, to send it to someone"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg><span class="lbl">&nbsp;Download</span></a>
@@ -710,6 +723,7 @@
 <main id="main"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
 <script src="/static/selbar.js"></script>
+<script src="/static/comments.js"></script>
 <script src="/static/taskcard.js"></script>
 <script src="/static/filedrag.js"></script>
 <script src="/static/filelinks.js"></script>
@@ -1443,56 +1457,104 @@ function mdToHtml(src) {
 // ---- In-place review comments (same idea as the chat bubbles) -----------
 // Select text in the document → attach a comment; collect several; send them
 // all to the room the file was opened from (carried in ?room=), or copy them.
-const CMTS = [];               // {cid, start, end, quote, note, view}
-let _cseq = 1, _composerOpen = false, _cRoot = null;
+// In an HTML page's preview a comment can also be on an element: Point, then
+// click the part of the page (FC below).
+//
+// They are kept in this browser until the hub has them (static/comments.js,
+// one list per file): a reload, the page being made again or a second tab on
+// the same file never loses one.
+//   text:    {cid, at, start, end, quote, note, view, line?}
+//   element: {cid, at, kind: 'el', el: {tag, label, text, hint, near, path, html, line, box}, note, view}
+const FVC = cmtStore('cd-fvc:' + encodeURIComponent(PATH_Q) + ':', c => typeof c.note === 'string'
+  && (c.kind === 'el' ? !!(c.el && c.el.tag) : typeof c.quote === 'string' && Number.isFinite(c.start)));
+FVC.sync();
+const CMTS = FVC.list;
+let _composerOpen = false, _cRoot = null;
 // The bar over a selection in the file (static/selbar.js), made once the page has run.
 let SEL = null;
 function selShown() { return !!SEL && SEL.shown(); }
 function hideSelBtn() { if (SEL) SEL.hide(); }
-const FV_MARK = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // this page's mark on its send keys
 // Which rendering of the file is showing. A passage's offsets count through
 // that rendering's text, so a comment is marked only in the view it was made in:
 // the same offsets in Markdown's source and its preview are different words.
 let CUR_VIEW = '';
+// The comments whose place is not in the file as it reads now (it changed
+// since): listed as such in the tray, never dropped.
+const LOST = new Set();
 function _mark(root, start, end, cid) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); let off = 0, n; const ts = [];
   while ((n = w.nextNode())) { const len = n.nodeValue.length, s = Math.max(start, off), e = Math.min(end, off + len); if (s < e) ts.push({ node: n, s: s - off, e: e - off }); off += len; }
   for (const t of ts.reverse()) { try { const r = document.createRange(); r.setStart(t.node, t.s); r.setEnd(t.node, t.e); const m = document.createElement('mark'); m.className = 'cmt-hl'; m.dataset.cid = cid; r.surroundContents(m); } catch (e) {} }
 }
-function clearHl() { document.querySelectorAll('mark.cmt-hl').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); }); }
+function clearHl() { document.querySelectorAll('mark.cmt-hl').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); }); FC.clear(); }
+// Where a passage is in `full` now: where it was when its words are still
+// there, else the same words nearest to it, else null (they are gone).
+function anchorText(full, c) {
+  if (full.slice(c.start, c.end) === c.quote) return { start: c.start, end: c.end };
+  let best = -1;
+  for (let i = full.indexOf(c.quote); i >= 0; i = full.indexOf(c.quote, i + 1)) {
+    if (best < 0 || Math.abs(i - c.start) < Math.abs(best - c.start)) best = i;
+  }
+  return best < 0 ? null : { start: best, end: best + c.quote.length };
+}
+// A comment's place moved with its words: kept where it is now.
+function reanchored(c, at) {
+  if (at.start === c.start && at.end === c.end) return;
+  FVC.put({ ...c, start: at.start, end: at.end });
+}
 // A comment takes the file's words: a selection reaching past them (into the
-// header, a drag ending outside) is cut to the part in the file.
-function selResolve(sel) {
+// header, a drag ending outside) is cut to the part in the file. In an HTML
+// page's preview the words are the page's own, in its frame.
+function selResolve(sel, doc) {
   const r = sel.getRangeAt(0);
+  if (doc && doc !== document) return FC.resolve(r, doc);
   if (!_cRoot || !_cRoot.isConnected || !r.intersectsNode(_cRoot)) return null;
   const c = SelBar.clampTo(_cRoot, r);
   if (!c) return null;
   const quote = (_cRoot.textContent || '').slice(c.start, c.end);
   return { range: SelBar.rangeIn(_cRoot, c.start, c.end), comment: quote.trim() ? { start: c.start, end: c.end, quote } : null };
 }
+// What a comment on an element says it is on, in a line: its locator and words.
+function elWords(el) {
+  return '<' + el.label + '>' + (el.text ? ' “' + (el.text.length > 60 ? el.text.slice(0, 60) + '…' : el.text) + '”' : el.hint ? ' (' + el.hint + ')'
+    : el.near ? ' in “' + el.near + '”' : '');
+}
 // data.start < 0 means a comment on the file as a whole — the only kind an
 // image, a PDF or a rendered page can carry, and always available from the
-// header button whatever the file turns out to be.
+// header button whatever the file turns out to be. data.kind 'el' is one on
+// an element of an HTML page's preview (data.node, which Wider widens).
 function openComposer(data) {
   _composerOpen = true;
-  const whole = data.start < 0;
-  const q = data.quote.length > 200 ? data.quote.slice(0, 200) + '…' : data.quote;
+  const isEl = data.kind === 'el', whole = !isEl && data.start < 0;
+  let node = isEl ? data.node : null, el = isEl ? FC.describe(node) : null;
+  const q = !isEl && data.quote.length > 200 ? data.quote.slice(0, 200) + '…' : data.quote;
   const p = document.createElement('div'); p.className = 'cmt-composer';
-  p.innerHTML = `<div class="cmt-quote"></div><textarea class="cmt-note" rows="3" placeholder="${whole ? 'Your comment on this file…' : 'Your comment on this passage…'}"></textarea><div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
-  p.querySelector('.cmt-quote').textContent = whole ? 'On this file as a whole' : '“' + q + '”';
+  p.innerHTML = `<div class="cmt-quote"></div><textarea class="cmt-note" rows="3" placeholder="${whole ? 'Your comment on this file…' : isEl ? 'Your comment on this part of the page…' : 'Your comment on this passage…'}"></textarea><div class="cmt-actions">${isEl ? '<button class="cmt-wider" title="Comment on the element around this one">Wider</button><span class="grow"></span>' : ''}<button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
+  const qEl = p.querySelector('.cmt-quote');
+  const say = () => { qEl.textContent = whole ? 'On this file as a whole' : isEl ? 'On ' + elWords(el) : '“' + q + '”'; };
+  say();
   document.body.appendChild(p);
   const ta = p.querySelector('.cmt-note'); ta.focus();
-  const close = () => { p.remove(); _composerOpen = false; };
+  if (isEl) FC.hold(node);
+  const close = () => { p.remove(); _composerOpen = false; if (isEl) FC.hold(null); };
+  if (isEl) {
+    const wider = p.querySelector('.cmt-wider');
+    const can = () => { wider.disabled = !node.parentElement || node === node.ownerDocument.body; };
+    can();
+    wider.onclick = () => { if (wider.disabled) return; node = node.parentElement; el = FC.describe(node); FC.hold(node); say(); can(); ta.focus(); };
+  }
   p.querySelector('.cmt-cancel').onclick = close;
   p.querySelector('.cmt-add').onclick = () => {
     const note = ta.value.trim(); if (!note) { ta.focus(); return; }
-    const cid = _cseq++; CMTS.push({ cid, start: data.start, end: data.end, quote: data.quote, note, view: CUR_VIEW });
-    if (!whole && _cRoot) _mark(_cRoot, data.start, data.end, cid);
-    close(); renderTray();
-    const s = window.getSelection(); if (s) s.removeAllRanges();
+    const base = { cid: FVC.id(), at: FVC.now(), note, view: CUR_VIEW };
+    if (isEl) FVC.put({ ...base, kind: 'el', el });
+    else FVC.put({ ...base, start: data.start, end: data.end, quote: data.quote, ...(data.line ? { line: data.line } : {}) });
+    close(); clearHl(); remarkAll(); renderTray();
+    const s = (data.doc || document).getSelection(); if (s) s.removeAllRanges();
   };
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); p.querySelector('.cmt-add').click(); } if (e.key === 'Escape') { e.preventDefault(); close(); } });
 }
+function dropCmts(cids) { FVC.remove(cids); cids.forEach(cid => LOST.delete(cid)); }
 function renderTray() {
   let tray = document.getElementById('cmt-tray');
   if (!CMTS.length) { if (tray) tray.remove(); return; }
@@ -1500,35 +1562,336 @@ function renderTray() {
   const dest = ROOM ? (ROOM_NAME ? 'Send to “' + ROOM_NAME + '”' : 'Send to chat') : 'Copy';
   tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit" title="${ROOM ? esc(dest) : 'No task chat owns this file — copy the comments instead'}">${esc(dest)}</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
   const list = tray.querySelector('.cmt-list');
-  CMTS.forEach(c => {
+  CMTS.forEach((c, i) => {
     const it = document.createElement('div'); it.className = 'cmt-item'; it.dataset.cid = c.cid;
     const q = document.createElement('div'); q.className = 'cmt-item-q';
-    q.textContent = c.start < 0 ? 'this file' : '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”';
+    q.textContent = (i + 1) + '. ' + (c.kind === 'el' ? elWords(c.el) : c.start < 0 ? 'this file' : '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”');
+    if (LOST.has(c.cid)) {
+      const z = document.createElement('span'); z.className = 'cmt-lost'; z.textContent = 'Not found';
+      z.title = 'The file changed since: this spot is not in it now. The comment is still sent, with what it was on.';
+      q.append(' ', z);
+    }
     const nn = document.createElement('div'); nn.className = 'cmt-item-n'; nn.textContent = c.note;
     const x = document.createElement('button'); x.className = 'cmt-item-x'; x.textContent = '✕';
+    x.title = 'Remove this comment'; x.setAttribute('aria-label', 'Remove comment ' + (i + 1));
     it.append(q, nn, x);
-    x.onclick = (e) => { e.stopPropagation(); const i = CMTS.findIndex(z => z.cid === c.cid); if (i >= 0) CMTS.splice(i, 1); clearHl(); remarkAll(); renderTray(); };
-    it.onclick = () => { const m = document.querySelector(`mark.cmt-hl[data-cid="${c.cid}"]`); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    x.onclick = (e) => { e.stopPropagation(); dropCmts([c.cid]); clearHl(); remarkAll(); renderTray(); };
+    it.onclick = () => {
+      if (FC.reveal(c.cid)) return;
+      const m = document.querySelector(`mark.cmt-hl[data-cid="${c.cid}"]`); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
     list.appendChild(it);
   });
   tray.querySelector('.cmt-submit').onclick = submitCmts;
-  tray.querySelector('.cmt-clear').onclick = () => { CMTS.length = 0; clearHl(); renderTray(); };
+  tray.querySelector('.cmt-clear').onclick = () => { dropCmts(CMTS.map(c => c.cid)); clearHl(); renderTray(); };
 }
 // Re-apply the highlights for every comment that has a passage. Called after
 // anything replaces the comment root's content — switching an HTML file between
-// preview and source, or removing one comment from the tray.
+// preview and source, or removing one comment from the tray. A passage whose
+// words moved is marked where they are now; one whose words are gone is LOST.
 function remarkAll() {
+  if (FC.on()) { FC.render(); return; }
   if (!_cRoot) return;
-  CMTS.forEach(c => { if (c.start >= 0 && c.view === CUR_VIEW) _mark(_cRoot, c.start, c.end, c.cid); });
+  const full = _cRoot.textContent || '';
+  CMTS.forEach(c => {
+    if (c.kind === 'el' || c.start < 0 || c.view !== CUR_VIEW) return;
+    const at = anchorText(full, c);
+    if (!at) { LOST.add(c.cid); return; }
+    LOST.delete(c.cid);
+    reanchored(c, at);
+    _mark(_cRoot, at.start, at.end, c.cid);
+  });
 }
+// The comments as the agent reads them: the file, then each comment with what
+// it is on. A passage is quoted; an element is named so it can be found in the
+// source: its locator and words, the line it starts on when that is certain,
+// its CSS path, where it sat on the page and its HTML (long values cut).
 function buildBody() {
   const base = document.getElementById('name').textContent || 'file';
   const path = new URLSearchParams(location.search).get('path') || '';
+  const gone = c => LOST.has(c.cid) ? '\n_(The file changed since: this spot is not in it now.)_' : '';
+  const fence = s => { let f = '```'; while (s.includes(f)) f += '`'; return f; };
   return `## Review comments on \`${base}\` (${CMTS.length})\nFile: \`${path}\`\n\n` +
-    CMTS.map((c, i) => c.start < 0
-      ? `**${i + 1}.** (on the file as a whole)\n\n${c.note}`
-      : `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+    CMTS.map((c, i) => {
+      if (c.kind === 'el') {
+        const e = c.el, f = fence(e.html || '');
+        return `**${i + 1}.** On the element \`${e.label}\`${e.text ? ' “' + e.text + '”' : ''}${e.hint ? ' (' + e.hint + ')' : ''}${e.line ? ' at line ' + e.line : ''} of the page`
+          + (e.near ? `, in “${e.near}”` : '') + `${gone(c)}\n`
+          + `CSS path: \`${e.path}\`` + (e.box ? `; on screen ${e.box.w}×${e.box.h} px at (${e.box.x}, ${e.box.y}) in a ${e.box.vw} px wide view` : '') + '\n'
+          + `${f}html\n${e.html}\n${f}\n\n${c.note}`;
+      }
+      if (c.start < 0) return `**${i + 1}.** (on the file as a whole)\n\n${c.note}`;
+      return `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}${c.line ? '\n\n(around line ' + c.line + ' of the source)' : ''}${gone(c)}\n\n${c.note}`;
+    }).join('\n\n');
 }
+// Another tab added, sent or removed a comment on this file: show the list as
+// it is now.
+window.addEventListener('storage', e => {
+  if (!FVC.hears(e.key)) return;
+  FVC.sync(); clearHl(); remarkAll(); renderTray();
+});
+
+// ---- Comments on an HTML page's preview (#233) ----------------------------
+// The page renders in a frame sandboxed with allow-same-origin and nothing
+// else: its own scripts never run, and this page reaches into its document as
+// it already does for links. Nothing is posted between the two, so there is no
+// message for a page to forge: every comment is made by this page's code from
+// a selection or a click it read itself.
+//
+// What is drawn over the page (the pointed-at box, the marks and their
+// numbered pins, the layer that takes clicks while pointing) lives in one
+// element at the end of the page's <html>, outside its <body>, in a shadow
+// root: the page's styles cannot reach it, and the body's text, which
+// a passage's offsets count through, is unchanged. Passages are painted with
+// the CSS Custom Highlight API, which changes no node.
+const FC = (() => {
+  let ifr = null, doc = null, src = '', masked = '', host = null, root = null, pins = null, hov = null, cat = null;
+  let picking = false, held = null, raf = 0, hoverEl = null;
+  const where = new Map();                       // cid → Range | Element
+  const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const btn = () => document.getElementById('cmt-pick');
+  // The page's source with comments and the text of script, style, textarea
+  // and title blanked (their newlines kept): what a tag is searched for in.
+  function blank(s) {
+    const sp = m => m.replace(/[^\n]/g, ' ');
+    return s.replace(/<!--[\s\S]*?-->/g, sp)
+      .replace(/(<(script|style|textarea|title)\b[^>]*>)([\s\S]*?)(<\/\2\s*>)/gi, (m, a, _t, b, c) => a + sp(b) + c);
+  }
+  const lineAt = i => { let n = 1; for (let k = src.indexOf('\n'); k >= 0 && k < i; k = src.indexOf('\n', k + 1)) n++; return n; };
+  // The line of the source an element starts on, when that is certain: its
+  // id written once, else the k-th "<tag" of the source for the k-th element
+  // of that tag, when the two counts agree (a parser-made <tbody> would not).
+  function sourceLine(e) {
+    if (!src) return 0;
+    const tag = e.tagName.toLowerCase();
+    if (e.id) {
+      const idRe = new RegExp('\\sid\\s*=\\s*(["\']?)' + e.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\1(?=[\\s/>])', 'g');
+      const hits = [...masked.matchAll(idRe)];
+      if (hits.length === 1) return lineAt(hits[0].index);
+    }
+    if (/^(html|head|body|tbody)$/.test(tag)) return 0;
+    const re = new RegExp('<' + tag.replace(/[^\w-]/g, '') + '(?=[\\s/>])', 'gi');
+    const at = [...masked.matchAll(re)].map(m => m.index);
+    const all = [...doc.getElementsByTagName(e.tagName)];
+    return at.length === all.length ? lineAt(at[all.indexOf(e)]) : 0;
+  }
+  // A passage's line in the source: its first words found there exactly once.
+  function textLine(quote) {
+    const first = (quote.split('\n').map(s => s.trim()).find(s => s.length > 3) || '').slice(0, 40);
+    if (!first || !masked) return 0;
+    const i = masked.indexOf(first);
+    return i >= 0 && masked.indexOf(first, i + 1) < 0 ? lineAt(i) : 0;
+  }
+  // A selector that finds this element again: from the nearest ancestor with
+  // an id of its own (or the body) down, tag and position among its kind.
+  function cssPath(e) {
+    const parts = [];
+    for (let n = e; n && n.nodeType === 1; n = n.parentElement) {
+      const tag = n.tagName.toLowerCase();
+      if (tag === 'body' || tag === 'html') { parts.unshift(tag); break; }
+      if (n.id && doc.querySelectorAll('#' + CSS.escape(n.id)).length === 1) { parts.unshift(tag + '#' + CSS.escape(n.id)); break; }
+      const same = n.parentElement ? [...n.parentElement.children].filter(k => k.tagName === n.tagName) : [n];
+      parts.unshift(same.length > 1 ? `${tag}:nth-of-type(${same.indexOf(n) + 1})` : tag);
+    }
+    return parts.join(' > ');
+  }
+  const words = e => ((e.innerText != null ? e.innerText : e.textContent) || '').replace(/\s+/g, ' ').trim();
+  const clip = t => t.length > 120 ? t.slice(0, 120) + '…' : t;
+  // tag#id.class.class: what the element is, in the page's own names.
+  const labelOf = e => e.tagName.toLowerCase() + (e.id ? '#' + CSS.escape(e.id) : '') + [...e.classList].slice(0, 3).map(c => '.' + CSS.escape(c)).join('');
+  // Everything a comment on an element carries, for the agent to find it.
+  function describe(e) {
+    const tag = e.tagName.toLowerCase();
+    const text = words(e);
+    const hint = ['aria-label', 'title', 'alt', 'placeholder', 'value', 'name'].map(a => e.getAttribute(a)).find(v => v && v.trim()) || '';
+    // Where it is, for one with few words of its own: its figure's caption,
+    // else the heading it is under.
+    let near = '';
+    const fig = e.closest('figure'), cap = fig && fig.querySelector('figcaption');
+    if (cap && !cap.contains(e)) near = words(cap);
+    else for (const h of doc.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+      if (h.contains(e) || e.contains(h)) continue;
+      if (h.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) near = words(h); else break;
+    }
+    let html = e.outerHTML.replace(/=("|')([^"']{100})[^"']*\1/g, '=$1$2…$1');
+    if (html.length > 500) html = html.slice(0, 500) + ' …';
+    const b = e.getBoundingClientRect(), W = doc.defaultView;
+    return { tag, label: labelOf(e), text: clip(text),
+             hint: hint.trim().slice(0, 80), near: near.slice(0, 80), path: cssPath(e), html, line: sourceLine(e),
+             box: { x: Math.round(b.left + W.scrollX), y: Math.round(b.top + W.scrollY), w: Math.round(b.width), h: Math.round(b.height), vw: W.innerWidth } };
+  }
+  // The element a comment was on, in the page as it is now: by its path when
+  // that still names the same kind of element with the same words or classes,
+  // else by its id, else the one element of its kind with its words.
+  function findEl(el) {
+    const ok = n => n && n.tagName.toLowerCase() === el.tag;
+    let n = null;
+    try { n = doc.querySelector(el.path); } catch (e) {}
+    if (ok(n) && (clip(words(n)) === el.text || labelOf(n) === el.label)) return n;
+    const id = (/#((?:\\.|[\w-])+)/.exec(el.label) || [])[1];
+    if (id) { try { n = doc.querySelector('#' + id); } catch (e) { n = null; } if (ok(n)) return n; }
+    if (!el.text) return null;
+    const same = [...doc.getElementsByTagName(el.tag)].filter(k => clip(words(k)) === el.text);
+    return same.length === 1 ? same[0] : null;
+  }
+  function style() {
+    return `:host { all: initial; }
+      .cat { position: fixed; inset: 0; pointer-events: none; }
+      .cat.on { pointer-events: auto; cursor: crosshair; }
+      .hov { position: fixed; display: none; box-sizing: border-box; pointer-events: none;
+        border: 2px solid ${tok('--accent')}; background: color-mix(in srgb, ${tok('--accent')} 10%, transparent); border-radius: 3px; }
+      .hov .tag { position: absolute; left: -2px; bottom: 100%; margin-bottom: 2px; padding: 0 6px; border-radius: 3px; white-space: nowrap;
+        font: 600 11px/16px ${tok('--font-mono') || 'monospace'}; background: ${tok('--accent')}; color: ${tok('--accent-fg')}; }
+      .hov.below .tag { bottom: auto; top: 100%; margin: 2px 0 0; }
+      .mk { position: fixed; box-sizing: border-box; pointer-events: none; border: 2px dashed ${tok('--c-warning-bold')}; border-radius: 3px; }
+      .pin { position: fixed; box-sizing: border-box; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; pointer-events: auto;
+        font: 600 11px/1 ${tok('--font-sans') || 'sans-serif'}; font-variant-numeric: tabular-nums;
+        background: ${tok('--match-bg')}; color: ${tok('--match-fg')}; border: 2px solid ${tok('--c-warning-bold')}; box-shadow: ${tok('--e-200')}; }
+      .pin.flash { outline: 3px solid ${tok('--focus-ring')}; outline-offset: 1px; }
+      @media (pointer: coarse) { .pin { min-width: 24px; height: 24px; border-radius: 12px; font-size: 12px; } }`;
+  }
+  function attach(frame, text) {
+    detach();
+    let d = null;
+    try { d = frame.contentDocument; } catch (e) {}
+    if (!d || !d.documentElement || !d.body) return;
+    ifr = frame; doc = d; src = text || ''; masked = blank(src);
+    host = d.createElement('ens-comments');
+    host.setAttribute('style', 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; display: block;');
+    root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `<style>${style()}</style><div class="cat"></div><div class="pins"></div><div class="hov"><span class="tag"></span></div>`;
+    cat = root.querySelector('.cat'); pins = root.querySelector('.pins'); hov = root.querySelector('.hov');
+    d.documentElement.appendChild(host);
+    const hl = d.createElement('style');
+    hl.id = 'ens-comments-hl';
+    hl.textContent = `::highlight(ens-cmt) { background-color: ${tok('--match-bg')}; color: ${tok('--match-fg')}; text-decoration: underline 2px ${tok('--c-warning-bold')}; }`;
+    (d.head || d.documentElement).appendChild(hl);
+    // Pointing: the layer takes the pointer, so a click on the page's own link
+    // or button picks it instead of following it.
+    const pickAt = (x, y) => {
+      const n = d.elementsFromPoint(x, y).find(k => k !== host && k !== d.documentElement);
+      return n || d.body;
+    };
+    cat.addEventListener('pointermove', e => { if (picking && !_composerOpen) box(pickAt(e.clientX, e.clientY)); });
+    cat.addEventListener('pointerdown', e => { if (picking && !_composerOpen) box(pickAt(e.clientX, e.clientY)); });
+    cat.addEventListener('click', e => {
+      if (!picking || _composerOpen) return;
+      e.preventDefault(); e.stopPropagation();
+      const n = pickAt(e.clientX, e.clientY);
+      openComposer({ kind: 'el', node: n, doc: d });
+    });
+    pins.addEventListener('click', e => { const p = e.target.closest('.pin'); if (p) { e.stopPropagation(); showTrayItem(p.dataset.cid); } });
+    d.addEventListener('keydown', onKey, true);
+    const later = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; place(); }); };
+    d.addEventListener('scroll', later, true);
+    d.addEventListener('load', later, true);               // a picture arriving moves what is under it
+    d.defaultView.addEventListener('resize', later);
+    btn().hidden = false;
+  }
+  function detach() {
+    setPick(false);
+    if (host) host.remove();
+    try { if (doc) { doc.removeEventListener('keydown', onKey, true); const W = doc.defaultView; if (W && W.CSS && W.CSS.highlights) W.CSS.highlights.delete('ens-cmt'); } } catch (e) {}
+    ifr = doc = host = root = pins = hov = cat = null; held = hoverEl = null; src = masked = '';
+    where.clear();
+    const b = btn(); if (b) b.hidden = true;
+  }
+  function onKey(e) { if (e.key === 'Escape' && picking && !_composerOpen && !e.defaultPrevented) { e.preventDefault(); setPick(false); } }
+  function setPick(on) {
+    picking = !!on && !!doc;
+    const b = btn(); if (b) b.setAttribute('aria-pressed', String(picking));
+    if (cat) cat.classList.toggle('on', picking);
+    if (picking) { try { doc.getSelection().removeAllRanges(); } catch (e) {} hideSelBtn(); }
+    else box(null);
+  }
+  // The box over the element pointed at (or held by an open comment box).
+  function box(n) {
+    hoverEl = n;
+    if (!hov) return;
+    const e = held || n;
+    if (!e) { hov.style.display = 'none'; return; }
+    const r = e.getBoundingClientRect();
+    hov.style.display = 'block';
+    hov.style.left = r.left + 'px'; hov.style.top = r.top + 'px';
+    hov.style.width = Math.max(r.width, 4) + 'px'; hov.style.height = Math.max(r.height, 4) + 'px';
+    hov.classList.toggle('below', r.top < 20);
+    hov.querySelector('.tag').textContent = labelOf(e);
+  }
+  function hold(n) { held = n; box(n ? n : picking ? hoverEl : null); }
+  // Every comment on the preview, found in the page as it is now: passages
+  // painted, elements outlined, each with its number.
+  function render() {
+    if (!doc) return;
+    where.clear();
+    const full = doc.body.textContent || '', ranges = [];
+    CMTS.forEach(c => {
+      if (c.view !== 'preview' || (c.kind !== 'el' && c.start < 0)) return;
+      let t = null;
+      if (c.kind === 'el') t = findEl(c.el);
+      else {
+        const at = anchorText(full, c);
+        if (at) { reanchored(c, at); t = SelBar.rangeIn(doc.body, at.start, at.end); ranges.push(t); }
+      }
+      if (t) { where.set(c.cid, t); LOST.delete(c.cid); } else LOST.add(c.cid);
+    });
+    const W = doc.defaultView;
+    try { if (W.CSS && W.CSS.highlights && W.Highlight) { if (ranges.length) W.CSS.highlights.set('ens-cmt', new W.Highlight(...ranges)); else W.CSS.highlights.delete('ens-cmt'); } } catch (e) {}
+    place();
+  }
+  function clear() {
+    where.clear();
+    if (pins) pins.innerHTML = '';
+    try { const W = doc && doc.defaultView; if (W && W.CSS && W.CSS.highlights) W.CSS.highlights.delete('ens-cmt'); } catch (e) {}
+  }
+  // Pins and outlines where their comments are on screen now.
+  function place() {
+    if (!pins) return;
+    pins.innerHTML = '';
+    const vw = doc.defaultView.innerWidth, vh = doc.defaultView.innerHeight;
+    CMTS.forEach((c, i) => {
+      const t = where.get(c.cid);
+      if (!t) return;
+      const r = t.tagName ? t.getBoundingClientRect() : (t.getClientRects()[0] || t.getBoundingClientRect());
+      if (!r || (!r.width && !r.height) || r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) return;
+      if (c.kind === 'el') {
+        const m = doc.createElement('div'); m.className = 'mk';
+        Object.assign(m.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+        pins.appendChild(m);
+      }
+      const p = doc.createElement('div'); p.className = 'pin'; p.dataset.cid = c.cid; p.textContent = String(i + 1);
+      p.title = 'Comment ' + (i + 1) + ': ' + c.note.slice(0, 120);
+      p.style.left = Math.max(2, Math.min(vw - 24, r.left - 10)) + 'px';
+      p.style.top = Math.max(2, Math.min(vh - 24, r.top - 10)) + 'px';
+      pins.appendChild(p);
+    });
+    if (hov && hov.style.display === 'block') box(hoverEl);
+  }
+  // From the tray: scroll the comment's place into view and point at its pin.
+  function reveal(cid) {
+    const t = where.get(cid);
+    if (!t) return false;
+    const e = t.tagName ? t : (t.startContainer.nodeType === 1 ? t.startContainer : t.startContainer.parentElement);
+    if (e && e.scrollIntoView) e.scrollIntoView({ block: 'center' });
+    place();
+    const p = pins && pins.querySelector(`.pin[data-cid="${cid}"]`);
+    if (p) { p.classList.add('flash'); setTimeout(() => p.classList.remove('flash'), 1200); }
+    return true;
+  }
+  // A selection in the page: the part in its body, as a comment on a passage.
+  function resolve(r, d) {
+    if (d !== doc || picking) return null;
+    const c = SelBar.clampTo(d.body, r);
+    if (!c) return null;
+    const quote = (d.body.textContent || '').slice(c.start, c.end);
+    const line = quote.trim() ? textLine(quote) : 0;
+    return { range: SelBar.rangeIn(d.body, c.start, c.end), comment: quote.trim() ? { start: c.start, end: c.end, quote, doc: d, ...(line ? { line } : {}) } : null };
+  }
+  return { attach, detach, render, clear, reveal, resolve, describe, hold, setPick,
+           on: () => !!doc, picking: () => picking, frame: () => ifr };
+})();
+document.getElementById('cmt-pick').onclick = () => FC.setPick(!FC.picking());
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && FC.picking() && !_composerOpen && !e.defaultPrevented) FC.setPick(false); });
 // No alert() and no reliance on the clipboard: this page runs inside the
 // workspace panel's iframe, where a modal freezes the parent page too and
 // clipboard writes can be refused outright. Show the text and let it be copied.
@@ -1552,9 +1915,10 @@ async function submitCmts() {
   }
   // The hub's resume-or-deliver, never /api/room/say: a task that is not
   // running is resumed for the comments and they are typed in once its owner
-  // is up. The key names this batch (the ids are this page's, so the page's
-  // own mark goes in front): sent again after a lost reply, it counts once.
-  const key = 'fv:' + FV_MARK + ':' + CMTS.map(c => c.cid).join(',');
+  // is up. The key names this batch by its comments' ids, which are kept
+  // with them: sent again after a lost reply or a reload, it counts once.
+  const sent = CMTS.map(c => c.cid);
+  const key = 'fv:' + sent.join(',');
   try {
     const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '', key }) });
     let j = null;
@@ -1563,10 +1927,10 @@ async function submitCmts() {
       // Refused but held by the hub: shown in the task's chat as not
       // delivered, with Retry. Anything else keeps them here.
       if (!(j && j.kept)) throw new Error((j && j.error) || r.status);
-      CMTS.length = 0; clearHl(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
+      dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
       return;
     }
-    CMTS.length = 0; clearHl(); renderTray(); toast('✓ Comments sent to the chat');
+    dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('✓ Comments sent to the chat');
   } catch (e) { showFallback('Couldn’t send to the chat. Copy your comments:', body); }
 }
 // Download, Copy (a text file) and Share… (where the browser shares files):
@@ -1641,6 +2005,10 @@ function enableComments(root) {
     const m = e.target.closest && e.target.closest('mark.cmt-hl');
     if (m) showTrayItem(m.dataset.cid);
   });
+  mountSel();
+}
+// The selection bar: one, for the file's own text and for an HTML page's frame.
+function mountSel() {
   if (_cDocWired) return;                       // one document listener, not one per render
   _cDocWired = true;
   SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data) });
@@ -2184,6 +2552,9 @@ function fvBackButton() {
     // listener does not hear: listen there, and put a reopened tab back.
     ifr.addEventListener('load', () => {
       wireFrameLinks(ifr);
+      // Comments on the page: its selections, and Point for its elements.
+      mountSel(); SEL.watch(ifr);
+      FC.attach(ifr, text); FC.render(); renderTray();
       try { ifr.contentDocument.addEventListener('scroll', onScroll, true); ifr.contentDocument.addEventListener('keydown', fvOnKey, true); } catch (e) {}
       putBack();
       report();
@@ -2223,6 +2594,7 @@ function fvBackButton() {
   function paint() {
     clearHl();
     hideSelBtn();
+    FC.detach();
     CUR_VIEW = view;
     if (views) [...document.getElementById('views').children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
     wrapBtn.hidden = !(view === 'source' || view === 'pretty');
@@ -2419,7 +2791,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
 // What this page holds, for the update block above: a comment being written
 // or a passage picked. Where it is goes into the address it comes back to:
 // the same st= a Workspace tab reopens it with (see ensUpdPlace in the reader).
-window.ensUpdBusy = () => _composerOpen || selShown();
+window.ensUpdBusy = () => _composerOpen || selShown() || FC.picking();
 setInterval(ensUpd.poll, 15000);   // asks every 30 s; a tick that lands a hair early is not skipped
 </script>
 </body>
