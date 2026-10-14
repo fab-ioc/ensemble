@@ -806,7 +806,7 @@
   #thr-side.layer #ts-back { min-height:var(--touch-min); }
   #ts-frame { flex:1 1 auto; min-height:0; width:100%; border:0; background:var(--bg); }
   /* The thread page inside that frame: the frame's head is its head. */
-  body.side > header, body.side #info, body.side #agentcol { display:none; }
+  body.side > header, body.side #info, body.side #agentcol, body.side #open-questions { display:none; }
   body.side #chatcol { border-right:0; }
   /* A thread: its own messages, all of them; the chat's own bars are not its. */
   body.thread #chatbar, body.thread #points-line, body.thread #ask-line { display:none; }
@@ -1497,7 +1497,7 @@
       <div id="ask-line" role="status" hidden></div>
       <div id="chat-controls">
         <div id="points-line" hidden></div>
-        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="earlier-threads" hidden>Show earlier threads</button></div>
+        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="earlier-threads" hidden>Earlier messages</button></div>
       </div>
       <div id="thread-catchup" hidden></div>
       <div id="msgs"></div>
@@ -4946,10 +4946,14 @@ function loadOlder(upto = '') {
       // fold the old first row into a group, so failing that, by the height added.
       const box = $('#msgs'), place = readingPlace(box), h0 = box.scrollHeight, t0 = box.scrollTop;
       const mid = place && (place.el.dataset.mid || (place.el.querySelector('[data-mid]') || {dataset: {}}).dataset.mid || '');
+      // A reader at the end (the hub's rows fetched for turns older than them,
+      // #234) stays at the end and keeps following.
+      const atEnd = !upto && STICK && nearEnd(box);
       STICK = false;
       if (SOLO_MODE) { if (!threadedView() && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
       else if (ROOM_OBJ) renderMsgs(ROOM_OBJ);
-      if (!DRAW_HELD && place) {
+      if (atEnd && !DRAW_HELD) { box.scrollTop = box.scrollHeight; STICK = true; }
+      else if (!DRAW_HELD && place) {
         const at = mid && [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid && e.offsetParent);
         const row = at && [...box.children].find(k => k.contains(at));
         box.scrollTop = row ? row.offsetTop - place.off : t0 + box.scrollHeight - h0;

@@ -73,6 +73,7 @@ const VIEW = `(() => {
     whole: !!document.getElementById('whole-chat') || !!document.querySelector('[data-phone-action="whole-chat"]'),
     folded: document.querySelectorAll('#msgs .msg-fold, #msgs .fold-note, #msgs .gap-row').length,
     scrollX: document.documentElement.scrollWidth - innerWidth,
+    endGap: (b => Math.round(b.scrollHeight - b.scrollTop - b.clientHeight))(document.getElementById('msgs')),
     side: { open: !side.hidden, layer: side.classList.contains('layer'), title: document.getElementById('ts-title').textContent,
       src: f.getAttribute('src') || '', left: sr.left, width: sr.width, height: sr.height, chatWidth: cr.width,
       stored: (() => { try { return localStorage.getItem('cd-thread-open:' + ROOM); } catch (e) { return null; } })() },
@@ -526,6 +527,8 @@ class ThreadsPage(unittest.TestCase):
                 self.assertIn("&side=1&thread=P1", side["src"])
                 self.assertEqual([x["thr"] for x in o["side"]["lines"] if x["on"]], ["P1"], "its line is marked")
                 self.assertEqual(o["side"]["mids"], o["channel"]["mids"], "the chat stays as it was")
+                if o["channel"]["endGap"] <= 50:
+                    self.assertLessEqual(o["side"]["endGap"], 50, "a chat at its end stays there")
                 t = o["sideThread"]
                 self.assertEqual(t["mids"], [f"{sid}:1", f"{sid}:2", f"{sid}:3"])
                 self.assertTrue(t["side"] and t["headHidden"] and t["also"], t)
