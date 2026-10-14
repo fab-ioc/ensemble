@@ -42,18 +42,24 @@ class FileTable:
         self._dirs: dict[str, tuple[int, list[str], list[str], bool]] = {}
         self._files: dict[str, tuple[float, int, int]] = {}
         self._full_at = 0.0
+        self._at = 0.0
 
     def forget(self) -> None:
         """The next look walks everything (a test, or files changed behind it)."""
         with self._lock:
-            self._full_at = 0.0
+            self._full_at = self._at = 0.0
 
-    def files(self, hot_names=()) -> dict[str, tuple[float, int, int]]:
+    def files(self, hot_names=(), fresh_s: float = 0.0) -> dict[str, tuple[float, int, int]]:
+        """``fresh_s``: the last look, if younger than that (a lookup per row
+        of one refresh)."""
         root = str(self._root_fn())
         now = time.time()
         with self._lock:
             if root != self._root:
                 self._reset(root)
+            elif fresh_s and not hot_names and now - self._at < fresh_s:
+                return dict(self._files)
+            self._at = now
             full = now - self._full_at >= FULL_S
             if full:
                 self._full_at = now

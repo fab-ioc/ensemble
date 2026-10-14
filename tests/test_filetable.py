@@ -130,6 +130,13 @@ class FileTableTest(unittest.TestCase):
         self.root = other.name
         self.assertEqual(list(self.table.files()), [r])
 
+    def test_fresh_answer_reused(self):
+        self.table.files()
+        p = self._write("a.jsonl", "x")
+        self.assertEqual(self.table.files(fresh_s=60), {})      # the last look
+        self.assertIn(p, self.table.files(fresh_s=60, hot_names={"a"}))
+        self.assertIn(p, self.table.files(fresh_s=60))
+
     def test_newest_first(self):
         a = self._write("a.jsonl", "x", age=100)
         b = self._write("b.jsonl", "x")

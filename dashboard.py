@@ -1013,7 +1013,8 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
         if fresh and time.time() - at >= _TRANSCRIPT_INDEX_TTL_S:
             at = time.time()
             idx = {}
-            for p in CLAUDE_FILES.files():
+            # The task list's own walk when it is a second old: a refresh walks once.
+            for p in CLAUDE_FILES.files(fresh_s=_TRANSCRIPT_INDEX_TTL_S / 2):
                 f = filetable.as_path(p)
                 idx.setdefault(f.stem, f)
             _TRANSCRIPT_INDEX = (root, at, idx)

@@ -161,7 +161,7 @@ _ROLLOUT_CACHE: dict[str, tuple] = {}
 _TABLES: dict[str, filetable.FileTable] = {}
 
 
-def _rollout_table(root: Path) -> dict[str, tuple[float, int, int]]:
+def _rollout_table(root: Path, fresh_s: float = 0.0) -> dict[str, tuple[float, int, int]]:
     """Every rollout under ``root`` with its time and size, from a file table
     (#228): a refresh re-lists only day folders that moved and re-stats only
     recent rollouts, not all of them."""
@@ -170,7 +170,7 @@ def _rollout_table(root: Path) -> dict[str, tuple[float, int, int]]:
     if t is None:
         t = _TABLES[key] = filetable.FileTable(
             lambda: key, 3, lambda n: n.startswith("rollout-") and n.endswith(".jsonl"))
-    return t.files()
+    return t.files(fresh_s=fresh_s)
 
 
 def _parse_rollout(path: Path, sig: tuple | None = None) -> AgentSession | None:
@@ -345,15 +345,21 @@ class CodexAgent(AgentType):
     def rollouts_for_session(self, session_id: str) -> list[Path]:
         """Every rollout belonging to ``session_id``, oldest first.
 
-        The id is the uuid in the filename, so a targeted glob finds it without
-        touching the rest of the history — this runs on the dashboard's poll
-        loop, so it must not cost a full scan. Only when that misses (older
+        The id is the uuid in the filename, so the rollout table (a second
+        old at most: one refresh asks for many sessions), else a targeted glob
+        (a rollout written since), finds it without touching the rest of the
+        history — this runs on the dashboard's poll loop, so it must not cost
+        a full scan. Only when both miss (older
         layouts, or a resume that forked a file under a different name) do we
         fall back to reading each rollout's `session_meta` line."""
         root = self.sessions_dir()
         if not session_id or not root.exists():
             return []
-        hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
+        tail = f"-{session_id}.jsonl"
+        hits = [filetable.as_path(p) for p in _rollout_table(root, 1.0)
+                if p.endswith(tail) and os.path.basename(p).startswith("rollout-")]
+        if not hits:
+            hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
         if not hits:
             # A missing old solo-session ID is common. Do not scan every
             # rollout's metadata per ID or every minute; the fallback index
