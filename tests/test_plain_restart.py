@@ -476,6 +476,11 @@ ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
             "class H(BaseHTTPRequestHandler):\n"
             "    def do_GET(self):\n"
             "        self.send_response(200); self.end_headers(); self.wfile.write(b'{}')\n"
+            "    def do_POST(self):\n"   # the preflight's typing check (#229)
+            "        self.rfile.read(int(self.headers.get('Content-Length') or 0))\n"
+            "        self.send_response(200); self.send_header('Content-Type', 'application/json')\n"
+            "        self.end_headers()\n"
+            "        self.wfile.write(b'{\"ok\": true, \"detail\": \"stand-in\"}')\n"
             "    def log_message(self, *a): pass\n"
             "ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()\n")
         ports = []
