@@ -1947,8 +1947,13 @@ def reserve_hub_line(sess):
         if rid and ident and _d:
             room = _d.chatroom.get_room(rid, public=False)
             part = _d.chatroom.participant(room, ident) if room else None
-            if part and part.get("ptyId") and _pty(part) is not sess:
-                return None
+            if part and part.get("ptyId"):
+                # The seat recorded for this agent must be the one being
+                # typed into: compared by PTY id, since a host-backed
+                # lookup may hand back another object for the same PTY.
+                seat = _pty(part)
+                if getattr(seat, "id", None) != getattr(sess, "id", None):
+                    return None
         token = object()
         sess.hub_line_typing_at = time.time()
         sess.hub_line_typing_token = token

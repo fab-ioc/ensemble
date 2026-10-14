@@ -11082,11 +11082,57 @@ def pty_host_state_dir() -> Path:
 _PTY_HOST_MODE = "unknown"  # startup sets attached/local; local must drain
 
 
+class OneProxyPerPty:
+    """The hub's view of the PTY host: one session object per PTY for as
+    long as the host has it. The hub keeps state on a session (the hub line
+    it typed, its typing lease) and tells seats apart by identity, while
+    the host client hands out a fresh object per lookup: that lost both,
+    and every hub line was refused as "stopped before the message could be
+    typed" (10-13, after #226). Kept out of backends/ptyhost.py so the
+    running host's version is unchanged and a hub-only restart keeps the
+    agents."""
+
+    def __init__(self, client):
+        self._client = client
+        self._proxies: dict[str, object] = {}
+        self._lock = threading.Lock()
+
+    def __getattr__(self, name):        # pid, version, call, reap, deaths...
+        return getattr(self._client, name)
+
+    def _keep(self, proxy):
+        with self._lock:
+            kept = self._proxies.get(proxy.id)
+            if kept is None:
+                self._proxies[proxy.id] = proxy
+                return proxy
+            kept._info, kept._info_at = proxy._info, proxy._info_at
+            return kept
+
+    def _forget(self, pty_id):
+        with self._lock:
+            self._proxies.pop(pty_id, None)
+
+    def create(self, *args, **kwargs):
+        return self._keep(self._client.create(*args, **kwargs))
+
+    def get(self, pty_id):
+        proxy = self._client.get(pty_id)
+        if proxy is None:
+            self._forget(pty_id)
+            return None
+        return self._keep(proxy)
+
+    def kill(self, pty_id):
+        self._forget(pty_id)
+        return self._client.kill(pty_id)
+
+
 def attach_pty_host() -> None:
     """The web hub must serve even when the detached PTY owner fails."""
     global _PTY_HOST_MODE
     try:
-        host_client = ptyhost.connect(pty_host_state_dir(), BACKEND)
+        host_client = OneProxyPerPty(ptyhost.connect(pty_host_state_dir(), BACKEND))
         ptyrun.use_host(host_client)
         _PTY_HOST_MODE = "attached"
         _restart_log(f"PTY host attached: pid {host_client.pid}, version {host_client.version}")
