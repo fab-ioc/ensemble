@@ -1052,7 +1052,11 @@ or closed and opened again), else at the dock's right edge, 440 px wide (`PD_THR
 an edge panel by its least width, so `pdMinOf` gives 440 while it is added: a stopgap until Dock's
 `addPanel` takes a size), while it fits (`pdFits`), else a tab of the chat's stack. Another thread
 opened replaces it; its × tells the chat (`thread-closed`); another PO shown takes it quietly and
-that PO's chat brings its own back (`thread-again`). Its frame is `iframe.po-thread`, never
+that PO's chat brings its own back (`thread-again`). When the chat shows the thread itself (a
+phone, its own window, which asks the page through its opener), the panel goes quietly: one thread
+on screen; the chat docked back brings it back. In the panel's own window, a link inside the
+thread that the page handles (a task, "Also in" another thread) reaches the window, not the page,
+as in a task chat's window: a known limit. Its frame is `iframe.po-thread`, never
 `.dp-session` / `.po-session`, so a balloon link (`sendGotoMsg`) goes to the chat, which opens the
 thread here.
 On a phone both are tabs of the one column, as everything is. **Still interim**: the PO's two (Switch agent, the PO's task) wait in

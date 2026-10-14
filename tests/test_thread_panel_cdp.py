@@ -110,12 +110,37 @@ async function main() {
       const w=e=>e?e.getBoundingClientRect().width:null;
       return {panel:w(p), frame:w(f), list:w(d.querySelector('#msgs')), box:w(d.querySelector('#compose')), top:w(p.querySelector('.dp-top')), tabs:w(p.querySelector(':scope > .dp-tabs'))}; })()`);
     await ev('closeDetail(); 0'); await sleep(400);
-    // A popped-out PO chat window: its thread opens in that window's chat.
+    const PANELS = `PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id))`;
+    const LOADED = `!!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`;
+    const known = new Set([targetId]);
+    const newTarget = async what => { for(let i=0;i<40;i++) { const t=await send('Target.getTargets'); const n=t.targetInfos.find(x=>x.type==='page'&&!known.has(x.targetId)&&x.url.startsWith(A.base)); if(n){ known.add(n.targetId); return n.targetId; } await sleep(100); } throw Error('no window: '+what); };
+    // A thread open, then another PO shown: its panel goes; that PO again, it comes back.
+    await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
+    await until(LOADED, 'thread before the switch');
+    const src0 = (await ev(`${THR}.getAttribute('src')`)).split('&msg=')[0];
+    await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj2)}; PROJECT_TAB='tasks'; renderRows(); 0`);
+    await until(`${PO}?.dataset.room===${JSON.stringify(A.po2)}`, 'the other PO');
+    await sleep(800);
+    out.otherPo = await ev(`({threadPanels:${PANELS}})`);
+    await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
+    await until(`${PO}?.dataset.room===${JSON.stringify(A.po)} && ${LOADED}`, 'the thread back with its PO');
+    out.backPo = await ev(`({threadPanels:${PANELS}, src:${THR}.getAttribute('src').split('&msg=')[0]})`);
+    out.backPo.same = out.backPo.src === src0;
+    // The thread panel in a window of its own, and back.
+    await ev(`PD.dock.setViewMode('thread:po','window'); 0`);
+    await until(`!!PD.dock.popWindow('thread:po')`, 'thread window');
+    const tw = await newTarget('thread');
+    const {sessionId:tws}=await send('Target.attachToTarget',{targetId:tw,flatten:true});
+    await untilIn(tws, `!!document.querySelector('iframe.po-thread')?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread in its window');
+    out.threadWindow = await evIn(tws, `({loaded:true, title:document.title})`);
+    await ev(`PD.dock.setViewMode('thread:po','pinned'); 0`);
+    await until(`!PD.dock.popWindow('thread:po') && ${LOADED}`, 'thread docked back');
+    out.threadDocked = await ev(`({threadPanels:${PANELS}})`);
+    // A popped-out PO chat window: its thread opens in that window's chat, and
+    // the panel goes (one thread on screen); docked back, the panel returns.
     await ev(`PD.dock.setViewMode('po-chat','window'); 0`);
     await until(`!!PD.dock.popWindow('po-chat')`, 'pop-out');
-    let popId;
-    for(let i=0;i<30;i++) { const t=await send('Target.getTargets'); popId=t.targetInfos.find(x=>x.type==='page'&&x.targetId!==targetId&&x.url.startsWith(A.base))?.targetId; if(popId)break; await sleep(100); }
-    if(!popId) throw Error('popup target absent');
+    const popId = await newTarget('chat');
     const {sessionId:ps}=await send('Target.attachToTarget',{targetId:popId,flatten:true});
     await send('Emulation.setDeviceMetricsOverride',{width:1200,height:900,deviceScaleFactor:1,mobile:false},ps);
     const OWN = `document.querySelector('iframe.pd-own')`;
@@ -125,8 +150,10 @@ async function main() {
     await sleep(400);
     out.popped=await evIn(ps, `(() => { const d=${OWN}.contentDocument, side=d.getElementById('thr-side'), f=${OWN};
       return {inFrame:!side.hidden, side:side.getBoundingClientRect().width, chat:f.getBoundingClientRect().width, layer:side.classList.contains('layer')}; })()`);
-    out.poppedMain=await ev(`({threadPanels:PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id))})`);
+    out.poppedMain=await ev(`({threadPanels:${PANELS}})`);
     await ev(`PD.dock.setViewMode('po-chat','pinned'); 0`);
+    await until(`!PD.dock.popWindow('po-chat') && ${LOADED}`, 'panel back after the chat docks');
+    out.afterPopIn=await ev(`({threadPanels:${PANELS}, inFrame:!${PO}.contentDocument.getElementById('thr-side').hidden})`);
     await sleep(600);
     // A phone: the thread over the chat, with Back (#234), not a panel.
     await size(390,844,true); await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5},s);
@@ -182,6 +209,13 @@ class ThreadPanel(unittest.TestCase):
         dashboard.assign_session_project(po['id'], cls.proj)
         dashboard.set_project_po(cls.proj, po['id'])
         cls.po = po['id']
+        ok, proj2, _ = dashboard.register_project('Garden'); assert ok, proj2
+        cls.proj2 = proj2['id']
+        po2 = chatroom.create_room('Garden PO', [{'identity':'claude','agent':'claude','role':'Product owner','sessionId':'panel-po2','cwd':str(Path(proj2.get('home') or proj2['path']))}])
+        chatroom.post_message(po2['id'], 'user', 'Another PO')
+        dashboard.assign_session_project(po2['id'], cls.proj2)
+        dashboard.set_project_po(cls.proj2, po2['id'])
+        cls.po2 = po2['id']
         transcript = base / 'transcripts' / 'C--po'
         transcript.mkdir()
         at = time.time() - 3600
@@ -205,7 +239,7 @@ class ThreadPanel(unittest.TestCase):
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         args = {**chrome_profile.node_args(), 'tmp': cls.tmp.name,
                 'base': f'http://127.0.0.1:{cls.server.server_address[1]}',
-                'proj': cls.proj, 'task': cls.task, 'po': cls.po}
+                'proj': cls.proj, 'task': cls.task, 'po': cls.po, 'proj2': cls.proj2, 'po2': cls.po2}
         script = base / 'thread_panel_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=240)
         assert out.returncode == 0, out.stderr[-4000:]
@@ -267,6 +301,21 @@ class ThreadPanel(unittest.TestCase):
     def test_popped_out_chat_keeps_its_thread_inside(self):
         self.assertTrue(self.got['popped']['inFrame'], self.got['popped'])
         self.assertEqual(self.got['poppedMain']['threadPanels'], [])
+
+    def test_another_po_takes_the_panel_and_gives_it_back(self):
+        self.assertEqual(self.got['otherPo']['threadPanels'], [], self.got['otherPo'])
+        g = self.got['backPo']
+        self.assertEqual(g['threadPanels'], ['thread:po'], g)
+        self.assertTrue(g['same'], g)
+
+    def test_thread_panel_pops_out_and_back(self):
+        self.assertTrue(self.got['threadWindow']['loaded'], self.got['threadWindow'])
+        self.assertEqual(self.got['threadDocked']['threadPanels'], ['thread:po'])
+
+    def test_popped_chat_takes_the_thread_and_gives_it_back(self):
+        g = self.got['afterPopIn']
+        self.assertEqual(g['threadPanels'], ['thread:po'], g)
+        self.assertFalse(g['inFrame'], g)
 
     def test_phone_keeps_the_thread_over_the_chat(self):
         g = self.got['phone']

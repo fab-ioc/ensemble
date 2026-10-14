@@ -13043,7 +13043,8 @@ function pdEnsure() {
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
-  PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
+  // The chat back in the page brings back the thread its window had open (#236).
+  PD.dock.onPopIn(id => { if (id === 'po-chat') { pdPopChat(false); setTimeout(() => { if (PD.thrRoom) pdThreadTell(PD.thrRoom, 'thread-again'); }, 300); } });
   pdKeepMiddle();
   pdPlaceChat();
   pdToolRestore();
@@ -13182,7 +13183,6 @@ function pdChatRemoved(id) {
 // A thread of a PO chat (#210, #234): the chat page opens it beside its
 // channel, so the chat framed here is told which thread (or balloon) to open,
 // as a balloon link is (GOTO_MSG); one still loading is told when it starts.
-const pdThreadId = roomId => 'thread:' + roomId;
 function pdThreadOpen(roomId, thread, mid, source, part = '') {
   if (!roomId) return false;
   GOTO_MSG.set(roomId, { msg: mid || '', part: part || '', thread: thread || '' });
@@ -13201,9 +13201,15 @@ const PD_THREAD = 'thread:po';
 const PD_THREAD_W = 440;
 function pdThreadPanel(frameEl, o) {
   const d = PD.dock;
-  if (!d || d.narrow() || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;
-  if (!frameEl || frameEl.hidden || !frameEl.classList.contains('po-session') || frameEl.classList.contains('pd-own')) return false;
-  if (PO_PANEL.parentNode !== PD.els['po-chat'] || !PO_PANEL.contains(frameEl) || d.popWindow('po-chat')) return false;
+  if (!d || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;
+  if (!frameEl || frameEl.hidden || !frameEl.classList.contains('po-session')) return false;
+  // The chat shows the thread itself (a phone, its own window): one thread on
+  // screen, so the panel goes, quietly (its place is kept).
+  if (d.narrow() || frameEl.classList.contains('pd-own') || d.popWindow('po-chat')) {
+    if (PD.rt.has(PD_THREAD)) { PD.thrQuiet = true; try { d.removePanel(PD_THREAD); } catch (e) {} finally { PD.thrQuiet = false; } }
+    return false;
+  }
+  if (PO_PANEL.parentNode !== PD.els['po-chat'] || !PO_PANEL.contains(frameEl)) return false;
   const src = '/session?id=' + encodeURIComponent(o.room) + '&embed=1&side=1'
     + (o.tid ? '&thread=' + encodeURIComponent(o.tid) : '&thread=&tmid=' + encodeURIComponent(o.mid))
     + (o.msg ? '&msg=' + encodeURIComponent(o.msg) : '') + (o.part ? '&part=' + encodeURIComponent(o.part) : '');
