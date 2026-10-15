@@ -17,7 +17,7 @@ datas = [(str(ROOT / name), ".") for name in
          ("index.html", "session.html", "fileview.html", "pty-test.html",
           "restart-hub.ps1", "LICENSE")]
 datas += [(str(ROOT / "static"), "static"), (str(ROOT / "skills"), "skills")]
-# ptyhost.version() hashes these two sources (Path(__file__)): without them the
+# ptyhost.version() hashes these two sources (sys._MEIPASS/backends): without them the
 # app cannot answer /api/version, so no update to it would ever install, and
 # its PTY host never starts.
 datas += [(str(ROOT / "backends" / name), "backends") for name in ("ptyhost.py", "ptyrun.py")]

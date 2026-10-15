@@ -35,9 +35,40 @@ class HostVersionMismatch(RuntimeError):
     """A live owner speaks a different wire or code version."""
 
 
+SOURCES = ("ptyhost.py", "ptyrun.py")
+
+
+def _source_dirs() -> list[Path]:
+    """Where the host's two sources may be, first match wins: the built
+    app's resource folder (PyInstaller's ``sys._MEIPASS``, the app ships them
+    as data under ``backends/``), beside the program (Nuitka), then beside
+    this module (a checkout). Named by resource path, not ``__file__``: a
+    frozen or byte-compiled module's own file may be a .pyc, or not exist."""
+    dirs = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        dirs.append(Path(meipass) / "backends")
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        dirs.append(Path(sys.executable).resolve().parent / "backends")
+        dirs.append(Path(sys.executable).resolve().parent / "_internal" / "backends")
+    own = globals().get("__file__")      # a frozen module may have none
+    if own:
+        dirs.append(Path(own).resolve().parent)
+    return dirs
+
+
 def version() -> str:
+    """A hash of the host's sources (ptyhost.py, ptyrun.py), the same in a
+    checkout and in the built app. FileNotFoundError when neither has them."""
+    for folder in _source_dirs():
+        paths = [folder / name for name in SOURCES]
+        if all(p.is_file() for p in paths):
+            break
+    else:
+        raise FileNotFoundError("the PTY host's sources (backends/ptyhost.py, ptyrun.py) "
+                                "are not shipped")
     digest = hashlib.sha256()
-    for path in (Path(__file__), Path(ptyrun.__file__)):
+    for path in paths:
         digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     return digest.hexdigest()[:16]
 
