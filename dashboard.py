@@ -11846,13 +11846,13 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
                     f"{len(entries)} recorded room(s) it no longer runs are left stopped")
     lease = _restart_lease_path()
     if lease.exists() and 0 <= _restart_lease_age(lease) < RESTART_BUSY_S:
-        return done("a restart is under way: its helper brings the rooms back")
+        return done("a restart is under way: its snapshot brings the rooms back")
     if _RESTART_RESTORING:
         return done("the restart's restore is bringing the rooms back: left to it")
     snap = _read_restart_snapshot()
     if (snap and snap.get("hubPid") != os.getpid()
             and 0 <= time.time() - float(snap.get("at") or 0) <= RESTART_SNAPSHOT_MAX_AGE_S):
-        return done("a restart's snapshot waits for its restore: left to the helper")
+        return done("a restart's snapshot waits for its restore: left to it")
     # Started since the hub came up (a replayed action, a message): left as is.
     early = [e["roomId"] for e in entries if e["roomId"] in live]
     if early:
@@ -16238,7 +16238,8 @@ class Handler(BaseHTTPRequestHandler):
                                          f"is unknown, everyone comes back quiet)")
                      + f", {len(snap['rooms'])} room(s)"
                      + (", a hub-only one" if snap.get("keepAgents") else "")
-                     + ("; restored by the hub (no helper did)" if by_hub else ""))
+                     + (("; checked by the hub (no helper restores a hub-only one)" if snap.get("keepAgents")
+                         else "; restored by the hub (no helper did)") if by_hub else ""))
         out = self._bring_back_rooms(snap["rooms"], fresh=fresh, wake_room=wake_room,
                                      po_rooms=po_rooms, drained=drained, drain_notes=drain_notes,
                                      notice=f"The hub was restarted at {time.strftime('%H:%M')}.",
