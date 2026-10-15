@@ -11790,10 +11790,26 @@ def check_pty_host() -> dict | None:
         return None
     if not _pty_host_gone(client):
         return None         # alive but not answering now: looked at again next time
-    lease = _restart_lease_path()
-    if lease.exists() and 0 <= _restart_lease_age(lease) < RESTART_BUSY_S:
-        return None         # a restart under way: its own restore brings the rooms back
-    return recover_pty_host(client)
+    if restart_drain.holding():
+        return None         # a drain's restart follows: the next hub brings them back
+    # The restart lease, held for the whole recovery: a restart asked for
+    # meanwhile is refused (it would snapshot a host still being filled and
+    # stop it, taking the rooms started after the snapshot along). One under
+    # way already: its own restore brings the rooms back.
+    lease, _ = _take_restart_lease()
+    if not lease:
+        return None
+    done = threading.Event()
+
+    def renew() -> None:
+        while not done.wait(20):
+            app_update.renew_lease(str(_restart_lease_path()), lease)
+    threading.Thread(target=renew, daemon=True).start()
+    try:
+        return recover_pty_host(client)
+    finally:
+        done.set()
+        _drop_restart_lease(lease)
 
 
 def recover_pty_host(old) -> dict:
@@ -16583,8 +16599,17 @@ class Handler(BaseHTTPRequestHandler):
                 notes = {} if rid == wake_room else drain_notes.get(rid, {})
                 lined: list[str] = []
                 with _RESUMES_LOCK:
-                    busy = _RESUMES.get(rid) is not None
-                    res = None if busy else _RESUMES.setdefault(rid, _Resume(rid))
+                    prior = _RESUMES.get(rid)
+                    # A resume that failed (its sends kept for Retry) is not
+                    # one under way: the restore takes over, sends and all.
+                    busy = prior is not None and prior.state != "failed"
+                    res = None
+                    if not busy:
+                        res = _RESUMES[rid] = _Resume(rid)
+                        if prior is not None:
+                            res.queue.extend(prior.queue)
+                            sends.mark(rid, {it.get("key") for it in prior.queue if it.get("key")},
+                                       "queued")       # on their way again
                 if busy:
                     outcome = "a resume is already under way: left to it"
                 else:

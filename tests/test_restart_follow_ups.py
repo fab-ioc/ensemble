@@ -316,6 +316,66 @@ class PtyHostDies(_Left):
         self.assertIsNone(dashboard.check_pty_host())
         self.assertEqual(self.attached, [])
 
+    def test_a_resume_that_failed_against_the_dead_host_is_taken_over(self):
+        rid = self.room(title="Sent to")
+        self.running(rid, "claude", "idle")
+        dashboard.running_rooms.refresh()
+        dashboard.check_pty_host()
+        self.die()
+        # A person's send resumed the room against the dead host and failed:
+        # its send is kept for Retry.
+        failed = dashboard._Resume(rid)
+        failed.queue.append({"text": "hello", "to": "", "at": time.time(), "key": "k1"})
+        failed.fail("PTY host closed the connection")
+        dashboard._RESUMES[rid] = failed
+        out = dashboard.check_pty_host()
+        self.join()
+        self.assertTrue(out["rooms"][0]["outcome"].startswith("brought back"), out)
+        self.assertEqual(self.starts, 1)
+        res = dashboard._RESUMES.get(rid)
+        self.assertNotEqual(getattr(res, "state", ""), "failed")
+        # Its send came along and was typed once the agent was up.
+        self.assertTrue(any("hello" in t for t in self.typed(rid)["claude"]), self.typed(rid))
+
+    def test_a_restart_asked_for_during_the_recovery_is_refused(self):
+        self.running(self.room(), "claude", "idle")
+        dashboard.running_rooms.refresh()
+        self.die()
+        taken = []
+
+        def connect(state_dir, backend=None):
+            taken.append(dashboard._take_restart_lease()[0])    # a restart asked for now
+            self.new = FakeClient(222)
+            return self.new
+
+        real = self.handler
+
+        def launcher():
+            h = real()
+            start = h._bring_back_rooms
+
+            def between(*a, **k):
+                taken.append(dashboard._take_restart_lease()[0])
+                return start(*a, **k)
+            h._bring_back_rooms = between
+            return h
+        with mock.patch.object(dashboard.ptyhost, "connect", connect), \
+                mock.patch.object(dashboard, "hub_launcher", launcher):
+            out = dashboard.check_pty_host()
+        self.assertTrue(out["ok"])
+        self.assertEqual(taken, ["", ""])                       # refused both times
+        self.assertEqual(self.starts, 1)
+        self.assertFalse((self.dir / "restart.lease").exists())   # let go after
+        self.assertTrue(dashboard._take_restart_lease()[0])
+
+    def test_not_while_a_drain_holds_what_it_would_start(self):
+        self.running(self.room(), "claude", "idle")
+        dashboard.running_rooms.refresh()
+        self.die()
+        with mock.patch.object(dashboard.restart_drain, "holding", lambda: True):
+            self.assertIsNone(dashboard.check_pty_host())
+        self.assertEqual(self.attached, [])
+
     def test_a_host_that_cannot_start_is_tried_again(self):
         self.running(self.room(), "claude", "idle")
         dashboard.running_rooms.refresh()
@@ -359,6 +419,18 @@ class HostVersionByResourcePath(unittest.TestCase):
         with mock.patch.object(ptyhost, "__file__", str(elsewhere / "ptyhost.pyc")), \
                 mock.patch.object(sys, "_MEIPASS", str(self.dir / "_internal"), create=True):
             self.assertEqual(ptyhost.version(), self.real)
+
+    def test_a_frozen_module_with_no_file_reads_the_shipped_sources(self):
+        shipped = self.dir / "_internal" / "backends"
+        shipped.mkdir(parents=True)
+        for name in ("ptyhost.py", "ptyrun.py"):
+            shutil.copy(ROOT / "backends" / name, shipped / name)
+        own = ptyhost.__dict__.pop("__file__")
+        self.addCleanup(setattr, ptyhost, "__file__", own)
+        with mock.patch.object(sys, "_MEIPASS", str(self.dir / "_internal"), create=True):
+            self.assertEqual(ptyhost.version(), self.real)
+        with self.assertRaises(OSError):
+            ptyhost.version()
 
     def test_a_pyc_beside_the_sources_reads_them(self):
         with mock.patch.object(ptyhost, "__file__",

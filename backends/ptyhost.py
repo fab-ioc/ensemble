@@ -51,7 +51,9 @@ def _source_dirs() -> list[Path]:
     if getattr(sys, "frozen", False) or "__compiled__" in globals():
         dirs.append(Path(sys.executable).resolve().parent / "backends")
         dirs.append(Path(sys.executable).resolve().parent / "_internal" / "backends")
-    dirs.append(Path(__file__).resolve().parent)
+    own = globals().get("__file__")      # a frozen module may have none
+    if own:
+        dirs.append(Path(own).resolve().parent)
     return dirs
 
 
