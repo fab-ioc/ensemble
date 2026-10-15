@@ -158,10 +158,13 @@ def get(room_id: str, key: str) -> dict | None:
         return dict(s) if s else None
 
 
-def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = None) -> dict:
+def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = None,
+           thread: str = "", also: bool = False) -> dict:
     """The hub has taken ``text`` (as it will be delivered) under ``key``:
     queued. The same key again is the same send: kept as it is, except that
-    one that failed is queued again (its retry)."""
+    one that failed is queued again (its retry). ``thread``: sent from a
+    thread's box (threads.py), so the chat's page draws it there alone
+    unless ``also``."""
     now = time.time() if now is None else now
     with _LOCK:
         items = _prune(_load(room_id), now)
@@ -170,6 +173,8 @@ def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = 
             # The whole text: Retry sends it again as it is.
             s = {"key": key, "text": text or "", "to": to or "", "at": now,
                  "state": "queued", "stateAt": now, "error": "", "boot": BOOT}
+            if thread:
+                s.update(thread=thread, also=bool(also))
             items.append(s)
         elif s["state"] == "failed":
             _set(s, "queued", now)
@@ -213,6 +218,13 @@ def mark(room_id: str, keys, state: str, error: str = "", mid: str = "",
                 _save(room_id, items)
     except (OSError, ValueError) as e:     # the delivery itself stands
         _log(f"{room_id}: sends not marked {state}: {e!r}")
+        return
+    if state == "confirmed" and mid and HIDDEN_MID not in mid:
+        # A team chat's post (its message id): a thread's reply, placed for good.
+        try:
+            _d.threads.confirmed(room_id, {k: mid for k in keys})
+        except Exception as e:  # noqa: BLE001 — threads pair it by what it holds instead
+            _log(f"{room_id}: thread replies not marked: {e!r}")
 
 
 def hold_for_restart(room_id: str, keys, now: float | None = None) -> None:
@@ -320,6 +332,19 @@ class Evidence:
         self.words, self.cut = words[:_NEEDLE], len(words) > _NEEDLE
         self.images = _image_paths(send_text)
         self.kind = "points" if self.points else "words" if self.words else "images" if self.images else ""
+
+    def keep(self) -> dict:
+        """What of it a record keeps (:meth:`kept` makes it again)."""
+        return {"points": self.points, "words": self.words, "cut": self.cut, "images": self.images}
+
+    @classmethod
+    def kept(cls, d: dict) -> "Evidence":
+        ev = cls("")
+        ev.points = [str(x) for x in d.get("points") or []]
+        ev.words, ev.cut = str(d.get("words") or ""), bool(d.get("cut"))
+        ev.images = [str(x) for x in d.get("images") or []]
+        ev.kind = "points" if ev.points else "words" if ev.words else "images" if ev.images else ""
+        return ev
 
     def order(self) -> tuple[int, int]:
         """Points first (they can only be this send's), then the fullest."""
@@ -547,7 +572,9 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
     hits: dict[str, str] = {}
     gone: set[str] = set()
     for s in by_size(waiting):
-        floor = float(s["at"]) - SLACK_S
+        # A thread's reply (#237): only a turn typed after it was sent, so a
+        # message said in the chat before it is never taken for it.
+        floor = float(s["at"]) - (0 if s.get("thread") else SLACK_S)
         ev = evidence(s["text"])
         hit = next((mid for mid, t in turns
                     if (_d._turn_epoch(t.get("timestamp")) or now) >= floor
@@ -579,6 +606,19 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
                 changed = True
         if changed:
             _save(room_id, items)
+    # A reply sent from a thread's box: its balloon, by its key (threads.py).
+    found = {k: m for k, m in hits.items() if HIDDEN_MID not in m}
+    if found:
+        try:
+            _d.threads.confirmed(room_id, found)
+        except Exception as e:  # noqa: BLE001 — threads pair it by what it says instead
+            _log(f"{room_id}: thread replies not marked: {e!r}")
+
+
+def confirmed_mids(room_id: str) -> dict[str, str]:
+    """{key: balloon id} of the sends found in the conversation (kept KEEP_S)."""
+    with _LOCK:
+        return {s["key"]: s["mid"] for s in _load(room_id) if s["state"] == "confirmed" and s.get("mid")}
 
 
 def reconcile(room_id: str, now: float | None = None) -> list[dict]:
@@ -618,8 +658,8 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
                 s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
             continue        # in the conversation (or never to be: a /command)
         row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read",
-                                     "afterRestart")
-               if s.get(k) not in (None, "")}
+                                     "afterRestart", "thread", "also")
+               if s.get(k) not in (None, "", False)}
         if s.get("redeliveries"):
             row["redeliveredAt"] = s["redeliveries"][-1]["at"]     # "typed in again at …"
         out.append(row)

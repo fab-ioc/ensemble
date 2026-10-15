@@ -5466,11 +5466,18 @@ function sendsBySize(list) {
 // confirmation, or a turn that holds it, each send by its own part of the
 // turn). One the hub confirmed stays until this page's copy of the
 // conversation has its turn, so it is replaced, never gone and back.
+// A send from this thread's own box (the hub keeps its thread, #237).
+function sendHere(s) {
+  return !!s.thread && (s.thread === THREAD || (!!THREAD_MID && s.thread === 'm:' + THREAD_MID));
+}
 function sendsToShow(items) {
   const thr = typeof threadedView === 'function' && threadedView();
-  // A thread (#210) shows only what was sent from it, on this page.
-  const all = thr && THREAD_MODE ? [] : ROOM_SENDS.slice();
-  for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k)) all.push(v.s);
+  // A thread (#210) shows what was sent from it (failed too: its Retry is
+  // there); the chat (#237) what was not, or was sent to the chat too. This
+  // page's own copy of a send has no thread until the hub's answer.
+  const mine = !thr ? () => true : THREAD_MODE ? s => !s.thread || sendHere(s) : s => !s.thread || !!s.also;
+  const all = ROOM_SENDS.filter(s => (!thr || s.thread || !THREAD_MODE) && mine(s));
+  for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k) && mine(v.s)) all.push(v.s);
   all.sort((a, b) => (a.at || 0) - (b.at || 0));
   const turns = new Map(), gone = new Set();
   const turn = m => { if (!turns.has(m.id)) turns.set(m.id, sendTurn(m.text)); return turns.get(m.id); };
@@ -5478,7 +5485,9 @@ function sendsToShow(items) {
   for (const { s, ev } of sendsBySize(all)) {
     const own = s.mid && items.find(m => m.id === s.mid);
     if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid && !s.read) gone.add(s);
-    else if (thr && s.state === 'confirmed' && s.mid) gone.add(s);   // in the chat, in a thread this view does not show
+    // In the chat, in a thread this view does not show; one sent from here
+    // stays until the thread draws it (never gone, then back).
+    else if (thr && s.state === 'confirmed' && s.mid && !(THREAD_MODE && sendHere(s))) gone.add(s);
     else open.push({ s, ev });
   }
   for (const { s, ev } of open) {
