@@ -11939,17 +11939,20 @@ def _left_snapshot_host_unknown(snap: dict, handler=None) -> dict:
     for entry in snap.get("rooms") or []:
         rid = entry.get("roomId") or ""
         room_full = chatroom.get_room(rid, public=False)
+        parts = {p.get("identity"): p for p in (room_full or {}).get("participants", [])
+                 if p.get("kind") == "agent"}
+        ran = sorted({a.get("identity") for a in entry.get("agents") or []
+                      if isinstance(a, dict) and a.get("state") != "stopped"} & set(parts))
+        alive = {i for i in ran if _pty_alive(parts[i].get("ptyId"))}
         if room_full is None:
             outcome = "no such room any more"
-        elif _room_is_live(room_full):
+        elif ran and alive == set(ran):
             outcome = "already running: left alone"
         else:
-            outcome = f"NOT checked: {why}"
-            wanted = sorted({a.get("identity") for a in entry.get("agents") or []
-                             if isinstance(a, dict) and a.get("state") != "stopped"
-                             and not a.get("onMention")} - {None, ""})
+            outcome = f"NOT checked: {why}" + (
+                f" ({', '.join(sorted(set(ran) - alive))} not running here)" if alive else "")
             if restore_problems.record(rid, entry.get("title") or "", why, what, lease,
-                                       agents=wanted):
+                                       agents=ran):
                 not_back.append((rid, why))
         _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}': {outcome}")
         out.append({"roomId": rid, "outcome": outcome})
@@ -16342,20 +16345,25 @@ class Handler(BaseHTTPRequestHandler):
             # snapshot: that stop stands, the restart does not undo it.
             killed = {i for i, p in parts.items()
                       if since and float(p.get("killedAt") or 0) > since}
-            # Who is to run again: each agent that ran (a reviewer is started
-            # again with its request below, not resumed).
-            wanted = ({a.get("identity") for a in agents_was
-                       if a.get("state") != "stopped" and not a.get("onMention")}
-                      & set(parts)) - killed
+            # Who is to run again: each agent that ran. A reviewer that was
+            # at work is started again with its request (below), not resumed.
+            ran = {a.get("identity"): a for a in agents_was
+                   if a.get("state") != "stopped" and a.get("identity") in parts
+                   and a.get("identity") not in killed}
+            wanted = {i for i, a in ran.items() if not a.get("onMention")}
             alive = {i for i, p in parts.items() if _pty_alive(p.get("ptyId"))}
             missing = wanted - alive
+            reviews = [a for i, a in ran.items() if a.get("onMention") and i not in alive]
             if room_full is None:
                 outcome = "no such room any more"
             elif since and float(room_full.get("stoppedAt") or 0) > since:
                 outcome = "stopped on purpose since the snapshot: left stopped"
-            elif alive and not missing:
+            elif not agents_was:
+                # Nothing says who ran: nobody is started.
+                outcome = "NOT brought back: the snapshot lists none of its agents"
+            elif alive and not missing and not reviews:
                 outcome = "already running: left alone"
-            elif killed and not missing:
+            elif killed and not missing and not reviews:
                 outcome = "stopped on purpose since the snapshot: left stopped"
             else:
                 # An agent that was already stopped when the hub went down
@@ -16366,9 +16374,8 @@ class Handler(BaseHTTPRequestHandler):
                           if not a.get("onMention")
                           and (a.get("state") == "stopped"
                                or (fresh and rid != wake_room))}
-                if agents_was:
-                    listed = {a.get("identity") for a in agents_was}
-                    states.update({i: "stopped" for i in parts if i not in listed})
+                listed = {a.get("identity") for a in agents_was}
+                states.update({i: "stopped" for i in parts if i not in listed})
                 states.update({i: "stopped" for i in killed})
                 notes = {} if rid == wake_room else drain_notes.get(rid, {})
                 lined = sorted({i for i, st in states.items() if st in MID_TURN_STATES} | set(notes))
@@ -16407,9 +16414,8 @@ class Handler(BaseHTTPRequestHandler):
                             chatroom.post_notice(
                                 rid, digest.SENDER, notice,
                                 {"noticeKind": RESTART_NOTICE_KIND})
-                        for a in agents_was:
-                            if not (a.get("onMention") and a.get("state") != "stopped"):
-                                continue
+                        lost = []
+                        for a in reviews:
                             msg = next((m for m in room_full.get("messages") or []
                                         if m.get("id") == a.get("reviewMessageId")), None)
                             try:
@@ -16417,20 +16423,26 @@ class Handler(BaseHTTPRequestHandler):
                                     rid, a.get("identity"), msg,
                                     note=drain_notes.get(rid, {}).get(a.get("identity"), ""))
                             except Exception as exc:    # noqa: BLE001
-                                started = None
-                                outcome += f"; the review by {a.get('identity')} NOT started again: {exc!r}"
-                            if started:
-                                outcome += (f"; the review by {a.get('identity')} that was running "
-                                            f"was started again (review {started.get('n')})")
-                            elif msg is None:
-                                outcome += (f"; the review by {a.get('identity')} that was running "
-                                            f"is lost (its request was not found)")
+                                lost.append(f"the review by {a.get('identity')} that was running "
+                                            f"could not be started again ({exc!r})")
+                            else:
+                                if started:
+                                    outcome += (f"; the review by {a.get('identity')} that was running "
+                                                f"was started again (review {started.get('n')})")
+                                else:
+                                    lost.append(f"the review by {a.get('identity')} that was running "
+                                                f"is lost (" + ("its request was not found" if msg is None
+                                                                 else "it did not start") + ")")
+                        if lost:
+                            # Not running again: said so, and on Needs you.
+                            outcome = ("NOT brought back: " + "; ".join(lost)
+                                       + " (the rest: " + outcome + ")")
             _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}' (was: {was}): {outcome}")
             out.append({"roomId": rid, "outcome": outcome})
             if outcome.startswith("NOT brought back"):
                 why = outcome[len("NOT brought back: "):] or "unknown"
                 if restore_problems.record(rid, entry.get("title") or "", why, what, lease,
-                                           agents=sorted(wanted)):
+                                           agents=sorted(ran)):
                     not_back.append((rid, why))
         if not_back:
             try:

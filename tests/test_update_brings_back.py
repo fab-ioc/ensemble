@@ -175,6 +175,94 @@ class HubOnlySnapshot(_Left):
         self.assertTrue((self.dir / "restart-snapshot.last.json").exists())
 
 
+class ReviewsAndPartlyLiveRooms(_Left):
+    """Review 2: a reviewer at work counts as running; an entry that lists
+    nobody starts nobody; a host this hub cannot reach is checked agent by
+    agent."""
+
+    def reviewed_room(self):
+        rid = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"], title="rev")
+        full = chatroom.get_room(rid, public=False)
+        full["messages"].append({"id": "m7", "from": "claude", "to": "codex",
+                                 "text": "@codex review abc", "ts": time.time()})
+        chatroom.update_room(full)
+        owner = self.running(rid, "claude", "idle")
+        self.running(rid, "codex", "working", "screen")
+        chatroom.patch_participant(rid, "codex", {"review": {"n": 2, "messageId": "m7"}})
+        return rid, owner
+
+    def only(self, pid):
+        self.listed[:] = [s for s in self.listed if s["id"] == pid]
+        self.ptys = {pid: self.ptys[pid]}
+
+    def test_the_owner_alive_and_the_reviewer_dead_gets_the_review_back(self):
+        rid, owner = self.reviewed_room()
+        self.left(keep=True)
+        self.only(owner)
+        out = self.restore()
+        outcome = out["rooms"][0]["outcome"]
+        self.assertTrue(outcome.startswith("brought back"), outcome)
+        self.assertIn("claude kept running", outcome)
+        self.assertIn("the review by codex that was running was started again", outcome)
+        self.assertEqual(self.reviews, [(rid, "codex", "m7")])
+        self.assertEqual(self.starts, 0)
+        self.assertIn("1 of 1 room(s) running again", out["note"])
+
+    def test_a_reviewer_ended_since_the_snapshot_gets_no_review(self):
+        rid, owner = self.reviewed_room()
+        self.left(keep=True)
+        chatroom.patch_participant(rid, "codex", {"killedAt": time.time() + 1})
+        self.only(owner)
+        out = self.restore()
+        self.assertEqual(out["rooms"][0]["outcome"], "already running: left alone")
+        self.assertEqual((self.reviews, self.starts), ([], 0))
+
+    def test_a_review_that_cannot_start_is_not_brought_back_and_on_needs_you(self):
+        rid, owner = self.reviewed_room()
+        self.left(keep=True)
+        self.only(owner)
+        h = self.handler()
+
+        def boom(*a, **k):
+            raise RuntimeError("no seat")
+
+        h._start_review = boom
+        out = dashboard.restore_left_snapshot(h, wait=0.2)
+        self.join()
+        outcome = out["rooms"][0]["outcome"]
+        self.assertTrue(outcome.startswith("NOT brought back: the review by codex"), outcome)
+        self.assertIn("could not be started again", outcome)
+        self.assertIn("0 of 1 room(s) running again", out["note"])
+        self.assertEqual(restore_problems.by_room()[rid]["agents"], ["claude", "codex"])
+
+    def test_an_entry_that_lists_no_agent_starts_none(self):
+        rid = self.room(title="empty")
+        self.running(rid, "claude", "idle")
+        snap = self.left(keep=True)
+        snap["rooms"][0]["agents"] = []
+        (self.dir / "restart-snapshot.json").write_text(json.dumps(snap), encoding="utf-8")
+        self.hub_stops()
+        out = self.restore()
+        self.assertEqual(out["rooms"][0]["outcome"],
+                         "NOT brought back: the snapshot lists none of its agents")
+        self.assertEqual(self.starts, 0)
+        self.assertIn(rid, restore_problems.by_room())
+
+    def test_host_unknown_with_one_of_two_alive_is_on_needs_you(self):
+        rid = self.room(agents=("claude", "claude-b"), title="pair")
+        kept = self.running(rid, "claude", "idle")
+        self.running(rid, "claude-b", "idle")
+        self.left(keep=True)
+        self.only(kept)
+        with mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", True):
+            out = self.restore()
+        self.assertEqual(self.starts, 0)
+        outcome = out["rooms"][0]["outcome"]
+        self.assertTrue(outcome.startswith("NOT checked"), outcome)
+        self.assertIn("claude-b not running here", outcome)
+        self.assertEqual(restore_problems.by_room()[rid]["agents"], ["claude", "claude-b"])
+
+
 class HelperNeverRestored(_Left):
     def test_a_room_stopped_while_the_hub_waited_stays_stopped(self):
         stopped, other = self.room(title="off"), self.room(title="on")
