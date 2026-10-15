@@ -459,6 +459,79 @@ class RenewalAfterTheDrop(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
 
+class HelperDropsAfterARenewal(unittest.TestCase):
+    """A failed update: the helper (another process, without the hub's lock)
+    drops the lease while a renewal, the hub's or its own, is under way."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "restart.lease"
+        self.path.write_text(json.dumps({"id": "L1", "at": time.time() - 30}), encoding="utf-8")
+        self.read, self.go = threading.Event(), threading.Event()
+        real_time = time.time
+
+        def paused_time():  # renew_lease's stamp: after its read, before its write
+            if threading.current_thread().name == "renewal":
+                self.read.set()
+                self.go.wait(5)
+            return real_time()
+        clock = types.SimpleNamespace(time=paused_time, sleep=time.sleep)
+        p = mock.patch.object(dashboard.app_update, "time", clock)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def renewal(self, target):
+        t = threading.Thread(target=target, name="renewal")
+        t.start()
+        self.assertTrue(self.read.wait(5))
+        return t
+
+    def test_a_renewal_between_its_read_and_its_write_does_not_bring_the_lease_back(self):
+        renewer = self.renewal(lambda: dashboard.app_update.renew_lease(str(self.path), "L1"))
+        dropper = threading.Thread(target=dashboard.app_update.drop_lease_file,
+                                   args=(str(self.path), "L1"))
+        dropper.start()
+        time.sleep(0.2)                             # the drop, mid-renewal
+        self.go.set()
+        renewer.join(5)
+        dropper.join(5)
+        self.assertFalse(dropper.is_alive())
+        self.assertFalse(self.path.exists())
+
+    def test_a_renewal_never_creates_a_dropped_lease(self):
+        self.go.set()
+        self.path.unlink()
+        dashboard.app_update.renew_lease(str(self.path), "L1")
+        self.assertFalse(self.path.exists())
+
+    def test_a_renewal_leaves_another_lease_alone(self):
+        self.go.set()
+        self.path.write_text(json.dumps({"id": "L2", "at": 1.0}), encoding="utf-8")
+        dashboard.app_update.renew_lease(str(self.path), "L1")
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
+                         {"id": "L2", "at": 1.0})
+
+    def test_the_helper_stops_and_joins_its_heartbeat_before_it_drops(self):
+        helper = dashboard.app_update.Helper.__new__(dashboard.app_update.Helper)
+        helper.plan = {"leasePath": str(self.path), "leaseId": "L1"}
+        done = threading.Event()
+        beat = self.renewal(helper.renew)           # its heartbeat, mid-renewal
+        helper._beat = (done, beat)
+        dropped = []
+        real_drop = dashboard.app_update.drop_lease_file
+
+        def drop(*a):
+            dropped.append(beat.is_alive())
+            real_drop(*a)
+        threading.Timer(0.2, self.go.set).start()
+        with mock.patch.object(dashboard.app_update, "drop_lease_file", drop):
+            helper.drop_lease()
+        self.assertEqual(dropped, [False])          # the heartbeat had ended
+        self.assertTrue(done.is_set())
+        self.assertFalse(self.path.exists())
+
+
 class HostVersionByResourcePath(unittest.TestCase):
     def setUp(self):
         self.real = ptyhost.version()

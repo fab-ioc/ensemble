@@ -514,13 +514,36 @@ def renew_lease(path: str | None, lease_id: str | None) -> None:
     after."""
     if not path:
         return
+    # In place, through the one handle it read the id from: a lease dropped
+    # meanwhile (by the helper, another process) is not created again, and a
+    # lease another restart took since is not overwritten.
     try:
-        lease = json.loads(Path(path).read_text(encoding="utf-8"))
-        if lease.get("id") == lease_id:
-            lease["at"] = time.time()
-            Path(path).write_text(json.dumps(lease), encoding="utf-8")
+        with open(path, "r+", encoding="utf-8") as f:
+            lease = json.loads(f.read())
+            if lease.get("id") == lease_id:
+                lease["at"] = time.time()
+                f.seek(0)
+                f.write(json.dumps(lease))
+                f.truncate()
     except (OSError, ValueError):
         pass
+
+
+def drop_lease_file(path: str | None, lease_id: str | None) -> None:
+    """Remove the lease at ``path`` if it is still ``lease_id``. A renewal
+    that has it open (Windows refuses the unlink then) or is half way through
+    its write is waited for, briefly."""
+    if not path:
+        return
+    for _ in range(40):
+        try:
+            if json.loads(Path(path).read_text(encoding="utf-8")).get("id") == lease_id:
+                Path(path).unlink()
+            return
+        except (PermissionError, ValueError):
+            time.sleep(0.05)
+        except OSError:
+            return
 
 
 def _pid_alive(pid: int) -> bool:
@@ -609,12 +632,16 @@ class Helper:
         renew_lease(self.plan.get("leasePath"), self.plan.get("leaseId"))
 
     def drop_lease(self) -> None:
-        path = self.plan.get("leasePath")
-        try:
-            if path and json.loads(Path(path).read_text(encoding="utf-8")).get("id") == self.plan.get("leaseId"):
-                Path(path).unlink()
-        except (OSError, ValueError):
-            pass
+        self.stop_heartbeat()   # no renewal of ours is under way to write it back
+        drop_lease_file(self.plan.get("leasePath"), self.plan.get("leaseId"))
+
+    def stop_heartbeat(self) -> None:
+        beat = getattr(self, "_beat", None)
+        if beat is None:
+            return
+        beat[0].set()
+        if beat[1] is not threading.current_thread():
+            beat[1].join(10)
 
     def record(self, **result) -> dict:
         result = {"at": time.time(), "from": self.plan.get("fromVersion"),
@@ -709,11 +736,12 @@ class Helper:
         def beat() -> None:
             while not done.wait(LEASE_BEAT_S):
                 self.renew()
-        threading.Thread(target=beat, daemon=True).start()
+        self._beat = (done, threading.Thread(target=beat, daemon=True))
+        self._beat[1].start()
         try:
             return self._run()
         finally:
-            done.set()
+            self.stop_heartbeat()
 
     def _run(self) -> dict:
         new_app = Path(self.plan["newApp"])

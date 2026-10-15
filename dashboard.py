@@ -11345,13 +11345,8 @@ def _renew_restart_lease(lease: str, done: threading.Event, every: float = 20) -
 
 def _drop_restart_lease(lease: str) -> None:
     _LEASE_PURPOSE.pop(lease, None)
-    path = _restart_lease_path()
     with _RESTART_LOCK:
-        try:
-            if json.loads(path.read_text(encoding="utf-8")).get("id") == lease:
-                path.unlink()
-        except (OSError, ValueError, AttributeError):
-            pass
+        app_update.drop_lease_file(str(_restart_lease_path()), lease)
 
 
 def _spare_port() -> int:
