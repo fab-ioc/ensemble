@@ -624,6 +624,34 @@ class Endpoints(tp._World):
         dashboard.sends.mark(self.rid, ["kp"], "confirmed", mid="m-123")
         self.assertEqual([(a["key"], a.get("mid")) for a in threads.load_side(self.rid)["sent"]], [("kp", "m-123")])
 
+    def test_only_a_turn_typed_after_a_thread_reply_confirms_it(self):
+        # Review 4: the same words typed in the terminal 10 s before the
+        # thread reply are never its receipt; the turn after it is, once.
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room",
+                               lambda h, room, text="", to="", key="", quiet=False: sent.append(text) or {"delivered": 1}), \
+                mock.patch.object(dashboard, "_send_left_behind", return_value=""):
+            self.assertEqual(tp.http("/api/room/resume", {"roomId": self.rid, "text": "ship it", "key": "k7",
+                                                          "thread": "P1"})[0], 200)
+        sends = dashboard.sends
+        sends.mark(self.rid, ["k7"], "delivered")
+        at = sends.get(self.rid, "k7")["at"]
+        self.add("sid-1", tp.turn("user", sent[0], at - 10), tp.turn("assistant", "Shipping.", at - 9))
+        sends.sync(self.rid, force=True, now=at + 5)
+        self.assertEqual(sends.get(self.rid, "k7")["state"], "delivered", "a turn from before it is not it")
+        self.add("sid-1", tp.turn("user", sent[0], at + 20), tp.turn("assistant", "Re P1: shipped.", at + 21))
+        sends._SCANNED.clear()          # this world's transcripts keep one stat
+        sends.sync(self.rid, force=True, now=at + 25)
+        s = sends.get(self.rid, "k7")
+        self.assertEqual((s["state"], s["mid"]), ("confirmed", "sid-1:6"))
+        self.assertEqual([a.get("mid") for a in threads.load_side(self.rid)["sent"]], ["sid-1:6"])
+        self.poll()
+        shown = {i["mid"] for i in http_get(f"/api/room/channel?id={self.rid}")[1]["items"]}
+        self.assertIn("sid-1:4", shown, "typed in the chat: the chat's")
+        self.assertNotIn("sid-1:6", shown, "the thread's reply: in its thread alone")
+        sends.sync(self.rid, force=True, now=at + 60)
+        self.assertEqual(sends.get(self.rid, "k7")["mid"], "sid-1:6", "once")
+
     def test_discard_and_withdraw_take_the_thread_record_back(self):
         # Review 1: a reply taken back is no thread's; the same words typed
         # in the chat later are the chat's.

@@ -572,7 +572,9 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
     hits: dict[str, str] = {}
     gone: set[str] = set()
     for s in by_size(waiting):
-        floor = float(s["at"]) - SLACK_S
+        # A thread's reply (#237): only a turn typed after it was sent, so a
+        # message said in the chat before it is never taken for it.
+        floor = float(s["at"]) - (0 if s.get("thread") else SLACK_S)
         ev = evidence(s["text"])
         hit = next((mid for mid, t in turns
                     if (_d._turn_epoch(t.get("timestamp")) or now) >= floor
