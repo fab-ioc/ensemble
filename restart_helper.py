@@ -76,11 +76,11 @@ def _run(plan: dict) -> int:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{endpoint}", timeout=timeout) as resp:
             return resp.read()
 
-    def post(endpoint, body):
+    def post(endpoint, body, timeout=180):
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(f"http://127.0.0.1:{plan['port']}{endpoint}",
                                      data=data, headers={"Content-Type": "application/json; charset=utf-8"})
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def spawn(port):
@@ -222,9 +222,13 @@ def _run(plan: dict) -> int:
         return 1
     if not plan["keepAgents"]:
         try:
-            post("/api/restart/restore", lease)
-        except OSError as exc:
-            log(f"rooms could not be restored: {exc}")
+            # Many rooms take minutes to come back, each a few seconds.
+            res = post("/api/restart/restore", lease, timeout=600)
+            log(f"restore: {len(res.get('rooms') or [])} room(s) in the snapshot; "
+                f"{res.get('note') or 'nothing brought back'}")
+        except (OSError, ValueError) as exc:
+            log(f"rooms could not be restored: {exc}; the hub brings back what the snapshot "
+                f"lists by itself")
     log("hub up; restart complete")
     return 0
 

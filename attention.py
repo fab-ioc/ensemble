@@ -1644,6 +1644,10 @@ def _items() -> list[dict]:
         typing_alarms = _d.hub_typing.by_room()
     except Exception:
         typing_alarms = {}
+    try:
+        not_back = _d.restore_problems.by_room()
+    except Exception:
+        not_back = {}
 
     for room in rooms:
         if not room.get("launched", True):
@@ -1715,6 +1719,12 @@ def _items() -> list[dict]:
             # (hub_typing, P190): it hears nothing the hub tells it.
             found.append(("blocked", typing["reason"], {"since": typing["since"]},
                           next((p for p in agents if p.get("identity") == typing["identity"]), {})))
+        back = not_back.get(room["id"])
+        if back and live_agents:
+            _d.restore_problems.clear(room["id"])   # it runs again: the item goes
+        elif back:
+            # A restart or an update did not bring it back (restore_problems).
+            found.append(("blocked", back["reason"], {"since": back["since"]}, {}))
         if not found:
             continue
         # One item per task: the worst thing wrong with it.

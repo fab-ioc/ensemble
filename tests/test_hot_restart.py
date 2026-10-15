@@ -172,7 +172,9 @@ class HotRestartTest(TestCase):
                              ["/api/restart/external-cancel"])
             stop.assert_not_called()
 
-    def test_matching_host_skips_drain_and_snapshot(self):
+    def test_matching_host_skips_drain_and_marks_its_snapshot_hub_only(self):
+        # #240: a hub-only restart still writes down who runs, marked hub-only,
+        # so the hub that comes back can bring back agents that died anyway.
         with tempfile.TemporaryDirectory(prefix="ensemble-hot-plan-") as td, \
              mock.patch.object(dashboard, "DASHBOARD_DIR", Path(td)), \
              mock.patch.object(dashboard, "pty_host_compatible", return_value=True), \
@@ -182,7 +184,8 @@ class HotRestartTest(TestCase):
             result = dashboard.trigger_restart()
             self.assertTrue(result["keepAgents"])
             self.assertEqual(result["resumeRooms"], [])
-            snapshot.assert_not_called()
+            snapshot.assert_called_once()
+            self.assertIs(snapshot.call_args.kwargs["keep"], True)
 
     def test_safe_tool_request_uses_hot_mode_without_a_drain_record(self):
         with tempfile.TemporaryDirectory(prefix="ensemble-hot-request-") as td, \

@@ -604,7 +604,8 @@ def request_restart(reason: str, by: dict, action: str = "restart",
             if err:
                 return {"status": 500, "started": False, "error": err}
             _log("source update: PTY host unchanged; hub-only mode")
-            res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""))
+            res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
+                                     purpose="update")
             return {"status": 202 if res.get("started") else 500, **res}
     now = time.time()
     with LOCK:
@@ -780,7 +781,7 @@ def _launch() -> None:
                 if err:
                     end_drain("failed", f"the update could not be fetched: {err}")
                     return
-            res = _d.trigger_restart(wake, drain=True)
+            res = _d.trigger_restart(wake, drain=True, **({"purpose": "update"} if update else {}))
     except Exception as e:      # noqa: BLE001 — said, and everything let go
         end_drain("failed", f"{e.__class__.__name__}: {e}")
         return
