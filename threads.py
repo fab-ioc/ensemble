@@ -71,7 +71,8 @@ CHANNEL_LIMIT = 5000            # … and at most, however far it scrolls back
 TITLE_WORDS = 14                # a thread's title: its first words
 PREVIEW_MAX = 240               # what a reply line quotes of the last reply
 ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon within this
-SIDE_KEEP = 400                 # "also send to chat" records kept
+SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
+PLACED_KEEP = 20000             # older ones whose balloon was found: kept as {mid, thread, also}
 
 # A PO message that says something is live: "Live: main 1a2b3c", "#240 is live".
 _LIVE = re.compile(r"(?im)^[ \t>*_-]*live\b[ \t*_]*[:—–-]|\b(?:is|are|now|went|goes|be|been)[ \t]+live\b")
@@ -203,7 +204,14 @@ def _save_side(room_id: str, side: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     side["also"] = side.get("also", [])[-SIDE_KEEP:]
-    side["sent"] = side.get("sent", [])[-SIDE_KEEP:]
+    sent = side.get("sent", [])
+    if len(sent) > SIDE_KEEP:
+        # A reply's place lasts as long as its balloon (#237 review 1): an
+        # older send keeps only that, once its balloon is known.
+        old = [{k: a[k] for k in ("mid", "thread", "also", "key") if k in a}
+               for a in sent[:-SIDE_KEEP] if a.get("mid")]
+        sent = old[-PLACED_KEEP:] + sent[-SIDE_KEEP:]
+    side["sent"] = sent
     try:
         durable.write_tmp(tmp, json.dumps(side, indent=1, ensure_ascii=True))
         os.replace(tmp, p)
@@ -490,9 +498,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                         tids.append(t)
                 tids = list(dict.fromkeys(tids))
                 sent = sent_of.get(mid)
-                if not tids and sent and sent.get("thread"):
-                    # A reply with no point (an image, a word the ledger
-                    # keeps no point of) sent from a thread's box.
+                if sent and sent.get("thread"):
+                    # Sent from a thread's box: in that thread (and in those
+                    # the points it names are in), whatever it holds.
                     t = sent["thread"]
                     if t.startswith("task:") and task_thread.get(t[5:]) not in (None, activity):
                         t = task_thread[t[5:]]
@@ -504,7 +512,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                         t = homes[-1] if homes else \
                             new(t, root, _words(root["turn"].get("text") or "") or "Thread")["id"]
                     if t in threads:
-                        tids = [t]
+                        tids = [x for x in tids if x != t] + [t]
                 if not tids:
                     # A message the ledger has no point of (sent before the
                     # ledger, a point taken back, or an image): a thread of its own.
@@ -572,7 +580,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         # Several PO balloons may be one answer with no new input between
         # them. Keep the same home until the next human or hub input.
         last = tids[-1]
-    return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
+    # Sends paired by what they hold: their balloon, kept (build), so their
+    # place outlives their record (#237 review 1).
+    paired = {a["key"]: m for m, a in sent_of.items() if a.get("key") and a.get("mid") != m}
+    return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order, "paired": paired}
 
 
 PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)
@@ -789,6 +800,11 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
     out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",
                  lambda done, total: announce("Sorting messages into threads", done, total))
     announce("Finishing threads")
+    if out.get("paired"):
+        try:
+            confirmed(room_id, out["paired"])
+        except Exception as e:      # noqa: BLE001 — paired again by what they hold next time
+            print(f"[threads] {room_id}: replies not kept with their balloons: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
     try:
         waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
@@ -1051,10 +1067,18 @@ def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, tex
     (:func:`confirmed`, the points it made), else by what it holds."""
     if not tid:
         return
+    # Only the points it made are anchored there: a "Re P2" typed in P1's
+    # box names a point with a thread of its own (#237 review 1).
+    made = set(pids or [])
+    if key:
+        try:
+            made &= {p["id"] for p in points.load(room_id).get("points") or [] if p.get("key") == key}
+        except Exception:       # noqa: BLE001 — anchored as it names them
+            pass
     with _LOCK:
         side = load_side(room_id)
         for pid in pids or []:
-            if not re.fullmatch(points.POINT_ID, tid) or pid != tid:
+            if pid in made and (not re.fullmatch(points.POINT_ID, tid) or pid != tid):
                 side["anchors"][pid] = tid
         mine = _send_words(points.norm_text(points.strip_point_lines(
             _d.message_refs.strip_message_refs(text or "")))) if _d else \

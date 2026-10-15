@@ -34,7 +34,7 @@ from tests.test_thread_panel_cdp import CDP_JS as PANEL_JS, NODE  # noqa: E402
 CDP_JS = PANEL_JS[:PANEL_JS.index('  const out={};')] + r"""
   const WATCH = doc => `(() => { const w=${doc}.defaultView; w.__seen = w.__seen || {};
     if (!w.__watch) w.__watch = setInterval(() => { const m=w.document.querySelector('#msgs'); if (!m) return;
-      for (const t of ['TOKA','TOKB','TOKC']) if (m.textContent.includes(t) && !w.__seen[t]) w.__seen[t] = Date.now(); }, 50);
+      for (const t of ['TOKA','TOKB','TOKC','TOKF']) if (m.textContent.includes(t) && !w.__seen[t]) w.__seen[t] = Date.now(); }, 50);
     return 0; })()`;
   const SEND = (doc, text, also) => `(async () => { const w=${doc}.defaultView;
     const a=w.document.getElementById('thr-also'); if (!a || w.document.getElementById('thr-also-l').hidden) throw Error('no Also box');
@@ -59,6 +59,11 @@ CDP_JS = PANEL_JS[:PANEL_JS.index('  const out={};')] + r"""
     await sleep(2500);
     out.unticked = await ev(`({sent:${sentA}, chat:${PO}.contentWindow.__seen.TOKA||0, thread:${THR}.contentWindow.__seen.TOKA||0,
       threadMsgs:${HAS(TD, 'TOKA')}})`);
+    // Not delivered: its Retry is in the thread, nothing in the chat (review 1).
+    const sentF = await ev(`(async () => { try { return await (${SEND(TD, 'TOKF will fail', false)}); } catch (e) { return Date.now(); } })()`);
+    await until(`!!${TD}.querySelector('#msgs')?.textContent.includes('TOKF') && /Retry/.test(${TD}.querySelector('#msgs').textContent)`, 'TOKF failed in the thread');
+    await sleep(2500);
+    out.failed = await ev(`({sent:${sentF}, chat:${PO}.contentWindow.__seen.TOKF||0, thread:${THR}.contentWindow.__seen.TOKF||0})`);
     // Ticked: in the thread and in the chat.
     const sentB = await ev(SEND(TD, 'TOKB also for the chat', true));
     await until(`${ANSWERED(TD, 'TOKB')} && ${HAS(CH, 'TOKB')}`, 'TOKB in both');
@@ -163,6 +168,9 @@ class ThreadReply(unittest.TestCase):
     def _deliver(h, room, text='', to='', key='', quiet=False, **kw):
         """Typed in at once; the PO reads it a second later and answers."""
         cls = ThreadReply
+        if 'TOKF' in text:          # its resume failed: kept, with Retry
+            sends.mark(room['id'], [key], 'failed', 'the PO stopped')
+            raise dashboard.StartRoomError('the PO stopped')
         sends.mark(room['id'], [key], 'delivered')
 
         def read():
@@ -187,6 +195,10 @@ class ThreadReply(unittest.TestCase):
 
     def test_an_unticked_reply_never_shows_in_the_chat(self):
         g = self.check('unticked')
+        self.assertEqual(g['chat'], 0, g)
+
+    def test_a_failed_thread_reply_stays_in_its_thread(self):
+        g = self.check('failed')
         self.assertEqual(g['chat'], 0, g)
 
     def test_a_ticked_reply_shows_in_both(self):

@@ -272,6 +272,42 @@ class AssignTest(unittest.TestCase):
             self.assertEqual(threads._channel({**out, "recs": recs_}), ["s:0"], row)
             self.assertEqual(out["also"], {}, row)
 
+    def test_a_reply_naming_another_point_moves_nothing(self):
+        # Review 1: "Re P2" typed in P1's box. P2 keeps its thread and its
+        # first message; the reply is in P1 (where it was sent) and in P2.
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."),
+                human("s:2", 10, "and the legend"), po("s:3", 15, "Done too."),
+                human("s:4", 100, "Re P2: smaller please", re_=["P2"])]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P2", "s:2", "and the legend", 10, followUps=["s:4"])]
+        out = self.run_(recs, pts, side(sent=[self.sent_row("Re P2: smaller please", 100)]))
+        self.assertEqual(out["threads"]["P2"]["members"], ["s:2", "s:3", "s:4"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:4"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+        self.assertEqual(out["also"], {})
+
+    def test_a_reply_keeps_its_place_after_400_newer_sends(self):
+        # Review 1: the record of an old reply outlives the rolling cutoff
+        # once its balloon is known (paired by what it holds, kept by build).
+        recs, pts = self.leak_case("Re P1: is this ready?")
+        row = self.sent_row("Re P1: is this ready?", 100)
+        out = self.run_(recs, pts, side(sent=[row]))
+        self.assertEqual(out["paired"], {"k": "s:2"})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(threads, "_dir", lambda: Path(tmp)):
+            rid = "room-abc126"
+            threads.forget()
+            threads._save_side(rid, side(sent=[row]))
+            threads.confirmed(rid, out["paired"])
+            sd = threads.load_side(rid)
+            sd["sent"] += [self.sent_row(f"other {n}", 200 + n, key=f"o{n}") for n in range(threads.SIDE_KEEP)]
+            threads._save_side(rid, sd)
+            threads.forget()
+            kept = threads.load_side(rid)
+            threads.forget()
+        self.assertEqual(len(kept["sent"]), threads.SIDE_KEEP + 1)
+        self.assertEqual(kept["sent"][0], {"mid": "s:2", "thread": "P1", "also": False, "key": "k"})
+        out = self.run_(recs, pts, kept)
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+
     def test_a_ticked_follow_up_is_in_the_thread_and_the_chat(self):
         recs, pts = self.leak_case("Re P1: is this ready?")
         out = self.run_(recs, pts, side(sent=[self.sent_row("Re P1: is this ready?", 100, also=True)]))
@@ -410,14 +446,19 @@ class SideTest(unittest.TestCase):
         past = 1_700_000_000.0          # seen times are never ahead of the hub's clock
         self.assertTrue(threads.mark_seen(rid, "P1", past))
         self.assertFalse(threads.mark_seen(rid, "P1", past - 1))
-        threads.note_send(rid, "task:#12", "k1", ["P7"], True, "Re P3: ship it")
-        threads.note_send(rid, "P3", "k2", ["P3"], False, "x")
+        # P7 is the point k1 made; P3 one it names (#237 review 1: not moved).
+        led = {"points": [{"id": "P7", "key": "k1"}, {"id": "P3", "key": "k0"}]}
+        with mock.patch.object(points, "load", lambda rid: led):
+            threads.note_send(rid, "task:#12", "k1", ["P7"], True, "Re P3: ship it")
+            threads.note_send(rid, "P3", "k2", ["P3"], False, "x")
+            threads.note_send(rid, "P1", "k3", ["P3"], False, "Re P3: and this")
         threads.forget()
         sd = threads.load_side(rid)
         self.assertEqual(sd["seen"], {"P1": past})
         self.assertEqual(sd["anchors"], {"P7": "task:#12"})
         self.assertEqual([(a["key"], a["words"], a["also"], a["pids"]) for a in sd["sent"]],
-                         [("k1", "ship it", True, ["P7"]), ("k2", "x", False, ["P3"])])
+                         [("k1", "ship it", True, ["P7"]), ("k2", "x", False, ["P3"]),
+                          ("k3", "and this", False, ["P3"])])
         self.assertEqual(sd["also"], [], "#237: every reply is a sent row, none an also row")
 
     def test_a_refused_send_is_dropped_and_a_confirmed_one_keeps_its_balloon(self):
@@ -548,6 +589,23 @@ class Endpoints(tp._World):
         self.assertEqual(status, 400)
         if not body.get("kept"):
             self.assertEqual(threads.load_side(self.rid)["sent"], [])
+
+    def test_discard_and_withdraw_take_the_thread_record_back(self):
+        # Review 1: a reply taken back is no thread's; the same words typed
+        # in the chat later are the chat's.
+        sends = dashboard.sends
+        for key, take_back in (("kd", "discard"), ("kw", "withdraw")):
+            text = "Re P1: ship it"
+            sends.accept(self.rid, key, text, thread="P1")
+            threads.note_send(self.rid, "P1", key, [], False, text)
+            if take_back == "discard":
+                sends.mark(self.rid, [key], "failed", "no")
+                self.assertTrue(dashboard.discard_pending(self.rid, key))
+            else:
+                sends.mark(self.rid, [key], "confirmed", mid="sid-1:9")
+                with mock.patch.object(dashboard.chatroom, "withdraw_message", return_value=True):
+                    self.assertTrue(dashboard.withdraw_send(self.rid, key))
+            self.assertEqual([a["key"] for a in threads.load_side(self.rid)["sent"]], [], take_back)
 
     def settle(self):
         """The background build a poll started, done."""

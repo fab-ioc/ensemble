@@ -3236,6 +3236,9 @@ def discard_pending(room_id: str, key: str = "") -> bool:
     with _SAY_KEYS_LOCK:
         for it in held:
             _SAY_KEYS.pop((room_id, it.get("key") or ""), None)
+    for it in held:
+        if not it.get("posted"):
+            _thread_send_gone(room_id, it.get("key") or "")
     # What those sends did to the person's points goes with them, newest
     # first: they were never delivered. One already in a team's chat (only
     # its wake was owed) was, and keeps its points.
@@ -3257,6 +3260,14 @@ def discard_pending(room_id: str, key: str = "") -> bool:
         except Exception as e:      # noqa: BLE001 — the discard itself stands
             print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
+
+
+def _thread_send_gone(room_id: str, key: str) -> None:
+    """A send taken back before it was read: no balloon is its thread reply (#237)."""
+    try:
+        threads.drop_send(room_id, key)
+    except Exception as e:      # noqa: BLE001 — the take-back itself stands
+        print(f"[threads] {room_id}: taken-back reply's record kept: {e!r}", flush=True)
 
 
 def withdraw_send(room_id: str, key: str) -> bool:
@@ -3284,6 +3295,7 @@ def withdraw_send(room_id: str, key: str) -> bool:
     sends.drop(room_id, [key])
     with _SAY_KEYS_LOCK:
         _SAY_KEYS.pop((room_id, key), None)
+    _thread_send_gone(room_id, key)
     try:
         points.discard(room_id, points.point_ids(item.get("text") or ""), key)
     except Exception as e:      # noqa: BLE001 — the withdrawal itself stands

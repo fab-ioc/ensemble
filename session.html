@@ -5381,11 +5381,12 @@ function sendHere(s) {
 }
 function sendsToShow(items) {
   const thr = typeof threadedView === 'function' && threadedView();
-  // A thread (#210) shows what was sent from it; the chat (#237) what was
-  // not, or was sent to the chat too, or failed (its Retry is not lost).
-  const all = !thr ? ROOM_SENDS.slice() : THREAD_MODE ? ROOM_SENDS.filter(sendHere)
-    : ROOM_SENDS.filter(s => !s.thread || s.also || s.state === 'failed');
-  for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k)) all.push(v.s);
+  // A thread (#210) shows what was sent from it (failed too: its Retry is
+  // there); the chat (#237) what was not, or was sent to the chat too. This
+  // page's own copy of a send has no thread until the hub's answer.
+  const mine = !thr ? () => true : THREAD_MODE ? s => !s.thread || sendHere(s) : s => !s.thread || !!s.also;
+  const all = ROOM_SENDS.filter(s => (!thr || s.thread || !THREAD_MODE) && mine(s));
+  for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k) && mine(v.s)) all.push(v.s);
   all.sort((a, b) => (a.at || 0) - (b.at || 0));
   const turns = new Map(), gone = new Set();
   const turn = m => { if (!turns.has(m.id)) turns.set(m.id, sendTurn(m.text)); return turns.get(m.id); };
