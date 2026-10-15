@@ -63,8 +63,10 @@ export function createDocks({ root, panels, storageKey = 'dock.docks', storage =
     return layoutFile(order.map((id) => {
       const e = entries.get(id);
       const wide = e.dock.narrow() ? JSON.parse(memory.get(`${storageKey}.${id}`) || 'null') : null;
+      const at = measuredRoot(id, e.root);
+      // Each dock's split sizes as drawn (in narrow mode, the wide layout kept for later as the dock would draw it).
       return { id, title: e.title, window: e.window ? { ...e.window } : null,
-        layout: splitFractions(wide || e.dock.layout(), measuredRoot(id, e.root)) };
+        layout: wide ? splitFractions(wide, at, false, e.dock._sizeModel()) : e.dock._fractions(null, at) };
     }), app, savedAt, groupZoom);
   }
   function persist() {
