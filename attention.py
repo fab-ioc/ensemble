@@ -1720,7 +1720,7 @@ def _items() -> list[dict]:
             found.append(("blocked", typing["reason"], {"since": typing["since"]},
                           next((p for p in agents if p.get("identity") == typing["identity"]), {})))
         back = not_back.get(room["id"])
-        if back and live_agents:
+        if back and live_agents and set(back.get("agents") or []) <= set(live_agents):
             _d.restore_problems.clear(room["id"])   # it runs again: the item goes
         elif back:
             # A restart or an update did not bring it back (restore_problems).

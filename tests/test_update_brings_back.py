@@ -101,14 +101,60 @@ class HubOnlySnapshot(_Left):
         self.assertFalse((self.dir / "restart-snapshot.json").exists())
 
     def test_not_when_the_host_could_not_be_listed(self):
-        rid = self.room()
+        # The agents may run on a host this hub cannot reach: nothing starts,
+        # the room is on Needs you and the snapshot is claimed.
+        rid = self.room(title="far")
         self.running(rid, "claude", "idle")
-        self.left(keep=True)
+        self.left(keep=True, purpose="update")
         self.hub_stops()
         with mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", True):
             out = self.restore()
-        self.assertEqual((out["rooms"], self.starts), ([], 0))
-        self.assertTrue((self.dir / "restart-snapshot.json").exists())
+        self.assertEqual(self.starts, 0)
+        self.assertEqual([r["roomId"] for r in out["rooms"]], [rid])
+        self.assertTrue(out["rooms"][0]["outcome"].startswith("NOT checked"))
+        self.assertFalse((self.dir / "restart-snapshot.json").exists())
+        item = restore_problems.by_room()[rid]
+        self.assertIn("could not reach its terminal host", item["why"])
+        self.assertEqual(item["agents"], ["claude"])
+        self.assertIn("0 of 1 room(s) checked", self.log())
+        self.assertIn("after the update: 0 of 1 room(s) checked", self.update_log())
+
+    def test_a_room_with_one_agent_dead_gets_that_one_back(self):
+        rid = self.room(agents=("claude", "claude-b"), title="pair")
+        kept = self.running(rid, "claude", "idle")
+        self.running(rid, "claude-b", "idle")
+        self.left(keep=True)
+        self.listed[:] = [s for s in self.listed if s["id"] == kept]
+        self.ptys = {kept: self.ptys[kept]}
+        out = self.restore()
+        outcome = out["rooms"][0]["outcome"]
+        self.assertTrue(outcome.startswith("brought back"), outcome)
+        self.assertIn("claude kept running", outcome)
+        self.assertEqual(self.starts, 1)
+        parts = {p["identity"]: p for p in chatroom.get_room(rid, public=False)["participants"]}
+        self.assertEqual(parts["claude"]["ptyId"], kept)
+        self.assertNotEqual(parts["claude-b"]["ptyId"], f"old-{rid}-claude-b")
+
+    def test_an_agent_not_in_the_snapshot_is_not_started(self):
+        rid = self.room(agents=("claude", "claude-b"), title="pair")
+        self.running(rid, "claude", "idle")
+        self.left(keep=True)
+        self.hub_stops()
+        self.restore()
+        self.assertEqual(self.starts, 1)
+        self.assertEqual(list(self.typed(rid)), ["claude"])
+
+    def test_an_agent_ended_on_purpose_since_the_snapshot_stays_ended(self):
+        rid = self.room(agents=("claude", "claude-b"), title="pair")
+        kept = self.running(rid, "claude", "idle")
+        self.running(rid, "claude-b", "idle")
+        self.left(keep=True)
+        chatroom.patch_participant(rid, "claude-b", {"killedAt": time.time() + 1})
+        self.listed[:] = [s for s in self.listed if s["id"] == kept]
+        self.ptys = {kept: self.ptys[kept]}
+        out = self.restore()
+        self.assertEqual(out["rooms"][0]["outcome"], "already running: left alone")
+        self.assertEqual(self.starts, 0)
 
     def test_not_its_own_nor_an_old_one(self):
         rid = self.room()
@@ -130,6 +176,23 @@ class HubOnlySnapshot(_Left):
 
 
 class HelperNeverRestored(_Left):
+    def test_a_room_stopped_while_the_hub_waited_stays_stopped(self):
+        stopped, other = self.room(title="off"), self.room(title="on")
+        self.running(stopped, "claude", "idle")
+        self.running(other, "claude", "idle")
+        self.left(keep=False, purpose="update")
+        self.hub_stops()
+        chatroom.patch_room(stopped, stoppedAt=time.time() + 1)    # Stop, after the snapshot
+        out = self.restore(wait=0.05)
+        by = {r["roomId"]: r["outcome"] for r in out["rooms"]}
+        self.assertEqual(by[stopped], "stopped on purpose since the snapshot: left stopped")
+        self.assertTrue(by[other].startswith("brought back"))
+        self.assertEqual(self.starts, 1)
+        self.assertIn("1 of 1 room(s) running again; 1 stopped on purpose since, left stopped",
+                      self.update_log())
+        self.assertNotIn(stopped, restore_problems.by_room())
+
+
     def test_the_hub_restores_it_after_the_wait(self):
         rid = self.room()
         self.running(rid, "claude", "working")
@@ -222,6 +285,36 @@ class NotBroughtBack(_Left):
             self.assertTrue(restore_problems.record(bad, "Broken", "again", "update", "lease-2"))
         self.assertTrue(restore_problems.clear(bad))
         self.assertEqual(restore_problems.by_room(), {})
+
+
+class FailedRestartRetiresItsSnapshot(_Left):
+    def trigger(self, **self_restart):
+        plan = {"keepAgents": True, "wakeRoom": False, "graceSeconds": 0, "preflightPort": 0,
+                "resumeRooms": [], "log": ""}
+        with mock.patch.object(dashboard, "restart_plan", lambda *a, **k: dict(plan)),                 mock.patch.object(dashboard.BACKEND, "self_restart", **self_restart):
+            return dashboard.trigger_restart()
+
+    def test_a_helper_that_did_not_start(self):
+        self.running(self.room(), "claude", "idle")
+        self.assertEqual(self.trigger(return_value={"started": False})["status"], 500)
+        self.assertFalse((self.dir / "restart-snapshot.json").exists())
+        self.assertTrue((self.dir / "restart-snapshot.last.json").exists())
+
+    def test_a_helper_that_raised(self):
+        self.running(self.room(), "claude", "idle")
+        with self.assertRaises(OSError):
+            self.trigger(side_effect=OSError("no helper"))
+        self.assertFalse((self.dir / "restart-snapshot.json").exists())
+
+
+class NeedsYouUntilEveryAgentRuns(unittest.TestCase):
+    def test_the_item_names_the_agents_that_were_to_run(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d,                 mock.patch.object(dashboard, "DASHBOARD_DIR", Path(d)):
+            restore_problems.record("r1", "T", "boom", "update", "L", agents=["b", "a", ""])
+            self.assertEqual(restore_problems.by_room()["r1"]["agents"], ["a", "b"])
+            restore_problems.record("r2", "T", "boom", "update", "L")
+            self.assertEqual(restore_problems.by_room()["r2"]["agents"], [])
 
 
 class HelperLogs(unittest.TestCase):

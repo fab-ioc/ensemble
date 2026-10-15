@@ -5,7 +5,8 @@ the hub that comes back (``dashboard._bring_back_rooms``). When that fails for
 one, the person must not have to find it in restart.log: the room gets a Needs
 you item saying why (``by_room``, read by attention) and its project's PO chat
 one report (``dashboard._tell_pos_not_back``, once per room and restart). The item clears as soon as
-the room runs again (``clear``, from attention), or when the room is gone.
+every agent that was to run again runs (``clear``, from attention; any agent
+when none was recorded), when the room is stopped, or when it is gone.
 
 Kept in ``restore-problems.json`` in the state dir, so a hub that restarts again
 before anyone looked still shows it.
@@ -58,10 +59,13 @@ def po_room(rid: str) -> str:
     return (projects.get(pid) or {}).get("poRoomId") or ""
 
 
-def record(rid: str, title: str, why: str, what: str = "restart", lease: str = "") -> bool:
+def record(rid: str, title: str, why: str, what: str = "restart", lease: str = "",
+           agents: list[str] | tuple = ()) -> bool:
     """Note that ``what`` (``restart`` | ``update``) did not bring room ``rid``
-    back, because ``why``. True the first time for this room and lease: its
-    PO is to be told (``dashboard._tell_pos_not_back``), once."""
+    back, because ``why``. ``agents``: the room's agents that were to run
+    again; the item stays until each of them runs (``by_room``). True the
+    first time for this room and lease: its PO is to be told
+    (``dashboard._tell_pos_not_back``), once."""
     if not rid:
         return False
     with _LOCK:
@@ -69,6 +73,7 @@ def record(rid: str, title: str, why: str, what: str = "restart", lease: str = "
         prior = data.get(rid) or {}
         same = prior.get("lease") == lease
         data[rid] = {"title": title, "why": why, "what": what, "lease": lease,
+                     "agents": sorted(a for a in agents if a),
                      "since": prior.get("since") if same and prior.get("since") else time.time()}
         _write(data)
     return not (same and prior)
@@ -86,11 +91,11 @@ def clear(rid: str) -> bool:
 
 
 def by_room() -> dict[str, dict]:
-    """{room: {reason, since, why, what}}: each room's Needs you item."""
+    """{room: {reason, since, why, what, agents}}: each room's Needs you item."""
     with _LOCK:
         data = _read()
     return {rid: {"reason": f"The {e.get('what') or 'restart'} could not bring this task back: "
                             f"{e.get('why') or 'unknown'}. Resume it when you want it running.",
                   "since": float(e.get("since") or 0), "why": e.get("why") or "",
-                  "what": e.get("what") or "restart"}
+                  "what": e.get("what") or "restart", "agents": list(e.get("agents") or [])}
             for rid, e in data.items() if isinstance(e, dict)}
