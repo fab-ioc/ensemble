@@ -266,7 +266,9 @@ def main():
             # Once the helper is about to stop the old hub (launchd's bootout on
             # a Mac takes agents along), before the new hub attaches.
             wait("the helper to stop the old hub",
-                 lambda: "warm caches prepared before the stop" in tail(rlog, r0), 120)
+                 lambda: any(m in tail(rlog, r0) for m in (
+                     "warm caches prepared before the stop",     # restart-hub.ps1
+                     "snapshot before a hub-only stop")), 120)   # restart_helper.py
             if args.kill_host:
                 victim = int(json.loads((state / "pty-host.json").read_text(encoding="utf-8"))["pid"])
             else:
