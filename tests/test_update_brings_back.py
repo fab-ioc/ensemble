@@ -262,6 +262,32 @@ class ReviewsAndPartlyLiveRooms(_Left):
         self.assertIn("claude-b not running here", outcome)
         self.assertEqual(restore_problems.by_room()[rid]["agents"], ["claude", "claude-b"])
 
+    def test_host_unknown_with_the_reviewer_ended_since_is_left_alone(self):
+        rid, owner = self.reviewed_room()
+        self.left(keep=True)
+        chatroom.patch_participant(rid, "codex", {"killedAt": time.time() + 1})
+        self.only(owner)
+        with mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", True):
+            out = self.restore()
+        self.assertEqual(out["rooms"][0]["outcome"], "already running: left alone")
+        self.assertNotIn(rid, restore_problems.by_room())
+        self.assertIn("1 of 1 room(s) checked", out["note"])
+
+    def test_host_unknown_with_the_room_stopped_since_is_left_stopped(self):
+        rid = self.room(title="off")
+        self.running(rid, "claude", "idle")
+        self.left(keep=True)
+        chatroom.patch_room(rid, stoppedAt=time.time() + 1)
+        self.hub_stops()
+        with mock.patch.object(dashboard, "_BOOT_HOST_UNKNOWN", True):
+            out = self.restore()
+        self.assertEqual(out["rooms"][0]["outcome"],
+                         "stopped on purpose since the snapshot: left stopped")
+        self.assertEqual(self.starts, 0)
+        self.assertNotIn(rid, restore_problems.by_room())
+        self.assertIn("0 of 0 room(s) checked", out["note"])
+        self.assertIn("1 stopped on purpose since, left stopped", out["note"])
+
 
 class HelperNeverRestored(_Left):
     def test_a_room_stopped_while_the_hub_waited_stays_stopped(self):

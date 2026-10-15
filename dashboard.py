@@ -11935,19 +11935,28 @@ def _left_snapshot_host_unknown(snap: dict, handler=None) -> dict:
     what = "update" if snap.get("purpose") == "update" else "restart"
     why = ("the hub could not reach its terminal host; it may still be running there, "
            "so it was not started a second time")
+    since = float(snap.get("at") or 0)
     out, not_back = [], []
     for entry in snap.get("rooms") or []:
         rid = entry.get("roomId") or ""
         room_full = chatroom.get_room(rid, public=False)
         parts = {p.get("identity"): p for p in (room_full or {}).get("participants", [])
                  if p.get("kind") == "agent"}
-        ran = sorted({a.get("identity") for a in entry.get("agents") or []
-                      if isinstance(a, dict) and a.get("state") != "stopped"} & set(parts))
+        # As in _bring_back_rooms: a stop after the snapshot stands.
+        killed = {i for i, p in parts.items()
+                  if since and float(p.get("killedAt") or 0) > since}
+        ran = sorted(({a.get("identity") for a in entry.get("agents") or []
+                       if isinstance(a, dict) and a.get("state") != "stopped"}
+                      & set(parts)) - killed)
         alive = {i for i in ran if _pty_alive(parts[i].get("ptyId"))}
         if room_full is None:
             outcome = "no such room any more"
+        elif since and float(room_full.get("stoppedAt") or 0) > since:
+            outcome = "stopped on purpose since the snapshot: left stopped"
         elif ran and alive == set(ran):
             outcome = "already running: left alone"
+        elif killed and not ran:
+            outcome = "stopped on purpose since the snapshot: left stopped"
         else:
             outcome = f"NOT checked: {why}" + (
                 f" ({', '.join(sorted(set(ran) - alive))} not running here)" if alive else "")
@@ -11962,8 +11971,10 @@ def _left_snapshot_host_unknown(snap: dict, handler=None) -> dict:
             h._tell_pos_not_back(not_back, what)
         except Exception as exc:    # noqa: BLE001 — the Needs you items still show it
             _restart_log(f"restore: the POs could not be told what was not brought back: {exc!r}")
-    line = (f"{sum(o['outcome'].startswith('already running') for o in out)} of {len(out)} "
-            f"room(s) checked: the PTY host could not be reached, nothing started")
+    stopped = sum(o["outcome"].startswith("stopped on purpose") for o in out)
+    line = (f"{sum(o['outcome'].startswith('already running') for o in out)} of {len(out) - stopped} "
+            f"room(s) checked: the PTY host could not be reached, nothing started"
+            + (f"; {stopped} stopped on purpose since, left stopped" if stopped else ""))
     _restart_log(f"restore: a hub-only {what}'s snapshot is left; {line}")
     if what == "update":
         _update_log(f"after the update: {line}")
