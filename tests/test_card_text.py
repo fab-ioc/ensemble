@@ -78,6 +78,7 @@ const T = {
   otherPoint: 'Which set-up (P215)? http://127.0.0.1:8765/session?room=room-0000c0de&msg=his00000215&part=pt:P216',
   mdAfterPoint: 'Which set-up (P215)? [card](https://hub.example.net/session?room=room-0000c0de&msg=his00000215&part=pt:P215)',
   selfOther: 'And this one? http://127.0.0.1:8765/session?room=room-0000c0de&msg=selfcard0001&part=ask:1',
+  otherRoom: 'Read http://localhost:8765/session?room=room-1a2b3c4d&msg=selfcard0001&part=ask:0',
 };
 (async () => {
   // The project list, then the point: each asked on a draw, drawn again once the hub answers.
@@ -95,14 +96,20 @@ const T = {
     selfBare: hubUrlWords(T.selfBare, 'selfcard0001'),
     selfAsk0: hubUrlWords(T.selfBare, 'selfcard0001', 0),
     selfOther: hubUrlWords(T.selfOther, 'selfcard0001', 0),
+    otherRoom: hubUrlWords(T.otherRoom, 'selfcard0001', 0),
+    otherRoomOf: hubUrlWords(T.selfBare, { room: 'room-1a2b3c4d', msg: 'selfcard0001' }, 0),
     button: [
       'Keep the default, see http://localhost:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001',
-      'Keep it (card: https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0)',
+      'Keep it (card: https://hub.example.net/session?room=room-0000c0de&msg=selfcard0001&part=ask:0)',
+      'Or this (card: https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0)',
       'As in [the notes](http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001)',
       'See https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001',
       'Wait and see',
       'Open hedge.html: http://127.0.0.1:8765/fileview?path=C%%3A%%5CDocs%%5Chedge.html',
-    ].map(t => cardWords(t, 'selfcard0001', 0)),
+      'Use (P215)',
+      'See https://example.org/docs',
+      'P215',
+    ].map(t => { const x = cardText(t, 'selfcard0001', 0); return [x.words, x.links.length]; }),
     other: hubUrlWords(T.localhost, 'selfcard0001'),
     file: hubUrlWords(T.fileview, ''),
     external: hubUrlWords(T.external, ''),
@@ -176,6 +183,13 @@ class CardLinks(unittest.TestCase):
         self.assertIn('data-ref-msg="selfcard0001"', h, "another card of the same message stays")
         self.assertIn(">the question card</a>", h)
 
+    def test_a_message_of_the_same_id_in_another_room_is_not_this_card(self):
+        h = self.r["otherRoom"]
+        self.assertIn('data-ref-room="room-1a2b3c4d" data-ref-msg="selfcard0001"', h)
+        self.assertNoUrl(h)
+        self.assertEqual(self.r["words"]["otherRoom"], "Read the question card")
+        self.assertEqual(self.r["words"]["otherRoomOf"], "Which one? the question card")
+
     def test_a_link_to_another_card_or_point_of_the_same_message_stays(self):
         h = self.r["twoAsks"]
         self.assertIn('data-ref-part="ask:0"', h)
@@ -223,7 +237,7 @@ class CardLinks(unittest.TestCase):
         self.assertEqual(h.count('class="ref-chip'), 2, "the note's link and the label's link")
         self.assertNotRegex(h, r'<button(?:(?!</button>).)*<a[ >]', "no link inside a button")
         self.assertRegex(h, r'</button><span class="qa-oa"><a class="ref-chip', "the label's link follows its button")
-        self.assertIn('<span class="qa-ol">See the message</span></button>', h)
+        self.assertIn('<span class="qa-ol">See</span></button>', h)
         for part in re.findall(r'<span class="qa-o[lda]">(.*?)</span>(?:<span class="lz|</button>|</div>|<span class="qa-od)', h):
             self.assertNoUrl(part)
         self.assertNotIn("http", re.sub(r'(href|title|aria-label)="[^"]*"', "", text_of(h).replace("chip ", "")))
@@ -245,13 +259,13 @@ class CardLinks(unittest.TestCase):
 
     def test_an_answer_button_says_its_words_and_leaves_its_links_beside_it(self):
         self.assertEqual(self.r["words"]["button"], [
-            "Keep the default", "Keep it", "As in the notes", "See the message", "Wait and see",
-            "Open hedge.html: hedge.html"])
+            ["Keep the default", 1], ["Keep it", 0], ["Or this", 1], ["As in", 1], ["See", 1], ["Wait and see", 0],
+            ["Open hedge.html", 1], ["Use", 1], ["See", 1], ["", 1]])
 
     def test_every_place_a_card_shows_uses_them(self):
         self.assertIn('<span class="qa-qt">${cardTextHtml(a.question, m.id, a.n)}</span>', SESSION)
         self.assertIn('const label = cardText(o.label, m.id, a.n), words = cardWords(o.label, m.id, a.n);', SESSION)
-        self.assertIn('<span class="qa-ol">${esc(words)}</span>', SESSION)
+        self.assertIn('<span class="qa-ol">${esc(label.words || \'Choose\')}</span>', SESSION)
         self.assertIn('<span class="qa-od">${cardTextHtml(o.detail, m.id, a.n)}</span>', SESSION)
         self.assertIn('<span class="qa-dc">${cardTextHtml(got.comment, m.id, a.n)}</span>', SESSION)
         self.assertIn("esc(hubUrlWords(c.question, c.mid))", SESSION, "Open questions")

@@ -60,6 +60,7 @@ async function main() {
           chips:[...q.querySelectorAll('a.ref-chip')].map(a => ({msg:a.dataset.refMsg, where:a.closest('.qa-qt') ? 'question' : a.closest('.qa-od') ? 'note' : a.closest('.qa-oa') ? 'label' : 'other'})),
           nested:q.querySelectorAll('button a, button [tabindex]').length,
           words:[...q.querySelectorAll('.qa-opt .qa-ol')].map(e => e.textContent),
+          boxes:[...q.querySelectorAll('.qa-optw')].map(e => e.innerText),
           points:[...q.querySelectorAll('.point-chip')].map(a => a.textContent.trim()),
           wide:[...q.querySelectorAll('a.ref-chip')].every(a => a.getBoundingClientRect().right <= q.getBoundingClientRect().right + 1)};})()`);
       // The chip in an option's note opens its message; the card stays open.
@@ -77,7 +78,7 @@ async function main() {
       const focused = `(() => {const e=document.activeElement; return e.matches('.qa-opt') ? 'button:' + e.dataset.opt : e.closest('.qa-od') ? 'note' : e.closest('.qa-oa') ? 'label' : e.tagName + '.' + e.className;})()`;
       await ev(`document.querySelector(${JSON.stringify(card + ' .qa-opt')}).focus()`);
       const keys = [await ev(focused)];
-      for (let i = 0; i < 3; i++) { await tab(); keys.push(await ev(focused)); }
+      for (let i = 0; i < 5; i++) { await tab(); keys.push(await ev(focused)); }
       let answered = null;
       if (mob) {
         await ev(`document.querySelectorAll(${JSON.stringify(card + ' .qa-opt')})[1].focus()`);
@@ -132,7 +133,8 @@ class CardLinksPage(Hub):
                   'options': [{'label': 'Choose it', 'recommended': True,
                                'detail': f'as in https://hub.example.net/session?room={room}&msg={target["id"]}'},
                               {'label': f'Keep the default, see http://localhost:{port}/session?room={room}&msg={target["id"]}',
-                               'detail': '', 'recommended': False}]}]
+                               'detail': '', 'recommended': False},
+                              {'label': 'Use (P215)', 'detail': '', 'recommended': False}]}]
         card = chatroom.post_message(room, 'claude', 'Re P215: one decision.', to='user')['message']
         full = chatroom.get_room(room, public=False)
         for m in full['messages']:
@@ -153,15 +155,16 @@ class CardLinksPage(Hub):
                 seen = row['seen']
                 self.assertNotIn('http', seen['text'], seen['text'])
                 self.assertNotIn('localhost', seen['text'])
-                self.assertEqual(seen['points'], ['P215'], seen['qt'])
+                self.assertEqual(seen['points'], ['P215', 'P215'], 'in the question and in the third option')
                 self.assertEqual(sorted((c['where'], c['msg']) for c in seen['chips']),
                                  [('label', target['id']), ('note', target['id']), ('question', target['id'])],
                                  'the point\'s own link is not shown again after its chip')
                 self.assertTrue(seen['wide'], 'chips stay inside the card')
                 self.assertEqual(seen['nested'], 0, 'no link inside an answer button')
                 second = f'Keep the default, see http://localhost:{self.port}/session?room={self.room_id}&msg={target["id"]}'
-                self.assertEqual(row['keys'], ['button:Choose it', 'note', 'button:' + second, 'label'])
-                self.assertEqual(seen['words'], ['Choose it', 'Keep the default'], 'a button says its words; its link is beside it')
+                self.assertEqual(row['keys'][:6], ['button:Choose it', 'note', 'button:' + second, 'label', 'button:Use (P215)', 'label'])
+                self.assertEqual(seen['words'], ['Choose it', 'Keep the default', 'Use'], 'a button says its words; its link is beside it')
+                self.assertEqual(seen['boxes'][2].count('P215'), 1, 'the point shows once: as its chip')
                 self.assertEqual(row['after'], {'open': True, 'mid': target['id']})
                 self.assertFalse(row['overflow'])
         self.assertEqual(rows[1]['answered'], [second], 'Enter on an answer button answers with it')

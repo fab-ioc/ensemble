@@ -1776,19 +1776,23 @@ function hubUrlOf(u) {
 // What a hub link opens, in words: the question card, the message, the file's name.
 const hubUrlLabel = h => h.msg ? (h.msg.part.startsWith('ask:') ? 'the question card' : 'the message')
   : h.file != null ? (fileName(h.file) || h.file) : h.task ? 'the task' : h.thread ? 'the thread' : 'Ensemble';
-// A link to the card itself (self: its message id; n: its number there, when
-// known): the message as a whole or that card, not another card of it.
-const hubSelfLink = (r, self, n) => !!self && r.msg === self && (n == null || !r.part || r.part === 'ask:' + n);
+// A link to the card itself (self: its message id, in this page's room if it
+// has one, or { room, msg }; n: its number there, when known): that message in
+// that room, as a whole or that card; not another card of it, nor a message
+// of the same id in another room (a PO message is posted to two rooms).
+const hubSelfLink = (r, self, n) => {
+  const s = self && typeof self === 'object' ? self : { msg: self, room: typeof ROOM === 'string' ? ROOM : '' };
+  return !!s.msg && r.msg === s.msg && (!s.room || r.room === s.room) && (n == null || !r.part || r.part === 'ask:' + n);
+};
 // The hub links in a line that is itself a link (a question card's row in a
 // list) as words: never the bare URL. A link to the card the row opens
 // (self: its message id) goes, with the "(card: …)" around it. Other URLs
-// stay as written; drop: every link to a message or card goes too (its chip
-// is shown beside). Plain text in, plain text out.
-function hubUrlWords(text, self, n, drop) {
+// stay as written. Plain text in, plain text out.
+function hubUrlWords(text, self, n) {
   return String(text ?? '').replace(/(\s*)(\(\s*(?:(?:the\s+)?(?:question\s+)?card|link|see|ref)?\s*:?\s*)?(https?:\/\/[^\s<>()\[\]{}"'`*|\\]+)(\))?/gi, (m, sp, open, u, close) => {
     const [url, tail] = trimUrlTail(u), h = hubUrlOf(url);
     if (!h) return m;
-    if (h.msg && (drop || hubSelfLink(h.msg, self, n))) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
+    if (h.msg && hubSelfLink(h.msg, self, n)) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
     return sp + (open || '') + hubUrlLabel(h) + tail + (close || '');
   });
 }
@@ -2289,19 +2293,16 @@ function cardText(text, self, n) {
   s = s.replace(CARD_DROP_RE, '');
   const links = [];
   const html = esc(s).replace(REF_MARK_RE, (_, i) => { const h = chips[+i] || ''; if (h) links.push(h); return h; });
-  return { html, links };
+  // The words without the links, for a place that cannot hold a link (an
+  // answer button: its links follow it); a "see" left before them goes.
+  let words = s.replace(REF_MARK_RE, ' ').replace(/\(\s*(?:(?:the\s+)?(?:question\s+)?card|link|see|ref)?\s*:?\s*\)|\[\s*\]/gi, ' ').replace(/[ \t]+/g, ' ')
+    .replace(/ ([,.;:!?)])/g, '$1').replace(/\( /g, '(').trim();
+  if (links.length) words = words.replace(/[\s,;:—–-]*(?:\b(?:see|link|ref)\b)?[\s:]*$/i, '') || words;
+  return { html, links, words };
 }
 const cardTextHtml = (text, self, n) => cardText(text, self, n).html;
-// An option's words for its answer button, which holds no link: its links
-// follow the button (cardText(\u2026).links), so a link to a message or card is
-// left out, with a "see" before it ("Keep it, see <link>": "Keep it").
-function cardWords(text, self, n) {
-  const t = String(text ?? '').replace(CARD_MD_LINK_RE, (m, words) => words);
-  const all = hubUrlWords(t, self, n), left = hubUrlWords(t, self, n, true);
-  if (left === all) return all;
-  const w = left.replace(/[\s,;:\u2014\u2013-]*(?:\b(?:see|link|ref)\b)?[\s:]*$/i, '');
-  return w.trim() ? w : all;
-}
+// The words of a card's text with each link said in words, for a tooltip.
+const cardWords = (text, self, n) => hubUrlWords(String(text ?? '').replace(CARD_MD_LINK_RE, (m, words) => words), self, n);
 // ---- Card text: end --------------------------------------------------------
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
 const fileHref = (p, line) => FileLinks.href(p, { line, room: ROOM, cwd: fileBase() });
@@ -3264,14 +3265,15 @@ function askCardHtml(m, a, total, P) {
   const head = `<div class="qa-q"><span class="qa-no">${total > 1 ? `Ask ${a.n + 1} of ${total}` : 'Ask'}</span><span class="qa-qt">${cardTextHtml(a.question, m.id, a.n)}</span><button type="button" class="qa-copy" data-ask="${esc(key)}" title="Copy a link to this question">Copy link</button>${!got ? `<button type="button" class="qa-close" data-ask="${esc(key)}" title="Close without answering">Close</button>` : ''}</div>`;
   // An option: its answer button, holding its words, and beside it, in the
   // same box, the links its label names and its note: a link is never inside
-  // the button (#238), and a click on the box's words answers as the button does.
+  // the button and each shows once (#238); a click on the box's words answers
+  // as the button does. A label that is only links: the button says Choose.
   const opts = a.options.map(o => {
     const on = !!chosen && o.label === chosen;
     const label = cardText(o.label, m.id, a.n), words = cardWords(o.label, m.id, a.n);
     return `<div class="qa-optw${on ? ' on' : ''}${got ? ' off' : ''}">`
       + `<button type="button" class="qa-opt${o.recommended ? ' rec' : ''}${on ? ' on' : ''}" data-ask="${esc(key)}" data-opt="${esc(o.label)}"`
-      + `${got ? ' disabled' : ''} aria-pressed="${on}" title="${esc(got ? (on ? 'Your answer' : 'Answered') : `Answer “${words}”${o.detail ? ': ' + cardWords(o.detail, m.id, a.n) : ''}, with your comment if you wrote one. Sent once.`)}">`
-      + `<span class="qa-ol">${esc(words)}</span>${o.recommended ? '<span class="lz lz-neutral">recommended</span>' : ''}</button>`
+      + `${got ? ' disabled' : ''} aria-pressed="${on}"${label.words === words ? '' : ` aria-label="${esc(words)}"`} title="${esc(got ? (on ? 'Your answer' : 'Answered') : `Answer “${words}”${o.detail ? ': ' + cardWords(o.detail, m.id, a.n) : ''}, with your comment if you wrote one. Sent once.`)}">`
+      + `<span class="qa-ol">${esc(label.words || 'Choose')}</span>${o.recommended ? '<span class="lz lz-neutral">recommended</span>' : ''}</button>`
       + `${label.links.length ? `<span class="qa-oa">${label.links.join(' ')}</span>` : ''}`
       + `${o.detail ? `<span class="qa-od">${cardTextHtml(o.detail, m.id, a.n)}</span>` : ''}</div>`;
   }).join('');
