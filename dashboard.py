@@ -3236,6 +3236,9 @@ def discard_pending(room_id: str, key: str = "") -> bool:
     with _SAY_KEYS_LOCK:
         for it in held:
             _SAY_KEYS.pop((room_id, it.get("key") or ""), None)
+    for it in held:
+        if not it.get("posted"):
+            _thread_send_gone(room_id, it.get("key") or "")
     # What those sends did to the person's points goes with them, newest
     # first: they were never delivered. One already in a team's chat (only
     # its wake was owed) was, and keeps its points.
@@ -3257,6 +3260,14 @@ def discard_pending(room_id: str, key: str = "") -> bool:
         except Exception as e:      # noqa: BLE001 — the discard itself stands
             print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
+
+
+def _thread_send_gone(room_id: str, key: str) -> None:
+    """A send taken back before it was read: no balloon is its thread reply (#237)."""
+    try:
+        threads.drop_send(room_id, key)
+    except Exception as e:      # noqa: BLE001 — the take-back itself stands
+        print(f"[threads] {room_id}: taken-back reply's record kept: {e!r}", flush=True)
 
 
 def withdraw_send(room_id: str, key: str) -> bool:
@@ -3284,6 +3295,7 @@ def withdraw_send(room_id: str, key: str) -> bool:
     sends.drop(room_id, [key])
     with _SAY_KEYS_LOCK:
         _SAY_KEYS.pop((room_id, key), None)
+    _thread_send_gone(room_id, key)
     try:
         points.discard(room_id, points.point_ids(item.get("text") or ""), key)
     except Exception as e:      # noqa: BLE001 — the withdrawal itself stands
@@ -15136,6 +15148,7 @@ class Handler(BaseHTTPRequestHandler):
         if thread and not threads.is_threaded(rid):
             thread = ""
         pids: list = []
+        noted = False
         # A draft (created but never launched, e.g. by a planning agent)
         # starts fresh; anything else resumes its agents' conversations.
         try:
@@ -15175,7 +15188,15 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                 if text and not held:
-                    sends.accept(rid, key, text, to)
+                    sends.accept(rid, key, text, to, thread=thread, also=data.get("also") is True)
+                if thread and text and not held and not again:
+                    # Kept before it is delivered (#237): its balloon is the
+                    # thread's reply from the first moment the chat shows it.
+                    try:
+                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text)
+                        noted = True
+                    except Exception as e:      # noqa: BLE001 — sent; placed by its points instead
+                        print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
                 result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
                           if quiet else self._resume_room(room_full, text=text, to=to, key=key))
                 if key:
@@ -15187,11 +15208,6 @@ class Handler(BaseHTTPRequestHandler):
                 if why:
                     raise StartRoomError(why)
                 _settle_asks(rid, text, key)
-                if thread and text and not held and not again:
-                    try:
-                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text)
-                    except Exception as e:      # noqa: BLE001 — sent; shown by the chain instead
-                        print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
         except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
             print(f"[resume] {rid}: refused — {exc!r}", flush=True)
             # ``kept``: the text is held here, shown in the chat as not
@@ -15207,6 +15223,11 @@ class Handler(BaseHTTPRequestHandler):
                 sends.drop(rid, [key])      # the page keeps it in the box
             if not kept:
                 _points_discard(rid, pids, key)
+                if noted:
+                    try:
+                        threads.drop_send(rid, key)
+                    except Exception as e:      # noqa: BLE001 — a record no balloon will pair
+                        print(f"[threads] {rid}: reply record kept: {e!r}", flush=True)
             return (400, {"error": str(exc) or exc.__class__.__name__, "kept": kept,
                           **({"send": sends.get(rid, key)} if kept and key else {})})
         return (200, {"ok": True, **result,

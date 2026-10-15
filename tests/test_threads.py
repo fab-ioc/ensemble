@@ -244,6 +244,128 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:3"])
         self.assertEqual(out["also"], {"s:3": "P1"})
 
+    # #237: a reply sent from a thread's box is kept by the hub as it is
+    # sent ("sent" rows, threads.note_send), whatever it holds.
+    def sent_row(self, text, at, thread="P1", also=False, key="k", **kw):
+        return {"thread": thread, "key": key, "at": T0 + at, "also": also, "pids": [],
+                "words": threads._send_words(points.norm_text(points.strip_point_lines(text))),
+                "ev": threads._d.sends.evidence(text).keep(), **kw}
+
+    def leak_case(self, text, ts=100, **kw):
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."),
+                human("s:2", ts, text, re_=["P1"] if text.startswith("Re P1") else [])]
+        pts = [point("P1", "s:0", "make the chart wider", followUps=["s:2"])]
+        return recs, pts
+
+    def test_a_re_pn_follow_up_with_no_new_point_stays_in_its_thread(self):
+        # The leak: "Re P1: is this ready?" from P1's box makes no point (a
+        # follow-up), so nothing marked it as the thread box's reply.
+        recs, pts = self.leak_case("Re P1: is this ready?")
+        out = self.run_(recs, pts)
+        self.assertIn("s:2", threads._channel({**out, "recs": recs}), "no record: the chat's own (control)")
+        late, _ = self.leak_case("Re P1: is this ready?", ts=3000)                 # a busy agent read it late
+        for recs_, row in ((recs, self.sent_row("Re P1: is this ready?", 100)),    # by what it holds
+                           (recs, self.sent_row("Re P1: something else", 100, mid="s:2")),  # by its balloon
+                           (late, self.sent_row("Re P1: is this ready?", 100))):
+            out = self.run_(recs_, pts, side(sent=[row]))
+            self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2"], row)
+            self.assertEqual(threads._channel({**out, "recs": recs_}), ["s:0"], row)
+            self.assertEqual(out["also"], {}, row)
+
+    def test_a_reply_naming_another_point_moves_nothing(self):
+        # Review 1: "Re P2" typed in P1's box. P2 keeps its thread and its
+        # first message; the reply is in P1 (where it was sent) and in P2.
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."),
+                human("s:2", 10, "and the legend"), po("s:3", 15, "Done too."),
+                human("s:4", 100, "Re P2: smaller please", re_=["P2"])]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P2", "s:2", "and the legend", 10, followUps=["s:4"])]
+        out = self.run_(recs, pts, side(sent=[self.sent_row("Re P2: smaller please", 100)]))
+        self.assertEqual(out["threads"]["P2"]["members"], ["s:2", "s:3", "s:4"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:4"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+        self.assertEqual(out["also"], {})
+
+    def test_a_reply_keeps_its_place_after_400_newer_sends(self):
+        # Review 1: the record of an old reply outlives the rolling cutoff
+        # once its balloon is known (paired by what it holds, kept by build).
+        recs, pts = self.leak_case("Re P1: is this ready?")
+        row = self.sent_row("Re P1: is this ready?", 100)
+        out = self.run_(recs, pts, side(sent=[row]))
+        self.assertEqual(out["paired"], {"k": ("s:2", T0 + 100)})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(threads, "_dir", lambda: Path(tmp)):
+            rid = "room-abc126"
+            threads.forget()
+            threads._save_side(rid, side(sent=[row]))
+            threads.confirmed(rid, {"k": "s:2"})
+            sd = threads.load_side(rid)
+            sd["sent"] += [self.sent_row(f"other {n}", 200 + n, key=f"o{n}") for n in range(threads.SIDE_KEEP)]
+            threads._save_side(rid, sd)
+            threads.forget()
+            kept = threads.load_side(rid)
+            threads.forget()
+        self.assertEqual(len(kept["sent"]), threads.SIDE_KEEP + 1)
+        self.assertEqual(kept["sent"][0], {"mid": "s:2", "thread": "P1", "also": False})
+        out = self.run_(recs, pts, kept)
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+        # Review 2: a placement is never dropped, however many come after.
+        many = [{"mid": f"x:{n}", "thread": "P1", "also": False} for n in range(25000)]
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(threads, "_dir", lambda: Path(tmp)):
+            threads._save_side("room-abc127", side(sent=many + kept["sent"]))
+            threads.forget()
+            again = threads.load_side("room-abc127")["sent"]
+            threads.forget()
+        self.assertEqual(len(again), 25000 + 1 + threads.SIDE_KEEP)
+        self.assertEqual(again[0]["mid"], "x:0")
+
+    def test_the_same_words_in_the_chat_before_a_pending_reply_are_the_chats(self):
+        # Review 2: "Re P1: ship it" typed in the chat at 90, the same sent
+        # from P1's box at 100 and read at 120.
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."),
+                human("s:2", 90, "Re P1: ship it [point P1]", re_=["P1"])]
+        pts = [point("P1", "s:0", "make the chart wider", followUps=["s:2"])]
+        row = self.sent_row("Re P1: ship it [point P1]", 100)
+        # The hub found the chat's own send in s:2: no guess takes it.
+        out = threads.assign(recs, {"points": pts}, side(sent=[row]), None, claimed={"kc": "s:2"})
+        self.assertEqual(out["paired"], {})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+        # Not known to the hub (typed in the terminal): the balloon after the send wins once it comes.
+        recs.append(human("s:3", 120, "Re P1: ship it [point P1]", re_=["P1"]))
+        pts[0]["followUps"].append("s:3")
+        out = self.run_(recs, pts, side(sent=[row]))
+        self.assertEqual(out["paired"], {"k": ("s:3", T0 + 100)})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+
+    def test_a_ticked_follow_up_is_in_the_thread_and_the_chat(self):
+        recs, pts = self.leak_case("Re P1: is this ready?")
+        out = self.run_(recs, pts, side(sent=[self.sent_row("Re P1: is this ready?", 100, also=True)]))
+        self.assertIn("s:2", out["threads"]["P1"]["members"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+        self.assertEqual(out["also"], {"s:2": "P1"})
+
+    def test_a_reply_that_made_a_point_is_found_by_its_key(self):
+        recs = [human("s:0", 0, "a"), po("s:1", 5, "b"), human("s:2", 100, "a new ask from the thread")]
+        pts = [point("P1", "s:0", "a"), point("P2", "s:2", "a new ask from the thread", 100, key="k")]
+        row = self.sent_row("unrelated words", 99999, pids=["P2"])
+        out = self.run_(recs, pts, side(sent=[row], anchors={"P2": "P1"}))
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+
+    def test_quotes_links_images_and_codex_turns_stay_in_their_thread(self):
+        img = "[image] D:/shots/shot.png"
+        quote = "> Done." + chr(10) * 2 + "not quite: wider"
+        for sent, turn in ((quote, quote),
+                           ("see [the spec](https://example.com/x) again", "see [the spec](https://example.com/x) again"),
+                           (img, img),                                                   # an image alone
+                           ("look at this" + chr(10) + img, "look at this [Image #1]")):  # Codex names it
+            recs = [human("s:0", 0, "a"), po("s:1", 5, "Done."), human("s:2", 100, turn)]
+            out = self.run_(recs, [point("P1", "s:0", "a")], side(sent=[self.sent_row(sent, 100)]))
+            self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"], sent)
+            self.assertIn("s:2", out["threads"]["P1"]["members"], sent)
+
+    def test_a_record_from_before_237_keeps_its_old_placement(self):
+        recs, pts = self.leak_case("Re P1: ship it")
+        out = self.run_(recs, pts, side(also=[{"thread": "P1", "key": "k", "at": T0 + 100, "words": "ship it"}]))
+        self.assertEqual(out["also"], {"s:2": "P1"})
+
     def test_a_reply_with_no_point_from_a_thread_box_joins_it(self):
         recs = [human("s:0", 0, "a"), po("s:1", 5, "b"), human("s:2", 100, "ok thanks")]
         sd = side(sent=[{"thread": "P1", "key": "k", "at": T0 + 100, "words": "ok thanks", "also": False}])
@@ -351,13 +473,29 @@ class SideTest(unittest.TestCase):
         past = 1_700_000_000.0          # seen times are never ahead of the hub's clock
         self.assertTrue(threads.mark_seen(rid, "P1", past))
         self.assertFalse(threads.mark_seen(rid, "P1", past - 1))
-        threads.note_send(rid, "task:#12", "k1", ["P7"], True, "Re P3: ship it")
-        threads.note_send(rid, "P3", "k2", ["P3"], False, "x")
+        # P7 is the point k1 made; P3 one it names (#237 review 1: not moved).
+        led = {"points": [{"id": "P7", "key": "k1"}, {"id": "P3", "key": "k0"}]}
+        with mock.patch.object(points, "load", lambda rid: led):
+            threads.note_send(rid, "task:#12", "k1", ["P7"], True, "Re P3: ship it")
+            threads.note_send(rid, "P3", "k2", ["P3"], False, "x")
+            threads.note_send(rid, "P1", "k3", ["P3"], False, "Re P3: and this")
         threads.forget()
         sd = threads.load_side(rid)
         self.assertEqual(sd["seen"], {"P1": past})
         self.assertEqual(sd["anchors"], {"P7": "task:#12"})
-        self.assertEqual([a["words"] for a in sd["also"]], ["ship it"])
+        self.assertEqual([(a["key"], a["words"], a["also"], a["pids"]) for a in sd["sent"]],
+                         [("k1", "ship it", True, ["P7"]), ("k2", "x", False, ["P3"]),
+                          ("k3", "and this", False, ["P3"])])
+        self.assertEqual(sd["also"], [], "#237: every reply is a sent row, none an also row")
+
+    def test_a_refused_send_is_dropped_and_a_confirmed_one_keeps_its_balloon(self):
+        rid = "room-abc125"
+        threads.note_send(rid, "P1", "k1", [], False, "Re P1: one")
+        threads.note_send(rid, "P1", "k2", [], False, "Re P1: two")
+        threads.drop_send(rid, "k1")
+        threads.confirmed(rid, {"k2": "s:9", "other": "s:1"})
+        threads.forget()
+        self.assertEqual([(a["key"], a.get("mid")) for a in threads.load_side(rid)["sent"]], [("k2", "s:9")])
 
     def test_since_is_set_once(self):
         rid = "room-abc124"
@@ -435,7 +573,8 @@ class Endpoints(tp._World):
                                                      "thread": "P1", "also": True})
         self.assertEqual(status, 200)
         self.assertTrue(sent[0].startswith("Re P1: a bit more"), sent[0])
-        self.assertEqual(threads.load_side(self.rid)["also"][0]["thread"], "P1")
+        row = threads.load_side(self.rid)["sent"][0]
+        self.assertEqual((row["thread"], row["key"], row["also"]), ("P1", "k1", True))
         now = time.time()
         self.add("sid-1", tp.turn("user", sent[0], now + 5), tp.turn("assistant", "Re P1: wider still.", now + 6))
         room = self.poll()
@@ -448,6 +587,87 @@ class Endpoints(tp._World):
         self.assertEqual(self.poll()["threadsUnread"], [])
         for bad in ("nan", "inf", now + 10 * 86400):
             self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": bad})[0], 400, bad)
+
+    def test_an_unticked_thread_reply_never_shows_in_the_chat_even_after_a_restart(self):
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room",
+                               lambda h, room, text="", to="", key="", quiet=False: sent.append(text) or {"delivered": 1}), \
+                mock.patch.object(dashboard, "_send_left_behind", return_value=""):
+            self.assertEqual(tp.http("/api/room/resume", {"roomId": self.rid, "text": "is this ready?", "key": "k9",
+                                                          "thread": "P1"})[0], 200)
+        self.assertEqual([(s["key"], s.get("thread"), s.get("also")) for s in dashboard.sends.view(self.rid)],
+                         [("k9", "P1", None)], "the page knows it is the thread's")
+        # Read late by a busy PO, after a hub restart.
+        threads.forget()
+        now = time.time()
+        self.add("sid-1", tp.turn("user", sent[0], now + 900), tp.turn("assistant", "Re P1: yes.", now + 901))
+        self.poll()
+        status, ch = http_get(f"/api/room/channel?id={self.rid}")
+        self.assertNotIn("sid-1:4", {i["mid"] for i in ch["items"]})
+        status, th = http_get(f"/api/room/thread?id={self.rid}&t=P1")
+        self.assertIn("sid-1:4", [i["mid"] for i in th["items"]])
+
+    def test_a_refused_thread_reply_leaves_no_record(self):
+        def refuse(h, room, text="", to="", key="", quiet=False):
+            raise dashboard.StartRoomError("no")
+        with mock.patch.object(dashboard.Handler, "_resume_room", refuse), \
+                mock.patch.object(dashboard, "_send_left_behind", return_value=""):
+            status, body = tp.http("/api/room/resume", {"roomId": self.rid, "text": "x", "key": "k8", "thread": "P1"})
+        self.assertEqual(status, 400)
+        if not body.get("kept"):
+            self.assertEqual(threads.load_side(self.rid)["sent"], [])
+
+    def test_a_send_confirmed_by_its_posts_id_keeps_its_balloon(self):
+        # Review 2: a team chat's post confirms its send by id (sends.mark).
+        dashboard.sends.accept(self.rid, "kp", "Re P1: posted", thread="P1")
+        threads.note_send(self.rid, "P1", "kp", [], False, "Re P1: posted")
+        dashboard.sends.mark(self.rid, ["kp"], "confirmed", mid="m-123")
+        self.assertEqual([(a["key"], a.get("mid")) for a in threads.load_side(self.rid)["sent"]], [("kp", "m-123")])
+
+    def test_only_a_turn_typed_after_a_thread_reply_confirms_it(self):
+        # Review 4: the same words typed in the terminal 10 s before the
+        # thread reply are never its receipt; the turn after it is, once.
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room",
+                               lambda h, room, text="", to="", key="", quiet=False: sent.append(text) or {"delivered": 1}), \
+                mock.patch.object(dashboard, "_send_left_behind", return_value=""):
+            self.assertEqual(tp.http("/api/room/resume", {"roomId": self.rid, "text": "ship it", "key": "k7",
+                                                          "thread": "P1"})[0], 200)
+        sends = dashboard.sends
+        sends.mark(self.rid, ["k7"], "delivered")
+        at = sends.get(self.rid, "k7")["at"]
+        self.add("sid-1", tp.turn("user", sent[0], at - 10), tp.turn("assistant", "Shipping.", at - 9))
+        sends.sync(self.rid, force=True, now=at + 5)
+        self.assertEqual(sends.get(self.rid, "k7")["state"], "delivered", "a turn from before it is not it")
+        self.add("sid-1", tp.turn("user", sent[0], at + 20), tp.turn("assistant", "Re P1: shipped.", at + 21))
+        sends._SCANNED.clear()          # this world's transcripts keep one stat
+        sends.sync(self.rid, force=True, now=at + 25)
+        s = sends.get(self.rid, "k7")
+        self.assertEqual((s["state"], s["mid"]), ("confirmed", "sid-1:6"))
+        self.assertEqual([a.get("mid") for a in threads.load_side(self.rid)["sent"]], ["sid-1:6"])
+        self.poll()
+        shown = {i["mid"] for i in http_get(f"/api/room/channel?id={self.rid}")[1]["items"]}
+        self.assertIn("sid-1:4", shown, "typed in the chat: the chat's")
+        self.assertNotIn("sid-1:6", shown, "the thread's reply: in its thread alone")
+        sends.sync(self.rid, force=True, now=at + 60)
+        self.assertEqual(sends.get(self.rid, "k7")["mid"], "sid-1:6", "once")
+
+    def test_discard_and_withdraw_take_the_thread_record_back(self):
+        # Review 1: a reply taken back is no thread's; the same words typed
+        # in the chat later are the chat's.
+        sends = dashboard.sends
+        for key, take_back in (("kd", "discard"), ("kw", "withdraw")):
+            text = "Re P1: ship it"
+            sends.accept(self.rid, key, text, thread="P1")
+            threads.note_send(self.rid, "P1", key, [], False, text)
+            if take_back == "discard":
+                sends.mark(self.rid, [key], "failed", "no")
+                self.assertTrue(dashboard.discard_pending(self.rid, key))
+            else:
+                sends.mark(self.rid, [key], "confirmed", mid="sid-1:9")
+                with mock.patch.object(dashboard.chatroom, "withdraw_message", return_value=True):
+                    self.assertTrue(dashboard.withdraw_send(self.rid, key))
+            self.assertEqual([a["key"] for a in threads.load_side(self.rid)["sent"]], [], take_back)
 
     def settle(self):
         """The background build a poll started, done."""
