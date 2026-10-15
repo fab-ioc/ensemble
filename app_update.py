@@ -813,6 +813,9 @@ class Helper:
             if not self.keep_agents:
                 self.cancel_external_drain()
                 self.restore_rooms()
+            # The old hub runs on: no update is under way any more, and it
+            # retires the snapshot once the lease is gone.
+            self.drop_lease()
             return self.record(ok=False, stage="stop",
                                reason="the running hub did not stop; nothing was changed")
         if not self.keep_agents and "ptyHostVersion" in self.plan:
