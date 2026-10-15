@@ -81,6 +81,8 @@ PURE_JS = r"""
 const out = {};
 // pdPointsHtml renders task chips through taskChipsIn (index.html); these tests check the points markup, not the chips.
 const taskChipsIn = (t) => esc(String(t || ''));
+// A question's row says its hub links in words (hubUrlWords, #238: tests/test_card_text.py); here, as written.
+const hubUrlWords = (t) => String(t ?? '');
 %(fns)s
 (async () => {
   const L = await import(%(layout)s);
