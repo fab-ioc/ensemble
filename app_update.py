@@ -546,6 +546,24 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+RESTORE_TIMEOUT_S = 600
+
+
+def restore_line(res: dict) -> str:
+    """How a restore went, from /api/restart/restore's answer: how many of
+    the snapshot's rooms run again, and which do not."""
+    rooms = res.get("rooms") or []
+    running = [r for r in rooms if str(r.get("outcome", "")).startswith(("brought back",
+                                                                          "already running"))]
+    rest = [r for r in rooms if r not in running]
+    line = f"{len(rooms)} in the snapshot, {len(running)} running again"
+    if rest:
+        line += ", not: " + "; ".join(f"{r.get('roomId')} ({r.get('outcome')})" for r in rest)
+    elif res.get("note") and not rooms:
+        line += f" ({res['note']})"
+    return line
+
+
 class Helper:
     """One update, from a plan the hub wrote (``dashboard.update_plan``)."""
 
@@ -672,11 +690,16 @@ class Helper:
         return got is not None
 
     def restore_rooms(self) -> None:
+        # A room takes a few seconds to come back: 24 of them outlast _post's
+        # default minute, and a timeout here said nothing of how it went.
         try:
-            res = _post(self.port, "/api/restart/restore", {"lease": self.plan.get("leaseId", "")})
-            self.log(f"rooms: {res.get('note', '')} {len(res.get('rooms') or [])} in the snapshot")
+            res = _post(self.port, "/api/restart/restore", {"lease": self.plan.get("leaseId", "")},
+                        timeout=RESTORE_TIMEOUT_S)
         except (OSError, ValueError, urllib.error.URLError) as e:
-            self.log(f"rooms not brought back: {e}")
+            self.log(f"rooms: the restore did not answer ({e}); the hub brings back what it "
+                     f"lists by itself")
+            return
+        self.log(f"rooms: {restore_line(res)}")
 
     def run(self) -> dict:
         """The update, with the lease renewed every 20 s throughout (a long

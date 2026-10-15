@@ -147,6 +147,7 @@ from backends import ptyrun, ptyhost
 # whether the lines the hub types into agents arrive.
 import running_rooms
 import hub_typing
+import restore_problems
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -181,6 +182,7 @@ po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
+restore_problems.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
@@ -11200,6 +11202,7 @@ def _run_app_update(rel: dict, lease: str) -> None:
     except Exception as e:      # noqa: BLE001 — the hub keeps running; the page says why
         done.set()
         plan_path.unlink(missing_ok=True)
+        retire_own_snapshot(lease)      # no update: its snapshot restores nothing later
         _drop_restart_lease(lease)
         _update_log(f"update failed: {e}")
         stage("failed", error=str(e))
@@ -11239,6 +11242,7 @@ def start_app_update() -> dict:
     if not lease:
         return {"started": False,
                 "error": f"a restart or an update began {int(since)}s ago and is still under way"}
+    _LEASE_PURPOSE[lease] = "update"
     threading.Thread(target=_run_app_update, args=(rel, lease), daemon=True).start()
     return {"started": True, "leaseId": lease, "version": rel["version"], "pid": os.getpid(),
             "log": str(DASHBOARD_DIR / "logs" / "update.log")}
@@ -11296,6 +11300,11 @@ def _take_restart_lease() -> tuple[str, float]:
                 json.dump({"id": lease, "at": time.time(), "pid": os.getpid()}, f)
             return lease, 0.0
     return "", 0.0
+
+
+# What each lease of this process is for ("update" | "restart"): the snapshot
+# records it, so the hub that comes back says how an update went in update.log.
+_LEASE_PURPOSE: dict[str, str] = {}
 
 
 def _drop_restart_lease(lease: str) -> None:
@@ -11547,27 +11556,53 @@ def room_run_entry(rid: str, statuses: dict) -> dict | None:
     return {"roomId": rid, "title": room.get("title", ""), "agents": agents_out}
 
 
-def take_restart_snapshot(lease: str, wake_room: str | None = None) -> dict:
+def take_restart_snapshot(lease: str, wake_room: str | None = None,
+                          keep: bool | None = None) -> dict:
     """Write down every room with a live terminal and what each of its agents
     is doing right now (attention.turn_state: its hooks, Claude's status file,
     then the screen). ``wake_room`` is the restarting PO's room, which the
     helper tells itself; None keeps the one an earlier snapshot of this
-    restart recorded."""
+    restart recorded. ``keep``: a hub-only restart (agents are meant to keep
+    running, and no helper restores: the hub that comes back checks the
+    snapshot itself, restore_left_snapshot); None keeps the earlier one's."""
+    prior = _read_restart_snapshot() or {}
+    if prior.get("leaseId") != lease:
+        prior = {}
     if wake_room is None:
-        prior = _read_restart_snapshot() or {}
-        wake_room = prior.get("wakeRoom", "") if prior.get("leaseId") == lease else ""
+        wake_room = prior.get("wakeRoom", "")
+    if keep is None:
+        keep = bool(prior.get("keepAgents"))
     live = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions() if i.get("alive")}
     statuses = attention._claude_status_by_session()
     rooms = [e for e in (room_run_entry(rid, statuses) for rid in sorted(r for r in live if r))
              if e is not None]
     snap = {"leaseId": lease, "at": time.time(), "hubPid": os.getpid(),
-            "wakeRoom": wake_room or "", "rooms": rooms}
+            "wakeRoom": wake_room or "", "rooms": rooms, "keepAgents": bool(keep),
+            "purpose": _LEASE_PURPOSE.get(lease) or prior.get("purpose") or "restart"}
     path = _restart_snapshot_path()
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     durable.write_tmp(tmp, json.dumps(snap, indent=1))
     os.replace(tmp, path)
     return snap
+
+
+def restore_summary(out: list[dict], entries: list[dict]) -> str:
+    """"N of M room(s) running again", and the ones that are not. A room
+    stopped on purpose since the snapshot is not counted: it is meant to stay
+    stopped."""
+    running = [o for o in out if o["outcome"].startswith(("brought back", "already running"))]
+    stopped = [o for o in out if o["outcome"].startswith("stopped on purpose")]
+    titles = {e.get("roomId"): e.get("title") or "" for e in entries}
+    rest = [o for o in out if o not in running and o not in stopped
+            and not o["outcome"].startswith("no such room")]
+    line = f"{len(running)} of {len(out) - len(stopped)} room(s) running again"
+    if stopped:
+        line += f"; {len(stopped)} stopped on purpose since, left stopped"
+    if rest:
+        line += "; not: " + "; ".join(
+            f"{o['roomId']} '{titles.get(o['roomId'], '')[:40]}' ({o['outcome']})" for o in rest)
+    return line
 
 
 def _snapshot_summary(snap: dict) -> str:
@@ -11757,6 +11792,7 @@ _BOOT_HOST_ROOMS: set | None = None
 # A restart's own restore (/api/restart/restore) began in this process: it
 # brings the rooms back, even when its lease has aged past RESTART_BUSY_S.
 _RESTART_RESTORING = False
+_RESTORE_LOCK = threading.Lock()    # one restore of a snapshot: the hub's or the helper's
 
 
 _BOOT_HOST_UNKNOWN = False      # that lookup failed: no boot restore this start
@@ -11817,13 +11853,13 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
                     f"{len(entries)} recorded room(s) it no longer runs are left stopped")
     lease = _restart_lease_path()
     if lease.exists() and 0 <= _restart_lease_age(lease) < RESTART_BUSY_S:
-        return done("a restart is under way: its helper brings the rooms back")
+        return done("a restart is under way: its snapshot brings the rooms back")
     if _RESTART_RESTORING:
         return done("the restart's restore is bringing the rooms back: left to it")
     snap = _read_restart_snapshot()
     if (snap and snap.get("hubPid") != os.getpid()
             and 0 <= time.time() - float(snap.get("at") or 0) <= RESTART_SNAPSHOT_MAX_AGE_S):
-        return done("a restart's snapshot waits for its restore: left to the helper")
+        return done("a restart's snapshot waits for its restore: left to it")
     # Started since the hub came up (a replayed action, a message): left as is.
     early = [e["roomId"] for e in entries if e["roomId"] in live]
     if early:
@@ -11852,6 +11888,128 @@ def restore_after_boot(handler=None, gap: float | None = None) -> dict:
     return {"ok": True, "rooms": out, "note": ""}
 
 
+def retire_own_snapshot(lease: str) -> None:
+    """The restart of ``lease`` ended and this hub still runs: its snapshot
+    describes no restart, so no hub that starts later restores from it."""
+    snap = _read_restart_snapshot()
+    if snap and snap.get("leaseId") == lease and snap.get("hubPid") == os.getpid():
+        path = _restart_snapshot_path()
+        with contextlib.suppress(OSError):
+            os.replace(path, path.with_name("restart-snapshot.last.json"))
+
+
+# A snapshot left by the hub before this one that nobody restored: an update
+# whose helper never called /api/restart/restore (it ended, timed out, or it
+# is an older version's), or a hub-only restart or update whose agents died
+# anyway (launchd stopping the app on a Mac takes its PTY host along). The hub
+# that comes back restores it itself: at once for a hub-only one (no helper
+# will; rooms still running are left alone), after LEFT_SNAPSHOT_WAIT_S for
+# one a helper was to restore. One older than LEFT_SNAPSHOT_MAX_AGE_S is left.
+LEFT_SNAPSHOT_WAIT_S = 120.0
+LEFT_SNAPSHOT_MAX_AGE_S = 900.0
+LEFT_SNAPSHOT_POLL_S = 5.0
+
+
+def _left_snapshot() -> dict | None:
+    snap = _read_restart_snapshot()
+    if not snap or snap.get("hubPid") == os.getpid():
+        return None
+    if not 0 <= time.time() - float(snap.get("at") or 0) <= LEFT_SNAPSHOT_MAX_AGE_S:
+        return None
+    return snap
+
+
+def _left_snapshot_host_unknown(snap: dict, handler=None) -> dict:
+    """A hub-only snapshot is left and this hub cannot reach the PTY host
+    (it runs in-process terminals for its whole life): nothing is started.
+    The snapshot is claimed, and each room it lists that this hub does not
+    run gets a Needs you item and its PO a report."""
+    lease = str(snap.get("leaseId") or "")
+    with _RESTORE_LOCK:
+        now = _read_restart_snapshot()
+        if not now or now.get("leaseId") != lease:
+            return {"ok": True, "rooms": [], "note": "the snapshot was already restored"}
+        path = _restart_snapshot_path()
+        with contextlib.suppress(OSError):
+            os.replace(path, path.with_name("restart-snapshot.last.json"))
+    what = "update" if snap.get("purpose") == "update" else "restart"
+    why = ("the hub could not reach its terminal host; it may still be running there, "
+           "so it was not started a second time")
+    since = float(snap.get("at") or 0)
+    out, not_back = [], []
+    for entry in snap.get("rooms") or []:
+        rid = entry.get("roomId") or ""
+        room_full = chatroom.get_room(rid, public=False)
+        parts = {p.get("identity"): p for p in (room_full or {}).get("participants", [])
+                 if p.get("kind") == "agent"}
+        # As in _bring_back_rooms: a stop after the snapshot stands.
+        killed = {i for i, p in parts.items()
+                  if since and float(p.get("killedAt") or 0) > since}
+        ran = sorted(({a.get("identity") for a in entry.get("agents") or []
+                       if isinstance(a, dict) and a.get("state") != "stopped"}
+                      & set(parts)) - killed)
+        alive = {i for i in ran if _pty_alive(parts[i].get("ptyId"))}
+        if room_full is None:
+            outcome = "no such room any more"
+        elif since and float(room_full.get("stoppedAt") or 0) > since:
+            outcome = "stopped on purpose since the snapshot: left stopped"
+        elif ran and alive == set(ran):
+            outcome = "already running: left alone"
+        elif killed and not ran:
+            outcome = "stopped on purpose since the snapshot: left stopped"
+        else:
+            outcome = f"NOT checked: {why}" + (
+                f" ({', '.join(sorted(set(ran) - alive))} not running here)" if alive else "")
+            if restore_problems.record(rid, entry.get("title") or "", why, what, lease,
+                                       agents=ran):
+                not_back.append((rid, why))
+        _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}': {outcome}")
+        out.append({"roomId": rid, "outcome": outcome})
+    if not_back:
+        h = handler or hub_launcher()
+        try:
+            h._tell_pos_not_back(not_back, what)
+        except Exception as exc:    # noqa: BLE001 — the Needs you items still show it
+            _restart_log(f"restore: the POs could not be told what was not brought back: {exc!r}")
+    stopped = sum(o["outcome"].startswith("stopped on purpose") for o in out)
+    line = (f"{sum(o['outcome'].startswith('already running') for o in out)} of {len(out) - stopped} "
+            f"room(s) checked: the PTY host could not be reached, nothing started"
+            + (f"; {stopped} stopped on purpose since, left stopped" if stopped else ""))
+    _restart_log(f"restore: a hub-only {what}'s snapshot is left; {line}")
+    if what == "update":
+        _update_log(f"after the update: {line}")
+    return {"ok": True, "rooms": out, "note": line}
+
+
+def restore_left_snapshot(handler=None, wait: float | None = None) -> dict:
+    """Bring back what a snapshot left by an earlier hub lists, when no
+    helper does (see LEFT_SNAPSHOT_WAIT_S). Returns {ok, rooms, note}."""
+    if not running_rooms.enabled():
+        return {"ok": True, "rooms": [], "note": "a preflight hub brings nothing back"}
+    snap = _left_snapshot()
+    if snap is None:
+        return {"ok": True, "rooms": [], "note": "no snapshot left to restore"}
+    if snap.get("keepAgents") and _BOOT_HOST_UNKNOWN:
+        # The agents may well run on a host this hub cannot see: starting
+        # them again would run each twice. Each room is on Needs you instead.
+        return _left_snapshot_host_unknown(snap, handler)
+    if not snap.get("keepAgents"):
+        wait = LEFT_SNAPSHOT_WAIT_S if wait is None else wait
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            time.sleep(min(LEFT_SNAPSHOT_POLL_S, max(0.0, deadline - time.time())))
+            if _left_snapshot() is None:
+                return {"ok": True, "rooms": [], "note": "restored by the helper"}
+        _restart_log(f"restore: no helper restored the snapshot of {len(snap['rooms'])} "
+                     f"room(s) within {int(wait)}s; the hub brings them back itself")
+    h = handler
+    if h is None:
+        # No request behind it: the agents' hook env needs the hub's port.
+        h = Handler.__new__(Handler)
+        h.server = types.SimpleNamespace(server_address=("127.0.0.1", HUB_PORT))
+    return h._restore_after_restart(str(snap.get("leaseId") or ""), by_hub=True)
+
+
 def start_boot_restore() -> None:
     """In the background, once the hub serves: the boot restore, then the
     running-rooms heartbeat (not before: it would count rooms not yet back
@@ -11862,6 +12020,10 @@ def start_boot_restore() -> None:
             restore_after_boot()
         except Exception as exc:    # noqa: BLE001 — the hub serves without it
             _restart_log(f"boot: bringing rooms back failed: {exc!r}")
+        try:
+            restore_left_snapshot()
+        except Exception as exc:    # noqa: BLE001 — the hub serves without it
+            _restart_log(f"restore: bringing a left snapshot's rooms back failed: {exc!r}")
         running_rooms.start_heartbeat()
     threading.Thread(target=run, daemon=True, name="boot-restore").start()
 
@@ -11963,7 +12125,10 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
     while True:
         time.sleep(RESTART_HELPER_POLL_S)
         if not ours():
-            return                              # finished, or gave up and said so
+            # Finished or gave up, and this hub still runs: its snapshot
+            # describes no restart, so no later hub restores from it.
+            retire_own_snapshot(lease)
+            return
         if BACKEND.process_alive(pid):
             continue
         time.sleep(RESTART_HELPER_POLL_S)       # its last lease write may be landing
@@ -11974,6 +12139,7 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
                f"the code it started with")
         _restart_log(f"HELPER GONE - {why}")
         _drop_restart_lease(lease)
+        retire_own_snapshot(lease)
         room = chatroom.get_room(room_id) if room_id else None
         if room:
             who = identity or next((p.get("identity", "") for p in room.get("participants") or []), "")
@@ -11983,11 +12149,15 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
         return
 
 
-def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "") -> dict:
+def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
+                    purpose: str = "restart") -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
     ``drain``: the restart a drain led to (restart_drain.py): its PO's note
     says why, and who paused. ``identity``: the agent in ``room_id`` that
     asked, told if the helper ends before the restart.
+
+    ``purpose``: "update" for a source update's restart (its outcome also
+    goes to update.log).
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -12008,16 +12178,22 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "") 
         # the helper's own snapshot, taken just before the stop, never lands.
         _restart_log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
                                  else "classic drain and resume"))
-        if not plan["keepAgents"]:
-            try:
-                take_restart_snapshot(lease, wake_room=room_id if plan["wakeRoom"] else "")
-            except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
-                print(f"[restart] no snapshot at the request: {e!r}", flush=True)
+        # A hub-only restart too: should its agents die anyway, the hub that
+        # comes back brings them back from it (restore_left_snapshot).
+        _LEASE_PURPOSE[lease] = purpose
+        try:
+            take_restart_snapshot(lease, wake_room=room_id if plan["wakeRoom"] else "",
+                                  keep=plan["keepAgents"])
+        except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
+            print(f"[restart] no snapshot at the request: {e!r}", flush=True)
         result = BACKEND.self_restart(plan)
     except BaseException:
+        # No restart: its snapshot must not bring rooms back on a later start.
+        retire_own_snapshot(lease)
         _drop_restart_lease(lease)
         raise
     if not result.get("started"):
+        retire_own_snapshot(lease)
         _drop_restart_lease(lease)
         return {**result, "status": 500}
     if result.get("helperPid"):
@@ -13448,6 +13624,7 @@ def stop_task(rid: str) -> bool:
     chatroom.clear_exits(rid)
     running_rooms.note_stopped(rid)     # stopped on purpose: a cold start leaves it
     hub_typing.forget_room(rid)         # and no hub-typing alarm names it any more
+    restore_problems.clear(rid)         # nor a restart that could not bring it back
     return True
 
 
@@ -14812,7 +14989,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, check_for_update())
             return
         if p == "/api/version":
-            self._send_json(200, {**app_version.describe(), "ptyHostVersion": ptyhost.version()})
+            try:
+                host_version = ptyhost.version()
+            except OSError:
+                # An app build without the host's sources: still answer, or
+                # an update's preflight reads the new version as not started.
+                host_version = ""
+            self._send_json(200, {**app_version.describe(), "ptyHostVersion": host_version})
             return
         if p == "/api/restart/drain":
             # A restart at a safe point (restart_drain.py): the page's banner.
@@ -16078,7 +16261,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"resumed": [], "queued": 1 if text else 0, "delivered": 0, "held": True,
                 "afterRestart": True}
 
-    def _restore_after_restart(self, lease: str) -> dict:
+    def _restore_after_restart(self, lease: str, by_hub: bool = False) -> dict:
         """Bring back every room the snapshot of this restart lists, each under
         the rule of ``_start_or_resume_room(restart=…)``: nothing typed into an
         agent that was idle, RESTART_NOTE into one that was mid-turn. Once per
@@ -16086,23 +16269,29 @@ class Handler(BaseHTTPRequestHandler):
         its note); another project's PO that was idle gets one hub row in its
         chat; a review that was running is started again with its request (a
         reviewer has no conversation to resume). Every room is logged to
-        restart.log. Returns {ok, rooms: [{roomId, outcome}], note}."""
-        snap = _read_restart_snapshot()
-        if snap is None or snap.get("leaseId") != lease:
-            note = ("no snapshot of the rooms that were running" if snap is None
-                    else "the snapshot on disk is of another restart: ignored")
-            _restart_log(f"restore: {note}; nothing brought back")
-            return {"ok": True, "rooms": [], "note": note}
-        if snap.get("hubPid") == os.getpid():
-            note = "this hub process took the snapshot: it did not restart"
-            _restart_log(f"restore: {note}; nothing done")
-            restart_drain.not_restarted(lease)
-            return {"ok": True, "rooms": [], "note": note}
+        restart.log, with a summary (in update.log too for an update).
+        ``by_hub``: the hub restores a snapshot no helper did
+        (restore_left_snapshot). Returns {ok, rooms: [{roomId, outcome}], note}."""
         global _RESTART_RESTORING
-        _RESTART_RESTORING = True       # the boot restore leaves the rooms to this
-        path = _restart_snapshot_path()
-        with contextlib.suppress(OSError):
-            os.replace(path, path.with_name("restart-snapshot.last.json"))
+        with _RESTORE_LOCK:
+            # Read and claim at once: the hub and a late helper never both restore.
+            snap = _read_restart_snapshot()
+            if snap is None or snap.get("leaseId") != lease:
+                note = ("the snapshot was already restored" if by_hub else
+                        "no snapshot of the rooms that were running" if snap is None
+                        else "the snapshot on disk is of another restart: ignored")
+                _restart_log(f"restore: {note}; nothing brought back")
+                return {"ok": True, "rooms": [], "note": note}
+            if snap.get("hubPid") == os.getpid():
+                note = "this hub process took the snapshot: it did not restart"
+                _restart_log(f"restore: {note}; nothing done")
+                restart_drain.not_restarted(lease)
+                return {"ok": True, "rooms": [], "note": note}
+            _RESTART_RESTORING = True       # the boot restore leaves the rooms to this
+            path = _restart_snapshot_path()
+            with contextlib.suppress(OSError):
+                os.replace(path, path.with_name("restart-snapshot.last.json"))
+        what = "update" if snap.get("purpose") == "update" else "restart"
         age = time.time() - float(snap.get("at") or 0)
         fresh = 0 <= age <= RESTART_SNAPSHOT_MAX_AGE_S
         wake_room = snap.get("wakeRoom") or ""
@@ -16117,25 +16306,40 @@ class Handler(BaseHTTPRequestHandler):
         _restart_log(f"restore: snapshot {int(age)}s old"
                      + ("" if fresh else f" (over {RESTART_SNAPSHOT_MAX_AGE_S}s: who was mid-turn "
                                          f"is unknown, everyone comes back quiet)")
-                     + f", {len(snap['rooms'])} room(s)")
+                     + f", {len(snap['rooms'])} room(s)"
+                     + (", a hub-only one" if snap.get("keepAgents") else "")
+                     + (("; checked by the hub (no helper restores a hub-only one)" if snap.get("keepAgents")
+                         else "; restored by the hub (no helper did)") if by_hub else ""))
         out = self._bring_back_rooms(snap["rooms"], fresh=fresh, wake_room=wake_room,
                                      po_rooms=po_rooms, drained=drained, drain_notes=drain_notes,
-                                     notice=f"The hub was restarted at {time.strftime('%H:%M')}.")
+                                     notice=f"The hub was restarted at {time.strftime('%H:%M')}.",
+                                     what=what, lease=lease, since=float(snap.get("at") or 0))
         if drained:
             restart_drain.finish_restore(drained, drain_held, wake_room)
-        return {"ok": True, "rooms": out, "note": ""}
+        line = restore_summary(out, snap["rooms"])
+        _restart_log(f"restore: {line}")
+        if what == "update":
+            _update_log(f"after the update: {line}")
+        return {"ok": True, "rooms": out, "note": line}
 
     def _bring_back_rooms(self, entries: list[dict], *, fresh: bool, wake_room: str,
                           po_rooms: set, drained=None, drain_notes: dict | None = None,
-                          notice: str = "", gap: float = 0.0) -> list[dict]:
+                          notice: str = "", gap: float = 0.0, what: str = "restart",
+                          lease: str = "", since: float = 0.0) -> list[dict]:
         """Bring back each room ``entries`` lists (the restart snapshot's
         shape), under the rule of ``_start_or_resume_room(restart=…)``; each is
         logged to restart.log. ``fresh``: the agents' states are known, so one
         that was mid-turn gets the restart line. ``notice``: the row an idle
         PO other than ``wake_room`` gets. ``gap``: seconds between rooms, so a
-        cold start with many rooms does not start them all at once."""
+        cold start with many rooms does not start them all at once. A room
+        not brought back gets a Needs you item and its PO one report
+        (restore_problems), for the ``what`` (restart | update) of ``lease``.
+        A room with some agents still running gets only the others back.
+        ``since``: when the snapshot was taken; a room stopped after it, or an
+        agent whose terminal was ended after it, stays stopped (0: no check)."""
         drain_notes = drain_notes or {}
         out = []
+        not_back: list[tuple[str, str]] = []
         # Restore task terminals before any PO: even a fresh launch prompt
         # must see its tasks restored, regardless of snapshot room-id order.
         for n, entry in enumerate(sorted(entries, key=lambda e: e.get("roomId") in po_rooms)):
@@ -16146,18 +16350,44 @@ class Handler(BaseHTTPRequestHandler):
             was = ", ".join(f"{a.get('identity')} {a.get('state')}"
                             + (f"/{a.get('source')}" if a.get("source") else "") for a in agents_was)
             room_full = chatroom.get_room(rid, public=False)
+            parts = {p.get("identity"): p for p in (room_full or {}).get("participants", [])
+                     if p.get("kind") == "agent"}
+            # Stopped (or an agent's terminal ended) on purpose after the
+            # snapshot: that stop stands, the restart does not undo it.
+            killed = {i for i, p in parts.items()
+                      if since and float(p.get("killedAt") or 0) > since}
+            # Who is to run again: each agent that ran. A reviewer that was
+            # at work is started again with its request (below), not resumed.
+            ran = {a.get("identity"): a for a in agents_was
+                   if a.get("state") != "stopped" and a.get("identity") in parts
+                   and a.get("identity") not in killed}
+            wanted = {i for i, a in ran.items() if not a.get("onMention")}
+            alive = {i for i, p in parts.items() if _pty_alive(p.get("ptyId"))}
+            missing = wanted - alive
+            reviews = [a for i, a in ran.items() if a.get("onMention") and i not in alive]
             if room_full is None:
                 outcome = "no such room any more"
-            elif _room_is_live(room_full):
+            elif since and float(room_full.get("stoppedAt") or 0) > since:
+                outcome = "stopped on purpose since the snapshot: left stopped"
+            elif not agents_was:
+                # Nothing says who ran: nobody is started.
+                outcome = "NOT brought back: the snapshot lists none of its agents"
+            elif alive and not missing and not reviews:
                 outcome = "already running: left alone"
+            elif killed and not missing and not reviews:
+                outcome = "stopped on purpose since the snapshot: left stopped"
             else:
                 # An agent that was already stopped when the hub went down
                 # stays stopped whatever the snapshot's age: the restart
-                # brings back what ran, it starts nothing.
+                # brings back what ran, it starts nothing. Nor does it start
+                # an agent the snapshot does not list, or one stopped since.
                 states = {a.get("identity"): a.get("state") for a in agents_was
                           if not a.get("onMention")
                           and (a.get("state") == "stopped"
                                or (fresh and rid != wake_room))}
+                listed = {a.get("identity") for a in agents_was}
+                states.update({i: "stopped" for i in parts if i not in listed})
+                states.update({i: "stopped" for i in killed})
                 notes = {} if rid == wake_room else drain_notes.get(rid, {})
                 lined = sorted({i for i, st in states.items() if st in MID_TURN_STATES} | set(notes))
                 with _RESUMES_LOCK:
@@ -16176,7 +16406,8 @@ class Handler(BaseHTTPRequestHandler):
                         outcome = ("brought back; " + (
                             "the helper tells it" if rid == wake_room else
                             f"one line to {', '.join(lined)}, nothing typed into the rest" if lined
-                            else "nothing typed"))
+                            else "nothing typed")
+                            + (f"; {', '.join(sorted(alive))} kept running" if alive else ""))
                     except Exception as exc:    # noqa: BLE001 — one room never stops the rest
                         # As in _resume_room: what was sent to the room while
                         # it was coming up is kept as failed, so the next
@@ -16194,9 +16425,8 @@ class Handler(BaseHTTPRequestHandler):
                             chatroom.post_notice(
                                 rid, digest.SENDER, notice,
                                 {"noticeKind": RESTART_NOTICE_KIND})
-                        for a in agents_was:
-                            if not (a.get("onMention") and a.get("state") != "stopped"):
-                                continue
+                        lost = []
+                        for a in reviews:
                             msg = next((m for m in room_full.get("messages") or []
                                         if m.get("id") == a.get("reviewMessageId")), None)
                             try:
@@ -16204,17 +16434,60 @@ class Handler(BaseHTTPRequestHandler):
                                     rid, a.get("identity"), msg,
                                     note=drain_notes.get(rid, {}).get(a.get("identity"), ""))
                             except Exception as exc:    # noqa: BLE001
-                                started = None
-                                outcome += f"; the review by {a.get('identity')} NOT started again: {exc!r}"
-                            if started:
-                                outcome += (f"; the review by {a.get('identity')} that was running "
-                                            f"was started again (review {started.get('n')})")
-                            elif msg is None:
-                                outcome += (f"; the review by {a.get('identity')} that was running "
-                                            f"is lost (its request was not found)")
+                                lost.append(f"the review by {a.get('identity')} that was running "
+                                            f"could not be started again ({exc!r})")
+                            else:
+                                if started:
+                                    outcome += (f"; the review by {a.get('identity')} that was running "
+                                                f"was started again (review {started.get('n')})")
+                                else:
+                                    lost.append(f"the review by {a.get('identity')} that was running "
+                                                f"is lost (" + ("its request was not found" if msg is None
+                                                                 else "it did not start") + ")")
+                        if lost:
+                            # Not running again: said so, and on Needs you.
+                            outcome = ("NOT brought back: " + "; ".join(lost)
+                                       + " (the rest: " + outcome + ")")
             _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}' (was: {was}): {outcome}")
             out.append({"roomId": rid, "outcome": outcome})
+            if outcome.startswith("NOT brought back"):
+                why = outcome[len("NOT brought back: "):] or "unknown"
+                if restore_problems.record(rid, entry.get("title") or "", why, what, lease,
+                                           agents=sorted(ran)):
+                    not_back.append((rid, why))
+        if not_back:
+            try:
+                self._tell_pos_not_back(not_back, what)
+            except Exception as exc:    # noqa: BLE001 — the Needs you items still show it
+                _restart_log(f"restore: the POs could not be told what was not brought back: {exc!r}")
         return out
+
+    def _tell_pos_not_back(self, not_back: list[tuple[str, str]], what: str) -> None:
+        """One report to each PO whose tasks the restart or update did not
+        bring back (each room once per restart: restore_problems.record)."""
+        by_po: dict[str, list[tuple[str, str]]] = {}
+        for rid, why in not_back:
+            po_rid = restore_problems.po_room(rid)
+            if po_rid:
+                by_po.setdefault(po_rid, []).append((rid, why))
+        for po_rid, rooms in by_po.items():
+            po_full = chatroom.get_room(po_rid, public=False)
+            if po_full is None:
+                continue
+            names = [(task_label(chatroom.get_room(rid)) or rid, why) for rid, why in rooms]
+            body = (f"**blocked** — the {what} at {time.strftime('%H:%M')} could not bring back "
+                    f"{len(names)} task{'s' if len(names) != 1 else ''}:\n\n"
+                    + "\n".join(f"- {n}: {why}" for n, why in names)
+                    + "\n\nEach is on the Needs you list until it runs again: resume it when "
+                      "you want it running.")
+            res = chatroom.post_report(po_rid, digest.SENDER, chatroom.po_identity(po_full), body,
+                                       {"reportKind": "blocked", "reporter": digest.SENDER})
+            recipients = (res or {}).get("recipients") or []
+            if recipients:
+                self._ring(po_rid, recipients,
+                           f"[report] blocked: the {what} could not bring back "
+                           + ", ".join(n for n, _ in names)
+                           + " — each is on the Needs you list; resume it when you want it running.")
 
     def _resume_after_all(self, room_full: dict, items: list[dict]) -> dict:
         """The room read as live but an agent was gone by the time the message
@@ -17501,6 +17774,15 @@ class Handler(BaseHTTPRequestHandler):
             meta = ((getattr(sess, "meta", None) or {}) if sess else {})
             rid = str(meta.get("room") or "")
             ok = ptyrun.kill(pty_id)
+            if ok and rid and meta.get("identity"):
+                # Ended on purpose: a restart's snapshot taken before does not
+                # bring this agent back (_bring_back_rooms).
+                with contextlib.suppress(Exception):
+                    seat = chatroom.participant(chatroom.get_room(rid, public=False) or {},
+                                                str(meta.get("identity")))
+                    if seat and seat.get("ptyId") == pty_id:    # its seat's terminal, not a stray
+                        chatroom.patch_participant(rid, str(meta.get("identity")),
+                                                   {"killedAt": time.time()})
             if ok and rid and not _room_has_live_pty(rid):
                 running_rooms.note_stopped(rid)     # its last terminal ended on purpose
                 hub_typing.forget_room(rid)
@@ -17625,6 +17907,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "rooms": [r["roomId"] for r in snap["rooms"]]})
                 return
             if p == "/api/restart/prepare":
+                # A hub-only restart or update (no helper restores after it):
+                # who runs, for the hub that comes back to check.
+                try:
+                    snap = take_restart_snapshot(lease, keep=True)
+                    _restart_log(f"snapshot before a hub-only stop: {_snapshot_summary(snap)}")
+                except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
+                    _restart_log(f"no snapshot before a hub-only stop: {e!r}")
                 save_restart_caches()
                 self._send_json(200, {"ok": True})
                 return

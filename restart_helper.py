@@ -14,6 +14,9 @@ import urllib.request
 from backends import ptyhost
 
 
+PORT_FREE_WAIT_S = 10.0     # for the old hub's port, once its process is gone
+
+
 def hub_args(plan: dict, port: int) -> list[str]:
     """Keep the original bind and flags while replacing this instance's port."""
     args = [plan["python"]]
@@ -76,11 +79,11 @@ def _run(plan: dict) -> int:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{endpoint}", timeout=timeout) as resp:
             return resp.read()
 
-    def post(endpoint, body):
+    def post(endpoint, body, timeout=180):
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(f"http://127.0.0.1:{plan['port']}{endpoint}",
                                      data=data, headers={"Content-Type": "application/json; charset=utf-8"})
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def spawn(port):
@@ -189,10 +192,17 @@ def _run(plan: dict) -> int:
     else:
         log("old hub did not stop; leaving it running")
         return 1
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as check:
-        if check.connect_ex(("127.0.0.1", plan["port"])) == 0:
+    # The port can outlive the process for a moment (Windows closes its
+    # handles after the exit): giving up at once left no hub at all.
+    end = time.monotonic() + PORT_FREE_WAIT_S
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as check:
+            if check.connect_ex(("127.0.0.1", plan["port"])) != 0:
+                break
+        if time.monotonic() >= end:
             log("old hub port is still occupied; leaving PTY host intact")
             return 1
+        time.sleep(0.2)
     if not plan["keepAgents"]:
         state = Path(plan["leasePath"]).parent
         try:
@@ -222,9 +232,13 @@ def _run(plan: dict) -> int:
         return 1
     if not plan["keepAgents"]:
         try:
-            post("/api/restart/restore", lease)
-        except OSError as exc:
-            log(f"rooms could not be restored: {exc}")
+            # Many rooms take minutes to come back, each a few seconds.
+            res = post("/api/restart/restore", lease, timeout=600)
+            log(f"restore: {len(res.get('rooms') or [])} room(s) in the snapshot; "
+                f"{res.get('note') or 'nothing brought back'}")
+        except (OSError, ValueError) as exc:
+            log(f"rooms could not be restored: {exc}; the hub brings back what the snapshot "
+                f"lists by itself")
     log("hub up; restart complete")
     return 0
 
