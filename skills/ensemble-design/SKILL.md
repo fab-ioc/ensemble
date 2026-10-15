@@ -1074,7 +1074,7 @@ component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's
 on a computer ("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; on a phone (the narrow dock) it keeps reading **Chat** (`PD_TITLES`), so the 390 px tab row grows no longer than it was (Board stays on screen). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit, v0.22.0 now) of five panels, **PO chat, Needs you, Board, Workspace,
+library; `VERSION` names its commit, v0.22.2 now) of five panels, **PO chat, Needs you, Board, Workspace,
 Changes** (`PD_IDS` in `index.html`; Needs you is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar

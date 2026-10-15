@@ -479,7 +479,29 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const l = cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport(), migrate }));
     return narrowOn ? oneColumn(l) : l;
   }
+  // The dock's size when its split sizes were last set (loaded, dragged, a panel docked): its layout is saved as drawn
+  // at that size (exportLayout, a group's file), so a window made smaller or bigger since changes nothing saved.
+  let sizedAt = null;
+  const sizesOf = (n) => (!n ? '' : n.t === 'stack' ? `${n.min ? 'm' : ''}${n.size ?? ''}` : `${n.dir}${n.size ?? ''}(${n.kids.map(sizesOf)})`);
+  function anchorSizes() {
+    const sig = sizesOf(layout.root);
+    if (sizedAt && sizedAt.sig === sig) return;
+    const r = root.getBoundingClientRect ? root.getBoundingClientRect() : null;
+    if (!r || !(r.width > 1 && r.height > 1)) { sizedAt = null; return; }
+    const a = main.isConnected && main.getBoundingClientRect ? main.getBoundingClientRect() : null;
+    sizedAt = { sig, width: r.width, height: r.height, area: a && a.width > 1 && a.height > 1 ? { width: a.width, height: a.height } : null };
+  }
+  // How this dock draws a split's kids (layout-file.js drawnAlong): its minimum sizes and the kid that takes what is left.
+  const sizeModel = (area = null) => ({ bar: S.bar, head: S.head, splitSize: S.splitSize, minAlong, fillAt: fillIndex, area });
+  // The layout `raw` (the dock's own by default) with its split sizes as fractions of the dock as drawn; `fallback`
+  // (an element) measures it when the dock is not drawn (hidden, not laid out yet).
+  function fractions(raw = layout, fallback = root) {
+    anchorSizes();
+    const at = sizedAt || null;
+    return splitFractions(raw, at ? { getBoundingClientRect: () => at } : fallback, false, sizeModel(at ? at.area : null));
+  }
   function save(changed = true) {
+    anchorSizes();
     if (changed) savedAt = new Date().toISOString();
     try { if (storage) storage.setItem(storeKey(), JSON.stringify(layout)); } catch { /* not remembered; still applied */ }
     try {
@@ -2626,7 +2648,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     screenshot,
     copyScreenshot,
     layout: () => layout,
-    exportLayout: () => layoutText(layoutFile([{ id: 'main', title: 'Main', layout: splitFractions(layout, root) }], layoutKey, savedAt, appZoom)),
+    exportLayout: () => layoutText(layoutFile([{ id: 'main', title: 'Main', layout: fractions() }], layoutKey, savedAt, appZoom)),
     importLayout(text, { onUnknown } = {}) {
       const { value, errors } = parseLayoutFile(text);
       if (!errors.length && value.docks.length !== 1) errors.push({ path: 'docks', message: 'Expected one dock' });
@@ -2728,6 +2750,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       commit();
       emitZoomChanges(before);
     },
+    /** The layout (the dock's own by default) with its split sizes as fractions of the dock as drawn (layout-file.js). */
+    _fractions: (raw, fallback) => fractions(raw || layout, fallback || root),
+    /** How the dock draws a split's kids, for splitFractions; `area`: the box its top split is drawn in. */
+    _sizeModel: sizeModel,
     _adoptParked: (entries) => { const n = adoptParked(layout, entries, opts()); if (n) save(); return n; },
     /** Closes a closable panel as its × does: the onClose hooks, then removePanel. A promise of whether it closed. */
     close: (id) => closeNow(id),
