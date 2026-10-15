@@ -350,7 +350,7 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
 
     def test_quotes_links_images_and_codex_turns_stay_in_their_thread(self):
-        img = "[image] C:/Users/x/shot.png"
+        img = "[image] D:/shots/shot.png"
         quote = "> Done." + chr(10) * 2 + "not quite: wider"
         for sent, turn in ((quote, quote),
                            ("see [the spec](https://example.com/x) again", "see [the spec](https://example.com/x) again"),
