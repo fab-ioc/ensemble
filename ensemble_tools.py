@@ -1227,7 +1227,7 @@ def _ask(ctx, args, handler):
         host = headers.get("Host", "127.0.0.1:8765")
         scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
         ref = f"{scheme}://{host}/session?room={po['roomId']}&msg={mid}" if mid else ""
-        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. Link reportReference when following up with the PO.",
+        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. Paste reportReference as it is when following up with the PO: it shows as the message's chip.",
                 **({"reportReference": ref} if ref else {}),
                 **({"warnings": warnings} if warnings else {})}
     result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
@@ -1244,7 +1244,7 @@ def _ask(ctx, args, handler):
             for a in questions]
     return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
             "questions": len(questions), "references": refs,
-            "note": "Paste the matching reference whenever you mention an open card. The card is waiting for the user's answer.",
+            "note": "Paste the matching reference as it is (not in a code span or a [label](link)) whenever you mention an open card: it shows as the card's chip. The card is waiting for the user's answer.",
             **({"warnings": warnings} if warnings else {})}
 
 

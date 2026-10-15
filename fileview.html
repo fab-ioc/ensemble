@@ -859,6 +859,38 @@ const msgHref = r => '/session?room=' + encodeURIComponent(r.room) + '&msg=' + e
   + (r.part ? '&part=' + encodeURIComponent(r.part).replace(/%3A/gi, ':') : '');
 const msgLinkHtml = (r, text) => !r.msg ? taskLinkHtml(r.room, text)
   : `<a class="msg-link${r.part.startsWith('ask:') ? ' card-jump' : ''}" href="${esc(msgHref(r))}" data-ref-room="${esc(r.room)}" data-ref-msg="${esc(r.msg)}"${r.part ? ` data-ref-part="${esc(r.part)}"` : ''}>${text}</a>`;
+// A link to one of the hub's own pages, whatever address it was written with
+// (#238): { msg } for a message or card (msgLinkOf), { file, line } for a file
+// view, { task } for a task's chat, { thread } for a thread, { href } for any
+// other page on this hub; null for any other URL.
+function hubUrlOf(u) {
+  let x = null;
+  try { x = new URL(u); } catch (e) { return null; }
+  if (!/^https?:$/.test(x.protocol)) return null;
+  const msg = msgLinkOf(x);
+  if (msg) return msg.msg ? { msg } : { task: msg.room };
+  const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
+  if (x.pathname === '/session' && /^room-[0-9a-f]{8}$/.test(room)) return { thread: room, href: x.pathname + x.search + x.hash };
+  if (x.pathname === '/fileview' && x.searchParams.get('path')) return { file: x.searchParams.get('path'), line: +(x.searchParams.get('line') || 0) || 0 };
+  const port = x.port || (x.protocol === 'https:' ? '443' : '80');
+  if (x.host === location.host || (LOOPBACK_HOST_RE.test(x.hostname) && port === hubPort())) return { href: x.pathname + x.search + x.hash };
+  return null;
+}
+// What a hub link opens, in words: the question card, the message, the file's name.
+const hubUrlLabel = h => h.msg ? (h.msg.part.startsWith('ask:') ? 'the question card' : 'the message')
+  : h.file != null ? (fileName(h.file) || h.file) : h.task ? 'the task' : h.thread ? 'the thread' : 'Ensemble';
+// The hub links in a line that is itself a link (a question card's row in a
+// list) as words: never the bare URL. A link to the card the row opens
+// (self: its message id) goes, with the "(card: …)" around it. Other URLs
+// stay as written. Plain text in, plain text out.
+function hubUrlWords(text, self) {
+  return String(text ?? '').replace(/(\s*)(\(\s*(?:(?:the\s+)?(?:question\s+)?card|link|see|ref)?\s*:?\s*)?(https?:\/\/[^\s<>()\[\]{}"'`*|\\]+)(\))?/gi, (m, sp, open, u, close) => {
+    const [url, tail] = trimUrlTail(u), h = hubUrlOf(url);
+    if (!h) return m;
+    if (self && h.msg && h.msg.msg === self) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
+    return sp + (open || '') + hubUrlLabel(h) + tail + (close || '');
+  });
+}
 // ---- Pictures named by their path, and paths abbreviated with "..." --------
 // A picture an agent names by its path (png, jpg, jpeg, gif, webp, svg, bmp:
 // what /api/file serves as one) shows as a thumbnail wherever the path stands

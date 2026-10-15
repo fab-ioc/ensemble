@@ -86,6 +86,8 @@ const { code, fixtures } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, withPathAbbrevs: (t, f) => f(),
   ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
+// The card's words (#238, tests/test_card_text.py): plain here.
+ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { parseAsks, safetyAsk, askCardHtml, askBodyHtml, openAsks, forCeo, pointMaps, CHAT_NAMES };`, ctx);
