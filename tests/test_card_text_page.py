@@ -2,8 +2,9 @@
 hub at 1728 and 390 px: a link to a message (localhost, the https address)
 is the balloon's chip in the question and in an option's note, a link after
 the point chip naming the same message is not shown again, no "http" is in
-the card's text, and the chip in an option lands on its message without
-answering the card."""
+the card's text, the chip in an option lands on its message without
+answering the card, and an option's links sit beside its answer button, not
+in it: Tab reaches each, Enter on the button answers."""
 import json
 import os
 import subprocess
@@ -56,7 +57,9 @@ async function main() {
       await shot('card');
       const seen = await ev(`(() => {const q=document.querySelector(${JSON.stringify(card)});
         return {text:q.innerText, qt:q.querySelector('.qa-qt').innerHTML,
-          chips:[...q.querySelectorAll('a.ref-chip')].map(a => ({msg:a.dataset.refMsg, where:a.closest('.qa-qt') ? 'question' : a.closest('.qa-od') ? 'note' : a.closest('.qa-ol') ? 'label' : 'other'})),
+          chips:[...q.querySelectorAll('a.ref-chip')].map(a => ({msg:a.dataset.refMsg, where:a.closest('.qa-qt') ? 'question' : a.closest('.qa-od') ? 'note' : a.closest('.qa-oa') ? 'label' : 'other'})),
+          nested:q.querySelectorAll('button a, button [tabindex]').length,
+          words:[...q.querySelectorAll('.qa-opt .qa-ol')].map(e => e.textContent),
           points:[...q.querySelectorAll('.point-chip')].map(a => a.textContent.trim()),
           wide:[...q.querySelectorAll('a.ref-chip')].every(a => a.getBoundingClientRect().right <= q.getBoundingClientRect().right + 1)};})()`);
       // The chip in an option's note opens its message; the card stays open.
@@ -64,7 +67,27 @@ async function main() {
       await until(`LANDED && LANDED.mid === '${A.target}'`);
       await shot('landed');
       const after = await ev(`({open: !document.querySelector(${JSON.stringify(card)}).classList.contains('done'), mid: LANDED.mid})`);
-      out.push({width, seen, after, overflow:await ev('document.documentElement.scrollWidth > innerWidth')});
+      // By keyboard: Tab from the first answer goes through each option's
+      // button and its links in turn; Enter on a button answers with it.
+      const tab = async () => {
+        await send('Input.dispatchKeyEvent', {type:'rawKeyDown', key:'Tab', code:'Tab', windowsVirtualKeyCode:9});
+        await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Tab', code:'Tab', windowsVirtualKeyCode:9});
+        await sleep(80);
+      };
+      const focused = `(() => {const e=document.activeElement; return e.matches('.qa-opt') ? 'button:' + e.dataset.opt : e.closest('.qa-od') ? 'note' : e.closest('.qa-oa') ? 'label' : e.tagName + '.' + e.className;})()`;
+      await ev(`document.querySelector(${JSON.stringify(card + ' .qa-opt')}).focus()`);
+      const keys = [await ev(focused)];
+      for (let i = 0; i < 3; i++) { await tab(); keys.push(await ev(focused)); }
+      let answered = null;
+      if (mob) {
+        await ev(`document.querySelectorAll(${JSON.stringify(card + ' .qa-opt')})[1].focus()`);
+        await send('Input.dispatchKeyEvent', {type:'rawKeyDown', key:'Enter', code:'Enter', windowsVirtualKeyCode:13});
+        await send('Input.dispatchKeyEvent', {type:'char', key:'Enter', text:'\r'});
+        await send('Input.dispatchKeyEvent', {type:'keyUp', key:'Enter', code:'Enter', windowsVirtualKeyCode:13});
+        await until(`(q => q.classList.contains('done') && !q.classList.contains('busy'))(document.querySelector(${JSON.stringify(card)}))`);
+        answered = await ev(`[...document.querySelectorAll(${JSON.stringify(card + ' .qa-opt[aria-pressed="true"]')})].map(b => b.dataset.opt)`);
+      }
+      out.push({width, seen, after, keys, answered, overflow:await ev('document.documentElement.scrollWidth > innerWidth')});
       await c.send('Target.closeTarget',{targetId});
     }
   } finally { try {await c.send('Browser.close');} catch(e) {} ch.kill(); }
@@ -91,7 +114,8 @@ class CardLinksPage(Hub):
         server.daemon_threads = True
         self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        port = server.server_port
+        port = self.port = server.server_port
+        self.room_id = room
         his = chatroom.post_message(room, 'user', 'Should the test set-up let you choose the browser profile?')['message']
         led = points.load(room)
         point = points._new_point(led, his['text'], 'claude', his['ts'], '', '', n=215, mid=his['id'])
@@ -107,7 +131,8 @@ class CardLinksPage(Hub):
                               f'The notes: http://localhost:{port}/session?room={room}&msg={target["id"]}',
                   'options': [{'label': 'Choose it', 'recommended': True,
                                'detail': f'as in https://hub.example.net/session?room={room}&msg={target["id"]}'},
-                              {'label': 'Keep the default', 'detail': '', 'recommended': False}]}]
+                              {'label': f'Keep the default, see http://localhost:{port}/session?room={room}&msg={target["id"]}',
+                               'detail': '', 'recommended': False}]}]
         card = chatroom.post_message(room, 'claude', 'Re P215: one decision.', to='user')['message']
         full = chatroom.get_room(room, public=False)
         for m in full['messages']:
@@ -130,11 +155,16 @@ class CardLinksPage(Hub):
                 self.assertNotIn('localhost', seen['text'])
                 self.assertEqual(seen['points'], ['P215'], seen['qt'])
                 self.assertEqual(sorted((c['where'], c['msg']) for c in seen['chips']),
-                                 [('note', target['id']), ('question', target['id'])],
+                                 [('label', target['id']), ('note', target['id']), ('question', target['id'])],
                                  'the point\'s own link is not shown again after its chip')
                 self.assertTrue(seen['wide'], 'chips stay inside the card')
+                self.assertEqual(seen['nested'], 0, 'no link inside an answer button')
+                second = f'Keep the default, see http://localhost:{self.port}/session?room={self.room_id}&msg={target["id"]}'
+                self.assertEqual(row['keys'], ['button:Choose it', 'note', 'button:' + second, 'label'])
+                self.assertEqual(seen['words'], ['Choose it', 'Keep the default'], 'a button says its words; its link is beside it')
                 self.assertEqual(row['after'], {'open': True, 'mid': target['id']})
                 self.assertFalse(row['overflow'])
+        self.assertEqual(rows[1]['answered'], [second], 'Enter on an answer button answers with it')
 
 
 if __name__ == '__main__':

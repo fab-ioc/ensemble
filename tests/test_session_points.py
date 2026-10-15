@@ -40,7 +40,7 @@ const posts = [];
 const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBlocks: t => t,
   ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
 // The card's words (#238, tests/test_card_text.py): plain here.
-ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? '');
+ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, pointsSummary, pointsListHtml, pointsLineHtml, heldBy, foldPlan,
@@ -310,7 +310,7 @@ const out = { inFlight: 0, most: 0, rooms: 0, drawn: [], wants: [], notes: [] };
 const ctx = { out, POINTS_SIG: '', LAST_ITEMS: null, pointMaps: v => v, showPointsLine: () => {}, pointsTell: () => {},
   pointsAges: () => {}, renderBubbles: () => {}, POINTS: null, resolves: [] };
 // The card's words (#238, tests/test_card_text.py): plain here.
-ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? '');
+ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
   // The room request, held open until the test lets it answer.
@@ -353,7 +353,7 @@ const ctx = { out, $: () => box, CHAT_DRAWN: true, _landing: false, _cmtComposer
   soloOwns: sid => sid === 'now' || sid === 'old', renderSolo: () => { out.renders++; },
   showGotoNote: t => { if (t) out.notes.push(t); } };
 // The card's words (#238, tests/test_card_text.py): plain here.
-ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? '');
+ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
   GOTO = 'old:q0'; landPending();

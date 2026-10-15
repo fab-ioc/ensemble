@@ -8,8 +8,10 @@ against a stand-in hub:
   a tailnet name, https) is the balloon's chip in the question, an option,
   its note and the comment; until the hub has the message, a link named for
   what it opens; never the URL as text;
-* a link right after the point chip naming the same place is dropped, with
-  its "(card: …)"; so is a link back to the card itself;
+* a link (bare or [words](url)) right after the point chip naming the same
+  place is dropped, with its "(card: …)"; so is a link back to the card
+  itself; a link to another card or point of the same message stays;
+* an option's answer button holds no link: its label's links follow it;
 * a file view link is its file's link; an external URL stays a link as
   written; text that only looks like a URL stays text;
 * a row that is itself a link (Needs you, Open questions) says the link in
@@ -72,12 +74,16 @@ const T = {
   external: 'See https://github.com/fab-ioc/ensemble/issues/20, then answer.',
   looksLike: 'Is hub.example.net/session?room=x a link, or http//nope, or www dot example?',
   html: 'A <b>bold</b> & "quoted" question?',
+  twoAsks: 'Which: [the first](http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0) http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:1',
+  otherPoint: 'Which set-up (P215)? http://127.0.0.1:8765/session?room=room-0000c0de&msg=his00000215&part=pt:P216',
+  mdAfterPoint: 'Which set-up (P215)? [card](https://hub.example.net/session?room=room-0000c0de&msg=his00000215&part=pt:P215)',
+  selfOther: 'And this one? http://127.0.0.1:8765/session?room=room-0000c0de&msg=selfcard0001&part=ask:1',
 };
 (async () => {
   // The project list, then the point: each asked on a draw, drawn again once the hub answers.
-  for (let i = 0; i < 2; i++) { for (const t of Object.values(T)) cardTextHtml(t, 'selfcard0001'); await settle(); }
+  for (let i = 0; i < 2; i++) { for (const t of Object.values(T)) cardTextHtml(t, 'selfcard0001', 0); await settle(); }
   const out = {};
-  for (const [k, t] of Object.entries(T)) out[k] = cardTextHtml(t, 'selfcard0001');
+  for (const [k, t] of Object.entries(T)) out[k] = cardTextHtml(t, 'selfcard0001', 0);
   const m = { id: 'selfcard0001', from: 'claude', text: '' };
   const a = { n: 0, question: T.afterPoint, kind: 'decision', recommended: 0, options: [
     { label: 'Use the old one', detail: 'as in http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001', recommended: true },
@@ -87,6 +93,16 @@ const T = {
   out.words = {
     self: hubUrlWords(T.self, 'selfcard0001'),
     selfBare: hubUrlWords(T.selfBare, 'selfcard0001'),
+    selfAsk0: hubUrlWords(T.selfBare, 'selfcard0001', 0),
+    selfOther: hubUrlWords(T.selfOther, 'selfcard0001', 0),
+    button: [
+      'Keep the default, see http://localhost:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001',
+      'Keep it (card: https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0)',
+      'As in [the notes](http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001)',
+      'See https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001',
+      'Wait and see',
+      'Open hedge.html: http://127.0.0.1:8765/fileview?path=C%%3A%%5CDocs%%5Chedge.html',
+    ].map(t => cardWords(t, 'selfcard0001', 0)),
     other: hubUrlWords(T.localhost, 'selfcard0001'),
     file: hubUrlWords(T.fileview, ''),
     external: hubUrlWords(T.external, ''),
@@ -156,6 +172,27 @@ class CardLinks(unittest.TestCase):
     def test_a_link_back_to_this_card_goes(self):
         self.assertEqual(self.r["self"], "What do you want to do with the old data?")
         self.assertEqual(self.r["selfBare"], "Which one?")
+        h = self.r["selfOther"]
+        self.assertIn('data-ref-msg="selfcard0001"', h, "another card of the same message stays")
+        self.assertIn(">the question card</a>", h)
+
+    def test_a_link_to_another_card_or_point_of_the_same_message_stays(self):
+        h = self.r["twoAsks"]
+        self.assertIn('data-ref-part="ask:0"', h)
+        self.assertIn('data-ref-part="ask:1"', h)
+        self.assertIn(">the first</a>", h)
+        self.assertNoUrl(h)
+        h = self.r["otherPoint"]
+        self.assertIn("point-chip", h)
+        self.assertIn('data-ref-msg="his00000215" data-ref-part="pt:P216"', h)
+        self.assertNoUrl(h)
+
+    def test_a_markdown_link_repeating_the_point_chip_is_dropped(self):
+        h = self.r["mdAfterPoint"]
+        self.assertIn("point-chip", h)
+        self.assertNotIn("ref-chip", h)
+        self.assertNotIn(">card</a>", h)
+        self.assertTrue(text_of(h).endswith("(P215)?"), h)
 
     def test_a_file_view_and_a_task_are_links_in_words(self):
         h = self.r["fileview"]
@@ -184,7 +221,10 @@ class CardLinks(unittest.TestCase):
         self.assertIn("point-chip", q)
         self.assertNoUrl(q)
         self.assertEqual(h.count('class="ref-chip'), 2, "the note's link and the label's link")
-        for part in re.findall(r'<span class="qa-o[ld]">(.*?)</span>(?:<span class="lz|</button>)', h):
+        self.assertNotRegex(h, r'<button(?:(?!</button>).)*<a[ >]', "no link inside a button")
+        self.assertRegex(h, r'</button><span class="qa-oa"><a class="ref-chip', "the label's link follows its button")
+        self.assertIn('<span class="qa-ol">See the message</span></button>', h)
+        for part in re.findall(r'<span class="qa-o[lda]">(.*?)</span>(?:<span class="lz|</button>|</div>|<span class="qa-od)', h):
             self.assertNoUrl(part)
         self.assertNotIn("http", re.sub(r'(href|title|aria-label)="[^"]*"', "", text_of(h).replace("chip ", "")))
         self.assertNotRegex(h, r'(title|aria-label)="[^"]*http', "tooltips say the link in words too")
@@ -197,15 +237,23 @@ class CardLinks(unittest.TestCase):
         w = self.r["words"]
         self.assertEqual(w["self"], "What do you want to do with the old data?")
         self.assertEqual(w["selfBare"], "Which one?")
+        self.assertEqual(w["selfAsk0"], "Which one?")
+        self.assertEqual(w["selfOther"], "And this one? the question card")
         self.assertEqual(w["other"], "Which one? the question card")
         self.assertEqual(w["file"], "Build the hedge in the preview hedge.html?")
         self.assertEqual(w["external"], "See https://github.com/fab-ioc/ensemble/issues/20, then answer.")
 
+    def test_an_answer_button_says_its_words_and_leaves_its_links_beside_it(self):
+        self.assertEqual(self.r["words"]["button"], [
+            "Keep the default", "Keep it", "As in the notes", "See the message", "Wait and see",
+            "Open hedge.html: hedge.html"])
+
     def test_every_place_a_card_shows_uses_them(self):
-        self.assertIn('<span class="qa-qt">${cardTextHtml(a.question, m.id)}</span>', SESSION)
-        self.assertIn('<span class="qa-ol">${cardTextHtml(o.label, m.id)}</span>', SESSION)
-        self.assertIn('<span class="qa-od">${cardTextHtml(o.detail, m.id)}</span>', SESSION)
-        self.assertIn('<span class="qa-dc">${cardTextHtml(got.comment, m.id)}</span>', SESSION)
+        self.assertIn('<span class="qa-qt">${cardTextHtml(a.question, m.id, a.n)}</span>', SESSION)
+        self.assertIn('const label = cardText(o.label, m.id, a.n), words = cardWords(o.label, m.id, a.n);', SESSION)
+        self.assertIn('<span class="qa-ol">${esc(words)}</span>', SESSION)
+        self.assertIn('<span class="qa-od">${cardTextHtml(o.detail, m.id, a.n)}</span>', SESSION)
+        self.assertIn('<span class="qa-dc">${cardTextHtml(got.comment, m.id, a.n)}</span>', SESSION)
         self.assertIn("esc(hubUrlWords(c.question, c.mid))", SESSION, "Open questions")
         self.assertIn("hubUrlWords(foldLine(String(c.question || ''))", SESSION, "the chat's Needs you")
         self.assertIn("hubUrlWords(String(c.question || '').split('\\n')[0]", INDEX, "the PO screen's Needs you")

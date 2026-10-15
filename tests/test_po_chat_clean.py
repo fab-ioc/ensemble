@@ -71,7 +71,7 @@ const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const ctx = { esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
   attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
 // The card's words (#238, tests/test_card_text.py): plain here.
-ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? '');
+ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, forCeo, gapsOf, gapWords, gapRowHtml, chatBarNote, hasReMarks, pointMaps, pointsListHtml, pointBarHtml, heldBy, PT_WORD, PT_FOLDS };`, ctx);

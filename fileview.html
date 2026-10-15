@@ -879,15 +879,19 @@ function hubUrlOf(u) {
 // What a hub link opens, in words: the question card, the message, the file's name.
 const hubUrlLabel = h => h.msg ? (h.msg.part.startsWith('ask:') ? 'the question card' : 'the message')
   : h.file != null ? (fileName(h.file) || h.file) : h.task ? 'the task' : h.thread ? 'the thread' : 'Ensemble';
+// A link to the card itself (self: its message id; n: its number there, when
+// known): the message as a whole or that card, not another card of it.
+const hubSelfLink = (r, self, n) => !!self && r.msg === self && (n == null || !r.part || r.part === 'ask:' + n);
 // The hub links in a line that is itself a link (a question card's row in a
 // list) as words: never the bare URL. A link to the card the row opens
 // (self: its message id) goes, with the "(card: …)" around it. Other URLs
-// stay as written. Plain text in, plain text out.
-function hubUrlWords(text, self) {
+// stay as written; drop: every link to a message or card goes too (its chip
+// is shown beside). Plain text in, plain text out.
+function hubUrlWords(text, self, n, drop) {
   return String(text ?? '').replace(/(\s*)(\(\s*(?:(?:the\s+)?(?:question\s+)?card|link|see|ref)?\s*:?\s*)?(https?:\/\/[^\s<>()\[\]{}"'`*|\\]+)(\))?/gi, (m, sp, open, u, close) => {
     const [url, tail] = trimUrlTail(u), h = hubUrlOf(url);
     if (!h) return m;
-    if (self && h.msg && h.msg.msg === self) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
+    if (h.msg && (drop || hubSelfLink(h.msg, self, n))) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
     return sp + (open || '') + hubUrlLabel(h) + tail + (close || '');
   });
 }

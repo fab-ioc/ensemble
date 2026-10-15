@@ -995,14 +995,20 @@
   .qa-no { flex:0 0 auto; color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
   .qa-qt { flex:1 1 200px; min-width:0; color:var(--fg); font-weight:600; overflow-wrap:anywhere; }
   .qa-opts { display:flex; flex-wrap:wrap; gap:var(--s-200); margin-top:var(--s-200); }
-  .qa-opt { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--s-050) var(--s-200); max-width:100%; min-height:32px;
-    padding:var(--s-100) var(--s-300); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-200);
+  /* An option's box: its answer button, then its label's links and its note. */
+  .qa-optw { display:inline-flex; flex-wrap:wrap; align-items:center; column-gap:var(--s-200); max-width:100%; box-sizing:border-box;
+    padding:0 var(--s-300); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-200); cursor:pointer; }
+  .qa-optw:hover:not(.off) { background:var(--hover); }
+  .qa-optw.off { cursor:default; }
+  .qa-optw.on { border-color:var(--fg); }
+  .qa-opt { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--s-050) var(--s-200); min-width:0; max-width:100%; min-height:32px;
+    padding:var(--s-100) 0; background:none; border:0; border-radius:var(--r-100);
     color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
-  .qa-opt:hover:not(:disabled) { background:var(--hover); }
   .qa-opt:disabled { cursor:default; color:var(--fg-muted); }
-  .qa-opt.on { color:var(--fg); border-color:var(--fg); font-weight:600; }
+  .qa-opt.on { color:var(--fg); font-weight:600; }
   .qa-ol { min-width:0; overflow-wrap:anywhere; }
-  .qa-od { flex:1 1 100%; min-width:0; color:var(--fg-muted); font-size:var(--fs-200); font-weight:400; overflow-wrap:anywhere; }
+  .qa-oa { min-width:0; overflow-wrap:anywhere; }
+  .qa-od { flex:1 1 100%; min-width:0; padding-bottom:var(--s-100); color:var(--fg-muted); font-size:var(--fs-200); font-weight:400; overflow-wrap:anywhere; cursor:auto; }
   .qa-cm { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--s-200); margin-top:var(--s-200); }
   .qa-cm textarea { flex:1 1 200px; min-width:0; max-width:100%; box-sizing:border-box; min-height:32px; resize:vertical;
     padding:var(--s-100) var(--s-200); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -1770,15 +1776,19 @@ function hubUrlOf(u) {
 // What a hub link opens, in words: the question card, the message, the file's name.
 const hubUrlLabel = h => h.msg ? (h.msg.part.startsWith('ask:') ? 'the question card' : 'the message')
   : h.file != null ? (fileName(h.file) || h.file) : h.task ? 'the task' : h.thread ? 'the thread' : 'Ensemble';
+// A link to the card itself (self: its message id; n: its number there, when
+// known): the message as a whole or that card, not another card of it.
+const hubSelfLink = (r, self, n) => !!self && r.msg === self && (n == null || !r.part || r.part === 'ask:' + n);
 // The hub links in a line that is itself a link (a question card's row in a
 // list) as words: never the bare URL. A link to the card the row opens
 // (self: its message id) goes, with the "(card: …)" around it. Other URLs
-// stay as written. Plain text in, plain text out.
-function hubUrlWords(text, self) {
+// stay as written; drop: every link to a message or card goes too (its chip
+// is shown beside). Plain text in, plain text out.
+function hubUrlWords(text, self, n, drop) {
   return String(text ?? '').replace(/(\s*)(\(\s*(?:(?:the\s+)?(?:question\s+)?card|link|see|ref)?\s*:?\s*)?(https?:\/\/[^\s<>()\[\]{}"'`*|\\]+)(\))?/gi, (m, sp, open, u, close) => {
     const [url, tail] = trimUrlTail(u), h = hubUrlOf(url);
     if (!h) return m;
-    if (self && h.msg && h.msg.msg === self) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
+    if (h.msg && (drop || hubSelfLink(h.msg, self, n))) return open && close ? '' : (open ? sp + open : '') + tail + (close || '');
     return sp + (open || '') + hubUrlLabel(h) + tail + (close || '');
   });
 }
@@ -2234,40 +2244,63 @@ function hubLinkHtml(h, words) {
   if (h.task) return taskLinkHtml(h.task, words);
   return `<a href="${esc(h.href)}"${A_NEW}>${words}</a>`;
 }
-function cardTextHtml(text, self) {
+// A link goes where a chip already opens when it names the same message and
+// the same passage of it, or the message as a whole: "&part=ask:1" is another
+// card than "&part=ask:0", "&part=pt:P216" another point than P215.
+const cardSamePlace = (u, t) => u.room === t.room && u.msg === t.msg && (!u.part || u.part === (t.part || ''));
+// The text and the links kept in it: { html, links: [the links' HTML, in order] }.
+// self: this card's message id; n: its number there (a link to another card
+// of the same message is not a link to this one).
+function cardText(text, self, n) {
   const chips = [], goes = [], urls = new Set();
-  const park = (h, at) => { const i = chips.push(h) - 1; if (at) goes[i] = at.map(t => t.room + '|' + t.msg); return REF_A + i + REF_Z; };
+  const park = (h, at) => { const i = chips.push(h) - 1; if (at) goes[i] = at; return REF_A + i + REF_Z; };
+  // A link to a message or card: its target kept, to be dropped when it only repeats.
+  const parkUrl = (h, html) => { const k = park(html, [h.msg]); urls.add(chips.length - 1); return k; };
   let s = String(text ?? '').replace(/[\uE004\uE005\uE006]/g, '');
   s = s.replace(CARD_MD_LINK_RE, (m, words, u) => {
     const h = hubUrlOf(u);
+    if (h && h.msg) return parkUrl(h, hubLinkHtml(h, esc(words)));
     return park(h ? hubLinkHtml(h, esc(words)) : `<a href="${esc(u)}"${A_NEW}>${esc(words)}</a>`);
   });
   s = s.replace(REF_URL_RE, u => {
     const [url, tail] = trimUrlTail(u), h = hubUrlOf(url);
     if (!h) return park(urlLinkHtml(url, esc(url), 'text')) + tail;
     if (!h.msg) return park(hubLinkHtml(h, esc(hubUrlLabel(h)))) + tail;
-    const at = park(refChipHtml(h.msg) || hubLinkHtml(h, esc(hubUrlLabel(h))), [h.msg]);
-    urls.add(chips.length - 1);
-    return at + tail;
+    return parkUrl(h, refChipHtml(h.msg) || hubLinkHtml(h, esc(hubUrlLabel(h)))) + tail;
   });
   s = parkPmRefs(s, chips);
   s = POINT_REFS.replace(s, TASK_REFS.ctx(''), x => x, (h, at) => park(h, at || []));
   s = parkTaskRefs(s, chips);
   // What every chip opens, for one written by a step that did not say.
   chips.forEach((h, i) => {
-    const m = goes[i] ? null : String(h).match(/data-ref-room="([^"]*)" data-ref-msg="([^"]*)"/);
-    if (!goes[i]) goes[i] = m ? [m[1] + '|' + m[2]] : [];
+    if (goes[i]) return;
+    const m = String(h).match(/data-ref-room="([^"]*)" data-ref-msg="([^"]*)"(?: data-ref-part="([^"]*)")?/);
+    goes[i] = m ? [{ room: m[1], msg: m[2], part: m[3] || '' }] : [];
   });
   let prev = -1, end = 0;
   s = s.replace(REF_MARK_RE, (m, k, off, all) => {
     const i = +k, before = prev, gap = all.slice(end, off);
     prev = i; end = off + m.length;
     if (!urls.has(i)) return m;
-    const same = before >= 0 && CARD_GAP_RE.test(gap) && gap.length <= 24 && goes[i].some(t => goes[before].includes(t));
-    return same || (self && goes[i].includes(ROOM + '|' + self)) ? CARD_DROP : m;
+    const u = goes[i][0];
+    const same = before >= 0 && CARD_GAP_RE.test(gap) && gap.length <= 24 && goes[before].some(t => cardSamePlace(u, t));
+    return same || hubSelfLink(u, self, n) ? CARD_DROP : m;
   });
   s = s.replace(CARD_DROP_RE, '');
-  return esc(s).replace(REF_MARK_RE, (_, i) => chips[+i] || '');
+  const links = [];
+  const html = esc(s).replace(REF_MARK_RE, (_, i) => { const h = chips[+i] || ''; if (h) links.push(h); return h; });
+  return { html, links };
+}
+const cardTextHtml = (text, self, n) => cardText(text, self, n).html;
+// An option's words for its answer button, which holds no link: its links
+// follow the button (cardText(\u2026).links), so a link to a message or card is
+// left out, with a "see" before it ("Keep it, see <link>": "Keep it").
+function cardWords(text, self, n) {
+  const t = String(text ?? '').replace(CARD_MD_LINK_RE, (m, words) => words);
+  const all = hubUrlWords(t, self, n), left = hubUrlWords(t, self, n, true);
+  if (left === all) return all;
+  const w = left.replace(/[\s,;:\u2014\u2013-]*(?:\b(?:see|link|ref)\b)?[\s:]*$/i, '');
+  return w.trim() ? w : all;
 }
 // ---- Card text: end --------------------------------------------------------
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
@@ -3228,13 +3261,19 @@ function askCardHtml(m, a, total, P) {
   const got = askAnswer(m, a, P), key = m.id + ':' + a.n;
   const chosen = got ? (got.approved || got.option || '') : '';
   const busy = !!(got && got.pending);
-  const head = `<div class="qa-q"><span class="qa-no">${total > 1 ? `Ask ${a.n + 1} of ${total}` : 'Ask'}</span><span class="qa-qt">${cardTextHtml(a.question, m.id)}</span><button type="button" class="qa-copy" data-ask="${esc(key)}" title="Copy a link to this question">Copy link</button>${!got ? `<button type="button" class="qa-close" data-ask="${esc(key)}" title="Close without answering">Close</button>` : ''}</div>`;
+  const head = `<div class="qa-q"><span class="qa-no">${total > 1 ? `Ask ${a.n + 1} of ${total}` : 'Ask'}</span><span class="qa-qt">${cardTextHtml(a.question, m.id, a.n)}</span><button type="button" class="qa-copy" data-ask="${esc(key)}" title="Copy a link to this question">Copy link</button>${!got ? `<button type="button" class="qa-close" data-ask="${esc(key)}" title="Close without answering">Close</button>` : ''}</div>`;
+  // An option: its answer button, holding its words, and beside it, in the
+  // same box, the links its label names and its note: a link is never inside
+  // the button (#238), and a click on the box's words answers as the button does.
   const opts = a.options.map(o => {
     const on = !!chosen && o.label === chosen;
-    return `<button type="button" class="qa-opt${o.recommended ? ' rec' : ''}${on ? ' on' : ''}" data-ask="${esc(key)}" data-opt="${esc(o.label)}"`
-      + `${got ? ' disabled' : ''} aria-pressed="${on}" title="${esc(got ? (on ? 'Your answer' : 'Answered') : `Answer “${hubUrlWords(o.label, m.id)}”${o.detail ? ': ' + hubUrlWords(o.detail, m.id) : ''}, with your comment if you wrote one. Sent once.`)}">`
-      + `<span class="qa-ol">${cardTextHtml(o.label, m.id)}</span>${o.recommended ? '<span class="lz lz-neutral">recommended</span>' : ''}`
-      + `${o.detail ? `<span class="qa-od">${cardTextHtml(o.detail, m.id)}</span>` : ''}</button>`;
+    const label = cardText(o.label, m.id, a.n), words = cardWords(o.label, m.id, a.n);
+    return `<div class="qa-optw${on ? ' on' : ''}${got ? ' off' : ''}">`
+      + `<button type="button" class="qa-opt${o.recommended ? ' rec' : ''}${on ? ' on' : ''}" data-ask="${esc(key)}" data-opt="${esc(o.label)}"`
+      + `${got ? ' disabled' : ''} aria-pressed="${on}" title="${esc(got ? (on ? 'Your answer' : 'Answered') : `Answer “${words}”${o.detail ? ': ' + cardWords(o.detail, m.id, a.n) : ''}, with your comment if you wrote one. Sent once.`)}">`
+      + `<span class="qa-ol">${esc(words)}</span>${o.recommended ? '<span class="lz lz-neutral">recommended</span>' : ''}</button>`
+      + `${label.links.length ? `<span class="qa-oa">${label.links.join(' ')}</span>` : ''}`
+      + `${o.detail ? `<span class="qa-od">${cardTextHtml(o.detail, m.id, a.n)}</span>` : ''}</div>`;
   }).join('');
   if (got) {
     const said = got.approved ? `Approved: ${got.approved}` : (got.option || '');
@@ -3244,15 +3283,15 @@ function askCardHtml(m, a, total, P) {
     const undo = !busy && !got.undone && (!!got.option || closed) && askUndoLeft(key) > 0;
     const words = closed ? `Closed by you · ${chatStamp(got.at).split(' ').at(-1)}` : busy ? 'Sending…' : undo ? 'Sent' : 'You answered';
     return `<div class="qa${busy ? ' busy' : ''} done" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts">${opts}</div>` : ''}`
-      + `<div class="qa-done"><span class="qa-dw">${words}${said ? ':' : ''}</span>${said ? ` <strong>${cardTextHtml(said, m.id)}</strong>` : ''}`
+      + `<div class="qa-done"><span class="qa-dw">${words}${said ? ':' : ''}</span>${said ? ` <strong>${cardTextHtml(said, m.id, a.n)}</strong>` : ''}`
       + (undo ? ` · <button type="button" class="qa-undo${closed ? ' qa-reopen' : ''}" data-ask="${esc(key)}" title="${closed ? 'Reopen this question' : 'Take this answer back'}">Undo</button>` : '')
       + (got.undone ? ' · taken back' : '')
-      + `${got.comment ? `<span class="qa-dc">${cardTextHtml(got.comment, m.id)}</span>` : ''}</div></div>`;
+      + `${got.comment ? `<span class="qa-dc">${cardTextHtml(got.comment, m.id, a.n)}</span>` : ''}</div></div>`;
   }
   const open = a.kind === 'open';
   const aside = ''; // An open card never ages out or closes when attention moves on.
-  return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + hubUrlWords(a.question, m.id))}">${opts}</div>` : ''}`
-    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + hubUrlWords(a.question, m.id))}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? `${MOD_ENTER} sends` : `Goes with the answer you press, or alone with Send comment (${MOD_ENTER})`}"></textarea>`
+  return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + hubUrlWords(a.question, m.id, a.n))}">${opts}</div>` : ''}`
+    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + hubUrlWords(a.question, m.id, a.n))}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? `${MOD_ENTER} sends` : `Goes with the answer you press, or alone with Send comment (${MOD_ENTER})`}"></textarea>`
     + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'} (${MOD_ENTER})">${open ? 'Send' : 'Send comment'}</button></div></div>`;
 }
 // An agent's balloon with asks: its words as always, each ask's lines drawn
@@ -3493,8 +3532,9 @@ async function askSend(key, option, post) {
 }
 function askClick(e) {
   // A chip or link in an option's words opens what it names; it does not answer (#238).
-  if (e.target.closest && e.target.closest('.qa-opt a')) return false;
-  const b =e.target.closest && e.target.closest('.qa-opt, .qa-send');
+  if (e.target.closest && e.target.closest('.qa-optw a')) return false;
+  const w = e.target.closest && !e.target.closest('.qa-opt') && e.target.closest('.qa-optw');
+  const b = w ? w.querySelector('.qa-opt') : e.target.closest && e.target.closest('.qa-opt, .qa-send');
   return askPress(b);
 }
 // An option or Send pressed: by a click, or Ctrl/⌘+Enter in the card's comment.
