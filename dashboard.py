@@ -15136,6 +15136,7 @@ class Handler(BaseHTTPRequestHandler):
         if thread and not threads.is_threaded(rid):
             thread = ""
         pids: list = []
+        noted = False
         # A draft (created but never launched, e.g. by a planning agent)
         # starts fresh; anything else resumes its agents' conversations.
         try:
@@ -15175,7 +15176,15 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                 if text and not held:
-                    sends.accept(rid, key, text, to)
+                    sends.accept(rid, key, text, to, thread=thread, also=data.get("also") is True)
+                if thread and text and not held and not again:
+                    # Kept before it is delivered (#237): its balloon is the
+                    # thread's reply from the first moment the chat shows it.
+                    try:
+                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text)
+                        noted = True
+                    except Exception as e:      # noqa: BLE001 — sent; placed by its points instead
+                        print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
                 result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
                           if quiet else self._resume_room(room_full, text=text, to=to, key=key))
                 if key:
@@ -15187,11 +15196,6 @@ class Handler(BaseHTTPRequestHandler):
                 if why:
                     raise StartRoomError(why)
                 _settle_asks(rid, text, key)
-                if thread and text and not held and not again:
-                    try:
-                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text)
-                    except Exception as e:      # noqa: BLE001 — sent; shown by the chain instead
-                        print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
         except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
             print(f"[resume] {rid}: refused — {exc!r}", flush=True)
             # ``kept``: the text is held here, shown in the chat as not
@@ -15207,6 +15211,11 @@ class Handler(BaseHTTPRequestHandler):
                 sends.drop(rid, [key])      # the page keeps it in the box
             if not kept:
                 _points_discard(rid, pids, key)
+                if noted:
+                    try:
+                        threads.drop_send(rid, key)
+                    except Exception as e:      # noqa: BLE001 — a record no balloon will pair
+                        print(f"[threads] {rid}: reply record kept: {e!r}", flush=True)
             return (400, {"error": str(exc) or exc.__class__.__name__, "kept": kept,
                           **({"send": sends.get(rid, key)} if kept and key else {})})
         return (200, {"ok": True, **result,

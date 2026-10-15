@@ -38,8 +38,9 @@ first threaded counts as read (``since``).
 
 **Storage.** ``threads/<room>.json`` beside the rooms folder: when the room
 was first threaded, when each thread was last opened, the anchors of replies
-sent from a thread, and the replies sent to the chat too. The threads
-themselves are never stored.
+sent from a thread, and every reply sent from a thread's box (``sent``: its
+key, its thread, whether it goes to the chat too, what it holds, and its
+balloon once found; #237). The threads themselves are never stored.
 
 Bound to the dashboard module like ``points``: nothing reads ``_d`` at import.
 """
@@ -445,7 +446,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
 
     last: str | None = None         # the thread of the last input: what a PO message answers
     activity = "team:activity"
-    sent_of = _pair_sent(recs, side)
+    sent_of = _pair_sent(recs, side, {p["key"]: p["mid"] for p in pts.values() if p.get("key") and p.get("mid")})
 
     def team(r: dict) -> str:
         # Hub and unclaimed task traffic has one home outside the channel.
@@ -493,6 +494,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     # A reply with no point (an image, a word the ledger
                     # keeps no point of) sent from a thread's box.
                     t = sent["thread"]
+                    if t.startswith("task:") and task_thread.get(t[5:]) not in (None, activity):
+                        t = task_thread[t[5:]]
                     if t.startswith("m:") and t not in threads and t[2:] in done:
                         # Its balloon's thread, or one of its own: Team
                         # activity is not a thread (as a point's anchor above).
@@ -513,10 +516,13 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     join(t, r)
                 last = tids[-1] if tids else None
                 if tids and not starts:
-                    _also_mark(r, tids, side, also)
                     # Slack (#234): what is typed in the channel is in the
                     # channel. Only a reply sent from a thread's own box stays
                     # in the thread alone, unless it was sent to the chat too.
+                    if sent and sent.get("also"):
+                        also[mid] = sent["thread"] if sent.get("thread") in tids else tids[-1]
+                    elif not sent:
+                        _also_mark(r, tids, side, also)     # a record from before #237
                     boxed = bool(sent) or (bool(made) and all(anchors.get(i) for i in made))
                     if not boxed and mid not in also:
                         also[mid] = tids[-1]
@@ -569,35 +575,75 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order}
 
 
-def _pair_sent(recs: list[dict], side: dict) -> dict[str, dict]:
+PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)
+PAIR_LATE_S = 6 * 3600          # a send read this long after it was sent, at most (a busy agent)
+
+
+def _pair_sent(recs: list[dict], side: dict, keyed: dict | None = None) -> dict[str, dict]:
     """The thread box send (:func:`note_send`) each person's balloon is:
-    ``{mid: send}``. A send is one balloon and a balloon one send, the
-    nearest in time with the same words first, so a short word said again
-    in the channel ("ok") is not taken for an earlier reply in a thread."""
-    sends = side.get("sent") or []
-    if not sends:
+    ``{mid: send}``. A send is one balloon and a balloon one send. By its
+    key first: the balloon the hub confirmed it in (:func:`confirmed`), or
+    the one a point it made is in (``keyed``: {key: mid}, the ledger's).
+    Else by what it holds (sends.Evidence: its point lines, its first words
+    as delivered, its images; a busy agent reads it late), else (a record
+    from before #237) by its words; the nearest in time first, so a word
+    said again in the channel ("ok") is not taken for a reply in a thread."""
+    rows = side.get("sent") or []
+    if not rows:
         return {}
-    pairs = []
-    for r in recs:
-        if r.get("role") != "user" or r.get("kind") != "human":
-            continue
-        words = _send_words(r.get("words") or "")
-        if not words:
-            continue
-        for n, a in enumerate(sends):
-            if a.get("words") != words:
-                continue
-            at = _num(a.get("at"))
-            if r["ts"] and not (at - ALSO_SLACK_S <= r["ts"] <= at + ALSO_SLACK_S):
-                continue
-            pairs.append((abs((r["ts"] or at) - at), n, r["mid"]))
+    keyed = keyed or {}
+    people = [r for r in recs if r.get("role") == "user" and r.get("kind") == "human"]
+    by_mid = {r["mid"]: r for r in people}
     out: dict[str, dict] = {}
     taken: set[int] = set()
+    for n, a in enumerate(rows):
+        mid = a.get("mid") or keyed.get(a.get("key") or "")
+        if mid in by_mid and mid not in out:
+            taken.add(n)
+            out[mid] = a
+    pairs = []
+    turns: dict[str, object] = {}
+    for n, a in enumerate(rows):
+        if n in taken:
+            continue
+        at = _num(a.get("at"))
+        ev = _d.sends.Evidence.kept(a["ev"]) if _d and isinstance(a.get("ev"), dict) else None
+        words = a.get("words") or ""
+        for r in people:
+            if r["mid"] in out:
+                continue
+            ts = r["ts"]
+            if ev is not None and ev.kind:
+                if ts and not (at - PAIR_SLACK_S <= ts <= at + PAIR_LATE_S):
+                    continue
+                if r["mid"] not in turns:
+                    turns[r["mid"]] = _d.sends._Turn(r["turn"].get("text") or "")
+                if not _holds(turns[r["mid"]], ev):
+                    continue
+            else:
+                if not words or _send_words(r.get("words") or "") != words:
+                    continue
+                if ts and not (at - ALSO_SLACK_S <= ts <= at + ALSO_SLACK_S):
+                    continue
+            pairs.append((abs((ts or at) - at), n, r["mid"]))
     for _, n, mid in sorted(pairs):
         if n not in taken and mid not in out:
             taken.add(n)
-            out[mid] = sends[n]
+            out[mid] = rows[n]
     return out
+
+
+def _holds(turn, ev) -> bool:
+    """Whether a balloon holds all a send's evidence says (sends._Turn, but
+    every part: its point lines, its words, its images), without claiming
+    it: two follow-ups of one point carry the same point line. Images count
+    only for a send of images alone, as sends does (a transcript may name
+    them otherwise)."""
+    if turn._less(turn.points, ev.points) is None:
+        return False
+    if ev.words and turn._span(ev) is None:
+        return False
+    return ev.kind != "images" or turn._less(turn.images, ev.images) is not None
 
 
 def _send_words(norm: str) -> str:
@@ -995,32 +1041,56 @@ def reply_text(room_id: str, room: dict, tid: str, text: str) -> str:
     return f"Re {pids[-1]}: {body}" if pids else text
 
 
-def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, text: str) -> None:
-    """A reply sent from a thread's box: the points it made are in that
-    thread (a thread without a point gets one now), and with ``also`` the
-    reply shows in the chat too."""
+def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, text: str,
+              now: float | None = None) -> None:
+    """A reply sent from a thread's box, before it is delivered: the points
+    it made are in that thread (a thread without a point gets one now), and
+    the send itself is kept (#237), so its balloon is that thread's reply
+    whatever it says (a ``Re Pn`` that makes no point, images, a quote):
+    in the chat too only with ``also``. Its balloon is found by its key
+    (:func:`confirmed`, the points it made), else by what it holds."""
     if not tid:
         return
     with _LOCK:
         side = load_side(room_id)
-        changed = False
         for pid in pids or []:
             if not re.fullmatch(points.POINT_ID, tid) or pid != tid:
-                if side["anchors"].get(pid) != tid:
-                    side["anchors"][pid] = tid
-                    changed = True
-        words = _send_words(points.norm_text(points.strip_point_lines(text or "")))
-        if also:
-            side["also"] = [a for a in side["also"] if not (key and a.get("key") == key)]
-            side["also"].append({"thread": tid, "key": key, "at": time.time(), "words": words})
-            changed = True
-        if not pids and words:
-            # A reply with no point: matched to its balloon by its words (#234).
-            mine = _send_words(points.norm_text(points.strip_point_lines(
-                _d.message_refs.strip_message_refs(text or "")))) if _d else words
-            side["sent"] = [a for a in side["sent"] if not (key and a.get("key") == key)]
-            side["sent"].append({"thread": tid, "key": key, "at": time.time(), "words": mine, "also": bool(also)})
-            changed = True
+                side["anchors"][pid] = tid
+        mine = _send_words(points.norm_text(points.strip_point_lines(
+            _d.message_refs.strip_message_refs(text or "")))) if _d else \
+            _send_words(points.norm_text(points.strip_point_lines(text or "")))
+        side["sent"] = [a for a in side["sent"] if not (key and a.get("key") == key)]
+        side["sent"].append({"thread": tid, "key": key, "at": time.time() if now is None else now,
+                             "words": mine, "also": bool(also), "pids": list(pids or []),
+                             "ev": _d.sends.evidence(text or "").keep() if _d else {}})
+        _save_side(room_id, side)
+
+
+def drop_send(room_id: str, key: str) -> None:
+    """A send refused and not kept: its record goes (its next attempt makes it again)."""
+    if not key:
+        return
+    with _LOCK:
+        side = load_side(room_id)
+        left = [a for a in side["sent"] if a.get("key") != key]
+        if len(left) != len(side["sent"]):
+            side["sent"] = left
+            _save_side(room_id, side)
+
+
+def confirmed(room_id: str, mids: dict) -> None:
+    """The sends ``{key: balloon id}`` were found in the conversation
+    (sends.sync): a thread's reply is paired with its balloon for good."""
+    if not _ROOM_ID.fullmatch(room_id or "") or not mids:
+        return
+    with _LOCK:
+        side = load_side(room_id)
+        changed = False
+        for a in side["sent"]:
+            mid = mids.get(a.get("key") or "")
+            if mid and a.get("mid") != mid:
+                a["mid"] = mid
+                changed = True
         if changed:
             _save_side(room_id, side)
 

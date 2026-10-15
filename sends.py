@@ -158,10 +158,13 @@ def get(room_id: str, key: str) -> dict | None:
         return dict(s) if s else None
 
 
-def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = None) -> dict:
+def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = None,
+           thread: str = "", also: bool = False) -> dict:
     """The hub has taken ``text`` (as it will be delivered) under ``key``:
     queued. The same key again is the same send: kept as it is, except that
-    one that failed is queued again (its retry)."""
+    one that failed is queued again (its retry). ``thread``: sent from a
+    thread's box (threads.py), so the chat's page draws it there alone
+    unless ``also``."""
     now = time.time() if now is None else now
     with _LOCK:
         items = _prune(_load(room_id), now)
@@ -170,6 +173,8 @@ def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = 
             # The whole text: Retry sends it again as it is.
             s = {"key": key, "text": text or "", "to": to or "", "at": now,
                  "state": "queued", "stateAt": now, "error": "", "boot": BOOT}
+            if thread:
+                s.update(thread=thread, also=bool(also))
             items.append(s)
         elif s["state"] == "failed":
             _set(s, "queued", now)
@@ -320,6 +325,19 @@ class Evidence:
         self.words, self.cut = words[:_NEEDLE], len(words) > _NEEDLE
         self.images = _image_paths(send_text)
         self.kind = "points" if self.points else "words" if self.words else "images" if self.images else ""
+
+    def keep(self) -> dict:
+        """What of it a record keeps (:meth:`kept` makes it again)."""
+        return {"points": self.points, "words": self.words, "cut": self.cut, "images": self.images}
+
+    @classmethod
+    def kept(cls, d: dict) -> "Evidence":
+        ev = cls("")
+        ev.points = [str(x) for x in d.get("points") or []]
+        ev.words, ev.cut = str(d.get("words") or ""), bool(d.get("cut"))
+        ev.images = [str(x) for x in d.get("images") or []]
+        ev.kind = "points" if ev.points else "words" if ev.words else "images" if ev.images else ""
+        return ev
 
     def order(self) -> tuple[int, int]:
         """Points first (they can only be this send's), then the fullest."""
@@ -579,6 +597,13 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
                 changed = True
         if changed:
             _save(room_id, items)
+    # A reply sent from a thread's box: its balloon, by its key (threads.py).
+    found = {k: m for k, m in hits.items() if HIDDEN_MID not in m}
+    if found:
+        try:
+            _d.threads.confirmed(room_id, found)
+        except Exception as e:  # noqa: BLE001 — threads pair it by what it says instead
+            _log(f"{room_id}: thread replies not marked: {e!r}")
 
 
 def reconcile(room_id: str, now: float | None = None) -> list[dict]:
@@ -618,8 +643,8 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
                 s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
             continue        # in the conversation (or never to be: a /command)
         row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read",
-                                     "afterRestart")
-               if s.get(k) not in (None, "")}
+                                     "afterRestart", "thread", "also")
+               if s.get(k) not in (None, "", False)}
         if s.get("redeliveries"):
             row["redeliveredAt"] = s["redeliveries"][-1]["at"]     # "typed in again at …"
         out.append(row)
