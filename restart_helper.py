@@ -14,6 +14,9 @@ import urllib.request
 from backends import ptyhost
 
 
+PORT_FREE_WAIT_S = 10.0     # for the old hub's port, once its process is gone
+
+
 def hub_args(plan: dict, port: int) -> list[str]:
     """Keep the original bind and flags while replacing this instance's port."""
     args = [plan["python"]]
@@ -189,10 +192,17 @@ def _run(plan: dict) -> int:
     else:
         log("old hub did not stop; leaving it running")
         return 1
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as check:
-        if check.connect_ex(("127.0.0.1", plan["port"])) == 0:
+    # The port can outlive the process for a moment (Windows closes its
+    # handles after the exit): giving up at once left no hub at all.
+    end = time.monotonic() + PORT_FREE_WAIT_S
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as check:
+            if check.connect_ex(("127.0.0.1", plan["port"])) != 0:
+                break
+        if time.monotonic() >= end:
             log("old hub port is still occupied; leaving PTY host intact")
             return 1
+        time.sleep(0.2)
     if not plan["keepAgents"]:
         state = Path(plan["leasePath"]).parent
         try:
