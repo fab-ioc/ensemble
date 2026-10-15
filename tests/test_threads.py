@@ -291,12 +291,12 @@ class AssignTest(unittest.TestCase):
         recs, pts = self.leak_case("Re P1: is this ready?")
         row = self.sent_row("Re P1: is this ready?", 100)
         out = self.run_(recs, pts, side(sent=[row]))
-        self.assertEqual(out["paired"], {"k": "s:2"})
+        self.assertEqual(out["paired"], {"k": ("s:2", T0 + 100)})
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(threads, "_dir", lambda: Path(tmp)):
             rid = "room-abc126"
             threads.forget()
             threads._save_side(rid, side(sent=[row]))
-            threads.confirmed(rid, out["paired"])
+            threads.confirmed(rid, {"k": "s:2"})
             sd = threads.load_side(rid)
             sd["sent"] += [self.sent_row(f"other {n}", 200 + n, key=f"o{n}") for n in range(threads.SIDE_KEEP)]
             threads._save_side(rid, sd)
@@ -304,9 +304,36 @@ class AssignTest(unittest.TestCase):
             kept = threads.load_side(rid)
             threads.forget()
         self.assertEqual(len(kept["sent"]), threads.SIDE_KEEP + 1)
-        self.assertEqual(kept["sent"][0], {"mid": "s:2", "thread": "P1", "also": False, "key": "k"})
+        self.assertEqual(kept["sent"][0], {"mid": "s:2", "thread": "P1", "also": False})
         out = self.run_(recs, pts, kept)
         self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+        # Review 2: a placement is never dropped, however many come after.
+        many = [{"mid": f"x:{n}", "thread": "P1", "also": False} for n in range(25000)]
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(threads, "_dir", lambda: Path(tmp)):
+            threads._save_side("room-abc127", side(sent=many + kept["sent"]))
+            threads.forget()
+            again = threads.load_side("room-abc127")["sent"]
+            threads.forget()
+        self.assertEqual(len(again), 25000 + 1 + threads.SIDE_KEEP)
+        self.assertEqual(again[0]["mid"], "x:0")
+
+    def test_the_same_words_in_the_chat_before_a_pending_reply_are_the_chats(self):
+        # Review 2: "Re P1: ship it" typed in the chat at 90, the same sent
+        # from P1's box at 100 and read at 120.
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."),
+                human("s:2", 90, "Re P1: ship it [point P1]", re_=["P1"])]
+        pts = [point("P1", "s:0", "make the chart wider", followUps=["s:2"])]
+        row = self.sent_row("Re P1: ship it [point P1]", 100)
+        # The hub found the chat's own send in s:2: no guess takes it.
+        out = threads.assign(recs, {"points": pts}, side(sent=[row]), None, claimed={"kc": "s:2"})
+        self.assertEqual(out["paired"], {})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
+        # Not known to the hub (typed in the terminal): the balloon after the send wins once it comes.
+        recs.append(human("s:3", 120, "Re P1: ship it [point P1]", re_=["P1"]))
+        pts[0]["followUps"].append("s:3")
+        out = self.run_(recs, pts, side(sent=[row]))
+        self.assertEqual(out["paired"], {"k": ("s:3", T0 + 100)})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2"])
 
     def test_a_ticked_follow_up_is_in_the_thread_and_the_chat(self):
         recs, pts = self.leak_case("Re P1: is this ready?")
@@ -589,6 +616,13 @@ class Endpoints(tp._World):
         self.assertEqual(status, 400)
         if not body.get("kept"):
             self.assertEqual(threads.load_side(self.rid)["sent"], [])
+
+    def test_a_send_confirmed_by_its_posts_id_keeps_its_balloon(self):
+        # Review 2: a team chat's post confirms its send by id (sends.mark).
+        dashboard.sends.accept(self.rid, "kp", "Re P1: posted", thread="P1")
+        threads.note_send(self.rid, "P1", "kp", [], False, "Re P1: posted")
+        dashboard.sends.mark(self.rid, ["kp"], "confirmed", mid="m-123")
+        self.assertEqual([(a["key"], a.get("mid")) for a in threads.load_side(self.rid)["sent"]], [("kp", "m-123")])
 
     def test_discard_and_withdraw_take_the_thread_record_back(self):
         # Review 1: a reply taken back is no thread's; the same words typed

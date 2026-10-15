@@ -218,6 +218,13 @@ def mark(room_id: str, keys, state: str, error: str = "", mid: str = "",
                 _save(room_id, items)
     except (OSError, ValueError) as e:     # the delivery itself stands
         _log(f"{room_id}: sends not marked {state}: {e!r}")
+        return
+    if state == "confirmed" and mid and HIDDEN_MID not in mid:
+        # A team chat's post (its message id): a thread's reply, placed for good.
+        try:
+            _d.threads.confirmed(room_id, {k: mid for k in keys})
+        except Exception as e:  # noqa: BLE001 — threads pair it by what it holds instead
+            _log(f"{room_id}: thread replies not marked: {e!r}")
 
 
 def hold_for_restart(room_id: str, keys, now: float | None = None) -> None:
@@ -604,6 +611,12 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
             _d.threads.confirmed(room_id, found)
         except Exception as e:  # noqa: BLE001 — threads pair it by what it says instead
             _log(f"{room_id}: thread replies not marked: {e!r}")
+
+
+def confirmed_mids(room_id: str) -> dict[str, str]:
+    """{key: balloon id} of the sends found in the conversation (kept KEEP_S)."""
+    with _LOCK:
+        return {s["key"]: s["mid"] for s in _load(room_id) if s["state"] == "confirmed" and s.get("mid")}
 
 
 def reconcile(room_id: str, now: float | None = None) -> list[dict]:
