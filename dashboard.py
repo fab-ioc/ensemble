@@ -11187,10 +11187,7 @@ def _run_app_update(rel: dict, lease: str) -> None:
     # takes it meanwhile.
     done = threading.Event()
 
-    def renew() -> None:
-        while not done.wait(20):
-            app_update.renew_lease(str(_restart_lease_path()), lease)
-    threading.Thread(target=renew, daemon=True).start()
+    threading.Thread(target=_renew_restart_lease, args=(lease, done), daemon=True).start()
     plan_path = UPDATE_DIR / f"plan-{uuid.uuid4().hex}.json"
     try:
         stage("downloading", to=rel["version"], error="", at=time.time())
@@ -11332,6 +11329,18 @@ def _take_restart_lease() -> tuple[str, float]:
 # What each lease of this process is for ("update" | "restart"): the snapshot
 # records it, so the hub that comes back says how an update went in update.log.
 _LEASE_PURPOSE: dict[str, str] = {}
+
+
+def _renew_restart_lease(lease: str, done: threading.Event, every: float = 20) -> None:
+    """Renew ``lease`` every ``every`` s until ``done``. Under the lock that
+    takes and drops leases, and never once ``done`` is set: a renewal between
+    the drop's unlink and its own write would bring the lease back, or
+    overwrite the lease the next restart took."""
+    while not done.wait(every):
+        with _RESTART_LOCK:
+            if done.is_set():
+                return
+            app_update.renew_lease(str(_restart_lease_path()), lease)
 
 
 def _drop_restart_lease(lease: str) -> None:
@@ -11801,10 +11810,7 @@ def check_pty_host() -> dict | None:
         return None
     done = threading.Event()
 
-    def renew() -> None:
-        while not done.wait(20):
-            app_update.renew_lease(str(_restart_lease_path()), lease)
-    threading.Thread(target=renew, daemon=True).start()
+    threading.Thread(target=_renew_restart_lease, args=(lease, done), daemon=True).start()
     try:
         return recover_pty_host(client)
     finally:

@@ -402,6 +402,63 @@ class LeasePurposes(unittest.TestCase):
             self.assertNotIn("L2", dashboard._LEASE_PURPOSE)
 
 
+class RenewalAfterTheDrop(unittest.TestCase):
+    """A renewal never brings back a lease dropped while it ran."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        p = mock.patch.object(dashboard, "DASHBOARD_DIR", Path(self.temp.name))
+        p.start()
+        self.addCleanup(p.stop)
+        self.lease, _ = dashboard._take_restart_lease()
+        self.path = dashboard._restart_lease_path()
+        self.done = threading.Event()
+
+    def test_a_drop_waits_for_a_renewal_between_its_read_and_its_write(self):
+        real = dashboard.app_update.renew_lease
+        read, go = threading.Event(), threading.Event()
+
+        def slow_renew(path, lease_id):
+            json.loads(Path(path).read_text(encoding="utf-8"))
+            read.set()
+            go.wait(5)
+            real(path, lease_id)
+        with mock.patch.object(dashboard.app_update, "renew_lease", slow_renew):
+            renewer = threading.Thread(target=dashboard._renew_restart_lease,
+                                       args=(self.lease, self.done, 0.01))
+            renewer.start()
+            self.assertTrue(read.wait(5))
+            self.done.set()
+            dropper = threading.Thread(target=dashboard._drop_restart_lease, args=(self.lease,))
+            dropper.start()
+            dropper.join(0.3)
+            self.assertTrue(dropper.is_alive())     # waits for the renewal's write
+            go.set()
+            renewer.join(5)
+            dropper.join(5)
+        self.assertFalse(self.path.exists())
+        lease, _ = dashboard._take_restart_lease()  # the next restart gets it
+        self.assertTrue(lease)
+        dashboard._drop_restart_lease(lease)
+
+    def test_a_renewal_due_as_the_recovery_ends_writes_nothing(self):
+        calls = []
+        with mock.patch.object(dashboard.app_update, "renew_lease",
+                               lambda *a: calls.append(a)):
+            with dashboard._RESTART_LOCK:
+                renewer = threading.Thread(target=dashboard._renew_restart_lease,
+                                           args=(self.lease, self.done, 0.01))
+                renewer.start()
+                time.sleep(0.1)                     # due, waiting for the lock
+                self.done.set()
+                self.path.unlink()
+            renewer.join(5)
+        self.assertFalse(renewer.is_alive())
+        self.assertEqual(calls, [])
+        self.assertFalse(self.path.exists())
+
+
 class HostVersionByResourcePath(unittest.TestCase):
     def setUp(self):
         self.real = ptyhost.version()
