@@ -85,15 +85,17 @@ const PointRefs = (() => {
       const href = '/session?room=' + encodeURIComponent(at.room) + '&msg=' + encodeURIComponent(at.msg) + '&part=' + at.part;
       const links = c ? [{ text: p.card.open ? 'Answer the question ↓' : 'The question ↓', title: p.card.question || '', point: c },
                          { text: 'His message', title: 'The message that raised ' + p.id, point: his }] : null;
-      return TaskCard.chipHtml({ roomId: p.roomId, ref: p.id, label: p.id, title, project: p.project,
+      const h = TaskCard.chipHtml({ roomId: p.roomId, ref: p.id, label: p.id, title, project: p.project,
         inProject: p.projectId === ctx.own, agents: [] }, { href, point: at, links, state: [stage, when].filter(Boolean).join(' · ') });
+      // What the chip opens: a link right after it to either is the same place (#238).
+      return { h, at: [his, c].filter(Boolean) };
     }
     function replace(text, ctx, plain = s => s, park = s => s) {
       let out = '', at = 0;
       for (const r of refsIn(text, ctx)) {
-        const h = chip(r, ctx);
-        if (!h) continue;
-        out += plain(text.slice(at, r.start)) + park(h); at = r.end;
+        const x = chip(r, ctx);
+        if (!x) continue;
+        out += plain(text.slice(at, r.start)) + park(x.h, x.at); at = r.end;
       }
       return out + plain(text.slice(at));
     }
