@@ -261,6 +261,24 @@ class TheGate(unittest.TestCase):
             for method in ("GET", "HEAD"):
                 self.assertEqual(self.hub.get(path, self.PROXIED, method=method)[0], 401, (method, path))
         self.assertEqual(self.hub.get("/apple-touch-icon.png", self.PROXIED, method="HEAD")[0], 200)
+        # Request targets sent as they are, which urlparse would read as an
+        # open path: absolute form, a fragment, an inner double slash, a
+        # backslash. (A leading "//" is made "/" by http.server itself, the
+        # same path.)
+        import http.client
+        for target in ("http://elsewhere.example/apple-touch-icon.png", "/apple-touch-icon.png#x",
+                       "/static/icons\\apple-touch-icon.png",
+                       "http://elsewhere.example/manifest.webmanifest", "/static//icons/icon-192.png"):
+            for method in ("GET", "HEAD"):
+                c = http.client.HTTPConnection("127.0.0.1", self.hub.port, timeout=10)
+                try:
+                    c.putrequest(method, target, skip_host=True, skip_accept_encoding=True)
+                    for k, v in self.PROXIED.items():
+                        c.putheader(k, v)
+                    c.endheaders()
+                    self.assertEqual(c.getresponse().status, 401, (method, target))
+                finally:
+                    c.close()
 
     def test_a_starting_hub_answers_the_root_touch_icons(self):
         for path in dashboard.APPLE_TOUCH_PATHS:

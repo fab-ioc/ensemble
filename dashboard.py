@@ -47,7 +47,7 @@ import types
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlparse, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlparse
 
 # All OS-specific behavior (terminal control, process introspection, desktop
 # integration) lives behind a platform backend, selected by sys.platform.
@@ -14418,10 +14418,12 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         if not ACCESS_TOKEN or self._is_local():
             return True
-        # The path as sent: urlparse drops a last ";params", which made
-        # /apple-touch-icon.png;x an open path too (#243 review).
-        raw = urlsplit(self.path).path
-        if self.command in ("GET", "HEAD") and ".." not in raw and "%" not in raw and ";" not in raw and (
+        # The path exactly as sent, up to a query: urlparse drops a last
+        # ";params", a "#..." and an absolute-form "http://host" in front,
+        # each of which made another target open too (#243 review).
+        raw = self.path.split("?", 1)[0]
+        if self.command in ("GET", "HEAD") and raw.startswith("/") and not any(
+                c in raw for c in ("..", "%", ";", "#", "//", "\\")) and (
                 raw in UNGATED_PATHS or raw.startswith(UNGATED_PREFIXES)):
             return True
         tok = self._presented_token(u)
