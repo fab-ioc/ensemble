@@ -86,7 +86,7 @@ async function main() {
             const focusedBottom=d.getElementById('compose').getBoundingClientRect().bottom;
             const expanded=input.getBoundingClientRect().height; input.blur(); input.value=''; input.dispatchEvent(new Event('input',{bubbles:true}));
             const tools=d.querySelector('.phone-compose-tools'); tools.open=true;
-            const menuTargets=[...tools.querySelectorAll('button')].map(b=>[b.getBoundingClientRect().width,b.getBoundingClientRect().height]);
+            const menuTargets=[...tools.querySelectorAll('button:not([hidden])')].map(b=>[b.getBoundingClientRect().width,b.getBoundingClientRect().height]);
             tools.querySelector('[data-phone-action="team-all"]').click();
             const filter=w.eval('TEAM_ALL');
             w.eval('ROOM_OBJ.openAsk=null; showAskLine(LAST_ITEMS)');

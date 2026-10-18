@@ -1010,8 +1010,9 @@
   .qa-oa { min-width:0; overflow-wrap:anywhere; }
   .qa-od { flex:1 1 100%; min-width:0; padding-bottom:var(--s-100); color:var(--fg-muted); font-size:var(--fs-200); font-weight:400; overflow-wrap:anywhere; cursor:auto; }
   .qa-cm { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--s-200); margin-top:var(--s-200); }
-  .qa-cm textarea { flex:1 1 200px; min-width:0; max-width:100%; box-sizing:border-box; min-height:32px; resize:vertical;
-    padding:var(--s-100) var(--s-200); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
+  /* A comment grows with its text as the message box does (#242). */
+  .qa-cm textarea { flex:1 1 200px; min-width:0; max-width:100%; box-sizing:border-box; min-height:32px; max-height:40vh;
+    field-sizing:content; overflow-y:auto; resize:none; padding:var(--s-100) var(--s-200); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
     border-radius:var(--r-200); font:inherit; }
   .qa-send { flex:0 0 auto; min-height:32px; padding:0 var(--s-300); background:var(--surface); border:1px solid var(--border-strong);
     border-radius:var(--r-200); color:var(--fg); font:inherit; cursor:pointer; }
@@ -1346,8 +1347,10 @@
     #compose #hint { font-size:var(--fs-100); line-height:16px; }
     #compose { display:grid; grid-template-columns:minmax(0,1fr) auto; padding:var(--s-100); gap:var(--s-100); }
     #compose:focus-within { box-shadow:inset 0 0 0 2px var(--focus-ring); }
-    /* The draft determines the height. Focus must not move Send during a press. */
-    #compose #input { min-height:var(--touch-min); max-height:88px; height:auto; field-sizing:content; overflow-y:auto; resize:none; }
+    /* The draft determines the height, up to 40% of what is visible (the
+       frame's height, which the keyboard shortens; #242), then it scrolls.
+       Focus must not move Send during a press. */
+    #compose #input { min-height:var(--touch-min); max-height:40vh; height:auto; field-sizing:content; overflow-y:auto; resize:none; }
     #compose #hint:empty { display:none; }
     /* The words get the box's width (#232): nothing but + and Send beside them;
        "Also send to chat" is a quiet line under the box. */
@@ -1361,9 +1364,25 @@
     .phone-compose-tools summary::-webkit-details-marker { display:none; }
     .phone-compose-tools .phone-tools-menu { position:absolute; bottom:100%; right:0; width:220px; padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); z-index:10; }
     .phone-tools-menu button { display:block; width:100%; text-align:left; }
+    .phone-tools-menu button[hidden] { display:none; }
     #compose:has(.ed-pt) { grid-template-columns:minmax(0,1fr); }
     #compose:has(.ed-pt) .ed-row { justify-content:flex-end; }
   }
+  /* A phone's chat (#242): one row above the messages, never four. The Needs
+     you line already lists the open questions (under Older questions, its
+     count in the line) and the threads with new replies, so their own strips
+     go while it shows; Threads and Earlier messages are in the box's + menu. */
+  @media (pointer: coarse) and (max-width: 767px) {
+    #msgpane:has(#points-line:not([hidden])) #open-questions,
+    #msgpane:has(#points-line:not([hidden])) #thread-catchup { display: none; }
+    body.po-thread-channel #chatbar { display: none; }
+    /* In the list of threads, its bar says so and leads back. */
+    body.po-thread-channel #chatbar:has(#threads-view[aria-pressed="true"]) { display: flex; }
+    #points-line { margin: 0; border-radius: 0; border-width: 0 0 1px; }
+    #points-line .pt-sum-oq { display: inline; }
+    #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  }
+  .pt-sum-oq { display: none; }
   @media not all and (pointer: coarse) {
     #compose { margin:0 var(--s-300) var(--s-200); grid-template-columns:minmax(0,1fr) auto; }
     #compose #input { grid-column:1; grid-row:1; }
@@ -1532,6 +1551,8 @@
           <button type="button" data-phone-action="attach">Attach image</button>
           <button type="button" data-phone-action="add-point">Add an ask</button>
           <button type="button" data-phone-action="team-all">Team activity</button>
+          <button type="button" data-phone-action="threads-view" hidden>Threads</button>
+          <button type="button" data-phone-action="earlier-threads" hidden>Earlier messages</button>
         </div></details>
         <button type="button" id="add-point" title="Add a numbered ask (Ctrl+Shift+Enter)">+ Add an ask</button>
         <!-- Pasting or dropping a screenshot still works; this is the way you can see. -->
@@ -1611,6 +1632,20 @@ document.addEventListener('click', e => {
   action.closest('details').open = false;
   document.getElementById(action.dataset.phoneAction).click();
 });
+// Threads and Earlier messages: in the + menu whenever their buttons in the
+// chat's bar are offered (a phone has no such bar in a PO chat, #242).
+for (const id of ['threads-view', 'earlier-threads']) {
+  const src = document.getElementById(id), item = document.querySelector(`[data-phone-action="${id}"]`);
+  if (!src || !item) continue;
+  const mirror = () => {
+    item.hidden = src.hidden;
+    const on = src.getAttribute('aria-pressed');
+    if (on === null) item.removeAttribute('aria-pressed'); else item.setAttribute('aria-pressed', on);
+    if (id === 'threads-view') item.textContent = on === 'true' ? 'Back to the chat' : 'Threads';
+  };
+  new MutationObserver(mirror).observe(src, { attributes: true, attributeFilter: ['hidden', 'aria-pressed'] });
+  mirror();
+}
 if (TOUCH && window.visualViewport) {
   // Set only while the visible viewport is shorter than the page (the iOS
   // keyboard); otherwise 100dvh, so a stale reading can never shorten the page.
@@ -1623,6 +1658,11 @@ if (TOUCH && window.visualViewport) {
   visualViewport.addEventListener('resize', fitVisualViewport);
   fitVisualViewport();
 }
+// The dashboard sizes the chat to the keyboard only while a text field has
+// focus (#242): tell it when focus comes or goes here.
+const kbdTell = () => { try { if (window.top !== window && window.top.kbdCheck) window.top.kbdCheck(); } catch (e) {} };
+document.addEventListener('focusin', kbdTell);
+document.addEventListener('focusout', kbdTell);
 const $ = s => document.querySelector(s);
 // Write only what changed: a poll that rewrites the same text still replaces
 // the node, and the page repaints under whatever the person is doing.
@@ -4286,8 +4326,11 @@ function pointsListHtml(P, href, now) {
 function pointsLineHtml(P, open, href, now) {
   const sum = pointsSummary(P);
   if (!sum) return '';
+  // On a phone the open questions have no strip of their own (#242): their count is in the line.
+  const older = (P.needs && (P.needs.olderCount || (P.needs.older || []).length)) || 0;
+  const oq = older ? `<span class="pt-sum-oq"> · ${esc(plural(older, 'older question', 'older questions'))}</span>` : '';
   return `<button type="button" class="pt-sum" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each ask, with your message and its answer'}">`
-    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span><span class="pt-sum-t">${esc(sum)}</span></button>`
+    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span><span class="pt-sum-t">${esc(sum)}${oq}</span></button>`
     + `<ul id="points-list"${open ? '' : ' hidden'}>${open ? pointsListHtml(P, href, now) : ''}</ul>`;
 }
 // A balloon asking for the person's decision, or a task's own question, with a
@@ -7029,10 +7072,15 @@ $('#input').addEventListener('input', () => {
 // Keep the same stable, capped height there without tying it to focus.
 const SEND_SIZE_FALLBACK = !CSS.supports('field-sizing', 'content');
 function fitSendInput() {
-  if (!SEND_SIZE_FALLBACK) return;
-  const ta = $('#input');
-  ta.style.height = '44px';
-  ta.style.height = Math.min(88, Math.max(44, ta.scrollHeight)) + 'px';
+  if (SEND_SIZE_FALLBACK) fitToText($('#input'), 44);
+}
+// To its text, between a row and 40% of the frame (the CSS cap), on input only.
+function fitToText(ta, row) {
+  if (!ta) return;
+  ta.style.height = row + 'px';
+  const cs = getComputedStyle(ta);
+  const edge = cs.boxSizing === 'border-box' ? ta.offsetHeight - ta.clientHeight : -(parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
+  ta.style.height = Math.min(Math.round(window.innerHeight * .4), Math.max(row, ta.scrollHeight + edge)) + 'px';
 }
 if (SEND_SIZE_FALLBACK && window.ResizeObserver) {
   let width = -1;
@@ -8234,7 +8282,9 @@ $('#points-line').addEventListener('click', e => {
 });
 $('#msgs').addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
-  if (ta) askDraftSet(ta.dataset.ask, ta.value);
+  if (!ta) return;
+  askDraftSet(ta.dataset.ask, ta.value);
+  if (SEND_SIZE_FALLBACK) fitToText(ta, parseFloat(getComputedStyle(ta).minHeight) || 32);
 });
 // Ctrl/⌘+Enter in a card's comment is its Send, sent once (askSend's guard;
 // a held key's repeats do nothing). Mid-composition it waits for the text.

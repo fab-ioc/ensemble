@@ -3267,16 +3267,18 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        task) and to the project. The task used to cover the bar too, which left
        no way to the PO until the task was closed. Its height follows the
        visible viewport (--vv-h, set by script), so the on-screen keyboard
-       never covers the chat composer at the bottom of the panel. */
+       never covers the chat composer at the bottom of the panel; with the
+       keyboard down it stops above the home indicator (the safe area, #242;
+       --vv-safe is 0 while the keyboard covers it). */
     #detail-panel {
       top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto; width: 100vw;
-      height: calc(var(--vv-h, 100dvh) - var(--top-h));
+      height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px)));
       border-left: 0; border-radius: 0; box-shadow: none;
       padding: var(--s-300) var(--s-300) var(--s-600);
     }
     #detail-panel-resize { display: none !important; }
     body.detail-open main { padding-right: 0; }
-    body.po-peek #po-panel { top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto; height: calc(var(--vv-h, 100dvh) - var(--top-h)); }
+    body.po-peek #po-panel { top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto; height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px))); }
 
     /* Live-embed header: shrink it so the terminal gets the room. Chips and the
        action buttons scroll horizontally in one row instead of stacking. */
@@ -3308,7 +3310,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* The bar: identity goes, search folds into a button that opens over the
        bar, and the plan chip moves into the avatar menu (a warning still
        reaches the banner above the bar). */
-    header { gap: 0; padding: 0 var(--s-100); }
+    /* The page's 16px gutter (#242): Create and Panels touched the edge. */
+    header { gap: 0; padding: 0 var(--s-400); }
     .bar-sep { display: none; }
     #plan-usage-slot { display: none; }
     .me-item.me-phone { display: flex; }
@@ -3791,20 +3794,21 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dock.dk-narrow .dk-head { flex-basis: calc(var(--touch-min) + 1px); height: calc(var(--touch-min) + 1px); }
   .dock.dk-narrow .dk-tab { min-height: var(--touch-min); }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
-    body.po-dock main { height: calc(var(--vv-h, 100dvh) - var(--top-h)); padding-bottom: 0; }
+    body.po-dock main { height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px))); padding-bottom: 0; }
     body.po-dock #po-dock-host { border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; }
     /* An open task (#129): its tabs straight under the bar, nothing between. */
     body.dp-docked main { padding-top: 0; }
     body.dp-docked #po-dock-host { border-top: 0; }
     .pd-pane { padding: var(--s-200) var(--s-300); }
     .pdp-btn, a.pdp-link, .pdp-fold, .pdp-thr { min-height: var(--touch-min); display: inline-flex; align-items: center; }
-    .pd-ctl .po-btn { min-height: var(--touch-min); }
+    /* Exactly a row's height: taller, it ran out of the bar's second row (#242). */
+    .pd-ctl .po-btn { min-height: 0; height: var(--touch-min); box-sizing: border-box; }
     /* An open task covers the panels; openPoOf opens the PO over it, as the
        drawer it is on every other page. */
     body.po-dock.po-peek #po-dock-host { isolation: auto; z-index: auto; }
     body.po-dock.po-peek #po-panel {
       position: fixed; left: 0; right: 0; width: auto; z-index: 30;
-      top: calc(var(--top-h) + var(--vv-top, 0px)); height: calc(var(--vv-h, 100dvh) - var(--top-h));
+      top: calc(var(--top-h) + var(--vv-top, 0px)); height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px)));
     }
   }
 .dp-state-short, .dp-state-narrow { display:none; }
@@ -13416,6 +13420,44 @@ function pdRuntimeRestore() {
     const f = PD.dock.frontOf('po-chat');
     if (f !== 'po-chat' && PD.rt.has(f)) PD.dock.activate(front0 && front0 !== f && PD.els[front0] && !PD.rt.has(front0) ? front0 : 'po-chat');
   } catch (e) {}
+  // What was set aside and did not come back is gone (none is held back).
+  if (!PD_HOLD && [...PD_ASIDE].some(id => !PD.rt.has(id))) {
+    for (const id of [...PD_ASIDE]) if (!PD.rt.has(id)) PD_ASIDE.delete(id);
+    pdAsideSave();
+  }
+  pdProjectPanels();
+}
+// One dock serves every project's screen, so the file and chat panels opened
+// in one project are set aside on another's (#242: a Motors chat had another
+// project's files as tabs) and come back, in their places, with their project.
+// Only what this hid comes back (kept across a reload): a panel the person
+// hid stays hidden. A panel in a window of its own is left alone.
+const PD_ASIDE_KEY = 'cd-pd-aside';
+const PD_ASIDE = (() => { try { return new Set(JSON.parse(localStorage.getItem(PD_ASIDE_KEY) || '[]')); } catch (e) { return new Set(); } })();
+const pdAsideSave = () => { try { localStorage.setItem(PD_ASIDE_KEY, JSON.stringify([...PD_ASIDE])); } catch (e) {} };
+function pdPanelProject(e) {
+  if (e.kind === 'chat') { const p = projectOfRoom(e.room); return p ? p.id : ''; }
+  const ctx = e.kind === 'file' && e.v && e.v.ctx;
+  if (!ctx) return null;
+  if (ctx.kind === 'task') { const p = wsProjectForRow({ roomId: ctx.sid }); return p ? p.id : ''; }
+  return ctx.projectId || '';
+}
+function pdProjectPanels() {
+  if (!PD.dock) return;
+  const r = pdTask() ? rowBySid(SELECTED_SID) : null, task = r ? wsProjectForRow(r) : null;
+  const here = r ? (task ? task.id : '') : (poDockProject() || {}).id;
+  if (here === undefined) return;
+  const was = [...PD_ASIDE].join();
+  for (const [id, e] of PD.rt) {
+    const pj = pdPanelProject(e);
+    if (pj === null) continue;
+    try {
+      if (pj !== here) {
+        if (!PD_ASIDE.has(id) && PD.dock.isVisible(id) && !PD.dock.isOut(id)) { PD.dock.setVisible(id, false); PD_ASIDE.add(id); }
+      } else if (PD_ASIDE.has(id)) { PD_ASIDE.delete(id); PD.dock.setVisible(id, true); }
+    } catch (err) {}
+  }
+  if (was !== [...PD_ASIDE].join()) pdAsideSave();
 }
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
@@ -16353,6 +16395,7 @@ function renderRows() {
   const chb = !dockPj && PD.els.changes.querySelector(':scope > .ch-body');
   if (chb) chb.remove();
   renderPo();
+  if (docked) pdProjectPanels();
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = wsPlace(docked);
@@ -19471,18 +19514,60 @@ midSync();
 // Set only while the visible viewport is actually shorter than the page (the
 // iOS keyboard); otherwise the rules fall back to 100dvh, so a stale reading
 // can never leave the panel shorter than the screen.
+// The keyboard is up only while a text field has focus (#242): iOS does not
+// always tell the visual viewport's resize when the keyboard goes, and the
+// installed app can even keep the short viewport after it, which left the
+// message box floating a keyboard's height above the bottom. So a short
+// visual viewport with nothing to type in counts for nothing, every focus
+// change in a chat checks again (kbdCheck), and the installed app on a phone
+// takes back the tallest height it had at this width.
+const VV_TALL = new Map();   // width -> the tallest innerHeight seen at it
+function kbdField() {
+  let d = document;
+  for (let i = 0; i < 4; i++) {
+    const a = d.activeElement;
+    if (!a) return false;
+    if (a.tagName === 'IFRAME') { try { d = a.contentDocument; if (!d) return false; continue; } catch (e) { return false; } }
+    return a.isContentEditable || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT'
+      || (a.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image|hidden)$/i.test(a.type || ''));
+  }
+  return false;
+}
 function fitVisualViewport() {
   const vv = window.visualViewport;
   const root = document.documentElement.style;
   if (!vv) return;
-  if (vv.height < window.innerHeight - 1) {
+  const w = window.innerWidth, h = window.innerHeight, typing = kbdField();
+  if (!typing) VV_TALL.set(w, Math.max(VV_TALL.get(w) || 0, h));
+  const tall = VV_TALL.get(w) || h;
+  const stuck = !typing && h < tall - 4 && isPhone()
+    && ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true);
+  if (typing && vv.height < h - 1) {
     root.setProperty('--vv-h', Math.round(vv.height) + 'px');
     root.setProperty('--vv-top', Math.round(vv.offsetTop) + 'px');
+    root.setProperty('--vv-safe', '0px');   // the keyboard covers the home indicator
+  } else if (stuck) {
+    root.setProperty('--vv-h', tall + 'px');
+    root.removeProperty('--vv-top');
+    root.removeProperty('--vv-safe');
   } else {
     root.removeProperty('--vv-h');
     root.removeProperty('--vv-top');
+    root.removeProperty('--vv-safe');
   }
+  // A page the keyboard scrolled stays scrolled on iOS once it went.
+  if (!typing && isPhone() && (window.scrollY || document.documentElement.scrollTop)) window.scrollTo(0, 0);
 }
+// A chat's text field got or lost focus: now, and again as the keyboard moves
+// (iOS reports its new height a moment later, or never).
+let KBD_TIMERS = [];
+// The first check waits a tick: on a focusout the next field has no focus yet.
+function kbdCheck() {
+  KBD_TIMERS.forEach(clearTimeout);
+  KBD_TIMERS = [0, 120, 400, 900].map(ms => setTimeout(fitVisualViewport, ms));
+}
+document.addEventListener('focusin', kbdCheck);
+document.addEventListener('focusout', kbdCheck);
 // With the keyboard up, the chat you are typing in comes fully into view. Its
 // composer is at its foot, and above it the task's header and tabs took 264px
 // of a 420px screen: the panel scrolls so the chat's foot meets the keyboard.
