@@ -13399,6 +13399,8 @@ async function pdRestoreHeld() {
   pdChatsRemember();
   wsPanelsRemember();
   pdTabTips();
+  pdAsidePrune();
+  pdProjectPanels();   // what came back late is set aside on another project's screen too
 }
 function pdRuntimeRestore() {
   if (PD.restored || !PD.dock) return;
@@ -13420,12 +13422,14 @@ function pdRuntimeRestore() {
     const f = PD.dock.frontOf('po-chat');
     if (f !== 'po-chat' && PD.rt.has(f)) PD.dock.activate(front0 && front0 !== f && PD.els[front0] && !PD.rt.has(front0) ? front0 : 'po-chat');
   } catch (e) {}
-  // What was set aside and did not come back is gone (none is held back).
-  if (!PD_HOLD && [...PD_ASIDE].some(id => !PD.rt.has(id))) {
-    for (const id of [...PD_ASIDE]) if (!PD.rt.has(id)) PD_ASIDE.delete(id);
-    pdAsideSave();
-  }
+  pdAsidePrune();
   pdProjectPanels();
+}
+// What was set aside and did not come back is gone (once none is held back).
+function pdAsidePrune() {
+  if (PD_HOLD || ![...PD_ASIDE].some(id => !PD.rt.has(id))) return;
+  for (const id of [...PD_ASIDE]) if (!PD.rt.has(id)) PD_ASIDE.delete(id);
+  pdAsideSave();
 }
 // One dock serves every project's screen, so the file and chat panels opened
 // in one project are set aside on another's (#242: a Motors chat had another
@@ -13453,7 +13457,8 @@ function pdProjectPanels() {
     if (pj === null) continue;
     try {
       if (pj !== here) {
-        if (!PD_ASIDE.has(id) && PD.dock.isVisible(id) && !PD.dock.isOut(id)) { PD.dock.setVisible(id, false); PD_ASIDE.add(id); }
+        // Set aside before a reload and shown again by its restore: aside again.
+        if (PD.dock.isVisible(id) && !PD.dock.isOut(id)) { PD.dock.setVisible(id, false); PD_ASIDE.add(id); }
       } else if (PD_ASIDE.has(id)) { PD_ASIDE.delete(id); PD.dock.setVisible(id, true); }
     } catch (err) {}
   }
@@ -19520,8 +19525,11 @@ midSync();
 // message box floating a keyboard's height above the bottom. So a short
 // visual viewport with nothing to type in counts for nothing, every focus
 // change in a chat checks again (kbdCheck), and the installed app on a phone
-// takes back the tallest height it had at this width.
-const VV_TALL = new Map();   // width -> the tallest innerHeight seen at it
+// takes back the height it had before the keyboard, but only while the window
+// is still exactly as short as the keyboard left it: any other height (a
+// toolbar, a rotation, a window made shorter) is the new height.
+const VV_BASE = new Map();   // width -> innerHeight with no keyboard
+let VV_KBD = null;           // {w, h}: the shorter innerHeight seen while typing
 function kbdField() {
   let d = document;
   for (let i = 0; i < 4; i++) {
@@ -19538,10 +19546,12 @@ function fitVisualViewport() {
   const root = document.documentElement.style;
   if (!vv) return;
   const w = window.innerWidth, h = window.innerHeight, typing = kbdField();
-  if (!typing) VV_TALL.set(w, Math.max(VV_TALL.get(w) || 0, h));
-  const tall = VV_TALL.get(w) || h;
-  const stuck = !typing && h < tall - 4 && isPhone()
+  const tall = VV_BASE.get(w) || h;
+  const left = !!VV_KBD && VV_KBD.w === w && VV_KBD.h === h && h < tall - 4 && isPhone()
     && ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true);
+  if (typing) { if (h < tall - 4) VV_KBD = { w, h }; }
+  else if (!left) { VV_KBD = null; VV_BASE.set(w, h); }
+  const stuck = !typing && left;
   if (typing && vv.height < h - 1) {
     root.setProperty('--vv-h', Math.round(vv.height) + 'px');
     root.setProperty('--vv-top', Math.round(vv.offsetTop) + 'px');

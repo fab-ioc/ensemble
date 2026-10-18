@@ -134,6 +134,48 @@ const GROW = `(async () => {
   out.row = Math.round(parseFloat(w.getComputedStyle(ta).minHeight) || 0);
   return out;
 })()`;
+// The installed app, its window as tall as the screen until the keyboard: the
+// height the keyboard left comes back to the full one; any other height
+// (a toolbar, a window made shorter with no keyboard) is the new height.
+const STANDALONE = `(async () => {
+  const pause = ms => new Promise(r => setTimeout(r, ms)), d = ${FRAME}.contentDocument;
+  const mm = window.matchMedia, od = Object.getOwnPropertyDescriptor(window, 'innerHeight'), H = innerHeight;
+  let ih = H;
+  window.matchMedia = q => /standalone/.test(q) ? { matches: true, addEventListener() {}, removeEventListener() {} } : mm.call(window, q);
+  Object.defineProperty(window, 'innerHeight', { get: () => ih, configurable: true });
+  const vvh = () => getComputedStyle(document.documentElement).getPropertyValue('--vv-h').trim();
+  const step = async () => { fitVisualViewport(); await pause(50); return vvh(); };
+  const out = { H };
+  try {
+    out.start = await step();
+    d.getElementById('input').focus(); ih = H - 340; out.typing = await step();
+    d.getElementById('input').blur(); await pause(1000); out.stale = vvh();
+    ih = H - 60; out.toolbar = await step();
+    ih = H; await step(); ih = H - 60; out.shorter = await step();
+  } finally {
+    if (od) Object.defineProperty(window, 'innerHeight', od); else delete window.innerHeight;
+    window.matchMedia = mm; fitVisualViewport();
+  }
+  return out;
+})()`;
+// A reload while the hub warms up: /api/health says 'starting' and the task
+// list has no Plain task yet, so the Plain file panel is held, until __warm
+// goes (sessionStorage 'warm' names the task left out).
+const WARM = `(() => { let room = ''; try { room = sessionStorage.getItem('warm') || ''; sessionStorage.removeItem('warm'); } catch (e) {}
+  if (!room) return; window.__warm = true;
+  const drop = x => Array.isArray(x) ? x.filter(i => !(i && (i.roomId === room || i.sessionId === room))).map(drop)
+    : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, drop(v)])) : x;
+  const real = window.fetch;
+  window.fetch = async (u, o) => {
+    const url = String(u && u.url || u);
+    if (!window.__warm || !/\\/api\\//.test(url)) return real(u, o);
+    if (/\\/api\\/health/.test(url)) return new Response(JSON.stringify({ phase: 'starting' }), { headers: { 'Content-Type': 'application/json' } });
+    const r = await real(String(url).replace(/([?&])since=[^&]*/, '$1since='), o);
+    if (!/\\/api\\/(sessions|projects)\\b/.test(url) || !r.ok) return r;
+    const j = drop(await r.json()); if (j && typeof j === 'object' && 'rev' in j) j.rev = '';
+    return new Response(JSON.stringify(j), { headers: { 'Content-Type': 'application/json' } });
+  };
+})();`;
 // What the page shows, for a wait that timed out.
 const DIAG = `({ body: document.body.className, tabs: [...document.querySelectorAll('#po-dock .dk-tab')].map(e => e.textContent.trim()),
   views: [...WS_VIEWS.keys()], files: [...document.querySelectorAll('.wse')].slice(0, 12).map(e => e.className + ' ' + (e.dataset.path || '')),
@@ -147,7 +189,7 @@ async function main() {
     await c.send('Page.enable', {}, s);
     await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 3 : 1, mobile }, s);
     await c.send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 }, s);
-    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}\n" + FAKE_VV }, s);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}\n" + FAKE_VV + WARM }, s);
     const ev = async expression => { const r = await c.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, s); if (r.exceptionDetails) throw Error(expression.slice(0, 120) + ' ' + JSON.stringify(r.exceptionDetails).slice(0, 800)); return r.result.value; };
     const until = async (ex, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { try { if (await ev(ex)) return; } catch (e) {} await sleep(150); }
       let seen = ''; try { seen = JSON.stringify(await ev(DIAG)); } catch (e) { seen = String(e); }
@@ -218,6 +260,20 @@ async function main() {
         await inFrame(p, PO_STATE);
         o.grow = await p.ev(GROW);
         await p.shot(`grow-${k}`);
+        o.standalone = await p.ev(STANDALONE);
+        // The Plain file panel held over a reload while the hub warms, on the Motors chat.
+        await p.ev(`sessionStorage.setItem('warm', ${JSON.stringify(A.plainTask)}); location.reload(); 0`);
+        await sleep(500);
+        await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')');
+        await openPo(p);
+        await p.until(`PD.restored && !!PD_HOLD && PD_HOLD.ctxs.length > 0`);
+        o.held = await p.ev(`({ project: (poDockProject() || {}).id, detail: document.body.classList.contains('detail-open') })`);
+        await p.ev(`window.__warm = false; 0`);
+        await p.until(`PD_HOLD === null && [...PD.rt.values()].some(e => e.kind === 'file')`);
+        await sleep(600);
+        o.held.tabs = await p.ev(`[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`);
+        await openTask(p, A.plainTask);
+        o.held.back = await p.ev(`[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].map(e => e.textContent.trim())`);
       }
       await p.close();
     }
@@ -327,6 +383,23 @@ class IphoneChat(unittest.TestCase):
                 self.assertFalse(any('PLAIN-NOTES.md' in t for t in g['po']['tabs']), g['po']['tabs'])
                 self.assertFalse(any('PLAIN-NOTES.md' in t for t in g['task']['tabs']), g['task']['tabs'])
                 self.assertTrue(any('PLAIN-NOTES.md' in t for t in g['plainBack']), g['plainBack'])
+
+    def test_the_installed_app_height(self):
+        if self.before:
+            return
+        g = self.got['440x956']['standalone']
+        full = '%dpx' % g['H']
+        # Back to the full height only while the window is as short as the keyboard left it.
+        self.assertEqual((g['start'], g['typing'], g['stale'], g['toolbar'], g['shorter']), ('', '', full, '', ''), g)
+
+    def test_a_late_panel_stays_with_its_project(self):
+        if self.before:
+            return
+        g = self.got['440x956']['held']
+        self.assertEqual(g['project'], self.proj, g)
+        self.assertFalse(g['detail'], g)
+        self.assertFalse(any('PLAIN-NOTES.md' in t for t in g['tabs']), g)
+        self.assertTrue(any('PLAIN-NOTES.md' in t for t in g['back']), g)
 
     def test_the_boxes_grow_with_the_text(self):
         if self.before:
