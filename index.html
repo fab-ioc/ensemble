@@ -177,6 +177,13 @@
      scope is "/", which holds them. -->
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/static/icons/apple-touch-icon-120.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/static/icons/apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/static/icons/apple-touch-icon-167.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ensemble">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#FFFFFF">
 <script>
 // The browser's offer to install can come before the Install app button's
@@ -591,7 +598,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     font-feature-settings: "ss01", "cv11";
+    /* viewport-fit=cover: on an iPhone held sideways the notch's side, and
+       (below) the home indicator, are kept clear. Zero everywhere else (#243). */
+    padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
   }
+  body:not(.po-dock) { padding-bottom: env(safe-area-inset-bottom, 0px); }
   /* The bar, left to right: where you are and the way back (the app / the
      project and its menu), what you can do here (a PO screen's Panels), then
      the global things: search, the PO, the plan, what needs you, you, Create.
@@ -18975,6 +18986,11 @@ document.addEventListener('click', (ev) => {
 // install); the line under it says what holds when there is no button.
 function appInstallHint(s) {
   if (s.app) return 'Ensemble is running as an app: its own window, and pop-out panels without an address bar.';
+  // An iPhone or iPad installs from Safari's Share menu only (no offer, and
+  // plain http is fine there). The app gets a copy of Safari's cookies when
+  // it is added (iOS 17.2+) and keeps its own after that (#243).
+  if (s.ios) return 'On this iPhone or iPad: Safari › Share › Add to Home Screen, with Open as Web App on.'
+    + ' Ensemble then opens full screen from its own icon. If it asks for the access token, paste it there once.';
   if (s.offer) return 'A window of its own with its own icon, and pop-out panels without an address bar.';
   if (!s.secure) {
     const [name, port] = String(s.host).split(':');
@@ -18992,7 +19008,8 @@ function appInstallHint(s) {
 function appInstallMount() {
   const btn = $('#install-app-btn'), hint = $('#install-app-hint');
   const paint = inst => {
-    hint.textContent = appInstallHint({ app: inst.isAppWindow(), offer: !btn.hidden, secure: window.isSecureContext,
+    hint.textContent = appInstallHint({ app: inst.isAppWindow() || navigator.standalone === true, offer: !btn.hidden,
+      ios: isIosDevice(), secure: window.isSecureContext,
       prompts: 'onbeforeinstallprompt' in window, host: location.host });
   };
   import('/static/dock/src/install.js').then(inst => {
@@ -19003,7 +19020,13 @@ function appInstallMount() {
     }
     new MutationObserver(() => paint(inst)).observe(btn, { attributes: true, attributeFilter: ['hidden'] });
     paint(inst);
-  }).catch(() => { hint.textContent = appInstallHint({ app: false, offer: false, secure: window.isSecureContext, prompts: false, host: location.host }); });
+  }).catch(() => { hint.textContent = appInstallHint({ app: navigator.standalone === true, offer: false, ios: isIosDevice(),
+    secure: window.isSecureContext, prompts: false, host: location.host }); });
+}
+// An iPhone, an iPod or an iPad (which says Macintosh, but has a touch screen).
+function isIosDevice() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent)
+    || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 }
 appInstallMount();
 // The title bar of an installed window takes the theme's surface.

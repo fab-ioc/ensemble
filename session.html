@@ -10,6 +10,16 @@
 <script src="/static/hub-resilience.js"></script>
 <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg">
 <link rel="icon" href="/static/icons/favicon.ico" sizes="16x16 32x32 48x48">
+<!-- Added to an iPhone's home screen it opens as the app, at "/" (the manifest), with this icon. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/static/icons/apple-touch-icon-120.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/static/icons/apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/static/icons/apple-touch-icon-167.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ensemble">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
 <link rel="stylesheet" href="/static/progress.css">
 <script src="/static/progress.js"></script>
@@ -594,7 +604,9 @@
   * { box-sizing: border-box; }
   /* --vv-h is the visible viewport on a touch screen (set by script), so the
      composer at the foot of the page stays above the on-screen keyboard. */
-  body { margin:0; height:100vh; height:var(--vv-h, 100dvh); display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif; }
+  body { margin:0; height:100vh; height:var(--vv-h, 100dvh); display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif;
+         /* viewport-fit=cover: clear of an iPhone's notch held sideways; zero elsewhere (#243). */
+         padding-left:env(safe-area-inset-left, 0px); padding-right:env(safe-area-inset-right, 0px); }
   header { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border); flex:0 0 auto; }
   header h1 { font-size:14px; margin:0; }
   .grow { flex:1; }

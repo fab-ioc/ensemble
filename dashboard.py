@@ -231,14 +231,16 @@ def _host_is_loopback(host_header: str) -> bool:
 
 # Served to anyone who can reach the hub, without the token: the browser
 # fetches a web manifest without cookies, and the icons it names follow.
-# Nothing in them is private.
-UNGATED_PATHS = ("/manifest.webmanifest",)
+# Nothing in them is private. iOS asks for its home-screen icon at the root
+# too (the two apple-touch paths), also without cookies (#243).
+APPLE_TOUCH_PATHS = ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png")
+UNGATED_PATHS = ("/manifest.webmanifest",) + APPLE_TOUCH_PATHS
 UNGATED_PREFIXES = ("/static/icons/",)
 # A hub that is starting (startup.py, ED-227) answers these as ever; the
 # pages below get the start-up page instead; any other GET /api/... is a 503
 # the page tries again, and a write waits until the hub is booted.
 STARTUP_OPEN_PATHS = ("/api/health", "/api/version", "/api/platform", "/sw.js", "/startup",
-                      "/manifest.webmanifest", "/ui-key")
+                      "/manifest.webmanifest", "/ui-key") + APPLE_TOUCH_PATHS
 STARTUP_PAGES = ("/", "/index.html", "/session", "/fileview")
 STARTUP_WRITE_WAIT_S = 150
 # What a page opened without the token cookie gets: a field for the token. Its
@@ -250,6 +252,15 @@ SIGN_IN_PAGE = b"""<!doctype html>
 <title>Ensemble: sign in</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/static/icons/apple-touch-icon-120.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/static/icons/apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="/static/icons/apple-touch-icon-167.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ensemble">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F7F8F9">
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #F7F8F9; color: #172B4D;
          font: 14px/20px system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -14407,8 +14418,13 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         if not ACCESS_TOKEN or self._is_local():
             return True
-        if self.command in ("GET", "HEAD") and ".." not in u.path and "%" not in u.path and (
-                u.path in UNGATED_PATHS or u.path.startswith(UNGATED_PREFIXES)):
+        # The path exactly as sent, up to a query: urlparse drops a last
+        # ";params", a "#..." and an absolute-form "http://host" in front,
+        # each of which made another target open too (#243 review).
+        raw = self.path.split("?", 1)[0]
+        if self.command in ("GET", "HEAD") and raw.startswith("/") and not any(
+                c in raw for c in ("..", "%", ";", "#", "//", "\\")) and (
+                raw in UNGATED_PATHS or raw.startswith(UNGATED_PREFIXES)):
             return True
         tok = self._presented_token(u)
         if tok and hmac.compare_digest(tok, ACCESS_TOKEN):
@@ -14648,6 +14664,10 @@ class Handler(BaseHTTPRequestHandler):
             # key that /api/update asks for.
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8",
                             self._ui_key_headers() + self._token_cookie_headers())
+            return
+        if p in APPLE_TOUCH_PATHS:
+            # Where iOS looks when a page names no icon (#243).
+            self._send_file(STATIC_DIR / "static" / "icons" / "apple-touch-icon.png", "image/png")
             return
         if p == "/manifest.webmanifest":
             # What makes the page installable as an app (a window of its own,
