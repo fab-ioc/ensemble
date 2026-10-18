@@ -15,7 +15,12 @@ Checked against the hub's handler:
   one; a navigation without the token gets the sign-in page; the https origin
   of the proxy passes the same-origin check;
 * the token cookie is sent again, a year ahead, when a remote browser opens
-  the page with it.
+  the page with it;
+* the iPhone's home screen (#243): every page (the sign-in page, the
+  start-up page, the board, a chat, a file) names the apple-touch icons
+  (180, 167, 152, 120) and the web-app metas; the two root paths iOS asks for
+  answer the 180 icon without the token, also on a hub bound to an address
+  that is not loopback, and nothing else is opened.
 
 Checked in headless Chrome over CDP, against a hub in a thread:
 
@@ -23,7 +28,11 @@ Checked in headless Chrome over CDP, against a hub in a thread:
   manifest without errors and Page.getInstallabilityErrors is empty;
 * in a browser tab the page is not an app, and Settings says why there is no
   button; started with --app=, it is one, and a Dock panel popped out opens in
-  a window that is an app window too (display-mode standalone).
+  a window that is an app window too (display-mode standalone);
+* as an iPhone from the tailnet: the sign-in page's head carries the icons,
+  which load without cookies; signing in once lands on "/" with no token in
+  the address, a reload stays signed in, and Settings says how to add it to
+  the home screen.
 
 Skipped without Node or Chrome.
 """
@@ -55,6 +64,20 @@ from tests import chrome_profile  # noqa: E402
 
 NODE = shutil.which("node")
 TOKEN = "t0ken-for-the-test"
+TOUCH_ICONS = {"apple-touch-icon.png": 180, "apple-touch-icon-167.png": 167,
+               "apple-touch-icon-152.png": 152, "apple-touch-icon-120.png": 120}
+IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 "
+             "(KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1")
+HOME_SCREEN_HEAD = (
+    '<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">',
+    '<link rel="apple-touch-icon" sizes="120x120" href="/static/icons/apple-touch-icon-120.png">',
+    '<link rel="apple-touch-icon" sizes="152x152" href="/static/icons/apple-touch-icon-152.png">',
+    '<link rel="apple-touch-icon" sizes="167x167" href="/static/icons/apple-touch-icon-167.png">',
+    '<meta name="apple-mobile-web-app-capable" content="yes">',
+    '<meta name="mobile-web-app-capable" content="yes">',
+    '<meta name="apple-mobile-web-app-title" content="Ensemble">',
+    '<meta name="apple-mobile-web-app-status-bar-style" content="default">',
+)
 
 
 def png_size(path: Path) -> tuple[int, int]:
@@ -158,6 +181,28 @@ class TheManifest(unittest.TestCase):
         self.assertTrue({(16, 16), (32, 32)} <= sizes, sizes)
         self.assertIn('id="install-app-btn"', INDEX)
 
+    def test_every_page_carries_the_home_screen_icon_and_metas(self):
+        # The sign-in page is what a new phone, and a new home-screen app (its
+        # own cookie jar), sees first: without these iOS shows a screenshot.
+        heads = {page: (ROOT / page).read_text(encoding="utf-8").split("</head>")[0]
+                 for page in ("index.html", "session.html", "fileview.html", "static/startup.html")}
+        heads["sign-in"] = dashboard.SIGN_IN_PAGE.decode("utf-8").split("</head>")[0]
+        for page, head in heads.items():
+            for line in HOME_SCREEN_HEAD:
+                self.assertIn(line, head, page)
+            self.assertIn('<link rel="manifest" href="/manifest.webmanifest">', head, page + ": the app starts at /")
+            self.assertNotIn("token=", head, page)
+
+    def test_the_touch_icons_exist_at_their_sizes(self):
+        for name, px in TOUCH_ICONS.items():
+            self.assertEqual(png_size(ROOT / "static" / "icons" / name), (px, px), name)
+            code, h, _ = self.hub.get("/static/icons/" + name)
+            self.assertEqual((code, h["Content-Type"]), (200, "image/png"), name)
+        icon = (ROOT / "static" / "icons" / "apple-touch-icon.png").read_bytes()
+        for path in dashboard.APPLE_TOUCH_PATHS:
+            code, h, body = self.hub.get(path)
+            self.assertEqual((code, h["Content-Type"], body), (200, "image/png", icon), path)
+
 
 class TheGate(unittest.TestCase):
     """The token gate with a token set, as on the tailnet."""
@@ -196,6 +241,24 @@ class TheGate(unittest.TestCase):
             self.assertEqual(self.hub.get(path, self.PROXIED)[0], 200, path)
         for path in ("/", "/static/hl.js", "/static/dock/src/install.js", "/static/icons/../hl.js", "/api/live"):
             self.assertEqual(self.hub.get(path, self.PROXIED)[0], 401, path)
+
+    def test_the_root_touch_icons_need_no_token_and_nothing_else_is_opened(self):
+        self.assertEqual(set(dashboard.UNGATED_PATHS),
+                         {"/manifest.webmanifest", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"})
+        self.assertEqual(dashboard.UNGATED_PREFIXES, ("/static/icons/",))
+        for path in dashboard.APPLE_TOUCH_PATHS + ("/static/icons/apple-touch-icon-167.png",):
+            code, h, _ = self.hub.get(path, self.PROXIED)
+            self.assertEqual((code, h["Content-Type"]), (200, "image/png"), path)
+        for path in ("/apple-touch-icon.png/../index.html", "/apple-touch-icon.png.bak", "/apple-touch-icon",
+                     "/apple-touch-icon-120x120.png", "/Apple-Touch-Icon.png", "/apple-touch-icon.png%2F..%2Fapi",
+                     "/favicon.ico", "/index.html", "/session", "/fileview"):
+            self.assertEqual(self.hub.get(path, self.PROXIED)[0], 401, path)
+        code, _, _ = self.hub.get("/apple-touch-icon.png?x=1", self.PROXIED)
+        self.assertEqual(code, 200, "a query does not change the path")
+
+    def test_a_starting_hub_answers_the_root_touch_icons(self):
+        for path in dashboard.APPLE_TOUCH_PATHS:
+            self.assertIn(path, dashboard.STARTUP_OPEN_PATHS)
 
     def test_a_page_without_the_token_gets_the_sign_in_page(self):
         code, h, body = self.hub.get("/", {**self.PROXIED, **self.NAV})
@@ -237,6 +300,68 @@ class TheGate(unittest.TestCase):
         self.assertFalse(same(h), "only a proxy on this machine names the host")
 
 
+def _a_lan_address() -> str | None:
+    """An address of this machine that is not loopback, or None."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))   # nothing is sent: picks the outgoing interface
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
+
+
+class OnANonLoopbackBind(unittest.TestCase):
+    """A hub bound to this machine's LAN address, as with --bind tailscale: a
+    request to it comes from that address, not loopback, so the gate holds."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ip = _a_lan_address()
+        if not cls.ip:
+            raise unittest.SkipTest("no address but loopback")
+        cls.patches = [mock.patch.object(dashboard, "ACCESS_TOKEN", TOKEN),
+                       mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None)]
+        for p in cls.patches:
+            p.start()
+            cls.addClassCleanup(p.stop)
+        try:
+            cls.server = ThreadingHTTPServer((cls.ip, 0), dashboard.Handler)
+        except OSError as e:
+            raise unittest.SkipTest(f"cannot bind {cls.ip}: {e}")
+        cls.server.daemon_threads = True
+        cls.server.handle_error = lambda *a: None
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = f"http://{cls.ip}:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def get(self, path):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(self.base + path, timeout=10) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    def test_the_icons_and_the_manifest_answer_without_the_cookie(self):
+        for path in dashboard.APPLE_TOUCH_PATHS:
+            code, h, body = self.get(path)
+            self.assertEqual((code, h["Content-Type"]), (200, "image/png"), path)
+            self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n", path)
+        code, _, body = self.get("/manifest.webmanifest")
+        self.assertEqual(code, 200)
+        for icon in json.loads(body)["icons"]:
+            code, h, _ = self.get(icon["src"])
+            self.assertEqual((code, h["Content-Type"]), (200, "image/png"), icon["src"])
+        self.assertEqual(self.get("/api/settings")[0], 401, "the gate holds on this bind")
+        self.assertEqual(self.get("/")[0], 401)
+
+
 class TheHint(unittest.TestCase):
     """What Settings says where there is no Install app button."""
 
@@ -248,7 +373,8 @@ class TheHint(unittest.TestCase):
 const cases = {
   app: { app: true }, offer: { offer: true, secure: true, prompts: true },
   http: { secure: false, prompts: true, host: 'hub.tailnet.example:8765' },
-  safari: { secure: true, prompts: false }, chrome: { secure: true, prompts: true } };
+  safari: { secure: true, prompts: false }, chrome: { secure: true, prompts: true },
+  iphone: { ios: true, secure: false, prompts: false, host: '100.64.0.1:8765' }, iphoneApp: { app: true, ios: true } };
 const out = {}; for (const k in cases) out[k] = appInstallHint(cases[k]);
 console.log(JSON.stringify(out));"""
         r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, encoding="utf-8", timeout=30)
@@ -262,6 +388,9 @@ console.log(JSON.stringify(out));"""
         self.assertIn("Add to Dock", self.o["safari"])
         self.assertIn("Add to Home Screen", self.o["safari"])
         self.assertIn("Install page as app", self.o["chrome"])
+        self.assertIn("Safari › Share › Add to Home Screen, with Open as Web App on", self.o["iphone"])
+        self.assertNotIn("Chrome", self.o["iphone"], "plain http is no obstacle on an iPhone")
+        self.assertIn("running as an app", self.o["iphoneApp"])
 
 
 # ---- in headless Chrome -----------------------------------------------------------
@@ -386,6 +515,25 @@ main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
 
 
+def state_patches(base: Path, root: Path, state: Path) -> list:
+    """A hub with throwaway state under ``base``."""
+    return [
+        mock.patch.object(dashboard, "PROJECTS_ROOT", root),
+        mock.patch.object(dashboard, "DASHBOARD_DIR", state),
+        mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
+        mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
+        mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
+        mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
+        mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
+        mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
+        mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+        mock.patch.object(dashboard, "load_live", lambda: []),
+        mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
+        mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
+        mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+    ]
+
+
 @unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
 class InChrome(unittest.TestCase):
     @classmethod
@@ -398,20 +546,7 @@ class InChrome(unittest.TestCase):
         root.mkdir()
         (base / "transcripts").mkdir()
         (base / "cs").mkdir()
-        cls.patches = [
-            mock.patch.object(dashboard, "PROJECTS_ROOT", root),
-            mock.patch.object(dashboard, "DASHBOARD_DIR", state),
-            mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
-            mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
-            mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
-            mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
-            mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
-            mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
-            mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
-            mock.patch.object(dashboard, "load_live", lambda: []),
-            mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
-            mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
-            mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+        cls.patches = state_patches(base, root, state) + [
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
         ]
         for p in cls.patches:
@@ -471,6 +606,114 @@ class InChrome(unittest.TestCase):
         self.assertTrue(pop["opened"], pop)
         self.assertEqual(pop["mode"], "standalone", pop)
         self.assertGreater(pop["board"], 0, "the Board came along")
+
+
+IPHONE_JS = chrome_profile.JS + r"""
+const { spawn } = require('child_process');
+const A = JSON.parse(process.argv[2]);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function main() {
+  const udd = chromeProfile(A);
+  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run',
+    '--no-default-browser-check', '--disable-gpu', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const wsUrl = await new Promise((res, rej) => {
+    let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
+    ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
+  });
+  const ws = new WebSocket(wsUrl); let id = 0; const waits = new Map();
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  ws.onmessage = ev => { const m = JSON.parse(ev.data); const w = m.id && waits.get(m.id); if (w) { waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } };
+  const send = (method, params = {}, sessionId) => new Promise((res, rej) => { const i = ++id; waits.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, sessionId })); });
+  const out = {};
+  try {
+    const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId: s } = await send('Target.attachToTarget', { targetId, flatten: true });
+    const ev = async expr => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, s); if (r.exceptionDetails) throw new Error(expr.slice(0, 100) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 500)); return r.result.value; };
+    const until = async (expr, ms = 20000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { let v = null; try { v = await ev(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
+    await send('Page.enable', {}, s); await send('Network.enable', {}, s);
+    // An iPhone 17 Pro Max from the tailnet: its user agent, its screen, touch,
+    // and a request the hub sees as not from this machine.
+    await send('Network.setUserAgentOverride', { userAgent: A.ua, platform: 'iPhone' }, s);
+    await send('Emulation.setDeviceMetricsOverride', { width: 440, height: 956, deviceScaleFactor: 3, mobile: true }, s);
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, s);
+    await send('Network.setExtraHTTPHeaders', { headers: { 'X-Forwarded-For': '100.64.0.7' } }, s);
+    await send('Page.navigate', { url: A.base + '/' }, s);
+    await until('!!document.querySelector("input[name=token]")');
+    out.signIn = await ev(`(async () => {
+      const head = document.head;
+      const touch = [...head.querySelectorAll('link[rel="apple-touch-icon"]')].map(l => ({ href: l.getAttribute('href'), sizes: l.getAttribute('sizes') || '' }));
+      const meta = n => (head.querySelector('meta[name="' + n + '"]') || {}).content || '';
+      const loads = [];
+      for (const t of touch) { const r = await fetch(t.href, { credentials: 'omit' }); loads.push([t.href, r.status, r.headers.get('content-type')]); }
+      for (const h of ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']) { const r = await fetch(h, { credentials: 'omit' }); loads.push([h, r.status, r.headers.get('content-type')]); }
+      return { touch, loads, ua: navigator.userAgent, capable: meta('apple-mobile-web-app-capable'), title: meta('apple-mobile-web-app-title'),
+               bar: meta('apple-mobile-web-app-status-bar-style'), manifest: !!head.querySelector('link[rel=manifest]') };
+    })()`);
+    // Signing in once: the token goes, the address is "/" again.
+    await ev(`(() => { const i = document.querySelector('input[name=token]'); i.value = ${JSON.stringify(A.token)}; i.form.submit(); return 0; })()`);
+    await until('typeof appInstallHint === "function" && document.getElementById("install-app-hint").textContent.length > 0', 30000);
+    out.after = await ev('({ href: location.href, hint: document.getElementById("install-app-hint").textContent })');
+    await send('Page.reload', {}, s);
+    await sleep(500);
+    await until('typeof appInstallHint === "function" && document.getElementById("install-app-hint").textContent.length > 0', 30000);
+    out.reload = await ev('({ href: location.href, signIn: !!document.querySelector("input[name=token]") })');
+  } finally { ch.kill(); }
+  console.log(JSON.stringify(out));
+}
+main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
+class InChromeAsAnIphone(unittest.TestCase):
+    """The board opened from an iPhone over the tailnet, with the token set."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix="ens-iph-", ignore_cleanup_errors=True)
+        base = Path(cls.tmp.name)
+        state, root = base / "state", base / "EnsembleProjects"
+        for d in (state, root, base / "transcripts", base / "cs"):
+            d.mkdir()
+        cls.patches = state_patches(base, root, state) + [
+            mock.patch.object(dashboard, "ACCESS_TOKEN", TOKEN),
+            mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+        ]
+        for p in cls.patches:
+            p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
+        cls.hub = Hub()
+        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.hub.port}",
+                "ua": IPHONE_UA, "token": TOKEN}
+        script = base / "iphone_cdp.js"
+        script.write_text(IPHONE_JS, encoding="utf-8")
+        out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=180)
+        assert out.returncode == 0, out.stderr[-4000:]
+        cls.got = json.loads(out.stdout.strip().splitlines()[-1])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.hub.close()
+        cls.tmp.cleanup()
+
+    def test_the_sign_in_page_names_the_home_screen_icon(self):
+        s = self.got["signIn"]
+        self.assertIn("iPhone", s["ua"])
+        self.assertEqual({t["sizes"] for t in s["touch"]}, {"", "120x120", "152x152", "167x167"})
+        self.assertIn({"href": "/static/icons/apple-touch-icon.png", "sizes": ""}, s["touch"])
+        self.assertEqual((s["capable"], s["title"], s["bar"], s["manifest"]), ("yes", "Ensemble", "default", True))
+
+    def test_its_icons_load_without_cookies(self):
+        for href, code, ctype in self.got["signIn"]["loads"]:
+            self.assertEqual((code, ctype), (200, "image/png"), href)
+
+    def test_it_signs_in_once_and_stays_signed_in(self):
+        base = f"http://127.0.0.1:{self.hub.port}/"
+        self.assertEqual(self.got["after"]["href"], base, "no token left in the address")
+        self.assertEqual(self.got["reload"], {"href": base, "signIn": False})
+
+    def test_settings_says_how_to_add_it_to_the_home_screen(self):
+        self.assertIn("Share › Add to Home Screen", self.got["after"]["hint"])
 
 
 if __name__ == "__main__":

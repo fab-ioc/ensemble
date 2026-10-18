@@ -8,7 +8,8 @@ one of the concepts in static/icons/src/, each a 512 SVG with a full-bleed
 
 * icon-192.png, icon-512.png ("any"): the ground as a tile with rounded
   corners, transparent outside it, the motif as drawn;
-* icon-maskable-512.png ("maskable") and apple-touch-icon.png (180): the
+* icon-maskable-512.png ("maskable") and apple-touch-icon.png (180; and
+  apple-touch-icon-120/152/167.png, an older iPhone's, an iPad's): the
   ground to every edge (a platform cuts its own mask; iOS rounds the corners
   and shows transparency as black), the motif inside the safe zone;
 * favicon.svg, favicon.ico (16, 32, 48): the tile to the edges and the motif
@@ -101,6 +102,8 @@ def ship(concept: str, work: Path) -> None:
     sized(tile, 512).save(OUT / "icon-512.png", optimize=True)
     sized(full, 512).convert("RGB").save(OUT / "icon-maskable-512.png", optimize=True)
     sized(full, 180).convert("RGB").save(OUT / "apple-touch-icon.png", optimize=True)
+    for px in (120, 152, 167):
+        sized(full, px).convert("RGB").save(OUT / f"apple-touch-icon-{px}.png", optimize=True)
     (OUT / "favicon.svg").write_text(fav_svg, encoding="utf-8")
     sized(fav, 48).save(OUT / "favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
     print("shipped", concept, "->", ", ".join(sorted(p.name for p in OUT.iterdir() if p.is_file())))
