@@ -471,7 +471,10 @@
   * { box-sizing: border-box; }
   [hidden] { display:none !important; }
   body { margin:0; min-height:100vh; background:var(--surface); color:var(--fg);
-    font:var(--fs-300)/var(--lh-300) var(--font-sans); }
+    font:var(--fs-300)/var(--lh-300) var(--font-sans);
+    /* viewport-fit=cover: clear of an iPhone's notch held sideways and of its
+       home indicator, code mode too (border-box); zero elsewhere (#243). */
+    padding:0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
   header { position:sticky; top:0; display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-200);
     padding:var(--s-200) var(--s-400); background:var(--surface); border-bottom:1px solid var(--border); z-index:5; }
   header .name { font-weight:600; word-break:break-all; }
@@ -637,7 +640,7 @@
   .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
   .cmt-composer button { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); padding:5px 12px; border-radius:var(--r-200); cursor:pointer; font:inherit; }
   .cmt-composer .cmt-add { background:var(--accent); color:var(--accent-fg); border:none; }
-  #cmt-tray { position:fixed; right:12px; bottom:12px; z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); overflow:hidden; }
+  #cmt-tray { position:fixed; right:calc(12px + env(safe-area-inset-right, 0px)); bottom:calc(12px + env(safe-area-inset-bottom, 0px)); z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); overflow:hidden; }
   #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
   #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
@@ -675,7 +678,7 @@
     background:var(--c-warning-bg); color:var(--c-warning-fg); font:600 var(--fs-100)/16px var(--font-sans); text-transform:uppercase; letter-spacing:.05em; }
   .cmt-composer .grow { flex:1; }
   .cmt-composer button:disabled { color:var(--fg-muted); cursor:default; }
-  .cmt-toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-300); padding:9px 16px; font-size:13px; box-shadow:var(--e-200); }
+  .cmt-toast { position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom, 0px)); transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-300); padding:9px 16px; font-size:13px; box-shadow:var(--e-200); }
   /* ---- Phone (SKILL.md §8) ---------------------------------------------
      Keyed on a touch screen, not on width: on a desktop this page sits in the
      dashboard's Workspace pane, which can be narrower than a phone. */

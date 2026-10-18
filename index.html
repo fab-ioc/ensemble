@@ -18987,9 +18987,10 @@ document.addEventListener('click', (ev) => {
 function appInstallHint(s) {
   if (s.app) return 'Ensemble is running as an app: its own window, and pop-out panels without an address bar.';
   // An iPhone or iPad installs from Safari's Share menu only (no offer, and
-  // plain http is fine there); the app keeps its own sign-in (#243).
+  // plain http is fine there). The app gets a copy of Safari's cookies when
+  // it is added (iOS 17.2+) and keeps its own after that (#243).
   if (s.ios) return 'On this iPhone or iPad: Safari › Share › Add to Home Screen, with Open as Web App on.'
-    + ' Ensemble then opens full screen from its own icon; sign in there once, with the same access token.';
+    + ' Ensemble then opens full screen from its own icon. If it asks for the access token, paste it there once.';
   if (s.offer) return 'A window of its own with its own icon, and pop-out panels without an address bar.';
   if (!s.secure) {
     const [name, port] = String(s.host).split(':');

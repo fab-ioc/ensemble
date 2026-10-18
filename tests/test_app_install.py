@@ -96,12 +96,12 @@ class Hub:
         self.port = self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
-    def get(self, path, headers=None):
+    def get(self, path, headers=None, method="GET"):
         """(status, headers, body), redirects not followed."""
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *a, **k):
                 return None
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", headers=headers or {})
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", headers=headers or {}, method=method)
         try:
             with urllib.request.build_opener(NoRedirect).open(req, timeout=10) as r:
                 return r.status, r.headers, r.read()
@@ -255,6 +255,12 @@ class TheGate(unittest.TestCase):
             self.assertEqual(self.hub.get(path, self.PROXIED)[0], 401, path)
         code, _, _ = self.hub.get("/apple-touch-icon.png?x=1", self.PROXIED)
         self.assertEqual(code, 200, "a query does not change the path")
+        # A ";params" alias, which urlparse would cut off: GET and HEAD.
+        for path in ("/apple-touch-icon.png;x", "/apple-touch-icon-precomposed.png;", "/manifest.webmanifest;x",
+                     "/static/icons/apple-touch-icon.png;x"):
+            for method in ("GET", "HEAD"):
+                self.assertEqual(self.hub.get(path, self.PROXIED, method=method)[0], 401, (method, path))
+        self.assertEqual(self.hub.get("/apple-touch-icon.png", self.PROXIED, method="HEAD")[0], 200)
 
     def test_a_starting_hub_answers_the_root_touch_icons(self):
         for path in dashboard.APPLE_TOUCH_PATHS:
@@ -477,6 +483,8 @@ async function main() {
       let errs = null;
       for (let i = 0; i < 20; i++) { errs = (await c.send('Page.getInstallabilityErrors', {}, p.sessionId)).installabilityErrors; if (!errs.length) break; await sleep(300); }
       out.installErrors = errs;
+      // Chrome's offer can come late on a loaded machine (seen in a full run).
+      try { await p.until('!document.getElementById("install-app-btn").hidden', 10000); } catch (e) { /* said below */ }
       out.tab = await p.evalIn(`({ mode: ${APP}, btnHidden: document.getElementById('install-app-btn').hidden,
         hint: document.getElementById('install-app-hint').textContent, secure: isSecureContext })`);
       // Settings opened: the button is a Default button, the line under it --fg-muted.
@@ -657,6 +665,19 @@ async function main() {
     await sleep(500);
     await until('typeof appInstallHint === "function" && document.getElementById("install-app-hint").textContent.length > 0', 30000);
     out.reload = await ev('({ href: location.href, signIn: !!document.querySelector("input[name=token]") })');
+    // A file, held sideways: its header, its code and its comment tray clear
+    // of the notch and the home indicator (insets as an iPhone Pro Max's).
+    await send('Emulation.setDeviceMetricsOverride', { width: 956, height: 440, deviceScaleFactor: 3, mobile: true,
+      screenOrientation: { type: 'landscapePrimary', angle: 90 } }, s);
+    try { await send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 0, left: 62, right: 62, bottom: 21 } }, s); out.insets = true; }
+    catch (e) { out.insets = false; }
+    await send('Page.navigate', { url: A.base + '/fileview?path=' + encodeURIComponent(A.file) }, s);
+    await until('document.body.classList.contains("code-mode") && !!document.querySelector(".code")', 30000);
+    await sleep(300);
+    out.file = await ev(`(() => { const r = e => e.getBoundingClientRect(), h = document.querySelector('header'), c = document.querySelector('.code');
+      let t = document.getElementById('cmt-tray'); const made = !t; if (made) { t = document.createElement('div'); t.id = 'cmt-tray'; t.textContent = 'x'; document.body.appendChild(t); }
+      const out = { w: innerWidth, h: innerHeight, header: [r(h).left, r(h).right], code: [r(c).left, r(c).right, r(c).bottom], tray: [r(t).right, r(t).bottom] };
+      if (made) t.remove(); return out; })()`);
   } finally { ch.kill(); }
   console.log(JSON.stringify(out));
 }
@@ -682,9 +703,13 @@ class InChromeAsAnIphone(unittest.TestCase):
         for p in cls.patches:
             p.start()
             cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
+        ok, proj, _ = dashboard.register_project("Motors")
+        assert ok, proj
+        code = Path(proj["path"]) / "motor.py"
+        code.write_text("".join(f"def step_{i}():\n    return {i}\n" for i in range(80)), encoding="utf-8")
         cls.hub = Hub()
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.hub.port}",
-                "ua": IPHONE_UA, "token": TOKEN}
+                "ua": IPHONE_UA, "token": TOKEN, "file": str(code)}
         script = base / "iphone_cdp.js"
         script.write_text(IPHONE_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=180)
@@ -711,6 +736,19 @@ class InChromeAsAnIphone(unittest.TestCase):
         base = f"http://127.0.0.1:{self.hub.port}/"
         self.assertEqual(self.got["after"]["href"], base, "no token left in the address")
         self.assertEqual(self.got["reload"], {"href": base, "signIn": False})
+
+    def test_a_file_held_sideways_keeps_clear_of_the_notch_and_home_indicator(self):
+        if not self.got["insets"]:
+            self.skipTest("this Chrome cannot emulate safe-area insets")
+        f = self.got["file"]
+        self.assertEqual((f["w"], f["h"]), (956, 440))
+        self.assertGreaterEqual(f["header"][0], 62)
+        self.assertLessEqual(f["header"][1], f["w"] - 62)
+        self.assertGreaterEqual(f["code"][0], 62)
+        self.assertLessEqual(f["code"][1], f["w"] - 62)
+        self.assertLessEqual(f["code"][2], f["h"] - 21, "the code scrolls above the home indicator")
+        self.assertLessEqual(f["tray"][0], f["w"] - 62 - 12)
+        self.assertLessEqual(f["tray"][1], f["h"] - 21 - 12)
 
     def test_settings_says_how_to_add_it_to_the_home_screen(self):
         self.assertIn("Share › Add to Home Screen", self.got["after"]["hint"])
