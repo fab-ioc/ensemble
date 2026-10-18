@@ -387,7 +387,12 @@ class TheTopBar(unittest.TestCase):
                 self.assertEqual(g["mark"]["h"], 22)
                 self.assertLessEqual(g["mark"]["y"] + g["mark"]["h"], 49, "on the bar's first row")
                 self.assertGreaterEqual(g["mark"]["y"], 0)
-                self.assertLess(g["mark"]["x"], 24, "at the bar's left end")
+                if k[:3] in ("430", "390", "360"):
+                    # A phone's bar keeps a 16px gutter (#242).
+                    self.assertGreaterEqual(g["mark"]["x"], 16, "inside the gutter")
+                    self.assertLess(g["mark"]["x"], 32, "at the bar's left end")
+                else:
+                    self.assertLess(g["mark"]["x"], 24, "at the bar's left end")
                 self.assertEqual(g["overlaps"], [])
                 if k[:3] in ("430", "390", "360"):
                     self.assertGreaterEqual(min(g["link"]["w"], g["link"]["h"]), 44, "finger-sized")
