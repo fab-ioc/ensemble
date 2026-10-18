@@ -200,6 +200,8 @@ async function main() {
     await sleep(300);
     return { ev, until, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
+  // The panels follow the project list, which a poll (5s) brings: a while for it, then the check.
+  const settled = p => p.until(`![...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].some(e => e.getBoundingClientRect().width > 0 && /PLAIN-NOTES/.test(e.textContent))`, 8000).catch(() => {});
   const inFrame = (p, js) => p.ev(`${FRAME}.contentWindow.eval(${JSON.stringify(js)})`);
   const chatReady = p => p.until(`!!${FRAME}?.contentWindow?.document.getElementById('input') && ${FRAME}.contentWindow.eval('typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && !!ROOM_OBJ.participants')`);
   const openPo = async p => {
@@ -242,6 +244,7 @@ async function main() {
       await openPo(p);
       await inFrame(p, PO_STATE);
       await sleep(400);
+      await settled(p);
       o.po = await p.ev(GEO);
       await p.shot(`po-${k}`);
       o.poKbd = await keyboard(p, h, false);
@@ -271,6 +274,7 @@ async function main() {
         await p.ev(`window.__warm = false; 0`);
         await p.until(`PD_HOLD === null && [...PD.rt.values()].some(e => e.kind === 'file')`);
         await sleep(600);
+        await settled(p);
         o.held.tabs = await p.ev(`[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`);
         await openTask(p, A.plainTask);
         o.held.back = await p.ev(`[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].map(e => e.textContent.trim())`);

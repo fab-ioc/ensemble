@@ -13391,7 +13391,7 @@ function pdRestorePanels(ctxs, rooms, hold) {
 // is there now come back; the rest are forgotten as before.
 async function pdRestoreHeld() {
   while ((HUB_PHASE = await hubPhase()) !== 'ready') await new Promise(r => setTimeout(r, 2000));
-  try { await refresh({ now: true }); } catch (e) {}
+  try { await refresh({ now: true }); await refreshProjects(); } catch (e) {}   // the projects too: whose panel is whose
   const hold = PD_HOLD;
   PD_HOLD = null;
   if (!hold) return;
@@ -13435,21 +13435,23 @@ function pdAsidePrune() {
 // in one project are set aside on another's (#242: a Motors chat had another
 // project's files as tabs) and come back, in their places, with their project.
 // Only what this hid comes back (kept across a reload): a panel the person
-// hid stays hidden. A panel in a window of its own is left alone.
+// hid stays hidden. A panel in a window of its own is left alone, and so is
+// one, or a screen, whose project the list does not say (yet: a task just
+// made shows in the project list a poll later).
 const PD_ASIDE_KEY = 'cd-pd-aside';
 const PD_ASIDE = (() => { try { return new Set(JSON.parse(localStorage.getItem(PD_ASIDE_KEY) || '[]')); } catch (e) { return new Set(); } })();
 const pdAsideSave = () => { try { localStorage.setItem(PD_ASIDE_KEY, JSON.stringify([...PD_ASIDE])); } catch (e) {} };
 function pdPanelProject(e) {
-  if (e.kind === 'chat') { const p = projectOfRoom(e.room); return p ? p.id : ''; }
+  if (e.kind === 'chat') { const p = projectOfRoom(e.room); return p ? p.id : null; }
   const ctx = e.kind === 'file' && e.v && e.v.ctx;
   if (!ctx) return null;
-  if (ctx.kind === 'task') { const p = wsProjectForRow({ roomId: ctx.sid }); return p ? p.id : ''; }
+  if (ctx.kind === 'task') { const p = wsProjectForRow({ roomId: ctx.sid }); return p ? p.id : null; }
   return ctx.projectId || '';
 }
 function pdProjectPanels() {
   if (!PD.dock) return;
   const r = pdTask() ? rowBySid(SELECTED_SID) : null, task = r ? wsProjectForRow(r) : null;
-  const here = r ? (task ? task.id : '') : (poDockProject() || {}).id;
+  const here = r ? (task || {}).id : (poDockProject() || {}).id;
   if (here === undefined) return;
   const was = [...PD_ASIDE].join();
   for (const [id, e] of PD.rt) {
@@ -16757,7 +16759,7 @@ async function refresh({ now = false, until = 0 } = {}) {
       const showProjectProgress = !PROJECTS;
       if (showProjectProgress) globalThis.EnsembleProgress?.set(projectProgressKey, {phase: 'Loading projects'});
       // Which attention item is a PO's is known only once the projects are.
-      apiProjects().then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); })
+      apiProjects().then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); else pdProjectPanels(); })
         .catch(() => { if (typeof HubResilience === 'undefined' || !HubResilience.offline) { _projFailed = true; renderRows(); } })
         .finally(() => { if (showProjectProgress) globalThis.EnsembleProgress?.clear(projectProgressKey); _projInFlight = false; });
     }
