@@ -238,6 +238,10 @@ def scenario(root: Path, old_zip: Path, new_zip: Path, old: str, new: str,
             proc = subprocess.Popen([str(exe), "--background", "--port", str(port)], env=env,
                                     cwd=exe.parent, stdin=subprocess.DEVNULL, stdout=output,
                                     stderr=subprocess.STDOUT)
+        # On macOS the updater tests os.kill(pid, 0) while stopping the old
+        # hub. A child left as a zombie still answers that probe, so reap it
+        # as soon as it exits instead of waiting until this scenario ends.
+        threading.Thread(target=proc.wait, daemon=True).start()
         try:
             def started():
                 version = hub.get("/api/version")
@@ -276,6 +280,12 @@ def scenario(root: Path, old_zip: Path, new_zip: Path, old: str, new: str,
             step(f"{name}: {expected} serves pages and keeps state",
                  lambda: (wait("restarted hub", served, 60), verify_state(hub, project_id)))
             print(f"RESULT {name}: {json.dumps(final, sort_keys=True)}", flush=True)
+        except BaseException:
+            for path in (home / ".ensemble" / "logs" / "update.log", log):
+                if path.exists():
+                    print(f"DIAGNOSTIC {path.name}:\n" + "\n".join(
+                        path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]), flush=True)
+            raise
         finally:
             stop_own_hub(hub, home, proc, exe, env)
 
