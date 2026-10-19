@@ -119,6 +119,7 @@ import threads
 import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
+import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
 import sends
@@ -3857,9 +3858,15 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
 
 # A long PO's transcript runs to tens of megabytes, and both the chat page and
 # the points ledger read it whenever it grows: one read per change serves both.
-_TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns), turns)
+# A PO's chat spans hundreds of them (a rotated session is a transcript of its
+# own), each read by the threads index, the points ledger and the asks: they
+# are kept by the size of their words, not by count (#247: six were kept, so
+# every reader of a 198-session chat parsed it all again).
+_TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns, *provenance), turns, chars)
 _TURNS_CACHE_LOCK = threading.Lock()
-_TURNS_CACHE_MAX = 6
+_TURNS_CACHE_CHARS = 96_000_000
+_TURNS_CACHE_SIZE = [0]
+_TURNSTORE_VER: list[str] = []
 _SESSION_INPUT_CONTEXT_CACHE: dict[tuple[str, str], tuple[str, str]] = {}
 _SESSION_INPUT_CONTEXT_LOCK = threading.Lock()
 _SESSION_INPUT_CONTEXT_MAX = 4_096
@@ -3935,6 +3942,7 @@ def claude_turns_classified(tpath: Path) -> list[dict]:
         return classify_turns(_claude_text_turns(tpath), room_id=room_id,
                               identity=identity, session_id=tpath.stem)
     key = str(tpath)
+    file_sig = sig
     room_id, identity = _session_input_context(tpath.stem)
     provenance_sig = input_provenance.signature(room_id)
     sig = (*sig, *provenance_sig)
@@ -3942,13 +3950,48 @@ def claude_turns_classified(tpath: Path) -> list[dict]:
         hit = _TURNS_CACHE.get(key)
         if hit and hit[0] == sig:
             return copy.deepcopy(hit[1])
-    turns = classify_turns(_claude_text_turns(tpath), room_id=room_id,
+    turns = classify_turns(_stored_text_turns(tpath, file_sig), room_id=room_id,
                            identity=identity, session_id=tpath.stem)
+    chars = sum(len(t.get("text") or "") + 200 for t in turns)
     with _TURNS_CACHE_LOCK:
-        _TURNS_CACHE.pop(key, None)
-        _TURNS_CACHE[key] = (sig, copy.deepcopy(turns))
-        while len(_TURNS_CACHE) > _TURNS_CACHE_MAX:
-            _TURNS_CACHE.pop(next(iter(_TURNS_CACHE)))
+        old = _TURNS_CACHE.pop(key, None)
+        if old:
+            _TURNS_CACHE_SIZE[0] -= old[2]
+        _TURNS_CACHE[key] = (sig, copy.deepcopy(turns), chars)
+        _TURNS_CACHE_SIZE[0] += chars
+        while _TURNS_CACHE_SIZE[0] > _TURNS_CACHE_CHARS and len(_TURNS_CACHE) > 1:
+            _TURNS_CACHE_SIZE[0] -= _TURNS_CACHE.pop(next(iter(_TURNS_CACHE)))[2]
+    return turns
+
+
+def _turnstore_db() -> Path:
+    return chatroom.ROOMS_DIR.parent / "cache" / "turns.sqlite3"
+
+
+def _turnstore_version() -> str:
+    """The parser's own source: a change to how a transcript is read reads
+    every stored one afresh."""
+    if not _TURNSTORE_VER:
+        import inspect
+        try:
+            parts = [inspect.getsource(f) for f in (
+                _claude_text_turns, _queued_prompt_text, _unwrap_pasted,
+                _claude_image_source, _extract_text)] + [inspect.getsource(message_refs)]
+        except (OSError, TypeError):
+            parts = [str(time.time())]     # no source: nothing stored is trusted
+        _TURNSTORE_VER.append(turnstore.version_of(*parts))
+    return _TURNSTORE_VER[0]
+
+
+def _stored_text_turns(tpath: Path, sig: tuple[int, int]) -> list[dict]:
+    """_claude_text_turns(tpath), from the turn store while the file is
+    unchanged (#247: a restarted hub read every transcript again)."""
+    ver = _turnstore_version()
+    db = _turnstore_db()
+    turns = turnstore.get(db, str(tpath), sig, ver)
+    if turns is None:
+        turns = _claude_text_turns(tpath)
+        turnstore.put(db, str(tpath), sig, ver, turns)
     return turns
 
 
@@ -4263,7 +4306,8 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
     assistant turn that follows one. A resume note typed together with the
     messages held for the resume (one input) is two turns: the note, then
     what the person sent."""
-    recorded = input_provenance.index(room_id) if room_id else {}
+    recorded = (input_provenance.index(room_id, identity=identity, session_id=session_id)
+                if room_id else {})
     modern_session = any(
         (not identity or not row.get("identity") or row.get("identity") == identity)
         and (not session_id or not row.get("sessionId") or row.get("sessionId") == session_id)
@@ -6581,15 +6625,17 @@ def _task_index() -> list[dict]:
         if hit and hit[0] == mtime:
             out.append(hit[1])
             continue
-        room = chatroom.get_room(rid)
+        # Read in place: a first call reads every room, and a copy of each
+        # doubled a cold chat's first open (#247). The entry copies what it keeps.
+        room = chatroom.get_room(rid, copy_room=False)
         if room is None:
             continue
         rep = room.get("lastReport") if isinstance(room.get("lastReport"), dict) else {}
         entry = {"id": rid, "no": room.get("no"), "noProjectId": room.get("noProjectId") or "",
-                 "previousNos": room.get("previousNos") or [], "title": room.get("title", ""),
+                 "previousNos": list(room.get("previousNos") or []), "title": room.get("title", ""),
                  "projectId": room.get("projectId") or "", "cwd": room.get("cwd") or "",
                  "launched": room.get("launched", True), "status": room.get("status", ""),
-                 "workflow": room.get("workflow"), "workflowAt": room.get("workflowAt"),
+                 "workflow": copy.deepcopy(room.get("workflow")), "workflowAt": room.get("workflowAt"),
                  "createdAt": room.get("createdAt"),
                  "branch": ((room.get("workspace") or {}).get("branch") or ""),
                  "taskDir": room.get("taskDir") or "",

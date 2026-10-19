@@ -33,6 +33,7 @@ MAX_RECORDS = 2_000
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, tuple[tuple[int, int], list[dict]]] = {}
+_ORDERED: dict[str, tuple[tuple[int, int], dict[str, list[dict]]]] = {}
 _PASTE = re.compile(r"^\x1b\[200~(.*)\x1b\[201~$", re.S)
 
 
@@ -178,14 +179,43 @@ def record(room_id: str, identity: str, text: str, info: dict,
     return dict(row)
 
 
-def index(room_id: str) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = defaultdict(list)
-    for order, row in enumerate(records(room_id)):
+def _ordered(room_id: str) -> dict[str, list[dict]]:
+    """The room's records with ``_order``, grouped by session ("" for a row
+    without one), kept while the journal is unchanged: a PO's chat classifies
+    hundreds of transcripts against one journal (#247)."""
+    sig = signature(room_id)
+    key = str(path_for(room_id))
+    with _LOCK:
+        hit = _ORDERED.get(key)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+    rows = records(room_id)
+    by_session: dict[str, list[dict]] = defaultdict(list)
+    for order, row in enumerate(rows):
         # File order is the causal signal for ordinary headless PTY text
         # writes, which the dashboard journals under the same short lock.
         # Slow visible-console and discrete-Enter phases have documented
         # narrow ordering gaps rather than blocking unrelated keystrokes.
-        out[str(row.get("hash") or "")].append({**row, "_order": order})
+        by_session[str(row.get("sessionId") or "")].append({**row, "_order": order})
+    with _LOCK:
+        _ORDERED[key] = (sig, dict(by_session))
+    return dict(by_session)
+
+
+def index(room_id: str, *, identity: str = "", session_id: str = "") -> dict[str, list[dict]]:
+    """The room's records by text hash. With ``identity`` / ``session_id``:
+    only those match() and assign() would keep for that seat and session
+    anyway (a row naming none is kept). The rows are shared: read only."""
+    groups = _ordered(room_id) if room_id else {}
+    if session_id:
+        rows = sorted([*groups.get(session_id, []), *groups.get("", [])], key=lambda r: r["_order"])
+    else:
+        rows = sorted((r for bucket in groups.values() for r in bucket), key=lambda r: r["_order"])
+    if identity:
+        rows = [r for r in rows if not r.get("identity") or r.get("identity") == identity]
+    out: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        out[str(row.get("hash") or "")].append(row)
     return dict(out)
 
 

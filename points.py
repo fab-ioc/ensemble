@@ -1267,6 +1267,9 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         room = _d.chatroom.get_room(room_id)
     if room is None:
         return load(room_id, shared=shared)
+    # Each transcript is classified for its room and seat: known from the
+    # room in hand, not looked up across every room per session (#247).
+    _d.note_session_owners(room)
     # The transcripts are read first, without the lock: a long one takes a
     # while, and every poll and send waits on the lock. Only a session that
     # changed since it was last read, and after the oldest point still
