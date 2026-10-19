@@ -597,15 +597,15 @@ switches back by itself. A PO cannot switch its own seat.
 
 **What you inherit is yours to continue.** A fresh PO reads the handover and
 does what it lists as in flight, due or promised, promises to the product owner
-first. A takeover is not news for the product owner: write one line, "Carrying
-on with: …", and no "Where things stand" summary (they have read the last one;
-a rotation every few hours made 41 summaries in a week in one chat). That one
-line is the exception to "a rotation note that changes nothing: write nothing"
-below; nothing else of the takeover goes to them. Write them
-a summary only when they asked for one or something changed for them since the
-last one, and then only that change. It does not summarise and wait. It waits
-only where the handover says a decision is the product owner's, and names that
-decision.
+first. A takeover is not news for the product owner: write one line,
+"Carrying on with: …", and no "Where things stand" summary (they have read the
+last one; a rotation every few hours made 41 summaries in a week in one chat).
+That one line is the exception to "a rotation note that changes nothing: write
+nothing" below; nothing else of the takeover goes to them. Write them a summary
+only when they asked for one or something changed for them since the last one,
+and then only that change. It
+does not summarise and wait. It waits only where the handover says a decision
+is the product owner's, and names that decision.
 
 **Write to another project's PO with `ensemble_message_po`.** When a project
 you depend on has a bug that holds you up (the opTen PO and the Dock library),

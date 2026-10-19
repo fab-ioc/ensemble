@@ -1702,8 +1702,10 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"under '{DUE_HEADING}' what is due at a time.",
         # The summary is not the end of the turn: a fresh PO that summarised and
         # waited left a promised test undone for four hours (2026-09-18).
-        f"Then reply with a short summary of where things stand, and in the same "
-        f"message say what you are carrying on with ('Carrying on with: …'): whatever "
+        # One line, not a status summary: a takeover is not news (#244 measured 41
+        # summaries in a week in one chat).
+        f"Then reply with one line saying what you are carrying on with "
+        f"('Carrying on with: …'), no summary of where things stand: whatever "
         f"the handover lists as in flight, due or promised is yours now, so continue "
         f"it at once, promises to {_d.operator_name()} first, without being asked again. "
         f"Wait only where the handover says the decision is {_d.operator_name()}'s, and "

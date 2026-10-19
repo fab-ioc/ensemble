@@ -34,7 +34,8 @@ class FirstPromptTests(unittest.TestCase):
         self.assertNotIn("and wait", text)
         self.assertNotRegex(text.rstrip(), r"\bwait\.?$")
         last = text.split("\n\n")[-1]
-        self.assertIn("short summary of where things stand", last)
+        self.assertIn("reply with one line", last)
+        self.assertNotIn("short summary", last)
         self.assertIn("Carrying on with:", last)
         self.assertIn("in flight, due or promised", last)
         self.assertIn("promises to sam first", last)
