@@ -948,44 +948,78 @@ def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     return out
 
 
-def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "") -> dict:
+def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
+          frm: str = "") -> tuple[int, int]:
+    """Which of ``seq`` (balloon ids in order) a page shows, as [start, end):
+    the last ``n``; ``before``: the ``n`` before that balloon (a page further
+    up, as the reader scrolls); ``frm``: from that balloon to the end (the
+    poll of a page that holds what is above it); ``upto``: as many more as
+    reach a balloon a link lands on. A balloon no longer in ``seq`` (moved
+    into a thread) is placed by its time."""
+    def at(mid: str) -> int | None:
+        try:
+            return seq.index(mid)
+        except ValueError:
+            r = idx["by_mid"].get(mid)
+            if r is None:
+                return None
+            ts = r["ts"] or 0
+            return next((i for i, m in enumerate(seq) if (idx["by_mid"][m]["ts"] or 0) >= ts), len(seq))
+    n = max(1, min(int(n or CHANNEL_MAX), CHANNEL_LIMIT))
+    if before:
+        end = at(before)
+        if end is not None:
+            return max(0, end - n), end
+    if frm:
+        start = at(frm)
+        if start is not None:
+            return max(0, len(seq) - CHANNEL_LIMIT, start), len(seq)
+    if upto and upto in idx["by_mid"]:
+        i = at(upto)
+        if i is not None:
+            n = min(max(n, len(seq) - i + 20), CHANNEL_LIMIT)
+    return max(0, len(seq) - n), len(seq)
+
+
+def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
+                 before: str = "", frm: str = "") -> dict:
     """The channel: its last ``n`` entries (turns as /api/session gives
     them, each with its balloon id, ``thr`` on a parent, ``inThr`` on a reply
     also sent to the chat), the threads they show, and how many came before.
     ``upto``: a balloon a link lands on; when the channel has it, as many
-    more as reach it (``n`` says how many were sent). ``{pending: true}``
-    while the chat is first read."""
+    more as reach it (``n`` says how many were sent). ``before`` / ``frm``:
+    a page above the one held, or the held one from its first entry on
+    (:func:`_span`). ``{pending: true}`` while the chat is first read."""
     idx = ready(room_id, room)
     if idx is None:
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
-    n = int(n or CHANNEL_MAX)
     ch = idx["channel"]
-    if upto and upto in idx["by_mid"]:
-        try:
-            n = max(n, len(ch) - ch.index(upto) + 20)
-        except ValueError:
-            pass
-    n = max(1, min(n, CHANNEL_LIMIT))
-    shown = ch[-n:]
+    start, end = _span(idx, ch, n, upto, before, frm)
+    shown = ch[start:end]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     # A reply also in the chat names its thread ("replied to a thread: …").
     tids |= {t for m in shown if m in idx["also"] for t in idx["of"].get(m) or []}
-    return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
-            "items": [_turn(idx, m) for m in shown],
-            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
-            "activity": _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None,
-            "unreadThreads": sorted((_meta(t) for t in idx["threads"].values()
-                                    if t["id"] != "team:activity" and t.get("unread")),
-                                    key=lambda t: t.get("lastAt") or 0, reverse=True),
-            "before": max(0, len(ch) - n), "n": n, "balloons": len(idx["recs"]), "channel": len(ch)}
+    out = {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+           "items": [_turn(idx, m) for m in shown],
+           "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
+           "before": start, "n": len(shown), "balloons": len(idx["recs"]), "channel": len(ch)}
+    if before:
+        return out      # a page above: the rest the reader holds already
+    out["activity"] = _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None
+    out["unreadThreads"] = sorted((_meta(t) for t in idx["threads"].values()
+                                   if t["id"] != "team:activity" and t.get("unread")),
+                                  key=lambda t: t.get("lastAt") or 0, reverse=True)
+    return out
 
 
-def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:
+def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int = 0,
+                before: str = "", frm: str = "", upto: str = "") -> dict:
     """One thread: its meta and its balloons in order (``alsoIn`` on one that
-    is in other threads too). ``mid`` instead of ``tid``: the thread that
-    balloon is in (its newest), or a new one it would start (``m:<mid>``)
-    when it is in none. ``{pending: true}`` while the chat is first read;
-    ``{error}`` for a thread it does not have."""
+    is in other threads too); with ``n``, its last ``n`` and how many came
+    before (``before`` / ``frm`` / ``upto`` as for the channel). ``mid``
+    instead of ``tid``: the thread that balloon is in (its newest), or a new
+    one it would start (``m:<mid>``) when it is in none. ``{pending: true}``
+    while the chat is first read; ``{error}`` for a thread it does not have."""
     idx = ready(room_id, room)
     if idx is None:
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
@@ -994,6 +1028,7 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:
         # balloon of it starts a thread of its own.
         tids = [t for t in idx["of"].get(mid) or [] if t != "team:activity"]
         tid = tids[-1] if tids else ("m:" + mid if mid in idx["by_mid"] else "")
+        upto = upto or mid
     th = idx["threads"].get(tid)
     if th is None and tid.startswith("m:") and tid[2:] in idx["by_mid"]:
         # A thread started on a balloon from its menu: its parent alone so far.
@@ -1002,12 +1037,14 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "") -> dict:
                 "points": [], "task": "", "replies": 0, "who": [], "lastAt": r["ts"], "lastWho": "",
                 "unread": 0, "state": "", "new": True}
         return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
-                "thread": meta, "items": [_turn(idx, r["mid"], tid)]}
+                "thread": meta, "items": [_turn(idx, r["mid"], tid)], "before": 0}
     if th is None:
         return {"error": "no_such_thread"}
+    members = [m for m in th["members"] if m in idx["by_mid"]]
+    start, end = _span(idx, members, n, upto, before, frm) if n else (0, len(members))
     return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
-            "thread": _meta(th),
-            "items": [_turn(idx, m, tid) for m in th["members"] if m in idx["by_mid"]]}
+            "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],
+            "before": start}
 
 
 def unread_threads(room_id: str, room: dict) -> list[dict] | None:

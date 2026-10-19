@@ -621,7 +621,6 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
                 room["threaded"] = True
                 unread = threads.unread_threads(room.get("id", ""), room)
                 if unread is not None:
-                    room["threadsUnread"] = unread
                     if isinstance(room.get("points"), dict):
                         room["points"]["threads"] = unread     # Needs you's Threads group
         except Exception as e:      # noqa: BLE001 — the chat still shows
@@ -10307,6 +10306,98 @@ ROTATION_SHOWN = ("n", "at", "fromSessionId", "toSessionId", "tokens", "threshol
 _ROOM_STATUS_LOCK = threading.Lock()
 
 
+# A chat's first read (&lite=1) paints with these and takes the rest as a
+# patch on the poll it makes right after (#247: a PO chat's status was
+# 400-540 KB, most of it closed points, Needs you's lists and 200 rotations).
+LITE_THREADS = 20
+LITE_ROTATIONS = 3
+
+
+def lite_status(status: dict) -> dict:
+    """What a chat's first paint needs of its status: the points still
+    waiting on someone (no Needs you lists, no answered cards' asks), the
+    newest threads with unread replies, and in a threaded chat (its balloons
+    come from the channel) each agent's last rotations."""
+    out = dict(status)
+    pts = status.get("points")
+    if isinstance(pts, dict):
+        out["points"] = {**{k: v for k, v in pts.items() if k not in ("needs", "asks", "items", "threads")},
+                         "items": [i for i in pts.get("items") or [] if i.get("state") in points.LIVE],
+                         **({"threads": pts["threads"][:LITE_THREADS]} if "threads" in pts else {})}
+    if status.get("threaded"):
+        out["participants"] = [
+            {**p, "rotations": p["rotations"][-LITE_ROTATIONS:]} if len(p.get("rotations") or []) > LITE_ROTATIONS
+            else p for p in status.get("participants") or []]
+    return out
+
+
+def _hub_row(m: dict) -> bool:
+    """A room message a one-agent chat shows among its transcript's turns
+    (session.html withHubRows): a restart notice, a PO's message, a card."""
+    return ((m.get("kind") == "notice" and m.get("noticeKind") == "restart")
+            or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list))
+
+
+def channel_hub_rows(out: dict, room: dict) -> dict:
+    """The room's hub rows of the time the channel's entries span
+    (``hubRows``, from ``hubFrom``): the page put them among the turns after
+    fetching older pages of the room until it reached that time, 200-260 KB
+    each on a PO chat (#247)."""
+    stamps = [_turn_epoch(t.get("timestamp")) for t in out.get("items") or []]
+    stamps = [x for x in stamps if x]
+    if not stamps:
+        return out
+    since = min(stamps)
+    out["hubFrom"] = since
+    out["hubRows"] = [m for m in room.get("messages") or []
+                      if _hub_row(m) and float(m.get("ts") or 0) >= since]
+    return out
+
+
+# The channel and thread views last sent, by room and the sig sent with
+# them: a poll that holds one gets what changed since (#247: a PO's channel
+# was 250 KB on every change of any of it).
+_THREAD_VIEWS: dict[tuple[str, str], dict] = {}     # oldest use first
+_THREAD_VIEWS_MAX = 48
+_THREAD_VIEWS_LOCK = threading.Lock()
+
+
+def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> dict:
+    """A channel or thread view as sent: its ``sig`` names this very view
+    (the index's and a digest of the rest). The view the page holds (``had``)
+    again: ``{same}``; one kept: a delta, ``{delta, ids, rows, set, del}``
+    (the entries in order, those new or changed, the other keys changed or
+    gone); else the view whole. ``keep``: kept for the next poll (not a page
+    above the one held)."""
+    progress_now = out.pop("progress", None)
+    rows = {}
+    for t in out.get("items") or []:
+        rows[str(t.get("mid"))] = json.dumps(t, sort_keys=True)
+    keys = {k: json.dumps(v, sort_keys=True) for k, v in out.items() if k not in ("items", "sig")}
+    digest = hashlib.sha1("\0".join([*rows.values(), *(k + v for k, v in sorted(keys.items()))])
+                          .encode("utf-8")).hexdigest()[:12]
+    sig = f"{out['sig']}:{digest}"
+    extra = {"progress": progress_now} if progress_now else {}
+    if had == sig:
+        return {"sig": sig, "same": True, **extra}
+    with _THREAD_VIEWS_LOCK:
+        base = _THREAD_VIEWS.pop((rid, had), None) if had else None
+        if base is not None:
+            _THREAD_VIEWS[(rid, had)] = base
+        if keep:
+            _THREAD_VIEWS.pop((rid, sig), None)
+            _THREAD_VIEWS[(rid, sig)] = {"rows": rows, "keys": keys}
+            while len(_THREAD_VIEWS) > _THREAD_VIEWS_MAX:
+                del _THREAD_VIEWS[next(iter(_THREAD_VIEWS))]
+    if base is None:
+        return {**out, "sig": sig, **extra}
+    return {"sig": sig, "delta": True, "ids": list(rows),
+            "rows": {str(t.get("mid")): t for t in out.get("items") or []
+                     if base["rows"].get(str(t.get("mid"))) != rows[str(t.get("mid"))]},
+            "set": {k: out[k] for k, v in keys.items() if base["keys"].get(k) != v},
+            "del": [k for k in base["keys"] if k not in keys], **extra}
+
+
 def keep_room_status(rid: str, sig: str, text: str) -> None:
     """Keep the status sent as ``sig`` (its JSON text, as the sig was made)."""
     with _ROOM_STATUS_LOCK:
@@ -15154,6 +15245,13 @@ class Handler(BaseHTTPRequestHandler):
                                       **({"total": len(every)} if win else {}),
                                       "messages": messages})
                 return
+            if q.get("lite", [""])[0] == "1":
+                # The first read: the rest of the status comes as a patch on
+                # the page's next poll, which it makes once this is drawn.
+                status = lite_status(status)
+                status_text = json.dumps(status, sort_keys=True)
+                status_sig = hashlib.sha1(status_text.encode("utf-8")).hexdigest()[:20]
+                out = {**status, "messages": out.get("messages") or [], "lite": True}
             keep_room_status(rid, status_sig, status_text)
             if win:
                 room_window(out, win)
@@ -15232,19 +15330,30 @@ class Handler(BaseHTTPRequestHandler):
             if not threads.is_threaded(rid):
                 self._send_json(409, {"error": "not_threaded"})
                 return
+            arg = lambda k: (q.get(k, [""])[0] or "").strip()      # noqa: E731
+            before = arg("before")
+            try:
+                n = int(arg("n") or 0)
+            except ValueError:
+                n = 0
             try:
                 if p == "/api/room/channel":
-                    n = int(q.get("n", [""])[0] or threads.CHANNEL_MAX)
-                    out = threads.channel_view(rid, room, n, q.get("upto", [""])[0].strip())
+                    out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
+                                               before, arg("from"))
+                    channel_hub_rows(out, room)
+                    if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):
+                        # The first read: the newest threads with replies; the
+                        # rest on the next poll, as a delta of this one.
+                        out["unreadThreads"] = out["unreadThreads"][:LITE_THREADS]
                 else:
-                    out = threads.thread_view(rid, room, q.get("t", [""])[0].strip(), q.get("mid", [""])[0].strip())
+                    out = threads.thread_view(rid, room, arg("t"), arg("mid"), n, before,
+                                              arg("from"), arg("upto"))
             except Exception as e:      # noqa: BLE001 — the page shows the whole chat
                 print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_read"})
                 return
-            if out.get("sig") and out["sig"] == q.get("sig", [""])[0]:
-                out = {"sig": out["sig"], "same": True,
-                       **({"progress": out["progress"]} if out.get("progress") else {})}
+            if out.get("sig") and not out.get("error"):
+                out = thread_view_answer(rid, out, arg("sig"), keep=not before)
             self._send_json(404 if out.get("error") else 200, out)
             return
         if p == "/api/attention":

@@ -417,6 +417,25 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(linked["before"], 30)
         self.assertEqual(gone["n"], threads.CHANNEL_MAX)
 
+    def test_the_channel_comes_in_pages_from_the_newest_up(self):
+        # #247: the latest 40 first; older ones a page at a time as the
+        # reader scrolls up; a poll asks from the first entry it holds.
+        recs = [human(f"s:{i}", i * 10, f"message {i}") for i in range(400)]
+        out = self.run_(recs, [], side())
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}, "sig": 1,
+               "channel": threads._channel({**out, "recs": recs})}
+        with mock.patch.object(threads, "ready", return_value=idx):
+            first = threads.channel_view("r", {}, 40)
+            up = threads.channel_view("r", {}, 100, before=first["items"][0]["mid"])
+            poll = threads.channel_view("r", {}, 0, frm=first["items"][0]["mid"])
+            top = threads.channel_view("r", {}, 100, before="s:50")
+        mids = lambda v: [t["mid"] for t in v["items"]]      # noqa: E731
+        self.assertEqual((mids(first)[0], mids(first)[-1], first["before"]), ("s:360", "s:399", 360))
+        self.assertEqual((mids(up)[0], mids(up)[-1], up["before"]), ("s:260", "s:359", 260))
+        self.assertNotIn("unreadThreads", up, "a page above carries its entries only")
+        self.assertEqual(mids(poll), mids(first))
+        self.assertEqual((mids(top)[0], len(top["items"]), top["before"]), ("s:0", 50, 0))
+
 
 class PoRoomsTest(unittest.TestCase):
     def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):
@@ -552,6 +571,22 @@ class Endpoints(tp._World):
                          "Reply in thread on Team activity starts a thread of its own")
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
 
+    def test_a_poll_that_holds_the_channel_gets_what_changed(self):
+        # #247: a new balloon reaches a page that holds the channel as a
+        # delta: the entries in order, only the new one whole.
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.add("sid-1", tp.turn("assistant", "Something new.", time.time() + 2))
+        self.poll()
+        d = http_get(f"/api/room/channel?id={self.rid}&sig={ch['sig']}")[1]
+        self.assertTrue(d.get("delta"), d)
+        self.assertEqual(d["ids"][:3], [i["mid"] for i in ch["items"]])
+        self.assertEqual(list(d["rows"]), [d["ids"][-1]], "only the new entry is sent whole")
+        self.assertEqual(d["rows"][d["ids"][-1]]["text"], "Something new.")
+        # A sig the hub no longer holds gets the view whole.
+        whole = http_get(f"/api/room/channel?id={self.rid}&sig=gone:0")[1]
+        self.assertFalse(whole.get("delta"))
+        self.assertEqual([i["mid"] for i in whole["items"]], d["ids"])
+
     def test_team_activity_unread_points_to_latest_po_reply_not_hub_traffic(self):
         now = time.time() + 2
         self.add("sid-1", tp.turn("assistant", "An update for you.", now),
@@ -578,13 +613,13 @@ class Endpoints(tp._World):
         now = time.time()
         self.add("sid-1", tp.turn("user", sent[0], now + 5), tp.turn("assistant", "Re P1: wider still.", now + 6))
         room = self.poll()
-        self.assertEqual([(t["id"], t["unread"]) for t in room["threadsUnread"]], [("P1", 1)])
+        self.assertEqual([(t["id"], t["unread"]) for t in room["points"]["threads"]], [("P1", 1)])
         status, ch = http_get(f"/api/room/channel?id={self.rid}")
         shown = {i["mid"]: i for i in ch["items"]}
         self.assertEqual(shown["sid-1:4"].get("inThr"), "P1", "sent to the chat too: there, marked")
         self.assertNotIn("sid-1:5", shown, "the PO's answer in the thread is a reply")
         self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": now + 6})[0], 200)
-        self.assertEqual(self.poll()["threadsUnread"], [])
+        self.assertEqual(self.poll()["points"]["threads"], [])
         for bad in ("nan", "inf", now + 10 * 86400):
             self.assertEqual(tp.http("/api/room/thread/seen", {"roomId": self.rid, "thread": "P1", "ts": bad})[0], 400, bad)
 
