@@ -119,6 +119,36 @@ class TaskOwnerSwap(unittest.TestCase):
         self.assertIn("cwd missing", log.getvalue())
         self.assertFalse(missing.exists())
 
+    def test_codex_with_unbackfilled_session_resumes_after_stop_or_restart(self):
+        made = chatroom.create_room("task", [
+            {"identity": "codex", "agent": "codex", "role": "engineer",
+             "sessionId": "", "cwd": str(self.worktree)},
+        ])
+        rid = made["id"]
+        room = chatroom.get_room(rid, public=False)
+        room.update(cwd=str(self.worktree), sharedCwd=True, launched=True,
+                    mode="solo", spec="Build the task.", stoppedAt=1)
+        chatroom.update_room(room)
+        for restart in (None, {"codex": "working"}):
+            with self.subTest(restart=restart):
+                room = chatroom.get_room(rid, public=False)
+                resumed = []
+                handler = dashboard.Handler.__new__(dashboard.Handler)
+
+                def resume(room_full, part, collab=True, seed="", human=False):
+                    resumed.append((part["identity"], part["cwd"], seed))
+                    return {"ptyId": "resumed-terminal", "sessionId": "",
+                            "cwd": part["cwd"], "prompted": False}
+
+                with (mock.patch.object(dashboard, "_pty_alive", return_value=False),
+                      mock.patch.object(dashboard, "load_projects", return_value=[]),
+                      mock.patch.object(handler, "_resume_room_agent_pty", side_effect=resume),
+                      mock.patch.object(handler, "_launch_room_agent_pty",
+                                        side_effect=AssertionError("ran Codex relaunched")),
+                      mock.patch.object(handler, "_deliver_after_resume")):
+                    handler._start_or_resume_room_now(room, restart=restart)
+                self.assertEqual(resumed, [("codex", str(self.worktree), "Build the task.")])
+
 
 if __name__ == "__main__":
     unittest.main()

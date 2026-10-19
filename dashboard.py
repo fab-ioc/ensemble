@@ -16307,7 +16307,13 @@ class Handler(BaseHTTPRequestHandler):
                 part.pop("fresh", None)
                 part.pop("stoppedState", None)
                 continue
-            if part.pop("fresh", False) or not (part.get("sessionId") or "").strip():
+            fresh = part.pop("fresh", False)
+            # Codex's id is found asynchronously after launch. A seat that
+            # already ran can still have an empty sessionId; its resume path
+            # can recover the id from the rollout in its cwd.
+            codex_ran = part.get("agent") == "codex" and any(
+                part.get(key) for key in ("cwd", "ptyId", "lastExit", "hubStarted"))
+            if fresh or (not (part.get("sessionId") or "").strip() and not codex_ran):
                 # A seat with no recorded conversation needs its first prompt,
                 # even if an older room record did not mark it fresh.
                 info = self._launch_room_agent_pty(
