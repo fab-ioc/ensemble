@@ -382,6 +382,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     of: dict[str, list[str]] = {}
     parent: dict[str, list[str]] = {}
     also: dict[str, str] = {}
+    work: set[str] = set()             # task traffic inside a person's thread
     order: list[str] = []
     done: dict[str, dict] = {}              # the balloons read so far
     task_thread: dict[str, str] = {}
@@ -453,6 +454,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 threads[tid]["task"] = ref
 
     last: str | None = None         # the thread of the last input: what a PO message answers
+    last_input_work = False
     activity = "team:activity"
     sent_of = _pair_sent(recs, side, {**(claimed or {}),
                                       **{p["key"]: p["mid"] for p in pts.values() if p.get("key") and p.get("mid")}})
@@ -474,6 +476,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         if r["role"] == "user":
             kind = r.get("kind")
             if kind == "human":
+                last_input_work = False
                 made = [i for i in by_mid.get(mid, []) if i in pts]
                 made += [i for i in r.get("pts") or [] if i in pts and i not in made
                          and pts[i].get("mid") in (None, "", mid)]
@@ -536,6 +539,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     if not boxed and mid not in also:
                         also[mid] = tids[-1]
             elif kind == "report":
+                last_input_work = True
                 ref = r.get("task") or ""
                 tid = task_thread.get(ref) if ref else None
                 if tid is None:
@@ -544,8 +548,11 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                         task_thread[ref] = tid
                 else:
                     join(tid, r)
+                    if tid != activity:
+                        work.add(mid)
                 last = tid
             else:
+                last_input_work = True
                 last = team(r)
             continue
         # The PO's balloon.
@@ -559,6 +566,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             if t:
                 tids.append(t)
         tids = list(dict.fromkeys(tids))
+        explicit = bool(r.get("re") or _point_mentions(r["turn"].get("text") or "")
+                        or re.search(r"(?im)^\s*(?:>\s*)?for you\s*:", r["turn"].get("text") or ""))
         if not tids and last == activity and (r.get("ask") or r.get("live")):
             # A PO question or live announcement woken by a digest/report is
             # addressed to the person, not just more task traffic.
@@ -573,6 +582,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             tids = [tid]
         for t in tids:
             join(t, r)
+        if last_input_work and not explicit and not r.get("ask") and not r.get("live"):
+            if any(t != activity for t in tids):
+                work.add(mid)
         if tids and (r.get("ask") or r.get("live")) and activity not in tids:
             # Never hidden in a thread (an ask, "is live"): in the chat too,
             # marked with the newest of its threads. An answer to several
@@ -584,7 +596,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     # Sends paired by what they hold: their balloon, kept (build), so their
     # place outlives their record (#237 review 1).
     paired = {a["key"]: (m, _num(a.get("at"))) for m, a in sent_of.items() if a.get("key") and a.get("mid") != m}
-    return {"threads": threads, "of": of, "parent": parent, "also": also, "order": order, "paired": paired}
+    return {"threads": threads, "of": of, "parent": parent, "also": also,
+            "work": work, "order": order, "paired": paired}
 
 
 PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)
@@ -834,7 +847,9 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
     seen = side.get("seen") or {}
     for tid, th in out["threads"].items():
         rs = [by_mid[m] for m in th["members"] if m in by_mid]
-        replies = rs[1:]
+        work = out["work"]
+        replies = [r for r in rs[1:] if r["mid"] not in work]
+        work_replies = [r for r in rs[1:] if r["mid"] in work]
         mine = max([r["ts"] for r in rs if _who(r) == "you"] + [0.0])
         mark = max(since, _num(seen.get(tid)), mine)
         news = [r for r in replies if _who(r) != "you" and r["ts"] > mark]
@@ -845,6 +860,8 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
         open_questions = sum(1 for m in th["members"] if m in open_mids)
         th.update({
             "replies": len(replies),
+            "workCount": len(work_replies),
+            "workLastMid": work_replies[-1]["mid"] if work_replies else "",
             "rootWho": _who(rs[0]) if rs else "",
             "who": list(dict.fromkeys(_who(r) for r in replies)),
             "lastAt": (lastr or rs[0])["ts"] if rs else th["rootTs"],
@@ -923,7 +940,7 @@ def ready(room_id: str, room: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _meta(th: dict) -> dict:
-    out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "rootWho", "who",
+    out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "workCount", "workLastMid", "rootWho", "who",
                                    "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions")}
     if th["id"] == "team:activity":
         # Hub notes and reports do not ring the unread bell. A PO reply in
@@ -936,6 +953,8 @@ def _meta(th: dict) -> dict:
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     r = idx["by_mid"][mid]
     out = {**r["turn"], "mid": mid}
+    if tid and mid in idx.get("work", ()):
+        out["workLog"] = True
     thr = [t for t in idx["parent"].get(mid) or [] if t != "team:activity"]
     if thr:
         out["thr"] = thr

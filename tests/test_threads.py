@@ -152,6 +152,18 @@ class AssignTest(unittest.TestCase):
         th = out["threads"]["team:activity"]
         self.assertEqual((th["title"], th["members"]), ("Team activity", ["s:3", "s:4"]))
 
+    def test_work_lane_keeps_reports_and_po_notes_out_of_unread(self):
+        recs = [human("s:0", 0, "status of #12?"), po("s:1", 2, "Re P1: in progress", re_=["P1"]),
+                report("s:2", 10, "#12"), po("s:3", 11, "Review passed."),
+                po("s:4", 12, "Still working."), po("s:5", 13, "For you: ready to try."),
+                human("s:6", 20, "Re P1: tried", re_=["P1"]), po("s:7", 21, "It works."),
+                report("s:8", 30, "#12"), po("s:9", 31, "Re P1: shipped", re_=["P1"])]
+        out = self.run_(recs, [point("P1", "s:0", "status of #12?")])
+        self.assertEqual(out["work"], {"s:2", "s:3", "s:4", "s:8"})
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
+        self.assertTrue(threads._turn(idx, "s:3", "P1")["workLog"])
+        self.assertNotIn("workLog", threads._turn(idx, "s:5", "P1"))
+
     def test_a_point_naming_one_task_claims_its_reports(self):
         recs = [human("s:0", 0, "how is #12 going?"), report("s:1", 50, "#12")]
         out = self.run_(recs, [point("P1", "s:0", "how is #12 going?")])

@@ -790,6 +790,12 @@
   .thr-card .thr-count, .thr-card .thr-meta, .thr-card .thr-asks { flex:0 0 auto; color:var(--fg-muted); font-size:var(--fs-200); }
   .thr-card .thr-asks { color:var(--c-warning-fg); }
   .thr-empty { padding:var(--s-400); color:var(--fg-muted); text-align:center; }
+  .thr-work { display:flex; flex-direction:column; align-items:stretch; gap:var(--s-050); width:100%; margin:var(--s-200) 0;
+    padding:var(--s-200) var(--s-300); text-align:left; background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--r-200); color:var(--fg); font:inherit; cursor:pointer; }
+  .thr-work:hover { background:var(--hover); }
+  .thr-work:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .thr-work .preview { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--fg-muted); font-size:var(--fs-200); }
   #threads-view[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
   body.po-thread-channel #chatbar button { min-height:var(--touch-min); }
   .thr-card { gap:var(--s-100); min-height:44px; } .thr-card .thr-root { flex-basis:0; }
@@ -4620,6 +4626,9 @@ function renderBubbles(items, opt = {}) {
   // An agent's asks: a card of quick answers in each one's place (askBodyHtml).
   const body = m => { if (m.from !== 'user') return askBodyHtml(m, POINTS, md, ptBar); const it = m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
+  const workItems = THREAD_MODE ? items.filter(m => m.workLog) : [];
+  const workLast = workItems.length ? workItems[workItems.length - 1] : null;
+  let workLineShown = false;
   // The catch-up line goes above what is drawn first for the first message after the read point.
   const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked, POINTS.askMids) : null;
   const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',') + '|' + [...(POINTS.askMids || [])].join(',');
@@ -4641,6 +4650,13 @@ function renderBubbles(items, opt = {}) {
     if (!tids.length) rows.push('<div class="thr-empty">No threads with new replies</div>');
   } else items.forEach((m, i) => {
     while (due.length && m.ts && m.ts > (due[0].at || 0)) rows.push(sendHtml(due.shift(), md));
+    if (THREAD_MODE && m.workLog) {
+      if (!workLineShown) {
+        workLineShown = true;
+        rows.push(`<button type="button" class="thr-work" data-key="thr-work:${workItems.length}:${WORK_LOG_OPEN ? 1 : 0}" aria-expanded="${WORK_LOG_OPEN}"><strong>Work log · ${workItems.length} task reports and PO notes</strong><span class="preview">${esc(foldLine(workLast.text || ''))}</span></button>`);
+      }
+      if (!WORK_LOG_OPEN) return;
+    }
     const k = foldKey(m, i);
     const gp = gapAt.get(i);
     const g = groupAt.get(i);
@@ -6049,6 +6065,12 @@ let THR_META = {};         // thread id → its line's facts, as the hub sent th
 let THR_ASKED = '';         // the link's balloon the channel was last asked to reach (&upto=)
 let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;   // the latest 150 channel entries first (#228, #234)
 let THR_DRAWN = false;    // the channel or thread is what is drawn
+let WORK_LOG_OPEN = false;
+document.addEventListener('click', e => {
+  if (!e.target.closest?.('.thr-work')) return;
+  WORK_LOG_OPEN = !WORK_LOG_OPEN;
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+});
 let THR_INFO = null;       // the thread shown (thread mode)
 let THR_SEEN_TS = 0;       // its newest message told as seen
 let THR_ITEMS = null;      // the thread's messages as drawn (told as seen once on screen)
@@ -6109,7 +6131,8 @@ async function renderThreaded(force) {
     // A link to an older message of the chat: the hub sent as many as reach it.
     if (d.n > THR_N) THR_N = d.n;
     let items = (d.items || []).map(t => Object.assign(soloItems([t], 's', SOLO_AGENT, 1)[0], { id: t.mid },
-      t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {}));
+      t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {},
+      t.workLog ? { workLog: true } : {}));
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     // A balloon link lands in the thread containing that balloon, once the
     // channel was asked to reach it (else landPending asks first).
