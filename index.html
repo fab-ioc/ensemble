@@ -3664,8 +3664,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .topic-menu summary { display:flex; align-items:center; justify-content:center; list-style:none; }
   .topic-menu summary::-webkit-details-marker { display:none; }
   .topic-menu[open] > div { display:flex; flex-direction:column; min-width:130px; padding:var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface-overlay); }
+  .topic-menu[open] > div[hidden] { display:none; }
   .topic-menu button { min-height:var(--touch-min); padding:0 var(--s-200); border:0; border-radius:var(--r-200); background:transparent; color:var(--fg); text-align:left; font:inherit; cursor:pointer; }
   .topic-menu button:hover { background:var(--hover); }
+  .topic-picker { display:flex; flex-direction:column; gap:var(--s-100); min-width:210px; padding:var(--s-100); }
+  .topic-picker[hidden] { display:none; }
+  .topic-picker label { display:flex; flex-direction:column; gap:var(--s-050); color:var(--fg-muted); font-size:var(--fs-200); }
+  .topic-picker input, .topic-picker select { width:100%; min-height:var(--touch-min); padding:0 var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; }
+  .topic-picker input:focus-visible, .topic-picker select:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  .topic-picker-actions { display:flex; gap:var(--s-100); }
+  .topic-restore { display:inline-block; vertical-align:middle; font-weight:400; }
+  .topic-restore > div { position:absolute; right:var(--s-100); z-index:2; border:1px solid var(--border); background:var(--surface-overlay); }
   .topic-chips { display:none; flex:0 0 auto; gap:var(--s-100); padding:var(--s-100); overflow-x:auto; white-space:nowrap; border-bottom:1px solid var(--border); background:var(--surface); scrollbar-width:thin; }
   .topic-chip { flex:0 0 auto; min-height:var(--touch-min); padding:0 var(--s-200); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; cursor:pointer; }
   .topic-chip.on { background:var(--selected-bg); color:var(--selected-fg); }
@@ -12717,7 +12726,7 @@ function pdPointsHtml(told, now) {
     + `<span class="pdp-words" title="${esc(t.title || '')}"><button type="button" class="pdp-thr" data-thr="${esc(t.id)}" title="Open the thread beside the chat">${esc(t.title || 'Thread')}</button></span></div>`
     + `<div class="pdp-meta"><span class="pdp-state">${esc(`${+t.unread || 0} new repl${+t.unread === 1 ? 'y' : 'ies'}`)}</span>`
     + `<span class="pdp-age" data-at="${esc(String(t.lastAt || 0))}">${esc(pdPtAge(t.lastAt, now))}</span></div></li>`;
-  const topicRows = typeof pdTopicNeedsRows === 'function' ? pdTopicNeedsRows(pv, now) : null;
+  const topicRows = typeof pdTopicNeedsRows === 'function' ? pdTopicNeedsRows(pv, now, thrRow) : null;
   const threadRows = (pv.threads || []).map(thrRow);
   const top = group('decisions', 'Decisions', decisions) + group('try', 'To try', by('try').map(p => row(p, 'to try')))
     + group('new', 'New answers', by('new').map(p => row(p, 'new answer')))
@@ -13913,12 +13922,13 @@ function pdPopChat(out) {
 
 // ---- Topics: one project index, read only while its PO chat is on screen.
 const TOPICS = {room:'', data:null, busy:false, again:false, timer:0, filter:new Map(), expanded:new Set(), sig:''};
-function pdTopicNeedsRows(pv, now) {
+function pdTopicNeedsRows(pv, now, thrRow) {
   if (!TOPICS.data || TOPICS.room !== PD.chatKey || TOPICS.data.pending) return null;
   const unread = new Map((pv.threads || []).map(t => [t.id, t]));
   const rows = TOPICS.data.topics.filter(t => t.decisions || t.threads.some(id => unread.has(id)));
   if (!rows.length) return null;
-  return rows.map(t => {
+  const covered = new Set(rows.flatMap(t => t.threads));
+  const grouped = rows.map(t => {
     const threads = t.threads.map(id => unread.get(id)).filter(Boolean);
     const answers = threads.reduce((sum, th) => sum + (+th.unread || 0), 0);
     const bits = [];
@@ -13928,6 +13938,7 @@ function pdTopicNeedsRows(pv, now) {
     return `<li class="pdp-row"><div class="pdp-top"><span class="pdp-words"><button type="button" class="pdp-thr" data-topic-open="${esc(t.id)}" title="Open this topic at its latest PO answer">${esc(t.name)}</button></span></div>`
       + `<div class="pdp-meta"><span class="pdp-state">${esc(bits.join(' · '))}</span><span class="pdp-age" data-at="${esc(String(ts))}">${esc(pdPtAge(ts, now))}</span></div></li>`;
   });
+  return grouped.concat((pv.threads || []).filter(t => !covered.has(t.id)).map(thrRow));
 }
 function pdTopicTime(ts) {
   return ts ? new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
@@ -13939,12 +13950,14 @@ function pdTopicPaint() {
   const all = data?.topics || [];
   const selected = TOPICS.filter.get(room)?.id || '';
   const expanded = TOPICS.expanded.has(room);
-  const list = expanded ? all : all.filter(t => t.threadCount > 1 || t.unread || t.decisions || t.id === selected);
-  const sig = JSON.stringify([room, selected, expanded, all.map(t => [t.id,t.name,t.latest?.mid,t.unread,t.decisions,t.threadCount])]);
+  const recent = Date.now() / 1000 - 48 * 3600;
+  const list = expanded ? all : all.filter(t => t.threadCount > 1 || t.unread || t.decisions || (t.latest?.ts || 0) > recent || t.id === selected);
+  const sig = JSON.stringify([room, selected, expanded, all.map(t => [t.id,t.name,t.latest?.mid,t.unread,t.decisions,t.threadCount]), data?.archived]);
   if (TOPICS.sig === sig) return;
   TOPICS.sig = sig;
   box.innerHTML = `<div class="topics-head">Topics${selected ? ' <button type="button" class="topic-action" data-topic-clear title="Clear topic filter">Clear</button>' : ''}`
-    + (all.length > list.length || expanded ? ` <button type="button" class="topic-action" data-topic-all>${expanded ? 'Show fewer' : 'Show all ' + all.length}</button>` : '') + '</div>'
+    + (all.length > list.length || expanded ? ` <button type="button" class="topic-action" data-topic-all>${expanded ? 'Show fewer' : 'Show all ' + all.length}</button>` : '')
+    + (data?.archived?.length ? `<details class="topic-restore"><summary class="topic-action">Archived (${data.archived.length})</summary><div class="topic-picker"><label>Topic<select data-topic-restore-id>${data.archived.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></label><button type="button" data-topic-restore>Restore</button></div></details>` : '') + '</div>'
     + (data?.pending ? '<div class="topic-row">Reading topics…</div>' : !list.length ? `<div class="topic-row">${all.length ? 'No active topics. Show all to browse.' : 'No topics yet'}</div>` : list.map(t => {
       const latest = t.latest || {}, title = t.name || 'Topic';
       const state = [t.task, t.state, `${t.threadCount} thread${t.threadCount === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
@@ -13953,13 +13966,13 @@ function pdTopicPaint() {
         + `<span class="topic-name">${badge ? '<span class="topic-dot" aria-hidden="true"></span>' : ''}${esc(title)}</span>`
         + `<span class="topic-snippet">${latest.ts ? 'PO ' + esc(pdTopicTime(latest.ts)) + ': ' : ''}${esc(latest.text || 'No PO answer yet')}</span>`
         + `<span class="topic-meta">${esc(state)}${badge ? ' · ' + esc(badge) : ''}</span></button>`
-        + `<details class="topic-menu"><summary class="topic-action" aria-label="Actions for ${esc(title)}">⋯</summary><div>`
+        + `<details class="topic-menu"><summary class="topic-action" aria-label="Actions for ${esc(title)}">⋯</summary><div class="topic-options">`
         + `<button type="button" data-topic-action="rename" data-topic="${esc(t.id)}">Rename</button>`
         + `<button type="button" data-topic-action="merge" data-topic="${esc(t.id)}">Merge into…</button>`
         + `<button type="button" data-topic-action="move" data-topic="${esc(t.id)}">Move a thread…</button>`
         + `<button type="button" data-topic-action="out" data-topic="${esc(t.id)}">Move thread out…</button>`
         + `<button type="button" data-topic-action="archive" data-topic="${esc(t.id)}">Archive</button>`
-        + '</div></details></div>';
+        + '</div><div class="topic-picker" hidden></div></details></div>';
     }).join(''));
   chips.innerHTML = `<button type="button" class="topic-chip${selected ? '' : ' on'}" data-topic-clear>All</button>`
     + list.map(t => `<button type="button" class="topic-chip${selected === t.id ? ' on' : ''}" data-topic-open="${esc(t.id)}">${esc(t.name)}${t.decisions ? ' · ?' : t.unread ? ' · new' : ''}</button>`).join('')
@@ -14006,12 +14019,14 @@ function pdTopicOpen(id) {
   else pdReveal('po-chat');
 }
 async function pdTopicChange(action, data) {
-  const r = await fetch('/api/room/topics', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({roomId:TOPICS.room, action, ...data})});
-  const out = await r.json();
-  if (!r.ok) { toast(out.message || 'Topic change could not be saved', 4000, 'err'); return; }
-  TOPICS.data = out; TOPICS.sig = ''; pdTopicPaint();
-  pdTopicsRefresh(true);
+  try {
+    const r = await fetch('/api/room/topics', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({roomId:TOPICS.room, action, ...data})});
+    const out = await r.json();
+    if (!r.ok) { toast(out.message || 'Topic change could not be saved', 4000, 'err'); return; }
+    TOPICS.data = out; TOPICS.sig = ''; pdTopicPaint();
+    pdTopicsRefresh(true);
+  } catch (err) { toast('Topic change could not be saved', 4000, 'err'); }
 }
 function pdTopicClicked(e) {
   const open = e.target.closest('[data-topic-open]'), clear = e.target.closest('[data-topic-clear]');
@@ -14023,29 +14038,49 @@ function pdTopicClicked(e) {
     else TOPICS.expanded.add(TOPICS.room);
     TOPICS.sig = ''; pdTopicPaint(); return;
   }
+  const restore = e.target.closest('[data-topic-restore]');
+  if (restore) {
+    const topic = restore.closest('.topic-restore')?.querySelector('[data-topic-restore-id]')?.value;
+    if (topic) pdTopicChange('restore', {topic});
+    return;
+  }
+  const save = e.target.closest('[data-topic-save]');
+  if (save) {
+    const picker = save.closest('.topic-picker'), action = picker.dataset.action;
+    const topic = picker.dataset.topic, name = picker.querySelector('[data-topic-name]')?.value.trim();
+    const other = picker.querySelector('[data-topic-destination]')?.value;
+    const thread = picker.querySelector('[data-topic-thread]')?.value;
+    if (action === 'rename' && name) pdTopicChange('rename', {topic, name});
+    else if (action === 'merge' && other) pdTopicChange('merge', {topic, other});
+    else if (action === 'move' && other && thread) pdTopicChange('move', {thread, topic:other});
+    else if (action === 'out' && thread) pdTopicChange('out', {thread});
+    return;
+  }
+  const cancel = e.target.closest('[data-topic-cancel]');
+  if (cancel) {
+    const menu = cancel.closest('.topic-menu');
+    menu.querySelector('.topic-options').hidden = false;
+    menu.querySelector('.topic-picker').hidden = true;
+    return;
+  }
   const btn = e.target.closest('[data-topic-action]');
   if (!btn) return;
   const action = btn.dataset.topicAction, row = TOPICS.data?.topics?.find(t => t.id === btn.dataset.topic);
   if (!row) return;
   if (action === 'archive') { pdTopicChange('archive', {topic:row.id}); return; }
-  if (action === 'rename') { const name = prompt('Topic name', row.name); if (name?.trim()) pdTopicChange('rename', {topic:row.id, name}); return; }
-  if (action === 'merge') {
-    const name = prompt('Merge into which topic?', (TOPICS.data.topics.find(t => t.id !== row.id) || {}).name || '');
-    const other = TOPICS.data.topics.find(t => t.id !== row.id && t.name.toLowerCase() === name?.trim().toLowerCase());
-    if (other) pdTopicChange('merge', {topic:row.id, other:other.id});
-    return;
-  }
+  const menu = btn.closest('.topic-menu'), picker = menu.querySelector('.topic-picker');
   const choices = row.threadOptions || row.threads.map(id => ({id, title:id}));
-  const guide = choices.map((t, i) => `${i + 1}. ${t.title}`).join('\n');
-  const picked = prompt('Choose a thread number:\n' + guide, '1');
-  const n = Number(picked);
-  const thread = Number.isInteger(n) && n >= 1 && n <= choices.length ? choices[n - 1].id
-    : choices.find(t => t.id === picked)?.id;
-  if (!thread) return;
-  if (action === 'out') { pdTopicChange('out', {thread}); return; }
-  const name = prompt('Move into which topic?', (TOPICS.data.topics.find(t => t.id !== row.id) || {}).name || '');
-  const other = TOPICS.data.topics.find(t => t.id !== row.id && t.name.toLowerCase() === name?.trim().toLowerCase());
-  if (other) pdTopicChange('move', {thread, topic:other.id});
+  const destinations = TOPICS.data.topics.filter(t => t.id !== row.id);
+  if ((action === 'move' || action === 'merge') && !destinations.length) return;
+  const select = (attr, label, options) => `<label>${label}<select ${attr}>${options.map(t => `<option value="${esc(t.id)}">${esc(t.name || t.title || t.id)}</option>`).join('')}</select></label>`;
+  picker.dataset.topic = row.id; picker.dataset.action = action;
+  picker.innerHTML = (action === 'rename' ? `<label>Topic name<input type="text" data-topic-name maxlength="80" value="${esc(row.name)}"></label>` : '')
+    + ((action === 'move' || action === 'out') ? select('data-topic-thread', 'Thread', choices) : '')
+    + ((action === 'move' || action === 'merge') ? select('data-topic-destination', 'Destination topic', destinations) : '')
+    + `<div class="topic-picker-actions"><button type="button" data-topic-save>${action === 'out' ? 'Move out' : action === 'merge' ? 'Merge' : 'Save'}</button><button type="button" data-topic-cancel>Cancel</button></div>`;
+  menu.querySelector('.topic-options').hidden = true;
+  picker.hidden = false;
+  picker.querySelector('input, select')?.focus();
 }
 PD.els.topics.addEventListener('click', pdTopicClicked);
 PD.els.points.addEventListener('click', pdTopicClicked);

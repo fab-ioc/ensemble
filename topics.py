@@ -7,28 +7,23 @@ keyed by project, so a restart cannot undo them.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 
 import durable
+import points
 import threads
 
 _LOCK = threading.RLock()
 _PROJECT = re.compile(r"proj-[0-9a-f]+$")
 _DAYS = 30 * 86400
-_ALIASES = (
-    ("backtesting", "Backtesting", re.compile(r"\bbacktest(?:ed|er|ing|s)?\b|\bdyna.zero\b.*\breplay\b", re.I)),
-    ("skew-chart", "Skew chart", re.compile(r"\bskew\b", re.I)),
-    ("single-app", "Single app", re.compile(r"\bsingle.app\b|\bsingle app\b", re.I)),
-    ("massive-data", "Massive data", re.compile(r"\bmassive\b.{0,30}\b(?:data|history|prices|provider)\b", re.I)),
-    ("x5-ad", "X5 ad", re.compile(r"\bX5\b.{0,100}\b(?:ad|advert|views?|statistics|listing|lease|portal|price|disabled|enquir\w*|tra(?:c|ck)tion|facebook|autoscout\w*)\b|"
-                                     r"\b(?:ad|advert|views?|statistics|listing|lease|portal|price|disabled|enquir\w*|tra(?:c|ck)tion|facebook|autoscout\w*)\b.{0,100}\bX5\b|"
-                                     r"\bAutoSco(?:ut|unt)(?:24)?\b", re.I)),
-)
-_STOP = frozenset("a an and are at be can do for from has how i in is it latest me my of on or our please the this to was we what where why with you your".split())
+_STOP = frozenset("a an and are at be been can did do does for from has have how i in is it its latest me my of on or our please the this to was we were what when where why with would you your after before about all any more new now one own same some still than then there these those them they their via will yes done ready update task thread point report review status issue work".split())
+_CACHE: dict[str, tuple[tuple, dict]] = {}
 
 
 def _path(project_id: str, rooms_dir: Path) -> Path:
@@ -42,9 +37,13 @@ def _load(path: Path) -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    return {"version": 1, "auto": dict(data.get("auto") or {}),
+    archive = data.get("archive") or {}
+    if isinstance(archive, list):
+        archive = {key: 0 for key in archive}
+    return {"version": 2, "auto": dict(data.get("auto") or {}) if data.get("version") == 2 else {},
             "assign": dict(data.get("assign") or {}), "names": dict(data.get("names") or {}),
-            "merged": dict(data.get("merged") or {}), "archive": list(data.get("archive") or [])}
+            "merged": dict(data.get("merged") or {}), "archive": dict(archive),
+            "declined": dict(data.get("declined") or {})}
 
 
 def _save(path: Path, data: dict) -> None:
@@ -58,21 +57,110 @@ def _save(path: Path, data: dict) -> None:
 
 
 def _terms(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]{3,}", text.lower()) if w not in _STOP and not w.isdigit()}
+    def stem(word: str) -> str:
+        if len(word) > 7 and word.endswith("ing"):
+            word = word[:-3]
+        elif len(word) > 6 and word.endswith("ed"):
+            word = word[:-2]
+        elif len(word) > 5 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
+        return word
+    return {stem(w) for w in re.findall(r"[a-z0-9]{3,}|[a-z]+[0-9]+", text.lower())
+            if w not in _STOP and not w.isdigit()}
 
 
-def _key(th: dict, idx: dict) -> tuple[str, str, set[str]]:
+def _features(th: dict, idx: dict) -> dict:
     root = idx["by_mid"].get(th["root"]) or {}
     title = th.get("title") or "Topic"
-    text = title + "\n" + ((root.get("turn") or {}).get("text") or "")
-    for slug, name, pat in _ALIASES:
-        if pat.search(text):
-            return "subject:" + slug, name, _terms(name)
-    if th.get("task"):
-        return "task:" + th["task"], th["task"], _terms(title)
-    terms = _terms(title)
-    signature = "-".join(sorted(terms)[:3]) or th["id"].replace(":", "-")
-    return "subject:" + signature, title, terms
+    root_text = (root.get("turn") or {}).get("text") or ""
+    heading = _terms(title)
+    own = heading | _terms(root_text[:1000])
+    refs = Counter(points.task_refs(root_text))
+    replies = []
+    for mid in th["members"]:
+        r = idx["by_mid"].get(mid) or {}
+        if mid == th["root"] or mid in idx["work"]:
+            continue
+        body = (r.get("turn") or {}).get("text") or ""
+        if r.get("role") == "agent":
+            replies.append(body)
+        refs.update(points.task_refs(body))
+    reply_terms = _terms("\n".join(body[:450] for body in replies[-2:]))
+    whole = own | reply_terms
+    task = th.get("task") or ""
+    if not task and refs:
+        ranked = refs.most_common()
+        if len(ranked) == 1 or ranked[0][1] > ranked[1][1]:
+            task = ranked[0][0]
+    return {"task": task, "heading": heading, "root": own,
+            "all": whole, "title": title,
+            "ts": (root.get("ts") or 0)}
+
+
+def _similarity(a: dict, b: dict, rarity: dict[str, float], rare_cutoff: float) -> float:
+    common = a["root"] & b["root"]
+    cross = (a["root"] & b["all"]) | (b["root"] & a["all"])
+    if not cross:
+        return 0.0
+    core = sum(rarity.get(t, 0) for t in common)
+    shared = core + .35 * sum(rarity.get(t, 0) for t in cross - common)
+    base = sum(rarity.get(t, 0) for t in a["root"] | b["root"]) or 1
+    score = shared / base
+    # A distinctive name occurring in both roots is a useful subject even
+    # when each question has quite different surrounding words.
+    if any(len(t) >= 7 and rarity.get(t, 0) >= rare_cutoff
+           and t in a["heading"] and t in b["heading"] for t in common):
+        score = max(score, .72)
+    return score
+
+
+def _subject_name(members: list[str], features: dict, rarity: dict) -> str:
+    if len(members) == 1:
+        return features[members[0]]["title"][:80]
+    counts = Counter(t for tid in members for t in features[tid]["root"])
+    common = {t for t, n in counts.items() if n >= max(2, math.ceil(len(members) * .45))
+              and rarity.get(t, 0) >= .7}
+    if common:
+        chosen = sorted(common, key=lambda t: (-counts[t], -rarity.get(t, 0), t))[:3]
+        return " ".join(w.upper() if any(c.isdigit() for c in w) else w.capitalize() for w in chosen)
+    return features[members[0]]["title"][:80]
+
+
+def _auto_groups(candidates: dict[str, dict]) -> tuple[dict[str, str], dict[str, str], dict[tuple[str, str], float]]:
+    ids = sorted(candidates, key=lambda tid: (candidates[tid]["ts"], tid))
+    count = Counter(t for row in candidates.values() for t in row["root"])
+    # Repeated hub briefs and handover instructions are poor subject signals.
+    rare_cutoff = 1 + math.log((len(ids) + 1) / (max(2, len(ids) * .1) + 1))
+    rarity = {t: 1 + math.log((len(ids) + 1) / (n + 1)) if n <= max(5, len(ids) * .12) else 0
+              for t, n in count.items()}
+    clusters: dict[str, list[str]] = {}
+    scores = {}
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            aa, bb = candidates[a], candidates[b]
+            score = _similarity(aa, bb, rarity, rare_cutoff)
+            if score >= .35:
+                scores[a, b] = score
+    for tid in ids:
+        row = candidates[tid]
+        same_task = "task:" + row["task"] if row["task"] else ""
+        best = max(((scores.get((rep, tid), 0), group) for group, members in clusters.items()
+                    for rep in members[:1]), default=(0, ""))
+        if same_task and same_task in clusters:
+            group = same_task
+        elif best[0] >= (.78 if row["task"] or best[1].startswith("task:") else .68):
+            group = best[1]
+        else:
+            group = same_task or "subject:" + tid.replace(":", "-")
+        clusters.setdefault(group, []).append(tid)
+    auto, labels = {}, {}
+    for key, members in clusters.items():
+        first = min(members, key=lambda tid: (candidates[tid]["ts"], tid))
+        task = candidates[first]["task"]
+        labels[key] = task or _subject_name(members, candidates, rarity)
+        for tid in members:
+            auto[tid] = key
+    return auto, labels, scores
 
 
 def _target(topic: str, merged: dict) -> str:
@@ -89,34 +177,47 @@ def view(project: dict, room: dict, rooms_dir: Path, *, now: float | None = None
     if idx is None:
         return {"pending": True, "topics": [], "suggestions": {}}
     path = _path(project["id"], rooms_dir)
-    now = time.time() if now is None else now
+    cacheable = now is None
+    now = time.time() if cacheable else now
     with _LOCK:
+        stamp = path.stat().st_mtime_ns if path.exists() else 0
+        cache_key = (idx["sig"], stamp)
+        hit = _CACHE.get(project["id"])
+        if cacheable and hit and hit[0] == cache_key:
+            return hit[1]
         data = _load(path)
         changed = False
         topics: dict[str, dict] = {}
         suggestions: dict[str, dict] = {}
+        eligible = []
         for tid in idx["order"]:
             th = idx["threads"][tid]
             if tid == "team:activity" or (th.get("rootWho") != "you" and not th.get("openQuestions")) \
                     or max((idx["by_mid"].get(mid) or {}).get("ts", 0)
                            for mid in th["members"]) < now - _DAYS:
                 continue
-            auto, label, terms = _key(th, idx)
+            eligible.append(tid)
+        features = {tid: _features(idx["threads"][tid], idx) for tid in eligible}
+        heading_freq = Counter(t for feat in features.values() for t in feat["heading"])
+        auto_keys, labels, scores = _auto_groups(features)
+        for tid in eligible:
+            th = idx["threads"][tid]
+            auto = auto_keys[tid]
             if tid not in data["auto"]:
                 data["auto"][tid] = auto
                 changed = True
             raw = data["assign"].get(tid) or data["auto"][tid]
             topic_id = _target(raw, data["merged"])
             if topic_id not in topics:
-                topics[topic_id] = {"id": topic_id, "name": data["names"].get(topic_id) or label,
+                topics[topic_id] = {"id": topic_id, "name": data["names"].get(topic_id) or labels.get(topic_id) or features[tid]["title"],
                                     "threads": [], "latest": None, "unread": 0,
-                                    "decisions": 0, "task": "", "state": "", "terms": terms}
+                                    "decisions": 0, "task": "", "state": ""}
             row = topics[topic_id]
             row["threads"].append(tid)
             row["unread"] += int(th.get("unread") or 0)
             row["decisions"] += int(th.get("openQuestions") or 0)
-            if th.get("task") and not row["task"]:
-                row["task"] = th["task"]
+            if features[tid]["task"] and not row["task"]:
+                row["task"] = features[tid]["task"]
             for mid in th["members"]:
                 r = idx["by_mid"].get(mid)
                 if not r or r["role"] != "agent" or mid in idx["work"]:
@@ -125,32 +226,50 @@ def view(project: dict, room: dict, rooms_dir: Path, *, now: float | None = None
                     row["latest"] = {"mid": mid, "thread": tid, "ts": r["ts"],
                                      "text": " ".join((r["turn"].get("text") or "").split())[:240]}
                     row["state"] = th.get("state") or ""
-            # A loose subject may resemble another topic, but isn't joined
-            # until the person accepts the chip in its thread.
-            if raw.startswith("subject:") and not raw.startswith("subject:" + next((a[0] for a in _ALIASES if auto == "subject:" + a[0]), "\0")):
-                best = None
-                for other_id, other in topics.items():
-                    if other_id == topic_id or other_id in data["archive"] or not terms or not other["terms"]:
-                        continue
-                    score = len(terms & other["terms"]) / len(terms | other["terms"])
-                    if score >= .45 and (best is None or score > best[0]):
-                        best = (score, other_id, other["name"])
-                if best:
-                    suggestions[tid] = {"topic": best[1], "name": best[2]}
+        # Score against all topics only after all groups exist: a chip must
+        # not depend on which thread happened to be visited first.
+        for tid in eligible:
+            own = _target(data["assign"].get(tid) or data["auto"][tid], data["merged"])
+            if len(topics[own]["threads"]) != 1:
+                continue
+            best = None
+            for other in eligible:
+                target = _target(data["assign"].get(other) or data["auto"][other], data["merged"])
+                if target == own or target in data["archive"] or target in data["declined"].get(tid, []):
+                    continue
+                if len(topics[target]["threads"]) < 2:
+                    continue
+                shared_headings = [term for term in features[tid]["heading"] & features[other]["heading"]
+                                   if len(term) >= 4 and heading_freq[term] <= max(5, len(eligible) * .12)]
+                if len(shared_headings) < 2:
+                    continue
+                score = scores.get((tid, other)) or scores.get((other, tid)) or 0
+                if score >= .55 and (best is None or score > best[0]):
+                    best = (score, target)
+            if best:
+                suggestions[tid] = {"topic": best[1], "name": topics[best[1]]["name"]}
+        for topic_id, row in topics.items():
+            archived_at = data["archive"].get(topic_id)
+            if archived_at is not None and row["unread"] and (row["latest"] or {}).get("ts", 0) > archived_at:
+                data["archive"].pop(topic_id)
+                changed = True
         if changed:
             _save(path, data)
         rows = []
         for row in topics.values():
             if row["id"] in data["archive"]:
                 continue
-            row.pop("terms", None)
             row["threadCount"] = len(row["threads"])
             row["threadOptions"] = [{"id": tid, "title": (idx["threads"][tid].get("title") or tid)[:100]}
                                     for tid in row["threads"]]
             rows.append(row)
         rows.sort(key=lambda row: ((row["latest"] or {}).get("ts") or 0, row["name"]), reverse=True)
-        return {"pending": False, "topics": rows, "suggestions": suggestions,
-                "sig": idx["sig"]}
+        result = {"pending": False, "topics": rows, "suggestions": suggestions,
+                  "archived": [{"id": key, "name": data["names"].get(key) or topics.get(key, {}).get("name") or key}
+                               for key in data["archive"]], "sig": idx["sig"]}
+        if cacheable:
+            _CACHE[project["id"]] = ((idx["sig"], path.stat().st_mtime_ns if path.exists() else 0), result)
+        return result
 
 
 def change(project: dict, rooms_dir: Path, action: str, *, topic: str = "", other: str = "",
@@ -174,9 +293,14 @@ def change(project: dict, rooms_dir: Path, action: str, *, topic: str = "", othe
             data["names"]["thread:" + thread] = name.strip()[:80] or "Separate topic"
         elif action == "archive" and topic in known:
             if topic not in data["archive"]:
-                data["archive"].append(topic)
+                data["archive"][topic] = time.time()
         elif action == "restore" and topic in data["archive"]:
-            data["archive"].remove(topic)
+            data["archive"].pop(topic)
+        elif action == "reject" and thread in data["auto"] and topic in known:
+            data["declined"].setdefault(thread, [])
+            if topic not in data["declined"][thread]:
+                data["declined"][thread].append(topic)
         else:
             raise ValueError("invalid topic change")
         _save(path, data)
+        _CACHE.pop(project["id"], None)

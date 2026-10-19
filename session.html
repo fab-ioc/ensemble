@@ -1559,7 +1559,7 @@
         <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="earlier-threads" hidden>Earlier messages</button></div>
       </div>
       <div id="topic-note" hidden><span></span><button type="button">Clear</button></div>
-      <div id="topic-suggestion" hidden><span></span><button type="button">Add</button></div>
+      <div id="topic-suggestion" hidden><span></span><button type="button" data-topic-reply="add">Add</button><button type="button" data-topic-reply="reject">Not this topic</button></div>
       <div id="thread-catchup" hidden></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
@@ -6227,7 +6227,7 @@ function showTopicSuggestion() {
   el.hidden = !THREAD_MODE || !TOPIC_SUGGESTION;
   if (TOPIC_SUGGESTION) {
     setText(el.querySelector('span'), 'This thread may belong to ' + TOPIC_SUGGESTION.name);
-    setText(el.querySelector('button'), 'Add to ' + TOPIC_SUGGESTION.name);
+    setText(el.querySelector('[data-topic-reply="add"]'), 'Add to ' + TOPIC_SUGGESTION.name);
   }
 }
 $('#topic-note').querySelector('button').addEventListener('click', () => {
@@ -6235,19 +6235,22 @@ $('#topic-note').querySelector('button').addEventListener('click', () => {
   if (host) host.postMessage({type:'topic-clear', roomId:ROOM}, location.origin);
   else { TOPIC_FILTER = null; showTopicFilter(); THR_SIG = ''; renderThreaded(true); }
 });
-$('#topic-suggestion').querySelector('button').addEventListener('click', async () => {
+$('#topic-suggestion').addEventListener('click', async e => {
+  const choice = e.target.closest('[data-topic-reply]');
+  if (!choice) return;
   if (!TOPIC_SUGGESTION || !THREAD) return;
   const suggestion = TOPIC_SUGGESTION;
-  const button = $('#topic-suggestion').querySelector('button');
-  button.disabled = true;
+  const buttons = [...$('#topic-suggestion').querySelectorAll('button')];
+  buttons.forEach(button => button.disabled = true);
   try {
-    await postOk('/api/room/topics', {roomId:ROOM, action:'move', thread:THREAD, topic:suggestion.topic});
+    await postOk('/api/room/topics', {roomId:ROOM, action:choice.dataset.topicReply === 'reject' ? 'reject' : 'move',
+                                      thread:THREAD, topic:suggestion.topic});
     TOPIC_SUGGESTION = null;
     showTopicSuggestion();
     const host = dashboardHost();
     if (host) host.postMessage({type:'topics-changed', roomId:ROOM}, location.origin);
   } catch (e) { setText($('#hint'), 'Could not save the topic. Try again.'); }
-  finally { button.disabled = false; }
+  finally { buttons.forEach(button => button.disabled = false); }
 });
 function threadCardHtml(tid) {
   const t = THR_META[tid];

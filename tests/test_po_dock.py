@@ -156,7 +156,8 @@ const PD = {chatKey:'room-po'};
   out.needs = pdPointsHtml(needs, now);
   TOPICS.data = {topics:[{id:'subject:board', name:'Board', threads:['P1'], decisions:0,
     latest:{ts:now-30}}]};
-  out.topicNeeds = pdPointsHtml({...needs, points:{...needs.points, threads:[{id:'P1', unread:1, lastAt:now-30}]}}, now);
+  out.topicNeeds = pdPointsHtml({...needs, points:{...needs.points, threads:[{id:'P1', unread:1, lastAt:now-30},
+    {id:'P2', unread:1, lastAt:now-20, title:'A separate reply'}]}}, now);
   TOPICS.data = null;
   out.needsSummary = pdPointsSummary(needs.points);
   PD_PT_FOLDS.add('closed');
@@ -249,6 +250,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn(">Topics <", html)
         self.assertIn('data-topic-open="subject:board"', html)
         self.assertIn("1 new answer", html)
+        self.assertIn('data-thr="P2"', html, "unmatched unread threads stay in Needs you")
 
     def test_a_planned_point_shows_its_task_and_takes_no_thumbs_up(self):
         html = self.o["list"]

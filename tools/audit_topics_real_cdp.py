@@ -25,8 +25,10 @@ import threads
 from tests import chrome_profile
 from tests.test_page_update import CHROME
 
-ROOMS = {"Backtesting": "room-3f303104", "Single app": "room-3f303104",
-         "X5 ad": "room-e325b967"}
+ROOMS = {"Backtesting": ("room-3f303104", "P725"),
+         "Single app": ("room-3f303104", "P683"),
+         "X5 ad": ("room-e325b967", "P145"),
+         "Ensemble general": ("room-8d56cd21", "")}
 SCRIPT = chrome_profile.JS + r"""
 const {spawn} = require('child_process');
 const A = JSON.parse(process.argv[2]);
@@ -66,12 +68,13 @@ async function main() {
           await send('Target.closeTarget',{targetId});
           continue;
         }
-        await until(`TOPICS.room===${JSON.stringify(cas.room)} && TOPICS.data?.topics?.some(t=>t.name===${JSON.stringify(cas.name)})`, 'topic rows '+cas.name);
+        const target = `TOPICS.data?.topics?.find(t=>${cas.anchor ? `t.threads.includes(${JSON.stringify(cas.anchor)})` : `t.threadCount>=2 && t.latest?.mid`})`;
+        await until(`TOPICS.room===${JSON.stringify(cas.room)} && ${target}`, 'topic rows '+cas.name);
         await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
         const openMs=Date.now()-started;
-        const before=await ev(`(() => {const t=TOPICS.data.topics.find(t=>t.name===${JSON.stringify(cas.name)});
+        const before=await ev(`(() => {const t=${target};
           const rail=PD.els.topics.getBoundingClientRect(), chips=PO_PANEL.querySelector('.topic-chips').getBoundingClientRect();
-          return {id:t.id,mid:t.latest?.mid||'',thread:t.latest?.thread||'',count:t.threadCount,
+          return {id:t.id,name:t.name,mid:t.latest?.mid||'',thread:t.latest?.thread||'',count:t.threadCount,
             railWidth:rail.width,chipWidth:chips.width,phone:PD.dock.narrow(),
             scrollX:document.documentElement.scrollWidth-innerWidth,
             theme:document.documentElement.dataset.theme};})()`);
@@ -91,7 +94,22 @@ async function main() {
           chip:PO_PANEL.querySelector('.topic-chips .on')?.textContent||'',
           rail:PD.els.topics.querySelectorAll('.topic-row').length,
           scrollX:document.documentElement.scrollWidth-innerWidth})`);
-        results.push({name:cas.name,width,height,theme,chatMs,openMs,before,after,result});
+        let picker = null;
+        if (A.pickerOnly) {
+          await ev(`(() => {window.prompt=()=>{throw Error('native prompt used')};
+            const row=[...PD.els.topics.querySelectorAll('.topic-row')].find(x=>x.querySelector('[data-topic-open]')?.dataset.topicOpen===${JSON.stringify(before.id)});
+            row.querySelector('.topic-menu summary').click();row.querySelector('[data-topic-action="rename"]').click();
+            const input=row.querySelector('[data-topic-name]');input.value='Topic audit';row.querySelector('[data-topic-save]').click();return true;})()`);
+          await until(`TOPICS.data?.topics?.some(t=>t.id===${JSON.stringify(before.id)} && t.name==='Topic audit')`, 'rename');
+          await ev(`(() => {const row=[...PD.els.topics.querySelectorAll('.topic-row')].find(x=>x.querySelector('[data-topic-open]')?.dataset.topicOpen===${JSON.stringify(before.id)});
+            row.querySelector('.topic-menu summary').click();row.querySelector('[data-topic-action="archive"]').click();return true;})()`);
+          await until(`TOPICS.data?.archived?.some(t=>t.id===${JSON.stringify(before.id)})`, 'archive');
+          await ev(`(() => {const d=PD.els.topics.querySelector('.topic-restore');d.querySelector('summary').click();
+            d.querySelector('[data-topic-restore-id]').value=${JSON.stringify(before.id)};d.querySelector('[data-topic-restore]').click();return true;})()`);
+          await until(`TOPICS.data?.topics?.some(t=>t.id===${JSON.stringify(before.id)} && t.name==='Topic audit')`, 'restore');
+          picker = {renamed:true,archived:true,restored:true};
+        }
+        results.push({name:cas.name,width,height,theme,chatMs,openMs,before,after,result,picker});
         await send('Target.closeTarget',{targetId});
       }
     console.log(JSON.stringify(results));
@@ -115,7 +133,7 @@ def main():
                 shutil.copy2(p, state / name)
         for sub in ("rooms", "points", "threads", "sends", "input-provenance"):
             (state / sub).mkdir()
-            for rid in set(ROOMS.values()):
+            for rid in {rid for rid, _ in ROOMS.values()}:
                 for ext in (".json", ".jsonl"):
                     p = source / sub / (rid + ext)
                     if p.exists():
@@ -139,17 +157,19 @@ def main():
             server.daemon_threads = True
             server.handle_error = lambda *a: None
             threading.Thread(target=server.serve_forever, daemon=True).start()
-            projects = {p["poRoomId"]: p for p in dashboard.load_projects() if p.get("poRoomId") in ROOMS.values()}
+            projects = {p["poRoomId"]: p for p in dashboard.load_projects() if p.get("poRoomId") in {rid for rid, _ in ROOMS.values()}}
             open_only = "--open-only" in sys.argv
-            cases = [{"name": name, "room": rid, "project": projects[rid]["id"]} for name, rid in ROOMS.items()
-                     if not open_only or name == "Backtesting"]
+            picker_only = "--picker-only" in sys.argv
+            cases = [{"name": name, "room": rid, "anchor": anchor, "project": projects[rid]["id"]}
+                     for name, (rid, anchor) in ROOMS.items()
+                     if not (open_only or picker_only) or name == "Backtesting"]
             script = base / "audit.js"
             script.write_text(SCRIPT, encoding="utf-8")
             args = {**chrome_profile.node_args(), "tmp": tmp,
                     "base": f"http://127.0.0.1:{server.server_address[1]}", "cases": cases,
-                    "openOnly": open_only,
-                    "sizes": [[1728, 1117, False]] if open_only else [[1728, 1117, False], [440, 956, True]],
-                    "themes": ["light"] if open_only else ["light", "dark"]}
+                    "openOnly": open_only, "pickerOnly": picker_only,
+                    "sizes": [[1728, 1117, False]] if (open_only or picker_only) else [[1728, 1117, False], [440, 956, True]],
+                    "themes": ["light"] if (open_only or picker_only) else ["light", "dark"]}
             out = subprocess.run([shutil.which("node"), str(script), json.dumps(args)],
                                  capture_output=True, encoding="utf-8", timeout=900)
             if out.returncode:
@@ -166,6 +186,8 @@ def main():
                     raise AssertionError(f"horizontal overflow: {row}")
                 if row["width"] == 440 and not row["before"]["chipWidth"]:
                     raise AssertionError(f"phone topic chips are hidden: {row}")
+                if picker_only and row.get("picker") != {"renamed": True, "archived": True, "restored": True}:
+                    raise AssertionError(f"topic picker round trip failed: {row}")
                 print(json.dumps(row, ensure_ascii=False))
         finally:
             if server:

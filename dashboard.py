@@ -15191,6 +15191,13 @@ class Handler(BaseHTTPRequestHandler):
                         chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
                         topic_tids = set(chosen["threads"]) if chosen else set()
                         n = threads.CHANNEL_LIMIT
+                    idx = threads.ready(rid, room)
+                    if idx is not None and not q.get("upto", [""])[0].strip():
+                        current = threads._sig_text(idx) + (":topic:" + ",".join(sorted(topic_tids))
+                                                            if topic_tids is not None else "")
+                        if q.get("sig", [""])[0] == current:
+                            self._send_json(200, {"sig": current, "same": True})
+                            return
                     out = threads.channel_view(rid, room, n, q.get("upto", [""])[0].strip(), topic_tids)
                 else:
                     out = threads.thread_view(rid, room, q.get("t", [""])[0].strip(), q.get("mid", [""])[0].strip())

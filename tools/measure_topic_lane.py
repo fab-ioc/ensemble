@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -81,9 +82,33 @@ def main():
                                       "poHits": [h for h in found["messages"] if h["fromLabel"] == "PO"][:5]}), flush=True)
                 project = next((p for p in dashboard.load_projects() if p.get("poRoomId") == rid), None)
                 if project:
+                    t0 = time.perf_counter()
                     got = topics.view(project, chatroom.get_room(rid), chatroom.ROOMS_DIR)
-                    wanted = ("backtest", "skew", "single", "massive", "x5")
+                    cold_ms = (time.perf_counter() - t0) * 1000
+                    t0 = time.perf_counter()
+                    for _ in range(10):
+                        topics.view(project, chatroom.get_room(rid), chatroom.ROOMS_DIR)
+                    cached_ms = (time.perf_counter() - t0) * 100
+                    if name == "opTen":
+                        a = topics._features(idx["threads"]["P708"], idx)
+                        b = topics._features(idx["threads"]["P725"], idx)
+                        print(json.dumps({"pair": "P708-P725", "commonRoot": sorted(a["root"] & b["root"]),
+                                          "cross": sorted((a["root"] & b["all"]) | (b["root"] & a["all"])),
+                                          "both": sorted(a["all"] & b["all"])}), flush=True)
+                    wanted = ("backtest", "skew", "single", "massive", "x5", "autoscout", "ad")
                     print(json.dumps({"room": name, "topicCount": len(got["topics"]),
+                                      "coldMs": round(cold_ms, 2), "cachedMs": round(cached_ms, 2),
+                                      "singleThreadCount": sum(t["threadCount"] == 1 for t in got["topics"]),
+                                      "largest": [{"name": t["name"], "id": t["id"], "task": t["task"], "count": t["threadCount"],
+                                                   "sample": t["threadOptions"][:3]}
+                                                  for t in sorted(got["topics"], key=lambda t: t["threadCount"], reverse=True)[:8]],
+                                      "cases": [{"thread": tid, "name": t["name"], "count": t["threadCount"],
+                                                 "latest": t["latest"],
+                                                 "root": idx["threads"][tid]["title"],
+                                                 "terms": sorted(topics._features(idx["threads"][tid], idx)["root"]),
+                                                 "all": sorted(topics._features(idx["threads"][tid], idx)["all"])}
+                                                for tid in ("P708", "P725", "P683", "P145")
+                                                for t in got["topics"] if tid in t["threads"]],
                                       "suggestions": list(got["suggestions"].items())[:10],
                                       "suggestionCount": len(got["suggestions"]),
                                       "topics": [{"name": t["name"],
