@@ -5606,9 +5606,10 @@ function sendWhen(ts, day = true) {
 function sendHtml(s, md) {
   // The hub found it in a one-agent chat's transcript (in whichever session
   // of the seat read it, #245): read, even while this page's copy has no turn
-  // for it yet. A team room confirms a post on arrival, a /command once
-  // typed: neither is a read.
-  const read = !!s.read || (s.state === 'confirmed' && SOLO_MODE && !!s.mid);
+  // for it yet. Its id says so (a transcript turn is "<session>:<n>", q<n> or qb<n>): a team
+  // room confirms a post on arrival (a room message's id), a /command once
+  // typed (none), and neither is a read, whatever the room is now.
+  const read = !!s.read || (s.state === 'confirmed' && /^[^:]+:(qb?)?\d+$/.test(s.mid || ''));
   const when = sendWhen(s.at);
   const sent = when ? `<span class="pend-when">Sent ${esc(when)}&nbsp;·</span> ` : '';
   const again = s.redeliveredAt ? sendWhen(s.redeliveredAt, false) : '';

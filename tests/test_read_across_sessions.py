@@ -247,12 +247,36 @@ class ConfirmedIsNotAlwaysRead(unittest.TestCase):
         self.assertNotIn("Read by the agent", b["line"])
         self.assertTrue(b["pending"])
 
+    def test_a_team_post_still_unread_after_the_room_became_one_agent(self):
+        """Review 2: the team was handed to one agent within the 120 s the hub
+        still lists the post; the room is solo now, the post still unread."""
+        [b] = balloons([self.row(mid="a1b2c3d4e5f6")], [], solo=True)
+        self.assertNotIn("Read by the agent", b["line"])
+        self.assertTrue(b["pending"])
+
     def test_the_same_send_in_a_one_agent_chat_is_read(self):
         [b] = balloons([self.row(mid=S1 + ":4")], [])
         self.assertEqual(b["line"].split("· ", 1)[1], "Read by the agent.")
 
     def test_a_command_is_never_shown_as_read(self):
         self.assertEqual(balloons([self.row(text="/compact")], []), [])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class TeamHandedToOneAgent(Harness):
+    """Review 2, through the hub: a team's post (confirmed on arrival, by
+    its room message's id), then the room is one agent's within the 120 s
+    the hub still lists it. Its balloon does not say it was read."""
+
+    def test_the_post_is_not_read(self):
+        rid = self.room(agents=("claude",))
+        at = time.time() - 30
+        sends.accept(rid, "send:p", "for the team", now=at)
+        sends.mark(rid, ["send:p"], "confirmed", mid="a1b2c3d4e5f6", now=at + 1)
+        [s] = [s for s in self.payload(rid)["sends"] if s["key"] == "send:p"]
+        [b] = balloons([s], [], solo=True)
+        self.assertNotIn("Read by the agent", b["line"])
+        self.assertTrue(b["pending"])
 
 
 @unittest.skipUnless(NODE, "node is not installed")
