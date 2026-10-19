@@ -11735,6 +11735,57 @@ def _warm_first_lists() -> None:
         startup.ready()
 
 
+# The chats read at start, so the first open after a restart is a warm one
+# (#247): every project's PO chat, then the chats changed most lately.
+WARM_ROOMS = 30
+WARM_ROOM_PAUSE_S = 0.05        # between rooms: the pages' own requests come first
+
+
+def warm_room(rid: str) -> None:
+    """What opening a chat reads, read now: its thread build (a PO chat),
+    its points, cards and liveness. The answers are not kept; the caches
+    under them are."""
+    room = chatroom.get_room(rid)
+    if room is None:
+        return
+    if threads.is_threaded(rid):
+        with threads._LOCK:
+            busy = rid in threads._BUILDING
+            if not busy:
+                threads._BUILDING.add(rid)
+        if not busy:
+            try:
+                threads.build(rid, room, show_progress=False)
+            finally:
+                with threads._LOCK:
+                    threads._BUILDING.discard(rid)
+    _annotate_room_liveness(room, with_points=True)
+
+
+def warm_rooms(limit: int = WARM_ROOMS) -> list[str]:
+    """Warm the chats likeliest to be opened first; the ones done, in order."""
+    po = threads._po_rooms()
+    rows = sorted(chatroom.room_index(), key=lambda r: (r["id"] not in po, -float(r.get("updatedAt") or 0)))
+    done = []
+    for r in rows[:max(limit, len(po))]:
+        try:
+            warm_room(r["id"])
+            done.append(r["id"])
+        except Exception as e:      # noqa: BLE001 — the chat reads it itself when opened
+            print(f"[warm] {r['id']}: not read ahead: {e!r}", flush=True)
+        time.sleep(WARM_ROOM_PAUSE_S)
+    return done
+
+
+def _warm_rooms_at_start() -> None:
+    """Once the first task list is in: the chats, read ahead."""
+    while not startup.is_ready():
+        time.sleep(0.5)
+    t0 = time.time()
+    done = warm_rooms()
+    _restart_log(f"chats read ahead: {len(done)} in {time.time() - t0:.1f}s")
+
+
 def _warm_saver() -> None:
     """Every WARM_SAVE_EVERY_S, once the first list is read: a crash or a
     power cut then costs the next start at most these minutes of reading."""
@@ -19760,6 +19811,7 @@ def main():
     startup.booted()
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
+    threading.Thread(target=_warm_rooms_at_start, name="warm-rooms", daemon=True).start()
 
     # Projects backup: the app owns the projects-root repo. Init it now
     # (idempotent; remote only if configured) and start the scheduler, which
