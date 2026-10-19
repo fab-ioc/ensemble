@@ -116,6 +116,7 @@ import points
 import asks
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
+import topics
 import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
@@ -15153,6 +15154,16 @@ class Handler(BaseHTTPRequestHandler):
                    "more": max(0, len(text) - message_refs.QUOTE_MAX)}
             self._send_json(200, ref)
             return
+        if p == "/api/room/topics":
+            q = parse_qs(u.query)
+            rid = (q.get("id", [""])[0] or "").strip()
+            project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+            room = chatroom.get_room(rid, public=False) if project else None
+            if not room:
+                self._send_json(404, {"error": "no_such_po_chat"})
+                return
+            self._send_json(200, topics.view(project, room, chatroom.ROOMS_DIR))
+            return
         if p in ("/api/room/channel", "/api/room/thread"):
             # A PO chat as threads (threads.py): ?id=&n= the channel (its
             # last n entries, each thread's parent with its reply line;
@@ -15172,9 +15183,22 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if p == "/api/room/channel":
                     n = int(q.get("n", [""])[0] or threads.CHANNEL_MAX)
-                    out = threads.channel_view(rid, room, n, q.get("upto", [""])[0].strip())
+                    topic_id = q.get("topic", [""])[0].strip()
+                    topic_tids = None
+                    if topic_id:
+                        project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+                        grouping = topics.view(project, room, chatroom.ROOMS_DIR) if project else {"topics": []}
+                        chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
+                        topic_tids = set(chosen["threads"]) if chosen else set()
+                        n = threads.CHANNEL_LIMIT
+                    out = threads.channel_view(rid, room, n, q.get("upto", [""])[0].strip(), topic_tids)
                 else:
                     out = threads.thread_view(rid, room, q.get("t", [""])[0].strip(), q.get("mid", [""])[0].strip())
+                    if out.get("thread"):
+                        project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+                        if project:
+                            grouping = topics.view(project, room, chatroom.ROOMS_DIR)
+                            out["topicSuggestion"] = grouping.get("suggestions", {}).get(out["thread"]["id"])
             except Exception as e:      # noqa: BLE001 — the page shows the whole chat
                 print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_read"})
@@ -18622,6 +18646,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "not_saved", "message": "The hub could not save that."})
                 return
             self._send_json(200, {"ok": True, "seen": got, **({"points": _points_view(rid)} if got else {})})
+            return
+        if p == "/api/room/topics":
+            if self._files_cross_site():
+                return
+            rid = str(data.get("roomId") or "")
+            project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+            room = chatroom.get_room(rid, public=False) if project else None
+            if not room:
+                self._send_json(404, {"error": "no_such_po_chat"})
+                return
+            try:
+                topics.view(project, room, chatroom.ROOMS_DIR)
+                topics.change(project, chatroom.ROOMS_DIR, str(data.get("action") or ""),
+                              topic=str(data.get("topic") or ""), other=str(data.get("other") or ""),
+                              thread=str(data.get("thread") or ""), name=str(data.get("name") or ""))
+            except (ValueError, OSError) as e:
+                self._send_json(400, {"error": "invalid_topic_change", "message": str(e)})
+                return
+            self._send_json(200, {"ok": True, **topics.view(project, room, chatroom.ROOMS_DIR)})
             return
         if p == "/api/room/thread/seen":
             # The person opened a thread of a PO chat: {roomId, thread, ts}

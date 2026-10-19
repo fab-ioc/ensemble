@@ -804,6 +804,17 @@
   #thread-catchup[hidden], body.thread #thread-catchup { display:none; }
   #thread-catchup button { background:transparent; border:0; color:var(--link); font:inherit; cursor:pointer; min-height:var(--touch-min); }
   #thread-catchup button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #topic-note { display:flex; align-items:center; gap:var(--s-200); min-height:var(--touch-min); padding:0 var(--s-300);
+    border-bottom:1px solid var(--border); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
+  #topic-note[hidden] { display:none; }
+  #topic-note span { flex:1 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #topic-note button, #topic-suggestion button { min-height:var(--touch-min); padding:0 var(--s-200); border:0;
+    border-radius:var(--r-200); background:transparent; color:inherit; font:inherit; cursor:pointer; }
+  #topic-suggestion { display:flex; align-items:center; gap:var(--s-100); min-height:var(--touch-min); padding:0 var(--s-300);
+    border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); }
+  #topic-suggestion[hidden] { display:none; }
+  #topic-suggestion button { color:var(--link); }
+  #topic-note button:focus-visible, #topic-suggestion button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
   #thr-also-l[hidden], #thr-back[hidden] { display:none; }
   @media (max-width:600px) { #chatbar-note { display:none; } }
   /* Slack's line under a message with replies (#234): one button holding who
@@ -1547,6 +1558,8 @@
         <div id="points-line" hidden></div>
         <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="earlier-threads" hidden>Earlier messages</button></div>
       </div>
+      <div id="topic-note" hidden><span></span><button type="button">Clear</button></div>
+      <div id="topic-suggestion" hidden><span></span><button type="button">Add</button></div>
       <div id="thread-catchup" hidden></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
@@ -6069,6 +6082,8 @@ let THR_META = {};         // thread id → its line's facts, as the hub sent th
 let THR_ASKED = '';         // the link's balloon the channel was last asked to reach (&upto=)
 let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;   // the latest 150 channel entries first (#228, #234)
 let THR_DRAWN = false;    // the channel or thread is what is drawn
+let TOPIC_FILTER = null;   // the dashboard's selected topic in this PO channel
+let TOPIC_SUGGESTION = null;
 let WORK_LOG_OPEN = false;
 let WORK_LOG_THREAD = '';
 document.addEventListener('click', e => {
@@ -6087,7 +6102,9 @@ const threadedView = () => THREADED;
 function thrUrl(sig) {
   const base = THREAD_MODE
     ? '/api/room/thread?id=' + encodeURIComponent(ROOM) + (THREAD ? '&t=' + encodeURIComponent(THREAD) : '&mid=' + encodeURIComponent(THREAD_MID))
-    : '/api/room/channel?id=' + encodeURIComponent(ROOM) + '&n=' + THR_N + (GOTO ? '&upto=' + encodeURIComponent(THR_ASKED = GOTO) : '');
+    : '/api/room/channel?id=' + encodeURIComponent(ROOM) + '&n=' + THR_N
+      + (TOPIC_FILTER?.id ? '&topic=' + encodeURIComponent(TOPIC_FILTER.id) : '')
+      + (GOTO ? '&upto=' + encodeURIComponent(THR_ASKED = GOTO) : '');
   return base + (sig ? '&sig=' + encodeURIComponent(sig) : '');
 }
 async function renderThreaded(force) {
@@ -6129,6 +6146,8 @@ async function renderThreaded(force) {
     showThreadCatchup();
     if (THREAD_MODE) {
       THR_INFO = d.thread || null;
+      TOPIC_SUGGESTION = d.topicSuggestion || null;
+      showTopicSuggestion();
       if (THR_INFO) { THR_META[THR_INFO.id] = THR_INFO; if (!THREAD) THREAD = THR_INFO.id; }
       if (WORK_LOG_THREAD !== THREAD) { WORK_LOG_THREAD = THREAD; WORK_LOG_OPEN = false; }
       threadHead();
@@ -6196,6 +6215,40 @@ function showThreadCatchup() {
   if (!newest) return;
   el.innerHTML = `<span>${THR_UNREAD.length} thread${THR_UNREAD.length === 1 ? '' : 's'} with new replies</span><button type="button" data-thr="${esc(newest.id)}" data-mid="${esc(newest.lastMid || newest.root)}">Open newest reply</button>`;
 }
+function showTopicFilter() {
+  const el = $('#topic-note');
+  if (!el) return;
+  el.hidden = THREAD_MODE || !TOPIC_FILTER;
+  if (TOPIC_FILTER) setText(el.querySelector('span'), 'Topic: ' + TOPIC_FILTER.name);
+}
+function showTopicSuggestion() {
+  const el = $('#topic-suggestion');
+  if (!el) return;
+  el.hidden = !THREAD_MODE || !TOPIC_SUGGESTION;
+  if (TOPIC_SUGGESTION) {
+    setText(el.querySelector('span'), 'This thread may belong to ' + TOPIC_SUGGESTION.name);
+    setText(el.querySelector('button'), 'Add to ' + TOPIC_SUGGESTION.name);
+  }
+}
+$('#topic-note').querySelector('button').addEventListener('click', () => {
+  const host = embedHost();
+  if (host) host.postMessage({type:'topic-clear', roomId:ROOM}, location.origin);
+  else { TOPIC_FILTER = null; showTopicFilter(); THR_SIG = ''; renderThreaded(true); }
+});
+$('#topic-suggestion').querySelector('button').addEventListener('click', async () => {
+  if (!TOPIC_SUGGESTION || !THREAD) return;
+  const suggestion = TOPIC_SUGGESTION;
+  const button = $('#topic-suggestion').querySelector('button');
+  button.disabled = true;
+  try {
+    await postOk('/api/room/topics', {roomId:ROOM, action:'move', thread:THREAD, topic:suggestion.topic});
+    TOPIC_SUGGESTION = null;
+    showTopicSuggestion();
+    const host = dashboardHost();
+    if (host) host.postMessage({type:'topics-changed', roomId:ROOM}, location.origin);
+  } catch (e) { setText($('#hint'), 'Could not save the topic. Try again.'); }
+  finally { button.disabled = false; }
+});
 function threadCardHtml(tid) {
   const t = THR_META[tid];
   if (!t) return '';
@@ -7761,6 +7814,20 @@ $('#terms').onclick = () => {
 // actions down to us (session.html owns the terminal UI + room controls).
 window.addEventListener('message', (e) => {
   const d = e.data || {};
+  if (d.ensemble === 'topic-filter' && e.source === window.parent && e.origin === location.origin && !THREAD_MODE) {
+    const next = d.topic && typeof d.topic.id === 'string' ? {id:d.topic.id, name:String(d.topic.name || 'Topic')} : null;
+    const changed = (TOPIC_FILTER?.id || '') !== (next?.id || '');
+    TOPIC_FILTER = next;
+    showTopicFilter();
+    if (changed) {
+      THR_SIG = '';
+      THR_N = 150;
+      THR_LIST = false;
+      showThreadsBtn();
+      renderThreaded(true);
+    }
+    return;
+  }
   if (d.ensemble === 'toggleTerms') $('#terms').click();
   else if (d.ensemble === 'pause') pauseToggle();
   // The dashboard opened this chat's panel again: a closed task panel only

@@ -83,7 +83,10 @@ def main():
                 if project:
                     got = topics.view(project, chatroom.get_room(rid), chatroom.ROOMS_DIR)
                     wanted = ("backtest", "skew", "single", "massive", "x5")
-                    print(json.dumps({"room": name, "topics": [{"name": t["name"],
+                    print(json.dumps({"room": name, "topicCount": len(got["topics"]),
+                                      "suggestions": list(got["suggestions"].items())[:10],
+                                      "suggestionCount": len(got["suggestions"]),
+                                      "topics": [{"name": t["name"],
                         "threadCount": t["threadCount"], "latest": t["latest"]}
                         for t in got["topics"] if any(w in t["name"].lower() for w in wanted)]}), flush=True)
 
