@@ -221,6 +221,7 @@ def scenario(root: Path, old_zip: Path, new_zip: Path, old: str, new: str,
     env = dict(os.environ, HOME=str(home), USERPROFILE=str(home), ENSEMBLE_NO_DIALOG="1")
     if rollback:
         env["ENSEMBLE_UPDATE_TEST_FAIL_PORT"] = str(port)
+        env["ENSEMBLE_UPDATE_TEST_FAIL_VERSION"] = new
     with Feed(new_zip, new) as feed:
         env["ENSEMBLE_RELEASES_URL"] = feed
         log = root / name / "hub-output.log"

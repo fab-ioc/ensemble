@@ -99,9 +99,13 @@ def main() -> None:
     # then this deliberately broken candidate exits on the hub's real port.
     # The old installed app does not know this variable and can roll back.
     fail_port = os.environ.get("ENSEMBLE_UPDATE_TEST_FAIL_PORT")
-    if fail_port and "--port" in args and args[args.index("--port") + 1] == fail_port:
-        print("release test: candidate exits on the hub port", file=sys.stderr)
-        sys.exit(77)
+    fail_version = os.environ.get("ENSEMBLE_UPDATE_TEST_FAIL_VERSION")
+    if (fail_port and fail_version and "--port" in args
+            and args[args.index("--port") + 1] == fail_port):
+        import app_version
+        if app_version.VERSION == fail_version:
+            print("release test: candidate exits on the hub port", file=sys.stderr)
+            sys.exit(77)
     import app_launch
     sys.exit(app_launch.main(args))
 
