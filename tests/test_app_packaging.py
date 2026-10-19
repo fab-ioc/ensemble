@@ -51,6 +51,25 @@ class VersionTest(unittest.TestCase):
 
 
 class ScriptArgvTest(unittest.TestCase):
+    def test_release_failure_injection_targets_only_the_candidate(self):
+        import ensemble_app
+        import app_launch
+        argv = ["Ensemble.exe", "--background", "--port", "54321"]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(app_launch, "main", return_value=0) as launch:
+            with mock.patch.dict("os.environ", {"ENSEMBLE_UPDATE_TEST_FAIL_PORT": "54321",
+                                               "ENSEMBLE_UPDATE_TEST_FAIL_VERSION": "9.9.9"}):
+                with self.assertRaises(SystemExit) as result:
+                    ensemble_app.main()
+                self.assertEqual(result.exception.code, 0)
+                launch.assert_called_once()
+            launch.reset_mock()
+            with mock.patch.dict("os.environ", {"ENSEMBLE_UPDATE_TEST_FAIL_PORT": "54321",
+                                               "ENSEMBLE_UPDATE_TEST_FAIL_VERSION": app_version.VERSION}):
+                with self.assertRaises(SystemExit) as result:
+                    ensemble_app.main()
+                self.assertEqual(result.exception.code, 77)
+                launch.assert_not_called()
+
     def test_source_runs_the_script(self):
         argv = app_version.script_argv("agent_hook", Path("C:/r/agent_hook.py"), python="C:/py/python.exe",
                                        frozen=False)
