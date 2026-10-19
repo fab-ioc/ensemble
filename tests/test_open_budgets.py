@@ -16,11 +16,12 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MODES = ("fill", "restart", "cold")
+MODES = ("fill", "restart", "restart-now", "cold", "cold-now")
 OPENS = ("poRoom", "poChannel", "poThread", "poTopic", "taskRoom", "soloTail")
 
 FIRST_BYTES = 100_000       # the spec: a first answer of at most 100 KB
 FIRST_MS = 300              # the first answer after a start (the spec's warm open, all of it)
+NOW_MS = 500                # the first answer while the hub still reads its chats ahead
 WARM_MS = 150               # the same open again
 POLL_BYTES = 8_000          # a poll with nothing new
 
@@ -62,6 +63,19 @@ class OpenBudgets(unittest.TestCase):
             for name in OPENS:
                 with self.subTest(mode=mode, open=name):
                     self.assertLessEqual(m[name]["firstMs"], FIRST_MS)
+
+    def test_a_chat_opened_the_moment_the_hub_listens_shows_its_latest(self):
+        # Review 4, finding 1: opened before the chats were read ahead, the
+        # room, its channel (its newest balloons, threads to come), a task
+        # chat and a one-agent chat each answer at once, never pending.
+        for mode in ("restart-now", "cold-now"):
+            for name, m in self.at[mode]["now"].items():
+                with self.subTest(mode=mode, open=name):
+                    self.assertFalse(m["pending"])
+                    self.assertLessEqual(m["bytes"], FIRST_BYTES)
+                    self.assertLessEqual(m["firstMs"], NOW_MS)
+                    if name != "soloTail":
+                        self.assertGreater(m["items"], 0)
 
     def test_an_open_again_is_quicker_still(self):
         for mode, m in self.at.items():

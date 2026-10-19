@@ -564,10 +564,13 @@ def unrecorded_room_ptys(room: dict) -> list[str]:
 _LAST_OPEN_CARDS: dict[str, list[dict]] = {}
 
 
-def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
+def _annotate_room_liveness(room: dict, with_points: bool = False, first: bool = False) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state. A reviewer
-    that is started per request is flagged `onMention`."""
+    that is started per request is flagged `onMention`. ``first``: a chat's
+    first read (&lite=1), whose points are the ledger as kept (#247: on a hub
+    just started, looking for new answers took ~0.9 s); the poll after it
+    looks."""
     room["live"] = _room_is_live(room)
     # What was sent while it was stopped and is still on its way in (a resume
     # in flight), or could not be delivered: the page shows those as pending.
@@ -612,7 +615,7 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     # The person's points (points.py), on the poll the chat already makes.
     if with_points:
         try:
-            room["points"] = points.view(room.get("id", ""), room=room)
+            room["points"] = points.view(room.get("id", ""), room=room, quick=first)
         except Exception as e:      # noqa: BLE001 — the chat still shows
             print(f"[points] {room.get('id')}: not listed: {e!r}", flush=True)
         # A PO chat's threads with replies not seen (Needs you's Threads);
@@ -5641,7 +5644,7 @@ class _PoFacts:
         self.by_id = {p["id"]: p for p in self.projects}
         self.links = load_session_projects()
         self.po_of = {(p.get("poRoomId") or "").strip(): p for p in self.projects if (p.get("poRoomId") or "").strip()}
-        self.installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a))
+        self.installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a, wait=False))
         self._dirs: dict[str, bool] = {}
 
     def is_dir(self, cwd: str) -> bool:
@@ -5675,23 +5678,36 @@ class _PoFacts:
 
 
 _INSTALLED: dict[str, tuple[float, bool]] = {}
+_INSTALLED_LOOKING: set[str] = set()
 INSTALLED_TTL_S = 60.0
 
 
-def _agent_installed(key: str) -> bool:
-    """Whether the agent's CLI is on PATH, looked up again every minute: a
-    chat's every read asks, and a PATH search costs ~7 ms (#247)."""
-    now = time.monotonic()
-    hit = _INSTALLED.get(key)
-    if hit and now - hit[0] < INSTALLED_TTL_S:
-        return hit[1]
+def _look_up_installed(key: str) -> bool:
     try:
         ag = agents.get_agent(key)
         ok = bool(ag is not None and ag.installed())
     except Exception:       # noqa: BLE001 — not installed, as far as a PO goes
         ok = False
-    _INSTALLED[key] = (now, ok)
+    _INSTALLED[key] = (time.monotonic(), ok)
+    _INSTALLED_LOOKING.discard(key)
     return ok
+
+
+def _agent_installed(key: str, wait: bool = True) -> bool:
+    """Whether the agent's CLI is on PATH, looked up again every minute: a
+    chat's every read asks, and a PATH search costs ~7 ms, ~2 s on a machine
+    just started (#247). ``wait=False`` (a page's read): what was found last,
+    looked up again behind it; never looked up yet, installed (the action
+    itself looks again)."""
+    hit = _INSTALLED.get(key)
+    if hit and time.monotonic() - hit[0] < INSTALLED_TTL_S:
+        return hit[1]
+    if wait:
+        return _look_up_installed(key)
+    if key not in _INSTALLED_LOOKING:
+        _INSTALLED_LOOKING.add(key)
+        threading.Thread(target=_look_up_installed, args=(key,), name=f"installed-{key}", daemon=True).start()
+    return hit[1] if hit else True
 
 
 def _session_live_now(sid: str) -> dict:
@@ -5736,10 +5752,11 @@ def _session_live_now(sid: str) -> dict:
     return out
 
 
-def make_po_facts(data: dict) -> dict:
+def make_po_facts(data: dict, wait: bool = True) -> dict:
     """The facts of the conversation a po-from-session request names, read
-    from the hub now (a task's room, a session's terminal and transcript)."""
-    installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a))
+    from the hub now (a task's room, a session's terminal and transcript).
+    ``wait=False``: a page's read (:func:`_agent_installed`)."""
+    installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a, wait))
     rid = (data.get("roomId") or "").strip()
     projects = load_projects()
     po_of = {(p.get("poRoomId") or "").strip(): p for p in projects if (p.get("poRoomId") or "").strip()}
@@ -11862,6 +11879,7 @@ def warm_rooms(limit: int = WARM_ROOMS) -> list[str]:
     done = []
     for r in rows[:max(limit, len(po))]:
         try:
+            yield_to_pages(most_s=2.0, quiet_s=0.3)
             warm_room(r["id"])
             done.append(r["id"])
         except Exception as e:      # noqa: BLE001 — the chat reads it itself when opened
@@ -14314,6 +14332,33 @@ def install_agent_skills() -> list[str]:
     return written
 
 
+# The page requests being answered: when each came in, by its thread; and
+# when the last one was answered (#247).
+_ANSWERING: dict[int, float] = {}
+_ANSWERED = [0.0]
+PAGE_ANSWER_S = 3.0         # a request answering longer is a stream: not waited for
+
+
+def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
+    """A read the hub does behind the pages (a chat read ahead, a thread
+    build) stands aside while a page's request is being answered: both need
+    the one interpreter, and a one-agent chat opened while the hub just
+    started read its chats ahead took ~2.6 s for ~0.17 s of work (#247).
+    ``quiet_s``: and until no page asked for that long (a page opening asks
+    several things in a row). Never waits on a request thread, nor for more
+    than ``most_s``."""
+    me = threading.get_ident()
+    if me in _ANSWERING:
+        return
+    end = time.monotonic() + most_s
+    while True:
+        now = time.monotonic()
+        if now >= end or (not any(now - t < PAGE_ANSWER_S for t in list(_ANSWERING.values()))
+                          and now - _ANSWERED[0] >= quiet_s):
+            return
+        time.sleep(0.005)
+
+
 class Handler(BaseHTTPRequestHandler):
     # Kept-alive connections and revalidated answers (#231). Every answer
     # says where it ends (Content-Length), or closes the connection after it.
@@ -14362,6 +14407,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         finally:
             self._waiting = False
+            if _ANSWERING.pop(threading.get_ident(), None) is not None:
+                _ANSWERED[0] = time.monotonic()
             body = self.rfile
             if isinstance(body, _RequestBody):
                 self.rfile = body.raw
@@ -14376,6 +14423,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def parse_request(self):
         self._waiting = False
+        _ANSWERING[threading.get_ident()] = time.monotonic()
         try:
             self.connection.settimeout(None)
         except OSError:
@@ -15416,7 +15464,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, room_older_page(room.get("messages") or [], older, win,
                                                      q.get("upto", [""])[0], revision))
                 return
-            out = _annotate_room_liveness(room, with_points=True)
+            lite = q.get("lite", [""])[0] == "1" and not q.get("cursor", [""])[0]
+            out = _annotate_room_liveness(room, with_points=True, first=lite)
             # The composer needs turn state, not recent terminal output: a
             # quiet long-running shell is still interruptible.
             statuses = attention._claude_status_by_session()
@@ -15426,8 +15475,10 @@ class Handler(BaseHTTPRequestHandler):
             out["reportsToRoom"] = room_po_id(room)
             out["checkpoints"] = checkpoint_list(room.get("id", rid))
             try:
-                # The pop-out's "Make PO of a new project…", as the list row has it.
-                out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
+                # The pop-out's "Make PO of a new project…", as the list row has
+                # it; not on a first read (the poll after it brings it).
+                if not lite:
+                    out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid}, wait=False)))
             except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
                 print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
             # A solo chat's page needs of each rotation which sessions it
@@ -15461,7 +15512,6 @@ class Handler(BaseHTTPRequestHandler):
                                       **({"total": len(every)} if win else {}), **pm_extra,
                                       "messages": messages})
                 return
-            lite = q.get("lite", [""])[0] == "1"
             if lite:
                 # The first read: the rest of the status comes as a patch on
                 # the page's next poll, which it makes once this is drawn.

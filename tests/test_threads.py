@@ -493,6 +493,36 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(mids(poll), mids(first))
         self.assertEqual((mids(top)[0], len(top["items"]), top["before"]), ("s:0", 50, 0))
 
+    def test_a_chat_not_read_yet_shows_its_newest_balloons_at_once(self):
+        # Review 4, finding 1: opened before its first build is done, the
+        # channel's first page is the newest balloons as the transcripts hold
+        # them (no threads yet, hub lines left out), never pending with
+        # nothing; its polls, a page above and a link wait for the build.
+        turns = {"old": [{"role": "user", "text": "first", "timestamp": "2026-01-01T00:00:00Z"}],
+                 "now": [{"role": "user" if i % 2 else "assistant", "text": f"turn {i}",
+                          "timestamp": f"2026-02-01T00:{i:02d}:00Z"} for i in range(50)]
+                        + [{"role": "user", "kind": "human", "text": "[digest] usage: fine",
+                            "timestamp": "2026-02-01T01:00:00Z"}]}
+        with mock.patch.object(threads, "ready", return_value=None),                 mock.patch.object(threads, "_sessions", return_value=["now", "old"]),                 mock.patch.object(threads.points, "load", return_value={}),                 mock.patch.object(dashboard, "read_session_turns", side_effect=lambda sid: turns[sid]):
+            first = threads.channel_view("r", {}, 40)
+            few = threads.channel_view("r", {}, 3)
+            later = [threads.channel_view("r", {}, 0, frm=first["items"][0]["mid"]),
+                     threads.channel_view("r", {}, 100, before=first["items"][0]["mid"]),
+                     threads.channel_view("r", {}, 40, upto="old:0"),
+                     threads.channel_view("r", {}, 40, topic_tids={"P1"})]
+        texts = [t["text"] for t in first["items"]]
+        self.assertTrue(first["quick"])
+        self.assertEqual((len(texts), texts[0], texts[-1]), (40, "turn 10", "turn 49"))
+        self.assertEqual((first["before"], first["channel"], first["threads"]), (11, 51, {}))
+        self.assertEqual([t["text"] for t in few["items"]], ["turn 47", "turn 48", "turn 49"])
+        self.assertEqual(len({t["mid"] for t in first["items"]}), 40)
+        for v in later:
+            self.assertTrue(v.get("pending"), v)
+        with mock.patch.object(threads, "ready", return_value=None),                 mock.patch.object(threads, "_sessions", return_value=["now"]),                 mock.patch.object(threads.points, "load", return_value={}),                 mock.patch.object(dashboard, "read_session_turns",
+                                  return_value=[{"role": "assistant", "text": str(i) * 30_000} for i in range(10)]):
+            big = threads.channel_view("r", {}, 40)
+        self.assertEqual(len(big["items"]), 2, "a first page fits its bytes")
+
 
 class PoRoomsTest(unittest.TestCase):
     def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):

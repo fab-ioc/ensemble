@@ -3,6 +3,8 @@ chats first, so the first open after a restart is a warm one.
 
     PYTHONPATH="<repo>;<repo>/tests" py -m unittest test_warm_rooms
 """
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -44,6 +46,49 @@ class WarmRooms(unittest.TestCase):
                 threads._BUILDING.discard("room-po")
         self.assertEqual(builds, ["room-po"])
         self.assertNotIn("room-po", threads._BUILDING)
+
+
+
+class YieldToPages(unittest.TestCase):
+    # Review 4, finding 1: what the hub reads behind the pages stands aside
+    # while a page's request is answered (a one-agent chat opened as the hub
+    # read its chats ahead took ~2.6 s for ~0.17 s of work).
+    def setUp(self):
+        self.addCleanup(dashboard._ANSWERING.clear)
+        self.addCleanup(dashboard._ANSWERED.__setitem__, 0, dashboard._ANSWERED[0])
+
+    def waited(self, **kw) -> float:
+        out = []
+
+        def run():
+            t = time.monotonic()
+            dashboard.yield_to_pages(**kw)
+            out.append(time.monotonic() - t)
+        th = threading.Thread(target=run)
+        th.start()
+        th.join()
+        return out[0]
+
+    def test_a_read_behind_waits_for_the_request_being_answered(self):
+        dashboard._ANSWERING[-1] = time.monotonic()
+        threading.Timer(0.2, dashboard._ANSWERING.pop, (-1,)).start()
+        self.assertGreater(self.waited(most_s=2.0), 0.15)
+        self.assertLess(self.waited(most_s=2.0), 0.05, "nothing answered: no wait")
+
+    def test_it_waits_for_a_quiet_moment_and_never_long(self):
+        dashboard._ANSWERED[0] = time.monotonic()
+        self.assertGreater(self.waited(quiet_s=0.2), 0.15)
+        dashboard._ANSWERING[-1] = time.monotonic()
+        self.assertLess(self.waited(most_s=0.1), 0.5)
+        dashboard._ANSWERING[-1] = time.monotonic() - dashboard.PAGE_ANSWER_S - 1
+        self.assertLess(self.waited(most_s=2.0), 0.05, "a stream is not waited for")
+
+    def test_a_request_never_waits_for_another(self):
+        dashboard._ANSWERING[-1] = time.monotonic()
+        dashboard._ANSWERING[threading.get_ident()] = time.monotonic()
+        t = time.monotonic()
+        dashboard.yield_to_pages(most_s=2.0)
+        self.assertLess(time.monotonic() - t, 0.05)
 
 
 if __name__ == "__main__":

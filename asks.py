@@ -695,7 +695,9 @@ def message_asks(room: dict, has_po: bool | None = None) -> list[tuple]:
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")}
     out = []
-    for m in room.get("messages") or []:
+    for n, m in enumerate(room.get("messages") or []):
+        if n % 50 == 0:
+            _d.yield_to_pages()         # read behind a page: it stands aside (#247)
         if m.get("from") in agents and (not has_po or m.get("askAudience") == "user") \
                 and m.get("kind") not in ("report", "notice") \
                 and m.get("askAudience") != "po" and not m.get("rang") \
@@ -852,7 +854,9 @@ def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
     if hit is not None and st is not None and hit[0] == st:
         return hit[1]
     found = []
-    for mid, t in (_d.solo_turns(room, sid) or {}).items():
+    for n, (mid, t) in enumerate((_d.solo_turns(room, sid) or {}).items()):
+        if n % 50 == 0:
+            _d.yield_to_pages()
         if t.get("role") == "user":
             continue
         text = t.get("text") or ""

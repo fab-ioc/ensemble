@@ -266,16 +266,8 @@ def _rec(sid: str, mid: str, t: dict) -> dict:
             or ("?" in text or "decision needed:" in text.lower()) and bool(_d.asks.safety(text))
         r["live"] = bool(_LIVE.search(points._prose(text)))
         return r
-    kind = t.get("kind") or "human"
-    if kind == "human":
-        # A hub line the provenance journal did not claim (older sessions):
-        # its prefix still tells it ([digest], [report] …).
-        legacy = _d.hub_input_kind(text)
-        if legacy.get("kind") not in (None, "human"):
-            t = {**t, **_d._input_sender_info(text, legacy)}
-            kind = t.get("kind") or "hub"
-            r["turn"] = t
-    r["kind"] = kind
+    t, kind = _told(t)
+    r["turn"], r["kind"] = t, kind
     if kind == "human":
         r["pts"] = points.point_ids(text)
         r["re"] = points.re_ids(text)
@@ -284,6 +276,21 @@ def _rec(sid: str, mid: str, t: dict) -> dict:
         r["task"] = points.task_ref(t.get("taskId") or "")
         r["taskTitle"] = t.get("taskTitle") or ""
     return r
+
+
+def _told(t: dict) -> tuple[dict, str]:
+    """A person's turn as shown, and its kind: a hub line the provenance
+    journal did not claim (older sessions) is told by its prefix ([digest],
+    [report] …)."""
+    kind = t.get("kind") or "human"
+    if kind != "human":
+        return t, kind
+    text = t.get("text") or ""
+    legacy = _d.hub_input_kind(text)
+    if legacy.get("kind") in (None, "human"):
+        return t, kind
+    t = {**t, **_d._input_sender_info(text, legacy)}
+    return t, t.get("kind") or "hub"
 
 
 def _session_balloons(sid: str, on_turn=None) -> list[dict]:
@@ -836,6 +843,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
     side = load_side(room_id)
     key = "thread:" + room_id
     def announce(phase, done=0, total=0):
+        _d.yield_to_pages()
         if show_progress:
             progress.set_progress(key, phase, done, total)
 
@@ -1037,6 +1045,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
     (:func:`_span`). ``{pending: true}`` while the chat is first read."""
     idx = ready(room_id, room)
     if idx is None:
+        if topic_tids is None and not (upto or before or frm):
+            return _quick_channel(room_id, room, n)
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     ch = idx["channel"]
     if topic_tids is not None:
@@ -1061,6 +1071,40 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                                    and (topic_tids is None or t["id"] in topic_tids)),
                                   key=lambda t: t.get("lastAt") or 0, reverse=True)
     return out
+
+
+QUICK_BYTES = 80_000       # a first page's balloons, before the threads are known
+
+
+def _quick_channel(room_id: str, room: dict, n: int) -> dict:
+    """The channel's first page while the chat is first read (a hub just
+    started, #247: ~3 s for a 10 MB chat): its newest ``n`` balloons as the
+    transcripts hold them, hub traffic left out, no threads yet. Its polls
+    are pending until the build is done; the view then comes whole (a delta
+    of this one): replies move into their threads."""
+    led = points.load(room_id, shared=True)
+    per = []
+    for sid in _sessions(room, led):
+        entries = [(mid, t) for mid, t in _d.page_turn_ids(sid, _d.read_session_turns(sid) or [])]
+        if entries:
+            per.append((next((_d._turn_epoch(t.get("timestamp")) for _m, t in entries
+                               if t.get("timestamp")), 0.0), entries))
+    shown = [(mid, t) for _f, entries in sorted(per, key=lambda x: x[0]) for mid, t in entries
+             if t.get("role") != "user" or _told(t)[1] == "human"]
+    items, size = [], 0
+    for mid, t in reversed(shown[-n:] if n else []):
+        item = {**t, "mid": mid}
+        size += len(json.dumps(item))
+        if items and size > QUICK_BYTES:
+            break
+        items.append(item)
+    items.reverse()
+    start = len(shown) - len(items)
+    return {"sig": "quick:" + str(len(shown)), "quick": True,
+            "progress": progress.snapshot().get("thread:" + room_id),
+            "items": items, "threads": {},
+            "before": start, "n": len(shown) - start, "balloons": len(shown), "channel": len(shown),
+            "activity": None, "unreadThreads": []}
 
 
 def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int = 0,

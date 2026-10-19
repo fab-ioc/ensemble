@@ -10,7 +10,9 @@ HOME pointing at a throwaway folder (test_open_budgets does that):
   restart caches as a restart does;
 - ``restart`` is the hub started again: its caches loaded, the chats read
   ahead (as ``main`` does), then each open asked the way the page asks;
-- ``cold`` the same with no restart cache (a crash, a new version).
+- ``cold`` the same with no restart cache (a crash, a new version);
+- ``restart-now`` / ``cold-now``: the same, but each open is asked the
+  moment the hub listens, its read ahead still running behind it.
 
 Prints, per open, the bytes and server time of the first answer and the best
 of three warm ones, as one JSON object."""
@@ -104,6 +106,8 @@ def fixture(home: Path) -> None:
 
 def main() -> None:
     mode = sys.argv[1]
+    now = mode.endswith("-now")
+    mode = mode.removesuffix("-now")
     home = Path.home()
     if mode == "fill":
         fixture(home)
@@ -123,11 +127,43 @@ def main() -> None:
             body = r.read()
         return body, (time.perf_counter() - t) * 1000
 
-    out: dict = {"mode": mode}
-    t = time.perf_counter()
-    dashboard.warm_rooms()                  # as main() does once the hub is up
-    out["readAheadMs"] = round((time.perf_counter() - t) * 1000)
-    get("/api/themes")                      # the page's own first requests come before any open
+    out: dict = {"mode": mode + ("-now" if now else "")}
+    if now:
+        # As main() starts it: behind the opens, not before them. The page
+        # asks for a PO chat's room and its channel together.
+        warm = threading.Thread(target=dashboard.warm_rooms, daemon=True)
+        warm.start()
+        got: dict = {}
+
+        def ask(name: str, path: str) -> None:
+            body, ms = get(path)
+            d = json.loads(body)
+            got[name] = {"bytes": len(body), "firstMs": round(ms, 1), "pending": bool(d.get("pending")),
+                         "quick": bool(d.get("quick")),
+                         "items": len(d.get("items") or d.get("messages") or [])}
+        asks = [threading.Thread(target=ask, args=a) for a in (
+            ("poRoom", f"/api/room?id={PO_ROOM}&n=50&lite=1"),
+            ("poChannel", f"/api/room/channel?id={PO_ROOM}&n=40&lite=1"))]
+        for a in asks:
+            a.start()
+        for a in asks:
+            a.join()
+        ask("taskRoom", f"/api/room?id={TASK_ROOM}&n=50&lite=1")
+        ask("soloTail", f"/api/session/{TASK_SID}?full=1&tail=120&bytes=96000")
+        out["now"] = got
+        t = time.perf_counter()
+        warm.join()
+        for _ in range(600):                # a build the open itself started may still run
+            d = json.loads(get(f"/api/room/channel?id={PO_ROOM}&n=40&lite=1")[0])
+            if not d.get("pending") and not d.get("quick"):
+                break
+            time.sleep(0.1)
+        out["readAheadLeftMs"] = round((time.perf_counter() - t) * 1000)
+    else:
+        t = time.perf_counter()
+        dashboard.warm_rooms()              # as main() does once the hub is up
+        out["readAheadMs"] = round((time.perf_counter() - t) * 1000)
+        get("/api/themes")                  # the page's own first requests come before any open
     # Each open as the page asks for it first: a PO chat (the room, light, and
     # its channel's newest entries), a thread of it, a topic, a task chat, and
     # a one-agent chat's last balloons.
