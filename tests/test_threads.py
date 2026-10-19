@@ -549,6 +549,28 @@ class AssignTest(unittest.TestCase):
             big = threads.channel_view("r", {}, 40)
         self.assertEqual(len(big["items"]), 2, "a first page fits its bytes")
 
+    def test_a_chat_not_read_yet_reads_only_the_sessions_its_newest_balloons_are_in(self):
+        # A PO chat rotated many times, opened with no turn cache: ~10 s to
+        # read every session for its newest 40. Read newest written first,
+        # and none that ended before those read began.
+        day = lambda d, i: f"2026-0{d}-01T00:{i:02d}:00Z"      # noqa: E731
+        epoch = lambda d: dashboard._turn_epoch(day(d, 59))     # noqa: E731
+        turns = {f"s{d}": [{"role": "assistant", "text": f"s{d} turn {i}", "timestamp": day(d, i)}
+                           for i in range(30)] for d in (1, 2, 3, 4)}
+        stat = {"s1": [1, epoch(1)], "s2": [1, epoch(2)], "s3": [1, epoch(3)], "s4": [1, epoch(4)]}
+        reads = []
+        with mock.patch.object(threads, "ready", return_value=None), \
+                mock.patch.object(threads, "_sessions", return_value=["s1", "s3", "s2", "s4"]), \
+                mock.patch.object(threads.points, "load", return_value={}), \
+                mock.patch.object(threads.points, "_session_stat", side_effect=stat.get), \
+                mock.patch.object(dashboard, "read_session_turns",
+                                  side_effect=lambda sid: reads.append(sid) or turns[sid]):
+            first = threads.channel_view("r", {}, 40)
+        texts = [t["text"] for t in first["items"]]
+        self.assertEqual(reads, ["s4", "s3"])
+        self.assertEqual((len(texts), texts[0], texts[-1]), (40, "s3 turn 20", "s4 turn 29"))
+        self.assertEqual(first["before"], 20)
+
 
 class PoRoomsTest(unittest.TestCase):
     def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):

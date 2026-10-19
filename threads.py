@@ -1100,14 +1100,22 @@ def _quick_channel(room_id: str, room: dict, n: int) -> dict:
     started, #247: ~3 s for a 10 MB chat): its newest ``n`` balloons as the
     transcripts hold them, hub traffic left out, no threads yet. Its polls
     are pending until the build is done; the view then comes whole (a delta
-    of this one): replies move into their threads."""
+    of this one): replies move into their threads. The sessions are read
+    newest written first, and no further once those left ended before the
+    ones read began (a PO chat rotated many times: ~10 s with no turn cache
+    for all of them); ``before`` then counts the sessions read only."""
     led = points.load(room_id, shared=True)
-    per = []
-    for sid in _sessions(room, led):
+    sids = _sessions(room, led)
+    stat = {sid: points._session_stat(sid) for sid in sids}
+    per, held = [], 0
+    for sid in sorted(sids, key=lambda s: -(stat[s] or [0, 0.0])[1]):
+        if held >= n and per and stat[sid] and stat[sid][1] < min((f for f, _e in per if f), default=0.0):
+            break
         entries = [(mid, t) for mid, t in _d.page_turn_ids(sid, _d.read_session_turns(sid) or [])]
         if entries:
             per.append((next((_d._turn_epoch(t.get("timestamp")) for _m, t in entries
                                if t.get("timestamp")), 0.0), entries))
+            held += sum(1 for _m, t in entries if t.get("role") != "user" or _told(t)[1] == "human")
     shown = [(mid, t) for _f, entries in sorted(per, key=lambda x: x[0]) for mid, t in entries
              if t.get("role") != "user" or _told(t)[1] == "human"]
     items, size = [], 0
