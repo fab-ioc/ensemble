@@ -295,7 +295,7 @@ const calls = [], shown = [];
 let answer = null;
 const ctx = {
   ROOM: 'room-1', ROOM_N: 50, SENDS_GEN: 0, ROOM_OBJ: null, structuredClone,
-  ptTicket: () => 1, setText: () => {}, $: () => ({}), FileLinks: { recheck() {} },
+  ptTicket: () => 1, setText: () => {}, THR_DRAWN: false, thrPrefetch: () => {}, $: () => ({}), FileLinks: { recheck() {} },
   refreshShow: room => shown.push(room.id), setTimeout, clearTimeout, Object, AbortController,
   AbortSignal: { timeout: ms => AbortSignal.timeout(Math.min(ms, 50)) },
   fetch: (url, init) => {
@@ -333,7 +333,8 @@ vm.runInContext(code, ctx);
 
     def test_every_poller_gives_up_a_request_that_never_settles(self):
         for call in ("pollFetch(ROOM_LAST?.revision", "pollFetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1')",
-                     "pollFetch(thrUrl(force ? '' : THR_SIG), null, 90000)"):
+                     "const url = thrUrl(force ? '' : THR_SIG)", "pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000)",
+                     "THR_PRE = { url, p: pollFetch(url, null, 90000) }"):
             self.assertIn(call, SESSION)
         # The transcript reads (#247: the last balloons, the page above them,
         # a session rotated out of) give up too.

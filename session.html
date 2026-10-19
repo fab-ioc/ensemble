@@ -6682,7 +6682,7 @@ async function refreshRoom() {
     if (!room && r.status === 304) room = structuredClone(ROOM_LAST.room);
     else if (!room) {
       room = await r.json();
-      if (room && room.lite) { delete room.lite; setTimeout(refresh, 250); }
+      if (room && room.lite) { delete room.lite; setTimeout(() => refresh(), 250); }
       ROOM_ETAG = r.ok ? (r.headers.get('ETag') || '') : '';
       ROOM_LAST = r.ok ? {etag: ROOM_ETAG, revision: room.revision || '',
         statusSig: room.statusSig || '', room: structuredClone(room)} : null;
