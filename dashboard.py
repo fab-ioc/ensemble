@@ -116,6 +116,7 @@ import points
 import asks
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
+import topics
 import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
@@ -9306,6 +9307,29 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
         s.setdefault("title", "")
         s.pop("path", None)
     full_rooms = {rid: chatroom.get_room(rid, public=False) or {} for rid in by_id}
+    # A PO room's room.json carries task and hub traffic; the person's and
+    # PO's own balloons live in transcripts. Thread indexes keep those turns
+    # incrementally and build in the background on their first search.
+    po_hits = []
+    latest_cards = []
+    po_pending = False
+    for rid, project in po_of.items():
+        room = full_rooms.get(rid)
+        if not room:
+            continue
+        found = threads.search_balloons(rid, room, groups)
+        if found is None:
+            po_pending = True
+            continue
+        for hit in found["messages"]:
+            po_hits.append({**hit, "projectId": project.get("id") or "",
+                            "project": project.get("name") or "", "title": f"{project.get('name') or ''} · PO",
+                            "po": True})
+        if found["latest"]:
+            latest_cards.append({**found["latest"], "query": q, "projectId": project.get("id") or "",
+                                 "project": project.get("name") or ""})
+    po_hits.sort(key=lambda m: -m["ts"])
+    latest_cards.sort(key=lambda m: -m["ts"])
 
     def participant_label(ident: str, rid: str) -> str:
         """A global-search message participant as the chat names them."""
@@ -9344,10 +9368,12 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
                         "project": (po or {}).get("name") or pname.get(e.get("projectId", ""), ""),
                         "title": f"{po.get('name') or ''} · PO" if po else e.get("title", ""), "po": bool(po),
                         "fromLabel": from_label, "toLabel": to_label})
-    return 200, {"q": q, "conversations": status,
+    return 200, {"q": q, "conversations": status, "poPending": po_pending,
+                 "latest": latest_cards[:1],
                  "tasks": {"count": len(t_items), "items": t_items[:global_search.ITEMS_MAX]},
                  "sessions": {"count": len(s_items), "items": cut},
-                 "messages": {"count": len(messages), "items": m_items}}
+                 "messages": {"count": len(messages) + len(po_hits),
+                              "items": (po_hits + m_items)[:global_search.ITEMS_MAX]}}
 
 
 def delete_session(sid: str) -> dict:
@@ -15446,6 +15472,16 @@ class Handler(BaseHTTPRequestHandler):
                    "more": max(0, len(text) - message_refs.QUOTE_MAX)}
             self._send_json(200, ref)
             return
+        if p == "/api/room/topics":
+            q = parse_qs(u.query)
+            rid = (q.get("id", [""])[0] or "").strip()
+            project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+            room = chatroom.get_room(rid, public=False) if project else None
+            if not room:
+                self._send_json(404, {"error": "no_such_po_chat"})
+                return
+            self._send_json(200, topics.view(project, room, chatroom.ROOMS_DIR))
+            return
         if p in ("/api/room/channel", "/api/room/thread"):
             # A PO chat as threads (threads.py): ?id=&n= the channel (its
             # last n entries, each thread's parent with its reply line;
@@ -15472,8 +15508,19 @@ class Handler(BaseHTTPRequestHandler):
                 n = 0
             try:
                 if p == "/api/room/channel":
+                    topic_id = arg("topic")
+                    topic_tids = None
+                    if topic_id:
+                        project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+                        grouping = topics.view(project, room, chatroom.ROOMS_DIR) if project else {"topics": []}
+                        if grouping.get("pending"):
+                            self._send_json(200, {"pending": True})
+                            return
+                        chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
+                        topic_tids = set(chosen["threads"]) if chosen else set()
+                        n = threads.CHANNEL_LIMIT
                     out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
-                                               before, arg("from"))
+                                               before, arg("from"), topic_tids)
                     channel_hub_rows(out, room)
                     if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):
                         # The first read: the newest threads with replies; the
@@ -15482,6 +15529,14 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     out = threads.thread_view(rid, room, arg("t"), arg("mid"), n, before,
                                               arg("from"), arg("upto"))
+                    if out.get("thread"):
+                        project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+                        if project:
+                            grouping = topics.view(project, room, chatroom.ROOMS_DIR)
+                            out["topicSuggestion"] = grouping.get("suggestions", {}).get(out["thread"]["id"])
+                            # A first thread open still renders during a cold topic
+                            # build; the changed signature supplies its chip later.
+                            out["sig"] += ":topics:" + str(grouping.get("stamp", "pending"))
             except Exception as e:      # noqa: BLE001 — the page shows the whole chat
                 print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_read"})
@@ -16437,7 +16492,24 @@ class Handler(BaseHTTPRequestHandler):
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         base = room_full.get("cwd") or str(CS_ROOT)
-        cwd = part.get("cwd") or os.path.join(base, ident)
+        recorded_cwd = (part.get("cwd") or "").strip()
+        cwd = recorded_cwd or (base if room_full.get("sharedCwd")
+                               else os.path.join(base, ident))
+        if not os.path.isdir(cwd):
+            # An unrecorded scratch seat gets the same directory as on first
+            # launch. A recorded directory that disappeared must not be
+            # silently recreated as an empty replacement for its old files.
+            if not recorded_cwd:
+                try:
+                    os.makedirs(cwd, exist_ok=True)
+                except OSError:
+                    pass
+            if not os.path.isdir(cwd):
+                fallback = base if os.path.isdir(base) else str(CS_ROOT)
+                os.makedirs(fallback, exist_ok=True)
+                print(f"[resume] {room_full['id']}/{ident}: cwd missing: {cwd}; "
+                      f"using {fallback}", flush=True)
+                cwd = fallback
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
@@ -16621,10 +16693,15 @@ class Handler(BaseHTTPRequestHandler):
                 part.pop("fresh", None)
                 part.pop("stoppedState", None)
                 continue
-            if part.pop("fresh", False):
-                # Assigned to the task after it had already run: there is no
-                # conversation to resume, so give it the same first prompt a
-                # launch would have (the collaboration briefing, or the spec).
+            fresh = part.pop("fresh", False)
+            # Codex's id is found asynchronously after launch. A seat that
+            # already ran can still have an empty sessionId; its resume path
+            # can recover the id from the rollout in its cwd.
+            codex_ran = part.get("agent") == "codex" and any(
+                part.get(key) for key in ("cwd", "ptyId", "lastExit", "hubStarted"))
+            if fresh or (not (part.get("sessionId") or "").strip() and not codex_ran):
+                # A seat with no recorded conversation needs its first prompt,
+                # even if an older room record did not mark it fresh.
                 info = self._launch_room_agent_pty(
                     room_full, part, room_full.get("spec", "") or "", collab=not solo)
                 part["sessionId"] = info["sessionId"]
@@ -18928,6 +19005,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "not_saved", "message": "The hub could not save that."})
                 return
             self._send_json(200, {"ok": True, "seen": got, **({"points": _points_view(rid)} if got else {})})
+            return
+        if p == "/api/room/topics":
+            if self._files_cross_site():
+                return
+            rid = str(data.get("roomId") or "")
+            project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
+            room = chatroom.get_room(rid, public=False) if project else None
+            if not room:
+                self._send_json(404, {"error": "no_such_po_chat"})
+                return
+            try:
+                topics.view(project, room, chatroom.ROOMS_DIR)
+                topics.change(project, chatroom.ROOMS_DIR, str(data.get("action") or ""),
+                              topic=str(data.get("topic") or ""), other=str(data.get("other") or ""),
+                              thread=str(data.get("thread") or ""), name=str(data.get("name") or ""))
+            except (ValueError, OSError) as e:
+                self._send_json(400, {"error": "invalid_topic_change", "message": str(e)})
+                return
+            self._send_json(200, {"ok": True, **topics.view(project, room, chatroom.ROOMS_DIR)})
             return
         if p == "/api/room/thread/seen":
             # The person opened a thread of a PO chat: {roomId, thread, ts}

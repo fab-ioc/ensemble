@@ -152,6 +152,63 @@ class AssignTest(unittest.TestCase):
         th = out["threads"]["team:activity"]
         self.assertEqual((th["title"], th["members"]), ("Team activity", ["s:3", "s:4"]))
 
+    def test_work_lane_keeps_reports_and_po_notes_out_of_unread(self):
+        recs = [human("s:0", 0, "status of #12?"), po("s:1", 2, "Re P1: in progress", re_=["P1"]),
+                report("s:2", 10, "#12"), po("s:3", 11, "Review passed."),
+                po("s:4", 12, "Still working."), po("s:5", 13, "For you: ready to try."),
+                human("s:6", 20, "Re P1: tried", re_=["P1"]), po("s:7", 21, "It works."),
+                report("s:8", 30, "#12"), po("s:9", 31, "Re P1: shipped", re_=["P1"])]
+        out = self.run_(recs, [point("P1", "s:0", "status of #12?")])
+        self.assertEqual(out["work"], {"s:2", "s:3", "s:4", "s:8"})
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
+        self.assertTrue(threads._turn(idx, "s:3", "P1")["workLog"])
+        self.assertNotIn("workLog", threads._turn(idx, "s:5", "P1"))
+
+    def test_real_case_answers_survive_handover_lane(self):
+        cases = [
+            ("P77", "Can the X5 ad explain the lease transfer?",
+             "The handover file is up to date. Re P77, here is what I found about the ad."),
+            ("P56", "The two drafts are missing their attachments.",
+             "I've updated the handover. I need your answer on P56 about the drafts."),
+            ("P245", "Why does ZC show no prices?",
+             "I found and fixed why ZC showed no prices. The fix is ready for P245."),
+            ("P729", "What should we do about the Windows update?",
+             "Weekly reminder: please restart Windows for updates this week. P729 is still open."),
+        ]
+        for pid, question, answer in cases:
+            with self.subTest(pid=pid):
+                recs = [human("s:0", 0, question), note("s:1", 1, "rotation"), po("s:2", 2, answer)]
+                out = self.run_(recs, [point(pid, "s:0", question)])
+                self.assertIn("s:2", out["threads"][pid]["members"])
+                self.assertNotIn("s:2", out["work"])
+
+    def test_handover_broadcast_without_an_open_answer_is_work(self):
+        recs = [human("s:0", 0, "First topic"), po("s:1", 1, "Re P1: answered", re_=["P1"]),
+                human("s:2", 2, "Second topic"), po("s:3", 3, "Re P2: answered", re_=["P2"]),
+                note("s:4", 4, "rotation"), po("s:5", 5, "I've taken over as PO. Where things stand for P1.")]
+        out = self.run_(recs, [point("P1", "s:0", "First topic"), point("P2", "s:2", "Second topic", 2)])
+        self.assertIn("s:5", out["work"])
+
+    def test_handover_summary_listing_last_point_does_not_raise_unread(self):
+        recs = [human("s:0", 0, "Please check P9"), note("s:1", 1, "rotation"),
+                po("s:2", 2, "I've brought PO-HANDOVER.md up to date for the next session.\n\nDue: P9 is still planned."),
+                po("s:3", 3, "I've updated the handover. Re P9, the check is done.")]
+        out = self.run_(recs, [point("P9", "s:0", "Please check P9")])
+        self.assertIn("s:2", out["work"])
+        self.assertNotIn("s:3", out["work"])
+
+    def test_quick_search_finds_balloon_and_newest_answer_across_threads(self):
+        recs = [human("s:0", 0, "backtest the models"), po("s:1", 1, "Re P1: started", re_=["P1"]),
+                human("s:2", 3, "backtest update?"), po("s:3", 4, "Re P2: 32 of 32 matched", re_=["P2"])]
+        out = self.run_(recs, [point("P1", "s:0", "backtest the models"),
+                               point("P2", "s:2", "backtest update?", 3)])
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
+        with mock.patch.object(threads, "ready", return_value=idx):
+            found = threads.search_balloons("room-12345678", {}, [["backtest"]])
+        self.assertEqual([m["msgId"] for m in found["messages"]], ["s:2", "s:0"])
+        self.assertEqual(found["latest"]["msgId"], "s:3")
+        self.assertEqual(found["latest"]["threads"], 2)
+
     def test_a_point_naming_one_task_claims_its_reports(self):
         recs = [human("s:0", 0, "how is #12 going?"), report("s:1", 50, "#12")]
         out = self.run_(recs, [point("P1", "s:0", "how is #12 going?")])
@@ -598,6 +655,22 @@ class Endpoints(tp._World):
         # Team activity is in the channel itself (#234): never in the Threads list.
         self.assertNotIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
         self.assertEqual(ch["activity"]["lastWho"], "po")
+
+    def test_work_log_replies_do_not_raise_unread(self):
+        now = time.time() + 2
+        asked, _ = self.send(self.rid, "How is #12?", at=now)
+        report_turn = tp.turn("user", "[report] Review passed", now + 3)
+        report_turn.update(kind="report", taskId="#12", taskTitle="Chart")
+        self.add("sid-1", tp.turn("user", asked, now), tp.turn("assistant", "Re P2: The task is working.", now + 1),
+                 report_turn, tp.turn("assistant", "Review passed; merging now.", now + 4))
+        points.sync(self.rid, force=True)
+        idx = threads.build(self.rid, show_progress=False)
+        tid = next(t for t in idx["threads"] if t not in ("P1", "team:activity"))
+        th = threads.thread_view(self.rid, chatroom.get_room(self.rid), tid)
+        self.assertEqual(th["thread"]["replies"], 1)
+        self.assertEqual(th["thread"]["unread"], 1, "only the explicit PO answer is new")
+        self.assertEqual(th["thread"]["workCount"], 2)
+        self.assertEqual([m.get("workLog", False) for m in th["items"]], [False, False, True, True])
 
     def test_a_reply_from_a_thread_names_its_point_and_new_replies_are_unread(self):
         sent = []

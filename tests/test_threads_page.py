@@ -293,6 +293,29 @@ async function main() {
     const second = await coldEval('sessionStorage.getItem("__secondWindow") || ""');
     out.coldLink = { coldRowsDuring, opened, second };
     await c.send('Target.closeTarget', { targetId: coldTarget });
+    // A report linked from the chat must unfold inside its thread and land.
+    const { targetId: workTarget } = await c.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId: workSession } = await c.send('Target.attachToTarget', { targetId: workTarget, flatten: true });
+    await c.send('Page.enable', {}, workSession);
+    const workEval = async expr => { const r = await c.send('Runtime.evaluate',
+      { expression: expr, returnByValue: true }, workSession);
+      if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.workRoom + '&msg=' + encodeURIComponent(A.workMid) }, workSession);
+    let work = null;
+    for (let i = 0; i < 200; i++) {
+      work = await workEval(`(() => { const f=document.getElementById('ts-frame');
+        try { if (!f || !f.contentWindow || !f.contentWindow.eval('THREAD_MODE')) return null; } catch (e) { return null; }   // the frame still loading
+        const d=f.contentDocument, box=d.getElementById('msgs'), el=[...d.querySelectorAll('.msg[data-mid]')].find(x=>x.dataset.mid===${JSON.stringify(A.workMid)});
+        const a=el?.getBoundingClientRect(), b=box?.getBoundingClientRect();
+        return {thread:f.contentWindow.eval('THREAD'), open:f.contentWindow.eval('WORK_LOG_OPEN'),
+          expanded:d.querySelector('.thr-work')?.getAttribute('aria-expanded'),
+          visible:!!a && a.top<b.bottom && a.bottom>b.top,
+          landed:!!el?.classList.contains('landed'), side:!document.getElementById('thr-side').hidden};})()`);
+      if (work?.landed && work.visible) break;
+      await sleep(150);
+    }
+    out.workLink = work;
+    await c.send('Target.closeTarget', { targetId: workTarget });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -366,6 +389,23 @@ class ThreadsPage(unittest.TestCase):
         for w, _h, _m in SIZES:
             cls.rooms[str(w)] = cls._po_room(f"Motors {w}", f"po{w}")
         cls.cold_link_room = cls._po_room("Link room", "coldlink")
+        cls.work_link_room = cls._po_room("Work link room", "worklink")
+        work_rid = cls.work_link_room
+        work_sid = cls.sids[work_rid]
+        work_t0 = time.time() - 120
+        work_question, ids = points.take(chatroom.get_room(work_rid, public=False),
+                                         "How is #12?", key="P3", now=work_t0, sid=work_sid)
+        assert ids == ["P3"], ids
+        work_lines = cls.lines[work_rid]
+        work_lines.extend([_turn(work_sid, "user", work_question, work_t0 + 1),
+                           _turn(work_sid, "assistant", "Re P3: The chart is ready.", work_t0 + 2)])
+        report = _turn(work_sid, "user", "[report] update from task 'Chart' (#12, codex): Review passed", work_t0 + 3)
+        work_lines.extend([report, _turn(work_sid, "assistant", "Review passed; merging now.", work_t0 + 4)])
+        cls._write(work_sid, work_lines)
+        points.sync(work_rid, force=True)
+        cls.work_mid = f"{work_sid}:{len(work_lines) - 2}"
+        work_idx = threads.build(work_rid, show_progress=False)
+        assert cls.work_mid in work_idx["threads"]["P3"]["members"]
         original_balloons = threads.balloons
         slowed_rooms = set()
         def slow_balloons(*args, **kwargs):
@@ -444,7 +484,9 @@ class ThreadsPage(unittest.TestCase):
     def _chrome(cls):
         base = Path(cls.tmp.name)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "rooms": cls.rooms, "coldRoom": cls.cold_link_room, "sizes": SIZES, "shots": cls.shots}
+                "rooms": cls.rooms, "coldRoom": cls.cold_link_room,
+                "workRoom": cls.work_link_room, "workMid": cls.work_mid,
+                "sizes": SIZES, "shots": cls.shots}
         script = base / "threads_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
@@ -595,6 +637,12 @@ class ThreadsPage(unittest.TestCase):
         self.assertIn("tmid=coldlink%3A3", self.got["coldLink"]["opened"])
         self.assertIn("msg=coldlink%3A3", self.got["coldLink"]["opened"])
         self.assertEqual(self.got["coldLink"]["second"], "")
+
+    def test_a_link_to_a_folded_work_log_report_opens_and_lands(self):
+        self.assertEqual(self.got["workLink"], {
+            "thread": "P3", "open": True, "expanded": "true",
+            "visible": True, "landed": True, "side": True,
+        })
 
     def test_a_thread_in_a_window_of_its_own(self):
         for w, o in self._each():
