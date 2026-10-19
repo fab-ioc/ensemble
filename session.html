@@ -5908,9 +5908,12 @@ function withHubRows(items, room, hub) {
 // counted apart, so the other turns keep the ids they had before those were
 // shown; the hub counts the same way (page_turn_ids), which is how a point
 // finds its balloon.
-function soloItems(raw, sid, agentId, keep) {
+// ``base``: the hub sent the last turns only (&tail=, #247) and how it had
+// counted them up to there (n, q, qb), so the ids are those of the whole.
+function soloItems(raw, sid, agentId, keep, base) {
   const all = [];
-  let prev = null, n = 0, q = 0, qb = 0;
+  const n0 = (base && base.n) || 0;
+  let prev = null, n = n0, q = (base && base.q) || 0, qb = (base && base.qb) || 0;
   for (const t of raw) {
     // Read from content blocks (it held an image; #192): apart again, ":qb<n>".
     if (t.queued === 'blocks') { all.push({ t, id: sid + ':qb' + (qb++), n: -1 }); continue; }
@@ -5919,8 +5922,8 @@ function soloItems(raw, sid, agentId, keep) {
     prev = t;
     if (!same) all.push({ t, id: sid + ':' + n, n: n++ });
   }
-  const off = Math.max(0, n - keep);
-  const start = off ? all.findIndex(x => x.n === off) : 0;
+  const off = Math.max(n0, n - keep);
+  const start = off > n0 ? all.findIndex(x => x.n === off) : 0;
   return all.slice(start).map(({ t, id }) => Object.assign({
     id,
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
@@ -5938,9 +5941,10 @@ async function prevSessionItems(sid, agentId) {
   const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
   const had = SOLO_PREV.get(sid);
   if (had && (want < 0 || had.from <= want)) return had.items;
-  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000).then(r => r.json());
+  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1' + (want < 0 ? '&tail=' + PREV_TURNS_SHOWN : ''),
+    null, 90000).then(r => r.json());
   const turns = d.turns || [];
-  const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
+  const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want), d.base);
   const first = items.find(m => /:\d+$/.test(String(m.id)));   // a queued line's id is ":q<n>"
   SOLO_PREV.set(sid, { items, from: first ? +String(first.id).split(':').pop() : 0 });
   return items;
@@ -5982,6 +5986,20 @@ async function checkSolo() {
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
 let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
+// A one-agent chat's last SOLO_KEEP balloons are fetched (&tail=, #247),
+// more as the reader scrolls up; SOLO_MORE: the transcript has more above.
+let SOLO_KEEP = 120, SOLO_MORE = false, SOLO_UP = false;
+async function soloLoadUp() {
+  if (SOLO_UP || SOLO_FETCHING || !SOLO_MORE) return;
+  SOLO_UP = true;
+  const box = $('#msgs'), place = readingPlace(box);
+  try {
+    SOLO_KEEP += 200;
+    STICK = false;
+    await renderSolo(SOLO_SID, SOLO_AGENT, true);
+    if (!DRAW_HELD) keepPlace(box, place);
+  } finally { SOLO_UP = false; }
+}
 let HUB_ROWS_N = 0;       // the hub's rows in the room, as last drawn into a solo chat
 let SOLO_FIRST_TRIES = 0; // failed first loads of a chat opened on a link
 async function renderSolo(sid, agentId, force) {
@@ -5992,14 +6010,18 @@ async function renderSolo(sid, agentId, force) {
   SOLO_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
-    const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000).then(r => r.json());
-    const raw = d.turns || [];
-    if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
-    SOLO_TURN_COUNT = raw.length;
-    // A link to an older turn than the last 120 draws back to it.
+    // A link to an older turn than those held asks for the whole transcript.
     const w = SOLO_WANT;
-    const want = w && w.sid === sid ? raw.length - w.n : 0;
-    let items = soloItems(raw, sid, agentId, Math.max(120, want));
+    const whole = w && w.sid === sid;
+    const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1' + (whole ? '' : '&tail=' + SOLO_KEEP),
+      null, 90000).then(r => r.json());
+    const raw = d.turns || [];
+    const count = d.total != null ? d.total : raw.length;
+    if (!force && count === SOLO_TURN_COUNT) return;   // nothing new
+    SOLO_TURN_COUNT = count;
+    SOLO_MORE = !!d.base;
+    const want = whole ? raw.length - w.n : 0;
+    let items = soloItems(raw, sid, agentId, Math.max(SOLO_KEEP, want), d.base);
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
     let wantOk = true;
@@ -8511,6 +8533,7 @@ function msgsScrolled() {
   readTick(true);
   if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
   if (!at && box.scrollTop < box.clientHeight && THREADED && THR_BEFORE && !DRAW_HELD) thrLoadUp();
+  if (!at && box.scrollTop < box.clientHeight && SOLO_MODE && !THREADED && SOLO_MORE && !DRAW_HELD) soloLoadUp();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the

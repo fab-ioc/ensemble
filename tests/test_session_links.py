@@ -51,6 +51,10 @@ const out = { fetches: [], notes: [] };
 const THREAD_MODE = false, URL_GOTO = '';
 let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false, SOLO_FIRST_TRIES = 0;
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
+let SOLO_KEEP = 120, SOLO_MORE = false;
+const pollFetch = (url, opts) => fetch(url, opts);   // the page's fetch that gives up (#245)
+let SOLO_MODE = true;
+const roomHasOlder = () => false;
 const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
 let _cmtComposerOpen = false, selShown = () => false, STICK = false, LAST_ITEMS = [];

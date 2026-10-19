@@ -4073,6 +4073,31 @@ def page_turn_ids(sid: str, raw: list[dict]) -> list[tuple[str, dict]]:
     return out
 
 
+def turns_tail(turns: list[dict], keep: int) -> tuple[list[dict], dict | None]:
+    """A one-agent chat's last ``keep`` balloons of ``turns`` (#247: the page
+    drew 120 of a transcript sent whole), from the turn the first of them
+    starts at, and the counters page_turn_ids has there (``base``: n, q, qb,
+    and ``cut``, the turns left above), so the page numbers them as it would
+    the whole. None for ``base`` when they are all sent."""
+    starts, prev, n, q, qb = [], None, 0, 0, 0
+    for i, t in enumerate(turns or []):
+        if t.get("queued") == "blocks":
+            qb += 1
+            continue
+        if t.get("queued"):
+            q += 1
+            continue
+        same = prev is not None and t.get("role") == prev.get("role") and t.get("text") == prev.get("text")
+        prev = t
+        if not same:
+            starts.append((i, n, q, qb))
+            n += 1
+    if keep <= 0 or len(starts) <= keep:
+        return turns, None
+    i, n0, q0, qb0 = starts[-keep]
+    return turns[i:], {"n": n0, "q": q0, "qb": qb0, "cut": i}
+
+
 def attachment_url(room_id: str, name: str) -> str:
     """Where the page shows a stored attachment from."""
     return "/api/room/attachment?" + urlencode({"room": room_id, "name": name})
@@ -15002,6 +15027,15 @@ class Handler(BaseHTTPRequestHandler):
             sid = p[len("/api/session/"):]
             qs = parse_qs(u.query)
             full = qs.get("full", ["0"])[0] in ("1", "true", "yes")
+            try:
+                tail = int(qs.get("tail", ["0"])[0] or 0)
+            except ValueError:
+                tail = 0
+
+            def full_turns(turns: list[dict]) -> dict:
+                # &tail=: the last balloons and where they start (turns_tail).
+                cut, base = turns_tail(turns, tail) if tail > 0 else (turns, None)
+                return {"turns": cut, **({"total": len(turns), "base": base} if base else {})}
             tpath = find_transcript(sid)
             want_stat = qs.get("stat", ["0"])[0] in ("1", "true", "yes")
             if not tpath:
@@ -15019,15 +15053,15 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 turns = cx.read_turns(sid)
                 if not full:
-                    turns = [{"timestamp": t["timestamp"], "text": t["text"]}
-                             for t in turns if t["role"] == "user"]
+                    body = {"turns": [{"timestamp": t["timestamp"], "text": t["text"]}
+                                      for t in turns if t["role"] == "user"]}
                 else:
                     room_id, identity = _session_input_context(sid)
-                    turns = classify_turns(turns, room_id=room_id, identity=identity,
-                                           session_id=sid)
+                    body = full_turns(classify_turns(turns, room_id=room_id, identity=identity,
+                                                     session_id=sid))
                 self._send_json(200, {"sessionId": sid,
                                       "cwd": cx.cwd_for_session(sid),
-                                      "turns": turns,
+                                      **body,
                                       "label": load_labels().get(sid, "")})
                 return
             # Cheap change-signal: the transcript's size+mtime. Clients poll this
@@ -15042,14 +15076,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if full:
                 # User + assistant text turns, with timestamps and roles.
-                turns = claude_turns_classified(tpath)
+                body = full_turns(claude_turns_classified(tpath))
             else:
-                turns = [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]
+                body = {"turns": [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]}
             labels = load_labels()
             self._send_json(200, {
                 "sessionId": sid,
                 "cwd": cwd_of(tpath),
-                "turns": turns,
+                **body,
                 "label": labels.get(sid, ""),
             })
             return

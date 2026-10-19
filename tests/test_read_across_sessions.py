@@ -22,6 +22,7 @@ Skipped parts need Node.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import unittest
@@ -334,7 +335,9 @@ vm.runInContext(code, ctx);
         for call in ("pollFetch(ROOM_LAST?.revision", "pollFetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1')",
                      "pollFetch(thrUrl(force ? '' : THR_SIG), null, 90000)"):
             self.assertIn(call, SESSION)
-        self.assertEqual(SESSION.count("pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000)"), 2)
+        # Both transcript reads (#247: the last balloons, &tail=) give up too.
+        self.assertEqual(len(re.findall(r"pollFetch\('/api/session/' \+ encodeURIComponent\(sid\) \+ '\?full=1'[^;]*?null, 90000\)",
+                                        SESSION)), 2)
         start = SESSION.index("async function refreshRoom()")
         self.assertNotIn("await fetch(", SESSION[start:SESSION.index("function refreshShow(", start)])
 
