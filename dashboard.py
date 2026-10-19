@@ -9196,6 +9196,29 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
         s.setdefault("title", "")
         s.pop("path", None)
     full_rooms = {rid: chatroom.get_room(rid, public=False) or {} for rid in by_id}
+    # A PO room's room.json carries task and hub traffic; the person's and
+    # PO's own balloons live in transcripts. Thread indexes keep those turns
+    # incrementally and build in the background on their first search.
+    po_hits = []
+    latest_cards = []
+    po_pending = False
+    for rid, project in po_of.items():
+        room = full_rooms.get(rid)
+        if not room:
+            continue
+        found = threads.search_balloons(rid, room, groups)
+        if found is None:
+            po_pending = True
+            continue
+        for hit in found["messages"]:
+            po_hits.append({**hit, "projectId": project.get("id") or "",
+                            "project": project.get("name") or "", "title": f"{project.get('name') or ''} · PO",
+                            "po": True})
+        if found["latest"]:
+            latest_cards.append({**found["latest"], "query": q, "projectId": project.get("id") or "",
+                                 "project": project.get("name") or ""})
+    po_hits.sort(key=lambda m: -m["ts"])
+    latest_cards.sort(key=lambda m: -m["ts"])
 
     def participant_label(ident: str, rid: str) -> str:
         """A global-search message participant as the chat names them."""
@@ -9234,10 +9257,12 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
                         "project": (po or {}).get("name") or pname.get(e.get("projectId", ""), ""),
                         "title": f"{po.get('name') or ''} · PO" if po else e.get("title", ""), "po": bool(po),
                         "fromLabel": from_label, "toLabel": to_label})
-    return 200, {"q": q, "conversations": status,
+    return 200, {"q": q, "conversations": status, "poPending": po_pending,
+                 "latest": latest_cards[:1],
                  "tasks": {"count": len(t_items), "items": t_items[:global_search.ITEMS_MAX]},
                  "sessions": {"count": len(s_items), "items": cut},
-                 "messages": {"count": len(messages), "items": m_items}}
+                 "messages": {"count": len(messages) + len(po_hits),
+                              "items": (po_hits + m_items)[:global_search.ITEMS_MAX]}}
 
 
 def delete_session(sid: str) -> dict:

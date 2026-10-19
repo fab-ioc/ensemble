@@ -6094,18 +6094,18 @@ function rowHaystack(r) {
 // Claude and Codex transcript). The page asks one thing at a time.
 // tests/test_global_find.py runs this block in Node.
 const FIND_MIN = 2;
-const FIND_GROUPS = [['tasks', 'Tasks'], ['sessions', 'Past sessions'], ['messages', 'Messages']];
+const FIND_GROUPS = [['latest', 'Latest answer'], ['tasks', 'Tasks'], ['sessions', 'Past sessions'], ['messages', 'Messages']];
 // The results in the order they are drawn: the arrows and Enter walk them.
 function findItems(res) {
   const out = [];
-  for (const [k] of FIND_GROUPS) for (const it of ((res && res[k]) || {}).items || []) out.push({ kind: k, it });
+  for (const [k] of FIND_GROUPS) for (const it of (k === 'latest' ? (res?.latest || []) : ((res && res[k]) || {}).items || [])) out.push({ kind: k, it });
   return out;
 }
 // A result's identity across the quick and the deep answer, so the one the
 // arrows chose stays chosen when the deep answer lands.
 function findKey(x) {
   const it = x.it || {};
-  return x.kind + ':' + (x.kind === 'messages' ? it.roomId + '/' + it.msgId : x.kind === 'tasks' ? it.roomId : it.sessionId);
+  return x.kind + ':' + (x.kind === 'messages' || x.kind === 'latest' ? it.roomId + '/' + it.msgId : x.kind === 'tasks' ? it.roomId : it.sessionId);
 }
 // The line under the box: what the results are and, per the design's §5.5,
 // why there may be fewer than everything.
@@ -6113,7 +6113,7 @@ function findStatus(q, res, phase) {
   q = (q || '').trim();
   if (q.length < FIND_MIN) return 'Type two letters or more.';
   if (!res) return phase === 'error' ? 'Search failed. Type again to retry.' : 'Searching…';
-  const n = FIND_GROUPS.reduce((s, [k]) => s + ((res[k] || {}).count || 0), 0);
+  const n = FIND_GROUPS.reduce((s, [k]) => s + (k === 'latest' ? (res.latest || []).length : ((res[k] || {}).count || 0)), 0);
   const conv = phase === 'deep' ? 'Searching conversations…'
     : phase === 'error' ? 'Conversations could not be searched.'
     : res.conversations === 'partial' ? 'Conversations: stopped at the time limit, some were not read.' : '';
@@ -6126,7 +6126,13 @@ function findFolder(p) {
 function findRowHtml(x, i, on, parsed) {
   const it = x.it || {};
   let title = '', meta = [], snip = it.snippet || '';
-  if (x.kind === 'tasks') {
+  if (x.kind === 'latest') {
+    title = 'Latest on ' + esc(it.query || 'this topic');
+    meta.push(it.project || 'PO chat');
+    if (it.task) meta.push(it.task);
+    if (it.state) meta.push(it.state);
+    meta.push(`${it.threads || 1} thread${it.threads === 1 ? '' : 's'}`);
+  } else if (x.kind === 'tasks') {
     title = (it.no && !it.po ? `<span class="tno">#${esc(String(it.no))}</span> ` : '') + highlight(it.title || '(task)', parsed);
     if (it.project && !it.po) meta.push(it.project);
     if (it.archived) meta.push('archived');
@@ -6157,7 +6163,7 @@ function findHtml(q, res, phase, active) {
   let html = status ? `<div class="fd-status" role="status">${esc(status)}</div>` : '<div class="fd-status" role="status" hidden></div>';
   let i = 0;
   for (const [k, name] of FIND_GROUPS) {
-    const g = (res && res[k]) || { count: 0, items: [] };
+    const g = k === 'latest' ? {count: (res?.latest || []).length, items: res?.latest || []} : (res && res[k]) || { count: 0, items: [] };
     const items = g.items || [];
     if (!items.length) continue;
     html += `<div class="fd-group" role="group" aria-labelledby="fd-h-${k}"><div class="fd-head" id="fd-h-${k}">`
@@ -16811,7 +16817,7 @@ window.addEventListener('storage', e => {
 // typed while the deep half runs stops it, in the page and on the hub (the
 // box's tag and count, as a Workspace's find). The results drop down under the
 // box; Enter opens the first (or the one the arrows chose), Esc closes them.
-var FIND = { q: '', res: null, resQ: '', runQ: '', phase: '', key: '', timer: 0, busy: false, ctl: null, seq: 0, enter: false, again: false };
+var FIND = { q: '', res: null, resQ: '', runQ: '', phase: '', key: '', timer: 0, busy: false, ctl: null, seq: 0, enter: false, again: false, poTimer: 0, poBusy: false };
 const FIND_TAG = 'bar:' + Math.random().toString(36).slice(2);
 const FIND_POP = document.getElementById('find-pop');
 function findShown() { return !FIND_POP.hidden; }
@@ -16861,6 +16867,26 @@ async function findAsk(q, deep, seq) {
   if (!r.ok) throw new Error(d.error || String(r.status));
   return d;
 }
+// Transcript indexes warm in the background. Refresh the quick results until
+// all PO rooms have been read, with one request at a time per search box.
+async function findPoAgain(q, seq) {
+  if (FIND.q.trim() !== q || !findShown()) return;
+  if (FIND.poBusy) { FIND.poTimer = setTimeout(() => findPoAgain(q, seq), 500); return; }
+  FIND.poBusy = true;
+  try {
+    const qs = new URLSearchParams({q, deep:'0', tag:FIND_TAG, seq:String(seq)});
+    const r = await fetch('/api/find?' + qs, {signal: AbortSignal.timeout(30000)});
+    const d = await r.json();
+    if (r.ok && FIND.q.trim() === q && FIND.seq === seq && FIND.res) {
+      FIND.res = {...FIND.res, latest:d.latest || [], messages:d.messages || FIND.res.messages, poPending:!!d.poPending};
+      if (!FIND.key && d.latest?.length) FIND.key = 'latest:' + d.latest[0].roomId + '/' + d.latest[0].msgId;
+      findPaint();
+      if (d.poPending) FIND.poTimer = setTimeout(() => findPoAgain(q, seq), 1500);
+    }
+  } catch (e) {
+    if (FIND.q.trim() === q && FIND.seq === seq) FIND.poTimer = setTimeout(() => findPoAgain(q, seq), 3000);
+  } finally { FIND.poBusy = false; }
+}
 async function findRun() {
   clearTimeout(FIND.timer);
   if (FIND.busy) {
@@ -16884,6 +16910,8 @@ async function findRun() {
     const quick = await findAsk(q, false, seq);
     if (stale()) return;
     FIND.res = quick; FIND.resQ = q; FIND.phase = 'deep';
+    clearTimeout(FIND.poTimer);
+    if (quick.poPending) FIND.poTimer = setTimeout(() => findPoAgain(q, seq), 1500);
     globalThis.EnsembleProgress?.set('deep-search', {phase: 'Searching transcripts'});
     if (findActive().i < 0) { const first = findItems(quick)[0]; FIND.key = first ? findKey(first) : ''; }
     findPaint();
@@ -16917,7 +16945,7 @@ function findGo(x) {
   if (FIND.busy && FIND.phase === 'deep') findCancel();
   $('#search').blur();
   document.body.classList.remove('search-open');
-  if (x.kind === 'messages') { openMsgLink(it.roomId, it.msgId); return; }
+  if (x.kind === 'messages' || x.kind === 'latest') { openMsgLink(it.roomId, it.msgId); return; }
   if (x.kind === 'tasks') {
     const pj = it.po ? projectById(it.projectId) : null;
     if (pj) openPoConv(pj);

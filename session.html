@@ -4542,7 +4542,7 @@ function renderBubbles(items, opt = {}) {
   const heldPts = heldBy(heldKeys, POINTS.keep);
   // A thread's first message, and a reply also sent to the chat, stand for
   // their thread in a PO chat's channel (#210): never folded away.
-  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0 || !!(m.thr || m.inThr);
+  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0 || !!(m.thr || m.inThr || (THREAD_MODE && m.workLog));
   const quiet = (m, i) => quietItem(m, false);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
@@ -4555,7 +4555,7 @@ function renderBubbles(items, opt = {}) {
   // The person's view (#146): over a transcript the hub types into, and
   // unless Team activity is on, each run of what is not theirs is one gap
   // row; opened, its messages draw as the full view draws them.
-  const clean = !TEAM_ALL && items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
+  const clean = !THREAD_MODE && !TEAM_ALL && items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
   const gaps = clean ? gapsOf(items, held) : [];
   const gapAt = new Map(), inGap = new Set();
   GAP_OF_MID = new Map();
@@ -4575,7 +4575,7 @@ function renderBubbles(items, opt = {}) {
     return (held && held(m, i)) || (drawnBefore && prevBase.has(k) && !prevHid.has(k)) || (clean && forCeo(m));
   };
   // An opened group stays open while some of it is kept apart for a while.
-  const every = chatGroups(items);
+  const every = THREAD_MODE ? [] : chatGroups(items);
   FOLD.groups.forEach(k => {
     if (k.startsWith('g:') && !every.some(g => g.key === k)) FOLD.groups.delete(k);
     if (clean && k.startsWith('gap:') && !gaps.some(g => g.key === k)) FOLD.groups.delete(k);   // a gap that is no more
@@ -5381,6 +5381,10 @@ function landPending() {
   try {
     const mid = GOTO;
     const find = sel => [...box.querySelectorAll(sel)].find(e => e.dataset.mid === mid);
+    if (THREAD_MODE && !WORK_LOG_OPEN && (LAST_ITEMS || []).some(m => m.id === mid && m.workLog)) {
+      WORK_LOG_OPEN = true;
+      renderBubbles(LAST_ITEMS);
+    }
     if (!find('.msg[data-mid], .msg-fold[data-mid]')) openGroupOf(box, mid);
     let el = find('.msg[data-mid]');
     const row = !el && find('.msg-fold[data-mid]');
@@ -6066,6 +6070,7 @@ let THR_ASKED = '';         // the link's balloon the channel was last asked to 
 let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;   // the latest 150 channel entries first (#228, #234)
 let THR_DRAWN = false;    // the channel or thread is what is drawn
 let WORK_LOG_OPEN = false;
+let WORK_LOG_THREAD = '';
 document.addEventListener('click', e => {
   if (!e.target.closest?.('.thr-work')) return;
   WORK_LOG_OPEN = !WORK_LOG_OPEN;
@@ -6125,6 +6130,7 @@ async function renderThreaded(force) {
     if (THREAD_MODE) {
       THR_INFO = d.thread || null;
       if (THR_INFO) { THR_META[THR_INFO.id] = THR_INFO; if (!THREAD) THREAD = THR_INFO.id; }
+      if (WORK_LOG_THREAD !== THREAD) { WORK_LOG_THREAD = THREAD; WORK_LOG_OPEN = false; }
       threadHead();
     }
     THR_BEFORE = d.before || 0;
@@ -6194,6 +6200,7 @@ function threadCardHtml(tid) {
   const t = THR_META[tid];
   if (!t) return '';
   const n = +t.replies || 0, unread = +t.unread || 0;
+  const work = +t.workCount || 0;
   const who = [...new Set([t.rootWho, ...(t.who || [])].filter(Boolean))].map(w => THR_WHO[w] || w).join(', ');
   const when = n ? new Date((+t.lastAt || 0) * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
   const root = t.title || 'Thread';
@@ -6201,7 +6208,7 @@ function threadCardHtml(tid) {
   return `<button type="button" class="thr-card thr-open${unread ? ' unread' : ''}" data-thr="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${open}:${+t.lastAt || 0}" aria-label="${esc(root)}. ${n} replies${unread ? ', ' + unread + ' unread' : ''}">
     ${unread ? '<span class="thr-dot" aria-hidden="true"></span>' : ''}
     <span class="thr-root" title="${esc(root)}">${esc(root)}</span>
-    <span class="thr-count">${n} repl${n === 1 ? 'y' : 'ies'}</span>
+    <span class="thr-count">${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}</span>
     ${who ? `<span class="thr-meta">${esc(who)}</span>` : ''}
     ${when ? `<span class="thr-meta">${esc(when)}</span>` : ''}
     ${open ? `<span class="thr-asks" title="${open} open question${open === 1 ? '' : 's'}" aria-label="${open} open question${open === 1 ? '' : 's'}">?${open}</span>` : ''}
@@ -6228,10 +6235,11 @@ function threadLineHtml(tid, mine) {
   const t = THR_META[tid];
   if (!t) return '';
   const n = +t.replies || 0, unread = +t.unread || 0;
-  if (!n) return '';
+  const work = +t.workCount || 0;
+  if (!n && !work) return '';
   const who = (t.who || []).map(w => THR_WHO[w] || w);
   const st = THR_STATE[t.state] || '';
-  const label = `${n} repl${n === 1 ? 'y' : 'ies'}`;
+  const label = `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
   return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`

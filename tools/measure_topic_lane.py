@@ -16,9 +16,11 @@ import chatroom
 import dashboard
 import points
 import threads
+import topics
 
-ROOMS = {"room-3f303104": ("opTen", "P633"),
-         "room-8d56cd21": ("Ensemble", "P193")}
+ROOMS = {"room-3f303104": ("opTen", ("P633", "P664", "P665")),
+         "room-8d56cd21": ("Ensemble", ("P193",)),
+         "room-e325b967": ("Motors", ())}
 
 
 def measure(idx, led, pid):
@@ -42,7 +44,7 @@ def measure(idx, led, pid):
                                                 "work": r["mid"] in idx["work"],
                                                 "ask": r.get("ask"), "live": r.get("live"),
                                                 "re": r.get("re"),
-                                                "text": (r["turn"].get("text") or "")[:90]})
+                                                "text": (r["turn"].get("text") or "")[:120]})
             if r["mid"] not in idx["work"]:
                 after.add(tid)
     return {"point": pid, "awayHours": round((at - mark) / 3600, 2),
@@ -67,10 +69,23 @@ def main():
              mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", dest / "session_projects.json"), \
              mock.patch.object(dashboard, "SETTINGS_FILE", dest / "settings.json"), \
              mock.patch.object(chatroom, "ROOMS_DIR", dest / "rooms"):
-            for rid, (name, pid) in ROOMS.items():
+            for rid, (name, pids) in ROOMS.items():
                 threads.forget()
                 idx = threads.build(rid, show_progress=False)
-                print(json.dumps({"room": name, **measure(idx, points.load(rid), pid)}), flush=True)
+                led = points.load(rid)
+                for pid in pids:
+                    print(json.dumps({"room": name, **measure(idx, led, pid)}), flush=True)
+                if name == "opTen":
+                    found = threads.search_balloons(rid, chatroom.get_room(rid), [["backtest"]])
+                    print(json.dumps({"room": name, "query": "backtest", "latest": found["latest"],
+                                      "poHits": [h for h in found["messages"] if h["fromLabel"] == "PO"][:5]}), flush=True)
+                project = next((p for p in dashboard.load_projects() if p.get("poRoomId") == rid), None)
+                if project:
+                    got = topics.view(project, chatroom.get_room(rid), chatroom.ROOMS_DIR)
+                    wanted = ("backtest", "skew", "single", "massive", "x5")
+                    print(json.dumps({"room": name, "topics": [{"name": t["name"],
+                        "threadCount": t["threadCount"], "latest": t["latest"]}
+                        for t in got["topics"] if any(w in t["name"].lower() for w in wanted)]}), flush=True)
 
 
 if __name__ == "__main__":

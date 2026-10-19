@@ -77,6 +77,12 @@ SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, t
 _LIVE = re.compile(r"(?im)^[ \t>*_-]*live\b[ \t*_]*[:—–-]|\b(?:is|are|now|went|goes|be|been)[ \t]+live\b")
 # An ask line (asks._ASK says it in full; this is the cheap test for "may hold one").
 _ASK_HINT = re.compile(r"(?im)^[^\n]{0,12}\bask\b")
+_HOUSEKEEPING = re.compile(
+    r"(?im)^\s*(?:i(?:'ve| have) (?:read the handover|taken over as PO|brought PO-HANDOVER\.md up to date|"
+    r"updated the handover)|i(?:'m| am) the new PO|the handover (?:file )?is up to date|"
+    r"here's where things stand|\*\*where things stand)")
+_INLINE_RE = re.compile(r"(?i)\bre\s+P\d+\b")
+_CEO_REQUEST = re.compile(r"(?i)\bplease\b|\byour answer on\b")
 
 _LOCK = threading.RLock()
 _BAL: dict[str, tuple] = {}         # session id -> (stat, its balloons)
@@ -455,6 +461,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
 
     last: str | None = None         # the thread of the last input: what a PO message answers
     last_input_work = False
+    last_human_points: set[str] = set()
+    unanswered: set[str] = set()
     activity = "team:activity"
     sent_of = _pair_sent(recs, side, {**(claimed or {}),
                                       **{p["key"]: p["mid"] for p in pts.values() if p.get("key") and p.get("mid")}})
@@ -526,6 +534,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     tids, starts = [tid], [tid]
                 for t in tids:
                     join(t, r)
+                last_human_points = set(made)
+                unanswered.update(made)
                 last = tids[-1] if tids else None
                 if tids and not starts:
                     # Slack (#234): what is typed in the channel is in the
@@ -557,8 +567,11 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             continue
         # The PO's balloon.
         tids = []
-        for i in list(dict.fromkeys((r.get("re") or []) + answers.get(mid, [])
-                                    + _point_mentions(r["turn"].get("text") or ""))):
+        # Explicit Re lines name the answers. Other point numbers in that
+        # answer are context, not extra destinations for an unread reply.
+        mentions = (r.get("re") or []) or (answers.get(mid, [])
+                    + _point_mentions(r["turn"].get("text") or ""))
+        for i in list(dict.fromkeys(mentions)):
             p = pts.get(i)
             if p is None or (r["ts"] and r["ts"] < float(p.get("createdAt") or 0) - points.SLACK_S):
                 continue
@@ -566,8 +579,11 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             if t:
                 tids.append(t)
         tids = list(dict.fromkeys(tids))
-        explicit = bool(r.get("re") or _point_mentions(r["turn"].get("text") or "")
-                        or re.search(r"(?im)^\s*(?:>\s*)?for you\s*:", r["turn"].get("text") or ""))
+        line = r["turn"].get("text") or ""
+        lead = line.split("\n\n", 1)[0]
+        explicit = bool(r.get("re") or _INLINE_RE.search(line) or _CEO_REQUEST.search(line)
+                        or re.search(r"(?im)^\s*(?:>\s*)?for you\s*:", line)
+                        or any(re.search(rf"\b{re.escape(pid)}\b", lead, re.I) for pid in last_human_points))
         if not tids and last == activity and (r.get("ask") or r.get("live")):
             # A PO question or live announcement woken by a digest/report is
             # addressed to the person, not just more task traffic.
@@ -582,9 +598,18 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             tids = [tid]
         for t in tids:
             join(t, r)
-        if last_input_work and not explicit and not r.get("ask") and not r.get("live"):
+        housekeeping = bool(_HOUSEKEEPING.search(line))
+        answers_open = any(set(threads[t].get("points") or []) & unanswered for t in tids if t in threads)
+        # A status or handover broadcast can list old open points without
+        # answering them. Keep the open-point guard for a substantive line;
+        # explicit replies and requests above always stay in the CEO lane.
+        if (last_input_work or housekeeping) and not explicit and (housekeeping or not answers_open) and not r.get("ask") and (not r.get("live") or housekeeping):
             if any(t != activity for t in tids):
                 work.add(mid)
+        else:
+            for t in tids:
+                if t in threads:
+                    unanswered.difference_update(threads[t].get("points") or [])
         if tids and (r.get("ask") or r.get("live")) and activity not in tids:
             # Never hidden in a thread (an ask, "is live"): in the chat too,
             # marked with the newest of its threads. An answer to several
@@ -953,7 +978,7 @@ def _meta(th: dict) -> dict:
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     r = idx["by_mid"][mid]
     out = {**r["turn"], "mid": mid}
-    if tid and mid in idx.get("work", ()):
+    if tid and tid != "team:activity" and mid in idx.get("work", ()):
         out["workLog"] = True
     thr = [t for t in idx["parent"].get(mid) or [] if t != "team:activity"]
     if thr:
@@ -967,7 +992,8 @@ def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     return out
 
 
-def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "") -> dict:
+def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
+                 topic_tids: set[str] | None = None) -> dict:
     """The channel: its last ``n`` entries (turns as /api/session gives
     them, each with its balloon id, ``thr`` on a parent, ``inThr`` on a reply
     also sent to the chat), the threads they show, and how many came before.
@@ -979,6 +1005,9 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "")
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     n = int(n or CHANNEL_MAX)
     ch = idx["channel"]
+    if topic_tids is not None:
+        ch = [mid for mid in ch if topic_tids.intersection(idx["parent"].get(mid) or [])
+              or topic_tids.intersection(idx["of"].get(mid) or [])]
     if upto and upto in idx["by_mid"]:
         try:
             n = max(n, len(ch) - ch.index(upto) + 20)
@@ -989,12 +1018,14 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "")
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     # A reply also in the chat names its thread ("replied to a thread: …").
     tids |= {t for m in shown if m in idx["also"] for t in idx["of"].get(m) or []}
-    return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+    sig = _sig_text(idx) + (":topic:" + ",".join(sorted(topic_tids)) if topic_tids is not None else "")
+    return {"sig": sig, "progress": progress.snapshot().get("thread:" + room_id),
             "items": [_turn(idx, m) for m in shown],
             "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
             "activity": _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None,
             "unreadThreads": sorted((_meta(t) for t in idx["threads"].values()
-                                    if t["id"] != "team:activity" and t.get("unread")),
+                                    if t["id"] != "team:activity" and t.get("unread")
+                                    and (topic_tids is None or t["id"] in topic_tids)),
                                     key=lambda t: t.get("lastAt") or 0, reverse=True),
             "before": max(0, len(ch) - n), "n": n, "balloons": len(idx["recs"]), "channel": len(ch)}
 
@@ -1039,6 +1070,55 @@ def unread_threads(room_id: str, room: dict) -> list[dict] | None:
            if th["id"] != "team:activity" and th.get("unread")]
     out.sort(key=lambda t: (t["lastAt"] or 0, t["id"]), reverse=True)
     return out
+
+
+def search_balloons(room_id: str, room: dict, groups: list[list[str]], limit: int = 20) -> dict | None:
+    """Quick-search the cached PO/CEO balloons and their thread answers.
+
+    ``ready`` starts one background incremental build on a cache miss; a
+    caller can retry while it is pending without blocking the search box.
+    """
+    idx = ready(room_id, room)
+    if idx is None:
+        return None
+    from global_search import snippet, terms_of, text_matches
+
+    terms = terms_of(groups)
+    hits = []
+    tids = set()
+    direct_answers = []
+    for r in idx["recs"]:
+        if _who(r) not in ("you", "po"):
+            continue
+        line = r["turn"].get("text") or ""
+        if not text_matches(line, groups):
+            continue
+        homes = [t for t in idx["of"].get(r["mid"], ()) if t != "team:activity"]
+        tids.update(homes)
+        if _who(r) == "po" and r["mid"] not in idx["work"] and homes:
+            direct_answers.append((r["ts"], homes[-1], idx["threads"][homes[-1]], r))
+        hits.append({"roomId": room_id, "msgId": r["mid"], "ts": r["ts"],
+                     "fromLabel": "PO" if _who(r) == "po" else _d.operator_name(),
+                     "snippet": snippet(line, terms), "thread": homes[-1] if homes else ""})
+    hits.sort(key=lambda h: -h["ts"])
+    answers = []
+    for tid in tids:
+        th = idx["threads"].get(tid)
+        if not th:
+            continue
+        for mid in reversed(th["members"]):
+            r = idx["by_mid"].get(mid)
+            if r and _who(r) == "po" and mid not in idx["work"]:
+                answers.append((r["ts"], tid, th, r))
+                break
+    latest = None
+    if direct_answers or answers:
+        at, tid, th, r = max(direct_answers or answers, key=lambda a: a[0])
+        latest = {"roomId": room_id, "msgId": r["mid"], "ts": at,
+                  "thread": tid, "task": th.get("task") or "", "state": th.get("state") or "",
+                  "snippet": snippet(r["turn"].get("text") or "", terms),
+                  "threads": len(tids)}
+    return {"messages": hits[:limit], "count": len(hits), "latest": latest}
 
 
 def _sig_text(idx: dict) -> str:
