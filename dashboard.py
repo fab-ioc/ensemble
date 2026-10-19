@@ -10611,17 +10611,36 @@ def status_patch(old: dict, new: dict) -> dict:
     return out
 
 
-def room_older_page(messages: list, before: str, n: int, upto: str, revision: str) -> dict:
+ROOM_LINK_BELOW = 40        # a link's window in a chat: messages after its balloon
+
+
+def room_older_page(messages: list, before: str, n: int, upto: str, revision: str,
+                    after: str = "") -> dict:
     """The ``n`` messages before ``before`` (or from ``upto``, with a few
-    before it for context), oldest first, and how many are older still."""
+    before it for context), oldest first, and how many are older still.
+    ``upto`` far above ``before``: a window around it, its balloon with 5
+    before it and ROOM_LINK_BELOW after, and ``gap``, the messages between
+    it and ``before`` not sent (#247 review 4). ``after``: the ``n`` after
+    that one, as the reader scrolls down such a window, and the gap left."""
     idx = next((i for i, m in enumerate(messages) if m.get("id") == before), None)
     if idx is None:
         return {"messages": [], "before": 0, "missing": True, "revision": revision}
-    start = max(0, idx - (n or 100))
+    n = n or 100
+    if after:
+        a = next((i for i, m in enumerate(messages[:idx]) if m.get("id") == after), None)
+        if a is None:
+            return {"messages": [], "gap": 0, "missing": True, "revision": revision}
+        end = min(idx, a + 1 + n)
+        return {"messages": messages[a + 1:end], "gap": idx - end, "revision": revision}
+    start = max(0, idx - n)
     if upto:
         j = next((i for i, m in enumerate(messages[:idx]) if m.get("id") == upto), None)
         if j is not None:
             start = min(start, max(0, j - 5))
+            end = j + 1 + ROOM_LINK_BELOW
+            if idx - end > n:
+                return {"messages": messages[start:end], "before": start, "gap": idx - end,
+                        "revision": revision}
     return {"messages": messages[start:idx], "before": start, "revision": revision}
 
 
@@ -15462,7 +15481,8 @@ class Handler(BaseHTTPRequestHandler):
                 # &before=<mid>&n=: the page of messages before the oldest one the
                 # chat holds, as it scrolls up (#228); &upto=<mid>: down to that one.
                 self._send_json(200, room_older_page(room.get("messages") or [], older, win,
-                                                     q.get("upto", [""])[0], revision))
+                                                     q.get("upto", [""])[0], revision,
+                                                     q.get("after", [""])[0]))
                 return
             lite = q.get("lite", [""])[0] == "1" and not q.get("cursor", [""])[0]
             out = _annotate_room_liveness(room, with_points=True, first=lite)

@@ -4712,6 +4712,7 @@ function renderBubbles(items, opt = {}) {
   // A channel shows its latest entries: the way to those before.
   if (thr && !THREAD_MODE && THR_BEFORE && !threadList) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
   // A link's window: the way to those after it.
+  if (!thr && ROOM_WIN && !SOLO_MODE) rows.push(`<div class="fold-note thr-more" data-key="room-newer:${ROOM_WIN.gap}">${ROOM_WIN.gap} later message${ROOM_WIN.gap === 1 ? '' : 's'} in this chat. <button type="button" class="room-newer-btn">Show more</button></div>`);
   if (thr && THR_AFTER && !threadList) rows.push(`<div class="fold-note thr-more" data-key="thr-newer:${THR_AFTER}">${THR_AFTER} later entr${THR_AFTER === 1 ? 'y' : 'ies'} in this ${THREAD_MODE ? 'thread' : 'chat'}. <button type="button" class="thr-newer-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
@@ -5113,7 +5114,7 @@ function patchChildren(box, rows) {
 function showLatest() {
   const box = $('#msgs'), btn = $('#to-latest');
   if (!box || !btn) return;
-  const away = !!box.clientHeight && (!STICK || !!(THREADED && THR_AFTER));
+  const away = !!box.clientHeight && (!STICK || !!(THREADED && THR_AFTER) || !!ROOM_WIN);
   btn.hidden = !away;
   const { label, tip } = latestLabel(NEW_N, DEC_N);
   setText(btn, label);
@@ -5122,6 +5123,7 @@ function showLatest() {
 function toLatest() {
   const box = $('#msgs');
   STICK = true;
+  if (ROOM_WIN) { ROOM_WIN = null; if (ROOM_OBJ) renderMsgs(ROOM_OBJ); }
   if (THREADED && THR_AFTER) {
     // A link's window: the newest entries instead (its pages start again).
     GOTO = ''; GOTO_PART = '';
@@ -5177,7 +5179,7 @@ function openGroupOf(box, mid) {
   }
 }
 function renderMsgs(room) {
-  CHAT_DRAWN = true; renderBubbles(room.messages);
+  CHAT_DRAWN = true; renderBubbles(ROOM_WIN ? ROOM_WIN.messages : room.messages);
   // A window that does not fill the chat (most of a PO's rows are hub
   // traffic it folds) gets the page before at once: there is no scroll to ask.
   const box = $('#msgs');
@@ -5193,10 +5195,15 @@ function renderMsgs(room) {
 // rest, the hub sends as a summary: window.total, pmIndex.
 const ROOM_N = 50;
 let OLDER_BUSY = null;
-function roomHasOlder() { return !!(ROOM_OBJ && ROOM_OBJ.window && ROOM_OBJ.window.before > 0); }
+// A link far above the messages held gets a window around its balloon
+// (review 4): ROOM_WIN {messages, before, gap} is drawn instead, `gap` the
+// messages between it and those held, loaded as the reader scrolls down
+// (&after=) until the two meet; Latest leaves it.
+let ROOM_WIN = null, ROOM_DOWN = null;
+function roomHasOlder() { const w = ROOM_WIN || (ROOM_OBJ && ROOM_OBJ.window); return !!(w && w.before > 0); }
 function loadOlder(upto = '') {
   if (OLDER_BUSY) return OLDER_BUSY;
-  const shown = ROOM_OBJ, first = shown && (shown.messages || [])[0];
+  const shown = ROOM_WIN || ROOM_OBJ, first = shown && (shown.messages || [])[0];
   if (!roomHasOlder() || !first) return Promise.resolve(false);
   OLDER_BUSY = (async () => {
     try {
@@ -5208,8 +5215,17 @@ function loadOlder(upto = '') {
         rooms.messages = d.messages.concat(rooms.messages);
         rooms.window = {...(rooms.window || {}), before: d.before};
       };
-      add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
-      if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      const win = ROOM_WIN;
+      if (win) {
+        if ((win.messages[0] || {}).id !== first.id) return false;
+        win.messages = d.messages.concat(win.messages);
+        win.before = d.before;
+      } else if (d.gap > 0) {
+        ROOM_WIN = { messages: d.messages, before: d.before, gap: d.gap };
+      } else {
+        add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
+        if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      }
       // The place is kept by the balloon read at the top: a page of older ones may
       // fold the old first row into a group, so failing that, by the height added.
       const box = $('#msgs'), place = readingPlace(box), h0 = box.scrollHeight, t0 = box.scrollTop;
@@ -5231,6 +5247,43 @@ function loadOlder(upto = '') {
     finally { OLDER_BUSY = null; }
   })();
   return OLDER_BUSY;
+}
+// The page below a link's window, as the reader nears its end: drawn under
+// what is shown; once it meets the messages held, the two are one again.
+function roomLoadDown() {
+  if (ROOM_DOWN || !ROOM_WIN || !ROOM_OBJ) return ROOM_DOWN || Promise.resolve(false);
+  const win = ROOM_WIN, last = win.messages[win.messages.length - 1], head = (ROOM_OBJ.messages || [])[0];
+  if (!last || !head) return Promise.resolve(false);
+  ROOM_DOWN = (async () => {
+    try {
+      const d = await fetch('/api/room?id=' + encodeURIComponent(ROOM) + '&n=100&before=' + encodeURIComponent(head.id)
+        + '&after=' + encodeURIComponent(last.id)).then(r => r.json());
+      if (ROOM_WIN !== win || !d || !Array.isArray(d.messages)) return false;
+      if (d.missing) ROOM_WIN = null;     // its place is gone: the latest instead
+      else {
+        win.messages = win.messages.concat(d.messages);
+        win.gap = d.gap || 0;
+        if (!win.gap) {
+          const join = (rooms, i) => {
+            if (!rooms || !rooms.messages || (rooms.messages[0] || {}).id !== head.id) return;
+            rooms.messages = (i ? structuredClone(win.messages) : win.messages).concat(rooms.messages);
+            rooms.window = {...(rooms.window || {}), before: win.before};
+          };
+          join(ROOM_OBJ, 0);
+          if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) join(ROOM_LAST.room, 1);
+          ROOM_WIN = null;
+        }
+      }
+      const box = $('#msgs'), t0 = box.scrollTop;
+      STICK = false;
+      renderMsgs(ROOM_OBJ);
+      if (!DRAW_HELD) box.scrollTop = t0;
+      showLatest();
+      return true;
+    } catch (e) { return false; }
+    finally { ROOM_DOWN = null; }
+  })();
+  return ROOM_DOWN;
 }
 // A new copy of the room (a full fetch after a restart, or a poll that crossed
 // a loadOlder) keeps the pages the reader loaded above its window.
@@ -5325,6 +5378,8 @@ function gotoMsg(mid, part) {
   GOTO_AT = Date.now();
   if (SOLO_WANT && SOLO_WANT.failed) SOLO_WANT = null;   // a new try loads it again
   showGotoNote('');
+  // A balloon outside the link's window drawn: from the messages held again.
+  if (ROOM_WIN && !ROOM_WIN.messages.some(m => m.id === GOTO)) { ROOM_WIN = null; if (ROOM_OBJ && !SOLO_MODE) renderMsgs(ROOM_OBJ); }
   // A PO chat's channel (#234): a balloon it shows lands there, a thread's
   // reply in its thread beside it (landPending, once the channel is drawn).
   if (THREADED && !THREAD_MODE) { landPending(); return; }
@@ -8670,6 +8725,7 @@ $('#msgs').addEventListener('click', e => {
   if (tr) { const t = THR_META && Object.values(THR_META).find(x => x.root === tr.dataset.mid && x.id !== 'team:activity'); openThread(t ? t.id : '', t ? '' : tr.dataset.mid); return; }
   if (e.target.closest && e.target.closest('.thr-more-btn')) { thrLoadUp(); return; }
   if (e.target.closest && e.target.closest('.thr-newer-btn')) { thrLoadDown(); return; }
+  if (e.target.closest && e.target.closest('.room-newer-btn')) { roomLoadDown(); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
@@ -8721,6 +8777,7 @@ function msgsScrolled() {
   if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
   if (!at && box.scrollTop < box.clientHeight && THREADED && THR_BEFORE && !DRAW_HELD) thrLoadUp();
   if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && THREADED && THR_AFTER && !DRAW_HELD) thrLoadDown();
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && ROOM_WIN && !DRAW_HELD) roomLoadDown();
   if (!at && box.scrollTop < box.clientHeight && SOLO_MODE && !THREADED && SOLO_MORE && !DRAW_HELD) soloLoadUp();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });

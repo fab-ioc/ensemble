@@ -55,7 +55,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // A link to a balloon not held: loaded down to it, landed on.
     await ev(`gotoMsg('m3'), 0`);
     await until(`!!document.querySelector('#msgs [data-key="m3"]')`);
-    out.goto = await ev(`({ held: ${held}, before: ROOM_OBJ.window.before, first: ROOM_OBJ.messages[0].id })`);
+    out.goto = await ev(`({ held: ${held}, before: ROOM_OBJ.window.before, first: ROOM_OBJ.messages[0].id,
+      win: ROOM_WIN && { first: ROOM_WIN.messages[0].id, n: ROOM_WIN.messages.length, gap: ROOM_WIN.gap },
+      note: !!document.querySelector('#msgs .room-newer-btn'), latest: !document.getElementById('to-latest').hidden })`);
+    // Latest leaves the window: the messages held again.
+    await ev(`toLatest(), 0`);
+    await until(`!ROOM_WIN && !document.querySelector('#msgs [data-key="m3"]')`);
+    out.latest = await ev(`({ held: ${held}, last: ROOM_OBJ.messages[ROOM_OBJ.messages.length - 1].id })`);
     // A new message still arrives, after everything held.
     console.log('POST');   // the test posts it
     await until(`ROOM_OBJ.messages.some(m => m.id && m.text === 'the newest one')`, 15000);
@@ -65,7 +71,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await until('typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && CHAT_DRAWN');
     await until(`!!document.querySelector('#msgs .msg[data-mid="m7"]') || /not found/.test(document.body.innerText)`);
     out.opened = await ev(`({ landed: !!document.querySelector('#msgs .msg[data-mid="m7"]'), notFound: /not found/.test(document.body.innerText),
-      first: ROOM_OBJ.messages[0].id })`);
+      first: (ROOM_WIN || ROOM_OBJ).messages[0].id, win: !!ROOM_WIN, gap: ROOM_WIN && ROOM_WIN.gap })`);
+    // Scrolling down the window pages it until it meets the messages held.
+    for (let i = 0; i < 10 && await ev('!!ROOM_WIN'); i++) {
+      await ev(`(() => { const b = document.getElementById('msgs'); b.scrollTop = b.scrollHeight; b.dispatchEvent(new Event('scroll')); return 0; })()`);
+      await until('!ROOM_DOWN');
+      await sleep(50);
+    }
+    out.joined = await ev(`({ win: !!ROOM_WIN, held: ${held}, before: ROOM_OBJ.window.before, first: ROOM_OBJ.messages[0].id,
+      ids: ROOM_OBJ.messages.every((m, i, a) => !i || !/^m[0-9]+$/.test(m.id) || !/^m[0-9]+$/.test(a[i - 1].id) || +m.id.slice(1) === +a[i - 1].id.slice(1) + 1) })`);
     console.log(JSON.stringify(out));
   } finally { ch.kill(); }
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
@@ -123,12 +137,29 @@ class RoomWindowPage(unittest.TestCase):
         o = self.got["opened"]
         self.assertTrue(o["landed"])
         self.assertFalse(o["notFound"])
-        self.assertEqual(o["first"], "m2", "the page from the link's balloon, with 5 before it")
+        self.assertEqual(o["first"], "m2", "the window from the link's balloon, with 5 before it")
+        self.assertTrue(o["win"], "a window, not everything down to the link")
+        self.assertGreater(o["gap"], 100)
 
-    def test_a_link_loads_down_to_its_balloon(self):
-        g = self.got["goto"]
-        self.assertEqual(g["before"], 0)
-        self.assertEqual(g["first"], "m0")
+    def test_scrolling_down_a_window_joins_it_to_the_latest(self):
+        j = self.got["joined"]
+        self.assertFalse(j["win"])
+        self.assertEqual((j["first"], j["before"]), ("m2", 2))
+        self.assertTrue(j["ids"], "no message missing or twice where they met")
+
+    def test_a_link_far_back_gets_a_window_around_its_balloon(self):
+        g, s = self.got["goto"], self.got["scrolled"]
+        self.assertEqual((g["held"], g["before"]), (s["held"], s["before"]), "the messages held are kept")
+        self.assertEqual(g["win"]["first"], "m0")
+        self.assertEqual(g["win"]["n"], 3 + 1 + 40)
+        self.assertEqual(g["win"]["gap"] + 44, s["before"])
+        self.assertTrue(g["note"], "the way to the later messages")
+        self.assertTrue(g["latest"], "and the Latest button")
+
+    def test_latest_leaves_the_window(self):
+        a, s = self.got["latest"], self.got["scrolled"]
+        self.assertEqual(a["held"], s["held"])
+        self.assertEqual(a["last"], "m399")
 
     def test_new_messages_still_arrive(self):
         a = self.got["after"]

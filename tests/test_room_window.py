@@ -82,6 +82,21 @@ class RoomWindowHttp(unittest.TestCase):
         self.assertEqual([m["id"] for m in d["messages"]], [f"m{i}" for i in range(30)])
         self.assertEqual(d["before"], 0)
 
+    def test_a_link_far_back_gets_a_window_around_it(self):
+        # #247 review 4: a link far above the chat's oldest sends its balloon
+        # with a few before and ROOM_LINK_BELOW after, not everything between.
+        d = self.get("&n=100&before=m250&upto=m20")
+        self.assertEqual([m["id"] for m in d["messages"]], [f"m{i}" for i in range(15, 61)])
+        self.assertEqual((d["before"], d["gap"]), (15, 189))
+        d = self.get("&n=100&before=m250&after=m60")
+        self.assertEqual([m["id"] for m in d["messages"]], [f"m{i}" for i in range(61, 161)])
+        self.assertEqual(d["gap"], 89)
+        d = self.get("&n=100&before=m250&after=m160")
+        self.assertEqual([m["id"] for m in d["messages"]], [f"m{i}" for i in range(161, 250)])
+        self.assertEqual(d["gap"], 0, "joined to the chat's oldest")
+        d = self.get("&n=100&before=m250&after=nope")
+        self.assertEqual((d["messages"], d["missing"]), ([], True))
+
     def test_a_message_not_in_the_room_says_so(self):
         d = self.get("&n=100&before=nope")
         self.assertEqual((d["messages"], d["missing"]), ([], True))
