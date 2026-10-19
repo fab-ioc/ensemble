@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -22,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import chatroom
 import dashboard
 import threads
+import topics
 from tests import chrome_profile
 from tests.test_page_update import CHROME
 
@@ -157,6 +160,47 @@ def main():
             server.daemon_threads = True
             server.handle_error = lambda *a: None
             threading.Thread(target=server.serve_forever, daemon=True).start()
+            if "--during-rebuild" in sys.argv:
+                rid = ROOMS["Backtesting"][0]
+                threads.build(rid, show_progress=False)
+                project = next(p for p in dashboard.load_projects() if p.get("poRoomId") == rid)
+                with topics._CACHE_LOCK:
+                    topics._CACHE.pop(project["id"], None)
+                entered, release = threading.Event(), threading.Event()
+                original = topics._auto_groups
+
+                def paused(candidates):
+                    entered.set()
+                    if not release.wait(5):
+                        raise TimeoutError("measurement did not release topic builder")
+                    return original(candidates)
+
+                def request(path):
+                    start = time.perf_counter()
+                    with urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}{path}", timeout=10) as response:
+                        body = json.load(response)
+                    return round((time.perf_counter() - start) * 1000, 2), body
+
+                try:
+                    with mock.patch.object(topics, "_auto_groups", side_effect=paused):
+                        first_ms, first = request(f"/api/room/topics?id={rid}")
+                        if not first.get("pending") or not entered.wait(3):
+                            raise AssertionError("topic rebuild did not begin")
+                        thread_ms, thread = request(f"/api/room/thread?id={rid}&t=P725")
+                        channel_ms, channel = request(f"/api/room/channel?id={rid}&topic=task:%23341")
+                        rail_ms, rail = request(f"/api/room/topics?id={rid}")
+                        if thread.get("thread", {}).get("id") != "P725" or not channel.get("pending") or not rail.get("pending"):
+                            raise AssertionError("thread or pending topic response was incorrect")
+                        if max(thread_ms, channel_ms, rail_ms) >= 1000:
+                            raise AssertionError("a request waited on the paused topic rebuild")
+                        print(json.dumps({"room": "opTen", "thread": "P725", "topicGetMs": first_ms,
+                                          "threadOpenDuringRebuildMs": thread_ms,
+                                          "filteredChannelDuringRebuildMs": channel_ms,
+                                          "railPollDuringRebuildMs": rail_ms,
+                                          "rebuildStillPaused": True}), flush=True)
+                finally:
+                    release.set()
+                return
             projects = {p["poRoomId"]: p for p in dashboard.load_projects() if p.get("poRoomId") in {rid for rid, _ in ROOMS.values()}}
             open_only = "--open-only" in sys.argv
             picker_only = "--picker-only" in sys.argv

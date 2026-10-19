@@ -15188,6 +15188,9 @@ class Handler(BaseHTTPRequestHandler):
                     if topic_id:
                         project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
                         grouping = topics.view(project, room, chatroom.ROOMS_DIR) if project else {"topics": []}
+                        if grouping.get("pending"):
+                            self._send_json(200, {"pending": True})
+                            return
                         chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
                         topic_tids = set(chosen["threads"]) if chosen else set()
                         n = threads.CHANNEL_LIMIT
@@ -15206,6 +15209,9 @@ class Handler(BaseHTTPRequestHandler):
                         if project:
                             grouping = topics.view(project, room, chatroom.ROOMS_DIR)
                             out["topicSuggestion"] = grouping.get("suggestions", {}).get(out["thread"]["id"])
+                            # A first thread open still renders during a cold topic
+                            # build; the changed signature supplies its chip later.
+                            out["sig"] += ":topics:" + str(grouping.get("stamp", "pending"))
             except Exception as e:      # noqa: BLE001 — the page shows the whole chat
                 print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_read"})

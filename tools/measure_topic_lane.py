@@ -83,7 +83,7 @@ def main():
                 project = next((p for p in dashboard.load_projects() if p.get("poRoomId") == rid), None)
                 if project:
                     t0 = time.perf_counter()
-                    got = topics.view(project, chatroom.get_room(rid), chatroom.ROOMS_DIR)
+                    got = topics._build_view(project, idx, chatroom.ROOMS_DIR)
                     cold_ms = (time.perf_counter() - t0) * 1000
                     t0 = time.perf_counter()
                     for _ in range(10):
@@ -97,6 +97,7 @@ def main():
                                           "both": sorted(a["all"] & b["all"])}), flush=True)
                     wanted = ("backtest", "skew", "single", "massive", "x5", "autoscout", "ad")
                     print(json.dumps({"room": name, "topicCount": len(got["topics"]),
+                                      "task269": next((t["threadCount"] for t in got["topics"] if t["task"] == "#269"), 0),
                                       "coldMs": round(cold_ms, 2), "cachedMs": round(cached_ms, 2),
                                       "singleThreadCount": sum(t["threadCount"] == 1 for t in got["topics"]),
                                       "largest": [{"name": t["name"], "id": t["id"], "task": t["task"], "count": t["threadCount"],

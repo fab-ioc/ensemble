@@ -24,6 +24,8 @@ _PROJECT = re.compile(r"proj-[0-9a-f]+$")
 _DAYS = 30 * 86400
 _STOP = frozenset("a an and are at be been can did do does for from has have how i in is it its latest me my of on or our please the this to was we were what when where why with would you your after before about all any more new now one own same some still than then there these those them they their via will yes done ready update task thread point report review status issue work".split())
 _CACHE: dict[str, tuple[tuple, dict]] = {}
+_CACHE_LOCK = threading.Lock()
+_BUILDING: set[str] = set()
 
 
 def _path(project_id: str, rooms_dir: Path) -> Path:
@@ -84,7 +86,10 @@ def _features(th: dict, idx: dict) -> dict:
         body = (r.get("turn") or {}).get("text") or ""
         if r.get("role") == "agent":
             replies.append(body)
-        refs.update(points.task_refs(body))
+        # A PO reply may mention another task while answering this thread.
+        # Only the CEO's own messages can establish its task identity.
+        if r.get("role") == "user" and r.get("kind") == "human":
+            refs.update(points.task_refs(body))
     reply_terms = _terms("\n".join(body[:450] for body in replies[-2:]))
     whole = own | reply_terms
     task = th.get("task") or ""
@@ -171,11 +176,9 @@ def _target(topic: str, merged: dict) -> str:
     return topic
 
 
-def view(project: dict, room: dict, rooms_dir: Path, *, now: float | None = None) -> dict:
-    room_id = project.get("poRoomId") or ""
-    idx = threads.ready(room_id, room)
-    if idx is None:
-        return {"pending": True, "topics": [], "suggestions": {}}
+def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None = None) -> dict:
+    """Build from one thread snapshot. Store edits are serialized, but readers
+    never take this lock and can keep using the last complete view."""
     path = _path(project["id"], rooms_dir)
     cacheable = now is None
     now = time.time() if cacheable else now
@@ -268,8 +271,48 @@ def view(project: dict, room: dict, rooms_dir: Path, *, now: float | None = None
                   "archived": [{"id": key, "name": data["names"].get(key) or topics.get(key, {}).get("name") or key}
                                for key in data["archive"]], "sig": idx["sig"]}
         if cacheable:
-            _CACHE[project["id"]] = ((idx["sig"], path.stat().st_mtime_ns if path.exists() else 0), result)
+            final_stamp = path.stat().st_mtime_ns if path.exists() else 0
+            result["stamp"] = final_stamp
+            with _CACHE_LOCK:
+                _CACHE[project["id"]] = ((idx["sig"], final_stamp), result)
         return result
+
+
+def view(project: dict, room: dict, rooms_dir: Path, *, now: float | None = None) -> dict:
+    """Return the last complete view, starting one background rebuild if stale.
+
+    The explicit `now` path is for deterministic audits and tests only.
+    """
+    pid = project["id"]
+    idx = threads.ready(project.get("poRoomId") or "", room)
+    if now is not None:
+        return _build_view(project, idx, rooms_dir, now=now) if idx else {"pending": True, "topics": [], "suggestions": {}}
+    with _CACHE_LOCK:
+        hit = _CACHE.get(pid)
+    if idx is None:
+        return {**hit[1], "building": True} if hit else {"pending": True, "topics": [], "suggestions": {}}
+    path = _path(pid, rooms_dir)
+    stamp = path.stat().st_mtime_ns if path.exists() else 0
+    key = (idx["sig"], stamp)
+    with _CACHE_LOCK:
+        hit = _CACHE.get(pid)
+        if hit and hit[0] == key:
+            return hit[1]
+        if pid in _BUILDING:
+            return {**hit[1], "building": True} if hit else {"pending": True, "topics": [], "suggestions": {}}
+        _BUILDING.add(pid)
+
+    def run():
+        try:
+            _build_view(project, idx, rooms_dir)
+        except Exception as e:  # noqa: BLE001 — retry on the next poll
+            print(f"[topics] {pid}: not built: {e!r}", flush=True)
+        finally:
+            with _CACHE_LOCK:
+                _BUILDING.discard(pid)
+
+    threading.Thread(target=run, name=f"topics-{pid}", daemon=True).start()
+    return {**hit[1], "building": True} if hit else {"pending": True, "topics": [], "suggestions": {}}
 
 
 def change(project: dict, rooms_dir: Path, action: str, *, topic: str = "", other: str = "",
@@ -303,4 +346,3 @@ def change(project: dict, rooms_dir: Path, action: str, *, topic: str = "", othe
         else:
             raise ValueError("invalid topic change")
         _save(path, data)
-        _CACHE.pop(project["id"], None)

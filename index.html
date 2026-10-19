@@ -13991,7 +13991,7 @@ async function pdTopicsRefresh(force=false) {
     if (!r.ok || poDockProject()?.poRoomId !== rid) return;
     TOPICS.room = rid; TOPICS.data = data; TOPICS.at = Date.now(); TOPICS.sig = '';
     const active = TOPICS.filter.get(rid);
-    if (active) {
+    if (active && !data.pending) {
       const row = data.topics?.find(t => t.id === active.id);
       if (row) TOPICS.filter.set(rid, {id:row.id, name:row.name, threads:row.threads, latest:row.latest});
       else TOPICS.filter.delete(rid);
@@ -13999,7 +13999,7 @@ async function pdTopicsRefresh(force=false) {
     }
     pdTopicPaint();
     pdPaintPoints();
-    if (data.pending) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 1500); }
+    if (data.pending || data.building) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 1500); }
   } catch (e) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 3000); }
   finally { TOPICS.busy = false; if (TOPICS.again) { TOPICS.again = false; pdTopicsRefresh(true); } }
 }
