@@ -5604,9 +5604,11 @@ function sendWhen(ts, day = true) {
     : d.toLocaleString([], Object.assign({ month: 'short', day: 'numeric' }, hm));
 }
 function sendHtml(s, md) {
-  // The hub found it in the conversation (in whichever session of the seat
-  // read it, #245): read, even while this page's copy has no turn for it yet.
-  const read = !!s.read || s.state === 'confirmed';
+  // The hub found it in a one-agent chat's transcript (in whichever session
+  // of the seat read it, #245): read, even while this page's copy has no turn
+  // for it yet. A team room confirms a post on arrival, a /command once
+  // typed: neither is a read.
+  const read = !!s.read || (s.state === 'confirmed' && SOLO_MODE && !!s.mid);
   const when = sendWhen(s.at);
   const sent = when ? `<span class="pend-when">Sent ${esc(when)}&nbsp;·</span> ` : '';
   const again = s.redeliveredAt ? sendWhen(s.redeliveredAt, false) : '';

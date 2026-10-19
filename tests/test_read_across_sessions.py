@@ -48,6 +48,7 @@ const ctx = {
   esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
   whoHtml: m => 'You', stripPointLines: t => String(t).replace(/\n*^\[point P\d+\]$/gm, ''),
   renderBubbles: () => {}, LAST_ITEMS: [], ROOM: 'room-1', pointItems: () => null,
+  SOLO_MODE: input.solo !== false,
 };
 if (input.threaded) Object.assign(ctx, { threadedView: () => true, THREAD_MODE: false, THREAD: '', THREAD_MID: '' });
 vm.createContext(ctx);
@@ -63,14 +64,16 @@ console.log(JSON.stringify(out));
 """
 
 
-def balloons(sends_rows, items, threaded=False):
+def balloons(sends_rows, items, threaded=False, solo=True):
     """What the chat draws for the hub's sends beside ``items`` (the
     conversation this page holds): one {key, line, pending} per balloon of
-    its own; a send whose turn is drawn has none."""
+    its own; a send whose turn is drawn has none. ``solo``: a one-agent chat
+    (False: a team's room)."""
     code = SESSION[SESSION.index("// ---- What you sent, until the conversation shows it: begin"):
                    SESSION.index("// ---- What you sent, until the conversation shows it: end")]
     r = subprocess.run([NODE, "-e", _BALLOONS], capture_output=True, text=True, encoding="utf-8", timeout=60,
-                       input=json.dumps({"code": code, "sends": sends_rows, "items": items, "threaded": threaded}))
+                       input=json.dumps({"code": code, "sends": sends_rows, "items": items, "threaded": threaded,
+                                         "solo": solo}))
     if r.returncode != 0:
         raise AssertionError(r.stderr)
     return json.loads(r.stdout)
@@ -228,6 +231,28 @@ class SentInTheHandoverWindow(Harness):
         # Still not read at the next idle: Not delivered, with Retry.
         sends.redeliver_tick(now=time.time() + sends.REDELIVER_AFTER_S + 5)
         self.assertEqual(line(), ("failed", f"Not delivered: {sends.NOT_TAKEN}."))
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class ConfirmedIsNotAlwaysRead(unittest.TestCase):
+    """Only a one-agent chat's transcript confirms a read (review 1): a
+    team's room confirms a post as it arrives, a /command once typed."""
+
+    def row(self, **kw):
+        return {"key": "send:t", "text": "for the team", "at": time.time() - 30, "state": "confirmed",
+                "stateAt": time.time() - 29, **kw}
+
+    def test_a_team_post_outside_the_window_is_not_read(self):
+        [b] = balloons([self.row(mid="a1b2c3d4e5f6")], [], solo=False)
+        self.assertNotIn("Read by the agent", b["line"])
+        self.assertTrue(b["pending"])
+
+    def test_the_same_send_in_a_one_agent_chat_is_read(self):
+        [b] = balloons([self.row(mid=S1 + ":4")], [])
+        self.assertEqual(b["line"].split("· ", 1)[1], "Read by the agent.")
+
+    def test_a_command_is_never_shown_as_read(self):
+        self.assertEqual(balloons([self.row(text="/compact")], []), [])
 
 
 @unittest.skipUnless(NODE, "node is not installed")

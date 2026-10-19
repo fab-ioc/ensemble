@@ -1248,7 +1248,7 @@ What the person sent that the conversation does not show yet (`sendHtml` in `ses
 hub's `sends.py` keeps it). It is their balloon with a **dashed** edge and one line under it saying
 where it is, in words: "Queued: it goes in once the session is up.", "Delivered, not yet read by the
 agent." (with **Hide**), or "Not delivered: *reason*." with **Retry** and **Discard**. Once the
-hub has found it in the conversation (in any session of the seat: one before a rotation, a switch or
+hub has found it in a one-agent chat's transcript (in any session of the seat: one before a rotation, a switch or
 a handover counts), it says "Read by the agent." with a solid edge until its turn is drawn (#245).
 
 - **Never on a timer or a row count.** It goes only when the turn that holds it is drawn (it is then
