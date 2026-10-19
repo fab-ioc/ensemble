@@ -549,6 +549,22 @@ def _save(room_id: str, led: dict) -> None:
         pass
 
 
+def with_ledgers() -> set[str]:
+    """The rooms that have a ledger (or its .prev), from one listing of the
+    folder: a point chip looks in every room of a project, and two stats per
+    room per chip held a chat's open (#247)."""
+    out = set()
+    try:
+        with os.scandir(_dir()) as it:
+            for e in it:
+                stem = e.name.split(".", 1)[0]
+                if e.name in (stem + ".json", stem + ".json.prev") and _ROOM_ID.fullmatch(stem):
+                    out.add(stem)
+    except OSError:
+        pass
+    return out
+
+
 def exists(room_id: str) -> bool:
     if not _ROOM_ID.fullmatch(room_id or ""):
         return False
@@ -1267,6 +1283,9 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         room = _d.chatroom.get_room(room_id)
     if room is None:
         return load(room_id, shared=shared)
+    # Each transcript is classified for its room and seat: known from the
+    # room in hand, not looked up across every room per session (#247).
+    _d.note_session_owners(room)
     # The transcripts are read first, without the lock: a long one takes a
     # while, and every poll and send waits on the lock. Only a session that
     # changed since it was last read, and after the oldest point still
@@ -1963,13 +1982,15 @@ def _item(p: dict, task=None) -> dict:
     return out
 
 
-def view(room_id: str, room: dict | None = None) -> dict:
+def view(room_id: str, room: dict | None = None, quick: bool = False) -> dict:
     """What the chat page shows: the points (newest first, capped), how many
     wait for an answer, are in progress and wait for an acknowledgement, and
-    the decisions approved. A planned point carries its task and where it is."""
+    the decisions approved. A planned point carries its task and where it is.
+    ``quick``: a chat's first read (#247): the ledger as kept, not looked
+    through for new answers (the next read does), and no Needs you lists."""
     # Read, never changed here: the cached ledger, not a copy of it.
     try:
-        led = sync(room_id, room=room, shared=True)
+        led = load(room_id, shared=True) if quick else sync(room_id, room=room, shared=True)
     except Exception as e:
         _log(f"{room_id}: answers not read: {e!r}")
         led = load(room_id, shared=True)
@@ -1992,7 +2013,7 @@ def view(room_id: str, room: dict | None = None) -> dict:
             "approvals": sorted(led.get("approvals") or {}),
             "asks": json.loads(json.dumps(led.get("asks") or {})),
             "asksSettledAt": float(led.get("asksSettledAt") or 0),
-            "needs": _needs_view(room_id, room, led)}
+            "needs": {} if quick else _needs_view(room_id, room, led)}
 
 
 def _closed_item(p: dict) -> dict:

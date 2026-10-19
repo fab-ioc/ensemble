@@ -5,9 +5,11 @@ own words.
 The page's landing and solo-transcript code runs in Node against a small
 stand-in for the chat and the hub, and checks that:
 
-* a link to a solo turn older than the drawn window widens the window and
-  lands, even though the link is found in the middle of the first render;
-* the same for a turn of the session a PO was rotated from;
+* a link to a solo turn older than the turns drawn gets a window around it
+  and lands, even though the link is found in the middle of the first render;
+  scrolling down the window joins it to the latest (#247 review 4);
+* the same for a turn of the session a PO was rotated from, and a rotated
+  chat scrolled up goes on into the sessions before;
 * a turn that does not exist says "not found" once the wider window is drawn;
 * a redraw that replaces the landed balloon's node keeps it marked;
 * stripRefBlocks removes exactly the hub's blocks.
@@ -51,8 +53,16 @@ const out = { fetches: [], notes: [] };
 const THREAD_MODE = false, URL_GOTO = '';
 let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false, SOLO_FIRST_TRIES = 0;
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
-const SOLO_PREV = new Map();
+let SOLO_KEEP = 120, SOLO_BYTES = 96000, SOLO_MORE = false, SOLO_UP = false, SOLO_HELD = null;
+const SOLO_OVERLAP = 4;
+const soloTail = () => '&tail=' + SOLO_KEEP + '&bytes=' + SOLO_BYTES;
+const soloUrl = (sid, q) => '/api/session/' + encodeURIComponent(sid) + '?full=1' + q;
+const pollFetch = (url, opts) => fetch(url, opts);   // the page's fetch that gives up (#245)
+let SOLO_MODE = true;
+const roomHasOlder = () => false;
 const PREV_TURNS_SHOWN = 60;
+let SOLO_ABOVE = [], SOLO_WIN = null, SOLO_DOWN = null, DRAW_HELD = false;
+const readingPlace = () => null, keepPlace = () => {};
 let _cmtComposerOpen = false, selShown = () => false, STICK = false, LAST_ITEMS = [];
 const FOLD = { open: new Set() };
 let GROUP_OF_MID = new Map(), GAP_OF_MID = new Map(), GOTO_PART = '';
@@ -90,7 +100,24 @@ function fetch(url) {
   const f = FAILS.find(x => x.sid === sid);
   if (f && f.skip) f.skip--;
   else if (f && f.times > 0) { f.times--; return Promise.reject(new Error('network')); }
-  return Promise.resolve({ json: () => Promise.resolve({ turns: TURNS[sid] || [] }) });
+  // As the hub answers: the turns after those held (&after=), or the last ones (&tail=).
+  const all = TURNS[sid] || [], arg = k => { const m = url.match(new RegExp('[?&]' + k + '=([0-9]+)')); return m ? +m[1] : -1; };
+  const after = arg('after'), tail = arg('tail'), upto = arg('upto'), around = arg('around'), from = arg('from'), to = arg('to');
+  let body = { turns: all };
+  // A link's window (&around=, its balloon with 20 before and 40 after) and the pages below it (&from=), up to &to=.
+  if (around >= 0) {
+    const s = Math.max(0, around - 20), e = Math.max(Math.min(all.length, around + 41, to >= 0 ? to : Infinity), around + 1);
+    body = around >= all.length ? { turns: [], total: all.length, missing: true }
+      : { turns: all.slice(s, e), total: all.length, end: e, base: { n: s, q: 0, qb: 0, cut: s } };
+  } else if (from >= 0) {
+    const e = Math.min(all.length, from + arg('n'), to >= 0 ? to : Infinity);
+    body = { turns: all.slice(from, e), total: all.length, from, end: e };
+  } else if (after >= 0 && after <= all.length) body = { turns: all.slice(after), total: all.length, after };
+  else if (upto >= 0 && upto <= all.length) {
+    const cut = Math.max(0, upto - tail);
+    body = { turns: all.slice(cut, upto), total: all.length, upto, base: { n: cut, q: 0, qb: 0, cut } };
+  } else if (tail > 0 && tail < all.length) body = { turns: all.slice(-tail), total: all.length, base: { n: all.length - tail, q: 0, qb: 0, cut: all.length - tail } };
+  return Promise.resolve({ json: () => Promise.resolve(body) });
 }
 const settle = async () => { for (let i = 0; i < 80; i++) await new Promise(r => setImmediate(r)); };
 """
@@ -144,6 +171,61 @@ FAILS = [{ sid: 's-new', skip: 0, times: 99 }];
 GOTO = 's-new:5';
 checkSolo().then(() => checkSolo());
 """,
+    "grows-and-scrolls": r"""
+TURNS = { 's-new': turns(300) };
+(async () => {
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  out.first = [drawn.length, drawn[0]];
+  TURNS['s-new'].push(...turns(305).slice(300));
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  out.grown = [drawn.length, drawn[0], drawn[drawn.length - 1]];
+  await soloLoadUp();
+  out.up = [drawn.length, drawn[0], drawn[drawn.length - 1], SOLO_MORE];
+  console.log(JSON.stringify(out));
+})();
+""",
+    "window-down": r"""
+TURNS = { 's-new': turns(300) };
+GOTO = 's-new:5';
+(async () => {
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  await settle();
+  out.win = [drawn.length, drawn[0], drawn[drawn.length - 1], LANDED && LANDED.mid];
+  for (let i = 0; i < 20 && SOLO_WIN; i++) await soloLoadDown();
+  out.joined = [drawn.length, drawn[0], drawn[drawn.length - 1], !!SOLO_WIN, SOLO_MORE, soloCut(SOLO_HELD)];
+  out.contiguous = drawn.every((id, i) => +id.split(':')[1] === i);
+  console.log(JSON.stringify(out));
+})();
+""",
+    "rotated-scroll-up": r"""
+TURNS = { 's-new': turns(4), 's-mid': turns(100), 's-old': turns(100) };
+SOLO_ROTS = [{ toSessionId: 's-mid', fromSessionId: 's-old', n: 1 },
+             { toSessionId: 's-new', fromSessionId: 's-mid', n: 2 }];
+SOLO_ROT = SOLO_ROTS[1];
+(async () => {
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  out.steps = [[drawn.length, drawn[0], SOLO_MORE]];
+  for (let i = 0; i < 10 && SOLO_MORE; i++) { await soloLoadUp(); out.steps.push([drawn.length, drawn[0], SOLO_MORE]); }
+  out.lines = LAST_ITEMS.filter(m => m.divider).map(m => m.id);
+  console.log(JSON.stringify(out));
+})();
+""",
+    "window-across": r"""
+TURNS = { 's-new': turns(4), 's-mid': turns(200), 's-old': turns(200) };
+SOLO_ROTS = [{ toSessionId: 's-mid', fromSessionId: 's-old', n: 1 },
+             { toSessionId: 's-new', fromSessionId: 's-mid', n: 2 }];
+SOLO_ROT = SOLO_ROTS[1];
+GOTO = 's-old:150';
+(async () => {
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  await settle();
+  out.win = [drawn.length, drawn[0], drawn[drawn.length - 1], LANDED && LANDED.mid];
+  for (let i = 0; i < 20 && SOLO_WIN; i++) await soloLoadDown();
+  out.joined = [drawn.length, drawn[0], drawn[drawn.length - 1], !!SOLO_WIN, SOLO_MORE];
+  out.lines = LAST_ITEMS.filter(m => m.divider).map(m => m.id);
+  console.log(JSON.stringify(out));
+})();
+""",
     "prev-fails": r"""
 TURNS = { 's-new': turns(4), 's-old': turns(200) };
 FAILS = [{ sid: 's-old', skip: 0, times: 99 }];
@@ -172,11 +254,16 @@ TAIL = r"""
 """
 
 
+OWN_END = ("grows-and-scrolls", "window-down", "rotated-scroll-up", "window-across")
+
+
 def run_scenario(name: str) -> dict:
     code = "\n".join([HARNESS, ATTACH, items_block(), js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
-        "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
-        "renderSolo", "openGroupOf", "partOf", "unwrapMarks", "landPending", "markLanded")]
-        + [SCENARIOS[name], TAIL])
+        "stripRefBlocks", "soloItems", "soloPrevSeg", "soloDrawnSeg", "segsItems", "soloJoin", "soloHolds",
+        "soloOpenWin", "soloLoadDown", "soloOwns", "soloWantFailed", "checkSolo", "soloTop",
+        "renderSolo", "soloLoadUp", "openGroupOf", "partOf", "unwrapMarks", "landPending", "markLanded")]
+        + [js_const(n) for n in ("SOLO_ZERO", "soloRotFrom", "soloRotTo", "soloCut")]
+        + [SCENARIOS[name], "" if name in OWN_END else TAIL])
     res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout.strip().splitlines()[-1])
@@ -184,13 +271,49 @@ def run_scenario(name: str) -> dict:
 
 @unittest.skipUnless(NODE, "node is not installed")
 class LandOnALinkedBalloon(unittest.TestCase):
-    def test_an_older_turn_than_the_window_widens_it_and_lands(self):
+    def test_an_older_turn_than_those_drawn_gets_a_window_and_lands(self):
         out = run_scenario("current")
         self.assertEqual(out["notes"], [])
         self.assertEqual(out["landed"], "s-new:5")
         self.assertEqual(out["marked"], ["s-new:5"])
-        self.assertGreater(out["drawn"], 120)
-        self.assertEqual(len(out["fetches"]), 2, out["fetches"])
+        self.assertEqual((out["drawn"], out["first"]), (46, "s-new:0"), "its balloon and 40 after, not all 300")
+        self.assertEqual(out["fetches"], ["/api/session/s-new?full=1&tail=120&bytes=96000",
+                                          "/api/session/s-new?full=1&tail=120&bytes=96000&after=296",
+                                          "/api/session/s-new?full=1&around=5&to=180&bytes=96000"])
+
+    def test_scrolling_down_a_window_joins_it_to_the_latest(self):
+        out = run_scenario("window-down")
+        self.assertEqual(out["win"], [46, "s-new:0", "s-new:45", "s-new:5"])
+        self.assertEqual(out["joined"], [300, "s-new:0", "s-new:299", False, False, 0])
+        self.assertTrue(out["contiguous"], "nothing missing or twice where they met")
+        self.assertIn("/api/session/s-new?full=1&from=46&n=100&to=180&bytes=96000", out["fetches"])
+
+    def test_a_rotated_chat_scrolls_up_into_the_sessions_before(self):
+        # Review 4: the session before shows its last 60, then its pages above,
+        # then the one before that, to the first turn of all.
+        out = run_scenario("rotated-scroll-up")
+        self.assertEqual(out["steps"], [[64, "s-mid:40", True], [104, "s-mid:0", True], [164, "s-old:40", True],
+                                        [204, "s-old:0", False]])
+        self.assertEqual(out["lines"], ["rot1", "rot2"])
+
+    def test_a_window_scrolls_down_across_sessions_to_the_latest(self):
+        out = run_scenario("window-across")
+        self.assertEqual(out["win"], [61, "s-old:130", "s-old:190", "s-old:150"])
+        self.assertEqual(out["joined"], [274, "s-old:130", "s-new:3", False, True])
+        self.assertEqual(out["lines"], ["rot1", "rot2"])
+
+    def test_a_poll_asks_for_the_new_turns_and_a_scroll_up_for_the_page_above(self):
+        # #247: the last 120 first; a poll the turns after those held (the
+        # last 4 again); the page above them as the reader scrolls up. The
+        # balloons are those of the whole transcript, numbered as it is.
+        out = run_scenario("grows-and-scrolls")
+        self.assertEqual(out["first"], [120, "s-new:180"])
+        self.assertEqual(out["grown"], [125, "s-new:180", "s-new:304"])
+        self.assertEqual(out["up"], [305, "s-new:0", "s-new:304", False])
+        self.assertEqual(out["fetches"], ["/api/session/s-new?full=1&tail=120&bytes=96000",
+                                          "/api/session/s-new?full=1&tail=120&bytes=96000&after=296",
+                                          "/api/session/s-new?full=1&tail=200&bytes=96000&upto=180",
+                                          "/api/session/s-new?full=1&tail=120&bytes=96000&after=301"])
 
     def test_an_older_turn_of_the_rotated_session_lands(self):
         out = run_scenario("rotated")
@@ -201,13 +324,13 @@ class LandOnALinkedBalloon(unittest.TestCase):
         out = run_scenario("two-rotations")
         self.assertEqual(out["notes"], [])
         self.assertEqual(out["marked"], ["s-old:3"])
-        self.assertEqual(out["first"], "s-old:3")
+        self.assertEqual(out["first"], "s-old:0", "its window: from 20 before it")
 
     def test_a_failed_fetch_of_the_wider_window_is_tried_again(self):
         out = run_scenario("fails-once")
         self.assertEqual(out["notes"], [])
         self.assertEqual(out["marked"], ["s-new:5"])
-        self.assertEqual(len(out["fetches"]), 3, out["fetches"])
+        self.assertEqual(len(out["fetches"]), 4, out["fetches"])   # the first read, the window twice, a poll
 
     def test_a_window_that_never_loads_says_so_and_stops(self):
         for name in ("fails-always", "prev-fails"):

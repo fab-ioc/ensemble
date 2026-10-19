@@ -127,10 +127,10 @@ class PoMessageNames(unittest.TestCase):
         self.assertNotEqual(self.r["sigA"], self.r["sigB"])
         self.assertIn("+ '|' + PM_SIG;", fn(SESSION, "renderBubbles"))
 
-    def test_a_link_to_an_older_po_message_draws_the_whole_transcript(self):
+    def test_a_link_to_an_older_po_message_draws_the_turns_of_its_time(self):
         land = fn(SESSION, "landPending")
         self.assertIn("const pm = !t && SOLO_SID && PM_IDX.has(mid);", land)
-        self.assertIn("SOLO_WANT = pm ? { sid: SOLO_SID, n: 0, mid }", land)
+        self.assertIn("SOLO_WANT = pm ? { sid: SOLO_SID, ts: PM_IDX.get(mid).ts || 0, mid }", land)
 
     def test_the_page_uses_them(self):
         md = fn(SESSION, "mdToHtml")

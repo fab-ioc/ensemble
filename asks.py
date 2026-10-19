@@ -695,7 +695,9 @@ def message_asks(room: dict, has_po: bool | None = None) -> list[tuple]:
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")}
     out = []
-    for m in room.get("messages") or []:
+    for n, m in enumerate(room.get("messages") or []):
+        if n % 50 == 0:
+            _d.yield_to_pages()         # read behind a page: it stands aside (#247)
         if m.get("from") in agents and (not has_po or m.get("askAudience") == "user") \
                 and m.get("kind") not in ("report", "notice") \
                 and m.get("askAudience") != "po" and not m.get("rang") \
@@ -746,7 +748,7 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     marked = _room_asks(summary)
     if not marked:
         return []
-    led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     settled = float(led.get("asksSettledAt") or 0)
     if not (bool(summary["po"]) if "po" in summary else bool(_d.room_po_id(summary))):
@@ -792,10 +794,12 @@ _OPEN: dict[str, tuple] = {}    # room id → (key, open_cards' list)
 
 def _room_of(summary: dict | None) -> dict | None:
     """The room a summary is of: the summary itself when it is a whole room
-    (the chat's poll has just read it), else read."""
+    (the chat's poll has just read it), else read: its messages are the
+    indexed ones, to read and never change (a PO room is 13 MB, and a chat
+    full of point chips read it once per chip, #247)."""
     if summary and "messages" in summary and "participants" in summary:
         return summary
-    return _d.chatroom.get_room((summary or {}).get("id", ""))
+    return _d.chatroom.get_room_snapshot((summary or {}).get("id", ""))[0]
 
 
 def _heads(text: str) -> list[tuple[int, list[str]]]:
@@ -850,7 +854,9 @@ def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
     if hit is not None and st is not None and hit[0] == st:
         return hit[1]
     found = []
-    for mid, t in (_d.solo_turns(room, sid) or {}).items():
+    for n, (mid, t) in enumerate((_d.solo_turns(room, sid) or {}).items()):
+        if n % 50 == 0:
+            _d.yield_to_pages()
         if t.get("role") == "user":
             continue
         text = t.get("text") or ""
@@ -927,7 +933,7 @@ def point_card(summary: dict, point: dict) -> dict | None:
     cards, read = _room_cards(summary)
     answers = {a["mid"]: float(a.get("at") or 0) for a in point.get("answers") or [] if a.get("mid")}
     since = float(point.get("createdAt") or 0)
-    led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     best = None
     for mid in set(answers) | {m for m, c in cards.items() if pid in c[2]}:
@@ -999,7 +1005,7 @@ def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
     if not cards:
         return []
     if led is None:
-        led = _d.points.load(rid) if _d.points.exists(rid) else {}
+        led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     pts = led.get("points") or []
     by_id = {p.get("id"): p for p in pts}
@@ -1060,7 +1066,7 @@ def decisions(summary: dict, led: dict | None = None, now: float | None = None) 
     now = time.time() if now is None else now
     if led is None:
         rid = (summary or {}).get("id", "")
-        led = _d.points.load(rid) if rid and _d.points.exists(rid) else {}
+        led = _d.points.load(rid, shared=True) if rid and _d.points.exists(rid) else {}
     last = max([float(led.get("lastPersonAt") or 0)]
                + [float(p.get("createdAt") or 0) for p in led.get("points") or []])
     waiting, older, kept = [], [], []
@@ -1212,7 +1218,7 @@ def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, l
     :data:`CACHE_S` (the attention poll asks every second and a half)."""
     global _RESULT
     now = time.time() if now is None else now
-    with _LOCK:
+    with _d.holding(_LOCK):
         if now - _RESULT[0] < CACHE_S:
             return _RESULT[1]
         out = {}

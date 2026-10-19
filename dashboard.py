@@ -120,6 +120,7 @@ import topics
 import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
+import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
 import sends
@@ -563,10 +564,13 @@ def unrecorded_room_ptys(room: dict) -> list[str]:
 _LAST_OPEN_CARDS: dict[str, list[dict]] = {}
 
 
-def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
+def _annotate_room_liveness(room: dict, with_points: bool = False, first: bool = False) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state. A reviewer
-    that is started per request is flagged `onMention`."""
+    that is started per request is flagged `onMention`. ``first``: a chat's
+    first read (&lite=1), whose points are the ledger as kept (#247: on a hub
+    just started, looking for new answers took ~0.9 s); the poll after it
+    looks."""
     room["live"] = _room_is_live(room)
     # What was sent while it was stopped and is still on its way in (a resume
     # in flight), or could not be delivered: the page shows those as pending.
@@ -611,7 +615,7 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     # The person's points (points.py), on the poll the chat already makes.
     if with_points:
         try:
-            room["points"] = points.view(room.get("id", ""), room=room)
+            room["points"] = points.view(room.get("id", ""), room=room, quick=first)
         except Exception as e:      # noqa: BLE001 — the chat still shows
             print(f"[points] {room.get('id')}: not listed: {e!r}", flush=True)
         # A PO chat's threads with replies not seen (Needs you's Threads);
@@ -621,7 +625,6 @@ def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
                 room["threaded"] = True
                 unread = threads.unread_threads(room.get("id", ""), room)
                 if unread is not None:
-                    room["threadsUnread"] = unread
                     if isinstance(room.get("points"), dict):
                         room["points"]["threads"] = unread     # Needs you's Threads group
         except Exception as e:      # noqa: BLE001 — the chat still shows
@@ -739,7 +742,21 @@ def stamp_page(data: bytes) -> bytes:
     if FILE_DRAG_META in data:
         data = data.replace(FILE_DRAG_META,
                             FILE_DRAG_META[:-2] + _FILE_DRAG_TOKEN.encode("ascii") + b'">', 1)
-    return data
+    return _VERSIONED_TAG.sub(_version_ref, data)
+
+
+# A page's <script src> and <link rel="stylesheet" href> to a shared file name
+# its stamp (?v=): the browser then keeps that file without asking again (#247),
+# where "no-cache" cost a round trip per file, six at a time, before a chat
+# could ask for its messages (~270 ms of a 540 ms open at 60 ms RTT). A merged
+# file has a new stamp, so the next load still asks for the new one.
+_VERSIONED_TAG = re.compile(rb'(<script src="|<link rel="stylesheet" href=")/(static/[^"?]+)"')
+
+
+def _version_ref(m: re.Match) -> bytes:
+    rel = m.group(2).decode("ascii", "replace")
+    stamp = page_stamp(rel) if rel in PAGE_FILES else ""
+    return m.group(0) if not stamp else m.group(1) + b"/" + m.group(2) + b"?v=" + stamp.encode("ascii") + b'"'
 
 
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
@@ -2069,7 +2086,8 @@ def _cp_target(room_id: str) -> tuple[str, tuple]:
     hit = _CP_DIR.get(room_id)
     if hit and now - hit[0] < 60:
         return hit[1], hit[2]
-    room = chatroom.get_room(room_id, public=False)
+    # Read in place: a copy of a 10 MB chat cost a first open ~70 ms (#247).
+    room = chatroom.get_room(room_id, public=False, copy_room=False)
     folder = checkpoint_dir(room)
     owners = tuple(p.get("identity", "") for p in rotation.task_owners(room)) if folder else ()
     _CP_DIR[room_id] = (now, folder, owners)
@@ -3631,7 +3649,7 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     room_id, msg_id = (room_id or "").strip(), (msg_id or "").strip()
     if not _REF_ROOM_ID.match(room_id) or not msg_id or msg_id == "task":
         return None
-    room = chatroom.get_room(room_id)
+    room = chatroom.get_room(room_id, copy_room=False)     # read only: a chip per link (#247)
     if room is None:
         return None
     is_po = any((p.get("poRoomId") or "") == room_id for p in load_projects())
@@ -3858,9 +3876,18 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
 
 # A long PO's transcript runs to tens of megabytes, and both the chat page and
 # the points ledger read it whenever it grows: one read per change serves both.
-_TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns), turns)
+# A PO's chat spans hundreds of them (a rotated session is a transcript of its
+# own), each read by the threads index, the points ledger and the asks: they
+# are kept by the size of their words, not by count (#247: six were kept, so
+# every reader of a 198-session chat parsed it all again).
+_TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns, *provenance), turns, chars)
 _TURNS_CACHE_LOCK = threading.Lock()
-_TURNS_CACHE_MAX = 6
+# Measured on the real state (#247): ~5 MB of the hub's working set per
+# million chars kept (2.8 bytes a char traced), and every transcript the
+# chats name came to 11.7 M chars; 20 M keeps the cache near 100 MB at most.
+_TURNS_CACHE_CHARS = 20_000_000
+_TURNS_CACHE_SIZE = [0]
+_TURNSTORE_VER: list[str] = []
 _SESSION_INPUT_CONTEXT_CACHE: dict[tuple[str, str], tuple[str, str]] = {}
 _SESSION_INPUT_CONTEXT_LOCK = threading.Lock()
 _SESSION_INPUT_CONTEXT_MAX = 4_096
@@ -3936,6 +3963,7 @@ def claude_turns_classified(tpath: Path) -> list[dict]:
         return classify_turns(_claude_text_turns(tpath), room_id=room_id,
                               identity=identity, session_id=tpath.stem)
     key = str(tpath)
+    file_sig = sig
     room_id, identity = _session_input_context(tpath.stem)
     provenance_sig = input_provenance.signature(room_id)
     sig = (*sig, *provenance_sig)
@@ -3943,13 +3971,87 @@ def claude_turns_classified(tpath: Path) -> list[dict]:
         hit = _TURNS_CACHE.get(key)
         if hit and hit[0] == sig:
             return copy.deepcopy(hit[1])
-    turns = classify_turns(_claude_text_turns(tpath), room_id=room_id,
+    turns = classify_turns(_stored_text_turns(tpath, file_sig), room_id=room_id,
                            identity=identity, session_id=tpath.stem)
+    chars = sum(len(t.get("text") or "") + 200 for t in turns)
     with _TURNS_CACHE_LOCK:
-        _TURNS_CACHE.pop(key, None)
-        _TURNS_CACHE[key] = (sig, copy.deepcopy(turns))
-        while len(_TURNS_CACHE) > _TURNS_CACHE_MAX:
-            _TURNS_CACHE.pop(next(iter(_TURNS_CACHE)))
+        old = _TURNS_CACHE.pop(key, None)
+        if old:
+            _TURNS_CACHE_SIZE[0] -= old[2]
+        _TURNS_CACHE[key] = (sig, copy.deepcopy(turns), chars)
+        _TURNS_CACHE_SIZE[0] += chars
+        while _TURNS_CACHE_SIZE[0] > _TURNS_CACHE_CHARS and len(_TURNS_CACHE) > 1:
+            _TURNS_CACHE_SIZE[0] -= _TURNS_CACHE.pop(next(iter(_TURNS_CACHE)))[2]
+    return turns
+
+
+def _turnstore_db() -> Path:
+    return chatroom.ROOMS_DIR.parent / "cache" / "turns.sqlite3"
+
+
+def _parser_sources(root=None) -> list[str]:
+    """What _claude_text_turns' output is made by: its source, and that of
+    every function, pattern and hub module it reaches (the image helpers,
+    ``attachments``, ``message_refs``...), followed through the names each
+    one's code uses."""
+    import inspect
+    import types
+    here = Path(__file__).resolve().parent
+    seen: set[int] = set()
+    out: list[str] = []
+
+    def code_names(code):
+        yield from code.co_names
+        for c in code.co_consts:
+            if isinstance(c, types.CodeType):
+                yield from code_names(c)
+
+    def visit(obj, scope):
+        if id(obj) in seen:
+            return
+        seen.add(id(obj))
+        if isinstance(obj, re.Pattern):
+            out.append(f"re:{obj.pattern!r}:{obj.flags}")
+        elif isinstance(obj, types.ModuleType):
+            f = getattr(obj, "__file__", "") or ""
+            if f and Path(f).resolve().parent == here:
+                out.append(inspect.getsource(obj))
+                for v in list(vars(obj).values()):
+                    if isinstance(v, types.ModuleType):
+                        visit(v, None)
+        elif isinstance(obj, types.FunctionType):
+            out.append(inspect.getsource(obj))
+            for name in code_names(obj.__code__):
+                if name in obj.__globals__:
+                    visit(obj.__globals__[name], obj.__globals__)
+        elif isinstance(obj, (str, int, float, tuple, frozenset)) and not isinstance(obj, bool):
+            out.append(repr(obj)[:2000])
+
+    visit(root or _claude_text_turns, globals())
+    return out
+
+
+def _turnstore_version() -> str:
+    """The parser's own source and all it uses (_parser_sources): a change
+    to how a transcript is read reads every stored one afresh."""
+    if not _TURNSTORE_VER:
+        try:
+            parts = _parser_sources()
+        except (OSError, TypeError):
+            parts = [str(time.time())]     # no source: nothing stored is trusted
+        _TURNSTORE_VER.append(turnstore.version_of(*parts))
+    return _TURNSTORE_VER[0]
+
+
+def _stored_text_turns(tpath: Path, sig: tuple[int, int]) -> list[dict]:
+    """_claude_text_turns(tpath), from the turn store while the file is
+    unchanged (#247: a restarted hub read every transcript again)."""
+    ver = _turnstore_version()
+    db = _turnstore_db()
+    turns = turnstore.get(db, str(tpath), sig, ver)
+    if turns is None:
+        turns = _claude_text_turns(tpath)
+        turnstore.put(db, str(tpath), sig, ver, turns)
     return turns
 
 
@@ -3991,6 +4093,119 @@ def page_turn_ids(sid: str, raw: list[dict]) -> list[tuple[str, dict]]:
             out.append((f"{sid}:{n}", t))
             n += 1
     return out
+
+
+TAIL_MIN = 3        # balloons a tail cut by size still sends
+
+
+def turns_tail(turns: list[dict], keep: int, max_bytes: int = 0) -> tuple[list[dict], dict | None]:
+    """A one-agent chat's last ``keep`` balloons of ``turns`` (#247: the page
+    drew 120 of a transcript sent whole), from the turn the first of them
+    starts at, and the counters page_turn_ids has there (``base``: n, q, qb,
+    and ``cut``, the turns left above), so the page numbers them as it would
+    the whole. None for ``base`` when they are all sent. ``max_bytes``: fewer
+    when they would not fit it (as JSON), but at least TAIL_MIN balloons."""
+    starts = _turn_starts(turns)[0]
+    keep = len(starts) if keep <= 0 else min(keep, len(starts))
+    if max_bytes > 0:
+        # Back from the end, balloon by balloon, while the turns still fit.
+        size, at, got = 0, len(turns), 0
+        for i, *_ in reversed(starts[-keep:]):
+            size += sum(len(json.dumps(t)) + 1 for t in turns[i:at])
+            at = i
+            if got >= TAIL_MIN and size > max_bytes:
+                break
+            got += 1
+        keep = got
+    if keep >= len(starts):
+        return turns, None
+    i, n0, q0, qb0 = starts[-keep]
+    return turns[i:], {"n": n0, "q": q0, "qb": qb0, "cut": i}
+
+
+SOLO_LINK_ABOVE, SOLO_LINK_BELOW = 20, 40   # a link's window: balloons before and after its own
+
+
+def _turn_starts(turns: list[dict]) -> tuple[list[tuple], list[tuple]]:
+    """Where each balloon of ``turns`` starts, (turn index, n, q, qb) as
+    page_turn_ids counts there, and each queued line, (turn index, id
+    suffix): "q3", "qb1"."""
+    starts, queued, prev, n, q, qb = [], [], None, 0, 0, 0
+    for i, t in enumerate(turns or []):
+        if t.get("queued") == "blocks":
+            queued.append((i, f"qb{qb}"))
+            qb += 1
+            continue
+        if t.get("queued"):
+            queued.append((i, f"q{q}"))
+            q += 1
+            continue
+        same = prev is not None and t.get("role") == prev.get("role") and t.get("text") == prev.get("text")
+        prev = t
+        if not same:
+            starts.append((i, n, q, qb))
+            n += 1
+    return starts, queued
+
+
+def turns_window(turns: list[dict], around: str = "", at: float = -1, frm: int = -1,
+                 n: int = 100, to: int = -1, max_bytes: int = 0) -> dict:
+    """A bounded part of a one-agent transcript (#247 review 4): never the
+    turns between a link and the latest. ``around`` (a balloon's id suffix:
+    "12", "q3", "qb1") or ``at`` (a time, for a PO message the chat draws
+    among the turns): from SOLO_LINK_ABOVE balloons before its own to
+    SOLO_LINK_BELOW after, with ``base`` the counters at its start, as
+    turns_tail; ``early`` when ``at`` is before the first turn (the session
+    before has it). ``frm``: the ``n`` balloons from that turn on, as the
+    reader scrolls down a window. Both end at ``to``, the first turn the
+    page holds, when they reach it; ``end`` is where they stop. ``max_bytes``:
+    fewer balloons when they would not fit it (as JSON), never none."""
+    turns = turns or []
+    starts, queued = _turn_starts(turns)
+    total = len(turns)
+    stop = total if to < 0 else min(to, total)
+    size = [len(json.dumps(t)) + 1 for t in turns] if max_bytes > 0 else []
+    at_turn = lambda b: starts[b][0] if b < len(starts) else total   # where balloon b starts
+    if frm >= 0:
+        k = next((j for j, s in enumerate(starts) if s[0] >= frm), len(starts))
+        b, got = k + 1, 0
+        if size:
+            got = sum(size[frm:min(at_turn(b), stop)])
+        while b < min(k + n, len(starts)) and at_turn(b) < stop:
+            more = sum(size[at_turn(b):min(at_turn(b + 1), stop)]) if size else 0
+            if size and got + more > max_bytes:
+                break
+            got += more
+            b += 1
+        end = max(min(at_turn(b), stop), min(frm, total))
+        return {"turns": turns[frm:end], "total": total, "from": frm, "end": end}
+    target = None
+    if at >= 0:
+        times = [(i, _turn_epoch(t.get("timestamp"))) for i, t in enumerate(turns) if t.get("timestamp")]
+        times = [(i, e) for i, e in times if e]
+        if not times or at < times[0][1]:
+            return {"turns": [], "total": total, "early": True}
+        target = next((i for i, e in times if e >= at), times[-1][0])
+    elif around.isdigit():
+        target = starts[int(around)][0] if int(around) < len(starts) else None
+    elif around:
+        target = next((i for i, sfx in queued if sfx == around), None)
+    if target is None:
+        return {"turns": [], "total": total, "missing": True}
+    k = max((j for j, s in enumerate(starts) if s[0] <= target), default=0)
+    a, b = max(0, k - SOLO_LINK_ABOVE), min(len(starts), k + 1 + SOLO_LINK_BELOW)
+    # From the first turn when it starts at the first balloon (a queued line
+    # may come before it), where every counter is 0.
+    span = lambda a, b: (0 if a == 0 else starts[a][0], max(min(at_turn(b), stop), target + 1))
+    while size and (a < k or b > k + 1) and sum(size[slice(*span(a, b))]) > max_bytes:
+        if b - k - 1 > k - a:
+            b -= 1
+        else:
+            a += 1
+    i, end = span(a, b)
+    n0, q0, qb0 = starts[a][1:] if a else (0, 0, 0)
+    return {"turns": turns[i:end], "total": total, "end": end,
+            "base": {"n": n0, "q": q0, "qb": qb0, "cut": i}}
 
 
 def attachment_url(room_id: str, name: str) -> str:
@@ -4264,7 +4479,8 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
     assistant turn that follows one. A resume note typed together with the
     messages held for the resume (one input) is two turns: the note, then
     what the person sent."""
-    recorded = input_provenance.index(room_id) if room_id else {}
+    recorded = (input_provenance.index(room_id, identity=identity, session_id=session_id)
+                if room_id else {})
     modern_session = any(
         (not identity or not row.get("identity") or row.get("identity") == identity)
         and (not session_id or not row.get("sessionId") or row.get("sessionId") == session_id)
@@ -5504,7 +5720,7 @@ class _PoFacts:
         self.by_id = {p["id"]: p for p in self.projects}
         self.links = load_session_projects()
         self.po_of = {(p.get("poRoomId") or "").strip(): p for p in self.projects if (p.get("poRoomId") or "").strip()}
-        self.installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a))
+        self.installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a, wait=False))
         self._dirs: dict[str, bool] = {}
 
     def is_dir(self, cwd: str) -> bool:
@@ -5537,12 +5753,37 @@ class _PoFacts:
                 "isLive": bool(r.get("isLive")), "updatedAt": r.get("updatedAt") or 0}
 
 
-def _agent_installed(key: str) -> bool:
+_INSTALLED: dict[str, tuple[float, bool]] = {}
+_INSTALLED_LOOKING: set[str] = set()
+INSTALLED_TTL_S = 60.0
+
+
+def _look_up_installed(key: str) -> bool:
     try:
         ag = agents.get_agent(key)
-        return bool(ag is not None and ag.installed())
+        ok = bool(ag is not None and ag.installed())
     except Exception:       # noqa: BLE001 — not installed, as far as a PO goes
-        return False
+        ok = False
+    _INSTALLED[key] = (time.monotonic(), ok)
+    _INSTALLED_LOOKING.discard(key)
+    return ok
+
+
+def _agent_installed(key: str, wait: bool = True) -> bool:
+    """Whether the agent's CLI is on PATH, looked up again every minute: a
+    chat's every read asks, and a PATH search costs ~7 ms, ~2 s on a machine
+    just started (#247). ``wait=False`` (a page's read): what was found last,
+    looked up again behind it; never looked up yet, installed (the action
+    itself looks again)."""
+    hit = _INSTALLED.get(key)
+    if hit and time.monotonic() - hit[0] < INSTALLED_TTL_S:
+        return hit[1]
+    if wait:
+        return _look_up_installed(key)
+    if key not in _INSTALLED_LOOKING:
+        _INSTALLED_LOOKING.add(key)
+        threading.Thread(target=_look_up_installed, args=(key,), name=f"installed-{key}", daemon=True).start()
+    return hit[1] if hit else True
 
 
 def _session_live_now(sid: str) -> dict:
@@ -5587,10 +5828,11 @@ def _session_live_now(sid: str) -> dict:
     return out
 
 
-def make_po_facts(data: dict) -> dict:
+def make_po_facts(data: dict, wait: bool = True) -> dict:
     """The facts of the conversation a po-from-session request names, read
-    from the hub now (a task's room, a session's terminal and transcript)."""
-    installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a))
+    from the hub now (a task's room, a session's terminal and transcript).
+    ``wait=False``: a page's read (:func:`_agent_installed`)."""
+    installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a, wait))
     rid = (data.get("roomId") or "").strip()
     projects = load_projects()
     po_of = {(p.get("poRoomId") or "").strip(): p for p in projects if (p.get("poRoomId") or "").strip()}
@@ -6582,15 +6824,17 @@ def _task_index() -> list[dict]:
         if hit and hit[0] == mtime:
             out.append(hit[1])
             continue
-        room = chatroom.get_room(rid)
+        # Read in place: a first call reads every room, and a copy of each
+        # doubled a cold chat's first open (#247). The entry copies what it keeps.
+        room = chatroom.get_room(rid, copy_room=False)
         if room is None:
             continue
         rep = room.get("lastReport") if isinstance(room.get("lastReport"), dict) else {}
         entry = {"id": rid, "no": room.get("no"), "noProjectId": room.get("noProjectId") or "",
-                 "previousNos": room.get("previousNos") or [], "title": room.get("title", ""),
+                 "previousNos": list(room.get("previousNos") or []), "title": room.get("title", ""),
                  "projectId": room.get("projectId") or "", "cwd": room.get("cwd") or "",
                  "launched": room.get("launched", True), "status": room.get("status", ""),
-                 "workflow": room.get("workflow"), "workflowAt": room.get("workflowAt"),
+                 "workflow": copy.deepcopy(room.get("workflow")), "workflowAt": room.get("workflowAt"),
                  "createdAt": room.get("createdAt"),
                  "branch": ((room.get("workspace") or {}).get("branch") or ""),
                  "taskDir": room.get("taskDir") or "",
@@ -6719,13 +6963,14 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
         return None
     links = load_session_projects()
     found = []
+    ledgers = points.with_ledgers()
     for room in _task_index():
         rid = room["id"]
+        if rid not in ledgers:
+            continue
         if rid != project.get("poRoomId") and _task_project(room, links, projects) != project_id:
             continue
-        if not points.exists(rid):
-            continue
-        matches = [p for p in points.load(rid)["points"] if p["id"] == point_id]
+        matches = [p for p in points.load(rid, shared=True)["points"] if p["id"] == point_id]
         for point in matches:
             found.append((room, point))
         if len(found) > 1:
@@ -6735,7 +6980,7 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
     room, point = found[0]
     rid = room["id"]
     # Read current replies only for the matching ledger, never all transcripts.
-    point = next((p for p in points.sync(rid)["points"] if p["id"] == point_id), point)
+    point = next((p for p in points.sync(rid, shared=True)["points"] if p["id"] == point_id), point)
     if not point.get("mid"):
         return None
     out = {"id": point_id, "roomId": rid, "mid": point["mid"],
@@ -10247,6 +10492,142 @@ ROTATION_SHOWN = ("n", "at", "fromSessionId", "toSessionId", "tokens", "threshol
 _ROOM_STATUS_LOCK = threading.Lock()
 
 
+# A chat's first read (&lite=1) paints with these and takes the rest as a
+# patch on the poll it makes right after (#247: a PO chat's status was
+# 400-540 KB, most of it closed points, Needs you's lists and 200 rotations).
+LITE_THREADS = 20
+LITE_ROTATIONS = 3
+LITE_POINTS = 20
+LITE_BYTES = 96 * 1024          # the whole first answer (#247: ≤100 KB)
+LITE_MIN_MESSAGES = 3
+
+
+def lite_status(status: dict) -> dict:
+    """What a chat's first paint needs of its status: the points still
+    waiting on someone (no Needs you lists, no answered cards' asks), the
+    newest threads with unread replies, and in a threaded chat (its balloons
+    come from the channel) each agent's last rotations."""
+    out = dict(status)
+    pts = status.get("points")
+    if isinstance(pts, dict):
+        out["points"] = {**{k: v for k, v in pts.items() if k not in ("needs", "asks", "items", "threads")},
+                         "items": [i for i in pts.get("items") or [] if i.get("state") in points.LIVE],
+                         **({"threads": pts["threads"][:LITE_THREADS]} if "threads" in pts else {})}
+        live = out["points"]["items"]
+        if len(live) > LITE_POINTS:
+            # Every open one; of those planned or delivered, the newest.
+            rest = sorted((i for i in live if i.get("state") != "open"),
+                          key=lambda i: i.get("stateAt") or i.get("createdAt") or 0)[-LITE_POINTS:]
+            keep = {id(i) for i in rest}
+            out["points"]["items"] = [i for i in live if i.get("state") == "open" or id(i) in keep]
+    out.pop("reviewAllocations", None)      # the board's, not the chat page's
+    out["participants"] = [
+        {**p, **({"rotations": p["rotations"][-LITE_ROTATIONS:]}
+                 if status.get("threaded") and len(p.get("rotations") or []) > LITE_ROTATIONS else {}),
+         **({"reviews": p["reviews"][-LITE_ROTATIONS:]} if len(p.get("reviews") or []) > LITE_ROTATIONS else {})}
+        for p in status.get("participants") or []]
+    return out
+
+
+def lite_window(out: dict, n: int, budget: int) -> dict:
+    """A chat's first read: of its latest ``n`` messages, the newest that
+    fit ``budget`` bytes (at least LITE_MIN_MESSAGES), the rest above it as
+    older pages; no ``pmIndex`` (``window.pm`` false: the next poll asks for
+    it with &pm=)."""
+    every = out.get("messages") or []
+    shown, used = [], 0
+    for m in reversed(every[-n:] if n else []):
+        size = len(json.dumps(m))
+        if len(shown) >= LITE_MIN_MESSAGES and used + size > budget:
+            break
+        shown.append(m)
+        used += size
+    shown.reverse()
+    out["messages"] = shown
+    out["window"] = {"total": len(every), "before": len(every) - len(shown), "pm": False}
+    return out
+
+
+def room_pm_index(messages: list[dict], before_id: str) -> list[dict]:
+    """``pmIndex`` for the messages above ``before_id`` (the oldest the page
+    holds): what a link to an older PO message needs to name it."""
+    rest = []
+    for m in messages:
+        if m.get("id") == before_id:
+            break
+        rest.append(m)
+    else:
+        return []
+    return [_pm_summary(m) for m in rest if m.get("kind") == "pomsg" and m.get("id")]
+
+
+def _hub_row(m: dict) -> bool:
+    """A room message a one-agent chat shows among its transcript's turns
+    (session.html withHubRows): a restart notice, a PO's message, a card."""
+    return ((m.get("kind") == "notice" and m.get("noticeKind") == "restart")
+            or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list))
+
+
+def channel_hub_rows(out: dict, room: dict) -> dict:
+    """The room's hub rows of the time the channel's entries span
+    (``hubRows``, from ``hubFrom``): the page put them among the turns after
+    fetching older pages of the room until it reached that time, 200-260 KB
+    each on a PO chat (#247)."""
+    stamps = [_turn_epoch(t.get("timestamp")) for t in out.get("items") or []]
+    stamps = [x for x in stamps if x]
+    if not stamps:
+        return out
+    since = min(stamps)
+    out["hubFrom"] = since
+    out["hubRows"] = [m for m in room.get("messages") or []
+                      if _hub_row(m) and float(m.get("ts") or 0) >= since]
+    return out
+
+
+# The channel and thread views last sent, by room and the sig sent with
+# them: a poll that holds one gets what changed since (#247: a PO's channel
+# was 250 KB on every change of any of it).
+_THREAD_VIEWS: dict[tuple[str, str], dict] = {}     # oldest use first
+_THREAD_VIEWS_MAX = 48
+_THREAD_VIEWS_LOCK = threading.Lock()
+
+
+def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> dict:
+    """A channel or thread view as sent: its ``sig`` names this very view
+    (the index's and a digest of the rest). The view the page holds (``had``)
+    again: ``{same}``; one kept: a delta, ``{delta, ids, rows, set, del}``
+    (the entries in order, those new or changed, the other keys changed or
+    gone); else the view whole. ``keep``: kept for the next poll (not a page
+    above the one held)."""
+    progress_now = out.pop("progress", None)
+    rows = {}
+    for t in out.get("items") or []:
+        rows[str(t.get("mid"))] = json.dumps(t, sort_keys=True)
+    keys = {k: json.dumps(v, sort_keys=True) for k, v in out.items() if k not in ("items", "sig")}
+    digest = hashlib.sha1("\0".join([*rows.values(), *(k + v for k, v in sorted(keys.items()))])
+                          .encode("utf-8")).hexdigest()[:12]
+    sig = f"{out['sig']}:{digest}"
+    extra = {"progress": progress_now} if progress_now else {}
+    if had == sig:
+        return {"sig": sig, "same": True, **extra}
+    with _THREAD_VIEWS_LOCK:
+        base = _THREAD_VIEWS.pop((rid, had), None) if had else None
+        if base is not None:
+            _THREAD_VIEWS[(rid, had)] = base
+        if keep:
+            _THREAD_VIEWS.pop((rid, sig), None)
+            _THREAD_VIEWS[(rid, sig)] = {"rows": rows, "keys": keys}
+            while len(_THREAD_VIEWS) > _THREAD_VIEWS_MAX:
+                del _THREAD_VIEWS[next(iter(_THREAD_VIEWS))]
+    if base is None:
+        return {**out, "sig": sig, **extra}
+    return {"sig": sig, "delta": True, "ids": list(rows),
+            "rows": {str(t.get("mid")): t for t in out.get("items") or []
+                     if base["rows"].get(str(t.get("mid"))) != rows[str(t.get("mid"))]},
+            "set": {k: out[k] for k, v in keys.items() if base["keys"].get(k) != v},
+            "del": [k for k in base["keys"] if k not in keys], **extra}
+
+
 def keep_room_status(rid: str, sig: str, text: str) -> None:
     """Keep the status sent as ``sig`` (its JSON text, as the sig was made)."""
     with _ROOM_STATUS_LOCK:
@@ -10306,17 +10687,36 @@ def status_patch(old: dict, new: dict) -> dict:
     return out
 
 
-def room_older_page(messages: list, before: str, n: int, upto: str, revision: str) -> dict:
+ROOM_LINK_BELOW = 40        # a link's window in a chat: messages after its balloon
+
+
+def room_older_page(messages: list, before: str, n: int, upto: str, revision: str,
+                    after: str = "") -> dict:
     """The ``n`` messages before ``before`` (or from ``upto``, with a few
-    before it for context), oldest first, and how many are older still."""
+    before it for context), oldest first, and how many are older still.
+    ``upto`` far above ``before``: a window around it, its balloon with 5
+    before it and ROOM_LINK_BELOW after, and ``gap``, the messages between
+    it and ``before`` not sent (#247 review 4). ``after``: the ``n`` after
+    that one, as the reader scrolls down such a window, and the gap left."""
     idx = next((i for i, m in enumerate(messages) if m.get("id") == before), None)
     if idx is None:
         return {"messages": [], "before": 0, "missing": True, "revision": revision}
-    start = max(0, idx - (n or 100))
+    n = n or 100
+    if after:
+        a = next((i for i, m in enumerate(messages[:idx]) if m.get("id") == after), None)
+        if a is None:
+            return {"messages": [], "gap": 0, "missing": True, "revision": revision}
+        end = min(idx, a + 1 + n)
+        return {"messages": messages[a + 1:end], "gap": idx - end, "revision": revision}
+    start = max(0, idx - n)
     if upto:
         j = next((i for i, m in enumerate(messages[:idx]) if m.get("id") == upto), None)
         if j is not None:
             start = min(start, max(0, j - 5))
+            end = j + 1 + ROOM_LINK_BELOW
+            if idx - end > n:
+                return {"messages": messages[start:end], "before": start, "gap": idx - end,
+                        "revision": revision}
     return {"messages": messages[start:idx], "before": start, "revision": revision}
 
 
@@ -11538,6 +11938,58 @@ def _warm_first_lists() -> None:
         print(f"[startup] first task list failed: {e!r}", flush=True)
     finally:
         startup.ready()
+
+
+# The chats read at start, so the first open after a restart is a warm one
+# (#247): every project's PO chat, then the chats changed most lately.
+WARM_ROOMS = 30
+WARM_ROOM_PAUSE_S = 0.05        # between rooms: the pages' own requests come first
+
+
+def warm_room(rid: str) -> None:
+    """What opening a chat reads, read now: its thread build (a PO chat),
+    its points, cards and liveness. The answers are not kept; the caches
+    under them are."""
+    room = chatroom.get_room(rid)
+    if room is None:
+        return
+    if threads.is_threaded(rid):
+        with threads._LOCK:
+            busy = rid in threads._BUILDING
+            if not busy:
+                threads._BUILDING.add(rid)
+        if not busy:
+            try:
+                threads.build(rid, room, show_progress=False)
+            finally:
+                with threads._LOCK:
+                    threads._BUILDING.discard(rid)
+    _annotate_room_liveness(room, with_points=True)
+
+
+def warm_rooms(limit: int = WARM_ROOMS) -> list[str]:
+    """Warm the chats likeliest to be opened first; the ones done, in order."""
+    po = threads._po_rooms()
+    rows = sorted(chatroom.room_index(), key=lambda r: (r["id"] not in po, -float(r.get("updatedAt") or 0)))
+    done = []
+    for r in rows[:max(limit, len(po))]:
+        try:
+            yield_to_pages(most_s=2.0, quiet_s=0.3)
+            warm_room(r["id"])
+            done.append(r["id"])
+        except Exception as e:      # noqa: BLE001 — the chat reads it itself when opened
+            print(f"[warm] {r['id']}: not read ahead: {e!r}", flush=True)
+        time.sleep(WARM_ROOM_PAUSE_S)
+    return done
+
+
+def _warm_rooms_at_start() -> None:
+    """Once the first task list is in: the chats, read ahead."""
+    while not startup.is_ready():
+        time.sleep(0.5)
+    t0 = time.time()
+    done = warm_rooms()
+    _restart_log(f"chats read ahead: {len(done)} in {time.time() - t0:.1f}s")
 
 
 def _warm_saver() -> None:
@@ -13975,6 +14427,48 @@ def install_agent_skills() -> list[str]:
     return written
 
 
+# The page requests being answered: when each came in, by its thread; and
+# when the last one was answered (#247).
+_ANSWERING: dict[int, float] = {}
+_ANSWERED = [0.0]
+PAGE_ANSWER_S = 3.0         # a request answering longer is a stream: not waited for
+_HOLDING = threading.local()    # n: the locks a page may wait on this thread holds
+
+
+@contextlib.contextmanager
+def holding(lock):
+    """``with holding(lock):`` takes a lock a page's request may wait on, and
+    nothing under it yields to pages: the page waiting on the lock counts as
+    being answered, so the yield would wait up to its ``most_s`` for a request
+    that is waiting on it (#247, every 50 messages of a chat's asks)."""
+    with lock:
+        _HOLDING.n = getattr(_HOLDING, "n", 0) + 1
+        try:
+            yield
+        finally:
+            _HOLDING.n -= 1
+
+
+def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
+    """A read the hub does behind the pages (a chat read ahead, a thread
+    build) stands aside while a page's request is being answered: both need
+    the one interpreter, and a one-agent chat opened while the hub just
+    started read its chats ahead took ~2.6 s for ~0.17 s of work (#247).
+    ``quiet_s``: and until no page asked for that long (a page opening asks
+    several things in a row). Never waits on a request thread, nor for more
+    than ``most_s``."""
+    me = threading.get_ident()
+    if me in _ANSWERING or getattr(_HOLDING, "n", 0):
+        return
+    end = time.monotonic() + most_s
+    while True:
+        now = time.monotonic()
+        if now >= end or (not any(now - t < PAGE_ANSWER_S for t in list(_ANSWERING.values()))
+                          and now - _ANSWERED[0] >= quiet_s):
+            return
+        time.sleep(0.005)
+
+
 class Handler(BaseHTTPRequestHandler):
     # Kept-alive connections and revalidated answers (#231). Every answer
     # says where it ends (Content-Length), or closes the connection after it.
@@ -14023,6 +14517,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         finally:
             self._waiting = False
+            if _ANSWERING.pop(threading.get_ident(), None) is not None:
+                _ANSWERED[0] = time.monotonic()
             body = self.rfile
             if isinstance(body, _RequestBody):
                 self.rfile = body.raw
@@ -14037,6 +14533,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def parse_request(self):
         self._waiting = False
+        _ANSWERING[threading.get_ident()] = time.monotonic()
         try:
             self.connection.settimeout(None)
         except OSError:
@@ -14542,7 +15039,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path: Path, content_type: str, extra_headers=()):
+    def _send_file(self, path: Path, content_type: str, extra_headers=(), version: str = ""):
         try:
             data = path.read_bytes()
         except FileNotFoundError:
@@ -14561,10 +15058,12 @@ class Handler(BaseHTTPRequestHandler):
         # Only the hub's own files: a workspace file is sent as before.
         own = bool(page) or _is_own_static(path)
         etag = weak_etag(data) if own else ""
+        # Asked by its stamp (?v=, see stamp_page): these bytes never change.
+        cache = "max-age=31536000, immutable" if stamp and version == stamp else "no-cache"
         if etag and etag_matches(self.headers.get("If-None-Match"), etag):
             self.send_response(304)
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Cache-Control", cache)
             self.send_header("Vary", "Accept-Encoding")
             if stamp:
                 self.send_header("X-Ensemble-Stamp", stamp)
@@ -14578,7 +15077,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache" if own else "no-store")
+        self.send_header("Cache-Control", cache if own else "no-store")
         if etag:
             self.send_header("ETag", etag)
         if gz:
@@ -14724,7 +15223,7 @@ class Handler(BaseHTTPRequestHandler):
                     ".js": "text/javascript; charset=utf-8",
                     ".css": "text/css; charset=utf-8",
                     ".html": "text/html; charset=utf-8"}.get(ext, "application/octet-stream")
-            self._send_file(f, mime)
+            self._send_file(f, mime, version=(parse_qs(u.query).get("v") or [""])[0])
             return
         if p == "/api/live":
             self._send_json(200, load_live())
@@ -14756,6 +15255,39 @@ class Handler(BaseHTTPRequestHandler):
             sid = p[len("/api/session/"):]
             qs = parse_qs(u.query)
             full = qs.get("full", ["0"])[0] in ("1", "true", "yes")
+            try:
+                tail = int(qs.get("tail", ["0"])[0] or 0)
+            except ValueError:
+                tail = 0
+
+            def num(k: str) -> int:
+                try:
+                    return int(qs.get(k, [""])[0] or -1)
+                except ValueError:
+                    return -1
+            after, upto, max_bytes = num("after"), num("upto"), max(0, num("bytes"))
+            around, frm, to = qs.get("around", [""])[0], num("from"), num("to")
+            try:
+                at = float(qs.get("at", [""])[0] or -1)
+            except ValueError:
+                at = -1
+
+            def full_turns(turns: list[dict]) -> dict:
+                # &around= / &at=: a link's window; &from=: the page below it.
+                if around or at >= 0 or frm >= 0:
+                    return turns_window(turns, around, at, frm, num("n") if num("n") > 0 else 100, to,
+                                        max_bytes)
+                # &after=: the turns from there on (a poll of the page that
+                # holds those above); &upto=: the page above the turns held.
+                if 0 <= after <= len(turns):
+                    return {"turns": turns[after:], "total": len(turns), "after": after}
+                if 0 <= upto <= len(turns):
+                    cut, base = turns_tail(turns[:upto], tail or 200, max_bytes)
+                    return {"turns": cut, "total": len(turns), "upto": upto,
+                            "base": base or {"n": 0, "q": 0, "qb": 0, "cut": 0}}
+                # &tail=: the last balloons and where they start (turns_tail).
+                cut, base = turns_tail(turns, tail, max_bytes) if tail > 0 else (turns, None)
+                return {"turns": cut, **({"total": len(turns), "base": base} if base else {})}
             tpath = find_transcript(sid)
             want_stat = qs.get("stat", ["0"])[0] in ("1", "true", "yes")
             if not tpath:
@@ -14773,15 +15305,15 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 turns = cx.read_turns(sid)
                 if not full:
-                    turns = [{"timestamp": t["timestamp"], "text": t["text"]}
-                             for t in turns if t["role"] == "user"]
+                    body = {"turns": [{"timestamp": t["timestamp"], "text": t["text"]}
+                                      for t in turns if t["role"] == "user"]}
                 else:
                     room_id, identity = _session_input_context(sid)
-                    turns = classify_turns(turns, room_id=room_id, identity=identity,
-                                           session_id=sid)
+                    body = full_turns(classify_turns(turns, room_id=room_id, identity=identity,
+                                                     session_id=sid))
                 self._send_json(200, {"sessionId": sid,
                                       "cwd": cx.cwd_for_session(sid),
-                                      "turns": turns,
+                                      **body,
                                       "label": load_labels().get(sid, "")})
                 return
             # Cheap change-signal: the transcript's size+mtime. Clients poll this
@@ -14796,14 +15328,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if full:
                 # User + assistant text turns, with timestamps and roles.
-                turns = claude_turns_classified(tpath)
+                body = full_turns(claude_turns_classified(tpath))
             else:
-                turns = [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]
+                body = {"turns": [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]}
             labels = load_labels()
             self._send_json(200, {
                 "sessionId": sid,
                 "cwd": cwd_of(tpath),
-                "turns": turns,
+                **body,
                 "label": labels.get(sid, ""),
             })
             return
@@ -15049,9 +15581,11 @@ class Handler(BaseHTTPRequestHandler):
                 # &before=<mid>&n=: the page of messages before the oldest one the
                 # chat holds, as it scrolls up (#228); &upto=<mid>: down to that one.
                 self._send_json(200, room_older_page(room.get("messages") or [], older, win,
-                                                     q.get("upto", [""])[0], revision))
+                                                     q.get("upto", [""])[0], revision,
+                                                     q.get("after", [""])[0]))
                 return
-            out = _annotate_room_liveness(room, with_points=True)
+            lite = q.get("lite", [""])[0] == "1" and not q.get("cursor", [""])[0]
+            out = _annotate_room_liveness(room, with_points=True, first=lite)
             # The composer needs turn state, not recent terminal output: a
             # quiet long-running shell is still interruptible.
             statuses = attention._claude_status_by_session()
@@ -15061,8 +15595,10 @@ class Handler(BaseHTTPRequestHandler):
             out["reportsToRoom"] = room_po_id(room)
             out["checkpoints"] = checkpoint_list(room.get("id", rid))
             try:
-                # The pop-out's "Make PO of a new project…", as the list row has it.
-                out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
+                # The pop-out's "Make PO of a new project…", as the list row has
+                # it; not on a first read (the poll after it brings it).
+                if not lite:
+                    out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid}, wait=False)))
             except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
                 print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
             # A solo chat's page needs of each rotation which sessions it
@@ -15081,6 +15617,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 revision, ids = change
                 every = out.pop("messages", [])
+                pm = q.get("pm", [""])[0]      # a first read's pmIndex, sent after it (#247)
+                pm_extra = {"pmIndex": room_pm_index(every, pm)} if pm else {}
                 messages = [m for m in every if m.get("id") in ids]
                 had = q.get("statusSig", [""])[0]
                 same_status = had == status_sig
@@ -15091,11 +15629,20 @@ class Handler(BaseHTTPRequestHandler):
                                       "statusSig": status_sig, "statusSame": same_status,
                                       **({} if same_status else
                                          {"patch": patch} if patch is not None else {"room": out}),
-                                      **({"total": len(every)} if win else {}),
+                                      **({"total": len(every)} if win else {}), **pm_extra,
                                       "messages": messages})
                 return
+            if lite:
+                # The first read: the rest of the status comes as a patch on
+                # the page's next poll, which it makes once this is drawn.
+                status = lite_status(status)
+                status_text = json.dumps(status, sort_keys=True)
+                status_sig = hashlib.sha1(status_text.encode("utf-8")).hexdigest()[:20]
+                out = {**status, "messages": out.get("messages") or [], "lite": True}
             keep_room_status(rid, status_sig, status_text)
-            if win:
+            if lite:
+                lite_window(out, win or ROOM_WINDOW_MAX, LITE_BYTES - len(status_text) - 512)
+            elif win:
                 room_window(out, win)
             out["revision"] = revision
             out["statusSig"] = status_sig
@@ -15113,7 +15660,7 @@ class Handler(BaseHTTPRequestHandler):
             pid = (q.get("project", [""])[0] or "").strip()
             ctx_pid = ""
             if ctx_room:
-                rm = chatroom.get_room(ctx_room)
+                rm = chatroom.get_room(ctx_room, copy_room=False)
                 ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
             rid, why = resolve_task_ref(q.get("ref", [""])[0], pid or ctx_pid)
             info = task_ref_info(rid) if rid else None
@@ -15169,21 +15716,31 @@ class Handler(BaseHTTPRequestHandler):
             # last n entries, each thread's parent with its reply line;
             # &upto=<balloon> as many more as reach it when it is there);
             # ?id=&t=<thread> or &mid=<balloon> one thread with all its
-            # messages. &sig= the page's: the same chat answers {same: true}.
+            # messages. The answer's n: how many entries were sent (more for
+            # an &upto= that reaches its balloon; fewer for a chat not read
+            # yet, whose first page stops at its bytes).
+            # &sig= the page's: the same chat answers {same: true}.
             # {pending: true} while the chat is first read.
             q = parse_qs(u.query)
             rid = (q.get("id", [""])[0] or "").strip()
-            room = chatroom.get_room(rid, public=False) if rid else None
+            # Read in place: threads only read the room, and a PO room is
+            # 13 MB to copy on every poll of the channel (#247).
+            room = chatroom.get_room(rid, public=False, copy_room=False) if rid else None
             if room is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
             if not threads.is_threaded(rid):
                 self._send_json(409, {"error": "not_threaded"})
                 return
+            arg = lambda k: (q.get(k, [""])[0] or "").strip()      # noqa: E731
+            before = arg("before")
+            try:
+                n = int(arg("n") or 0)
+            except ValueError:
+                n = 0
             try:
                 if p == "/api/room/channel":
-                    n = int(q.get("n", [""])[0] or threads.CHANNEL_MAX)
-                    topic_id = q.get("topic", [""])[0].strip()
+                    topic_id = arg("topic")
                     topic_tids = None
                     if topic_id:
                         project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
@@ -15193,17 +15750,16 @@ class Handler(BaseHTTPRequestHandler):
                             return
                         chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
                         topic_tids = set(chosen["threads"]) if chosen else set()
-                        n = threads.CHANNEL_LIMIT
-                    idx = threads.ready(rid, room)
-                    if idx is not None and not q.get("upto", [""])[0].strip():
-                        current = threads._sig_text(idx) + (":topic:" + ",".join(sorted(topic_tids))
-                                                            if topic_tids is not None else "")
-                        if q.get("sig", [""])[0] == current:
-                            self._send_json(200, {"sig": current, "same": True})
-                            return
-                    out = threads.channel_view(rid, room, n, q.get("upto", [""])[0].strip(), topic_tids)
+                    out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
+                                               before, arg("from"), topic_tids, arg("after"), arg("to"))
+                    channel_hub_rows(out, room)
+                    if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):
+                        # The first read: the newest threads with replies; the
+                        # rest on the next poll, as a delta of this one.
+                        out["unreadThreads"] = out["unreadThreads"][:LITE_THREADS]
                 else:
-                    out = threads.thread_view(rid, room, q.get("t", [""])[0].strip(), q.get("mid", [""])[0].strip())
+                    out = threads.thread_view(rid, room, arg("t"), arg("mid"), n, before,
+                                              arg("from"), arg("upto"), arg("after"), arg("to"))
                     if out.get("thread"):
                         project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
                         if project:
@@ -15216,9 +15772,8 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_read"})
                 return
-            if out.get("sig") and out["sig"] == q.get("sig", [""])[0]:
-                out = {"sig": out["sig"], "same": True,
-                       **({"progress": out["progress"]} if out.get("progress") else {})}
+            if out.get("sig") and not out.get("error"):
+                out = thread_view_answer(rid, out, arg("sig"), keep=not (before or arg("after")))
             self._send_json(404 if out.get("error") else 200, out)
             return
         if p == "/api/attention":
@@ -19617,6 +20172,7 @@ def main():
     startup.booted()
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
+    threading.Thread(target=_warm_rooms_at_start, name="warm-rooms", daemon=True).start()
 
     # Projects backup: the app owns the projects-root repo. Init it now
     # (idempotent; remote only if configured) and start the scheduler, which

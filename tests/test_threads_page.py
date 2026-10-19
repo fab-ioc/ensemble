@@ -177,6 +177,11 @@ async function main() {
       await sleep(400);
       o.reloaded = await evalIn(VIEW);
       o.reloadedThread = await evalIn(FVIEW);
+      // A PO chat seen before: its channel is asked beside the room's first read (#247).
+      o.prefetch = await evalIn(`(() => { const e = performance.getEntriesByType('resource');
+        const room = e.find(x => x.name.includes('/api/room?id=') && x.name.includes('&lite=1')), chan = e.filter(x => x.name.includes('/api/room/channel?'));
+        return { known: localStorage.getItem("ens-threaded:" + ROOM), room: !!room, chans: chan.filter(x => !x.name.includes("&sig=")).length, urls: chan.map(x => x.name.split("channel?")[1]),
+          before: !!room && !!chan.length && chan[0].startTime < room.responseEnd }; })()`);
       // A reply in it, also sent to the chat.
       const n = o.reloadedThread.mids.length;
       await evalIn(fe('document.getElementById("input").value = "A bit wider still, please."; document.getElementById("input").dispatchEvent(new Event("input")); document.getElementById("thr-also").checked = true; document.getElementById("send").click(); 0'));
@@ -304,7 +309,7 @@ async function main() {
     let work = null;
     for (let i = 0; i < 200; i++) {
       work = await workEval(`(() => { const f=document.getElementById('ts-frame');
-        if (!f || !f.contentWindow || !f.contentWindow.eval('THREAD_MODE')) return null;
+        try { if (!f || !f.contentWindow || !f.contentWindow.eval('THREAD_MODE')) return null; } catch (e) { return null; }   // the frame still loading
         const d=f.contentDocument, box=d.getElementById('msgs'), el=[...d.querySelectorAll('.msg[data-mid]')].find(x=>x.dataset.mid===${JSON.stringify(A.workMid)});
         const a=el?.getBoundingClientRect(), b=box?.getBoundingClientRect();
         return {thread:f.contentWindow.eval('THREAD'), open:f.contentWindow.eval('WORK_LOG_OPEN'),
@@ -316,6 +321,36 @@ async function main() {
     }
     out.workLink = work;
     await c.send('Target.closeTarget', { targetId: workTarget });
+    // Review 4, finding 2: a link far from the newest gets a window around
+    // its balloon; scrolled down, the entries after it come a page at a
+    // time; Latest goes to the newest.
+    const { targetId: longTarget } = await c.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId: longSession } = await c.send('Target.attachToTarget', { targetId: longTarget, flatten: true });
+    await c.send('Page.enable', {}, longSession);
+    const longEval = async expr => { const r = await c.send('Runtime.evaluate',
+      { expression: expr, awaitPromise: true, returnByValue: true }, longSession);
+      if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
+    const longUntil = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await longEval(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
+    const LONG = `(() => { const m = [...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid);
+      return { n: m.length, first: m[0], last: m[m.length - 1], has: m.includes(${JSON.stringify(A.longMid)}), after: THR_AFTER,
+        newer: !!document.querySelector('#msgs .thr-newer-btn'), latest: !document.getElementById('to-latest').hidden }; })()`;
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.longRoom + '&msg=' + encodeURIComponent(A.longMid) }, longSession);
+    await longUntil(`!!document.querySelector('#msgs .msg[data-mid="${A.longMid}"]')`, 30000);
+    await sleep(800);
+    const long = { linked: await longEval(LONG) };
+    long.asked = await longEval(`performance.getEntriesByType('resource').filter(x => x.name.includes('/api/room/channel?') && x.name.includes('upto=')).map(x => x.transferSize)`);
+    await longEval(`(b => { b.scrollTop = b.scrollHeight; b.dispatchEvent(new Event('scroll')); return 0; })(document.getElementById('msgs'))`);
+    await longUntil(`THR_AFTER < ${long.linked.after}`, 15000);
+    await sleep(400);
+    long.down = await longEval(LONG);
+    await sleep(2500);                  // a poll of the window keeps to it
+    long.polled = await longEval(LONG);
+    await longEval(`document.getElementById('to-latest').click(); 0`);
+    await longUntil(`!THR_AFTER && [...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid).pop() === ${JSON.stringify(A.longLast)}`, 15000);
+    await sleep(600);
+    long.latest = await longEval(LONG);
+    out.longLink = long;
+    await c.send('Target.closeTarget', { targetId: longTarget });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -406,6 +441,18 @@ class ThreadsPage(unittest.TestCase):
         cls.work_mid = f"{work_sid}:{len(work_lines) - 2}"
         work_idx = threads.build(work_rid, show_progress=False)
         assert cls.work_mid in work_idx["threads"]["P3"]["members"]
+        # A long chat: 400 plain entries after the talk (review 4, finding 2).
+        cls.long_room = cls._po_room("Long room", "longlink")
+        long_sid, long_lines = cls.sids[cls.long_room], cls.lines[cls.long_room]
+        long_t0 = time.time() - 3000
+        n0 = len(long_lines)
+        long_lines.extend(_turn(long_sid, "user" if i % 2 else "assistant", f"Long entry {i}.", long_t0 + i)
+                          for i in range(400))
+        cls._write(long_sid, long_lines)
+        points.sync(cls.long_room, force=True)
+        cls.long_mid = f"{long_sid}:{n0 + 31}"      # a person's: in the channel (an answer is in its thread)
+        cls.long_last = f"{long_sid}:{len(long_lines) - 1}"
+        threads.build(cls.long_room, show_progress=False)
         original_balloons = threads.balloons
         slowed_rooms = set()
         def slow_balloons(*args, **kwargs):
@@ -486,6 +533,7 @@ class ThreadsPage(unittest.TestCase):
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "rooms": cls.rooms, "coldRoom": cls.cold_link_room,
                 "workRoom": cls.work_link_room, "workMid": cls.work_mid,
+                "longRoom": cls.long_room, "longMid": cls.long_mid, "longLast": cls.long_last,
                 "sizes": SIZES, "shots": cls.shots}
         script = base / "threads_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
@@ -595,6 +643,14 @@ class ThreadsPage(unittest.TestCase):
                 self.assertFalse(o["closed"]["side"]["open"], "closed, a reload keeps it closed")
                 self.assertIsNone(o["closed"]["side"]["stored"])
 
+    def test_a_po_chat_seen_before_asks_for_its_channel_beside_the_room(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                self.assertEqual(o["prefetch"]["known"], "1")
+                self.assertTrue(o["prefetch"]["room"], o["prefetch"])
+                self.assertEqual(o["prefetch"]["chans"], 1, o["prefetch"])  # first reads; later ones are delta polls (&sig=)
+                self.assertTrue(o["prefetch"]["before"], "asked before the room's answer was in")
+
     def test_a_reply_lands_in_its_thread_and_also_in_the_chat_when_ticked(self):
         for w, o in self._each():
             with self.subTest(width=w):
@@ -643,6 +699,20 @@ class ThreadsPage(unittest.TestCase):
             "thread": "P3", "open": True, "expanded": "true",
             "visible": True, "landed": True, "side": True,
         })
+
+    def test_a_link_far_back_gets_a_window_around_it_and_latest_goes_to_the_newest(self):
+        got = self.got["longLink"]
+        linked, down, polled, latest = got["linked"], got["down"], got["polled"], got["latest"]
+        self.assertTrue(linked["has"])
+        self.assertLess(linked["n"], 100, "a window, not all that came after it")
+        self.assertGreater(linked["after"], 100)
+        self.assertTrue(linked["newer"] and linked["latest"], linked)
+        self.assertLess(max(got["asked"] or [0]), 100_000)
+        self.assertGreater(down["n"], linked["n"])
+        self.assertEqual(down["after"], linked["after"] - (down["n"] - linked["n"]))
+        self.assertEqual((polled["n"], polled["after"]), (down["n"], down["after"]))
+        self.assertEqual((latest["after"], latest["newer"], latest["has"]), (0, False, False))
+        self.assertLess(latest["n"], 100)
 
     def test_a_thread_in_a_window_of_its_own(self):
         for w, o in self._each():

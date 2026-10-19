@@ -4711,6 +4711,10 @@ function renderBubbles(items, opt = {}) {
   });
   // A channel shows its latest entries: the way to those before.
   if (thr && !THREAD_MODE && THR_BEFORE && !threadList) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
+  // A link's window: the way to those after it.
+  if (!thr && SOLO_WIN && SOLO_MODE) rows.push(`<div class="fold-note thr-more" data-key="solo-newer:${SOLO_WIN.segs.map(s => s.end).join(',')}">Later messages in this chat. <button type="button" class="solo-newer-btn">Show more</button></div>`);
+  if (!thr && ROOM_WIN && !SOLO_MODE) rows.push(`<div class="fold-note thr-more" data-key="room-newer:${ROOM_WIN.gap}">${ROOM_WIN.gap} later message${ROOM_WIN.gap === 1 ? '' : 's'} in this chat. <button type="button" class="room-newer-btn">Show more</button></div>`);
+  if (thr && THR_AFTER && !threadList) rows.push(`<div class="fold-note thr-more" data-key="thr-newer:${THR_AFTER}">${THR_AFTER} later entr${THR_AFTER === 1 ? 'y' : 'ies'} in this ${THREAD_MODE ? 'thread' : 'chat'}. <button type="button" class="thr-newer-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
@@ -5111,7 +5115,7 @@ function patchChildren(box, rows) {
 function showLatest() {
   const box = $('#msgs'), btn = $('#to-latest');
   if (!box || !btn) return;
-  const away = !!box.clientHeight && !STICK;
+  const away = !!box.clientHeight && (!STICK || !!(THREADED && THR_AFTER) || !!ROOM_WIN || !!(SOLO_MODE && SOLO_WIN));
   btn.hidden = !away;
   const { label, tip } = latestLabel(NEW_N, DEC_N);
   setText(btn, label);
@@ -5120,6 +5124,17 @@ function showLatest() {
 function toLatest() {
   const box = $('#msgs');
   STICK = true;
+  if (ROOM_WIN) { ROOM_WIN = null; if (ROOM_OBJ) renderMsgs(ROOM_OBJ); }
+  if (SOLO_WIN) { SOLO_WIN = null; if (SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
+  if (THREADED && THR_AFTER) {
+    // A link's window: the newest entries instead (its pages start again).
+    GOTO = ''; GOTO_PART = '';
+    thrRestart();
+    NEW_N = 0; DEC_N = 0;
+    showLatest();
+    renderThreaded(true);
+    return;
+  }
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   box.scrollTop = box.scrollHeight;   // also when a selection held the render
   SEEN = new Set([...box.children].map(k => k.dataset.seen || k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
@@ -5166,7 +5181,7 @@ function openGroupOf(box, mid) {
   }
 }
 function renderMsgs(room) {
-  CHAT_DRAWN = true; renderBubbles(room.messages);
+  CHAT_DRAWN = true; renderBubbles(ROOM_WIN ? ROOM_WIN.messages : room.messages);
   // A window that does not fill the chat (most of a PO's rows are hub
   // traffic it folds) gets the page before at once: there is no scroll to ask.
   const box = $('#msgs');
@@ -5182,10 +5197,15 @@ function renderMsgs(room) {
 // rest, the hub sends as a summary: window.total, pmIndex.
 const ROOM_N = 50;
 let OLDER_BUSY = null;
-function roomHasOlder() { return !!(ROOM_OBJ && ROOM_OBJ.window && ROOM_OBJ.window.before > 0); }
+// A link far above the messages held gets a window around its balloon
+// (review 4): ROOM_WIN {messages, before, gap} is drawn instead, `gap` the
+// messages between it and those held, loaded as the reader scrolls down
+// (&after=) until the two meet; Latest leaves it.
+let ROOM_WIN = null, ROOM_DOWN = null;
+function roomHasOlder() { const w = ROOM_WIN || (ROOM_OBJ && ROOM_OBJ.window); return !!(w && w.before > 0); }
 function loadOlder(upto = '') {
   if (OLDER_BUSY) return OLDER_BUSY;
-  const shown = ROOM_OBJ, first = shown && (shown.messages || [])[0];
+  const shown = ROOM_WIN || ROOM_OBJ, first = shown && (shown.messages || [])[0];
   if (!roomHasOlder() || !first) return Promise.resolve(false);
   OLDER_BUSY = (async () => {
     try {
@@ -5197,8 +5217,17 @@ function loadOlder(upto = '') {
         rooms.messages = d.messages.concat(rooms.messages);
         rooms.window = {...(rooms.window || {}), before: d.before};
       };
-      add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
-      if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      const win = ROOM_WIN;
+      if (win) {
+        if ((win.messages[0] || {}).id !== first.id) return false;
+        win.messages = d.messages.concat(win.messages);
+        win.before = d.before;
+      } else if (d.gap > 0) {
+        ROOM_WIN = { messages: d.messages, before: d.before, gap: d.gap };
+      } else {
+        add(ROOM_OBJ);   // a poll may have drawn a newer copy meanwhile: each copy held gets them
+        if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) add(ROOM_LAST.room);
+      }
       // The place is kept by the balloon read at the top: a page of older ones may
       // fold the old first row into a group, so failing that, by the height added.
       const box = $('#msgs'), place = readingPlace(box), h0 = box.scrollHeight, t0 = box.scrollTop;
@@ -5220,6 +5249,43 @@ function loadOlder(upto = '') {
     finally { OLDER_BUSY = null; }
   })();
   return OLDER_BUSY;
+}
+// The page below a link's window, as the reader nears its end: drawn under
+// what is shown; once it meets the messages held, the two are one again.
+function roomLoadDown() {
+  if (ROOM_DOWN || !ROOM_WIN || !ROOM_OBJ) return ROOM_DOWN || Promise.resolve(false);
+  const win = ROOM_WIN, last = win.messages[win.messages.length - 1], head = (ROOM_OBJ.messages || [])[0];
+  if (!last || !head) return Promise.resolve(false);
+  ROOM_DOWN = (async () => {
+    try {
+      const d = await fetch('/api/room?id=' + encodeURIComponent(ROOM) + '&n=100&before=' + encodeURIComponent(head.id)
+        + '&after=' + encodeURIComponent(last.id)).then(r => r.json());
+      if (ROOM_WIN !== win || !d || !Array.isArray(d.messages)) return false;
+      if (d.missing) ROOM_WIN = null;     // its place is gone: the latest instead
+      else {
+        win.messages = win.messages.concat(d.messages);
+        win.gap = d.gap || 0;
+        if (!win.gap) {
+          const join = (rooms, i) => {
+            if (!rooms || !rooms.messages || (rooms.messages[0] || {}).id !== head.id) return;
+            rooms.messages = (i ? structuredClone(win.messages) : win.messages).concat(rooms.messages);
+            rooms.window = {...(rooms.window || {}), before: win.before};
+          };
+          join(ROOM_OBJ, 0);
+          if (ROOM_LAST && ROOM_LAST.room && ROOM_LAST.room !== ROOM_OBJ) join(ROOM_LAST.room, 1);
+          ROOM_WIN = null;
+        }
+      }
+      const box = $('#msgs'), t0 = box.scrollTop;
+      STICK = false;
+      renderMsgs(ROOM_OBJ);
+      if (!DRAW_HELD) box.scrollTop = t0;
+      showLatest();
+      return true;
+    } catch (e) { return false; }
+    finally { ROOM_DOWN = null; }
+  })();
+  return ROOM_DOWN;
 }
 // A new copy of the room (a full fetch after a restart, or a poll that crossed
 // a loadOlder) keeps the pages the reader loaded above its window.
@@ -5314,6 +5380,8 @@ function gotoMsg(mid, part) {
   GOTO_AT = Date.now();
   if (SOLO_WANT && SOLO_WANT.failed) SOLO_WANT = null;   // a new try loads it again
   showGotoNote('');
+  // A balloon outside the link's window drawn: from the messages held again.
+  if (ROOM_WIN && !ROOM_WIN.messages.some(m => m.id === GOTO)) { ROOM_WIN = null; if (ROOM_OBJ && !SOLO_MODE) renderMsgs(ROOM_OBJ); }
   // A PO chat's channel (#234): a balloon it shows lands there, a thread's
   // reply in its thread beside it (landPending, once the channel is drawn).
   if (THREADED && !THREAD_MODE) { landPending(); return; }
@@ -5428,12 +5496,12 @@ function landPending() {
       // A line read while the agent was busy (":q<n>") has no place in the
       // numbering: the whole transcript is drawn for it.
       // A PO message older than the turns shown: the whole transcript is drawn.
-      const t = mid.match(/^(.+):(q?)(\d+)$/);
+      const t = mid.match(/^(.+):(qb|q)?(\d+)$/);
       const pm = !t && SOLO_SID && PM_IDX.has(mid);
       let failed = false;
       if ((t && SOLO_SID && soloOwns(t[1])) || pm) {
         if (!(SOLO_WANT && SOLO_WANT.mid === mid)) {
-          SOLO_WANT = pm ? { sid: SOLO_SID, n: 0, mid } : { sid: t[1], n: t[2] ? 0 : +t[3], mid };
+          SOLO_WANT = pm ? { sid: SOLO_SID, ts: PM_IDX.get(mid).ts || 0, mid } : { sid: t[1], key: (t[2] || '') + t[3], mid };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }
@@ -5700,10 +5768,9 @@ let SEND_IN_FLIGHT = false;
 // What the hub holds for this session while it is resumed (room.pending):
 // {state: 'resuming'|'failed', error, items:[{text,to,at}]}, or null.
 let ROOM_PENDING = null, ROOM_RESUMING = false, PENDING_SIG = 'null';
-// A rotated PO: its latest rotation, every rotation, and the sessions it was
-// rotated out of (sid → {items, from}; a finished transcript never changes).
+// A rotated PO: its latest rotation, and every rotation (SOLO_ABOVE: what is
+// drawn of the sessions it was rotated out of).
 let SOLO_ROT = null, SOLO_ROTS = [];
-const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
 function rotationText(r) {
   const k = n => Math.round((n || 0) / 1000) + 'k';
@@ -5913,12 +5980,18 @@ document.addEventListener('click', e => {
 // ---- Checkpoints: end ----------------------------------------------------------
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
-function withHubRows(items, room) {
-  if (room === ROOM_OBJ && roomHasOlder() && items.length) {
+// A channel's own (``hub``, its hubRows: those of the time its pages span)
+// spare fetching the room's older pages to find them (#247).
+function withHubRows(items, room, hub) {
+  if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
   }
-  const rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks));
+  let rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks));
+  if (hub && hub.size) {
+    const ids = new Set(rows.map(m => m.id));
+    rows = [...hub.values()].filter(m => !ids.has(m.id)).concat(rows).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  }
   if (!rows.length) return items;
   if (!items.length) return rows;
   const out = items.slice();
@@ -5935,9 +6008,12 @@ function withHubRows(items, room) {
 // counted apart, so the other turns keep the ids they had before those were
 // shown; the hub counts the same way (page_turn_ids), which is how a point
 // finds its balloon.
-function soloItems(raw, sid, agentId, keep) {
+// ``base``: the hub sent the last turns only (&tail=, #247) and how it had
+// counted them up to there (n, q, qb), so the ids are those of the whole.
+function soloItems(raw, sid, agentId, keep, base) {
   const all = [];
-  let prev = null, n = 0, q = 0, qb = 0;
+  const n0 = (base && base.n) || 0;
+  let prev = null, n = n0, q = (base && base.q) || 0, qb = (base && base.qb) || 0;
   for (const t of raw) {
     // Read from content blocks (it held an image; #192): apart again, ":qb<n>".
     if (t.queued === 'blocks') { all.push({ t, id: sid + ':qb' + (qb++), n: -1 }); continue; }
@@ -5946,8 +6022,8 @@ function soloItems(raw, sid, agentId, keep) {
     prev = t;
     if (!same) all.push({ t, id: sid + ':' + n, n: n++ });
   }
-  const off = Math.max(0, n - keep);
-  const start = off ? all.findIndex(x => x.n === off) : 0;
+  const off = Math.max(n0, n - keep);
+  const start = off > n0 ? all.findIndex(x => x.n === off) : 0;
   return all.slice(start).map(({ t, id }) => Object.assign({
     id,
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
@@ -5960,17 +6036,104 @@ function soloItems(raw, sid, agentId, keep) {
   }
     : t.answers ? { answers: t.answers } : {}));
 }
-async function prevSessionItems(sid, agentId) {
-  // A link to an older turn than those shown draws back to it.
-  const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
-  const had = SOLO_PREV.get(sid);
-  if (had && (want < 0 || had.from <= want)) return had.items;
-  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000).then(r => r.json());
-  const turns = d.turns || [];
-  const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
-  const first = items.find(m => /:\d+$/.test(String(m.id)));   // a queued line's id is ":q<n>"
-  SOLO_PREV.set(sid, { items, from: first ? +String(first.id).split(':').pop() : 0 });
-  return items;
+// The sessions this chat was rotated out of, drawn above the current one once
+// its top is reached (#247 review 4): SOLO_ABOVE, oldest first, each {sid,
+// raw, base, end, total}, held from base.cut to its end and paged up as the
+// current one is (soloLoadUp). A link far back is a window instead: SOLO_WIN
+// {segs}, the same but drawn alone, the last ending short of what follows,
+// paged down (soloLoadDown) until it meets the turns drawn; Latest leaves it.
+let SOLO_ABOVE = [], SOLO_WIN = null, SOLO_DOWN = null;
+const SOLO_ZERO = { n: 0, q: 0, qb: 0, cut: 0 };
+const soloRotFrom = sid => SOLO_ROTS.find(r => r.fromSessionId === sid && r.toSessionId) || null;
+const soloRotTo = sid => SOLO_ROTS.find(r => r.toSessionId === sid && r.fromSessionId) || null;
+const soloCut = s => (s && s.base && s.base.cut) || 0;
+// The last turns of a session this one was rotated out of.
+async function soloPrevSeg(sid) {
+  const d = await pollFetch(soloUrl(sid, '&tail=' + PREV_TURNS_SHOWN + '&bytes=' + SOLO_BYTES), null, 90000).then(r => r.json());
+  const turns = d.turns || [], total = d.total != null ? d.total : turns.length;
+  return { sid, raw: turns, base: d.base || { ...SOLO_ZERO }, end: total, total };
+}
+// What is drawn of a session: the current one's turns held, or one above them.
+function soloDrawnSeg(sid) {
+  if (SOLO_HELD && SOLO_HELD.sid === sid) return SOLO_HELD;
+  return soloCut(SOLO_HELD) ? null : SOLO_ABOVE.find(s => s.sid === sid) || null;
+}
+// Their balloons: each session's, then the line that ended it.
+function segsItems(segs, agentId, lastLine) {
+  const out = [];
+  segs.forEach((s, i) => {
+    out.push(...soloItems(s.raw, s.sid, agentId, Infinity, s.base));
+    const r = soloRotFrom(s.sid);
+    if (r && (lastLine || i < segs.length - 1)) out.push({ id: 'rot' + (r.n || ''), divider: r });
+  });
+  return out;
+}
+// A window that reached the turns drawn below it is one with them again.
+function soloJoin() {
+  const segs = SOLO_WIN.segs, s = segs[segs.length - 1], d = soloDrawnSeg(s.sid);
+  if (!d || d === s || s.end < soloCut(d)) return false;
+  d.raw = s.raw.slice(0, soloCut(d) - soloCut(s)).concat(d.raw);
+  d.base = s.base;
+  SOLO_ABOVE = segs.slice(0, -1).concat(d === SOLO_HELD ? [] : SOLO_ABOVE.slice(SOLO_ABOVE.indexOf(d)));
+  SOLO_WIN = null;
+  return true;
+}
+// A link's balloon already among those drawn: no window for it.
+function soloHolds(w) {
+  const d = soloDrawnSeg(w.sid);
+  if (!d) return false;
+  if (w.ts != null) { const f = d.raw.find(t => t.timestamp); return !!f && Date.parse(f.timestamp) / 1000 <= w.ts; }
+  const m = /^(qb|q)?(\d+)$/.exec(w.key || ''), b = d.base || SOLO_ZERO;
+  return !!m && +m[2] >= (m[1] === 'qb' ? b.qb : m[1] === 'q' ? b.q : b.n);
+}
+// A link's window: the turns around its balloon in the session that has it (a
+// PO message's time before a session's first turn: the session before).
+// False when it is in none.
+async function soloOpenWin(w) {
+  let sid = w.sid;
+  for (let i = 0; i <= SOLO_ROTS.length; i++) {
+    const d0 = soloDrawnSeg(sid);
+    const d = await pollFetch(soloUrl(sid, (w.ts != null ? '&at=' + w.ts : '&around=' + w.key) + (d0 ? '&to=' + soloCut(d0) : '') + '&bytes=' + SOLO_BYTES),
+      null, 90000).then(r => r.json());
+    if (d.early) { const r = soloRotTo(sid); if (!r) return false; sid = r.fromSessionId; continue; }
+    if (d.missing || !Array.isArray(d.turns)) return false;
+    SOLO_WIN = { segs: [{ sid, raw: d.turns, base: d.base || { ...SOLO_ZERO }, end: d.end, total: d.total }] };
+    soloJoin();
+    return true;
+  }
+  return false;
+}
+// The page below a link's window as the reader nears its end; at a session's
+// end, on into the one it was rotated to.
+function soloLoadDown() {
+  if (SOLO_DOWN || !SOLO_WIN) return SOLO_DOWN || Promise.resolve(false);
+  const win = SOLO_WIN;
+  SOLO_DOWN = (async () => {
+    try {
+      let s = win.segs[win.segs.length - 1];
+      if (s.end >= s.total) {
+        const r = soloRotFrom(s.sid);
+        if (!r) SOLO_WIN = null;     // where it went is not known: the latest instead
+        else win.segs.push(s = { sid: r.toSessionId, raw: [], base: { ...SOLO_ZERO }, end: 0, total: Infinity });
+      }
+      if (SOLO_WIN === win && !soloJoin()) {
+        const d0 = soloDrawnSeg(s.sid);
+        const d = await pollFetch(soloUrl(s.sid, '&from=' + s.end + '&n=100' + (d0 ? '&to=' + soloCut(d0) : '') + '&bytes=' + SOLO_BYTES),
+          null, 90000).then(r => r.json());
+        if (SOLO_WIN !== win || d.from !== s.end || !Array.isArray(d.turns)) return false;
+        s.raw = s.raw.concat(d.turns); s.end = d.end; s.total = d.total;
+        soloJoin();
+      }
+    } catch (e) { return false; }
+    finally { SOLO_DOWN = null; }
+    const box = $('#msgs'), t0 = box.scrollTop;
+    STICK = false;
+    await renderSolo(SOLO_SID, SOLO_AGENT, true);
+    if (!DRAW_HELD) box.scrollTop = t0;
+    showLatest();
+    return true;
+  })();
+  return SOLO_DOWN;
 }
 // The sessions of this chat a link may point into: the current one and every
 // one it was rotated out of.
@@ -6009,6 +6172,45 @@ async function checkSolo() {
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
 let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
+// A one-agent chat's last SOLO_KEEP balloons are fetched, as many as fit
+// SOLO_BYTES (&tail=&bytes=, #247), the page above them as the reader scrolls
+// up (&upto=); a poll asks for the turns after those held (&after=), the last
+// SOLO_OVERLAP again (the last may have grown). SOLO_HELD: {sid, raw, base,
+// end}: the turns held, from base.cut on, of the `end` the transcript had.
+// SOLO_MORE: the transcript has more above.
+let SOLO_KEEP = 120, SOLO_BYTES = 96000, SOLO_MORE = false, SOLO_UP = false, SOLO_HELD = null;
+const SOLO_OVERLAP = 4;
+const soloTail = () => '&tail=' + SOLO_KEEP + '&bytes=' + SOLO_BYTES;
+const soloUrl = (sid, q) => '/api/session/' + encodeURIComponent(sid) + '?full=1' + q;
+// The top drawn: a window's first session, else the current one until its
+// top is reached, then the oldest above it; its page above, or the session
+// before it (#247 review 4: a rotated chat scrolls on into the one before).
+function soloTop() {
+  const list = SOLO_WIN ? SOLO_WIN.segs : soloCut(SOLO_HELD) ? null : SOLO_ABOVE;
+  return { list, top: (list && list[0]) || SOLO_HELD };
+}
+async function soloLoadUp() {
+  if (SOLO_UP || SOLO_FETCHING || !SOLO_MORE) return;
+  const { list, top } = soloTop(), win = SOLO_WIN, start = soloCut(top), r = top && !start ? soloRotTo(top.sid) : null;
+  if (!top || (!start && !r)) return;
+  SOLO_UP = true;
+  const box = $('#msgs'), place = readingPlace(box);
+  try {
+    if (start) {
+      const d = await pollFetch(soloUrl(top.sid, '&tail=200&bytes=' + SOLO_BYTES + '&upto=' + start), null, 90000).then(r => r.json());
+      if (soloCut(top) !== start || SOLO_WIN !== win || d.upto !== start || !Array.isArray(d.turns)) return;
+      top.raw = d.turns.concat(top.raw);
+      top.base = d.base;
+    } else {
+      const seg = await soloPrevSeg(r.fromSessionId);
+      if (SOLO_WIN !== win || soloTop().top !== top) return;
+      list.unshift(seg);
+    }
+    STICK = false;
+    await renderSolo(SOLO_SID, SOLO_AGENT, true);
+    if (!DRAW_HELD) keepPlace(box, place);
+  } catch (e) {} finally { SOLO_UP = false; }
+}
 let HUB_ROWS_N = 0;       // the hub's rows in the room, as last drawn into a solo chat
 let SOLO_FIRST_TRIES = 0; // failed first loads of a chat opened on a link
 async function renderSolo(sid, agentId, force) {
@@ -6019,36 +6221,50 @@ async function renderSolo(sid, agentId, force) {
   SOLO_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
-    const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000).then(r => r.json());
-    const raw = d.turns || [];
-    if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
-    SOLO_TURN_COUNT = raw.length;
-    // A link to an older turn than the last 120 draws back to it.
     const w = SOLO_WANT;
-    const want = w && w.sid === sid ? raw.length - w.n : 0;
-    let items = soloItems(raw, sid, agentId, Math.max(120, want));
-    // A PO rotated into this session: the end of the one before, then the line.
-    const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
+    const h = SOLO_HELD && SOLO_HELD.sid === sid ? SOLO_HELD : null;
+    const start = soloCut(h);
+    const from = h ? Math.max(start, h.end - SOLO_OVERLAP) : -1;
+    const d = await pollFetch(soloUrl(sid, soloTail() + (h ? '&after=' + from : '')), null, 90000).then(r => r.json());
+    if (h && SOLO_HELD === h && d.after === from && Array.isArray(d.turns)) {
+      h.raw = h.raw.slice(0, from - start).concat(d.turns);
+      h.end = d.total;
+    } else {
+      // The first read, or one that is not what was held.
+      const got = d.turns || [];
+      SOLO_HELD = { sid, raw: got, base: d.base || null, end: d.total != null ? d.total : got.length };
+    }
+    const held = SOLO_HELD, raw = held.raw, count = held.end;
+    if (!force && count === SOLO_TURN_COUNT) return;   // nothing new
+    SOLO_TURN_COUNT = count;
+    // Rotated again since: what was above belongs to another session's past.
+    const lastAbove = SOLO_ABOVE[SOLO_ABOVE.length - 1];
+    if (lastAbove && (soloRotFrom(lastAbove.sid) || {}).toSessionId !== sid) SOLO_ABOVE = [];
+    // A link to a turn not drawn: a window around it (#247 review 4), never
+    // the turns between it and the latest.
     let wantOk = true;
-    if (rot && rot.fromSessionId) {
-      let prev = [];
-      try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) { if (w && w.sid === rot.fromSessionId) wantOk = false; }
-      items = prev.concat([{ id: 'rot' + (rot.n || ''), divider: rot }], items);
+    if (w && !w.loaded) {
+      if (soloHolds(w)) SOLO_WIN = null;
+      else try { await soloOpenWin(w); } catch (e) { wantOk = false; }
+      if (wantOk) w.loaded = true;
     }
-    // A link into a session from before that one: its turns from the linked
-    // one on, and the line that ended it, above the rest.
-    const old = w && w.sid !== sid && !(rot && w.sid === rot.fromSessionId)
-      ? SOLO_ROTS.find(r => r.fromSessionId === w.sid) : null;
-    if (old) {
-      try {
-        items = (await prevSessionItems(old.fromSessionId, agentId)).concat([{ id: 'rot' + (old.n || ''), divider: old }], items);
-      } catch (e) { wantOk = false; }
+    // A PO rotated into this session: the end of the one before, then the line.
+    if (wantOk && !SOLO_WIN && !soloCut(held) && !SOLO_ABOVE.length && soloRotTo(sid)) {
+      try { SOLO_ABOVE = [await soloPrevSeg(soloRotTo(sid).fromSessionId)]; } catch (e) {}
     }
-    if (w && wantOk) w.loaded = true;
+    const { top } = soloTop();
+    SOLO_MORE = !!(soloCut(top) || (top && soloRotTo(top.sid)));
+    let items = SOLO_WIN ? segsItems(SOLO_WIN.segs, agentId, false)
+      : (soloCut(held) ? [] : segsItems(SOLO_ABOVE, agentId, true)).concat(soloItems(raw, sid, agentId, Infinity, held.base));
     // What the hub wrote out under a balloon link is the agent's copy: the
     // balloon shows the words as they were sent, and the link as its chip.
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     items = withHubRows(items, ROOM_OBJ);
+    if (SOLO_WIN) {
+      // A window ends at its last turn: the hub's later rows are below its gap.
+      const last = [...items].reverse().find(m => m.ts && !m.divider && /:(q|qb)?\d+$/.test(String(m.id)));
+      if (last) items = items.filter(m => !(m.ts > last.ts));
+    }
     CHAT_DRAWN = true;
     DRAWN_ROOM_TS = roomTs;
     renderBubbles(items);
@@ -6080,7 +6296,33 @@ let TS = null;             // the thread open beside the channel: {tid, mid}
 let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
 let THR_ASKED = '';         // the link's balloon the channel was last asked to reach (&upto=)
-let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 150, THR_WAIT = 0;   // the latest 150 channel entries first (#228, #234)
+let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 40, THR_WAIT = 0;   // the latest 40 entries first (#228, #234, #247)
+// A channel or thread is held as pages (#247): the view the hub last sent
+// (a poll's delta applies to it), from its first entry on (THR_FROM: polls
+// ask from there, so nothing new slips between it and the pages above), and
+// the pages above it, fetched as the reader scrolls up (&before=). A link's
+// balloon gets a window around it (review 4): THR_AFTER entries come after
+// the window, fetched a page at a time as the reader scrolls down (&after=),
+// and its polls keep to it (&to=); "Latest" goes to the newest.
+let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0, THR_DOWN = null;
+let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
+// A PO chat seen before is asked for its channel beside the room's first read,
+// not after it (#247: a round trip of a phone's open). The page keeps which
+// chats were threaded; THR_PRE is that first channel read, used once.
+let THR_PRE = null, THR_NOTED = false;
+const THR_KNOWN = 'ens-threaded:';
+function thrPrefetch() {
+  let known = false;
+  try { known = localStorage.getItem(THR_KNOWN + ROOM) === '1'; } catch (e) {}
+  if (!known || THREAD_MODE || GOTO || TOPIC_FILTER) return;
+  const url = thrUrl('');
+  THR_PRE = { url, p: pollFetch(url, null, 90000) };
+  THR_PRE.p.catch(() => {});
+}
+function thrRemember(threaded) {
+  try { threaded ? localStorage.setItem(THR_KNOWN + ROOM, '1') : localStorage.removeItem(THR_KNOWN + ROOM); } catch (e) {}
+  if (!threaded) THR_PRE = null;
+}
 let THR_DRAWN = false;    // the channel or thread is what is drawn
 let TOPIC_FILTER = null;   // the dashboard's selected topic in this PO channel
 let TOPIC_SUGGESTION = null;
@@ -6099,25 +6341,113 @@ let THR_ITEMS = null;      // the thread's messages as drawn (told as seen once 
   if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS);
 }));
 const threadedView = () => THREADED;
-function thrUrl(sig) {
-  const base = THREAD_MODE
+function thrBase() {
+  return THREAD_MODE
     ? '/api/room/thread?id=' + encodeURIComponent(ROOM) + (THREAD ? '&t=' + encodeURIComponent(THREAD) : '&mid=' + encodeURIComponent(THREAD_MID))
-    : '/api/room/channel?id=' + encodeURIComponent(ROOM) + '&n=' + THR_N
-      + (TOPIC_FILTER?.id ? '&topic=' + encodeURIComponent(TOPIC_FILTER.id) : '')
-      + (GOTO ? '&upto=' + encodeURIComponent(THR_ASKED = GOTO) : '');
-  return base + (sig ? '&sig=' + encodeURIComponent(sig) : '');
+    : '/api/room/channel?id=' + encodeURIComponent(ROOM)
+      + (TOPIC_FILTER?.id ? '&topic=' + encodeURIComponent(TOPIC_FILTER.id) : '');
+}
+// The first read is light (&lite=1); a link's balloon asks for as many as
+// reach it (&upto=), which starts the pages again.
+function thrUrl(sig) {
+  const page = !THREAD_MODE && GOTO ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = GOTO)
+    : THR_FROM ? '&from=' + encodeURIComponent(THR_FROM) + (THR_AFTER && thrLast() ? '&to=' + encodeURIComponent(thrLast()) : '')
+    : '&n=' + THR_N + (THREAD_MODE ? '' : '&lite=1');
+  return thrBase() + page + (sig ? '&sig=' + encodeURIComponent(sig) : '');
+}
+// The pages from the newest again (a topic chosen or cleared).
+function thrRestart() { THR_SIG = ''; THR_N = 40; THR_FROM = ''; THR_VIEW = null; THR_OLDER = []; THR_HUB = new Map(); THR_BEFORE = 0; THR_AFTER = 0; }
+const thrLast = () => ((THR_VIEW && THR_VIEW.items) || []).slice(-1).map(t => t.mid)[0] || '';
+// The page below a window's last entry, as the reader nears its end: added
+// under what is drawn, so the reading place stays.
+function thrLoadDown() {
+  if (THR_DOWN || !THR_AFTER || !THR_VIEW) return THR_DOWN || Promise.resolve(false);
+  const last = thrLast();
+  if (!last) return Promise.resolve(false);
+  THR_DOWN = (async () => {
+    try {
+      const d = await pollFetch(thrBase() + '&n=100&after=' + encodeURIComponent(last), null, 90000).then(r => r.json());
+      if (!d || !Array.isArray(d.items) || d.error || d.pending || thrLast() !== last) return false;
+      const held = new Set(THR_VIEW.items.map(t => t.mid));
+      THR_VIEW.items = THR_VIEW.items.concat(d.items.filter(t => !held.has(t.mid)));
+      THR_AFTER = d.after || 0;
+      Object.assign(THR_META, d.threads || {});
+      thrKeepHub(d.hubRows);
+      const box = $('#msgs'), t0 = box.scrollTop;
+      STICK = false;
+      thrDraw(roomLatestTs(ROOM_OBJ));
+      if (!DRAW_HELD) box.scrollTop = t0;
+      showLatest();
+      return true;
+    } catch (e) { return false; }
+    finally { THR_DOWN = null; }
+  })();
+  return THR_DOWN;
+}
+function thrKeepHub(rows) { for (const m of rows || []) if (m && m.id) THR_HUB.set(m.id, m); }
+// The page above the entries held, as the reader nears the top: drawn with
+// the reading place kept, as loadOlder does for a room.
+function thrLoadUp() {
+  if (THR_UP || !THR_BEFORE || !THR_VIEW) return THR_UP || Promise.resolve(false);
+  const first = (THR_OLDER[0] || (THR_VIEW.items || [])[0] || {}).mid;
+  if (!first) return Promise.resolve(false);
+  THR_UP = (async () => {
+    try {
+      const d = await pollFetch(thrBase() + '&n=100&before=' + encodeURIComponent(first), null, 90000).then(r => r.json());
+      if (!d || !Array.isArray(d.items) || d.error || d.pending) return false;
+      const head = (THR_OLDER[0] || (THR_VIEW.items || [])[0] || {}).mid;
+      if (head !== first) return false;     // the pages started again meanwhile
+      THR_OLDER = d.items.concat(THR_OLDER);
+      THR_BEFORE = d.before || 0;
+      Object.assign(THR_META, d.threads || {});
+      thrKeepHub(d.hubRows);
+      const box = $('#msgs'), place = readingPlace(box), h0 = box.scrollHeight, t0 = box.scrollTop;
+      const mid = place && (place.el.dataset.mid || (place.el.querySelector('[data-mid]') || {dataset: {}}).dataset.mid || '');
+      STICK = false;
+      thrDraw(roomLatestTs(ROOM_OBJ));
+      if (!DRAW_HELD && place) {
+        const at = mid && [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid && e.offsetParent);
+        const row = at && [...box.children].find(k => k.contains(at));
+        box.scrollTop = row ? row.offsetTop - place.off : t0 + box.scrollHeight - h0;
+      }
+      return true;
+    } catch (e) { return false; }
+    finally { THR_UP = null; }
+  })();
+  return THR_UP;
+}
+// A poll's delta on the view held: the entries in order, the new or changed
+// ones, the other keys changed or gone. Null when it names an entry not held.
+function thrApply(v, d) {
+  const had = new Map((v.items || []).map(t => [t.mid, t]));
+  const items = (d.ids || []).map(id => (d.rows || {})[id] || had.get(id));
+  if (items.some(x => !x)) return null;
+  const out = Object.assign({}, v, d.set || {});
+  for (const k of d.del || []) delete out[k];
+  out.items = items; out.sig = d.sig;
+  return out;
 }
 async function renderThreaded(force) {
   if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
-    const r = await pollFetch(thrUrl(force ? '' : THR_SIG), null, 90000);
-    const d = await r.json();
+    const asked = !THREAD_MODE && !!GOTO;
+    const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
+    THR_PRE = null;
+    const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
+    let d = await r.json();
+    if (d && d.delta) {
+      const v = THR_VIEW && thrApply(THR_VIEW, d);
+      if (!v) { THR_SIG = ''; THR_AGAIN = true; return; }    // not the view held: ask for it whole
+      d = Object.assign(v, d.progress ? { progress: d.progress } : {});
+      delete d.delta;
+    }
     // Unchanged, but perhaps only now on screen (a Dock tab shown again): read now.
     if (d.same) {
       if (d.progress) globalThis.EnsembleProgress?.set('thread-build', d.progress);
       else globalThis.EnsembleProgress?.clear('thread-build');
+      if (THREAD_MODE && THR_INFO) threadHead();     // the room's refresh put the chat's title back
       if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS);
       return;
     }
@@ -6152,10 +6482,26 @@ async function renderThreaded(force) {
       if (WORK_LOG_THREAD !== THREAD) { WORK_LOG_THREAD = THREAD; WORK_LOG_OPEN = false; }
       threadHead();
     }
-    THR_BEFORE = d.before || 0;
-    // A link to an older message of the chat: the hub sent as many as reach it.
-    if (d.n > THR_N) THR_N = d.n;
-    let items = (d.items || []).map(t => Object.assign(soloItems([t], 's', SOLO_AGENT, 1)[0], { id: t.mid },
+    if (asked || !THR_FROM) { THR_OLDER = []; THR_HUB = new Map(); }
+    THR_VIEW = d;
+    THR_FROM = ((d.items || [])[0] || {}).mid || '';
+    THR_BEFORE = Math.max(0, (d.before || 0) - THR_OLDER.length);
+    THR_AFTER = d.after || 0;
+    thrKeepHub(d.hubRows);
+    thrDraw(roomTs, d);
+    showLatest();
+  } catch (e) {
+    globalThis.EnsembleProgress?.clear('thread-build');
+    if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
+  } finally {
+    THR_FETCHING = false;
+    if (THR_AGAIN) { THR_AGAIN = false; renderThreaded(true); }
+  }
+}
+// The pages held, drawn: the pages above, then the view the hub last sent.
+function thrDraw(roomTs, d = THR_VIEW) {
+  {
+    let items = THR_OLDER.concat((d && d.items) || []).map(t => Object.assign(soloItems([t], 's', SOLO_AGENT, 1)[0], { id: t.mid },
       t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {},
       t.workLog ? { workLog: true } : {}));
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
@@ -6166,20 +6512,14 @@ async function renderThreaded(force) {
       GOTO = ''; GOTO_PART = '';
       openThread('', target, part);
     }
-    if (!THREAD_MODE) items = withHubRows(items, ROOM_OBJ);
+    if (!THREAD_MODE) items = withHubRows(items, ROOM_OBJ, THR_HUB);
     document.body.classList.toggle('po-thread-channel', !THREAD_MODE);
-    const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !d.before;
+    const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !THR_BEFORE;
     CHAT_DRAWN = THR_DRAWN = true;
     DRAWN_ROOM_TS = roomTs;
     renderBubbles(items);
     if (THREAD_MODE) { THR_ITEMS = items; threadSeen(items); }
     else if (!SIDE_RESTORED) { SIDE_RESTORED = true; sideRestore(); }
-  } catch (e) {
-    globalThis.EnsembleProgress?.clear('thread-build');
-    if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
-  } finally {
-    THR_FETCHING = false;
-    if (THR_AGAIN) { THR_AGAIN = false; renderThreaded(true); }
   }
 }
 // The thread's title over its messages, and the way back on a phone.
@@ -6233,7 +6573,7 @@ function showTopicSuggestion() {
 $('#topic-note').querySelector('button').addEventListener('click', () => {
   const host = embedHost();
   if (host) host.postMessage({type:'topic-clear', roomId:ROOM}, location.origin);
-  else { TOPIC_FILTER = null; showTopicFilter(); THR_SIG = ''; renderThreaded(true); }
+  else { TOPIC_FILTER = null; showTopicFilter(); thrRestart(); renderThreaded(true); }
 });
 $('#topic-suggestion').addEventListener('click', async e => {
   const choice = e.target.closest('[data-topic-reply]');
@@ -6488,9 +6828,16 @@ async function refreshRoom() {
   const sendsGen = ++SENDS_GEN;
   try {
     const url = '/api/room?id=' + encodeURIComponent(ROOM) + '&n=' + ROOM_N;
+    // The first read is light (&lite=1, #247): what paints the chat; the
+    // rest of its status comes as a patch on the poll made once it is drawn.
+    // A first read sent no pmIndex (window.pm false): the next poll asks
+    // for it, of the messages above the oldest held.
+    const pmFrom = ROOM_LAST?.room?.window?.pm === false && ((ROOM_LAST.room.messages || [])[0] || {}).id;
+    if (!ROOM_LAST && !THR_DRAWN) thrPrefetch();
     let r = await pollFetch(ROOM_LAST?.revision
       ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
-        + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '') : url,
+        + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '')
+        + (pmFrom ? '&pm=' + encodeURIComponent(pmFrom) : '') : ROOM_LAST ? url : url + '&lite=1',
       !ROOM_LAST && ROOM_ETAG ? {headers: {'If-None-Match': ROOM_ETAG}} : undefined);
     if (r.ok && ROOM_LAST?.revision) {
       const patch = await r.json();
@@ -6515,6 +6862,10 @@ async function refreshRoom() {
         for (const k of ['window', 'pmIndex'])
           if (room[k] === undefined && ROOM_LAST.room[k] !== undefined) room[k] = ROOM_LAST.room[k];
         if (room.window && patch.total != null) room.window = {...room.window, total: patch.total};
+        if (patch.pmIndex && room.window) {
+          room.pmIndex = patch.pmIndex;
+          room.window = {...room.window}; delete room.window.pm;
+        }
         ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig,
           room: structuredClone(room)};
       } else {
@@ -6530,6 +6881,7 @@ async function refreshRoom() {
     if (!room && r.status === 304) room = structuredClone(ROOM_LAST.room);
     else if (!room) {
       room = await r.json();
+      if (room && room.lite) { delete room.lite; setTimeout(() => refresh(), 250); }
       ROOM_ETAG = r.ok ? (r.headers.get('ETag') || '') : '';
       ROOM_LAST = r.ok ? {etag: ROOM_ETAG, revision: room.revision || '',
         statusSig: room.statusSig || '', room: structuredClone(room)} : null;
@@ -6614,6 +6966,7 @@ function refreshShow(room, ticket, sendsGen) {
     HUB_ROWS_N = hubRows;
     const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;
     CP_SIG = cpNow;
+    if (!THR_NOTED || THREADED !== !!room.threaded) { THR_NOTED = true; thrRemember(!!room.threaded); }
     THREADED = !!room.threaded;
     showThreadsBtn();
     if (threadedView()) {
@@ -7823,8 +8176,7 @@ window.addEventListener('message', (e) => {
     TOPIC_FILTER = next;
     showTopicFilter();
     if (changed) {
-      THR_SIG = '';
-      THR_N = 150;
+      thrRestart();
       THR_LIST = false;
       showThreadsBtn();
       renderThreaded(true);
@@ -8472,7 +8824,10 @@ $('#msgs').addEventListener('click', e => {
   if (to) { openThread(to.dataset.thr, ''); return; }
   const tr = e.target.closest && e.target.closest('.thr-reply');
   if (tr) { const t = THR_META && Object.values(THR_META).find(x => x.root === tr.dataset.mid && x.id !== 'team:activity'); openThread(t ? t.id : '', t ? '' : tr.dataset.mid); return; }
-  if (e.target.closest && e.target.closest('.thr-more-btn')) { THR_N += 100; STICK = false; renderThreaded(true); return; }
+  if (e.target.closest && e.target.closest('.thr-more-btn')) { thrLoadUp(); return; }
+  if (e.target.closest && e.target.closest('.thr-newer-btn')) { thrLoadDown(); return; }
+  if (e.target.closest && e.target.closest('.room-newer-btn')) { roomLoadDown(); return; }
+  if (e.target.closest && e.target.closest('.solo-newer-btn')) { soloLoadDown(); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
@@ -8501,7 +8856,7 @@ $('#threads-view').addEventListener('click', () => { THR_LIST = !THR_LIST; $('#t
 $('#ts-close').addEventListener('click', sideClose);
 $('#ts-back').addEventListener('click', sideClose);
 $('#thread-catchup').addEventListener('click', e => { const b = e.target.closest('button[data-thr]'); if (b) openThread(b.dataset.thr, b.dataset.mid); });
-$('#earlier-threads').addEventListener('click', () => { THR_N += 100; STICK = false; renderThreaded(true); });
+$('#earlier-threads').addEventListener('click', () => { thrLoadUp(); });
 $('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h.postMessage({ type: 'thread-back', roomId: ROOM }, location.origin); });
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and
@@ -8522,6 +8877,11 @@ function msgsScrolled() {
   showLatest();
   readTick(true);
   if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
+  if (!at && box.scrollTop < box.clientHeight && THREADED && THR_BEFORE && !DRAW_HELD) thrLoadUp();
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && THREADED && THR_AFTER && !DRAW_HELD) thrLoadDown();
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && ROOM_WIN && !DRAW_HELD) roomLoadDown();
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && SOLO_MODE && SOLO_WIN && !THREADED && !DRAW_HELD) soloLoadDown();
+  if (!at && box.scrollTop < box.clientHeight && SOLO_MODE && !THREADED && SOLO_MORE && !DRAW_HELD) soloLoadUp();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the
@@ -8629,7 +8989,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
   } catch (e) {}
   // This page and the hub scripts it loads.
   // (A module a page imports is listed as a <link rel="modulepreload"> for this.)
-  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"], link[href^="/static/"]')].map(s => s.getAttribute(s.tagName === 'LINK' ? 'href' : 'src').slice(1))).filter(Boolean);
+  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"], link[href^="/static/"]')].map(s => s.getAttribute(s.tagName === 'LINK' ? 'href' : 'src').slice(1).split('?')[0])).filter(Boolean);
   const S = { page: PAGE, loaded, pages: null, pending: false, hold: false, reloading: false, lastInput: Date.now(), checkedAt: Date.now(), checking: false, line: null, timer: 0 };
   const typed = new Set();      // the fields typed in since the page loaded
   let held = false;             // a pointer held down or a drag under way
