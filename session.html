@@ -6136,6 +6136,23 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 // the pages above it, fetched as the reader scrolls up (&before=).
 let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null;
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
+// A PO chat seen before is asked for its channel beside the room's first read,
+// not after it (#247: a round trip of a phone's open). The page keeps which
+// chats were threaded; THR_PRE is that first channel read, used once.
+let THR_PRE = null, THR_NOTED = false;
+const THR_KNOWN = 'ens-threaded:';
+function thrPrefetch() {
+  let known = false;
+  try { known = localStorage.getItem(THR_KNOWN + ROOM) === '1'; } catch (e) {}
+  if (!known || THREAD_MODE || GOTO || TOPIC_FILTER) return;
+  const url = thrUrl('');
+  THR_PRE = { url, p: pollFetch(url, null, 90000) };
+  THR_PRE.p.catch(() => {});
+}
+function thrRemember(threaded) {
+  try { threaded ? localStorage.setItem(THR_KNOWN + ROOM, '1') : localStorage.removeItem(THR_KNOWN + ROOM); } catch (e) {}
+  if (!threaded) THR_PRE = null;
+}
 let THR_DRAWN = false;    // the channel or thread is what is drawn
 let TOPIC_FILTER = null;   // the dashboard's selected topic in this PO channel
 let TOPIC_SUGGESTION = null;
@@ -6219,7 +6236,9 @@ async function renderThreaded(force) {
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
     const asked = !THREAD_MODE && !!GOTO;
-    const r = await pollFetch(thrUrl(force ? '' : THR_SIG), null, 90000);
+    const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
+    THR_PRE = null;
+    const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
     let d = await r.json();
     if (d && d.delta) {
       const v = THR_VIEW && thrApply(THR_VIEW, d);
@@ -6615,6 +6634,7 @@ async function refreshRoom() {
     // A first read sent no pmIndex (window.pm false): the next poll asks
     // for it, of the messages above the oldest held.
     const pmFrom = ROOM_LAST?.room?.window?.pm === false && ((ROOM_LAST.room.messages || [])[0] || {}).id;
+    if (!ROOM_LAST && !THR_DRAWN) thrPrefetch();
     let r = await pollFetch(ROOM_LAST?.revision
       ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
         + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '')
@@ -6747,6 +6767,7 @@ function refreshShow(room, ticket, sendsGen) {
     HUB_ROWS_N = hubRows;
     const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;
     CP_SIG = cpNow;
+    if (!THR_NOTED || THREADED !== !!room.threaded) { THR_NOTED = true; thrRemember(!!room.threaded); }
     THREADED = !!room.threaded;
     showThreadsBtn();
     if (threadedView()) {

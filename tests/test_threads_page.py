@@ -177,6 +177,11 @@ async function main() {
       await sleep(400);
       o.reloaded = await evalIn(VIEW);
       o.reloadedThread = await evalIn(FVIEW);
+      // A PO chat seen before: its channel is asked beside the room's first read (#247).
+      o.prefetch = await evalIn(`(() => { const e = performance.getEntriesByType('resource');
+        const room = e.find(x => x.name.includes('/api/room?id=') && x.name.includes('&lite=1')), chan = e.filter(x => x.name.includes('/api/room/channel?'));
+        return { known: localStorage.getItem("ens-threaded:" + ROOM), room: !!room, chans: chan.filter(x => !x.name.includes("&sig=")).length, urls: chan.map(x => x.name.split("channel?")[1]),
+          before: !!room && !!chan.length && chan[0].startTime < room.responseEnd }; })()`);
       // A reply in it, also sent to the chat.
       const n = o.reloadedThread.mids.length;
       await evalIn(fe('document.getElementById("input").value = "A bit wider still, please."; document.getElementById("input").dispatchEvent(new Event("input")); document.getElementById("thr-also").checked = true; document.getElementById("send").click(); 0'));
@@ -594,6 +599,14 @@ class ThreadsPage(unittest.TestCase):
                 self.assertEqual(o["reloaded"]["side"]["stored"], '{"tid":"P1","mid":""}')
                 self.assertFalse(o["closed"]["side"]["open"], "closed, a reload keeps it closed")
                 self.assertIsNone(o["closed"]["side"]["stored"])
+
+    def test_a_po_chat_seen_before_asks_for_its_channel_beside_the_room(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                self.assertEqual(o["prefetch"]["known"], "1")
+                self.assertTrue(o["prefetch"]["room"], o["prefetch"])
+                self.assertEqual(o["prefetch"]["chans"], 1, o["prefetch"])  # first reads; later ones are delta polls (&sig=)
+                self.assertTrue(o["prefetch"]["before"], "asked before the room's answer was in")
 
     def test_a_reply_lands_in_its_thread_and_also_in_the_chat_when_ticked(self):
         for w, o in self._each():
