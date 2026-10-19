@@ -1820,7 +1820,7 @@ def snapshot(max_age: float = _RESULT_TTL) -> dict:
         return cached
     # One computation even when ten tabs ask at once: the losers of the race
     # take the fresh result the winner just published.
-    with _COMPUTE_LOCK:
+    with _d.holding(_COMPUTE_LOCK):
         with _RESULT_LOCK:
             ts, cached = _result
         if cached and time.time() - ts <= max_age:

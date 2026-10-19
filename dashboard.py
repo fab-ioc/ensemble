@@ -3882,7 +3882,10 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
 # every reader of a 198-session chat parsed it all again).
 _TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns, *provenance), turns, chars)
 _TURNS_CACHE_LOCK = threading.Lock()
-_TURNS_CACHE_CHARS = 96_000_000
+# Measured on the real state (#247): ~5 MB of the hub's working set per
+# million chars kept (2.8 bytes a char traced), and every transcript the
+# chats name came to 11.7 M chars; 20 M keeps the cache near 100 MB at most.
+_TURNS_CACHE_CHARS = 20_000_000
 _TURNS_CACHE_SIZE = [0]
 _TURNSTORE_VER: list[str] = []
 _SESSION_INPUT_CONTEXT_CACHE: dict[tuple[str, str], tuple[str, str]] = {}
@@ -14429,6 +14432,21 @@ def install_agent_skills() -> list[str]:
 _ANSWERING: dict[int, float] = {}
 _ANSWERED = [0.0]
 PAGE_ANSWER_S = 3.0         # a request answering longer is a stream: not waited for
+_HOLDING = threading.local()    # n: the locks a page may wait on this thread holds
+
+
+@contextlib.contextmanager
+def holding(lock):
+    """``with holding(lock):`` takes a lock a page's request may wait on, and
+    nothing under it yields to pages: the page waiting on the lock counts as
+    being answered, so the yield would wait up to its ``most_s`` for a request
+    that is waiting on it (#247, every 50 messages of a chat's asks)."""
+    with lock:
+        _HOLDING.n = getattr(_HOLDING, "n", 0) + 1
+        try:
+            yield
+        finally:
+            _HOLDING.n -= 1
 
 
 def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
@@ -14440,7 +14458,7 @@ def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
     several things in a row). Never waits on a request thread, nor for more
     than ``most_s``."""
     me = threading.get_ident()
-    if me in _ANSWERING:
+    if me in _ANSWERING or getattr(_HOLDING, "n", 0):
         return
     end = time.monotonic() + most_s
     while True:
@@ -15698,7 +15716,10 @@ class Handler(BaseHTTPRequestHandler):
             # last n entries, each thread's parent with its reply line;
             # &upto=<balloon> as many more as reach it when it is there);
             # ?id=&t=<thread> or &mid=<balloon> one thread with all its
-            # messages. &sig= the page's: the same chat answers {same: true}.
+            # messages. The answer's n: how many entries were sent (more for
+            # an &upto= that reaches its balloon; fewer for a chat not read
+            # yet, whose first page stops at its bytes).
+            # &sig= the page's: the same chat answers {same: true}.
             # {pending: true} while the chat is first read.
             q = parse_qs(u.query)
             rid = (q.get("id", [""])[0] or "").strip()

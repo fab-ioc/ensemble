@@ -125,6 +125,38 @@ class TurnStoreTest(unittest.TestCase):
         out = dashboard._stored_text_turns(self.t, sig)
         self.assertEqual([x["text"] for x in out], ["hello", "hi there"])
 
+    def test_the_turns_kept_in_memory_stay_well_under_150_mb(self):
+        # The PO's read: 96 M chars was ~480 MB of the hub at ~5 MB per
+        # million measured on the real state. Filled past its cap, the cache
+        # holds at most the cap, and that is well under 150 MB.
+        import gc
+        import tracemalloc
+        self.addCleanup(dashboard._TURNS_CACHE.clear)
+        self.addCleanup(dashboard._TURNS_CACHE_SIZE.__setitem__, 0, 0)
+        dashboard._TURNS_CACHE.clear()
+        dashboard._TURNS_CACHE_SIZE[0] = 0
+        per_file = 1_000_000
+        files = []
+        for i in range(dashboard._TURNS_CACHE_CHARS // per_file + 5):
+            f = Path(self.tmp.name) / f"s{i}.jsonl"
+            f.write_text("x", encoding="utf-8")
+            files.append(f)
+        made = lambda tpath, sig: [{"role": "assistant", "text": f"{tpath.stem} {n} " + "w" * 9_000,  # noqa: E731
+                                    "timestamp": "2026-10-19T10:00:00Z"} for n in range(per_file // 9_200)]
+        gc.collect()
+        tracemalloc.start()
+        self.addCleanup(tracemalloc.stop)
+        base = tracemalloc.get_traced_memory()[0]
+        with mock.patch.object(dashboard, "_stored_text_turns", made):
+            for f in files:
+                dashboard.claude_turns_classified(f)
+        gc.collect()
+        used = tracemalloc.get_traced_memory()[0] - base
+        self.assertLessEqual(dashboard._TURNS_CACHE_SIZE[0], dashboard._TURNS_CACHE_CHARS)
+        self.assertLess(len(dashboard._TURNS_CACHE), len(files), "the oldest went")
+        self.assertLessEqual(dashboard._TURNS_CACHE_CHARS * 5 / 1e6, 120, "~5 MB a million chars, measured")
+        self.assertLess(used / 2**20, 100, f"{used / 2**20:.0f} MB")
+
 
 class ProvenanceIndexTest(unittest.TestCase):
     """index() for one seat and session keeps what match() and assign()

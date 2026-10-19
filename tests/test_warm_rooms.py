@@ -90,6 +90,38 @@ class YieldToPages(unittest.TestCase):
         dashboard.yield_to_pages(most_s=2.0)
         self.assertLess(time.monotonic() - t, 0.05)
 
+    def test_nothing_yields_while_holding_a_lock_a_page_may_wait_on(self):
+        # The PO's read: the open asks and Needs you are worked out under a
+        # lock a page's request waits on; that request counts as answered, so
+        # a yield under the lock waited up to 1 s per 50 messages for it.
+        import asks
+        import attention
+        dashboard._ANSWERING[-1] = time.monotonic()
+        lock = threading.Lock()
+        t = time.monotonic()
+        with dashboard.holding(lock):
+            self.assertTrue(lock.locked())
+            dashboard.yield_to_pages(most_s=2.0)
+            with dashboard.holding(threading.Lock()):
+                pass
+            dashboard.yield_to_pages(most_s=2.0)
+        self.assertFalse(lock.locked())
+        self.assertLess(time.monotonic() - t, 0.05)
+        self.assertGreater(self.waited(most_s=0.2), 0.15, "outside the lock it yields again")
+        room = {"participants": [{"identity": "claude", "kind": "agent"}],
+                "messages": [{"id": f"m{i}", "from": "claude", "text": "x"} for i in range(200)]}
+        asks.forget()
+        self.addCleanup(asks.forget)
+        t = time.monotonic()
+        with mock.patch.object(asks, "open_in", lambda s, now: asks.message_asks(room, False)):
+            asks.open_by_room([{"id": "room-1"}])
+        self.assertLess(time.monotonic() - t, 0.5, "the open asks read under their lock")
+        t = time.monotonic()
+        with mock.patch.object(attention, "_items", lambda: dashboard.yield_to_pages(most_s=2.0) or []), \
+                mock.patch.object(attention, "_result", (0.0, {})):
+            attention.snapshot()
+        self.assertLess(time.monotonic() - t, 0.5, "Needs you worked out under its lock")
+
 
 if __name__ == "__main__":
     unittest.main()

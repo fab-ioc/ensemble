@@ -1218,7 +1218,7 @@ def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, l
     :data:`CACHE_S` (the attention poll asks every second and a half)."""
     global _RESULT
     now = time.time() if now is None else now
-    with _LOCK:
+    with _d.holding(_LOCK):
         if now - _RESULT[0] < CACHE_S:
             return _RESULT[1]
         out = {}
