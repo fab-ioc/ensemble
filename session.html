@@ -6481,9 +6481,13 @@ async function refreshRoom() {
     const url = '/api/room?id=' + encodeURIComponent(ROOM) + '&n=' + ROOM_N;
     // The first read is light (&lite=1, #247): what paints the chat; the
     // rest of its status comes as a patch on the poll made once it is drawn.
+    // A first read sent no pmIndex (window.pm false): the next poll asks
+    // for it, of the messages above the oldest held.
+    const pmFrom = ROOM_LAST?.room?.window?.pm === false && ((ROOM_LAST.room.messages || [])[0] || {}).id;
     let r = await pollFetch(ROOM_LAST?.revision
       ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
-        + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '') : ROOM_LAST ? url : url + '&lite=1',
+        + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '')
+        + (pmFrom ? '&pm=' + encodeURIComponent(pmFrom) : '') : ROOM_LAST ? url : url + '&lite=1',
       !ROOM_LAST && ROOM_ETAG ? {headers: {'If-None-Match': ROOM_ETAG}} : undefined);
     if (r.ok && ROOM_LAST?.revision) {
       const patch = await r.json();
@@ -6508,6 +6512,10 @@ async function refreshRoom() {
         for (const k of ['window', 'pmIndex'])
           if (room[k] === undefined && ROOM_LAST.room[k] !== undefined) room[k] = ROOM_LAST.room[k];
         if (room.window && patch.total != null) room.window = {...room.window, total: patch.total};
+        if (patch.pmIndex && room.window) {
+          room.pmIndex = patch.pmIndex;
+          room.window = {...room.window}; delete room.window.pm;
+        }
         ROOM_LAST = {revision: patch.revision, statusSig: patch.statusSig,
           room: structuredClone(room)};
       } else {

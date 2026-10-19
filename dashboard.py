@@ -10311,6 +10311,9 @@ _ROOM_STATUS_LOCK = threading.Lock()
 # 400-540 KB, most of it closed points, Needs you's lists and 200 rotations).
 LITE_THREADS = 20
 LITE_ROTATIONS = 3
+LITE_POINTS = 20
+LITE_BYTES = 96 * 1024          # the whole first answer (#247: ≤100 KB)
+LITE_MIN_MESSAGES = 3
 
 
 def lite_status(status: dict) -> dict:
@@ -10324,11 +10327,52 @@ def lite_status(status: dict) -> dict:
         out["points"] = {**{k: v for k, v in pts.items() if k not in ("needs", "asks", "items", "threads")},
                          "items": [i for i in pts.get("items") or [] if i.get("state") in points.LIVE],
                          **({"threads": pts["threads"][:LITE_THREADS]} if "threads" in pts else {})}
-    if status.get("threaded"):
-        out["participants"] = [
-            {**p, "rotations": p["rotations"][-LITE_ROTATIONS:]} if len(p.get("rotations") or []) > LITE_ROTATIONS
-            else p for p in status.get("participants") or []]
+        live = out["points"]["items"]
+        if len(live) > LITE_POINTS:
+            # Every open one; of those planned or delivered, the newest.
+            rest = sorted((i for i in live if i.get("state") != "open"),
+                          key=lambda i: i.get("stateAt") or i.get("createdAt") or 0)[-LITE_POINTS:]
+            keep = {id(i) for i in rest}
+            out["points"]["items"] = [i for i in live if i.get("state") == "open" or id(i) in keep]
+    out.pop("reviewAllocations", None)      # the board's, not the chat page's
+    out["participants"] = [
+        {**p, **({"rotations": p["rotations"][-LITE_ROTATIONS:]}
+                 if status.get("threaded") and len(p.get("rotations") or []) > LITE_ROTATIONS else {}),
+         **({"reviews": p["reviews"][-LITE_ROTATIONS:]} if len(p.get("reviews") or []) > LITE_ROTATIONS else {})}
+        for p in status.get("participants") or []]
     return out
+
+
+def lite_window(out: dict, n: int, budget: int) -> dict:
+    """A chat's first read: of its latest ``n`` messages, the newest that
+    fit ``budget`` bytes (at least LITE_MIN_MESSAGES), the rest above it as
+    older pages; no ``pmIndex`` (``window.pm`` false: the next poll asks for
+    it with &pm=)."""
+    every = out.get("messages") or []
+    shown, used = [], 0
+    for m in reversed(every[-n:] if n else []):
+        size = len(json.dumps(m))
+        if len(shown) >= LITE_MIN_MESSAGES and used + size > budget:
+            break
+        shown.append(m)
+        used += size
+    shown.reverse()
+    out["messages"] = shown
+    out["window"] = {"total": len(every), "before": len(every) - len(shown), "pm": False}
+    return out
+
+
+def room_pm_index(messages: list[dict], before_id: str) -> list[dict]:
+    """``pmIndex`` for the messages above ``before_id`` (the oldest the page
+    holds): what a link to an older PO message needs to name it."""
+    rest = []
+    for m in messages:
+        if m.get("id") == before_id:
+            break
+        rest.append(m)
+    else:
+        return []
+    return [_pm_summary(m) for m in rest if m.get("kind") == "pomsg" and m.get("id")]
 
 
 def _hub_row(m: dict) -> bool:
@@ -15232,6 +15276,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 revision, ids = change
                 every = out.pop("messages", [])
+                pm = q.get("pm", [""])[0]      # a first read's pmIndex, sent after it (#247)
+                pm_extra = {"pmIndex": room_pm_index(every, pm)} if pm else {}
                 messages = [m for m in every if m.get("id") in ids]
                 had = q.get("statusSig", [""])[0]
                 same_status = had == status_sig
@@ -15242,10 +15288,11 @@ class Handler(BaseHTTPRequestHandler):
                                       "statusSig": status_sig, "statusSame": same_status,
                                       **({} if same_status else
                                          {"patch": patch} if patch is not None else {"room": out}),
-                                      **({"total": len(every)} if win else {}),
+                                      **({"total": len(every)} if win else {}), **pm_extra,
                                       "messages": messages})
                 return
-            if q.get("lite", [""])[0] == "1":
+            lite = q.get("lite", [""])[0] == "1"
+            if lite:
                 # The first read: the rest of the status comes as a patch on
                 # the page's next poll, which it makes once this is drawn.
                 status = lite_status(status)
@@ -15253,7 +15300,9 @@ class Handler(BaseHTTPRequestHandler):
                 status_sig = hashlib.sha1(status_text.encode("utf-8")).hexdigest()[:20]
                 out = {**status, "messages": out.get("messages") or [], "lite": True}
             keep_room_status(rid, status_sig, status_text)
-            if win:
+            if lite:
+                lite_window(out, win or ROOM_WINDOW_MAX, LITE_BYTES - len(status_text) - 512)
+            elif win:
                 room_window(out, win)
             out["revision"] = revision
             out["statusSig"] = status_sig
