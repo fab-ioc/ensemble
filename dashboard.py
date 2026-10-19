@@ -3631,7 +3631,7 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     room_id, msg_id = (room_id or "").strip(), (msg_id or "").strip()
     if not _REF_ROOM_ID.match(room_id) or not msg_id or msg_id == "task":
         return None
-    room = chatroom.get_room(room_id)
+    room = chatroom.get_room(room_id, copy_room=False)     # read only: a chip per link (#247)
     if room is None:
         return None
     is_po = any((p.get("poRoomId") or "") == room_id for p in load_projects())
@@ -3968,15 +3968,54 @@ def _turnstore_db() -> Path:
     return chatroom.ROOMS_DIR.parent / "cache" / "turns.sqlite3"
 
 
+def _parser_sources(root=None) -> list[str]:
+    """What _claude_text_turns' output is made by: its source, and that of
+    every function, pattern and hub module it reaches (the image helpers,
+    ``attachments``, ``message_refs``...), followed through the names each
+    one's code uses."""
+    import inspect
+    import types
+    here = Path(__file__).resolve().parent
+    seen: set[int] = set()
+    out: list[str] = []
+
+    def code_names(code):
+        yield from code.co_names
+        for c in code.co_consts:
+            if isinstance(c, types.CodeType):
+                yield from code_names(c)
+
+    def visit(obj, scope):
+        if id(obj) in seen:
+            return
+        seen.add(id(obj))
+        if isinstance(obj, re.Pattern):
+            out.append(f"re:{obj.pattern!r}:{obj.flags}")
+        elif isinstance(obj, types.ModuleType):
+            f = getattr(obj, "__file__", "") or ""
+            if f and Path(f).resolve().parent == here:
+                out.append(inspect.getsource(obj))
+                for v in list(vars(obj).values()):
+                    if isinstance(v, types.ModuleType):
+                        visit(v, None)
+        elif isinstance(obj, types.FunctionType):
+            out.append(inspect.getsource(obj))
+            for name in code_names(obj.__code__):
+                if name in obj.__globals__:
+                    visit(obj.__globals__[name], obj.__globals__)
+        elif isinstance(obj, (str, int, float, tuple, frozenset)) and not isinstance(obj, bool):
+            out.append(repr(obj)[:2000])
+
+    visit(root or _claude_text_turns, globals())
+    return out
+
+
 def _turnstore_version() -> str:
-    """The parser's own source: a change to how a transcript is read reads
-    every stored one afresh."""
+    """The parser's own source and all it uses (_parser_sources): a change
+    to how a transcript is read reads every stored one afresh."""
     if not _TURNSTORE_VER:
-        import inspect
         try:
-            parts = [inspect.getsource(f) for f in (
-                _claude_text_turns, _queued_prompt_text, _unwrap_pasted,
-                _claude_image_source, _extract_text)] + [inspect.getsource(message_refs)]
+            parts = _parser_sources()
         except (OSError, TypeError):
             parts = [str(time.time())]     # no source: nothing stored is trusted
         _TURNSTORE_VER.append(turnstore.version_of(*parts))
@@ -6764,13 +6803,14 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
         return None
     links = load_session_projects()
     found = []
+    ledgers = points.with_ledgers()
     for room in _task_index():
         rid = room["id"]
+        if rid not in ledgers:
+            continue
         if rid != project.get("poRoomId") and _task_project(room, links, projects) != project_id:
             continue
-        if not points.exists(rid):
-            continue
-        matches = [p for p in points.load(rid)["points"] if p["id"] == point_id]
+        matches = [p for p in points.load(rid, shared=True)["points"] if p["id"] == point_id]
         for point in matches:
             found.append((room, point))
         if len(found) > 1:
@@ -6780,7 +6820,7 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
     room, point = found[0]
     rid = room["id"]
     # Read current replies only for the matching ledger, never all transcripts.
-    point = next((p for p in points.sync(rid)["points"] if p["id"] == point_id), point)
+    point = next((p for p in points.sync(rid, shared=True)["points"] if p["id"] == point_id), point)
     if not point.get("mid"):
         return None
     out = {"id": point_id, "roomId": rid, "mid": point["mid"],
@@ -15133,7 +15173,7 @@ class Handler(BaseHTTPRequestHandler):
             pid = (q.get("project", [""])[0] or "").strip()
             ctx_pid = ""
             if ctx_room:
-                rm = chatroom.get_room(ctx_room)
+                rm = chatroom.get_room(ctx_room, copy_room=False)
                 ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
             rid, why = resolve_task_ref(q.get("ref", [""])[0], pid or ctx_pid)
             info = task_ref_info(rid) if rid else None
@@ -15183,7 +15223,9 @@ class Handler(BaseHTTPRequestHandler):
             # {pending: true} while the chat is first read.
             q = parse_qs(u.query)
             rid = (q.get("id", [""])[0] or "").strip()
-            room = chatroom.get_room(rid, public=False) if rid else None
+            # Read in place: threads only read the room, and a PO room is
+            # 13 MB to copy on every poll of the channel (#247).
+            room = chatroom.get_room(rid, public=False, copy_room=False) if rid else None
             if room is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return

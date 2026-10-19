@@ -65,6 +65,41 @@ class TurnStoreTest(unittest.TestCase):
         out = dashboard._stored_text_turns(self.t, sig)
         self.assertEqual(out[0]["text"], "hello")
 
+    def test_a_change_to_anything_the_parser_uses_is_a_new_version(self):
+        base = turnstore.version_of(*dashboard._parser_sources())
+        def other_image_path(turn, path, k):
+            return False
+        def other_meta_texts(meta):
+            return []
+        for name, repl in (("_claude_image_path", other_image_path), ("_meta_texts", other_meta_texts),
+                           ("_PASTED", __import__("re").compile("x"))):
+            with mock.patch.object(dashboard, name, repl):
+                self.assertNotEqual(turnstore.version_of(*dashboard._parser_sources()), base, name)
+        with mock.patch.object(dashboard.attachments, "is_attachment_path", other_image_path):
+            # a hub module is taken whole: its source, not its live names
+            self.assertIn(__import__("inspect").getsource(dashboard.attachments),
+                          dashboard._parser_sources())
+        self.assertEqual(turnstore.version_of(*dashboard._parser_sources()), base)
+
+    def test_a_locked_or_busy_store_is_kept(self):
+        sig = self._sig()
+        turnstore.put(self.db, "x", sig, "v", [{"text": "a"}], force=True)
+        for err in (sqlite3.OperationalError("database is locked"),
+                    sqlite3.DatabaseError("a healthy file, a passing error")):
+            turnstore.close()
+            with mock.patch.object(turnstore, "_open", side_effect=err):
+                self.assertIsNone(turnstore.get(self.db, "x", sig, "v"))
+            self.assertTrue(self.db.is_file())
+        turnstore.close()
+        self.assertEqual(turnstore.get(self.db, "x", sig, "v"), [{"text": "a"}])
+
+    def test_an_older_reading_never_replaces_a_newer_one(self):
+        turnstore.put(self.db, "x", (20, 2000), "v", [{"text": "new"}], force=True)
+        turnstore.put(self.db, "x", (10, 1000), "v", [{"text": "old"}], force=True)
+        self.assertEqual(turnstore.get(self.db, "x", (20, 2000), "v"), [{"text": "new"}])
+        turnstore.put(self.db, "x", (10, 1000), "v2", [{"text": "new parser"}], force=True)
+        self.assertEqual(turnstore.get(self.db, "x", (10, 1000), "v2"), [{"text": "new parser"}])
+
     def test_a_live_transcript_is_stored_at_most_every_put_every(self):
         sig = self._sig()
         self.assertTrue(turnstore.put(self.db, "x", sig, "v", [{"text": "a"}]))

@@ -98,7 +98,7 @@ class Lookup(Hub):
         self.b = self.room('Other PO', self.ot)
         self.seed(self.a, 'P291', 'Our ask', 'acked')
         self.seed(self.b, 'P291', 'Other ask', 'open')
-        p = mock.patch.object(points, 'sync', side_effect=lambda rid: points.load(rid))
+        p = mock.patch.object(points, 'sync', side_effect=lambda rid, **k: points.load(rid, **k))
         p.start(); self.addCleanup(p.stop)
 
     def seed(self, rid, id, text, state):

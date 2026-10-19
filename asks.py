@@ -746,7 +746,7 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
     marked = _room_asks(summary)
     if not marked:
         return []
-    led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     settled = float(led.get("asksSettledAt") or 0)
     if not (bool(summary["po"]) if "po" in summary else bool(_d.room_po_id(summary))):
@@ -792,10 +792,12 @@ _OPEN: dict[str, tuple] = {}    # room id → (key, open_cards' list)
 
 def _room_of(summary: dict | None) -> dict | None:
     """The room a summary is of: the summary itself when it is a whole room
-    (the chat's poll has just read it), else read."""
+    (the chat's poll has just read it), else read: its messages are the
+    indexed ones, to read and never change (a PO room is 13 MB, and a chat
+    full of point chips read it once per chip, #247)."""
     if summary and "messages" in summary and "participants" in summary:
         return summary
-    return _d.chatroom.get_room((summary or {}).get("id", ""))
+    return _d.chatroom.get_room_snapshot((summary or {}).get("id", ""))[0]
 
 
 def _heads(text: str) -> list[tuple[int, list[str]]]:
@@ -927,7 +929,7 @@ def point_card(summary: dict, point: dict) -> dict | None:
     cards, read = _room_cards(summary)
     answers = {a["mid"]: float(a.get("at") or 0) for a in point.get("answers") or [] if a.get("mid")}
     since = float(point.get("createdAt") or 0)
-    led = _d.points.load(rid) if _d.points.exists(rid) else {}
+    led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     best = None
     for mid in set(answers) | {m for m, c in cards.items() if pid in c[2]}:
@@ -999,7 +1001,7 @@ def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
     if not cards:
         return []
     if led is None:
-        led = _d.points.load(rid) if _d.points.exists(rid) else {}
+        led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     pts = led.get("points") or []
     by_id = {p.get("id"): p for p in pts}
@@ -1060,7 +1062,7 @@ def decisions(summary: dict, led: dict | None = None, now: float | None = None) 
     now = time.time() if now is None else now
     if led is None:
         rid = (summary or {}).get("id", "")
-        led = _d.points.load(rid) if rid and _d.points.exists(rid) else {}
+        led = _d.points.load(rid, shared=True) if rid and _d.points.exists(rid) else {}
     last = max([float(led.get("lastPersonAt") or 0)]
                + [float(p.get("createdAt") or 0) for p in led.get("points") or []])
     waiting, older, kept = [], [], []

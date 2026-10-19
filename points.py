@@ -549,6 +549,22 @@ def _save(room_id: str, led: dict) -> None:
         pass
 
 
+def with_ledgers() -> set[str]:
+    """The rooms that have a ledger (or its .prev), from one listing of the
+    folder: a point chip looks in every room of a project, and two stats per
+    room per chip held a chat's open (#247)."""
+    out = set()
+    try:
+        with os.scandir(_dir()) as it:
+            for e in it:
+                stem = e.name.split(".", 1)[0]
+                if e.name in (stem + ".json", stem + ".json.prev") and _ROOM_ID.fullmatch(stem):
+                    out.add(stem)
+    except OSError:
+        pass
+    return out
+
+
 def exists(room_id: str) -> bool:
     if not _ROOM_ID.fullmatch(room_id or ""):
         return False

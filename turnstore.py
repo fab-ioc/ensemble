@@ -37,14 +37,42 @@ def _conn(db: Path) -> sqlite3.Connection:
         db.parent.mkdir(parents=True, exist_ok=True)
         try:
             conn = _open(db)
+        except sqlite3.OperationalError:
+            raise           # busy or locked (another hub writing): parse this time
         except sqlite3.DatabaseError:
             # Not a database (a torn copy, another program's file): it holds
-            # nothing that cannot be read again from the transcripts.
-            for p in (db, db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")):
+            # nothing that cannot be read again from the transcripts. A file
+            # another process has open is left (Windows refuses the unlink,
+            # OSError: parsed this time); its WAL goes only with it.
+            if not _corrupt(db):
+                raise
+            db.unlink()
+            for p in (db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")):
                 p.unlink(missing_ok=True)
             conn = _open(db)
         _CONN[key] = conn
     return conn
+
+
+def _corrupt(db: Path) -> bool:
+    """Whether ``db`` is surely no store: not an SQLite file, or one its own
+    integrity check fails. A lock or busy error is no proof."""
+    try:
+        with db.open("rb") as f:
+            if f.read(16) != b"SQLite format 3\x00":
+                return True
+    except OSError:
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=2)
+        try:
+            return conn.execute("PRAGMA quick_check").fetchone()[0] != "ok"
+        finally:
+            conn.close()
+    except sqlite3.OperationalError:
+        return False
+    except sqlite3.DatabaseError:
+        return True
 
 
 def _open(db: Path) -> sqlite3.Connection:
@@ -86,8 +114,14 @@ def put(db: Path, path: str, sig: tuple[int, int], ver: str, turns: list[dict],
         with _LOCK:
             conn = _conn(db)
             with conn:
-                conn.execute("INSERT OR REPLACE INTO turns(path, size, mtime, ver, data) "
-                             "VALUES (?, ?, ?, ?, ?)", (path, sig[0], sig[1], ver, blob))
+                # Two hubs on one home may store one file: an older reading
+                # never replaces a newer one of the same parser.
+                conn.execute("INSERT INTO turns(path, size, mtime, ver, data) VALUES (?, ?, ?, ?, ?) "
+                             "ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, "
+                             "ver=excluded.ver, data=excluded.data WHERE turns.ver != excluded.ver "
+                             "OR excluded.mtime > turns.mtime "
+                             "OR (excluded.mtime = turns.mtime AND excluded.size >= turns.size)",
+                             (path, sig[0], sig[1], ver, blob))
             _LAST_PUT[path] = now
         return True
     except (OSError, sqlite3.Error, ValueError, TypeError):
