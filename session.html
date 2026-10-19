@@ -5604,6 +5604,9 @@ function sendWhen(ts, day = true) {
     : d.toLocaleString([], Object.assign({ month: 'short', day: 'numeric' }, hm));
 }
 function sendHtml(s, md) {
+  // The hub found it in the conversation (in whichever session of the seat
+  // read it, #245): read, even while this page's copy has no turn for it yet.
+  const read = !!s.read || s.state === 'confirmed';
   const when = sendWhen(s.at);
   const sent = when ? `<span class="pend-when">Sent ${esc(when)}&nbsp;·</span> ` : '';
   const again = s.redeliveredAt ? sendWhen(s.redeliveredAt, false) : '';
@@ -5615,12 +5618,12 @@ function sendHtml(s, md) {
       ? `<div class="pend-state ok" role="status">${sent}${s.afterRestart
           ? 'Queued: it will be delivered after the restart.'
           : 'Queued: it goes in once the session is up.'}</div>`
-      : s.read
+      : read
         ? `<div class="pend-state ok" role="status">${sent}Read by the agent.</div>`
       : `<div class="pend-state ok" role="status">${sent}${again && s.state === 'delivered'
         ? `Typed in again at ${esc(again)}; not yet read by the agent.` : 'Delivered, not yet read by the agent.'}`
         + (s.state === 'delivered' ? ` <button type="button" class="send-hide" data-send="${esc(s.key)}" title="Stop showing it here (it was typed in)">Hide</button>` : '') + '</div>';
-  return `<div class="msg user${s.read ? '' : ' pending'}${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
+  return `<div class="msg user${read ? '' : ' pending'}${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
     + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div><div class="text md">${md(stripPointLines(s.text))}</div>${sendPointsHtml(s.text)}${st}</div>`;
 }
 // The asks a send holds, as the bar under a balloon names them: "P438 ·
@@ -5926,7 +5929,7 @@ async function prevSessionItems(sid, agentId) {
   const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
   const had = SOLO_PREV.get(sid);
   if (had && (want < 0 || had.from <= want)) return had.items;
-  const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
+  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000).then(r => r.json());
   const turns = d.turns || [];
   const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
   const first = items.find(m => /:\d+$/.test(String(m.id)));   // a queued line's id is ":q<n>"
@@ -5954,7 +5957,7 @@ async function checkSolo() {
   if (checkSolo.busy) return;   // one stat request at a time
   checkSolo.busy = true;
   try {
-    const s = await fetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
+    const s = await pollFetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
     if (s && typeof s.size === 'number') {
       const key = s.size + ':' + (s.mtime || 0);
       if (key === _soloStatKey) return;
@@ -5980,7 +5983,7 @@ async function renderSolo(sid, agentId, force) {
   SOLO_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
-    const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
+    const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1', null, 90000).then(r => r.json());
     const raw = d.turns || [];
     if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = raw.length;
@@ -6062,7 +6065,7 @@ async function renderThreaded(force) {
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
-    const r = await fetch(thrUrl(force ? '' : THR_SIG));
+    const r = await pollFetch(thrUrl(force ? '' : THR_SIG), null, 90000);
     const d = await r.json();
     // Unchanged, but perhaps only now on screen (a Dock tab shown again): read now.
     if (d.same) {
@@ -6350,6 +6353,17 @@ function showThreadsBtn() {
 
 // The room poll: one request at a time. A refresh asked for while one is
 // under way (after a click) runs once it is done, not beside it.
+// A poll's request is given up after ``ms`` (its body too), so the next tick
+// asks again: one that never settled (#245: a connection lost on the way)
+// held a poll's one-at-a-time flag for good, and the chat stopped hearing
+// from the hub. Its "Delivered" balloon stayed though the agent had read it.
+// The poll's own 30 s; a whole transcript or channel, 90 s.
+function pollFetch(url, init, ms = 30000) {
+  let signal;
+  if (typeof AbortSignal.timeout === 'function') signal = AbortSignal.timeout(ms);
+  else { const ctl = new AbortController(); setTimeout(() => ctl.abort(), ms); signal = ctl.signal; }
+  return fetch(url, Object.assign({}, init || {}, { signal }));
+}
 let REFRESH_BUSY = false, REFRESH_AGAIN = false;
 let ROOM_ETAG = '';
 let ROOM_LAST = null;  // last received room; a deferred draw may still show the prior one
@@ -6384,7 +6398,7 @@ async function refreshRoom() {
   const sendsGen = ++SENDS_GEN;
   try {
     const url = '/api/room?id=' + encodeURIComponent(ROOM) + '&n=' + ROOM_N;
-    let r = await fetch(ROOM_LAST?.revision
+    let r = await pollFetch(ROOM_LAST?.revision
       ? url + '&cursor=' + encodeURIComponent(ROOM_LAST.revision)
         + '&statusSig=' + encodeURIComponent(ROOM_LAST.statusSig || '') : url,
       !ROOM_LAST && ROOM_ETAG ? {headers: {'If-None-Match': ROOM_ETAG}} : undefined);
@@ -6393,7 +6407,7 @@ async function refreshRoom() {
       if (patch.refetch) {
         ROOM_LAST = null;
         ROOM_ETAG = '';
-        r = await fetch(url);
+        r = await pollFetch(url);
       } else if (patch.delta && patch.revision && (patch.statusSame || patch.room || patch.patch)) {
         const old = ROOM_LAST.room.messages || [];
         const changed = new Map((patch.messages || []).map(m => [m.id, m]));
@@ -6416,12 +6430,12 @@ async function refreshRoom() {
       } else {
         ROOM_LAST = null;
         ROOM_ETAG = '';
-        r = await fetch(url);
+        r = await pollFetch(url);
       }
     }
     if (!room && r.status === 304 && (!ROOM_LAST || ROOM_LAST.etag !== ROOM_ETAG)) {
       ROOM_ETAG = '';
-      r = await fetch(url);
+      r = await pollFetch(url);
     }
     if (!room && r.status === 304) room = structuredClone(ROOM_LAST.room);
     else if (!room) {
