@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODES = ("fill", "restart", "restart-now", "cold", "cold-now")
-OPENS = ("poRoom", "poChannel", "poThread", "poTopic", "taskRoom", "soloTail")
+OPENS = ("poRoom", "poChannel", "poThread", "poTopic", "taskRoom", "soloTail", "soloLink")
 
 FIRST_BYTES = 100_000       # the spec: a first answer of at most 100 KB
 FIRST_MS = 300              # the first answer after a start (the spec's warm open, all of it)

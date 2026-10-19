@@ -4102,19 +4102,7 @@ def turns_tail(turns: list[dict], keep: int, max_bytes: int = 0) -> tuple[list[d
     and ``cut``, the turns left above), so the page numbers them as it would
     the whole. None for ``base`` when they are all sent. ``max_bytes``: fewer
     when they would not fit it (as JSON), but at least TAIL_MIN balloons."""
-    starts, prev, n, q, qb = [], None, 0, 0, 0
-    for i, t in enumerate(turns or []):
-        if t.get("queued") == "blocks":
-            qb += 1
-            continue
-        if t.get("queued"):
-            q += 1
-            continue
-        same = prev is not None and t.get("role") == prev.get("role") and t.get("text") == prev.get("text")
-        prev = t
-        if not same:
-            starts.append((i, n, q, qb))
-            n += 1
+    starts = _turn_starts(turns)[0]
     keep = len(starts) if keep <= 0 else min(keep, len(starts))
     if max_bytes > 0:
         # Back from the end, balloon by balloon, while the turns still fit.
@@ -4130,6 +4118,91 @@ def turns_tail(turns: list[dict], keep: int, max_bytes: int = 0) -> tuple[list[d
         return turns, None
     i, n0, q0, qb0 = starts[-keep]
     return turns[i:], {"n": n0, "q": q0, "qb": qb0, "cut": i}
+
+
+SOLO_LINK_ABOVE, SOLO_LINK_BELOW = 20, 40   # a link's window: balloons before and after its own
+
+
+def _turn_starts(turns: list[dict]) -> tuple[list[tuple], list[tuple]]:
+    """Where each balloon of ``turns`` starts, (turn index, n, q, qb) as
+    page_turn_ids counts there, and each queued line, (turn index, id
+    suffix): "q3", "qb1"."""
+    starts, queued, prev, n, q, qb = [], [], None, 0, 0, 0
+    for i, t in enumerate(turns or []):
+        if t.get("queued") == "blocks":
+            queued.append((i, f"qb{qb}"))
+            qb += 1
+            continue
+        if t.get("queued"):
+            queued.append((i, f"q{q}"))
+            q += 1
+            continue
+        same = prev is not None and t.get("role") == prev.get("role") and t.get("text") == prev.get("text")
+        prev = t
+        if not same:
+            starts.append((i, n, q, qb))
+            n += 1
+    return starts, queued
+
+
+def turns_window(turns: list[dict], around: str = "", at: float = -1, frm: int = -1,
+                 n: int = 100, to: int = -1, max_bytes: int = 0) -> dict:
+    """A bounded part of a one-agent transcript (#247 review 4): never the
+    turns between a link and the latest. ``around`` (a balloon's id suffix:
+    "12", "q3", "qb1") or ``at`` (a time, for a PO message the chat draws
+    among the turns): from SOLO_LINK_ABOVE balloons before its own to
+    SOLO_LINK_BELOW after, with ``base`` the counters at its start, as
+    turns_tail; ``early`` when ``at`` is before the first turn (the session
+    before has it). ``frm``: the ``n`` balloons from that turn on, as the
+    reader scrolls down a window. Both end at ``to``, the first turn the
+    page holds, when they reach it; ``end`` is where they stop. ``max_bytes``:
+    fewer balloons when they would not fit it (as JSON), never none."""
+    turns = turns or []
+    starts, queued = _turn_starts(turns)
+    total = len(turns)
+    stop = total if to < 0 else min(to, total)
+    size = [len(json.dumps(t)) + 1 for t in turns] if max_bytes > 0 else []
+    at_turn = lambda b: starts[b][0] if b < len(starts) else total   # where balloon b starts
+    if frm >= 0:
+        k = next((j for j, s in enumerate(starts) if s[0] >= frm), len(starts))
+        b, got = k + 1, 0
+        if size:
+            got = sum(size[frm:min(at_turn(b), stop)])
+        while b < min(k + n, len(starts)) and at_turn(b) < stop:
+            more = sum(size[at_turn(b):min(at_turn(b + 1), stop)]) if size else 0
+            if size and got + more > max_bytes:
+                break
+            got += more
+            b += 1
+        end = max(min(at_turn(b), stop), min(frm, total))
+        return {"turns": turns[frm:end], "total": total, "from": frm, "end": end}
+    target = None
+    if at >= 0:
+        times = [(i, _turn_epoch(t.get("timestamp"))) for i, t in enumerate(turns) if t.get("timestamp")]
+        times = [(i, e) for i, e in times if e]
+        if not times or at < times[0][1]:
+            return {"turns": [], "total": total, "early": True}
+        target = next((i for i, e in times if e >= at), times[-1][0])
+    elif around.isdigit():
+        target = starts[int(around)][0] if int(around) < len(starts) else None
+    elif around:
+        target = next((i for i, sfx in queued if sfx == around), None)
+    if target is None:
+        return {"turns": [], "total": total, "missing": True}
+    k = max((j for j, s in enumerate(starts) if s[0] <= target), default=0)
+    a, b = max(0, k - SOLO_LINK_ABOVE), min(len(starts), k + 1 + SOLO_LINK_BELOW)
+    # From the first turn when it starts at the first balloon (a queued line
+    # may come before it), where every counter is 0.
+    span = lambda a, b: (0 if a == 0 else starts[a][0], max(min(at_turn(b), stop), target + 1))
+    while size and (a < k or b > k + 1) and sum(size[slice(*span(a, b))]) > max_bytes:
+        if b - k - 1 > k - a:
+            b -= 1
+        else:
+            a += 1
+    i, end = span(a, b)
+    n0, q0, qb0 = starts[a][1:] if a else (0, 0, 0)
+    return {"turns": turns[i:end], "total": total, "end": end,
+            "base": {"n": n0, "q": q0, "qb": qb0, "cut": i}}
 
 
 def attachment_url(room_id: str, name: str) -> str:
@@ -15175,8 +15248,17 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     return -1
             after, upto, max_bytes = num("after"), num("upto"), max(0, num("bytes"))
+            around, frm, to = qs.get("around", [""])[0], num("from"), num("to")
+            try:
+                at = float(qs.get("at", [""])[0] or -1)
+            except ValueError:
+                at = -1
 
             def full_turns(turns: list[dict]) -> dict:
+                # &around= / &at=: a link's window; &from=: the page below it.
+                if around or at >= 0 or frm >= 0:
+                    return turns_window(turns, around, at, frm, num("n") if num("n") > 0 else 100, to,
+                                        max_bytes)
                 # &after=: the turns from there on (a poll of the page that
                 # holds those above); &upto=: the page above the turns held.
                 if 0 <= after <= len(turns):

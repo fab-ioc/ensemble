@@ -337,9 +337,10 @@ vm.runInContext(code, ctx);
                      "THR_PRE = { url, p: pollFetch(url, null, 90000) }"):
             self.assertIn(call, SESSION)
         # The transcript reads (#247: the last balloons, the page above them,
-        # a session rotated out of) give up too.
+        # a session rotated out of, a link's window and the pages below it)
+        # give up too.
         self.assertEqual(len(re.findall(r"pollFetch\((?:'/api/session/' \+ encodeURIComponent\(sid\) \+ '\?full=1'|soloUrl\()"
-                                        r"[^;]*?null, 90000\)", SESSION)), 3)
+                                        r"[^;]*?null, 90000\)", SESSION)), 5)
         start = SESSION.index("async function refreshRoom()")
         self.assertNotIn("await fetch(", SESSION[start:SESSION.index("function refreshShow(", start)])
 

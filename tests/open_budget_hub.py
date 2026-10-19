@@ -170,7 +170,9 @@ def main() -> None:
     opens = {"poRoom": f"/api/room?id={PO_ROOM}&n=50&lite=1",
              "poChannel": f"/api/room/channel?id={PO_ROOM}&n=40&lite=1",
              "taskRoom": f"/api/room?id={TASK_ROOM}&n=50&lite=1",
-             "soloTail": f"/api/session/{TASK_SID}?full=1&tail=120&bytes=96000"}
+             "soloTail": f"/api/session/{TASK_SID}?full=1&tail=120&bytes=96000",
+             # A link to an early balloon of it: a window around that one.
+             "soloLink": f"/api/session/{TASK_SID}?full=1&around=30&bytes=96000"}
     first = {}
     for name, path in list(opens.items()):
         body, ms = get(path)

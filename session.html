@@ -4712,6 +4712,7 @@ function renderBubbles(items, opt = {}) {
   // A channel shows its latest entries: the way to those before.
   if (thr && !THREAD_MODE && THR_BEFORE && !threadList) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
   // A link's window: the way to those after it.
+  if (!thr && SOLO_WIN && SOLO_MODE) rows.push(`<div class="fold-note thr-more" data-key="solo-newer:${SOLO_WIN.segs.map(s => s.end).join(',')}">Later messages in this chat. <button type="button" class="solo-newer-btn">Show more</button></div>`);
   if (!thr && ROOM_WIN && !SOLO_MODE) rows.push(`<div class="fold-note thr-more" data-key="room-newer:${ROOM_WIN.gap}">${ROOM_WIN.gap} later message${ROOM_WIN.gap === 1 ? '' : 's'} in this chat. <button type="button" class="room-newer-btn">Show more</button></div>`);
   if (thr && THR_AFTER && !threadList) rows.push(`<div class="fold-note thr-more" data-key="thr-newer:${THR_AFTER}">${THR_AFTER} later entr${THR_AFTER === 1 ? 'y' : 'ies'} in this ${THREAD_MODE ? 'thread' : 'chat'}. <button type="button" class="thr-newer-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
@@ -5114,7 +5115,7 @@ function patchChildren(box, rows) {
 function showLatest() {
   const box = $('#msgs'), btn = $('#to-latest');
   if (!box || !btn) return;
-  const away = !!box.clientHeight && (!STICK || !!(THREADED && THR_AFTER) || !!ROOM_WIN);
+  const away = !!box.clientHeight && (!STICK || !!(THREADED && THR_AFTER) || !!ROOM_WIN || !!(SOLO_MODE && SOLO_WIN));
   btn.hidden = !away;
   const { label, tip } = latestLabel(NEW_N, DEC_N);
   setText(btn, label);
@@ -5124,6 +5125,7 @@ function toLatest() {
   const box = $('#msgs');
   STICK = true;
   if (ROOM_WIN) { ROOM_WIN = null; if (ROOM_OBJ) renderMsgs(ROOM_OBJ); }
+  if (SOLO_WIN) { SOLO_WIN = null; if (SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
   if (THREADED && THR_AFTER) {
     // A link's window: the newest entries instead (its pages start again).
     GOTO = ''; GOTO_PART = '';
@@ -5494,12 +5496,12 @@ function landPending() {
       // A line read while the agent was busy (":q<n>") has no place in the
       // numbering: the whole transcript is drawn for it.
       // A PO message older than the turns shown: the whole transcript is drawn.
-      const t = mid.match(/^(.+):(q?)(\d+)$/);
+      const t = mid.match(/^(.+):(qb|q)?(\d+)$/);
       const pm = !t && SOLO_SID && PM_IDX.has(mid);
       let failed = false;
       if ((t && SOLO_SID && soloOwns(t[1])) || pm) {
         if (!(SOLO_WANT && SOLO_WANT.mid === mid)) {
-          SOLO_WANT = pm ? { sid: SOLO_SID, n: 0, mid } : { sid: t[1], n: t[2] ? 0 : +t[3], mid };
+          SOLO_WANT = pm ? { sid: SOLO_SID, ts: PM_IDX.get(mid).ts || 0, mid } : { sid: t[1], key: (t[2] || '') + t[3], mid };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }
@@ -5766,10 +5768,9 @@ let SEND_IN_FLIGHT = false;
 // What the hub holds for this session while it is resumed (room.pending):
 // {state: 'resuming'|'failed', error, items:[{text,to,at}]}, or null.
 let ROOM_PENDING = null, ROOM_RESUMING = false, PENDING_SIG = 'null';
-// A rotated PO: its latest rotation, every rotation, and the sessions it was
-// rotated out of (sid → {items, from}; a finished transcript never changes).
+// A rotated PO: its latest rotation, and every rotation (SOLO_ABOVE: what is
+// drawn of the sessions it was rotated out of).
 let SOLO_ROT = null, SOLO_ROTS = [];
-const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
 function rotationText(r) {
   const k = n => Math.round((n || 0) / 1000) + 'k';
@@ -6035,18 +6036,104 @@ function soloItems(raw, sid, agentId, keep, base) {
   }
     : t.answers ? { answers: t.answers } : {}));
 }
-async function prevSessionItems(sid, agentId) {
-  // A link to an older turn than those shown draws back to it.
-  const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
-  const had = SOLO_PREV.get(sid);
-  if (had && (want < 0 || had.from <= want)) return had.items;
-  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1' + (want < 0 ? '&tail=' + PREV_TURNS_SHOWN + '&bytes=' + SOLO_BYTES : ''),
-    null, 90000).then(r => r.json());
-  const turns = d.turns || [];
-  const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want), d.base);
-  const first = items.find(m => /:\d+$/.test(String(m.id)));   // a queued line's id is ":q<n>"
-  SOLO_PREV.set(sid, { items, from: first ? +String(first.id).split(':').pop() : 0 });
-  return items;
+// The sessions this chat was rotated out of, drawn above the current one once
+// its top is reached (#247 review 4): SOLO_ABOVE, oldest first, each {sid,
+// raw, base, end, total}, held from base.cut to its end and paged up as the
+// current one is (soloLoadUp). A link far back is a window instead: SOLO_WIN
+// {segs}, the same but drawn alone, the last ending short of what follows,
+// paged down (soloLoadDown) until it meets the turns drawn; Latest leaves it.
+let SOLO_ABOVE = [], SOLO_WIN = null, SOLO_DOWN = null;
+const SOLO_ZERO = { n: 0, q: 0, qb: 0, cut: 0 };
+const soloRotFrom = sid => SOLO_ROTS.find(r => r.fromSessionId === sid && r.toSessionId) || null;
+const soloRotTo = sid => SOLO_ROTS.find(r => r.toSessionId === sid && r.fromSessionId) || null;
+const soloCut = s => (s && s.base && s.base.cut) || 0;
+// The last turns of a session this one was rotated out of.
+async function soloPrevSeg(sid) {
+  const d = await pollFetch(soloUrl(sid, '&tail=' + PREV_TURNS_SHOWN + '&bytes=' + SOLO_BYTES), null, 90000).then(r => r.json());
+  const turns = d.turns || [], total = d.total != null ? d.total : turns.length;
+  return { sid, raw: turns, base: d.base || { ...SOLO_ZERO }, end: total, total };
+}
+// What is drawn of a session: the current one's turns held, or one above them.
+function soloDrawnSeg(sid) {
+  if (SOLO_HELD && SOLO_HELD.sid === sid) return SOLO_HELD;
+  return soloCut(SOLO_HELD) ? null : SOLO_ABOVE.find(s => s.sid === sid) || null;
+}
+// Their balloons: each session's, then the line that ended it.
+function segsItems(segs, agentId, lastLine) {
+  const out = [];
+  segs.forEach((s, i) => {
+    out.push(...soloItems(s.raw, s.sid, agentId, Infinity, s.base));
+    const r = soloRotFrom(s.sid);
+    if (r && (lastLine || i < segs.length - 1)) out.push({ id: 'rot' + (r.n || ''), divider: r });
+  });
+  return out;
+}
+// A window that reached the turns drawn below it is one with them again.
+function soloJoin() {
+  const segs = SOLO_WIN.segs, s = segs[segs.length - 1], d = soloDrawnSeg(s.sid);
+  if (!d || d === s || s.end < soloCut(d)) return false;
+  d.raw = s.raw.slice(0, soloCut(d) - soloCut(s)).concat(d.raw);
+  d.base = s.base;
+  SOLO_ABOVE = segs.slice(0, -1).concat(d === SOLO_HELD ? [] : SOLO_ABOVE.slice(SOLO_ABOVE.indexOf(d)));
+  SOLO_WIN = null;
+  return true;
+}
+// A link's balloon already among those drawn: no window for it.
+function soloHolds(w) {
+  const d = soloDrawnSeg(w.sid);
+  if (!d) return false;
+  if (w.ts != null) { const f = d.raw.find(t => t.timestamp); return !!f && Date.parse(f.timestamp) / 1000 <= w.ts; }
+  const m = /^(qb|q)?(\d+)$/.exec(w.key || ''), b = d.base || SOLO_ZERO;
+  return !!m && +m[2] >= (m[1] === 'qb' ? b.qb : m[1] === 'q' ? b.q : b.n);
+}
+// A link's window: the turns around its balloon in the session that has it (a
+// PO message's time before a session's first turn: the session before).
+// False when it is in none.
+async function soloOpenWin(w) {
+  let sid = w.sid;
+  for (let i = 0; i <= SOLO_ROTS.length; i++) {
+    const d0 = soloDrawnSeg(sid);
+    const d = await pollFetch(soloUrl(sid, (w.ts != null ? '&at=' + w.ts : '&around=' + w.key) + (d0 ? '&to=' + soloCut(d0) : '') + '&bytes=' + SOLO_BYTES),
+      null, 90000).then(r => r.json());
+    if (d.early) { const r = soloRotTo(sid); if (!r) return false; sid = r.fromSessionId; continue; }
+    if (d.missing || !Array.isArray(d.turns)) return false;
+    SOLO_WIN = { segs: [{ sid, raw: d.turns, base: d.base || { ...SOLO_ZERO }, end: d.end, total: d.total }] };
+    soloJoin();
+    return true;
+  }
+  return false;
+}
+// The page below a link's window as the reader nears its end; at a session's
+// end, on into the one it was rotated to.
+function soloLoadDown() {
+  if (SOLO_DOWN || !SOLO_WIN) return SOLO_DOWN || Promise.resolve(false);
+  const win = SOLO_WIN;
+  SOLO_DOWN = (async () => {
+    try {
+      let s = win.segs[win.segs.length - 1];
+      if (s.end >= s.total) {
+        const r = soloRotFrom(s.sid);
+        if (!r) SOLO_WIN = null;     // where it went is not known: the latest instead
+        else win.segs.push(s = { sid: r.toSessionId, raw: [], base: { ...SOLO_ZERO }, end: 0, total: Infinity });
+      }
+      if (SOLO_WIN === win && !soloJoin()) {
+        const d0 = soloDrawnSeg(s.sid);
+        const d = await pollFetch(soloUrl(s.sid, '&from=' + s.end + '&n=100' + (d0 ? '&to=' + soloCut(d0) : '') + '&bytes=' + SOLO_BYTES),
+          null, 90000).then(r => r.json());
+        if (SOLO_WIN !== win || d.from !== s.end || !Array.isArray(d.turns)) return false;
+        s.raw = s.raw.concat(d.turns); s.end = d.end; s.total = d.total;
+        soloJoin();
+      }
+    } catch (e) { return false; }
+    finally { SOLO_DOWN = null; }
+    const box = $('#msgs'), t0 = box.scrollTop;
+    STICK = false;
+    await renderSolo(SOLO_SID, SOLO_AGENT, true);
+    if (!DRAW_HELD) box.scrollTop = t0;
+    showLatest();
+    return true;
+  })();
+  return SOLO_DOWN;
 }
 // The sessions of this chat a link may point into: the current one and every
 // one it was rotated out of.
@@ -6095,17 +6182,30 @@ let SOLO_KEEP = 120, SOLO_BYTES = 96000, SOLO_MORE = false, SOLO_UP = false, SOL
 const SOLO_OVERLAP = 4;
 const soloTail = () => '&tail=' + SOLO_KEEP + '&bytes=' + SOLO_BYTES;
 const soloUrl = (sid, q) => '/api/session/' + encodeURIComponent(sid) + '?full=1' + q;
+// The top drawn: a window's first session, else the current one until its
+// top is reached, then the oldest above it; its page above, or the session
+// before it (#247 review 4: a rotated chat scrolls on into the one before).
+function soloTop() {
+  const list = SOLO_WIN ? SOLO_WIN.segs : soloCut(SOLO_HELD) ? null : SOLO_ABOVE;
+  return { list, top: (list && list[0]) || SOLO_HELD };
+}
 async function soloLoadUp() {
   if (SOLO_UP || SOLO_FETCHING || !SOLO_MORE) return;
-  const h = SOLO_HELD, start = h && h.base ? h.base.cut : 0;
-  if (!h || !start) return;
+  const { list, top } = soloTop(), win = SOLO_WIN, start = soloCut(top), r = top && !start ? soloRotTo(top.sid) : null;
+  if (!top || (!start && !r)) return;
   SOLO_UP = true;
   const box = $('#msgs'), place = readingPlace(box);
   try {
-    const d = await pollFetch(soloUrl(h.sid, '&tail=200&bytes=' + SOLO_BYTES + '&upto=' + start), null, 90000).then(r => r.json());
-    if (SOLO_HELD !== h || d.upto !== start || !Array.isArray(d.turns)) return;
-    h.raw = d.turns.concat(h.raw);
-    h.base = d.base;
+    if (start) {
+      const d = await pollFetch(soloUrl(top.sid, '&tail=200&bytes=' + SOLO_BYTES + '&upto=' + start), null, 90000).then(r => r.json());
+      if (soloCut(top) !== start || SOLO_WIN !== win || d.upto !== start || !Array.isArray(d.turns)) return;
+      top.raw = d.turns.concat(top.raw);
+      top.base = d.base;
+    } else {
+      const seg = await soloPrevSeg(r.fromSessionId);
+      if (SOLO_WIN !== win || soloTop().top !== top) return;
+      list.unshift(seg);
+    }
     STICK = false;
     await renderSolo(SOLO_SID, SOLO_AGENT, true);
     if (!DRAW_HELD) keepPlace(box, place);
@@ -6121,49 +6221,50 @@ async function renderSolo(sid, agentId, force) {
   SOLO_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ);
   try {
-    // A link to an older turn than those held asks for the whole transcript.
     const w = SOLO_WANT;
-    const whole = w && w.sid === sid;
-    const h = !whole && SOLO_HELD && SOLO_HELD.sid === sid ? SOLO_HELD : null;
-    const start = h && h.base ? h.base.cut : 0;
+    const h = SOLO_HELD && SOLO_HELD.sid === sid ? SOLO_HELD : null;
+    const start = soloCut(h);
     const from = h ? Math.max(start, h.end - SOLO_OVERLAP) : -1;
-    const d = await pollFetch(soloUrl(sid, whole ? '' : soloTail() + (h ? '&after=' + from : '')),
-      null, 90000).then(r => r.json());
+    const d = await pollFetch(soloUrl(sid, soloTail() + (h ? '&after=' + from : '')), null, 90000).then(r => r.json());
     if (h && SOLO_HELD === h && d.after === from && Array.isArray(d.turns)) {
       h.raw = h.raw.slice(0, from - start).concat(d.turns);
       h.end = d.total;
     } else {
-      // The first read, a link's whole transcript, or one that is not what was held.
+      // The first read, or one that is not what was held.
       const got = d.turns || [];
       SOLO_HELD = { sid, raw: got, base: d.base || null, end: d.total != null ? d.total : got.length };
     }
     const held = SOLO_HELD, raw = held.raw, count = held.end;
     if (!force && count === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = count;
-    SOLO_MORE = !!(held.base && held.base.cut);
-    let items = soloItems(raw, sid, agentId, Infinity, held.base);
-    // A PO rotated into this session: the end of the one before, then the line.
-    const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
+    // Rotated again since: what was above belongs to another session's past.
+    const lastAbove = SOLO_ABOVE[SOLO_ABOVE.length - 1];
+    if (lastAbove && (soloRotFrom(lastAbove.sid) || {}).toSessionId !== sid) SOLO_ABOVE = [];
+    // A link to a turn not drawn: a window around it (#247 review 4), never
+    // the turns between it and the latest.
     let wantOk = true;
-    if (rot && rot.fromSessionId) {
-      let prev = [];
-      try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) { if (w && w.sid === rot.fromSessionId) wantOk = false; }
-      items = prev.concat([{ id: 'rot' + (rot.n || ''), divider: rot }], items);
+    if (w && !w.loaded) {
+      if (soloHolds(w)) SOLO_WIN = null;
+      else try { await soloOpenWin(w); } catch (e) { wantOk = false; }
+      if (wantOk) w.loaded = true;
     }
-    // A link into a session from before that one: its turns from the linked
-    // one on, and the line that ended it, above the rest.
-    const old = w && w.sid !== sid && !(rot && w.sid === rot.fromSessionId)
-      ? SOLO_ROTS.find(r => r.fromSessionId === w.sid) : null;
-    if (old) {
-      try {
-        items = (await prevSessionItems(old.fromSessionId, agentId)).concat([{ id: 'rot' + (old.n || ''), divider: old }], items);
-      } catch (e) { wantOk = false; }
+    // A PO rotated into this session: the end of the one before, then the line.
+    if (wantOk && !SOLO_WIN && !soloCut(held) && !SOLO_ABOVE.length && soloRotTo(sid)) {
+      try { SOLO_ABOVE = [await soloPrevSeg(soloRotTo(sid).fromSessionId)]; } catch (e) {}
     }
-    if (w && wantOk) w.loaded = true;
+    const { top } = soloTop();
+    SOLO_MORE = !!(soloCut(top) || (top && soloRotTo(top.sid)));
+    let items = SOLO_WIN ? segsItems(SOLO_WIN.segs, agentId, false)
+      : (soloCut(held) ? [] : segsItems(SOLO_ABOVE, agentId, true)).concat(soloItems(raw, sid, agentId, Infinity, held.base));
     // What the hub wrote out under a balloon link is the agent's copy: the
     // balloon shows the words as they were sent, and the link as its chip.
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     items = withHubRows(items, ROOM_OBJ);
+    if (SOLO_WIN) {
+      // A window ends at its last turn: the hub's later rows are below its gap.
+      const last = [...items].reverse().find(m => m.ts && !m.divider && /:(q|qb)?\d+$/.test(String(m.id)));
+      if (last) items = items.filter(m => !(m.ts > last.ts));
+    }
     CHAT_DRAWN = true;
     DRAWN_ROOM_TS = roomTs;
     renderBubbles(items);
@@ -8726,6 +8827,7 @@ $('#msgs').addEventListener('click', e => {
   if (e.target.closest && e.target.closest('.thr-more-btn')) { thrLoadUp(); return; }
   if (e.target.closest && e.target.closest('.thr-newer-btn')) { thrLoadDown(); return; }
   if (e.target.closest && e.target.closest('.room-newer-btn')) { roomLoadDown(); return; }
+  if (e.target.closest && e.target.closest('.solo-newer-btn')) { soloLoadDown(); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
@@ -8778,6 +8880,7 @@ function msgsScrolled() {
   if (!at && box.scrollTop < box.clientHeight && THREADED && THR_BEFORE && !DRAW_HELD) thrLoadUp();
   if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && THREADED && THR_AFTER && !DRAW_HELD) thrLoadDown();
   if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && ROOM_WIN && !DRAW_HELD) roomLoadDown();
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && SOLO_MODE && SOLO_WIN && !THREADED && !DRAW_HELD) soloLoadDown();
   if (!at && box.scrollTop < box.clientHeight && SOLO_MODE && !THREADED && SOLO_MORE && !DRAW_HELD) soloLoadUp();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });

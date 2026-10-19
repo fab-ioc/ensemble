@@ -391,11 +391,11 @@ class PollAndLinks(unittest.TestCase):
         self.assertEqual(r["rooms2"], 2, "the refresh asked for meanwhile runs once, after")
         self.assertEqual(r["afterFresh"], {"v": "fresh"})
 
-    def test_a_link_to_a_queued_line_loads_its_whole_transcript(self):
+    def test_a_link_to_a_queued_line_loads_its_window(self):
         r = self.node(LAND_JS, fn_src("landPending"))
-        self.assertEqual(r["want"], {"sid": "old", "n": 0, "mid": "old:q0"})
+        self.assertEqual(r["want"], {"sid": "old", "key": "q0", "mid": "old:q0"})
         self.assertEqual((r["renders"], r["renders2"]), (2, 1), "loaded once per link")
-        self.assertEqual(r["want2"], {"sid": "old", "n": 7, "mid": "old:7"})
+        self.assertEqual(r["want2"], {"sid": "old", "key": "7", "mid": "old:7"})
         self.assertEqual(r["notes"], [], "never 'not found' before the transcript is drawn")
 
 

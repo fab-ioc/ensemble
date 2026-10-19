@@ -43,6 +43,22 @@ def transcript(seed: int, n: int = 400) -> list[dict]:
     return out
 
 
+def numbered(part: list[dict], base: dict) -> list[str]:
+    """The ids of ``part``, counted on from ``base`` as page_turn_ids counts."""
+    n, q, qb, prev, ids = base["n"], base["q"], base["qb"], None, []
+    for t in part:
+        if t.get("queued") == "blocks":
+            ids.append(f"s:qb{qb}"); qb += 1
+        elif t.get("queued"):
+            ids.append(f"s:q{q}"); q += 1
+        else:
+            same = prev is not None and (t["role"], t["text"]) == (prev["role"], prev["text"])
+            prev = t
+            if not same:
+                ids.append(f"s:{n}"); n += 1
+    return ids
+
+
 class TurnsTail(unittest.TestCase):
     def test_the_tail_has_the_ids_of_the_whole(self):
         for seed in range(20):
@@ -88,6 +104,75 @@ class TurnsTail(unittest.TestCase):
         turns = transcript(1, 10)
         self.assertEqual(dashboard.turns_tail(turns, 120), (turns, None))
         self.assertEqual(dashboard.turns_tail(turns, 0), (turns, None))
+
+    def test_a_link_gets_a_window_around_its_balloon(self):
+        # #247 review 4: a link far back sends its balloon with 20 before and
+        # 40 after, numbered as the whole; pages below it run to the end, or
+        # to the turns the page holds (&to=), never past them.
+        for seed in range(10):
+            turns = transcript(seed, 2000)
+            whole = [i for i, _ in dashboard.page_turn_ids("s", turns)]
+            for target in ("s:30", "s:500", "s:0", next(i for i in whole[400:] if ":q" in i)):
+                w = dashboard.turns_window(turns, around=target.split(":")[1])
+                ids = numbered(w["turns"], w["base"])
+                self.assertIn(target, ids)
+                at = ids.index(target)
+                self.assertEqual(ids, whole[whole.index(ids[0]):whole.index(ids[0]) + len(ids)], (seed, target))
+                balloons = lambda l: sum(1 for i in l if re.fullmatch(r"s:\d+", i))
+                self.assertLessEqual(balloons(ids[:at]), dashboard.SOLO_LINK_ABOVE + 1, "a queued line: from the balloon before it")
+                self.assertLessEqual(balloons(ids[at + 1:]), dashboard.SOLO_LINK_BELOW + 1)
+                self.assertEqual(w["base"]["cut"] + len(w["turns"]), w["end"])
+                # Down to the end, a page at a time, with nothing missed or twice.
+                got, end = list(w["turns"]), w["end"]
+                for _ in range(100):
+                    if end >= len(turns):
+                        break
+                    p = dashboard.turns_window(turns, frm=end, n=100)
+                    self.assertEqual(p["from"], end)
+                    got += p["turns"]
+                    end = p["end"]
+                self.assertEqual(got, turns[w["base"]["cut"]:])
+            # Up to the turns held: the window and its pages stop there.
+            held = len(turns) - 300
+            w = dashboard.turns_window(turns, around="1000", to=held)
+            self.assertLessEqual(w["end"], held)
+            p = dashboard.turns_window(turns, frm=w["end"], n=10_000, to=held)
+            self.assertEqual(p["end"], held)
+            self.assertEqual(dashboard.turns_window(turns, around="99999"), {"turns": [], "total": 2000, "missing": True})
+
+    def test_a_window_and_its_pages_fit_the_bytes_asked(self):
+        turns = transcript(7, 2000)
+        for t in turns:
+            t["text"] += " " + "w" * 3000
+        whole = [i for i, _ in dashboard.page_turn_ids("s", turns)]
+        bytes_ = lambda l: sum(len(json.dumps(t)) + 1 for t in l)
+        w = dashboard.turns_window(turns, around="500", max_bytes=96_000)
+        self.assertLessEqual(bytes_(w["turns"]), 96_000)
+        ids = numbered(w["turns"], w["base"])
+        self.assertIn("s:500", ids)
+        self.assertEqual(ids, whole[whole.index(ids[0]):whole.index(ids[0]) + len(ids)])
+        above, below = ids.index("s:500"), len(ids) - ids.index("s:500") - 1
+        self.assertLessEqual(abs(above - below), 6, "cut on both sides alike")
+        got, end = list(w["turns"]), w["end"]
+        while end < len(turns):
+            p = dashboard.turns_window(turns, frm=end, n=100, max_bytes=96_000)
+            self.assertLessEqual(bytes_(p["turns"]), 96_000)
+            self.assertGreater(p["end"], end)
+            got += p["turns"]
+            end = p["end"]
+        self.assertEqual(got, turns[w["base"]["cut"]:])
+        # One balloon bigger than the bytes is still sent.
+        self.assertTrue(dashboard.turns_window(turns, around="500", max_bytes=10)["turns"])
+        self.assertTrue(dashboard.turns_window(turns, frm=end - 5, max_bytes=10)["turns"])
+
+    def test_a_po_message_link_finds_its_turns_by_time(self):
+        turns = transcript(2, 3000)
+        stamps = [dashboard._turn_epoch(t["timestamp"]) for t in turns if t.get("timestamp")]
+        w = dashboard.turns_window(turns, at=stamps[900] + 0.5)
+        got = [dashboard._turn_epoch(t["timestamp"]) for t in w["turns"] if t.get("timestamp")]
+        self.assertTrue(got[0] <= stamps[900] < got[-1])
+        self.assertLess(len(w["turns"]), 200)
+        self.assertTrue(dashboard.turns_window(turns, at=stamps[0] - 60)["early"], "the session before has it")
 
     @unittest.skipUnless(NODE, "node not installed")
     def test_the_page_numbers_the_tail_as_the_whole(self):
