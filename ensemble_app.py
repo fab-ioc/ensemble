@@ -95,6 +95,13 @@ def main() -> None:
         sys.argv = [args[1] + ".py", *args[2:]]
         run(sys.argv)
         return
+    # Release rehearsal only: the updater's preflight starts on a spare port,
+    # then this deliberately broken candidate exits on the hub's real port.
+    # The old installed app does not know this variable and can roll back.
+    fail_port = os.environ.get("ENSEMBLE_UPDATE_TEST_FAIL_PORT")
+    if fail_port and "--port" in args and args[args.index("--port") + 1] == fail_port:
+        print("release test: candidate exits on the hub port", file=sys.stderr)
+        sys.exit(77)
     import app_launch
     sys.exit(app_launch.main(args))
 

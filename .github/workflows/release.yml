@@ -371,9 +371,35 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  update-check:
+    needs: [version, windows, macos]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows
+            platform: windows-x64
+          - os: macos-14
+            artifact: macos
+            platform: macos-universal
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release
+      - name: Install previous published release, Update now, and prove rollback
+        run: python tests/release_update_e2e.py --new-dir release --platform ${{ matrix.platform }} --download-previous
+
   release:
     if: github.ref_type == 'tag'
-    needs: [version, windows, macos]
+    needs: [version, windows, macos, update-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -391,6 +417,9 @@ jobs:
           sha256sum Ensemble-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
           sed "s/@VERSION@/${{ needs.version.outputs.version }}/g" ../packaging/release-notes.md > ../notes.md
+          prerelease=()
+          case "$GITHUB_REF_NAME" in *-rc*) prerelease=(--prerelease);; esac
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            "${prerelease[@]}" \
             --title "Ensemble ${{ needs.version.outputs.version }}" \
             --notes-file ../notes.md --generate-notes ./*
