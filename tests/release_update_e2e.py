@@ -194,7 +194,7 @@ def wait(label: str, check, seconds: int):
     raise TimeoutError(f"{label} did not finish within {seconds}s")
 
 
-def stop_own_hub(hub: Hub, home: Path, initial_proc: subprocess.Popen):
+def stop_own_hub(hub: Hub, home: Path, initial_proc: subprocess.Popen, exe: Path, env: dict):
     pids = {initial_proc.pid} if initial_proc.poll() is None else set()
     with contextlib.suppress(Exception):
         config = hub.get("/api/config")
@@ -208,6 +208,15 @@ def stop_own_hub(hub: Hub, home: Path, initial_proc: subprocess.Popen):
         else:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, 15)
+    # The PTY host is a detached child with its own log file. Ask the app to
+    # stop the host authenticated by this isolated state directory's token.
+    # Killing by a descriptor PID alone could target an unrelated process.
+    state = home / ".ensemble"
+    if (state / "pty-host.json").exists():
+        result = subprocess.run([str(exe), "--run", "pty_host", "--stop", str(state)],
+                                env=env, cwd=exe.parent, capture_output=True, timeout=30)
+        if result.returncode:
+            print("cleanup: isolated PTY host did not stop cleanly", flush=True)
 
 
 def scenario(root: Path, old_zip: Path, new_zip: Path, old: str, new: str,
@@ -268,7 +277,7 @@ def scenario(root: Path, old_zip: Path, new_zip: Path, old: str, new: str,
                  lambda: (wait("restarted hub", served, 60), verify_state(hub, project_id)))
             print(f"RESULT {name}: {json.dumps(final, sort_keys=True)}", flush=True)
         finally:
-            stop_own_hub(hub, home, proc)
+            stop_own_hub(hub, home, proc, exe, env)
 
 
 def create_state(hub: Hub, name: str) -> str:
@@ -320,7 +329,15 @@ def main():
         print(f"PASS {args.platform}: {old} -> {new}; post-swap failure -> {old}", flush=True)
     finally:
         if success and not args.keep:
-            shutil.rmtree(scratch)
+            for attempt in range(10):
+                try:
+                    shutil.rmtree(scratch)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        print(f"cleanup: scratch kept: {scratch}", flush=True)
+                    else:
+                        time.sleep(1)
         else:
             print(f"scratch kept: {scratch}", flush=True)
 
