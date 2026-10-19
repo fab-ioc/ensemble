@@ -5974,7 +5974,7 @@ async function prevSessionItems(sid, agentId) {
   const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
   const had = SOLO_PREV.get(sid);
   if (had && (want < 0 || had.from <= want)) return had.items;
-  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1' + (want < 0 ? '&tail=' + PREV_TURNS_SHOWN : ''),
+  const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1' + (want < 0 ? '&tail=' + PREV_TURNS_SHOWN + '&bytes=' + SOLO_BYTES : ''),
     null, 90000).then(r => r.json());
   const turns = d.turns || [];
   const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want), d.base);
@@ -6019,19 +6019,31 @@ async function checkSolo() {
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
 let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
-// A one-agent chat's last SOLO_KEEP balloons are fetched (&tail=, #247),
-// more as the reader scrolls up; SOLO_MORE: the transcript has more above.
-let SOLO_KEEP = 120, SOLO_MORE = false, SOLO_UP = false;
+// A one-agent chat's last SOLO_KEEP balloons are fetched, as many as fit
+// SOLO_BYTES (&tail=&bytes=, #247), the page above them as the reader scrolls
+// up (&upto=); a poll asks for the turns after those held (&after=), the last
+// SOLO_OVERLAP again (the last may have grown). SOLO_HELD: {sid, raw, base,
+// end}: the turns held, from base.cut on, of the `end` the transcript had.
+// SOLO_MORE: the transcript has more above.
+let SOLO_KEEP = 120, SOLO_BYTES = 96000, SOLO_MORE = false, SOLO_UP = false, SOLO_HELD = null;
+const SOLO_OVERLAP = 4;
+const soloTail = () => '&tail=' + SOLO_KEEP + '&bytes=' + SOLO_BYTES;
+const soloUrl = (sid, q) => '/api/session/' + encodeURIComponent(sid) + '?full=1' + q;
 async function soloLoadUp() {
   if (SOLO_UP || SOLO_FETCHING || !SOLO_MORE) return;
+  const h = SOLO_HELD, start = h && h.base ? h.base.cut : 0;
+  if (!h || !start) return;
   SOLO_UP = true;
   const box = $('#msgs'), place = readingPlace(box);
   try {
-    SOLO_KEEP += 200;
+    const d = await pollFetch(soloUrl(h.sid, '&tail=200&bytes=' + SOLO_BYTES + '&upto=' + start), null, 90000).then(r => r.json());
+    if (SOLO_HELD !== h || d.upto !== start || !Array.isArray(d.turns)) return;
+    h.raw = d.turns.concat(h.raw);
+    h.base = d.base;
     STICK = false;
     await renderSolo(SOLO_SID, SOLO_AGENT, true);
     if (!DRAW_HELD) keepPlace(box, place);
-  } finally { SOLO_UP = false; }
+  } catch (e) {} finally { SOLO_UP = false; }
 }
 let HUB_ROWS_N = 0;       // the hub's rows in the room, as last drawn into a solo chat
 let SOLO_FIRST_TRIES = 0; // failed first loads of a chat opened on a link
@@ -6046,15 +6058,24 @@ async function renderSolo(sid, agentId, force) {
     // A link to an older turn than those held asks for the whole transcript.
     const w = SOLO_WANT;
     const whole = w && w.sid === sid;
-    const d = await pollFetch('/api/session/' + encodeURIComponent(sid) + '?full=1' + (whole ? '' : '&tail=' + SOLO_KEEP),
+    const h = !whole && SOLO_HELD && SOLO_HELD.sid === sid ? SOLO_HELD : null;
+    const start = h && h.base ? h.base.cut : 0;
+    const from = h ? Math.max(start, h.end - SOLO_OVERLAP) : -1;
+    const d = await pollFetch(soloUrl(sid, whole ? '' : soloTail() + (h ? '&after=' + from : '')),
       null, 90000).then(r => r.json());
-    const raw = d.turns || [];
-    const count = d.total != null ? d.total : raw.length;
+    if (h && SOLO_HELD === h && d.after === from && Array.isArray(d.turns)) {
+      h.raw = h.raw.slice(0, from - start).concat(d.turns);
+      h.end = d.total;
+    } else {
+      // The first read, a link's whole transcript, or one that is not what was held.
+      const got = d.turns || [];
+      SOLO_HELD = { sid, raw: got, base: d.base || null, end: d.total != null ? d.total : got.length };
+    }
+    const held = SOLO_HELD, raw = held.raw, count = held.end;
     if (!force && count === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = count;
-    SOLO_MORE = !!d.base;
-    const want = whole ? raw.length - w.n : 0;
-    let items = soloItems(raw, sid, agentId, Math.max(SOLO_KEEP, want), d.base);
+    SOLO_MORE = !!(held.base && held.base.cut);
+    let items = soloItems(raw, sid, agentId, Infinity, held.base);
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
     let wantOk = true;

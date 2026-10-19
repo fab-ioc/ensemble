@@ -2069,7 +2069,8 @@ def _cp_target(room_id: str) -> tuple[str, tuple]:
     hit = _CP_DIR.get(room_id)
     if hit and now - hit[0] < 60:
         return hit[1], hit[2]
-    room = chatroom.get_room(room_id, public=False)
+    # Read in place: a copy of a 10 MB chat cost a first open ~70 ms (#247).
+    room = chatroom.get_room(room_id, public=False, copy_room=False)
     folder = checkpoint_dir(room)
     owners = tuple(p.get("identity", "") for p in rotation.task_owners(room)) if folder else ()
     _CP_DIR[room_id] = (now, folder, owners)
@@ -4074,12 +4075,16 @@ def page_turn_ids(sid: str, raw: list[dict]) -> list[tuple[str, dict]]:
     return out
 
 
-def turns_tail(turns: list[dict], keep: int) -> tuple[list[dict], dict | None]:
+TAIL_MIN = 3        # balloons a tail cut by size still sends
+
+
+def turns_tail(turns: list[dict], keep: int, max_bytes: int = 0) -> tuple[list[dict], dict | None]:
     """A one-agent chat's last ``keep`` balloons of ``turns`` (#247: the page
     drew 120 of a transcript sent whole), from the turn the first of them
     starts at, and the counters page_turn_ids has there (``base``: n, q, qb,
     and ``cut``, the turns left above), so the page numbers them as it would
-    the whole. None for ``base`` when they are all sent."""
+    the whole. None for ``base`` when they are all sent. ``max_bytes``: fewer
+    when they would not fit it (as JSON), but at least TAIL_MIN balloons."""
     starts, prev, n, q, qb = [], None, 0, 0, 0
     for i, t in enumerate(turns or []):
         if t.get("queued") == "blocks":
@@ -4093,7 +4098,18 @@ def turns_tail(turns: list[dict], keep: int) -> tuple[list[dict], dict | None]:
         if not same:
             starts.append((i, n, q, qb))
             n += 1
-    if keep <= 0 or len(starts) <= keep:
+    keep = len(starts) if keep <= 0 else min(keep, len(starts))
+    if max_bytes > 0:
+        # Back from the end, balloon by balloon, while the turns still fit.
+        size, at, got = 0, len(turns), 0
+        for i, *_ in reversed(starts[-keep:]):
+            size += sum(len(json.dumps(t)) + 1 for t in turns[i:at])
+            at = i
+            if got >= TAIL_MIN and size > max_bytes:
+                break
+            got += 1
+        keep = got
+    if keep >= len(starts):
         return turns, None
     i, n0, q0, qb0 = starts[-keep]
     return turns[i:], {"n": n0, "q": q0, "qb": qb0, "cut": i}
@@ -5644,12 +5660,24 @@ class _PoFacts:
                 "isLive": bool(r.get("isLive")), "updatedAt": r.get("updatedAt") or 0}
 
 
+_INSTALLED: dict[str, tuple[float, bool]] = {}
+INSTALLED_TTL_S = 60.0
+
+
 def _agent_installed(key: str) -> bool:
+    """Whether the agent's CLI is on PATH, looked up again every minute: a
+    chat's every read asks, and a PATH search costs ~7 ms (#247)."""
+    now = time.monotonic()
+    hit = _INSTALLED.get(key)
+    if hit and now - hit[0] < INSTALLED_TTL_S:
+        return hit[1]
     try:
         ag = agents.get_agent(key)
-        return bool(ag is not None and ag.installed())
+        ok = bool(ag is not None and ag.installed())
     except Exception:       # noqa: BLE001 — not installed, as far as a PO goes
-        return False
+        ok = False
+    _INSTALLED[key] = (now, ok)
+    return ok
 
 
 def _session_live_now(sid: str) -> dict:
@@ -15058,9 +15086,24 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 tail = 0
 
+            def num(k: str) -> int:
+                try:
+                    return int(qs.get(k, [""])[0] or -1)
+                except ValueError:
+                    return -1
+            after, upto, max_bytes = num("after"), num("upto"), max(0, num("bytes"))
+
             def full_turns(turns: list[dict]) -> dict:
+                # &after=: the turns from there on (a poll of the page that
+                # holds those above); &upto=: the page above the turns held.
+                if 0 <= after <= len(turns):
+                    return {"turns": turns[after:], "total": len(turns), "after": after}
+                if 0 <= upto <= len(turns):
+                    cut, base = turns_tail(turns[:upto], tail or 200, max_bytes)
+                    return {"turns": cut, "total": len(turns), "upto": upto,
+                            "base": base or {"n": 0, "q": 0, "qb": 0, "cut": 0}}
                 # &tail=: the last balloons and where they start (turns_tail).
-                cut, base = turns_tail(turns, tail) if tail > 0 else (turns, None)
+                cut, base = turns_tail(turns, tail, max_bytes) if tail > 0 else (turns, None)
                 return {"turns": cut, **({"total": len(turns), "base": base} if base else {})}
             tpath = find_transcript(sid)
             want_stat = qs.get("stat", ["0"])[0] in ("1", "true", "yes")

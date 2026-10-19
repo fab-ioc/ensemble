@@ -69,6 +69,21 @@ class TurnsTail(unittest.TestCase):
                 self.assertEqual(ids, [i for i, _ in whole][-len(ids):], (seed, keep))
                 self.assertEqual(sum(1 for i in ids if re.fullmatch(r"s:\d+", i)), keep)
 
+    def test_big_balloons_are_cut_to_the_bytes_asked(self):
+        turns = transcript(5)
+        for t in turns:
+            t["text"] += " " + "w" * 3000
+        tail, base = dashboard.turns_tail(turns, 120, 96_000)
+        self.assertLessEqual(sum(len(json.dumps(t)) + 1 for t in tail), 96_000)
+        # As many as fit: one balloon more would not.
+        kept = sum(1 for i, _ in dashboard.page_turn_ids("s", tail) if re.fullmatch(r"s:\d+", i))
+        more, _ = dashboard.turns_tail(turns, kept + 1)
+        self.assertGreater(sum(len(json.dumps(t)) + 1 for t in more), 96_000)
+        # Never fewer than TAIL_MIN balloons.
+        tail, base = dashboard.turns_tail(turns, 120, 10)
+        self.assertEqual(len([i for i, _ in dashboard.page_turn_ids("s", tail) if re.fullmatch(r"s:\d+", i)]),
+                         dashboard.TAIL_MIN)
+
     def test_all_sent_when_there_are_fewer(self):
         turns = transcript(1, 10)
         self.assertEqual(dashboard.turns_tail(turns, 120), (turns, None))

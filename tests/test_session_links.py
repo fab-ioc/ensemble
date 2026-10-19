@@ -51,7 +51,10 @@ const out = { fetches: [], notes: [] };
 const THREAD_MODE = false, URL_GOTO = '';
 let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false, SOLO_FIRST_TRIES = 0;
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
-let SOLO_KEEP = 120, SOLO_MORE = false;
+let SOLO_KEEP = 120, SOLO_BYTES = 96000, SOLO_MORE = false, SOLO_UP = false, SOLO_HELD = null;
+const SOLO_OVERLAP = 4;
+const soloTail = () => '&tail=' + SOLO_KEEP + '&bytes=' + SOLO_BYTES;
+const soloUrl = (sid, q) => '/api/session/' + encodeURIComponent(sid) + '?full=1' + q;
 const pollFetch = (url, opts) => fetch(url, opts);   // the page's fetch that gives up (#245)
 let SOLO_MODE = true;
 const roomHasOlder = () => false;
@@ -94,7 +97,16 @@ function fetch(url) {
   const f = FAILS.find(x => x.sid === sid);
   if (f && f.skip) f.skip--;
   else if (f && f.times > 0) { f.times--; return Promise.reject(new Error('network')); }
-  return Promise.resolve({ json: () => Promise.resolve({ turns: TURNS[sid] || [] }) });
+  // As the hub answers: the turns after those held (&after=), or the last ones (&tail=).
+  const all = TURNS[sid] || [], arg = k => { const m = url.match(new RegExp('[?&]' + k + '=([0-9]+)')); return m ? +m[1] : -1; };
+  const after = arg('after'), tail = arg('tail'), upto = arg('upto');
+  let body = { turns: all };
+  if (after >= 0 && after <= all.length) body = { turns: all.slice(after), total: all.length, after };
+  else if (upto >= 0 && upto <= all.length) {
+    const cut = Math.max(0, upto - tail);
+    body = { turns: all.slice(cut, upto), total: all.length, upto, base: { n: cut, q: 0, qb: 0, cut } };
+  } else if (tail > 0 && tail < all.length) body = { turns: all.slice(-tail), total: all.length, base: { n: all.length - tail, q: 0, qb: 0, cut: all.length - tail } };
+  return Promise.resolve({ json: () => Promise.resolve(body) });
 }
 const settle = async () => { for (let i = 0; i < 80; i++) await new Promise(r => setImmediate(r)); };
 """
@@ -148,6 +160,21 @@ FAILS = [{ sid: 's-new', skip: 0, times: 99 }];
 GOTO = 's-new:5';
 checkSolo().then(() => checkSolo());
 """,
+    "grows-and-scrolls": r"""
+let DRAW_HELD = false;
+const readingPlace = () => null, keepPlace = () => {};
+TURNS = { 's-new': turns(300) };
+(async () => {
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  out.first = [drawn.length, drawn[0]];
+  TURNS['s-new'].push(...turns(305).slice(300));
+  await renderSolo(SOLO_SID, SOLO_AGENT, true);
+  out.grown = [drawn.length, drawn[0], drawn[drawn.length - 1]];
+  await soloLoadUp();
+  out.up = [drawn.length, drawn[0], drawn[drawn.length - 1], SOLO_MORE];
+  console.log(JSON.stringify(out));
+})();
+""",
     "prev-fails": r"""
 TURNS = { 's-new': turns(4), 's-old': turns(200) };
 FAILS = [{ sid: 's-old', skip: 0, times: 99 }];
@@ -179,8 +206,8 @@ TAIL = r"""
 def run_scenario(name: str) -> dict:
     code = "\n".join([HARNESS, ATTACH, items_block(), js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
         "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
-        "renderSolo", "openGroupOf", "partOf", "unwrapMarks", "landPending", "markLanded")]
-        + [SCENARIOS[name], TAIL])
+        "renderSolo", "soloLoadUp", "openGroupOf", "partOf", "unwrapMarks", "landPending", "markLanded")]
+        + [SCENARIOS[name], "" if name == "grows-and-scrolls" else TAIL])
     res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout.strip().splitlines()[-1])
@@ -195,6 +222,19 @@ class LandOnALinkedBalloon(unittest.TestCase):
         self.assertEqual(out["marked"], ["s-new:5"])
         self.assertGreater(out["drawn"], 120)
         self.assertEqual(len(out["fetches"]), 2, out["fetches"])
+
+    def test_a_poll_asks_for_the_new_turns_and_a_scroll_up_for_the_page_above(self):
+        # #247: the last 120 first; a poll the turns after those held (the
+        # last 4 again); the page above them as the reader scrolls up. The
+        # balloons are those of the whole transcript, numbered as it is.
+        out = run_scenario("grows-and-scrolls")
+        self.assertEqual(out["first"], [120, "s-new:180"])
+        self.assertEqual(out["grown"], [125, "s-new:180", "s-new:304"])
+        self.assertEqual(out["up"], [305, "s-new:0", "s-new:304", False])
+        self.assertEqual(out["fetches"], ["/api/session/s-new?full=1&tail=120&bytes=96000",
+                                          "/api/session/s-new?full=1&tail=120&bytes=96000&after=296",
+                                          "/api/session/s-new?full=1&tail=200&bytes=96000&upto=180",
+                                          "/api/session/s-new?full=1&tail=120&bytes=96000&after=301"])
 
     def test_an_older_turn_of_the_rotated_session_lands(self):
         out = run_scenario("rotated")

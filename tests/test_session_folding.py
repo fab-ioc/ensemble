@@ -341,6 +341,8 @@ class WhileThePageRedraws(unittest.TestCase):
         code += "\n" + "\n".join(re.search(rf"^{k} = .*$", SRC, re.M).group(0) for k in ("const taskRefProject", "let TASK_REF_PID"))
         # Checkpoint rows (#197) have their own tests; none are drawn here.
         code += "\nfunction withCheckpoints(items) { return items; }\nconst isCheckpoint = () => false;\n"
+        # A chat, not a thread (#246's work log folds only in a thread).
+        code += "const THREAD_MODE = false;\n"
         out = subprocess.run([NODE, "-e", RENDER_JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
