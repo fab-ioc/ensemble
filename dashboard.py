@@ -16106,7 +16106,24 @@ class Handler(BaseHTTPRequestHandler):
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         base = room_full.get("cwd") or str(CS_ROOT)
-        cwd = part.get("cwd") or os.path.join(base, ident)
+        recorded_cwd = (part.get("cwd") or "").strip()
+        cwd = recorded_cwd or (base if room_full.get("sharedCwd")
+                               else os.path.join(base, ident))
+        if not os.path.isdir(cwd):
+            # An unrecorded scratch seat gets the same directory as on first
+            # launch. A recorded directory that disappeared must not be
+            # silently recreated as an empty replacement for its old files.
+            if not recorded_cwd:
+                try:
+                    os.makedirs(cwd, exist_ok=True)
+                except OSError:
+                    pass
+            if not os.path.isdir(cwd):
+                fallback = base if os.path.isdir(base) else str(CS_ROOT)
+                os.makedirs(fallback, exist_ok=True)
+                print(f"[resume] {room_full['id']}/{ident}: cwd missing: {cwd}; "
+                      f"using {fallback}", flush=True)
+                cwd = fallback
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
@@ -16290,10 +16307,9 @@ class Handler(BaseHTTPRequestHandler):
                 part.pop("fresh", None)
                 part.pop("stoppedState", None)
                 continue
-            if part.pop("fresh", False):
-                # Assigned to the task after it had already run: there is no
-                # conversation to resume, so give it the same first prompt a
-                # launch would have (the collaboration briefing, or the spec).
+            if part.pop("fresh", False) or not (part.get("sessionId") or "").strip():
+                # A seat with no recorded conversation needs its first prompt,
+                # even if an older room record did not mark it fresh.
                 info = self._launch_room_agent_pty(
                     room_full, part, room_full.get("spec", "") or "", collab=not solo)
                 part["sessionId"] = info["sessionId"]
