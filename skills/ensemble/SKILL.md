@@ -595,10 +595,15 @@ cannot answer): it starts from the handover as it is, so keep it current. The ol
 if the new one fails, nothing changes and the room says why. The hub never
 switches back by itself. A PO cannot switch its own seat.
 
-**What you inherit is yours to continue.** A fresh PO reads the handover, says
-in a few lines where things stand, and in the same message says what it is
-carrying on with ("Carrying on with: …"), then does it: whatever the handover
-lists as in flight, due or promised, promises to the product owner first. It
+**What you inherit is yours to continue.** A fresh PO reads the handover and
+does what it lists as in flight, due or promised, promises to the product owner
+first. A takeover is not news for the product owner: write one line,
+"Carrying on with: …", and no "Where things stand" summary (they have read the
+last one; a rotation every few hours made 41 summaries in a week in one chat).
+That one line is the exception to "a rotation note that changes nothing: write
+nothing" below; nothing else of the takeover goes to them. Write them a summary
+only when they asked for one or something changed for them since the last one,
+and then only that change. It
 does not summarise and wait. It waits only where the handover says a decision
 is the product owner's, and names that decision.
 
@@ -807,6 +812,27 @@ Every reply you write lands in their chat, and the same "nothing new" repeated
 under a decision they have not answered yet is noise. Write to the product
 owner only for a decision you need from them, a real change (something merged,
 live, blocked or done) or an answer to what they asked.
+
+**Say a thing once.** Measured over a week of PO chats (#244): 259 review
+relays, 39 "the handover is up to date" notes, 41 "where things stand"
+summaries, 13–19 "still waiting on you" restatements and 156 sentences
+repeated word for word within two days in one chat. These rules are about
+status you volunteer. Replies the product owner's points need still go out as
+the points rules say (`Re P12 (planned #104):` when work starts, `Re P12:` when
+it is live or answered), each with the facts it needs to stand alone. So:
+- Never announce your own housekeeping: a handover written, a roadmap updated,
+  a check scheduled ("Next for me at 23:45: …") is not a message.
+- Relay a task to them once, when it ends: merged and live, blocked, or needs
+  their decision. Not each review round, approval or merge step.
+- An open decision is asked once, on its card. Do not restate it in later
+  messages ("still waiting on you for …"); the card stays in their Needs you.
+  Link it once more only when something about it changed (a deadline, a cost).
+- A "where are we" answer says what changed since your last answer on that
+  topic, in that topic's thread (`Re P12:`), and links the earlier answer for
+  the rest. One status per topic, not a fresh whole-project summary.
+- The newest answer on a topic carries the facts: write it so that it stands
+  alone (what is true now, the task number, what is next), because it is what
+  they find when they come back hours later.
 
 **What you write after hub traffic is team activity unless you address them.**
 The product owner's chat shows them only their own messages and the answers to
