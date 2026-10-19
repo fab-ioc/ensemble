@@ -739,7 +739,21 @@ def stamp_page(data: bytes) -> bytes:
     if FILE_DRAG_META in data:
         data = data.replace(FILE_DRAG_META,
                             FILE_DRAG_META[:-2] + _FILE_DRAG_TOKEN.encode("ascii") + b'">', 1)
-    return data
+    return _VERSIONED_TAG.sub(_version_ref, data)
+
+
+# A page's <script src> and <link rel="stylesheet" href> to a shared file name
+# its stamp (?v=): the browser then keeps that file without asking again (#247),
+# where "no-cache" cost a round trip per file, six at a time, before a chat
+# could ask for its messages (~270 ms of a 540 ms open at 60 ms RTT). A merged
+# file has a new stamp, so the next load still asks for the new one.
+_VERSIONED_TAG = re.compile(rb'(<script src="|<link rel="stylesheet" href=")/(static/[^"?]+)"')
+
+
+def _version_ref(m: re.Match) -> bytes:
+    rel = m.group(2).decode("ascii", "replace")
+    stamp = page_stamp(rel) if rel in PAGE_FILES else ""
+    return m.group(0) if not stamp else m.group(1) + b"/" + m.group(2) + b"?v=" + stamp.encode("ascii") + b'"'
 
 
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
@@ -14867,7 +14881,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path: Path, content_type: str, extra_headers=()):
+    def _send_file(self, path: Path, content_type: str, extra_headers=(), version: str = ""):
         try:
             data = path.read_bytes()
         except FileNotFoundError:
@@ -14886,10 +14900,12 @@ class Handler(BaseHTTPRequestHandler):
         # Only the hub's own files: a workspace file is sent as before.
         own = bool(page) or _is_own_static(path)
         etag = weak_etag(data) if own else ""
+        # Asked by its stamp (?v=, see stamp_page): these bytes never change.
+        cache = "max-age=31536000, immutable" if stamp and version == stamp else "no-cache"
         if etag and etag_matches(self.headers.get("If-None-Match"), etag):
             self.send_response(304)
             self.send_header("ETag", etag)
-            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Cache-Control", cache)
             self.send_header("Vary", "Accept-Encoding")
             if stamp:
                 self.send_header("X-Ensemble-Stamp", stamp)
@@ -14903,7 +14919,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache" if own else "no-store")
+        self.send_header("Cache-Control", cache if own else "no-store")
         if etag:
             self.send_header("ETag", etag)
         if gz:
@@ -15049,7 +15065,7 @@ class Handler(BaseHTTPRequestHandler):
                     ".js": "text/javascript; charset=utf-8",
                     ".css": "text/css; charset=utf-8",
                     ".html": "text/html; charset=utf-8"}.get(ext, "application/octet-stream")
-            self._send_file(f, mime)
+            self._send_file(f, mime, version=(parse_qs(u.query).get("v") or [""])[0])
             return
         if p == "/api/live":
             self._send_json(200, load_live())

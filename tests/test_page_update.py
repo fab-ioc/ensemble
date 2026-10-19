@@ -167,6 +167,26 @@ class HubStamps(unittest.TestCase):
             self.assertEqual(hdrs.get("x-ensemble-stamp"), dashboard.page_stamps()[rel])
             self.assertEqual(body, (self.dir / rel).read_bytes(), "a script is served as it is")
 
+    def test_a_page_names_its_scripts_by_stamp_and_those_are_kept_without_asking(self):
+        # #247: a "no-cache" script cost a round trip each before a chat could
+        # ask for its messages; asked by its stamp, the browser keeps it.
+        (self.dir / "session.html").write_bytes(
+            b"<!doctype html>\n" + dashboard.PAGE_META + b'\n<script src="/static/comments.js"></script>\n'
+            b'<link rel="stylesheet" href="/static/progress.css">\n<script src="/static/gone.js"></script>\n'
+            b'<link rel="modulepreload" href="/static/dock/src/index.js">\n')
+        status, hdrs, body = self.get("/session?room=room-1")
+        stamps = dashboard.page_stamps()
+        self.assertIn(b'<script src="/static/comments.js?v=' + stamps["static/comments.js"].encode() + b'">', body)
+        self.assertIn(b'<link rel="stylesheet" href="/static/progress.css?v=' + stamps["static/progress.css"].encode() + b'">', body)
+        self.assertIn(b'<script src="/static/gone.js">', body, "not a page file: as it is")
+        self.assertIn(b'href="/static/dock/src/index.js">', body, "a module keeps its one address")
+        status, hdrs, _ = self.get("/static/comments.js?v=" + stamps["static/comments.js"])
+        self.assertEqual(hdrs.get("cache-control"), "max-age=31536000, immutable")
+        status, hdrs, _ = self.get("/static/comments.js?v=000000000000")
+        self.assertEqual(hdrs.get("cache-control"), "no-cache", "an old stamp: the current bytes, asked again")
+        status, hdrs, _ = self.get("/static/comments.js")
+        self.assertEqual(hdrs.get("cache-control"), "no-cache")
+
     def test_other_files_carry_no_stamp(self):
         status, hdrs, body = self.get("/static/pic.png")
         self.assertEqual(status, 200)
