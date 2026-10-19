@@ -1000,17 +1000,24 @@ def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     return out
 
 
+LINK_ABOVE = 20                 # a link's window: entries above its balloon
+LINK_BELOW = 40                 # … and below it; nearer the end, to the end
+
+
 def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
-          frm: str = "") -> tuple[int, int]:
+          frm: str = "", after: str = "", to: str = "") -> tuple[int, int]:
     """Which of ``seq`` (balloon ids in order) a page shows, as [start, end):
     the last ``n``; ``before``: the ``n`` before that balloon (a page further
-    up, as the reader scrolls); ``frm``: from that balloon to the end (the
-    poll of a page that holds what is above it); ``upto``: as many more as
-    reach a balloon a link lands on. A balloon no longer in ``seq`` (moved
-    into a thread) is placed by its time."""
-    def at(mid: str) -> int | None:
+    up, as the reader scrolls); ``after``: the ``n`` after it (further down,
+    in a window that does not reach the end); ``frm``: from that balloon to
+    the end, or to ``to`` (the poll of a page that holds what is above it,
+    or of a window); ``upto``: a window around a balloon a link lands on.
+    Never more than CHANNEL_LIMIT: from a balloon older than that, the
+    window starts at it (#247 review 4). A balloon no longer in ``seq``
+    (moved into a thread) is placed by its time."""
+    def at(mid: str, past: bool = False) -> int | None:
         try:
-            return seq.index(mid)
+            return seq.index(mid) + past
         except ValueError:
             r = idx["by_mid"].get(mid)
             if r is None:
@@ -1022,30 +1029,41 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
         end = at(before)
         if end is not None:
             return max(0, end - n), end
+    if after:
+        start = at(after, past=True)
+        if start is not None:
+            return start, min(len(seq), start + n)
     if frm:
         start = at(frm)
         if start is not None:
-            return max(0, len(seq) - CHANNEL_LIMIT, start), len(seq)
+            end = at(to, past=True) if to else None
+            end = len(seq) if end is None else max(start, end)
+            return start, min(end, start + CHANNEL_LIMIT)
     if upto and upto in idx["by_mid"]:
         i = at(upto)
         if i is not None:
-            n = min(max(n, len(seq) - i + 20), CHANNEL_LIMIT)
+            start = max(0, i - LINK_ABOVE)
+            end = max(start + n, i + 1 + LINK_BELOW)
+            return start, (len(seq) if end + LINK_BELOW >= len(seq) else end)
     return max(0, len(seq) - n), len(seq)
 
 
 def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                  before: str = "", frm: str = "",
-                 topic_tids: set[str] | None = None) -> dict:
+                 topic_tids: set[str] | None = None, after: str = "", to: str = "") -> dict:
     """The channel: its last ``n`` entries (turns as /api/session gives
     them, each with its balloon id, ``thr`` on a parent, ``inThr`` on a reply
     also sent to the chat), the threads they show, and how many came before.
     ``upto``: a balloon a link lands on; when the channel has it, as many
     more as reach it (``n`` says how many were sent). ``before`` / ``frm``:
     a page above the one held, or the held one from its first entry on
-    (:func:`_span`). ``{pending: true}`` while the chat is first read."""
+    (:func:`_span`); ``after`` / ``to``: a page below, the held one up to
+    its last entry. ``after``: how many entries come after those sent (a
+    window, not the newest). ``{pending: true}`` while the chat is first
+    read."""
     idx = ready(room_id, room)
     if idx is None:
-        if topic_tids is None and not (upto or before or frm):
+        if topic_tids is None and not (upto or before or frm or after):
             return _quick_channel(room_id, room, n)
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     ch = idx["channel"]
@@ -1053,7 +1071,7 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
         # A topic: only the balloons of its threads (#246).
         ch = [mid for mid in ch if topic_tids.intersection(idx["parent"].get(mid) or [])
               or topic_tids.intersection(idx["of"].get(mid) or [])]
-    start, end = _span(idx, ch, n, upto, before, frm)
+    start, end = _span(idx, ch, n, upto, before, frm, after, to)
     shown = ch[start:end]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     # A reply also in the chat names its thread ("replied to a thread: …").
@@ -1062,9 +1080,10 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
     out = {"sig": sig, "progress": progress.snapshot().get("thread:" + room_id),
            "items": [_turn(idx, m) for m in shown],
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
-           "before": start, "n": len(shown), "balloons": len(idx["recs"]), "channel": len(ch)}
-    if before:
-        return out      # a page above: the rest the reader holds already
+           "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
+           "channel": len(ch)}
+    if before or after:
+        return out      # a page above or below: the rest the reader holds already
     out["activity"] = _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None
     out["unreadThreads"] = sorted((_meta(t) for t in idx["threads"].values()
                                    if t["id"] != "team:activity" and t.get("unread")
@@ -1108,7 +1127,7 @@ def _quick_channel(room_id: str, room: dict, n: int) -> dict:
 
 
 def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int = 0,
-                before: str = "", frm: str = "", upto: str = "") -> dict:
+                before: str = "", frm: str = "", upto: str = "", after: str = "", to: str = "") -> dict:
     """One thread: its meta and its balloons in order (``alsoIn`` on one that
     is in other threads too); with ``n``, its last ``n`` and how many came
     before (``before`` / ``frm`` / ``upto`` as for the channel). ``mid``
@@ -1136,10 +1155,10 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
     if th is None:
         return {"error": "no_such_thread"}
     members = [m for m in th["members"] if m in idx["by_mid"]]
-    start, end = _span(idx, members, n, upto, before, frm) if n else (0, len(members))
+    start, end = _span(idx, members, n, upto, before, frm, after, to) if n else (0, len(members))
     return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
             "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],
-            "before": start}
+            "before": start, "after": len(members) - end}
 
 
 def unread_threads(room_id: str, room: dict) -> list[dict] | None:

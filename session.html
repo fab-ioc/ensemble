@@ -4711,6 +4711,8 @@ function renderBubbles(items, opt = {}) {
   });
   // A channel shows its latest entries: the way to those before.
   if (thr && !THREAD_MODE && THR_BEFORE && !threadList) rows.unshift(`<div class="fold-note thr-more" data-key="thr-more:${THR_BEFORE}">${THR_BEFORE} earlier entr${THR_BEFORE === 1 ? 'y' : 'ies'} in this chat. <button type="button" class="thr-more-btn">Show more</button></div>`);
+  // A link's window: the way to those after it.
+  if (thr && THR_AFTER && !threadList) rows.push(`<div class="fold-note thr-more" data-key="thr-newer:${THR_AFTER}">${THR_AFTER} later entr${THR_AFTER === 1 ? 'y' : 'ies'} in this ${THREAD_MODE ? 'thread' : 'chat'}. <button type="button" class="thr-newer-btn">Show more</button></div>`);
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
@@ -5111,7 +5113,7 @@ function patchChildren(box, rows) {
 function showLatest() {
   const box = $('#msgs'), btn = $('#to-latest');
   if (!box || !btn) return;
-  const away = !!box.clientHeight && !STICK;
+  const away = !!box.clientHeight && (!STICK || !!(THREADED && THR_AFTER));
   btn.hidden = !away;
   const { label, tip } = latestLabel(NEW_N, DEC_N);
   setText(btn, label);
@@ -5120,6 +5122,15 @@ function showLatest() {
 function toLatest() {
   const box = $('#msgs');
   STICK = true;
+  if (THREADED && THR_AFTER) {
+    // A link's window: the newest entries instead (its pages start again).
+    GOTO = ''; GOTO_PART = '';
+    thrRestart();
+    NEW_N = 0; DEC_N = 0;
+    showLatest();
+    renderThreaded(true);
+    return;
+  }
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   box.scrollTop = box.scrollHeight;   // also when a selection held the render
   SEEN = new Set([...box.children].map(k => k.dataset.seen || k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
@@ -6133,8 +6144,11 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 // A channel or thread is held as pages (#247): the view the hub last sent
 // (a poll's delta applies to it), from its first entry on (THR_FROM: polls
 // ask from there, so nothing new slips between it and the pages above), and
-// the pages above it, fetched as the reader scrolls up (&before=).
-let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null;
+// the pages above it, fetched as the reader scrolls up (&before=). A link's
+// balloon gets a window around it (review 4): THR_AFTER entries come after
+// the window, fetched a page at a time as the reader scrolls down (&after=),
+// and its polls keep to it (&to=); "Latest" goes to the newest.
+let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0, THR_DOWN = null;
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
 // A PO chat seen before is asked for its channel beside the room's first read,
 // not after it (#247: a round trip of a phone's open). The page keeps which
@@ -6181,12 +6195,39 @@ function thrBase() {
 // reach it (&upto=), which starts the pages again.
 function thrUrl(sig) {
   const page = !THREAD_MODE && GOTO ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = GOTO)
-    : THR_FROM ? '&from=' + encodeURIComponent(THR_FROM)
+    : THR_FROM ? '&from=' + encodeURIComponent(THR_FROM) + (THR_AFTER && thrLast() ? '&to=' + encodeURIComponent(thrLast()) : '')
     : '&n=' + THR_N + (THREAD_MODE ? '' : '&lite=1');
   return thrBase() + page + (sig ? '&sig=' + encodeURIComponent(sig) : '');
 }
 // The pages from the newest again (a topic chosen or cleared).
-function thrRestart() { THR_SIG = ''; THR_N = 40; THR_FROM = ''; THR_VIEW = null; THR_OLDER = []; THR_HUB = new Map(); THR_BEFORE = 0; }
+function thrRestart() { THR_SIG = ''; THR_N = 40; THR_FROM = ''; THR_VIEW = null; THR_OLDER = []; THR_HUB = new Map(); THR_BEFORE = 0; THR_AFTER = 0; }
+const thrLast = () => ((THR_VIEW && THR_VIEW.items) || []).slice(-1).map(t => t.mid)[0] || '';
+// The page below a window's last entry, as the reader nears its end: added
+// under what is drawn, so the reading place stays.
+function thrLoadDown() {
+  if (THR_DOWN || !THR_AFTER || !THR_VIEW) return THR_DOWN || Promise.resolve(false);
+  const last = thrLast();
+  if (!last) return Promise.resolve(false);
+  THR_DOWN = (async () => {
+    try {
+      const d = await pollFetch(thrBase() + '&n=100&after=' + encodeURIComponent(last), null, 90000).then(r => r.json());
+      if (!d || !Array.isArray(d.items) || d.error || d.pending || thrLast() !== last) return false;
+      const held = new Set(THR_VIEW.items.map(t => t.mid));
+      THR_VIEW.items = THR_VIEW.items.concat(d.items.filter(t => !held.has(t.mid)));
+      THR_AFTER = d.after || 0;
+      Object.assign(THR_META, d.threads || {});
+      thrKeepHub(d.hubRows);
+      const box = $('#msgs'), t0 = box.scrollTop;
+      STICK = false;
+      thrDraw(roomLatestTs(ROOM_OBJ));
+      if (!DRAW_HELD) box.scrollTop = t0;
+      showLatest();
+      return true;
+    } catch (e) { return false; }
+    finally { THR_DOWN = null; }
+  })();
+  return THR_DOWN;
+}
 function thrKeepHub(rows) { for (const m of rows || []) if (m && m.id) THR_HUB.set(m.id, m); }
 // The page above the entries held, as the reader nears the top: drawn with
 // the reading place kept, as loadOlder does for a room.
@@ -6289,8 +6330,10 @@ async function renderThreaded(force) {
     THR_VIEW = d;
     THR_FROM = ((d.items || [])[0] || {}).mid || '';
     THR_BEFORE = Math.max(0, (d.before || 0) - THR_OLDER.length);
+    THR_AFTER = d.after || 0;
     thrKeepHub(d.hubRows);
     thrDraw(roomTs, d);
+    showLatest();
   } catch (e) {
     globalThis.EnsembleProgress?.clear('thread-build');
     if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
@@ -8626,6 +8669,7 @@ $('#msgs').addEventListener('click', e => {
   const tr = e.target.closest && e.target.closest('.thr-reply');
   if (tr) { const t = THR_META && Object.values(THR_META).find(x => x.root === tr.dataset.mid && x.id !== 'team:activity'); openThread(t ? t.id : '', t ? '' : tr.dataset.mid); return; }
   if (e.target.closest && e.target.closest('.thr-more-btn')) { thrLoadUp(); return; }
+  if (e.target.closest && e.target.closest('.thr-newer-btn')) { thrLoadDown(); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
@@ -8676,6 +8720,7 @@ function msgsScrolled() {
   readTick(true);
   if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
   if (!at && box.scrollTop < box.clientHeight && THREADED && THR_BEFORE && !DRAW_HELD) thrLoadUp();
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && THREADED && THR_AFTER && !DRAW_HELD) thrLoadDown();
   if (!at && box.scrollTop < box.clientHeight && SOLO_MODE && !THREADED && SOLO_MORE && !DRAW_HELD) soloLoadUp();
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });

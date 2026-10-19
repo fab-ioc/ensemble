@@ -15627,9 +15627,8 @@ class Handler(BaseHTTPRequestHandler):
                             return
                         chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
                         topic_tids = set(chosen["threads"]) if chosen else set()
-                        n = threads.CHANNEL_LIMIT
                     out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
-                                               before, arg("from"), topic_tids)
+                                               before, arg("from"), topic_tids, arg("after"), arg("to"))
                     channel_hub_rows(out, room)
                     if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):
                         # The first read: the newest threads with replies; the
@@ -15637,7 +15636,7 @@ class Handler(BaseHTTPRequestHandler):
                         out["unreadThreads"] = out["unreadThreads"][:LITE_THREADS]
                 else:
                     out = threads.thread_view(rid, room, arg("t"), arg("mid"), n, before,
-                                              arg("from"), arg("upto"))
+                                              arg("from"), arg("upto"), arg("after"), arg("to"))
                     if out.get("thread"):
                         project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
                         if project:
@@ -15651,7 +15650,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(500, {"error": "not_read"})
                 return
             if out.get("sig") and not out.get("error"):
-                out = thread_view_answer(rid, out, arg("sig"), keep=not before)
+                out = thread_view_answer(rid, out, arg("sig"), keep=not (before or arg("after")))
             self._send_json(404 if out.get("error") else 200, out)
             return
         if p == "/api/attention":
