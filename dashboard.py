@@ -13156,25 +13156,53 @@ def hub_preference(settings: dict | None = None) -> str:
 
 def _blocked_kinds() -> dict:
     """Agent kinds a live session shows blocked by its usage limit or a login
-    problem, as the attention list last read them: {kind: "usage_limit" |
-    "auth"}. A model's own limit is not the kind's (ED-159)."""
+    problem, as the attention list last read them: {kind: {"cause":
+    "usage_limit" | "auth", "since": when it was first seen}}. A login problem
+    outranks a limit; of two limits the later counts. A model's own limit is
+    not the kind's (ED-159)."""
     out = {}
     try:
         for item in attention.cached_items():
             kind, cause = item.get("agent"), item.get("cause")
-            if (item.get("state") == "blocked" and kind in ("claude", "codex")
-                    and cause in ("usage_limit", "auth") and out.get(kind) != "usage_limit"):
-                out[kind] = cause
+            if not (item.get("state") == "blocked" and kind in ("claude", "codex")
+                    and cause in ("usage_limit", "auth")):
+                continue
+            since = float(item.get("since") or 0)
+            had = out.get(kind)
+            if (had is None or (cause == "auth") > (had["cause"] == "auth")
+                    or (cause == had["cause"] and since > had["since"])):
+                out[kind] = {"cause": cause, "since": since}
     except Exception:                                        # noqa: BLE001
         pass
     return out
 
 
-def _spent_why(kind: str, reading: dict, installed, blocked: dict) -> str:
+def _reading_at(snapshot: dict, kind: str, reading: dict):
+    """When ``reading`` (from :func:`_kind_usage`) was written: the snapshot's
+    time less the age of the oldest window it was judged from, or None when
+    the snapshot does not say."""
+    source = next((s for s in snapshot.get("sources", []) if s.get("source") == kind), {})
+    checked = snapshot.get("checkedAt")
+    if not source or not isinstance(checked, (int, float)):
+        return None
+    ages = [w.get("ageSeconds") for w in source.get("windows") or []
+            if w.get("kind") in ("five_hour", "seven_day")
+            and (not reading.get("pool")
+                 or (w.get("pool") or usage.CODEX_MAIN_POOL) == reading["pool"])]
+    ages = [a for a in ages if isinstance(a, (int, float))]
+    if not ages and isinstance(source.get("ageSeconds"), (int, float)):
+        ages = [source["ageSeconds"]]
+    return float(checked) - max(ages) if ages else None
+
+
+def _spent_why(kind: str, reading: dict, installed, blocked: dict,
+               read_at: float | None = None) -> str:
     """Why ``kind`` cannot take a seat under a preference, or "" while it is
-    usable: not installed, a session blocked by its limit or a login, or a
-    worst window at 100%. A trusted current reading below 100% outweighs a
-    blocked screen, which may be a wall left from before a reset."""
+    usable: not installed, a session that needs a login, a session blocked by
+    its usage limit, or a worst window at 100%. A trusted reading below 100%
+    written after the limit block (``read_at``, :func:`_reading_at`) outweighs
+    it: that block is a wall left from before a reset. Nothing outweighs a
+    login problem, which a usage reading says nothing about."""
     name = _agent_kind_name(kind)
     if not installed(kind):
         return f"{name} is not installed on this machine"
@@ -13182,10 +13210,14 @@ def _spent_why(kind: str, reading: dict, installed, blocked: dict) -> str:
     percent = float(reading["percent"]) if known else None
     if known and percent >= PREFER_SPENT_PERCENT:
         return f"{_usage_reason_phrase(kind, reading)}, its limit"
-    cause = blocked.get(kind)
-    if cause and not (known and reading.get("trusted")):
-        return (f"{name} needs a login" if cause == "auth"
-                else f"{name} is blocked by its usage limit")
+    block = blocked.get(kind)
+    if isinstance(block, str):
+        block = {"cause": block, "since": 0.0}
+    if block and block.get("cause") == "auth":
+        return f"{name} needs a login"
+    if block and not (known and reading.get("trusted") and read_at is not None
+                      and read_at > float(block.get("since") or 0)):
+        return f"{name} is blocked by its usage limit"
     return ""
 
 
@@ -13515,7 +13547,8 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     if prefer in ("claude", "codex") and not keep_agents:
         alt = "codex" if prefer == "claude" else "claude"
         blocked = _blocked_kinds() if blocked is None else blocked
-        spent = {kind: _spent_why(kind, figures[kind], installed, blocked)
+        spent = {kind: _spent_why(kind, figures[kind], installed, blocked,
+                                  _reading_at(snapshot, kind, figures[kind]))
                  for kind in (prefer, alt)}
         if not spent[prefer]:
             kind, code = prefer, "prefer_setting"

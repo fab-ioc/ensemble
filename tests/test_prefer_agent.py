@@ -71,11 +71,34 @@ class SeatTests(unittest.TestCase):
         self.assertEqual(d["chosenKind"], "codex")
         self.assertIn("Claude is not installed", dashboard._prefer_reason(d, "Owner"))
 
-    def test_trusted_reading_below_limit_outweighs_a_stale_block(self):
+    def dated(self, claude, age=10, checked=1000.0):
+        snap = _snap(claude, 10)
+        snap["checkedAt"] = checked
+        snap["sources"][0]["windows"][0]["ageSeconds"] = age
+        return snap
+
+    def test_a_reading_after_a_limit_block_outweighs_it(self):
+        # Read at 990, the block first seen at 500: a wall from before a reset.
         d = dashboard.choose_agent_kind_for_seat(
-            "claude", _snap(20, 10), installed=_ALL, pace=_pace(),
-            blocked={"claude": "usage_limit"})
+            "claude", self.dated(20), installed=_ALL, pace=_pace(),
+            blocked={"claude": {"cause": "usage_limit", "since": 500.0}})
         self.assertEqual(d["chosenKind"], "claude")
+
+    def test_a_reading_from_before_the_limit_block_does_not(self):
+        # Read at 990 at 97%, the session hit its limit at 995.
+        d = dashboard.choose_agent_kind_for_seat(
+            "claude", self.dated(97), installed=_ALL, pace=_pace(),
+            blocked={"claude": {"cause": "usage_limit", "since": 995.0}})
+        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "prefer_spent"))
+        self.assertIn("Claude is blocked by its usage limit",
+                      dashboard._prefer_reason(d, "Owner"))
+
+    def test_a_login_block_is_never_outweighed_by_a_reading(self):
+        d = dashboard.choose_agent_kind_for_seat(
+            "claude", self.dated(20), installed=_ALL, pace=_pace(),
+            blocked={"claude": {"cause": "auth", "since": 500.0}})
+        self.assertEqual(d["chosenKind"], "codex")
+        self.assertIn("Claude needs a login", dashboard._prefer_reason(d, "Owner"))
 
     def test_unknown_reading_stays_on_preferred(self):
         snap = _snap(10, 10)
@@ -119,12 +142,17 @@ class SeatTests(unittest.TestCase):
 
 class BlockedKindsTests(unittest.TestCase):
     def test_reads_usage_limit_and_auth_from_attention(self):
-        items = [{"state": "blocked", "agent": "claude", "cause": "auth"},
-                 {"state": "blocked", "agent": "claude", "cause": "usage_limit"},
-                 {"state": "blocked", "agent": "codex", "cause": "model_limit"},
+        items = [{"state": "blocked", "agent": "claude", "cause": "usage_limit", "since": 5},
+                 {"state": "blocked", "agent": "claude", "cause": "auth", "since": 3},
+                 {"state": "blocked", "agent": "claude", "cause": "usage_limit", "since": 9},
+                 {"state": "blocked", "agent": "codex", "cause": "usage_limit", "since": 4},
+                 {"state": "blocked", "agent": "codex", "cause": "usage_limit", "since": 8},
+                 {"state": "blocked", "agent": "codex", "cause": "model_limit", "since": 9},
                  {"state": "waiting_for_you", "agent": "codex", "cause": "usage_limit"}]
         with mock.patch.object(attention, "cached_items", return_value=items):
-            self.assertEqual(dashboard._blocked_kinds(), {"claude": "usage_limit"})
+            self.assertEqual(dashboard._blocked_kinds(), {
+                "claude": {"cause": "auth", "since": 3.0},
+                "codex": {"cause": "usage_limit", "since": 8.0}})
 
 
 class LaunchTests(unittest.TestCase):
