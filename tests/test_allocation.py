@@ -78,8 +78,14 @@ class AllocationTests(unittest.TestCase):
         self.agent_patch = mock.patch.object(
             dashboard.agents, "get_agent", side_effect=lambda kind: _FakeAgent(kind))
         self.agent_patch.start()
+        # Never this machine's settings: its pacing switch or a kind preferred
+        # there (Settings › Agent models) would decide instead of the defaults.
+        self.settings_patch = mock.patch.object(
+            dashboard, "SETTINGS_FILE", Path(self.temp.name) / "settings.json")
+        self.settings_patch.start()
 
     def tearDown(self):
+        self.settings_patch.stop()
         self.agent_patch.stop()
         chatroom.ROOMS_DIR = self.old_rooms_dir
         self.temp.cleanup()

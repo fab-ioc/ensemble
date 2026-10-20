@@ -255,6 +255,28 @@ def launch_choice(kind: str, seat_model: str, value, models="read") -> tuple[str
     return model, effort
 
 
+def _major_version(model_id: str):
+    """The first number in a model id ("gpt-5.2-codex" -> 5), or None."""
+    m = re.search(r"\d+", model_id or "")
+    return int(m.group()) if m else None
+
+
+def mark_newest(models: list[dict]) -> list[dict]:
+    """Copies of ``models`` with ``tier: "newest"`` on those of the highest
+    major version listed: the newest models spend the Codex allowance
+    fastest (P206). No names are hard-coded, so a new release is marked by
+    itself; one listed version only marks nothing."""
+    out = [dict(m) for m in models]
+    majors = {_major_version(m.get("id", "")) for m in out} - {None}
+    if len(majors) < 2:
+        return out
+    top = max(majors)
+    for m in out:
+        if _major_version(m.get("id", "")) == top:
+            m["tier"] = "newest"
+    return out
+
+
 def describe(value) -> dict:
     """What Settings shows: per kind what is chosen, what can be, the agent's
     own default, and what a launch that names no model runs on."""
@@ -275,7 +297,7 @@ def describe(value) -> dict:
         "codex": {
             "chosen": chosen["codex"],
             "own": own,
-            "models": models or [],
+            "models": mark_newest(models or []),
             # False: Codex's model list could not be read, so nothing can be chosen.
             "readable": models is not None,
             # The chosen model is no longer offered: Codex's own default runs.
@@ -285,6 +307,8 @@ def describe(value) -> dict:
                 "effort": effort or own["effort"] or (known or {}).get("defaultEffort", ""),
                 "efforts": list((known or {}).get("efforts", [])),
                 "pool": pool["label"],
+                "newest": any(m.get("tier") == "newest" and m["id"] == runs_on
+                              for m in mark_newest(models or [])),
             },
         },
     }

@@ -712,6 +712,10 @@ the final choice without a network call:
   within its pace and below warning. Otherwise it reviews on the owner's kind
   in a fresh session. Only when the product owner asks, pin a task's agents with `keepAgents: true` on
   `ensemble_create_task` / `ensemble_update_task`.
+- When Settings › Agent models › Prefer names Claude or Codex, the hub seats
+  every owner, reviewer and handover on that kind while it is usable (below
+  100%, not blocked, installed) and ignores pacing; the allocation note says
+  "Claude preferred by Settings". Do not set `keepAgents` to get that.
 - A seat that names no model runs on the one the person chose for its kind in
   Settings (Agent models; for Codex a reasoning effort too), else on the
   agent's own default. Leave `model` out unless the task needs a particular

@@ -2827,6 +2827,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .usage-src-head { display: flex; align-items: baseline; gap: 6px; }
   .usage-src-name { font-size: var(--fs-200); font-weight: 600; }
   .usage-src-plan { font-size: var(--fs-100); color: var(--fg-muted); }
+  /* P205: the kind Settings prefers, underlined on the chip. */
+  .usage-chip-pref { text-decoration: underline; text-underline-offset: 3px; }
   .usage-src-age { margin-left: auto; font-size: var(--fs-100); color: var(--fg-subtle); }
   /* A stale reading is uncertain, not wrong: red stays unambiguous for the
      alarm, when a limit is actually reached. */
@@ -4167,7 +4169,17 @@ window.DOC_LISTENERS_PAUSED = false;
        (agent_models.py): one choice per agent kind, from what the agent offers. -->
   <div class="settings-section" id="settings-models">
     <h4>Agent models</h4>
+    <!-- P205: the kind every seat the hub chooses goes to while it is usable. -->
     <div class="pref-row">
+      <span class="pref-label" id="pref-prefer-label">Prefer</span>
+      <div class="seg pref-seg" id="pref-prefer" role="group" aria-labelledby="pref-prefer-label">
+        <button type="button" data-val="claude">Claude</button>
+        <button type="button" data-val="codex">Codex</button>
+        <button type="button" data-val="balanced">Balanced</button>
+      </div>
+    </div>
+    <p class="cfg-hint" id="pref-prefer-note">Claude or Codex: new tasks, reviews, handovers and PO switches go to that agent whenever it is usable, at any percent below its limit; the other one is used only while it is spent (at 100%, stopped by its limit or a login, or not installed), and it comes back at the next start once it is usable. Weekly pacing is not used then. Balanced: the hub moves work to the agent with more room, by the warning and the week's pace below. A task that keeps its agents is not moved either way.</p>
+    <div class="pref-row" style="margin-top: 16px;">
       <label class="pref-label" for="pref-model-claude">Claude model</label>
       <select id="pref-model-claude" class="pref-select" data-kind="claude" data-field="model" disabled></select>
     </div>
@@ -7450,7 +7462,9 @@ function agentModelOptions(kind) {
   const opts = [['', `${name}’s own default` + (a.own.model ? ` (currently ${a.own.model})` : '')]];
   for (const m of a.models) {
     const what = m.pool ? `spends the ${m.pool} pool` : (m.description || '').replace(/\.$/, '');
-    opts.push([m.id, m.id + (what ? ' — ' + what : '')]);
+    // P206: the newest models spend the Codex allowance fastest.
+    const tier = m.tier === 'newest' ? ' · newest, spends the allowance fastest' : '';
+    opts.push([m.id, m.id + (what ? ' — ' + what : '') + tier]);
   }
   // A value saved before (a full model id, a model no longer offered) stays selectable.
   const saved = a.chosen.model;
@@ -7513,6 +7527,8 @@ function renderAgentModels() {
         ? `${x.chosen.model} is no longer offered by Codex, so its own default`
           + `${x.own.model ? ' (' + x.own.model + ')' : ''} runs. Choose another model.`
         : `Codex agents run on ${eff.model || 'Codex’s own default'} and draw on the ${pool}.`
+          + (eff.newest ? ' It is one of the newest models, which spend the Codex allowance fastest.' : '')
+          + (x.models.some(m => m.tier === 'newest') ? ' Older models spend the allowance more slowly.' : '')
           + (x.poSwitchModel ? ` A PO switched to Codex still starts on ${x.poSwitchModel}, the hub’s older fallback, until a model is chosen here.` : '');
     note.hidden = false;
   }
@@ -7594,6 +7610,14 @@ function renderPrefs() {
     const one = document.getElementById('pref-noun-one'), many = document.getElementById('pref-noun-many');
     if (!preset && one && document.activeElement !== one) one.value = w.one;
     if (!preset && many && document.activeElement !== many) many.value = w.many;
+  }
+  const preferSeg = document.getElementById('pref-prefer');
+  if (preferSeg) {
+    const value = ['claude', 'codex'].includes(PREFS.preferAgent) ? PREFS.preferAgent : 'balanced';
+    preferSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+      b.setAttribute('aria-pressed', String(b.dataset.val === value));
+    });
   }
   const paceSeg = document.getElementById('pref-pace-week');
   if (paceSeg) {
@@ -14488,6 +14512,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
       <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
     </div>
     ${why ? `<p class="cfg-hint" role="status">${esc(why)}</p>` : ''}
+    ${info.prefer ? `<p class="cfg-hint" role="note">${esc(name(info.prefer))} preferred by Settings: ${info.prefer === other ? 'the hub’s choice while it is usable' : 'the PO stays on ' + esc(name(other)) + ' until you switch it back'}.</p>` : ''}
     ${!why && t.warning && !confirmMsg ? `<p class="cfg-hint" role="note">${esc(t.warning)} You will be asked to confirm.</p>` : ''}
     ${!why && t.allowance ? `<p class="cfg-hint" role="note">${esc(t.allowance)}</p>` : ''}
     ${last ? `<p class="cfg-hint" role="note">${esc(last)}</p>` : ''}
@@ -18345,12 +18370,15 @@ function usageChipPart(src) {
     + `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
   const pace = usagePaceOf(src), useIt = usageUseItOf(src);
-  const tip = name + (used ? ` (sessions use the ${usageCodexPoolName(used)})` : '')
+  // Settings › Agent models › Prefer names this kind (P205).
+  const preferred = !!src.source && (USAGE.pace || {}).prefer === src.source;
+  const tip = name + (preferred ? ', preferred by Settings' : '')
+    + (used ? ` (sessions use the ${usageCodexPoolName(used)})` : '')
     + ' — ' + all.map(w => usageChipTip(w, name)).join(' · ')
     + (useIt ? ` · week ${usageUseItText(useIt)}`
       : pace ? ` · ${usagePaceText(name, pace)}${pace.ahead ? ', ahead of pace' : ''}` : '');
   return `<span class="usage-chip-kind" title="${esc(tip)}"
-    >${esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b></span>`;
+    >${preferred ? `<span class="usage-chip-pref">${esc(short)}</span>` : esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b></span>`;
 }
 
 // A Codex pool in words: "main pool", "reserve pool", "GPT-5.3-Codex-Spark pool".
@@ -18494,6 +18522,7 @@ function usageSourceHtml(src) {
     <div class="usage-src-head">
       <span class="usage-src-name">${esc(name)}</span>
       ${src.planType ? `<span class="usage-src-plan">${esc(src.planType)}</span>` : ''}
+      ${src.source && (USAGE.pace || {}).prefer === src.source ? '<span class="usage-src-plan">preferred by Settings</span>' : ''}
       ${age}
     </div>
     ${inUse}
@@ -18504,10 +18533,11 @@ function usageSourceHtml(src) {
 }
 
 // A kind's pace mark from /api/usage (ED-164), or null when the hub does not
-// pace (switched off in Settings) or cannot date this kind's week.
+// pace (switched off in Settings, or a kind preferred there) or cannot date
+// this kind's week.
 function usagePaceOf(src) {
   const p = USAGE.pace;
-  if (!p || !p.enabled) return null;
+  if (!p || !p.enabled || p.prefer) return null;
   const k = (p.kinds || {})[src.source];
   return k && k.state === 'known' ? k : null;
 }
@@ -18515,6 +18545,7 @@ function usagePaceOf(src) {
 // A kind whose week resets within hours (ED-181): the hub seats it up to the
 // alarm, paced or not, since what is left is lost at the reset. Null otherwise.
 function usageUseItOf(src) {
+  if ((USAGE.pace || {}).prefer) return null;
   const k = ((USAGE.pace || {}).kinds || {})[src.source];
   if (!(k && k.state === 'known' && k.nearReset)) return null;
   // Spent: the week, or a current 5-hour window of the same pool, at the alarm.
@@ -20941,6 +20972,13 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-rtk-tasks')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('rtkForTasks', b.dataset.val === 'on');
+  });
+  // Which agent kind the hub prefers (P205): the usage chip marks it.
+  document.getElementById('pref-prefer')?.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (!b) return;
+    await setPref('preferAgent', b.dataset.val);
+    refreshUsage();
   });
   // The week's pace (ED-164): the switch, and the head start in points.
   document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {

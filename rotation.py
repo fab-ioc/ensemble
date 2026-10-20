@@ -825,7 +825,16 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         pace_why = (f"{_d._pace_reason_phrase(cur, paced.get(cur, {}))}, while "
                     f"{_d._pace_reason_phrase(other, paced.get(other, {}))}"
                     if other else "")
-        if code == "both_alarm":
+        if code.startswith("prefer_"):
+            # Settings › Prefer (P205): the preferred kind while it is usable.
+            chosen = decision["chosenKind"]
+            if chosen != cur:
+                seat, _ = _preferred_seats(room)
+                spent = (decision.get("spent") or {}).get(cur, "")
+                out.update(agent=chosen, model=_model_for(seat, chosen), changed=True,
+                           why=spent or f"{name(chosen)} preferred by Settings")
+            out["reason"] = _d._prefer_reason(decision, "Owner")
+        elif code == "both_alarm":
             out.update(alarm=True, reason=f"Owner kept on {name(cur)} although Claude and "
                                           f"Codex are both at or above the {alarm:g}% alarm.")
         elif code == "unknown":
@@ -911,10 +920,14 @@ def _model_name(kind: str, model) -> str:
 def _allowance_of(kind: str, model: str) -> tuple[dict, float, str]:
     """(reading, warn percent, why it cannot be trusted or "") of ``kind``'s
     plan allowance, as the failover reads it: every current window of its
-    pool must be trusted and known."""
+    pool must be trusted and known. With a preference in Settings the limit
+    is :data:`dashboard.PREFER_SPENT_PERCENT`, not the warning."""
     snap = _d.usage.snapshot()
     reading = _d._kind_usage(snap, kind, model if kind == "codex" else "")
     warn = float(snap.get("warnPercent", _d.usage.WARN_PERCENT))
+    if _d.hub_preference():
+        # Settings › Prefer (P205): a kind is usable until it is spent.
+        warn = float(_d.PREFER_SPENT_PERCENT)
     name = _d._agent_kind_name(kind)
     if reading.get("state") != "known":
         return reading, warn, f"{name} has no current allowance reading."
@@ -928,6 +941,11 @@ def _allowance_of(kind: str, model: str) -> tuple[dict, float, str]:
             or w.get("rolledOver") or w.get("resetUnknown") for w in windows):
         return reading, warn, f"{name} allowance is stale; its current level is unknown."
     return reading, warn, ""
+
+
+def _threshold(limit: float) -> str:
+    """"80% warning", or "100% limit" while Settings prefers a kind."""
+    return f"{limit:g}% limit" if _d.hub_preference() else f"{limit:g}% warning"
 
 
 def failover_po(project: dict, attention_item: dict | None) -> dict:
@@ -990,7 +1008,7 @@ def _failover_po(project: dict, item: dict) -> dict:
             return cannot(untrusted)
         if float(reading["percent"]) >= warn:
             return cannot(f"{_d._agent_kind_name(other)} is at or above the "
-                          f"{warn:g}% warning threshold.")
+                          f"{_threshold(warn)}.")
     except Exception as e:
         return cannot(f"The fallback allowance check failed ({type(e).__name__}).")
 
@@ -1239,13 +1257,15 @@ def switch_info(project: dict) -> dict:
     out = {"projectId": project["id"], "roomId": rid, "why": why,
            "agent": (part or {}).get("agent", ""), "model": (part or {}).get("model", ""),
            "live": bool(part) and _pty(part) is not None,
-           "running": None, "last": _LAST_SWITCH.get(rid), "targets": {}}
+           "running": None, "last": _LAST_SWITCH.get(rid), "targets": {},
+           "prefer": _d.hub_preference()}
     with GATE:
         st = _SWITCHING.get(rid)
         if st is not None:
             out["running"] = {k: v for k, v in st.items() if k != "flags"}
     for kind in _OTHER_KIND:
-        t = {"available": False, "why": "", "model": "", "warning": "", "installed": _installed(kind)}
+        t = {"available": False, "why": "", "model": "", "warning": "", "installed": _installed(kind),
+             "preferred": kind == out["prefer"]}
         try:
             t["why"] = _refusal(project, room, part, why, kind)
         except Exception as e:
@@ -1259,7 +1279,7 @@ def switch_info(project: dict) -> dict:
                 elif float(reading["percent"]) >= warn:
                     t["warning"] = (f"{_d._agent_kind_name(kind)} is at "
                                     f"{float(reading['percent']):g}%, at or above the "
-                                    f"{warn:g}% warning.")
+                                    f"{_threshold(warn)}.")
             except Exception as e:
                 t["allowance"] = f"The allowance check failed ({type(e).__name__})."
         t["available"] = not t["why"]
@@ -1319,7 +1339,7 @@ def request_switch(project: dict, agent: str, model: str | None = None,
             raise SwitchRefused(
                 "needs_confirm",
                 f"{_d._agent_kind_name(agent)} is at {float(reading['percent']):g}% of its "
-                f"allowance, at or above the {warn:g}% warning. Switch anyway?",
+                f"allowance, at or above the {_threshold(warn)}. Switch anyway?",
                 needsConfirm=True)
     rid = room["id"]
     if not _reserve(rid, {"trigger": "manual", "agent": agent, "model": model,
