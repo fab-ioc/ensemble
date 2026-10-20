@@ -138,7 +138,8 @@ class WhatCanBeChosen(_Home):
         self.assertEqual([m["id"] for m in info["claude"]["models"]],
                          ["fable", "opus", "sonnet", "haiku"])
         self.assertEqual(info["codex"]["effective"],
-                         {"model": "gpt-6-astra", "effort": "high", "efforts": list(LEVELS), "pool": None})
+                         {"model": "gpt-6-astra", "effort": "high", "efforts": list(LEVELS), "pool": None,
+                          "newest": True})
         (self.tmp / "claude.json").write_text("{}", encoding="utf-8")
         (self.codex / "config.toml").unlink()
         info = agent_models.describe(None)
@@ -150,7 +151,7 @@ class WhatCanBeChosen(_Home):
         info = dashboard.agent_models_info()
         self.assertEqual(info["codex"]["effective"],
                          {"model": "gpt-reserve", "effort": "max", "efforts": list(LEVELS[:5]),
-                          "pool": "reserve"})
+                          "pool": "reserve", "newest": False})
         self.assertEqual(info["codex"]["chosen"], {"model": "gpt-reserve", "effort": "max"})
         self.assertEqual(info["claude"]["effective"], {"model": "opus"})
         self.assertEqual(info["codex"]["poSwitchModel"], "")

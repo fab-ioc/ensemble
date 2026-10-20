@@ -1839,6 +1839,15 @@ def snapshot(max_age: float = _RESULT_TTL) -> dict:
         return payload
 
 
+def cached_items(max_age: float = 120.0) -> list[dict]:
+    """The items of the last computed result if it is at most ``max_age`` old,
+    else none; never computes (the page and the rotation tick keep it fresh),
+    so a caller holding another lock cannot wait on this one."""
+    with _RESULT_LOCK:
+        ts, cached = _result
+    return list(cached.get("items") or []) if cached and time.time() - ts <= max_age else []
+
+
 def reported_by_room(max_age: float = _RESULT_TTL) -> dict[str, dict]:
     """The finished reports waiting for the person's look, by room
     (``_reported``): ``/api/sessions`` stamps them on the rows."""

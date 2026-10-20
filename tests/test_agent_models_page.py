@@ -248,7 +248,9 @@ class AgentModelsInSettings(unittest.TestCase):
                 self.assertEqual([v for v, _ in codex[1:]],
                                  ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-reserve", "gpt-5.5"])
                 self.assertIn(["gpt-reserve", "gpt-reserve — spends the reserve pool"], codex)
-                self.assertIn(["gpt-6-sol", "gpt-6-sol — GPT-6-Sol in a line"], codex)
+                self.assertIn(["gpt-6-sol", "gpt-6-sol — GPT-6-Sol in a line · newest, spends "
+                               "the allowance fastest"], codex)
+                self.assertIn(["gpt-5.5", "gpt-5.5 — GPT-5.5 in a line"], codex)
                 self.assertEqual(rows["pref-effort-codex"]["options"], [
                     ["", "Codex’s own (currently high)"], *[[e, e] for e in
                                                             ("low", "medium", "high", "xhigh", "max", "ultra")]])
@@ -308,7 +310,8 @@ class AgentModelsInSettings(unittest.TestCase):
                               "(model gpt-6-astra, Codex’s own default).", g["chipBefore"])
                 r = g["reserve"]
                 self.assertEqual(r["select"], "gpt-reserve")
-                self.assertEqual(r["note"], "Codex agents run on gpt-reserve and draw on the reserve pool.")
+                self.assertEqual(r["note"], "Codex agents run on gpt-reserve and draw on the reserve pool. "
+                                            "Older models spend the allowance more slowly.")
                 self.assertEqual(r["efforts"], ["", "low", "medium", "high", "xhigh", "max"])
                 self.assertIn("Codex sessions currently use the reserve pool "
                               "(model gpt-reserve, chosen in Settings).", r["tray"])

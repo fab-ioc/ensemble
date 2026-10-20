@@ -1694,6 +1694,11 @@ CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
 PACE_MARGIN_DEFAULT = 15
 # A preferred seat changes kinds only for this relative capacity advantage.
 BALANCE_HYSTERESIS_DEFAULT = 25
+# Settings › Agent models › Prefer: a kind every seat goes to while it is
+# usable, or "balanced" (the warning and pacing rule).
+PREFER_CHOICES = ("balanced", "claude", "codex")
+# A preferred kind at this percent of its worst window is spent.
+PREFER_SPENT_PERCENT = 100
 TASK_AGENT_TOOLS_ENSEMBLE = "ensemble"
 TASK_AGENT_TOOLS_OWN = "own"
 TASK_AGENT_TOOLS_VALUES = {TASK_AGENT_TOOLS_ENSEMBLE, TASK_AGENT_TOOLS_OWN}
@@ -1753,6 +1758,11 @@ _SETTINGS_DEFAULTS = {
     # Pace each agent kind's 7-day allowance and compare weighted spare
     # capacity per hour until each kind's own reset (ED-203).
     "paceWeek": True,
+    # Which agent kind every seat the hub chooses goes to (P205/P206):
+    # "claude" or "codex" while that kind is usable (below 100%, not blocked by
+    # its limit or a login, installed), pacing ignored; "balanced" is the
+    # warning and pacing rule above.
+    "preferAgent": "balanced",
     "paceMarginPoints": PACE_MARGIN_DEFAULT,
     "balanceHysteresisPercent": BALANCE_HYSTERESIS_DEFAULT,
     "claudePlanWeight": "",  # empty: use detected plan tier
@@ -2497,6 +2507,8 @@ def _save_settings_locked(settings: dict) -> dict:
             v = 0 if v <= 0 else max(5, min(1440 if k == "pointsRemindMin" else 1440 * 7, v))
         if k in ("backupEnabled", "rtkForTasks", "paceWeek"):
             v = bool(v)
+        if k == "preferAgent" and v not in PREFER_CHOICES:
+            continue
         if k in ("paceMarginPoints", "balanceHysteresisPercent",
                  "claudePlanWeight", "codexPlanWeight"):
             if k.endswith("PlanWeight") and v in ("", None):
@@ -13136,6 +13148,67 @@ def _kind_usage(snapshot: dict, kind: str, codex_model: str = "") -> dict:
     }
 
 
+def hub_preference(settings: dict | None = None) -> str:
+    """Settings › Agent models › Prefer: "claude", "codex", or "" (balanced)."""
+    value = (settings if settings is not None else load_settings()).get("preferAgent")
+    return value if value in ("claude", "codex") else ""
+
+
+def _blocked_kinds() -> dict:
+    """Agent kinds a live session shows blocked by its usage limit or a login
+    problem, as the attention list last read them: {kind: "usage_limit" |
+    "auth"}. A model's own limit is not the kind's (ED-159)."""
+    out = {}
+    try:
+        for item in attention.cached_items():
+            kind, cause = item.get("agent"), item.get("cause")
+            if (item.get("state") == "blocked" and kind in ("claude", "codex")
+                    and cause in ("usage_limit", "auth") and out.get(kind) != "usage_limit"):
+                out[kind] = cause
+    except Exception:                                        # noqa: BLE001
+        pass
+    return out
+
+
+def _spent_why(kind: str, reading: dict, installed, blocked: dict) -> str:
+    """Why ``kind`` cannot take a seat under a preference, or "" while it is
+    usable: not installed, a session blocked by its limit or a login, or a
+    worst window at 100%. A trusted current reading below 100% outweighs a
+    blocked screen, which may be a wall left from before a reset."""
+    name = _agent_kind_name(kind)
+    if not installed(kind):
+        return f"{name} is not installed on this machine"
+    known = reading.get("state") == "known"
+    percent = float(reading["percent"]) if known else None
+    if known and percent >= PREFER_SPENT_PERCENT:
+        return f"{_usage_reason_phrase(kind, reading)}, its limit"
+    cause = blocked.get(kind)
+    if cause and not (known and reading.get("trusted")):
+        return (f"{name} needs a login" if cause == "auth"
+                else f"{name} is blocked by its usage limit")
+    return ""
+
+
+def _prefer_reason(decision: dict, who: str) -> str:
+    """"Owner kept on Claude: Claude preferred by Settings (Claude 7-day window
+    at 81%)." and the spent cases, for a decision made under a preference."""
+    prefer, chosen = decision["prefer"], decision["chosenKind"]
+    other = "codex" if prefer == "claude" else "claude"
+    spent = decision.get("spent") or {}
+    action = "switched to" if decision.get("changed") else "kept on"
+    said = f"{_agent_kind_name(prefer)} preferred by Settings"
+    if decision["decision"] == "prefer_setting":
+        reading = (decision.get("figures") or {}).get(prefer, {})
+        usage_note = (f" ({_usage_reason_phrase(prefer, reading)})"
+                      if reading.get("state") == "known" else "")
+        return f"{who} {action} {_agent_kind_name(chosen)}: {said}{usage_note}."
+    if decision["decision"] == "prefer_spent":
+        return (f"{who} {action} {_agent_kind_name(chosen)}: {said}, but {spent.get(prefer)}; "
+                f"back to {_agent_kind_name(prefer)} at its next start once it is usable.")
+    return (f"{who} {action} {_agent_kind_name(chosen)}: {said}, but both kinds are spent "
+            f"({spent.get(prefer)}; {spent.get(other)}).")
+
+
 def pace_settings(snapshot: dict | None = None) -> dict:
     """Weekly pacing and weighted spare-capacity settings."""
     settings = load_settings()
@@ -13173,6 +13246,7 @@ def pace_settings(snapshot: dict | None = None) -> dict:
                 sources[kind] = "equal fallback"
                 labels[kind] = _agent_kind_name(kind) + " plan weight unavailable"
     return {"enabled": settings.get("paceWeek", True) is not False,
+            "prefer": hub_preference(settings),
             "margin": max(0.0, min(100.0, margin)),
             "hysteresis": max(0.0, min(100.0, hysteresis)),
             "weights": weights, "labels": labels, "sources": sources}
@@ -13227,7 +13301,7 @@ def pace_view(snapshot: dict, now: float | None = None) -> dict:
     """Each kind's pace mark, for /api/usage and the plan chip: Codex judged by
     the pool a seat naming no model runs on."""
     cfg = pace_settings(snapshot)
-    return {"enabled": cfg["enabled"], "marginPoints": cfg["margin"],
+    return {"enabled": cfg["enabled"], "prefer": cfg["prefer"], "marginPoints": cfg["margin"],
             "hysteresisPercent": cfg["hysteresis"], "planWeights": cfg["weights"],
             "planLabels": cfg["labels"], "planSources": cfg["sources"],
             "kinds": {k: _kind_pace(snapshot, k, "", cfg["margin"], now)
@@ -13355,7 +13429,8 @@ def _seat_for_kind(preference: dict, kind: str) -> dict:
 def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                                installed=None, current_kind: str = "",
                                codex_model: str = "", pace: dict | None = None,
-                               keep_agents: bool = False, now: float | None = None) -> dict:
+                               keep_agents: bool = False, now: float | None = None,
+                               blocked: dict | None = None) -> dict:
     """Choose one seat's kind using the allowance rules shared by task launch
     and reviews.
 
@@ -13376,6 +13451,12 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     mark) is held to the alarm, not the warning: what is left of it is lost at
     the reset. Kept on it past the warning is ``use_before_reset``. Its worst
     window still decides, so a spent 5-hour window refuses it all the same.
+
+    A preference in Settings (``pace["prefer"]``, P205) replaces all of this
+    for a seat that does not keep its agents: the preferred kind at any
+    percent below 100, else the other kind (``prefer_spent``) while the
+    preferred one is spent (:func:`_spent_why`; ``blocked`` is
+    :func:`_blocked_kinds`, read when not given).
     """
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
     pace = pace_settings(snapshot) if pace is None else pace
@@ -13429,6 +13510,25 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                      "planSources": pace.get("sources") or {},
                      "kinds": paced, "capacity": capacity},
         }
+
+    prefer = pace.get("prefer") or ""
+    if prefer in ("claude", "codex") and not keep_agents:
+        alt = "codex" if prefer == "claude" else "claude"
+        blocked = _blocked_kinds() if blocked is None else blocked
+        spent = {kind: _spent_why(kind, figures[kind], installed, blocked)
+                 for kind in (prefer, alt)}
+        if not spent[prefer]:
+            kind, code = prefer, "prefer_setting"
+        elif not spent[alt]:
+            kind, code = alt, "prefer_spent"
+        elif installed(prefer):
+            kind, code = prefer, "prefer_both_spent"
+        elif installed(alt):
+            kind, code = alt, "prefer_both_spent"
+        else:
+            raise StartRoomError(f"agent_unavailable:{prefer}")
+        return {**result(kind, code), "preferredKind": prefer, "prefer": prefer,
+                "spent": spent}
 
     if not installed(preferred_kind):
         if other_kind and installed(other_kind):
@@ -13502,9 +13602,11 @@ def _with_model_note(reason: str, seats: list[dict]) -> str:
 def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                                    installed=None, pace: dict | None = None,
                                    keep_agents: bool = False,
-                                   now: float | None = None) -> tuple[list[dict], dict]:
+                                   now: float | None = None,
+                                   blocked: dict | None = None) -> tuple[list[dict], dict]:
     """Choose the first-launch line-up and return it with its audit record.
-    ``keep_agents``: the task keeps its agents whatever their pace (ED-164)."""
+    ``keep_agents``: the task keeps its agents whatever their pace (ED-164).
+    ``blocked``: :func:`_blocked_kinds`, read when a preference needs it."""
     preferred = copy.deepcopy(preferred)
     pace = pace_settings(snapshot) if pace is None else pace
     chosen = [{"agent": seat.get("agent", ""),
@@ -13534,7 +13636,7 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
             review_decision = choose_agent_kind_for_seat(
                 review_preference.get("agent", ""), snapshot, installed=installed,
                 current_kind=chosen[reviewer_i]["agent"], codex_model=review_codex_model,
-                pace=pace, now=now)
+                pace=pace, now=now, blocked=blocked)
             review_decision = _review_cross_check(
                 review_decision, owner_chosen, chosen[reviewer_i]["agent"], installed, False)
             chosen[reviewer_i] = _seat_for_kind(review_preference, review_decision["chosenKind"])
@@ -13552,6 +13654,25 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                       "warnPercent": warn, "alarmPercent": alarm, "kinds": figures,
                       **audit},
         }
+
+    if pace.get("prefer") in ("claude", "codex") and not keep_agents:
+        # Settings › Prefer (P205): every seat the hub chooses goes to the
+        # preferred kind while it is usable; the reviewer is chosen in result().
+        blocked = _blocked_kinds() if blocked is None else blocked
+        reviewer_i = _allocation_reviewer_index(preferred, owner_i)
+        owner_decision = None
+        for i, seat in enumerate(preferred):
+            if i == reviewer_i and len(preferred) > 1:
+                continue
+            d = choose_agent_kind_for_seat(
+                seat.get("agent", ""), snapshot, installed=installed,
+                codex_model=_seat_for_kind(seat, "codex")["model"], pace=pace,
+                now=now, blocked=blocked)
+            chosen[i] = _seat_for_kind(seat, d["chosenKind"])
+            if i == owner_i:
+                owner_decision = d
+        audit.update(decision=owner_decision["decision"], pace=owner_decision["pace"])
+        return result(_prefer_reason(owner_decision, "Owner"), False)
 
     unavailable_seats = [i for i, seat in enumerate(preferred)
                          if not installed(seat.get("agent", ""))]
@@ -13720,8 +13841,10 @@ def _participant_seat_preference(room_full: dict, identity: str, part: dict) -> 
 
 def _review_cross_check(decision: dict, owner_kind: str, current_kind: str,
                         installed, keep_agents: bool) -> dict:
-    """P168: cross-check only when the other kind is within its pace."""
-    if keep_agents or decision["decision"] == "both_alarm":
+    """P168: cross-check only when the other kind is within its pace. A
+    preference in Settings (P205) decides the review seat as it is."""
+    if (keep_agents or decision["decision"] == "both_alarm"
+            or decision["decision"].startswith("prefer_")):
         return decision
     opposite = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
     if not opposite:
@@ -13778,6 +13901,8 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
     code = decision["decision"]
     if code == "check_failed":
         return f"Reviewer {action} {chosen_name} because the allowance check failed."
+    if code.startswith("prefer_"):
+        return _prefer_reason(decision, "Reviewer")
     if code == "preferred_uninstalled":
         return (f"Reviewer {action} {chosen_name} because {preferred_name} is not installed "
                 "on this machine.")
@@ -13945,7 +14070,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
     allocation = {
         "reviewer": identity,
         "owner": {"identity": owner.get("identity", ""), "agent": owner_kind},
-        "preferred": _seat_for_kind(seat_preference, preferred_kind),
+        "preferred": _seat_for_kind(seat_preference,
+                                    decision.get("preferredKind") or preferred_kind),
         "chosen": chosen,
         "reason": _with_model_note(_review_allocation_reason(decision, owner),
                                    [chosen]),
