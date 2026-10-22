@@ -1862,6 +1862,9 @@ _SETTINGS_DEFAULTS = {
     "backupRemote": "",      # git remote for the projects root; empty = commit locally only
     "backupIntervalMin": 60, # how often to commit (+push if a remote is set)
     "backupEnabled": False,  # scheduler on/off
+    # Freeing disk space (prune.py): Done tasks older than this many days go
+    # by themselves, once a day, logged. 0 = off.
+    "pruneDoneAfterDays": 0,
     # How long an agent that owes a turn may print nothing before the dashboard
     # calls it stalled. Both CLIs repaint a working indicator every second while
     # they think, so real silence is the signal — but how much of it counts as
@@ -2614,6 +2617,12 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(5, min(1440, v))
+        if k == "pruneDoneAfterDays":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(0, min(3650, v))
         if k == "restartDrainMinutes":
             try:
                 v = int(v)
@@ -8330,7 +8339,8 @@ def _export_task_chats() -> int:
             room = chatroom.get_room(rid)            # public=True → no tokens
         except Exception:
             room = None
-        if not room:
+        if not room or room.get("pruned"):
+            # A pruned task (#260) keeps no chat and no folder to write it to.
             continue
         home = project_home(pj)                      # created on demand
         task_dir = room.get("taskDir") or ""
@@ -15398,7 +15408,9 @@ def _create_task_locked(title, spec, project_id, project, workspace, prio, prefe
 
 
 def _patch_task_json(folder: str, **fields) -> None:
-    if not folder:
+    # A folder that is gone (a pruned task's, #260) is not made again for a
+    # renumber or a move: a patch is never a task's whole record.
+    if not folder or not os.path.isdir(folder):
         return
     p = Path(folder) / "task.json"
     try:
@@ -17178,6 +17190,11 @@ class Handler(BaseHTTPRequestHandler):
                                   "remote": bs.get("backupRemote", ""),
                                   "intervalMin": bs.get("backupIntervalMin", 60),
                                   "enabled": bool(bs.get("backupEnabled"))})
+            return
+        if p == "/api/prune":
+            # Freeing disk space (#260): the preview, the deletion's progress
+            # and its result, and the retention rule's last run.
+            self._send_json(200, prune_state())
             return
         if p == "/api/rotation/status":
             self._send_json(200, rotation.status())
@@ -20412,6 +20429,41 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(*checkpoint_restore(str(data.get("room") or ""), n=n, undo=undo))
             return
+        if p in ("/api/prune/scan", "/api/prune/run", "/api/prune/cancel"):
+            # Freeing disk space (#260): {days, groups?} makes a preview,
+            # {ids} deletes what of it was ticked. Only the dashboard page,
+            # never a task's agent.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if p == "/api/prune/cancel":
+                PRUNE_JOB.cancel()
+                self._send_json(200, prune_state())
+                return
+            if p == "/api/prune/scan":
+                try:
+                    days = max(0, min(3650, int(data.get("days", prune.DEFAULT_DAYS))))
+                except (TypeError, ValueError):
+                    self._send_json(400, {"error": "bad_days", "message": "Days must be a number."})
+                    return
+                groups = data.get("groups") if isinstance(data.get("groups"), list) else None
+                if not prune_scan_start(days, groups):
+                    self._send_json(409, {"error": "busy", "message": "A preview or a deletion is already running."})
+                    return
+                self._send_json(200, prune_state())
+                return
+            ids = data.get("ids")
+            if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                self._send_json(400, {"error": "bad_ids", "message": "Tick what should go."})
+                return
+            ok, msg = prune_run_start(ids)
+            if not ok:
+                self._send_json(409 if not msg else 400, {"error": "not_started",
+                                                          "message": msg or "A preview or a deletion is already running."})
+                return
+            self._send_json(200, prune_state())
+            return
         if p == "/api/history/restore":
             # {projectId, rev, path}: put an old version back. A write, so only
             # the dashboard page may, never a task's agent.
@@ -21569,6 +21621,7 @@ def main():
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
     threading.Thread(target=_launch_file_pruner, name="launch-file-pruner", daemon=True).start()
+    threading.Thread(target=_prune_auto_loop, name="prune-auto", daemon=True).start()
     threading.Thread(target=_warm_rooms_at_start, name="warm-rooms", daemon=True).start()
 
     # Projects backup: the app owns the projects-root repo. Init it now
