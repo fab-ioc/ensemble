@@ -68,7 +68,7 @@ class RoomIncrementalTests(unittest.TestCase):
         start = chatroom.room_revision(room["id"])
         room["messages"].append({"id": "m1", "text": "first"})
         chatroom._write(room)
-        room["messages"][0]["text"] = "edited"
+        room["messages"][0] = {**room["messages"][0], "text": "edited"}
         room["messages"].append({"id": "m2", "text": "second"})
         chatroom._write(room)
         self.assertEqual(chatroom.room_delta(room["id"], start),

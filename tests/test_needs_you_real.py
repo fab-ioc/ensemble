@@ -59,7 +59,7 @@ class _Needs(_Bell):
     def age_last(self, seconds):
         """Make the room's newest message (and the room's own clock) older."""
         full = chatroom.get_room(self.rid, public=False)
-        m = full["messages"][-1]
+        m = full["messages"][-1] = dict(full["messages"][-1])
         m["ts"] = float(m["ts"]) - seconds
         chatroom.update_room(full)
         return m["ts"]

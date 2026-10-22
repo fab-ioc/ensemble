@@ -330,7 +330,7 @@ def expand_message_refs(text: str, lookup, task_lookup=None) -> str:
         body = strip_message_refs(str(ref.get("text") or "")).replace("\r\n", "\n")
         lines = ["> " + line for line in body[:QUOTE_MAX].split("\n")]
         if len(body) > QUOTE_MAX:
-            where = ref.get("where") or f"~/.ensemble/rooms/{room}.json"
+            where = ref.get("where") or f"~/.ensemble/rooms/messages/{room}.jsonl"
             lines.append(f"> … ({len(body) - QUOTE_MAX} more characters; the full message "
                          f"is in {where}, id {ref.get('id') or msg})")
         where = ref.get("taskTitle") or room

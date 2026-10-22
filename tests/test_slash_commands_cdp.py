@@ -211,8 +211,8 @@ class SlashCommandsPage(unittest.TestCase):
         chatroom.post_notice(cls.room, "claude", "Total cost:            $0.0034\nTotal duration (API):  2s",
                              {"noticeKind": "commandOutput", "command": "/cost", "key": "k0"})
         full = chatroom.get_room(cls.room, public=False)
-        full["messages"][-2]["ts"] = t0 + 30
-        full["messages"][-1]["ts"] = t0 + 31
+        full["messages"][-2] = {**full["messages"][-2], "ts": t0 + 30}
+        full["messages"][-1] = {**full["messages"][-1], "ts": t0 + 31}
         chatroom.update_room(full)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True

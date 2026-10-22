@@ -232,8 +232,8 @@ class TheDotsInChrome(unittest.TestCase):
             rid = chatroom.create_room(title, [{"identity": "claude", "agent": "claude", "cwd": home}])["id"]
             chatroom.post_message(rid, "user", "Please look at it")
             full = chatroom.get_room(rid, public=False)
-            for m in full.get("messages") or []:
-                m["ts"] = died - 3600      # written before the death: not a sign of use since
+            # written before the death: not a sign of use since
+            full["messages"] = [{**m, "ts": died - 3600} for m in full.get("messages") or []]
             part = chatroom.participant(full, "claude")
             part["sessionId"] = "s-" + rid
             for k, v in fields.pop("part", {}).items():
@@ -282,8 +282,7 @@ class TheDotsInChrome(unittest.TestCase):
             (base / "transcripts" / "C--x" / f"s-{rid}.jsonl").write_text(
                 "".join(json.dumps(t) + "\n" for t in turns), encoding="utf-8")
             full = chatroom.get_room(rid, public=False)
-            for m in full["messages"][-1:]:
-                m["ts"] = float(m["ts"]) - 2 * 86400
+            full["messages"][-1:] = [{**m, "ts": float(m["ts"]) - 2 * 86400} for m in full["messages"][-1:]]
             for k in ("lastReport", "lastRealReport"):
                 if isinstance(full.get(k), dict) and full[k].get("ts"):
                     full[k]["ts"] = float(full[k]["ts"]) - 2 * 86400

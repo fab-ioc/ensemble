@@ -540,7 +540,7 @@ class Team(_World):
         m = chatroom.post_message(rid, sender, text, to=to)["message"]
         if meta:
             room = chatroom.get_room(rid, public=False)
-            room["messages"][-1].update(meta)
+            room["messages"][-1] = {**room["messages"][-1], **meta}
             chatroom.update_room(room)
         return m
 

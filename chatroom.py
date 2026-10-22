@@ -188,12 +188,15 @@ def _log_path(room_id: str) -> Path:
     return ROOMS_DIR / LOG_DIR_NAME / f"{room_id}.jsonl"
 
 
-def _read_log(room_id: str) -> list[dict]:
+def _read_log(room_id: str) -> tuple[list[dict], bool]:
+    """The logged messages, and whether the log is whole: a line cut short
+    by a stop mid-append (or a missing log) makes the next write rewrite it,
+    so a message appended after it is not glued onto the damaged line."""
     try:
         raw = _log_path(room_id).read_bytes()
     except OSError as e:
         print(f"[rooms] {room_id}: messages not read: {e!r}", flush=True)
-        return []
+        return [], False
     out, bad = [], 0
     for line in raw.split(b"\n"):
         if not line.strip():
@@ -207,7 +210,7 @@ def _read_log(room_id: str) -> list[dict]:
             out.append(m)
     if bad:
         print(f"[rooms] {room_id}: {bad} damaged message line(s) skipped", flush=True)
-    return out
+    return out, not bad and (not raw or raw.endswith(b"\n"))
 
 
 def _read(room_id: str) -> dict | None:
@@ -218,9 +221,20 @@ def _read(room_id: str) -> dict | None:
         return None
     if not isinstance(room, dict):
         return room
-    if "messages" not in room and isinstance(room.get("messageLog"), dict):
-        room["messages"] = _read_log(room_id)
-        _LOGGED.add(room_id)
+    if isinstance(room.get("messageLog"), dict):
+        logged, whole = _read_log(room_id)
+        inline = room.get("messages")
+        if isinstance(inline, list):
+            # A hub from before the log wrote this file (a downgrade): its
+            # messages are added to the log's, never put in their place.
+            ids = {m.get("id") for m in logged}
+            logged += [m for m in inline if isinstance(m, dict) and m.get("id") not in ids]
+            whole = False
+        room["messages"] = logged
+        if whole:
+            _LOGGED.add(room_id)
+        else:
+            _LOGGED.discard(room_id)
     else:
         _LOGGED.discard(room_id)
     room.pop("messageLog", None)
@@ -278,6 +292,13 @@ def _load(room_id: str) -> dict | None:
         if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
             return _listed_copy(hit["room"])
     return _read(room_id)
+
+
+def messages_file(room_id: str) -> str:
+    """Where a room's messages are on disk, as an agent is told it."""
+    if room_id in _LOGGED:
+        return f"~/.ensemble/rooms/{LOG_DIR_NAME}/{room_id}.jsonl"
+    return f"~/.ensemble/rooms/{room_id}.json"
 
 
 def _write(room: dict) -> None:
@@ -706,6 +727,8 @@ def list_rooms(*, copy_rooms: bool = True) -> list[dict]:
 def get_room(room_id: str, public: bool = True, *, copy_room: bool = True) -> dict | None:
     # The GET path uses the index, while mutations keep using _read under
     # _LOCK. Copy so status decoration cannot change the indexed source.
+    # The message dicts are shared even in a copy: read them, never change
+    # one in place (replace it in the list), or the log keeps the old one.
     p = _room_path(room_id)
     try:
         st = p.stat()

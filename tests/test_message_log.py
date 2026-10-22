@@ -89,6 +89,37 @@ class MessageLog(_Rooms):
         self.assertEqual(msgs[-1]["text"], "one")
         self.assertNotIn("cut", [m.get("id") for m in msgs])
 
+    def restart(self):
+        chatroom._INDEX.clear()
+        chatroom._LOGGED.clear()
+
+    def test_a_post_after_a_cut_line_survives_a_restart(self):
+        rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        chatroom.post_message(rid, "claude", "one")
+        with open(self.path / "messages" / f"{rid}.jsonl", "ab") as f:
+            f.write(b'{"id": "cut", "te')       # a stop mid-append
+        self.restart()
+        chatroom.post_message(rid, "claude", "two")
+        self.restart()
+        self.assertEqual([m["text"] for m in chatroom._read(rid)["messages"]][-2:], ["one", "two"])
+        self.assertTrue(self.log_lines(rid)[-1].endswith(b"}"))
+
+    def test_a_replaced_message_is_kept_on_disk(self):
+        rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        chatroom.post_message(rid, "claude", "original")
+        full = chatroom.get_room(rid, public=False)
+        full["messages"][-1] = {**full["messages"][-1], "text": "edited"}
+        chatroom.update_room(full)
+        self.restart()
+        self.assertEqual(chatroom._read(rid)["messages"][-1]["text"], "edited")
+
+    def test_where_an_agent_is_told_the_messages_are(self):
+        rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        self.assertEqual(chatroom.messages_file(rid), f"~/.ensemble/rooms/messages/{rid}.jsonl")
+        old = self.old_format(["a"])
+        chatroom._read(old)
+        self.assertEqual(chatroom.messages_file(old), f"~/.ensemble/rooms/{old}.json")
+
     def test_a_missing_log_reads_as_no_messages(self):
         rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
         chatroom.post_message(rid, "claude", "one")
@@ -124,6 +155,24 @@ class OldFormat(_Rooms):
         self.assertEqual([m["text"] for m in chatroom._read(rid)["messages"]], ["a", "b"])
         chatroom.post_message(rid, "claude", "c")
         self.assertEqual([json.loads(x)["text"] for x in self.log_lines(rid)], ["a", "b", "c"])
+
+    def test_a_downgraded_hubs_messages_join_the_log(self):
+        # A hub from before the log keeps "messageLog" and writes the one
+        # message it posted inline: the logged ones are not lost.
+        rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        chatroom.post_message(rid, "claude", "a")
+        chatroom.post_message(rid, "claude", "b")
+        disk = self.room_file(rid)
+        disk["messages"] = [{"id": "old-hub", "from": "claude", "to": "", "text": "c", "ts": 9e9}]
+        (self.path / f"{rid}.json").write_text(json.dumps(disk), encoding="utf-8")
+        chatroom._INDEX.clear()
+        chatroom._LOGGED.clear()
+        self.assertEqual([m["text"] for m in chatroom._read(rid)["messages"]][-3:], ["a", "b", "c"])
+        chatroom.post_message(rid, "claude", "d")
+        chatroom._INDEX.clear()
+        chatroom._LOGGED.clear()
+        self.assertEqual([m["text"] for m in chatroom._read(rid)["messages"]][-4:], ["a", "b", "c", "d"])
+        self.assertNotIn("messages", self.room_file(rid))
 
     def test_a_deleted_room_takes_its_log(self):
         rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]

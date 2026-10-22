@@ -114,8 +114,7 @@ class RoomWindowHttp(unittest.TestCase):
     def test_the_first_read_fits_100_kb_and_its_pm_index_follows(self):
         # #247: messages of 20 KB each; the first read keeps the newest that
         # fit, never fewer than three, and names no older PO message yet.
-        for m in self.room["messages"][-60:]:
-            m["text"] = "x" * 20_000
+        self.room["messages"][-60:] = [{**m, "text": "x" * 20_000} for m in self.room["messages"][-60:]]
         chatroom._write(self.room)
         raw = urlopen(self.base + "&n=50&lite=1", timeout=5).read()
         d = json.loads(raw)
@@ -127,8 +126,7 @@ class RoomWindowHttp(unittest.TestCase):
         p = self.get("&n=50&cursor=" + quote(d["revision"]) + "&statusSig=" + quote(d["statusSig"]) + "&pm=m296")
         self.assertEqual([x["id"] for x in p["pmIndex"]], ["m5"])
         self.assertEqual(p["messages"], [])
-        for m in self.room["messages"]:
-            m["text"] = "x" * 50_000
+        self.room["messages"] = [{**m, "text": "x" * 50_000} for m in self.room["messages"]]
         chatroom._write(self.room)
         d = self.get("&n=50&lite=1")
         self.assertEqual(len(d["messages"]), dashboard.LITE_MIN_MESSAGES, "at least three, however big")

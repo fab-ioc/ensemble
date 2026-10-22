@@ -137,9 +137,8 @@ class CardLinksPage(Hub):
                               {'label': 'Use (P215)', 'detail': '', 'recommended': False}]}]
         card = chatroom.post_message(room, 'claude', 'Re P215: one decision.', to='user')['message']
         full = chatroom.get_room(room, public=False)
-        for m in full['messages']:
-            if m['id'] == card['id']:
-                m.update(asks=asks_, askAudience='user')
+        full['messages'] = [{**m, 'asks': asks_, 'askAudience': 'user'} if m['id'] == card['id'] else m
+                            for m in full['messages']]
         chatroom.update_room(full)
         shots = os.environ.get('ENSEMBLE_SHOTS', '')
         if shots: Path(shots).mkdir(parents=True, exist_ok=True)

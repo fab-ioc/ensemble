@@ -4421,7 +4421,7 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
                     "ts": float(m.get("ts") or 0),
                     "text": (points.strip_point_lines(m.get("text") or "")
                              if m.get("from") == chatroom.HUMAN_IDENTITY else m.get("text") or ""),
-                    "where": f"~/.ensemble/rooms/{room_id}.json"}
+                    "where": chatroom.messages_file(room_id)}
     sid, sep, n = msg_id.rpartition(":")
     if not sep or not sid or not (n.isdigit() or (n[:1] == "q" and n[1:].isdigit()))             or "/" in sid or "\\" in sid:
         return None
