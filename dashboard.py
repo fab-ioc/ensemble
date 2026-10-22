@@ -12998,7 +12998,11 @@ def _prune_classify(agent: str, path: Path, sid: str) -> tuple[str, str]:
 
 def _prune_hub() -> prune.Hub:
     def rooms():
-        return chatroom.list_rooms(copy_rooms=False)
+        # Each with its project as the hub reads it (the links first), a
+        # shallow copy: the index's own rooms are never changed.
+        links = load_session_projects()
+        return [{**r, "projectId": _room_project_id(r.get("id", ""), r, links)}
+                for r in chatroom.list_rooms(copy_rooms=False)]
 
     def live_rooms():
         return {(x.get("meta") or {}).get("room") for x in ptyrun.list_sessions()

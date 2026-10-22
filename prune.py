@@ -51,6 +51,7 @@ from typing import Callable
 
 DAY = 86400
 DEFAULT_DAYS = 30
+RECENT_S = 3600                 # a conversation written this recently is never listed
 LOG_NAME = "prune.log"
 GROUPS = ("done", "po", "hub", "own", "orphans", "housekeeping")
 # Ticked by itself in a preview: everything but the person's own conversations.
@@ -452,7 +453,9 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
                 continue
             rid = held.get(sid)
             newest = max(_mtime(p) for _a, p in files)
-            if newest > cutoff:
+            # Written in the last hour: perhaps a live one no record names (a
+            # live Codex is known by its folder only), whatever the days say.
+            if newest > min(cutoff, t0 - RECENT_S):
                 continue
             if rid is not None:
                 # A past conversation of a PO's room; a task's go with the task.
