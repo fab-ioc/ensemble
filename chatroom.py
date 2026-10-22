@@ -102,6 +102,11 @@ def room_index() -> list[dict]:
                 hit = _INDEX.get(rid)
                 if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
                     continue
+                # A kept card is taken while its room file is unchanged. A
+                # veto that changed without a write (a room made a PO's, a
+                # seat come alive) and a crash between the log append and the
+                # room file both leave it a card until the room is written:
+                # the chat itself is always read whole from file and log.
                 kept = _CARDS.get(rid)
                 if kept and kept["sig"] == _signature(st):
                     _INDEX[rid] = _card_entry(kept["card"], st)
@@ -1077,10 +1082,15 @@ def _listed_copy(room: dict) -> dict:
     return out
 
 
-def list_rooms(*, copy_rooms: bool = True) -> list[dict]:
-    """List rooms; read-only hot paths may borrow nested indexed values."""
+def list_rooms(*, copy_rooms: bool = True, revisions: dict | None = None) -> list[dict]:
+    """List rooms; read-only hot paths may borrow nested indexed values.
+    ``revisions`` gets each listed room's revision, taken with the room: a
+    room_revision() read later may be that of a write made since (#256)."""
+    entries = room_index()
+    if revisions is not None:
+        revisions.update((e["id"], e["signature"]) for e in entries)
     out = [_public(_listed_copy(e["room"]) if copy_rooms else e["room"])
-           for e in room_index()]
+           for e in entries]
     out.sort(key=lambda r: r.get("updatedAt", 0), reverse=True)
     return out
 
@@ -1167,19 +1177,20 @@ def resolve_token(token: str) -> tuple[str, str] | None:
     # cost an agent's every tool call up to ~0.6 s under the store lock, by
     # where its room fell in the folder (#256). The room last found for a
     # token is looked at first; the index re-reads a room that changed.
-    with _INDEX_LOCK:
-        rid = _TOKEN_ROOMS.get(token)
-        if rid:
-            room = get_room(rid, public=False, copy_room=False)
-            ident = (room or {}).get("tokens", {}).get(token)
-            if ident:
-                return rid, ident
-        for e in room_index():
-            ident = (e["room"].get("tokens") or {}).get(token)
-            if ident:
-                _TOKEN_ROOMS[token] = e["id"]
-                return e["id"], ident
-        _TOKEN_ROOMS.pop(token, None)
+    # The scan is outside the lock: room_index may save the cards file, which
+    # it does with the lock released.
+    rid = _TOKEN_ROOMS.get(token)
+    if rid:
+        room = get_room(rid, public=False, copy_room=False, messages=False)
+        ident = (room or {}).get("tokens", {}).get(token)
+        if ident:
+            return rid, ident
+    for e in room_index():
+        ident = (e["room"].get("tokens") or {}).get(token)
+        if ident:
+            _TOKEN_ROOMS[token] = e["id"]
+            return e["id"], ident
+    _TOKEN_ROOMS.pop(token, None)
     return None
 
 

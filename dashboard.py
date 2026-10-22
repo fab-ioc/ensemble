@@ -11803,7 +11803,7 @@ _FACTS: dict[str, tuple[str, dict]] = {}
 _COLD_ROWS: dict[str, tuple[tuple, dict]] = {}
 
 
-def _room_holds(rooms: list[dict]) -> dict[str, tuple[set, set, set]]:
+def _room_holds(rooms: list[dict], revs: dict[str, str]) -> dict[str, tuple[set, set, set]]:
     """Each room's agent conversations and folders (which make no rows of
     their own) and the conversations its seats left behind (rotations,
     switches, handovers, reviews, an agent taken off it):
@@ -11811,7 +11811,7 @@ def _room_holds(rooms: list[dict]) -> dict[str, tuple[set, set, set]]:
     out = {}
     for rm in rooms:
         rid = rm["id"]
-        rev = chatroom.room_revision(rid)
+        rev = revs.get(rid, "")
         hit = _HOLDS.get(rid)
         if hit and rev and hit[0] == rev:
             out[rid] = hit[1]
@@ -11896,13 +11896,17 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     own_cap = SESSION_LIST_OWN_CAP
     def _norm_cwd(p: str) -> str:
         return os.path.normcase(os.path.normpath(p)) if p else ""
+    # Each room's revision is taken with the room: one read later could be
+    # that of a post made meanwhile, and the caches below would keep facts of
+    # the room before it under the revision after it.
+    revs: dict[str, str] = {}
     try:
-        rooms = chatroom.list_rooms(copy_rooms=False)
+        rooms = chatroom.list_rooms(copy_rooms=False, revisions=revs)
     except Exception:
         rooms = []
     collab_sids: set[str] = set()
     collab_cwds: set[str] = set()
-    holds = _room_holds(rooms)
+    holds = _room_holds(rooms, revs)
     for rm in rooms:
         sids, cwds, _past = holds[rm["id"]]
         collab_sids |= sids
@@ -12178,7 +12182,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                     continue
             # A cold task's row changes only with its room, its label and the
             # models seats without one show: the row made last time is used.
-            rev = chatroom.room_revision(rid)
+            rev = revs.get(rid, "")
             cold_key = (rev, labels.get(rid), shown_sig) if cold and rev else None
             hit = _COLD_ROWS.get(rid) if cold_key else None
             if hit and hit[0] == cold_key:

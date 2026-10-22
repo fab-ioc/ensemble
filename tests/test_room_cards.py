@@ -189,6 +189,25 @@ class Cards(unittest.TestCase):
         chatroom.save_cards(force=True)
         self.assertEqual((self.path / f"{rid}.json").read_text(encoding="utf-8"), raw)
 
+    def test_a_post_during_a_list_is_in_the_next_list(self):
+        # Review 8: the task list caches a room's facts by its revision; that
+        # revision is the listed room's, never that of a write made since.
+        import dashboard
+        dashboard._FACTS.clear()
+        self.addCleanup(dashboard._FACTS.clear)
+        rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        chatroom.post_message(rid, "claude", "one")
+        revs = {}
+        rm = [r for r in chatroom.list_rooms(copy_rooms=False, revisions=revs) if r["id"] == rid][0]
+        chatroom.post_message(rid, "claude", "two")
+        self.assertNotEqual(revs[rid], chatroom.room_revision(rid))
+        self.assertEqual(dashboard._room_facts(rm, revs[rid])["turns"], 1)
+        for _ in range(2):
+            revs = {}
+            rm = [r for r in chatroom.list_rooms(copy_rooms=False, revisions=revs) if r["id"] == rid][0]
+            facts = dashboard._room_facts(rm, revs[rid])
+            self.assertEqual((facts["turns"], facts["last"]), (2, "two"))
+
 
 if __name__ == "__main__":
     unittest.main()
