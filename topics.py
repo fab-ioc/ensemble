@@ -26,6 +26,10 @@ _STOP = frozenset("a an and are at be been can did do does for from has have how
 _CACHE: dict[str, tuple[tuple, dict]] = {}
 _CACHE_LOCK = threading.Lock()
 _BUILDING: set[str] = set()
+# project id -> the last build's thread features and scored pairs, reused
+# by the next build; changing how threads are compared bumps _MODEL.
+_STATE: dict[str, dict] = {}
+_MODEL = 1
 
 
 def _path(project_id: str, rooms_dir: Path) -> Path:
@@ -102,19 +106,51 @@ def _features(th: dict, idx: dict) -> dict:
             "ts": (root.get("ts") or 0)}
 
 
-def _similarity(a: dict, b: dict, rarity: dict[str, float], rare_cutoff: float) -> float:
-    common = a["root"] & b["root"]
-    cross = (a["root"] & b["all"]) | (b["root"] & a["all"])
+def _feature_key(th: dict, idx: dict) -> tuple:
+    """Everything `_features` reads of a thread. Records are new objects on
+    every thread build, so the key holds their content, not their identity."""
+    by_mid, work = idx["by_mid"], idx["work"]
+
+    def one(mid):
+        r = by_mid.get(mid) or {}
+        return (mid, mid in work, r.get("role"), r.get("kind"), r.get("ts"),
+                hash((r.get("turn") or {}).get("text") or ""))
+    return (one(th["root"]), th.get("title"), th.get("task"), tuple(one(mid) for mid in th["members"]))
+
+
+def _rarity(candidates: dict[str, dict]) -> tuple[dict[str, float], float]:
+    n = len(candidates)
+    count = Counter(t for row in candidates.values() for t in row["root"])
+    # Repeated hub briefs and handover instructions are poor subject signals.
+    rare_cutoff = 1 + math.log((n + 1) / (max(2, n * .1) + 1))
+    rarity = {t: 1 + math.log((n + 1) / (c + 1)) if c <= max(5, n * .12) else 0
+              for t, c in count.items()}
+    return rarity, rare_cutoff
+
+
+def _prepare(row: dict, rarity: dict[str, float], rare_cutoff: float) -> tuple:
+    """What `_similarity` needs of one thread. A term no rarer than a brief's
+    boilerplate weighs 0, so only the rare root terms can score."""
+    rare = {t for t in row["root"] if rarity.get(t, 0)}
+    strong = {t for t in row["heading"] & rare if len(t) >= 7 and rarity[t] >= rare_cutoff}
+    return rare, row["all"], sum(rarity[t] for t in rare), strong
+
+
+def _similarity(a: tuple, b: tuple, rarity: dict[str, float]) -> float:
+    """`a` and `b` come from `_prepare` at the same rarity."""
+    rare_a, all_a, weight_a, strong_a = a
+    rare_b, all_b, weight_b, strong_b = b
+    cross = (rare_a & all_b) | (rare_b & all_a)
     if not cross:
         return 0.0
-    core = sum(rarity.get(t, 0) for t in common)
-    shared = core + .35 * sum(rarity.get(t, 0) for t in cross - common)
-    base = sum(rarity.get(t, 0) for t in a["root"] | b["root"]) or 1
-    score = shared / base
+    common = rare_a & rare_b
+    core = sum(rarity[t] for t in common)
+    shared = core + .35 * sum(rarity[t] for t in cross - common)
+    # The roots' union weighs both roots less the part they share.
+    score = shared / ((weight_a + weight_b - core) or 1)
     # A distinctive name occurring in both roots is a useful subject even
     # when each question has quite different surrounding words.
-    if any(len(t) >= 7 and rarity.get(t, 0) >= rare_cutoff
-           and t in a["heading"] and t in b["heading"] for t in common):
+    if strong_a and not strong_a.isdisjoint(strong_b):
         score = max(score, .72)
     return score
 
@@ -131,32 +167,68 @@ def _subject_name(members: list[str], features: dict, rarity: dict) -> str:
     return features[members[0]]["title"][:80]
 
 
-def _auto_groups(candidates: dict[str, dict]) -> tuple[dict[str, str], dict[str, str], dict[tuple[str, str], float]]:
-    ids = sorted(candidates, key=lambda tid: (candidates[tid]["ts"], tid))
-    count = Counter(t for row in candidates.values() for t in row["root"])
-    # Repeated hub briefs and handover instructions are poor subject signals.
-    rare_cutoff = 1 + math.log((len(ids) + 1) / (max(2, len(ids) * .1) + 1))
-    rarity = {t: 1 + math.log((len(ids) + 1) / (n + 1)) if n <= max(5, len(ids) * .12) else 0
-              for t, n in count.items()}
-    clusters: dict[str, list[str]] = {}
-    scores = {}
-    for i, a in enumerate(ids):
-        for b in ids[i + 1:]:
-            aa, bb = candidates[a], candidates[b]
-            score = _similarity(aa, bb, rarity, rare_cutoff)
+def _pairs(candidates: dict[str, dict], rarity: dict[str, float], rare_cutoff: float,
+           prev: dict | None = None) -> dict[str, dict[str, float]]:
+    """Each thread's partners scoring at least .35, both ways round.
+
+    With `prev` (the last build's candidates, rarity and pairs at the same
+    thread count), only the rows that can have moved are scored again: a
+    thread whose features changed, and a thread with a root term whose rarity
+    changed. Every other pair reads the same sets and weights as before."""
+    prepared = {tid: _prepare(row, rarity, rare_cutoff) for tid, row in candidates.items()}
+    if prev is None or len(prev["candidates"]) != len(candidates):
+        pairs: dict[str, dict[str, float]] = {tid: {} for tid in candidates}
+        dirty = list(candidates)
+    else:
+        old_rarity, old = prev["rarity"], prev["candidates"]
+        moved = {t for t in rarity.keys() | old_rarity.keys() if rarity.get(t, 0) != old_rarity.get(t, 0)}
+        dirty = [tid for tid, row in candidates.items()
+                 if old.get(tid) != row or (moved and not moved.isdisjoint(row["root"]))]
+        gone = old.keys() - candidates.keys()
+        drop = gone | set(dirty)
+        pairs = {tid: {} if tid in drop else {o: s for o, s in prev["pairs"][tid].items() if o not in drop}
+                 for tid in candidates}
+    done = set()
+    for a in dirty:
+        done.add(a)
+        row_a = prepared[a]
+        for b, row_b in prepared.items():
+            if b in done:
+                continue
+            score = _similarity(row_a, row_b, rarity)
             if score >= .35:
-                scores[a, b] = score
+                pairs[a][b] = pairs[b][a] = score
+    return pairs
+
+
+def _auto_groups(candidates: dict[str, dict], scored: tuple | None = None
+                 ) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, float]]]:
+    """Group threads by subject. `scored` is (rarity, pairs) worked out by
+    the caller, which may keep pairs between builds; without it every pair
+    is scored here."""
+    ids = sorted(candidates, key=lambda tid: (candidates[tid]["ts"], tid))
+    if scored is None:
+        rarity, rare_cutoff = _rarity(candidates)
+        pairs = _pairs(candidates, rarity, rare_cutoff)
+    else:
+        rarity, pairs = scored
+    clusters: dict[str, list[str]] = {}
+    rep_of: dict[str, str] = {}
     for tid in ids:
         row = candidates[tid]
         same_task = "task:" + row["task"] if row["task"] else ""
-        best = max(((scores.get((rep, tid), 0), group) for group, members in clusters.items()
-                    for rep in members[:1]), default=(0, ""))
+        # Only a group's first thread is compared, and only a scored partner
+        # can beat the thresholds below.
+        best = max(((score, rep_of[rep]) for rep, score in pairs[tid].items() if rep in rep_of),
+                   default=(0, ""))
         if same_task and same_task in clusters:
             group = same_task
         elif best[0] >= (.78 if row["task"] or best[1].startswith("task:") else .68):
             group = best[1]
         else:
             group = same_task or "subject:" + tid.replace(":", "-")
+        if group not in clusters:
+            rep_of[tid] = group
         clusters.setdefault(group, []).append(tid)
     auto, labels = {}, {}
     for key, members in clusters.items():
@@ -165,7 +237,7 @@ def _auto_groups(candidates: dict[str, dict]) -> tuple[dict[str, str], dict[str,
         labels[key] = task or _subject_name(members, candidates, rarity)
         for tid in members:
             auto[tid] = key
-    return auto, labels, scores
+    return auto, labels, pairs
 
 
 def _target(topic: str, merged: dict) -> str:
@@ -200,9 +272,22 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
                            for mid in th["members"]) < now - _DAYS:
                 continue
             eligible.append(tid)
-        features = {tid: _features(idx["threads"][tid], idx) for tid in eligible}
+        # The last build's features and pairs: a thread change scores only
+        # that thread's row again (and the rows a rarity change reaches).
+        prev = _STATE.pop(project["id"], None)
+        if prev is not None and prev["model"] != _MODEL:
+            prev = None
+        keys, features = {}, {}
+        for tid in eligible:
+            keys[tid] = key = _feature_key(idx["threads"][tid], idx)
+            features[tid] = (prev["candidates"][tid] if prev and prev["keys"].get(tid) == key
+                             else _features(idx["threads"][tid], idx))
         heading_freq = Counter(t for feat in features.values() for t in feat["heading"])
-        auto_keys, labels, scores = _auto_groups(features)
+        rarity, rare_cutoff = _rarity(features)
+        pairs = _pairs(features, rarity, rare_cutoff, prev)
+        auto_keys, labels, pairs = _auto_groups(features, (rarity, pairs))
+        _STATE[project["id"]] = {"model": _MODEL, "keys": keys, "candidates": features,
+                                 "rarity": rarity, "pairs": pairs}
         for tid in eligible:
             th = idx["threads"][tid]
             auto = auto_keys[tid]
@@ -226,17 +311,22 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
                 if not r or r["role"] != "agent" or mid in idx["work"]:
                     continue
                 if row["latest"] is None or r["ts"] > row["latest"]["ts"]:
-                    row["latest"] = {"mid": mid, "thread": tid, "ts": r["ts"],
-                                     "text": " ".join((r["turn"].get("text") or "").split())[:240]}
+                    # The text is cut once the latest is known (below).
+                    row["latest"] = {"mid": mid, "thread": tid, "ts": r["ts"], "text": r}
                     row["state"] = th.get("state") or ""
+        for row in topics.values():
+            if row["latest"] is not None:
+                r = row["latest"]["text"]
+                row["latest"]["text"] = " ".join((r["turn"].get("text") or "").split())[:240]
         # Score against all topics only after all groups exist: a chip must
         # not depend on which thread happened to be visited first.
+        position = {tid: i for i, tid in enumerate(eligible)}
         for tid in eligible:
             own = _target(data["assign"].get(tid) or data["auto"][tid], data["merged"])
             if len(topics[own]["threads"]) != 1:
                 continue
             best = None
-            for other in eligible:
+            for other in sorted(pairs[tid], key=position.__getitem__):
                 target = _target(data["assign"].get(other) or data["auto"][other], data["merged"])
                 if target == own or target in data["archive"] or target in data["declined"].get(tid, []):
                     continue
@@ -246,7 +336,7 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
                                    if len(term) >= 4 and heading_freq[term] <= max(5, len(eligible) * .12)]
                 if len(shared_headings) < 2:
                     continue
-                score = scores.get((tid, other)) or scores.get((other, tid)) or 0
+                score = pairs[tid][other]
                 if score >= .55 and (best is None or score > best[0]):
                     best = (score, target)
             if best:

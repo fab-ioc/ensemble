@@ -16,6 +16,8 @@ class TopicTest(unittest.TestCase):
     def setUp(self):
         with topics._CACHE_LOCK:
             topics._CACHE.pop("proj-abcdef12", None)
+        with topics._LOCK:
+            topics._STATE.pop("proj-abcdef12", None)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.rooms = Path(self.tmp.name) / "rooms"
@@ -138,10 +140,10 @@ class TopicTest(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         original = topics._auto_groups
 
-        def slow(candidates):
+        def slow(*args):
             entered.set()
             self.assertTrue(release.wait(3))
-            return original(candidates)
+            return original(*args)
 
         try:
             with mock.patch.object(threads, "ready", return_value=self.idx), \
@@ -162,6 +164,167 @@ class TopicTest(unittest.TestCase):
                     if self.project["id"] not in topics._BUILDING:
                         break
                 time.sleep(.01)
+
+
+class IncrementalTopicTest(unittest.TestCase):
+    """A build keeps the last one's features and pairs: a thread change scores
+    only what it can move, and every build equals one made from scratch."""
+    ASKS = ["Backtest the skew strategy on the replay window",
+            "What did the backtested skew trades show in the replay?",
+            "Make the volatility panel wider on the phone",
+            "The volatility panel overlaps the order book on the phone",
+            "Export the replay fills to a spreadsheet",
+            "Why does the order book lag after reconnecting?",
+            "Order book reconnect lag is back after the update"]
+
+    def setUp(self):
+        self.pid = "proj-abcdef34"
+        self.addCleanup(self.forget)
+        self.forget()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.rooms = Path(self.tmp.name) / "rooms"
+        self.rooms.mkdir()
+        self.project = {"id": self.pid, "poRoomId": "room-abcdef34"}
+        self.recs, self.pts = [], []
+        for i, ask in enumerate(self.ASKS):
+            self.recs += [human(f"s:{2 * i}", 2 * i, ask),
+                          po(f"s:{2 * i + 1}", 2 * i + 1, f"Re P{i + 1}: on it", re_=[f"P{i + 1}"])]
+            self.pts.append(point(f"P{i + 1}", f"s:{2 * i}", ask, 2 * i))
+        self.assign("start")
+
+    def assign(self, sig):
+        self.idx = {**threads.assign(self.recs, {"points": self.pts}, side()),
+                    "by_mid": {r["mid"]: r for r in self.recs}, "recs": self.recs, "sig": sig}
+        for th in self.idx["threads"].values():
+            th.update(unread=0, openQuestions=0, state="", rootWho="you")
+
+    def forget(self):
+        with topics._CACHE_LOCK:
+            topics._CACHE.pop(self.pid, None)
+        with topics._LOCK:
+            topics._STATE.pop(self.pid, None)
+
+    def view(self):
+        with mock.patch.object(threads, "ready", return_value=self.idx):
+            return topics.view(self.project, {}, self.rooms, now=T0 + 100)
+
+    def scored(self):
+        """The view and how many pairs it scored."""
+        with mock.patch.object(topics, "_similarity", wraps=topics._similarity) as sim:
+            got = self.view()
+        return got, sim.call_count
+
+    def assert_same_as_from_scratch(self, got):
+        with topics._LOCK:
+            kept = topics._STATE[self.pid]
+        features = kept["candidates"]
+        self.assertEqual(kept["pairs"], topics._auto_groups(features)[2])
+        self.assertEqual(features, {tid: topics._features(self.idx["threads"][tid], self.idx) for tid in features})
+        self.forget()
+        fresh = self.view()
+        self.assertEqual(got["topics"], fresh["topics"])
+        self.assertEqual(got["suggestions"], fresh["suggestions"])
+
+    def reply(self, tid, mid, text, ts):
+        self.idx["by_mid"][mid] = po(mid, ts, text)
+        self.idx["threads"][tid]["members"].append(mid)
+        self.idx["sig"] = mid
+
+    def add_thread(self, pid, mid, text, ts):
+        self.recs.append(human(mid, ts, text))
+        self.pts.append(point(pid, mid, text, ts))
+        self.assign(mid)
+
+    def drop_thread(self, pid):
+        mids = {p["mid"] for p in self.pts if p["id"] == pid}
+        self.recs = [r for r in self.recs if r["mid"] not in mids and pid not in r.get("re", ())]
+        self.pts = [p for p in self.pts if p["id"] != pid]
+        self.assign("without " + pid)
+
+    def test_first_build_scores_every_pair_once(self):
+        got, calls = self.scored()
+        n = len(self.ASKS)
+        self.assertEqual(calls, n * (n - 1) // 2)
+        self.assertIn({"P3", "P4"}, [set(row["threads"]) for row in got["topics"]])
+        self.assert_same_as_from_scratch(got)
+
+    def test_a_reply_scores_only_its_own_thread_again(self):
+        self.view()
+        self.reply("P5", "s:50", "The spreadsheet export of replay fills now covers the skew trades", 50)
+        self.assertEqual(self.idx["threads"]["P5"]["members"][-1], "s:50")
+        got, calls = self.scored()
+        self.assertEqual(calls, len(self.ASKS) - 1)
+        self.assert_same_as_from_scratch(got)
+
+    def test_an_unchanged_thread_index_scores_nothing_again(self):
+        self.view()
+        self.idx["sig"] = "same threads, new signature"
+        _got, calls = self.scored()
+        self.assertEqual(calls, 0)
+
+    def test_a_new_thread_scores_every_pair_again(self):
+        # Rarity depends on how many threads there are, so every pair moves.
+        self.view()
+        self.add_thread("P8", "s:60", "Order book reconnect lag on the phone", 60)
+        got, calls = self.scored()
+        n = len(self.ASKS) + 1
+        self.assertEqual(calls, n * (n - 1) // 2)
+        self.assertIn({"P6", "P7", "P8"}, [set(row["threads"]) for row in got["topics"]])
+        self.assert_same_as_from_scratch(got)
+
+    def test_a_deleted_thread_leaves_no_pair_behind(self):
+        self.view()
+        self.drop_thread("P4")
+        got, _calls = self.scored()
+        self.assertNotIn("P4", [tid for row in got["topics"] for tid in row["threads"]])
+        with topics._LOCK:
+            pairs = topics._STATE[self.pid]["pairs"]
+        self.assertNotIn("P4", pairs)
+        self.assertFalse(any("P4" in row for row in pairs.values()))
+        self.assert_same_as_from_scratch(got)
+
+    def test_a_thread_replaced_at_the_same_count_rescores_only_what_it_reaches(self):
+        self.view()
+        self.drop_thread("P5")
+        self.add_thread("P8", "s:60", "Rename the invoice folders every quarter", 60)
+        got, calls = self.scored()
+        n = len(self.ASKS)
+        self.assertLess(calls, n * (n - 1) // 2)
+        with topics._LOCK:
+            pairs = topics._STATE[self.pid]["pairs"]
+        self.assertFalse(any("P5" in row for row in pairs.values()))
+        self.assert_same_as_from_scratch(got)
+
+    def test_a_retitled_root_rescores_the_threads_its_rarity_reaches(self):
+        self.view()
+        self.idx["threads"]["P2"]["title"] = "Volatility panel width"
+        self.idx["sig"] = "retitled"
+        got, _calls = self.scored()
+        self.assert_same_as_from_scratch(got)
+
+    def test_a_restart_rebuilds_pairs_and_keeps_corrections(self):
+        before = self.view()
+        backtest = next(row["id"] for row in before["topics"] if "P1" in row["threads"])
+        topics.change(self.project, self.rooms, "move", thread="P5", topic=backtest)
+        topics.change(self.project, self.rooms, "rename", topic=backtest, name="Replay work")
+        kept = self.view()
+        self.forget()       # a hub start: no features or pairs in memory
+        got, calls = self.scored()
+        n = len(self.ASKS)
+        self.assertEqual(calls, n * (n - 1) // 2)
+        self.assertEqual(got["topics"], kept["topics"])
+        row = next(row for row in got["topics"] if row["id"] == backtest)
+        self.assertEqual(row["name"], "Replay work")
+        self.assertIn("P5", row["threads"])
+
+    def test_a_model_change_scores_every_pair_again(self):
+        self.view()
+        with topics._LOCK:
+            topics._STATE[self.pid]["model"] = topics._MODEL - 1
+        _got, calls = self.scored()
+        n = len(self.ASKS)
+        self.assertEqual(calls, n * (n - 1) // 2)
 
 
 if __name__ == "__main__":
