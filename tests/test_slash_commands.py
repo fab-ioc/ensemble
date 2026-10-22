@@ -14,6 +14,7 @@ the screens measured on Claude Code 2.1.308 and Codex 0.163.0
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -63,20 +64,27 @@ class Hub(unittest.TestCase):
             mock.patch.object(dashboard.time, "sleep", lambda s: None),
             mock.patch.object(dashboard, "checkpoint_wait_restore", lambda rid: None, create=True),
         ]
+        # The held lines' file (menu-held.json) goes to the temp dir.
+        self.patches.append(mock.patch.object(dashboard, "DASHBOARD_DIR", Path(self.temp.name)))
         for p in self.patches:
             p.start()
-        dashboard._COMMANDS.clear()
-        dashboard._MENUS.clear()
-        dashboard._MENU_HELD.clear()
+        self.clear_menus()
 
     def tearDown(self):
         for p in self.patches:
             p.stop()
+        self.clear_menus()
+        chatroom.ROOMS_DIR = self.old_dir
+        self.temp.cleanup()
+
+    @staticmethod
+    def clear_menus():
         dashboard._COMMANDS.clear()
         dashboard._MENUS.clear()
         dashboard._MENU_HELD.clear()
-        chatroom.ROOMS_DIR = self.old_dir
-        self.temp.cleanup()
+        dashboard._MENU_WHO.clear()
+        dashboard._MENU_RESTORE.clear()
+        dashboard._MENU_RESTORING[0] = False
 
     def room(self, agents=(("claude", "claude"),), mode="solo"):
         parts = [{"identity": ident, "agent": kind, "model": "", "role": "engineer" if i == 0 else "reviewer"}
@@ -127,6 +135,7 @@ class Hub(unittest.TestCase):
         rid = self.room()
         self.assertEqual(dashboard.send_command(rid, "hello", key="k")[0], 400)
         self.assertEqual(dashboard.send_command(rid, "/a\n/b", key="k")[0], 400)
+        self.assertEqual(dashboard.send_command(rid, "/a\r/b", key="k")[0], 400, "as the page's slParse")
         self.assertEqual(dashboard.send_command(rid, "/usr/bin", key="k")[0], 400)
         self.ptys["pty-claude"]._alive = False
         code, reply = dashboard.send_command(rid, "/mcp", key="k2")
@@ -164,7 +173,7 @@ class Hub(unittest.TestCase):
     def _codex_rollouts(self, latest):
         """Codex's rollout lookup: ``latest[0]`` is what it finds."""
         cx = mock.Mock()
-        cx.latest_session_id_for_cwd.side_effect = lambda cwd, since=0.0: latest[0]
+        cx.latest_session_id_for_cwd.side_effect = lambda cwd, since=0.0, **k: latest[0]
         dashboard._CODEX_SID_TRIED.clear()
         return mock.patch.object(dashboard.agents, "get_agent", return_value=cx)
 
@@ -361,6 +370,236 @@ class Hub(unittest.TestCase):
         src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
         self.assertIn('event.get("source") in ("clear", "resume")', src, "/resume is followed too")
 
+    # ---- follow-ups (#255) ----
+    def _no_threads(self, started=None):
+        return mock.patch.object(dashboard.threading, "Thread",
+                                 lambda target, args=(), daemon=None, name=None:
+                                 mock.Mock(start=lambda: (started if started is not None else []).append((target, args))))
+
+    def _typing(self, typed):
+        def type_now(sess, text, prov=None, record=True, parts=None, now=""):
+            typed.append((sess.id, text, prov, parts))
+            return True
+        return mock.patch.object(dashboard, "_type_input_now", type_now)
+
+    def test_a_menu_renewed_for_ever_lapses_at_the_cap(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        typed = []
+        with self._no_threads(), self._typing(typed):
+            dashboard.send_command(rid, "/model", key="k1")
+            dashboard.menu_report("pty-claude", True)
+            self.assertTrue(dashboard._type_input(pty, "[digest] one"))
+            dashboard._MENUS["pty-claude"]["opened"] -= dashboard.MENU_HOLD_CAP_S - 5
+            dashboard.menu_report("pty-claude", True)
+            self.assertTrue(dashboard.menu_open(pty), "under the cap: still held")
+            self.assertEqual(typed, [])
+            dashboard._MENUS["pty-claude"]["opened"] -= 10      # the tab stayed on /model, renewing
+            dashboard.menu_report("pty-claude", True)
+            self.assertFalse(dashboard.menu_open(pty), "the cap ends the hold")
+            self.assertEqual(pty.writes[-1], "\x1b", "the menu is closed with Esc")
+            dashboard._menu_drain(pty)
+            self.assertEqual([t[1] for t in typed], ["[digest] one"])
+            dashboard.menu_report("pty-claude", True)           # still renewed: no new hold, no second Esc
+            self.assertTrue(dashboard._type_input(pty, "two"))
+            self.assertEqual(typed[-1][1], "two")
+            self.assertEqual(pty.writes.count("\x1b"), 1)
+            dashboard.send_command(rid, "/model", key="k2")
+            self.assertTrue(dashboard.menu_open(pty), "a new command holds again")
+        notes = [m for m in chatroom.get_room(rid, public=False)["messages"] if m.get("noticeKind") == "menuClosed"]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["text"].count("\n"), 0)
+        self.assertIn("10 min", notes[0]["text"])
+        self.assertTrue(chatroom.is_command_record(notes[0]), "never news for an agent, nor an answer")
+
+    def test_a_menu_esc_does_not_close_keeps_the_lines_and_says_so_once(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        pty.tail = lambda *a, **k: "Select model\n> 1. Default\nEnter to confirm · Esc to exit"
+        typed = []
+        with self._no_threads(), self._typing(typed):
+            dashboard.send_command(rid, "/model", key="k1")
+            dashboard.menu_report("pty-claude", True)
+            self.assertTrue(dashboard._type_input(pty, "one"))
+            dashboard._MENUS["pty-claude"]["opened"] -= dashboard.MENU_HOLD_CAP_S + 1
+            self.assertTrue(dashboard.menu_open(pty), "Esc did not close it: still held")
+            self.assertEqual(pty.writes.count("\x1b"), dashboard.MENU_ESC_TRIES)
+            self.assertTrue(dashboard.menu_open(pty), "Esc is tried again only after another cap")
+            self.assertEqual(pty.writes.count("\x1b"), dashboard.MENU_ESC_TRIES)
+            dashboard._MENUS["pty-claude"]["opened"] -= dashboard.MENU_HOLD_CAP_S + 1
+            self.assertTrue(dashboard.menu_open(pty))
+            self.assertEqual(pty.writes.count("\x1b"), 2 * dashboard.MENU_ESC_TRIES)
+            self.assertEqual(typed, [])
+            self.assertEqual(dashboard._MENU_HELD["pty-claude"][0][0], "one")
+            pty.tail = lambda *a, **k: "> \n? for shortcuts"   # Esc works this time
+            dashboard._MENUS["pty-claude"]["opened"] -= dashboard.MENU_HOLD_CAP_S + 1
+            self.assertFalse(dashboard.menu_open(pty))
+            self.assertEqual(pty.writes.count("\x1b"), 2 * dashboard.MENU_ESC_TRIES + 1)
+            dashboard._menu_drain(pty)
+        self.assertEqual([t[1] for t in typed], ["one"])
+        notes = [m["text"] for m in chatroom.get_room(rid, public=False)["messages"]
+                 if m.get("noticeKind") == "menuClosed"]
+        self.assertEqual(len(notes), 2, notes)
+        self.assertIn("did not close", notes[0])
+        self.assertIn("closed it with Esc", notes[1])
+
+    def test_held_lines_are_typed_once_after_a_hub_restart(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        path = Path(self.temp.name) / dashboard.MENU_HELD_FILE
+        with self._no_threads():
+            dashboard.send_command(rid, "/model", key="k1")
+            dashboard.menu_report("pty-claude", True)
+            self.assertTrue(dashboard._type_input(pty, "[digest] one", {"kind": "digest"},
+                                                  parts=[("[digest] one", {"kind": "digest"})]))
+            self.assertTrue(dashboard._type_input(pty, "two"))
+        saved = json.loads(path.read_text(encoding="utf-8"))["held"]
+        self.assertEqual([(r["room"], r["identity"]) for r in saved], [(rid, "claude")])
+        self.assertEqual([it["text"] for it in saved[0]["items"]], ["[digest] one", "two"])
+        # The hub stops: what it held in memory is gone, and the agent comes
+        # back in a terminal under another id.
+        self.clear_menus()
+        room = chatroom.get_room(rid, public=False)
+        room["participants"][0]["ptyId"] = "pty-new"
+        chatroom.update_room(room)
+        self.ptys["pty-new"] = new = FakePty("pty-new", rid, "claude")
+        started, typed = [], []
+        with self._no_threads(started), self._typing(typed):
+            dashboard.menu_restore_at_start()
+            self.assertEqual([t[0] for t in started], [dashboard._menu_restore])
+            dashboard._menu_restore_once()
+            self.assertEqual(started[-1], (dashboard._menu_drain, (new,)))
+            dashboard._menu_drain(new)
+        self.assertEqual(typed, [("pty-new", "[digest] one", {"kind": "digest"}, [("[digest] one", {"kind": "digest"})]),
+                                 ("pty-new", "two", None, None)])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["held"], [])
+        self.clear_menus()
+        dashboard.menu_restore_at_start()                   # a second restart: nothing again
+        self.assertEqual(dashboard._MENU_RESTORE, {})
+
+    def test_restored_lines_wait_for_their_agent_and_are_given_up_after_a_while(self):
+        rid = self.room()
+        self.ptys["pty-claude"]._alive = False
+        dashboard._MENU_RESTORE[(rid, "claude")] = {"items": [("one", None, True, None, "")], "opened": 0.0,
+                                                   "at": time.time()}
+        dashboard._menu_restore_once()
+        self.assertIn((rid, "claude"), dashboard._MENU_RESTORE, "not running yet: kept")
+        dashboard._menu_restore_once(now=time.time() + dashboard.MENU_RESTORE_S)
+        self.assertEqual(dashboard._MENU_RESTORE, {})
+
+    def test_a_line_sent_after_a_restart_waits_behind_the_restored_ones(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        dashboard._MENU_RESTORE[(rid, "claude")] = {"items": [("one", None, True, None, "")], "opened": 0.0,
+                                                   "at": time.time()}
+        started, typed = [], []
+        with self._no_threads(started), self._typing(typed):
+            self.assertTrue(dashboard._type_input(pty, "two"), "held behind the restored line")
+            self.assertEqual(typed, [])
+            dashboard._menu_restore_once()
+            self.assertEqual(started[-1], (dashboard._menu_drain, (pty,)))
+            dashboard._menu_drain(pty)
+        self.assertEqual([t[1] for t in typed], ["one", "two"])
+
+    def test_restored_lines_of_a_task_stopped_since_are_dropped(self):
+        rid = self.room()
+        self.ptys["pty-claude"]._alive = False
+        t = time.time()
+        dashboard._MENU_RESTORE[(rid, "claude")] = {"items": [("one", None, True, None, "")], "opened": t - 60,
+                                                   "at": t}
+        chatroom.patch_room(rid, stoppedAt=t - 30)        # stopped while the menu held them
+        dashboard._menu_restore_once()
+        self.assertEqual(dashboard._MENU_RESTORE, {})
+
+    def test_codex_new_adopts_only_its_own_new_conversation(self):
+        """Two Codex seats in one folder: one sends /new; the other's rollout,
+        and one started before the /new, are written later but not adopted."""
+        home = Path(self.temp.name) / "codex"
+        cwd = str(Path(self.temp.name) / "work")
+        rid = self.room((("codex", "codex"),))
+        other = self.room((("codex", "codex"),))
+        for r in (rid, other):
+            room = chatroom.get_room(r, public=False)
+            room["cwd"] = cwd
+            chatroom.update_room(room)
+        room = chatroom.get_room(other, public=False)
+        room["participants"][0]["sessionId"] = "sid-other"
+        chatroom.update_room(room)
+        day = home / "sessions" / time.strftime("%Y/%m/%d")
+        day.mkdir(parents=True)
+
+        def rollout(sid, started, written):
+            iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(started)) + ".000Z"
+            p = day / f"rollout-{time.strftime('%Y-%m-%dT%H-%M-%S', time.localtime(started))}-{sid}.jsonl"
+            p.write_text(json.dumps({"type": "session_meta", "payload": {"id": sid, "cwd": cwd, "timestamp": iso}})
+                         + "\n", encoding="utf-8")
+            os.utime(p, (written, written))
+
+        t = time.time()
+        with mock.patch.dict("os.environ", {"CODEX_HOME": str(home)}):
+            dashboard.send_command(rid, "/new", key="k1")
+            rollout("sid-other", t - 300, t + 30)       # the other seat's, written last
+            rollout("sid-stray", t - 100, t + 20)       # nobody's, started before the /new
+            dashboard._CODEX_SID_TRIED.clear()
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+            part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+            self.assertEqual(part["sessionId"], "sid-codex", "neither is this seat's new conversation")
+            self.assertIn("pendingNew", part)
+            rollout("sid-mine", t + 2, t + 10)          # its own, started after the /new
+            dashboard._CODEX_SID_TRIED.clear()
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+        part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+        self.assertEqual(part["sessionId"], "sid-mine")
+        self.assertNotIn("pendingNew", part)
+        self.assertEqual(chatroom.participant(chatroom.get_room(other, public=False), "codex")["sessionId"],
+                         "sid-other")
+
+
+class Stalls(unittest.TestCase):
+    def test_command_output_after_a_long_silence_still_reads_as_stalled(self):
+        t0 = 1_000_000.0
+        part = {"identity": "claude", "kind": "agent", "agent": "claude", "ptyId": "p1"}
+        room = {"id": "room-x", "mode": "collab", "status": "active", "createdAt": t0 - 60,
+                "participants": [part, {"identity": "claude-2", "kind": "agent", "agent": "claude",
+                                        "onMention": True}],
+                "messages": [
+                    {"id": "m1", "from": "claude-2", "to": "claude", "text": "fix it",
+                     "ts": t0, "rang": ["claude"]},
+                    {"id": "m2", "kind": "notice", "noticeKind": "command", "from": "user",
+                     "to": "claude", "text": "/cost", "ts": t0 + 3600, "rang": []},
+                    {"id": "m3", "kind": "notice", "noticeKind": "commandOutput", "from": "claude",
+                     "text": "Total cost: $0.01", "ts": t0 + 3601, "rang": []},
+                ]}
+        summary = dashboard.attention._summarize(room, po="", is_po=False)
+        self.assertEqual(summary["lastMessage"]["from"], "claude-2", "the command and its output are skipped")
+        self.assertEqual(dashboard.attention._owed_since(summary, "claude"), (t0, "message"))
+        ev = {"ptyId": "p1", "alive": True, "tail": ">", "idleSeconds": 7000, "lastSubmit": 0.0,
+              "death": None, "scan": dashboard.attention.analyse(">"), "claudeStatus": "idle"}
+        with mock.patch.object(dashboard.stall, "silent_owner_owes", return_value=False, create=True):
+            hit = dashboard.attention._classify_agent(summary, summary["participants"][0], ev, 900, t0 + 7200)
+        self.assertEqual((hit or ("",))[0], "stalled", hit)
+
+    def test_command_output_is_not_a_sign_of_life_to_the_po(self):
+        """stall.py reads the full room (the PO's silent-owner look): the
+        command and its output after a long silence change nothing."""
+        t0 = 1_000_000.0
+        part = {"identity": "claude", "kind": "agent", "agent": "claude"}
+        msgs = [{"id": "m1", "from": "user", "to": "claude", "text": "go on", "ts": t0, "rang": ["claude"]}]
+        room = {"id": "room-x", "status": "active", "participants": [part], "messages": msgs}
+        later = msgs + [
+            {"id": "m2", "kind": "notice", "noticeKind": "command", "from": "user", "to": "claude",
+             "text": "/cost", "ts": t0 + 3600, "rang": []},
+            {"id": "m3", "kind": "notice", "noticeKind": "commandOutput", "from": "claude",
+             "text": "Total cost: $0.01", "ts": t0 + 3601, "rang": []}]
+        stall = dashboard.stall
+        self.assertEqual(stall._last_message(dict(room, messages=later))["id"], "m1")
+        self.assertEqual(stall.episode(dict(room, messages=later), "claude", 0.0, 0.0),
+                         stall.episode(room, "claude", 0.0, 0.0))
+        ev = {"alive": True}
+        with mock.patch.object(stall, "commit_at", return_value=0.0):
+            self.assertEqual(stall.last_sign(dict(room, messages=later), part, ev),
+                             stall.last_sign(room, part, ev))
+
 
 class Transcript(unittest.TestCase):
     def test_command_turns_and_the_compact_summary_are_counted_but_hidden(self):
@@ -479,6 +718,29 @@ console.log(JSON.stringify(cases.map(k => {
         self.assertNotIn("for shortcuts", status["text"])
         self.assertTrue(mcp["text"].startswith("🔌"), mcp)
         self.assertNotIn("Model:", mcp["text"])
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class PageParse(unittest.TestCase):
+    def test_the_page_and_the_hub_agree_on_what_is_a_command(self):
+        start = SESSION.index("function slParse(")
+        end = SESSION.index("// The box holds a command to send")
+        cases = ["/compact", "  /model opus  ", "/compact\nmore", "/compact more\nand more", "/a\r\n/b",
+                 "/usr/bin", "/tmp is full", "hello", "@claude-2 /cost", "@claude-2\n/cost"]
+        js = ("const SOLO_MODE = false, ROOM_IDENTS = ['claude-2'];\n" + SESSION[start:end]
+              + "\nconsole.log(JSON.stringify(" + json.dumps(cases) + ".map(t => { const c = slParse(t); "
+              "return c ? c.text : null; })));\n")
+        r = subprocess.run([NODE, "-"], input=js, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        page = json.loads(r.stdout)
+        self.assertIsNone(page[2], "a message of several lines that starts with / is a plain message")
+        self.assertIsNone(page[9])
+        self.assertEqual(page[8], "/cost")
+        for text, cmd in zip(cases, page):
+            if not text.startswith("@"):
+                self.assertEqual(cmd is not None, slash.is_command(text), text)
+            if cmd is not None:
+                self.assertTrue(slash.is_command(cmd), (text, cmd))
 
 
 class Page(unittest.TestCase):

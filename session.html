@@ -2784,8 +2784,9 @@ const itemBody = item => String(item || '').replace(/^\*\*\d+\.\*\*[ \t]*/, '').
 // traffic, see below) is a row at any age and counts for none of this.
 const FOLD_MIN = 10, FOLD_MAX = 25;
 // A line across the chat, not a balloon: a rotation, or the hub's row that it
-// was restarted (posted to a PO that was idle then: nothing was typed into it).
-const isHubRow = m => !!m && m.kind === 'notice' && m.noticeKind === 'restart';
+// was restarted (posted to a PO that was idle then: nothing was typed into it),
+// or that it closed a menu left open on an agent's screen (#253).
+const isHubRow = m => !!m && m.kind === 'notice' && (m.noticeKind === 'restart' || m.noticeKind === 'menuClosed');
 // A slash command the person ran from the chat, and what it printed (#253):
 // rows of the room a one-agent chat shows among its turns.
 const isCmdRow = m => !!m && m.kind === 'notice' && (m.noticeKind === 'command' || m.noticeKind === 'commandOutput');
@@ -3819,7 +3820,7 @@ function gapWords(g, items, N = CHAT_NAMES) {
   const add = k => n.set(k, (n.get(k) || 0) + 1);
   for (const i of g.idx) {
     const m = items[i];
-    if (isHubRow(m)) add('restart note');
+    if (isHubRow(m)) add(m.noticeKind === 'restart' ? 'restart note' : 'hub note');
     else if (isLandmark(m)) add('new session');
     else if (isPoMsg(m)) add('PO to PO');
     else if (isDigest(m)) add('progress check');
@@ -7633,8 +7634,11 @@ function slCatalogue(ident) {
   return SL_CAT[k];
 }
 // "@ident /name args" (a team) or "/name args": the command and its agent.
+// One line only, as the hub's slash.is_command: "/compact\nmore" is a message.
 function slParse(text) {
-  const m = String(text || '').trim().match(/^(?:@([\w-]+)\s+)?(\/([A-Za-z0-9][\w.:-]*))(\s[^\n]*)?$/);
+  const t = String(text || '').trim();
+  if (/[\r\n]/.test(t)) return null;
+  const m = t.match(/^(?:@([\w-]+)[ \t]+)?(\/([A-Za-z0-9][\w.:-]*))([ \t][^\n]*)?$/);
   if (!m) return null;
   if (m[1] && (SOLO_MODE || !ROOM_IDENTS.includes(m[1]))) return null;
   return { ident: m[1] || '', name: m[3], text: (m[2] + (m[4] || '')).trim(), args: !!(m[4] || '').trim() };

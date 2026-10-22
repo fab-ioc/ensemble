@@ -122,7 +122,7 @@ def episode(room: dict, owner: str, last_submit: float, nudged_at: float) -> flo
     nudge)."""
     ts = [0.0]
     for m in room.get("messages") or []:
-        if m.get("from") != owner:
+        if m.get("from") != owner and not _d.chatroom.is_command_record(m):
             ts.append(float(m.get("ts") or 0))
     ts.append(float((room.get("lastReport") or {}).get("ts") or 0))
     ts.append(float(room.get("specAt") or 0))
@@ -150,8 +150,7 @@ def why_not(room: dict, owner: str) -> str:
         return "no PO"                  # the CEO's bell (attention.py) has it
     if _d.attention.open_ask(room) is not None:
         return "something of it is open"
-    msgs = room.get("messages") or []
-    last = msgs[-1] if msgs else {}
+    last = _last_message(room)
     if last.get("from") == owner and last.get("rang"):
         return "handed to a teammate"
     return ""
@@ -411,10 +410,15 @@ def last_sign(room: dict, part: dict, ev: dict) -> float:
 
 
 def _last_message(room: dict) -> dict:
+    """The room's last message as attention's summary has it: a slash
+    command the person ran and what it printed (#253), or an owner's "new
+    session" notice, is neither an ask nor an answer."""
     if "lastMessage" in room:
         return room.get("lastMessage") or {}
-    msgs = room.get("messages") or []
-    return msgs[-1] if msgs else {}
+    return next((m for m in reversed(room.get("messages") or [])
+                 if not (m.get("noticeKind") == "rotation"
+                         and (m.get("rotation") or {}).get("startedAt"))
+                 and not _d.chatroom.is_command_record(m)), {})
 
 
 def _open_ask(room: dict):

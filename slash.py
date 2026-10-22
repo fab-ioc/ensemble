@@ -185,7 +185,7 @@ def is_command(text: str) -> bool:
     """A single-line text that starts with ``/name`` (a path such as
     ``/usr/bin`` is not one: a command name has no further slash)."""
     t = (text or "").strip()
-    return bool(command_name(t)) and "\n" not in t
+    return bool(command_name(t)) and "\n" not in t and "\r" not in t
 
 
 def starts_new_conversation(agent: str, text: str) -> bool:
