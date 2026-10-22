@@ -100,6 +100,24 @@ class OneProxyPerPtyTest(unittest.TestCase):
         self.assertEqual(host.list_sessions(), [])
         self.assertEqual(len(calls), 3)
 
+    def test_a_list_older_than_a_create_is_not_shared(self):
+        # The host answered before a create that ran meanwhile: its list
+        # lacks the new PTY and must not be kept (review 1 of #256).
+        client = _FreshPerLookupClient()
+        host = dashboard.OneProxyPerPty(client)
+        real = client.list_sessions
+        made = []
+
+        def racing():
+            out = real()
+            if not made:
+                made.append(host.create(["x"]))
+            return out
+
+        client.list_sessions = racing
+        self.assertEqual(host.list_sessions(), [])
+        self.assertEqual([x["id"] for x in host.list_sessions()], [made[0].id])
+
     def test_everything_else_reaches_the_client(self):
         client = _FreshPerLookupClient()
         host = dashboard.OneProxyPerPty(client)

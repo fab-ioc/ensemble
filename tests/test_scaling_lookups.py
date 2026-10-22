@@ -183,14 +183,15 @@ class LaunchFiles(unittest.TestCase):
             made = {}
             for d in ("_launch", "_mcp"):
                 (Path(tmp) / d).mkdir()
-                for name, age in (("old", 8 * 86400), ("new", 86400)):
+                for name, age in (("old", 31 * 86400), ("mid", 8 * 86400), ("new", 86400)):
                     f = Path(tmp) / d / f"{name}.x"
                     f.write_text("x", encoding="utf-8")
                     os.utime(f, (now - age, now - age))
                     made[(d, name)] = f
-            self.assertEqual(dashboard.prune_launch_files(now), 2)
+            # A script goes after a week, an MCP config after 30 days.
+            self.assertEqual(dashboard.prune_launch_files(now), 3)
             self.assertEqual({k for k, f in made.items() if f.exists()},
-                             {("_launch", "new"), ("_mcp", "new")})
+                             {("_launch", "new"), ("_mcp", "mid"), ("_mcp", "new")})
 
 
 if __name__ == "__main__":

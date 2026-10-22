@@ -12071,7 +12071,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             first_user = next((m for m in msgs
                                if m.get("from") == "user" and (m.get("text") or "").strip()), None)
             first_txt = ((first_user or (msgs[0] if msgs else {})).get("text") or "")[:200]
-            last_txt = points.strip_point_lines(((msgs[-1] if msgs else {}).get("text") or "")[:4000])[:200]
+            last_txt = ((msgs[-1] if msgs else {}).get("text") or "")
+            if len(last_txt) > 4000:    # whole lines only: a cut point line would show
+                last_txt = last_txt[:last_txt.rfind("\n", 0, 4000) + 1] or last_txt[:4000]
+            last_txt = points.strip_point_lines(last_txt)[:200]
             # The issue view's summary answers "what did this task do", so it
             # needs the last thing an AGENT said. `last` is the last message
             # from anyone, which would happily caption your own question as
@@ -12864,16 +12867,19 @@ def _warm_saver() -> None:
 
 # A launch writes a script (_launch) and, for Claude, an MCP config holding
 # its token (_mcp) that the agent reads as it starts; nothing reads them
-# again. Kept a week, they were 6,000 files each and 88 MB by 10-22 (#256).
-LAUNCH_FILES_KEEP_S = 7 * 86400
+# again. Kept forever, they were 6,000 files each and 88 MB by 10-22 (#256).
+# A script goes after a week; an MCP config after 30 days, in case a long-lived
+# agent re-reads its --mcp-config (a /mcp reconnect).
+LAUNCH_FILES_KEEP_S = {"_launch": 7 * 86400, "_mcp": 30 * 86400}
 
 
 def prune_launch_files(now: float | None = None) -> int:
     """Remove launch scripts and MCP configs older than LAUNCH_FILES_KEEP_S.
     Returns how many went."""
-    cut = (time.time() if now is None else now) - LAUNCH_FILES_KEEP_S
+    now = time.time() if now is None else now
     gone = 0
-    for d in (DASHBOARD_DIR / "_launch", DASHBOARD_DIR / "_mcp"):
+    for name, keep in LAUNCH_FILES_KEEP_S.items():
+        d, cut = DASHBOARD_DIR / name, now - keep
         try:
             entries = list(os.scandir(d))
         except OSError:
@@ -13083,18 +13089,20 @@ class OneProxyPerPty:
         self._lock = threading.Lock()
         self._gone: set[str] = set()
         self._list: tuple[float, list] | None = None
+        self._gen = 0       # each create or kill; a list fetched across one is not kept
 
     def __getattr__(self, name):        # pid, version, call, reap, deaths...
         return getattr(self._client, name)
 
     def list_sessions(self):
         with self._lock:
-            hit = self._list
+            hit, gen = self._list, self._gen
         if hit and time.monotonic() - hit[0] < self.LIST_TTL_S:
             return list(hit[1])
         out = self._client.list_sessions()
         with self._lock:
-            self._list = (time.monotonic(), list(out))
+            if self._gen == gen:
+                self._list = (time.monotonic(), list(out))
         return out
 
     def _keep(self, proxy):
@@ -13114,6 +13122,7 @@ class OneProxyPerPty:
         proxy = self._client.create(*args, **kwargs)
         with self._lock:
             self._list = None
+            self._gen += 1
             self._gone.discard(proxy.id)
         return self._keep(proxy)
 
@@ -13133,9 +13142,12 @@ class OneProxyPerPty:
 
     def kill(self, pty_id):
         self._forget(pty_id)
-        with self._lock:
-            self._list = None
-        return self._client.kill(pty_id)
+        try:
+            return self._client.kill(pty_id)
+        finally:
+            with self._lock:
+                self._list = None
+                self._gen += 1
 
 
 def attach_pty_host() -> None:
