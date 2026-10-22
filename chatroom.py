@@ -1172,8 +1172,8 @@ MCP_TOOLS = [
 
 # A slash command the person ran from the chat and what it printed (#253):
 # notices (``noticeKind``), the chat's record of what went into a terminal,
-# never news for an agent.
-COMMAND_KINDS = ("command", "commandOutput")
+# never news for an agent; and the line saying the hub closed a menu left open.
+COMMAND_KINDS = ("command", "commandOutput", "menuClosed")
 
 
 def is_command_record(msg: dict) -> bool:

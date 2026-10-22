@@ -907,10 +907,13 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
     # A task owner's "new session" notice is for the human and asks nothing of
     # anyone: the rotation itself is the ask (the participant's rotatedAt). A
     # PO's rotation sets no rotatedAt, so its notice still ends any older ask.
+    # A slash command the person sent and what it printed (#253) are neither
+    # an ask nor an answer: the agent's output must not read as it speaking.
+    cr = _d.chatroom
     last = next((m for m in reversed(msgs)
                  if not (m.get("noticeKind") == "rotation"
-                         and (m.get("rotation") or {}).get("startedAt"))), {})
-    cr = _d.chatroom
+                         and (m.get("rotation") or {}).get("startedAt"))
+                 and not cr.is_command_record(m)), {})
     rang = last.get("rang")
     if last and not isinstance(rang, list):
         # A message from before the wake rules recorded who they woke.

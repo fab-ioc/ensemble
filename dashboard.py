@@ -449,13 +449,22 @@ def _backfill_codex_session_ids(room: dict) -> None:
         avoid = taken
         if new:
             p_since = max(p_since, float(new.get("at") or 0))
-            avoid = {s for q in room.get("participants", []) if q is not pp
-                     for s in participant_session_ids(q)} | {pp.get("sessionId") or ""}
+            # Another Codex in the same folder (this task's or any other's)
+            # writes rollouts there too: never one another seat has had.
+            avoid = _other_seats_session_ids(room, pp) | {pp.get("sessionId") or ""}
         clr = [r for r in pp.get("cleared") or [] if isinstance(r, dict)]
         if clr:
             p_since = max(p_since, float(clr[-1].get("at") or 0))
         try:
-            sid = cx.latest_session_id_for_cwd(cwd, since=p_since)
+            if new:
+                # A /new is a conversation started after it was typed; a
+                # /resume may go back to an older one.
+                started = (float(new.get("sentAt") or new.get("at") or 0) - NEW_START_SLACK_S
+                           if new.get("command") == "new" else 0.0)
+                sid = cx.latest_session_id_for_cwd(cwd, since=p_since, skip=avoid - {""},
+                                                   started_since=started)
+            else:
+                sid = cx.latest_session_id_for_cwd(cwd, since=p_since)
         except Exception:
             sid = ""
         if sid and sid not in avoid:
@@ -488,6 +497,22 @@ def _backfill_codex_session_ids(room: dict) -> None:
 
 
 PENDING_NEW_MAX_S = 86400
+
+
+NEW_START_SLACK_S = 1.0     # a /new's conversation may be stamped just before the hub noted it
+
+
+def _other_seats_session_ids(room: dict, pp: dict) -> set[str]:
+    """Every conversation of every seat but ``pp``, in any task: a Codex
+    seat's /new must not adopt one of them (#253)."""
+    rid = room.get("id", "")
+    out: set[str] = set()
+    for r in [room] + [r for r in chatroom.list_rooms(copy_rooms=False) if r.get("id") != rid]:
+        for q in r.get("participants") or []:
+            if not isinstance(q, dict) or q is pp or (r is room and q.get("identity") == pp.get("identity")):
+                continue
+            out.update(participant_session_ids(q))
+    return out
 
 
 def _stayed(new: dict) -> bool:
@@ -3765,7 +3790,8 @@ def _type_command(sess, text: str) -> str:
         hub_typing.record(sess, ok, "" if ok else _not_typed_cause(sess))
 
 
-def _follow_new_conversation(room_id: str, identity: str, agent: str, sess=None) -> None:
+def _follow_new_conversation(room_id: str, identity: str, agent: str, sess=None,
+                             command: str = "", sent_at: float = 0.0) -> None:
     """A Codex agent sent ``/new`` or ``/resume``: it may go on in another
     conversation, whose rollout Codex writes only at the next prompt. The
     seat keeps its id meanwhile and notes ``pendingNew``;
@@ -3774,14 +3800,18 @@ def _follow_new_conversation(room_id: str, identity: str, agent: str, sess=None)
     conversation of the task). A /new Codex refused, or a /resume left with
     Esc, changes nothing: the old rollout stays the newest, and the wait
     ends once that rollout takes a prompt (Codex stayed there). Claude's new
-    id comes with its SessionStart hook (_follow_cleared)."""
+    id comes with its SessionStart hook (_follow_cleared). ``command`` (new
+    or resume) and ``sent_at`` (before it was typed) narrow what a /new may
+    adopt to a conversation started since."""
     if agent != "codex":
         return
     full = chatroom.get_room(room_id, public=False)
     part = chatroom.participant(full, identity) if full else None
     if not part:
         return
-    part["pendingNew"] = {"fromSessionId": str(part.get("sessionId") or ""), "at": time.time()}
+    now = time.time()
+    part["pendingNew"] = {"fromSessionId": str(part.get("sessionId") or ""), "at": now,
+                          "command": command, "sentAt": sent_at or now}
     path, size = _codex_rollout_start(sess) if sess is not None else (None, -1)
     if path and size >= 0:
         part["pendingNew"].update(rollout=str(path), size=size)
@@ -3851,6 +3881,7 @@ def send_command(room_id: str, text: str, identity: str = "", key: str = "") -> 
                 return 200, dict(held["reply"], duplicate=True)
             return 409, {"error": "not_typed", "cause": "busy",
                          "message": f"the hub is typing into {name} right now, so try again in a moment"}
+    sent_at = time.time()
     cause = _type_command(sess, text)
     if cause:
         if key:
@@ -3865,7 +3896,7 @@ def send_command(room_id: str, text: str, identity: str = "", key: str = "") -> 
     rec = chatroom.post_notice(room_id, chatroom.HUMAN_IDENTITY, text,
                                {"noticeKind": "command", "to": ident, "agent": agent, "key": key})
     if slash.starts_new_conversation(agent, text):
-        _follow_new_conversation(room_id, ident, agent, sess)
+        _follow_new_conversation(room_id, ident, agent, sess, slash.command_name(text), sent_at)
     reply = {"ok": True, "identity": ident, "agent": agent, "ptyId": part.get("ptyId"),
              "message": rec, "key": key}
     with _COMMANDS_LOCK:
@@ -3905,14 +3936,23 @@ def command_output(room_id: str, key: str, text: str) -> tuple[int, dict]:
 # The page that shows the menu panel says so (POST /api/room/command-menu),
 # renewing it while the menu is open; a command typed counts as one until
 # the page has looked. With no page renewing (closed meanwhile), the hub
-# reads the screen's last lines itself, for at most MENU_HOLD_MAX_S.
-_MENUS: dict[str, dict] = {}            # ptyId -> {typed, seen, open}
+# reads the screen's last lines itself, for at most MENU_HOLD_MAX_S. However
+# it is renewed (a tab left on /model), a menu holds for MENU_HOLD_CAP_S from
+# its opening: then it is closed with Esc (_menu_lapse). The held lines are
+# kept in MENU_HELD_FILE too, so a hub restart still types them (_menu_restore).
+_MENUS: dict[str, dict] = {}            # ptyId -> {typed, seen, open, opened, lapsed}
 _MENU_HELD: dict[str, list] = {}        # ptyId -> [(text, provenance, record, parts, now)]
+_MENU_WHO: dict[str, tuple] = {}        # ptyId -> (roomId, identity) of its held lines
+_MENU_RESTORE: dict[tuple, dict] = {}   # (roomId, identity) -> {items, opened, at}: from the hub before
+_MENU_RESTORING = [False]               # _menu_restore runs
 _MENU_LOCK = threading.Lock()
 MENU_LEASE_S = 6.0          # the page renews every 2 s
 MENU_COMMAND_S = 10.0       # a command typed, before the page has looked
 MENU_HOLD_MAX_S = 1800.0
+MENU_HOLD_CAP_S = 600.0     # from the menu's opening, however long it stays on screen
+MENU_RESTORE_S = 1800.0     # after a restart, held lines wait this long for their agent
 MENU_POLL_S = 1.0
+MENU_HELD_FILE = "menu-held.json"
 _MENU_HINT = re.compile(r"\b(enter|⏎)\s+(to\s+)?(select|confirm|choose)|\besc(ape)?\s+(to\s+)?"
                         r"(back|cancel|close|exit|dismiss|go back)|↑/↓|\bto navigate\b", re.I)
 _MENU_COMPOSER = re.compile(r"for shortcuts|bypass permissions|shift\+tab to cycle|context left", re.I)
@@ -3920,16 +3960,19 @@ _MENU_COMPOSER = re.compile(r"for shortcuts|bypass permissions|shift\+tab to cyc
 
 def menu_typed(pty_id: str) -> None:
     """A slash command went into this terminal: it may open a menu."""
+    now = time.time()
     with _MENU_LOCK:
-        _MENUS[pty_id] = {"typed": time.time(), "seen": 0.0, "open": False}
+        _MENUS[pty_id] = {"typed": now, "seen": 0.0, "open": False, "opened": now}
 
 
 def menu_report(pty_id: str, is_open: bool) -> None:
     """The page's reading of the screen: a menu open (renewed), or none."""
     with _MENU_LOCK:
         if is_open:
+            now = time.time()
             st = _MENUS.setdefault(pty_id, {"typed": 0.0})
-            st.update(seen=time.time(), open=True)
+            st.setdefault("opened", now)
+            st.update(seen=now, open=True)
         else:
             _MENUS.pop(pty_id, None)
 
@@ -3945,23 +3988,169 @@ def menu_open(sess) -> bool:
     pid = str(getattr(sess, "id", "") or "")
     with _MENU_LOCK:
         st = dict(_MENUS.get(pid) or {})
-    if not st:
+    if not st or st.get("lapsed"):
         return False
     now = time.time()
-    if st.get("open") and now - st["seen"] < MENU_LEASE_S:
-        return True
-    if not st.get("open") and now - st.get("typed", 0) < MENU_COMMAND_S:
-        return True
-    if now - max(st.get("seen") or 0, st.get("typed") or 0) < MENU_HOLD_MAX_S:
+    is_open = ((st.get("open") and now - st["seen"] < MENU_LEASE_S)
+               or (not st.get("open") and now - st.get("typed", 0) < MENU_COMMAND_S))
+    if not is_open and now - max(st.get("seen") or 0, st.get("typed") or 0) < MENU_HOLD_MAX_S:
         try:
-            if screen_menu_open((sess.tail(lines=12) or "").splitlines()):
-                return True
+            is_open = screen_menu_open((sess.tail(lines=12) or "").splitlines())
         except Exception:       # noqa: BLE001 — unreadable: not held
             pass
+    if is_open and now - float(st.get("opened") or now) >= MENU_HOLD_CAP_S:
+        _menu_lapse(sess, st)
+        return False
+    if is_open:
+        return True
     with _MENU_LOCK:
         if _MENUS.get(pid, {}).get("seen") == st.get("seen") and _MENUS.get(pid, {}).get("typed") == st.get("typed"):
             _MENUS.pop(pid, None)
     return False
+
+
+def _menu_lapse(sess, st: dict) -> None:
+    """The menu has held the hub's lines for MENU_HOLD_CAP_S: the hold ends
+    (until a command is typed again), the menu is closed with Esc and the
+    chat says so, once."""
+    pid = str(getattr(sess, "id", "") or "")
+    with _MENU_LOCK:
+        cur = _MENUS.get(pid)
+        if cur is None or cur.get("lapsed") or cur.get("opened") != st.get("opened"):
+            return
+        cur["lapsed"] = True
+    meta = getattr(sess, "meta", None) or {}
+    rid, ident = str(meta.get("room") or ""), str(meta.get("identity") or "")
+    why: list[str] = []
+    lease = rotation.reserve_hub_line(sess, why)
+    closed = False
+    if lease is not None:
+        try:
+            writer = getattr(sess, "write", None)
+            with _INPUT_WRITE_LOCK:
+                closed = callable(writer) and writer("\x1b") is not False and sess.alive()
+        except (OSError, EOFError):
+            closed = False
+        finally:
+            rotation.release_hub_line(sess, lease)
+    mins = int(MENU_HOLD_CAP_S // 60)
+    print(f"[command] {rid}/{ident}: a menu held the hub's lines for {mins} min; "
+          f"{'closed with Esc' if closed else 'Esc not typed (' + (why[0] if why else 'write') + ')'}",
+          flush=True)
+    if rid:
+        did = "closed it with Esc" if closed else "stopped waiting for it"
+        chatroom.post_notice(rid, rotation.SENDER,
+                             f"A menu stayed open on {ident or 'the agent'}'s screen for {mins} min, "
+                             f"so the hub {did} and sent the messages that were waiting.",
+                             {"noticeKind": "menuClosed", "identity": ident})
+
+
+def _menu_item_json(it: tuple) -> dict:
+    text, provenance, record, parts, now = it
+    return {"text": text, "provenance": provenance, "record": record,
+            "parts": [list(p) for p in parts] if parts else None, "now": now}
+
+
+def _menu_item_of(d: dict) -> tuple:
+    parts = d.get("parts")
+    return (str(d.get("text") or ""), d.get("provenance"), bool(d.get("record", True)),
+            [tuple(p) for p in parts] if parts else None, str(d.get("now") or ""))
+
+
+def _menu_save() -> None:
+    """Keep the held lines in the state dir (MENU_HELD_FILE), so the next
+    hub types them if this one stops first. Called with _MENU_LOCK held."""
+    rows = []
+    for pid, items in _MENU_HELD.items():
+        rid, ident = _MENU_WHO.get(pid) or ("", "")
+        if rid and ident and items:
+            rows.append({"room": rid, "identity": ident,
+                         "opened": (_MENUS.get(pid) or {}).get("opened") or 0,
+                         "items": [_menu_item_json(it) for it in items]})
+    for (rid, ident), ent in _MENU_RESTORE.items():
+        rows.append({"room": rid, "identity": ident, "opened": ent.get("opened") or 0,
+                     "at": ent.get("at") or 0, "items": [_menu_item_json(it) for it in ent["items"]]})
+    path = Path(DASHBOARD_DIR) / MENU_HELD_FILE
+    try:
+        if rows or path.exists():
+            durable.write_text(path, json.dumps({"held": rows}, default=str))
+    except Exception as e:      # noqa: BLE001 — kept in memory still
+        print(f"[command] the held lines were not saved: {e}", flush=True)
+
+
+def menu_restore_at_start() -> None:
+    """Held lines the hub before this one had not typed (_menu_save): each
+    agent's wait for its terminal, then go in as they would have, once."""
+    data = durable.read_json(Path(DASHBOARD_DIR) / MENU_HELD_FILE) or {}
+    rows = [r for r in data.get("held") or [] if isinstance(r, dict)] if isinstance(data, dict) else []
+    now = time.time()
+    with _MENU_LOCK:
+        for r in rows:
+            key = (str(r.get("room") or ""), str(r.get("identity") or ""))
+            items = [_menu_item_of(d) for d in r.get("items") or [] if isinstance(d, dict)]
+            if not all(key) or not items:
+                continue
+            ent = _MENU_RESTORE.setdefault(key, {"items": [], "opened": float(r.get("opened") or 0),
+                                                 "at": float(r.get("at") or now)})
+            ent["items"].extend(items)
+        if not _MENU_RESTORE:
+            return
+        n = sum(len(e["items"]) for e in _MENU_RESTORE.values())
+        _menu_save()
+        begin = not _MENU_RESTORING[0]
+        _MENU_RESTORING[0] = True
+    print(f"[command] {n} held line(s) from before the restart wait for their agents", flush=True)
+    if begin:
+        threading.Thread(target=_menu_restore, name="menu-restore", daemon=True).start()
+
+
+def _menu_restore() -> None:
+    while True:
+        _menu_restore_once()
+        with _MENU_LOCK:
+            if not _MENU_RESTORE:
+                _MENU_RESTORING[0] = False
+                return
+        time.sleep(2 * MENU_POLL_S)
+
+
+def _menu_restore_once(now: float | None = None) -> None:
+    """Hand restored held lines to their agent's terminal once it runs,
+    typed by _menu_drain (which waits for a menu still on the screen: a
+    hub-only restart keeps the terminals); given up after MENU_RESTORE_S."""
+    now = time.time() if now is None else now
+    with _MENU_LOCK:
+        keys = list(_MENU_RESTORE)
+    for key in keys:
+        room = chatroom.get_room(key[0], public=False)
+        part = chatroom.participant(room, key[1]) if room else None
+        sess = ptyrun.get(part.get("ptyId")) if part and part.get("ptyId") else None
+        try:
+            alive = sess is not None and sess.alive()
+        except Exception:       # noqa: BLE001
+            alive = False
+        start = False
+        with _MENU_LOCK:
+            ent = _MENU_RESTORE.get(key)
+            if ent is None:
+                continue
+            if not alive:
+                if room is None or part is None or now - ent["at"] >= MENU_RESTORE_S:
+                    _MENU_RESTORE.pop(key, None)
+                    _menu_save()
+                    print(f"[command] {key[0]}/{key[1]}: {len(ent['items'])} held line(s) from "
+                          f"before the restart given up: the agent is not running", flush=True)
+                continue
+            pid = str(sess.id)
+            _MENU_RESTORE.pop(key, None)
+            start = pid not in _MENU_HELD
+            _MENU_HELD.setdefault(pid, []).extend(ent["items"])
+            _MENU_WHO[pid] = key
+            _MENUS.setdefault(pid, {"typed": 0.0, "seen": now, "open": False,
+                                    "opened": ent.get("opened") or now})
+            _menu_save()
+        if start:
+            threading.Thread(target=_menu_drain, args=(sess,), daemon=True).start()
 
 
 def _menu_hold(sess, text, provenance, record, parts, now="") -> bool:
@@ -3976,11 +4165,13 @@ def _menu_hold(sess, text, provenance, record, parts, now="") -> bool:
         queued = pid in _MENU_HELD
     if not queued and not menu_open(sess):
         return False
+    meta = getattr(sess, "meta", None) or {}
     with _MENU_LOCK:
         start = pid not in _MENU_HELD
         _MENU_HELD.setdefault(pid, []).append((text, provenance, record, parts, now))
+        _MENU_WHO[pid] = (str(meta.get("room") or ""), str(meta.get("identity") or ""))
+        _menu_save()
     if start:
-        meta = getattr(sess, "meta", None) or {}
         print(f"[command] {meta.get('room', '')}/{meta.get('identity', '')}: a menu is open, "
               f"so the hub's lines wait until it closes", flush=True)
         threading.Thread(target=_menu_drain, args=(sess,), daemon=True).start()
@@ -4008,9 +4199,23 @@ def _menu_drain(sess) -> None:
         if not alive:
             with _MENU_LOCK:
                 left = _MENU_HELD.pop(pid, [])
+                _MENU_WHO.pop(pid, None)
             kept = [it for it in left if rid and ident and rotation.hold_wake(rid, ident, it[0])]
+            # The rest wait for the seat's next terminal (a resume), as after a restart.
+            rest = [it for it in left if not any(it is k for k in kept)]
+            with _MENU_LOCK:
+                if rest and rid and ident:
+                    ent = _MENU_RESTORE.setdefault((rid, ident), {"items": [], "opened": 0.0, "at": time.time()})
+                    ent["items"].extend(rest)
+                    begin = not _MENU_RESTORING[0]
+                    _MENU_RESTORING[0] = True
+                else:
+                    begin = False
+                _menu_save()
+            if begin:
+                threading.Thread(target=_menu_restore, name="menu-restore", daemon=True).start()
             print(f"[command] pty {pid}: stopped with {len(left)} held line(s); "
-                  f"{len(kept)} kept for the fresh session", flush=True)
+                  f"{len(kept)} kept for the fresh session, {len(rest)} for its next terminal", flush=True)
             return
         if menu_open(sess):
             continue
@@ -4018,6 +4223,8 @@ def _menu_drain(sess) -> None:
             items = _MENU_HELD.get(pid) or []
             if not items:
                 _MENU_HELD.pop(pid, None)
+                _MENU_WHO.pop(pid, None)
+                _menu_save()
                 return
             head = items[0]
         text, provenance, record, parts, now = head
@@ -4035,6 +4242,7 @@ def _menu_drain(sess) -> None:
             items = _MENU_HELD.get(pid) or []
             if items and items[0] is head:
                 items.pop(0)
+                _menu_save()
 
 
 def _typed_sends(room_id: str, items: list[dict]) -> None:
@@ -20916,6 +21124,11 @@ def main():
     # hub before this one is closed or waits for its restore, before any
     # request may act on it.
     restart_drain.on_startup()
+    # Lines the hub before this one held while a menu was open (#253).
+    try:
+        menu_restore_at_start()
+    except Exception as e:
+        print(f"held lines from before the restart skipped: {e}", flush=True)
     startup.booted()
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()

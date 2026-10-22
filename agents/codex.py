@@ -149,6 +149,18 @@ def _read_meta(path: Path) -> dict:
     return d.get("payload") or {}
 
 
+def _started(meta: dict, path: Path) -> float:
+    """When a rollout's conversation started: its `session_meta` timestamp,
+    else the file's creation time (Windows; a change time elsewhere)."""
+    t = _iso_to_epoch(str(meta.get("timestamp") or ""))
+    if t:
+        return t
+    try:
+        return path.stat().st_ctime
+    except OSError:
+        return 0.0
+
+
 def _mtime(path: Path) -> float:
     try:
         return path.stat().st_mtime
@@ -428,13 +440,17 @@ class CodexAgent(AgentType):
                 continue
         return turns
 
-    def latest_session_id_for_cwd(self, cwd: str, since: float = 0.0) -> str:
+    def latest_session_id_for_cwd(self, cwd: str, since: float = 0.0, *,
+                                  skip: set | frozenset = frozenset(),
+                                  started_since: float = 0.0) -> str:
         """The most recent codex session id whose rollout ran in `cwd` — used to
         `codex resume <id>` a headless session after a dashboard restart, and to
         learn the id of a session the dashboard just launched (codex, unlike
         claude, won't take a caller-supplied one). `since` skips rollouts older
         than that epoch, which keeps a "which session did I just start?" lookup
-        to the handful of files written after the launch."""
+        to the handful of files written after the launch. Ids in `skip` (another
+        agent's) are passed over for the next one; `started_since` takes only a
+        conversation that started at or after that epoch (a /new, #253)."""
         if not cwd:
             return ""
         target = os.path.normcase(os.path.normpath(cwd))
@@ -445,8 +461,14 @@ class CodexAgent(AgentType):
                 meta = _read_meta(f)
                 if not meta:
                     continue
-                if os.path.normcase(os.path.normpath(meta.get("cwd") or "")) == target:
-                    return meta.get("session_id") or meta.get("id") or ""
+                if os.path.normcase(os.path.normpath(meta.get("cwd") or "")) != target:
+                    continue
+                sid = meta.get("session_id") or meta.get("id") or ""
+                if not sid or sid in skip:
+                    continue
+                if started_since and _started(meta, f) < started_since:
+                    continue
+                return sid
         except OSError:
             pass
         return ""
