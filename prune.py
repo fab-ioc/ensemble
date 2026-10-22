@@ -83,6 +83,7 @@ class Hub:
     project_home: Callable[[dict], str]
     documents_dir: Callable[[dict], str]
     scratch_root: Callable[[str], str] = lambda cwd: ""
+    pty_ids: Callable[[], set] = lambda: set()  # every terminal the hub lists, live or kept
     progress: Callable[..., None] = lambda *a, **k: None
     now: Callable[[], float] = time.time
 
@@ -242,6 +243,14 @@ def worktrees(root: str) -> list[dict]:
         elif line.startswith("prunable"):
             cur["prunable"] = True
     return out
+
+
+def is_worktree_of(repo: str, path: str) -> bool:
+    """``git worktree list`` of ``repo`` names ``path`` (and it is not the
+    repository's own checkout)."""
+    if not repo or not path or _norm(path) == _norm(repo):
+        return False
+    return any(_norm(w["path"]) == _norm(path) for w in worktrees(repo)[1:])
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +486,7 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
             if group not in groups:
                 continue
             parts = [_part("conversation", p, size_of(p), sid=sid, agent=a) for a, p in files]
-            items.append(_item(group, f"{group}:{sid}", _conv_label(main, who), parts,
+            items.append(_item(group, f"{group}:{sid}", _conv_label(agent, main, who, newest), parts,
                                sid=sid, agent=agent, at=newest))
         rooms_by_id = {r["id"]: r for r in rooms}
         for rid, parts in po_parts.items():
@@ -501,9 +510,13 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
             "bytes": sum(g["bytes"] for g in out_groups), "kept": kept}
 
 
-def _conv_label(path: str, who: str) -> str:
-    folder = os.path.basename(os.path.dirname(path))
-    return who or folder
+def _conv_label(agent: str, path: str, who: str, at: float) -> str:
+    """Its first words (or the hub's kind of it), and when it last changed."""
+    when = time.strftime("%Y-%m-%d", time.localtime(at)) if at else ""
+    if not who:
+        who = ("Codex conversation" if agent == "codex" else
+               f"Claude conversation in {os.path.basename(os.path.dirname(path))}")
+    return f"{who} · {when}" if when else who
 
 
 def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: dict,
@@ -514,8 +527,9 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
     folder = r.get("taskDir") or ws.get("taskDir") or ""
     repo = (project or {}).get("path") or ""
     cwd = r.get("cwd") or ""
-    if ws.get("mode") == "worktree" and repo and cwd and within(cwd, folder or cwd) \
-            and _norm(cwd) != _norm(repo) and os.path.isdir(_long(cwd)):
+    if ws.get("mode") == "worktree" and repo and cwd and folder and within(cwd, folder) \
+            and _norm(cwd) != _norm(repo) and os.path.isdir(_long(cwd)) \
+            and _allowed_path(hub, cwd, projects) and is_worktree_of(repo, cwd):
         parts.append(_part("worktree", cwd, size_of(cwd, stop=stop), repo=repo))
     branch = ws.get("branch") or ""
     if branch and repo:
@@ -554,7 +568,10 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
         p = st / "attachments" / rid
         parts.append(_part("uploads", str(p), size_of(p)))
     no = r.get("no")
-    label = f"#{no} {r.get('title') or ''}".strip() if no else (r.get("title") or rid)
+    title = r.get("title") or ""
+    if no:
+        title = re.sub(rf"^\s*#?{no}[.:)]?\s+", "", title)       # "18. Fix it" is #18 already
+    label = f"#{no} {title}".strip() if no else (title or rid)
     extra = {}
     wt = next((p for p in parts if p["kind"] == "worktree"), None)
     if wt and _git_out(wt["path"], "status", "--porcelain"):
@@ -633,9 +650,10 @@ def _housekeeping(hub: Hub, room_ids: set, live: set, cutoff: float) -> list[dic
         except OSError:
             return []
 
+    day_ago = hub.now() - DAY                 # nothing written today, whatever the days say
     parts = [_part("log", e.path, e.stat().st_size) for e in files_in(
-        st / "logs", lambda e: e.is_file() and (_ROTATED_LOG.search(e.name) or e.stat().st_mtime < cutoff)
-        and e.name != LOG_NAME)]
+        st / "logs", lambda e: e.is_file() and e.name != LOG_NAME and e.stat().st_mtime < day_ago
+        and (_ROTATED_LOG.search(e.name) or e.stat().st_mtime < cutoff))]
     if parts:
         items.append(_item("housekeeping", "hk:logs", "Old and rotated logs", parts))
 
@@ -646,11 +664,13 @@ def _housekeeping(hub: Hub, room_ids: set, live: set, cutoff: float) -> list[dic
                           ("sends", "Sends of tasks that are gone", st / "sends"),
                           ("chat", "Message logs of tasks that are gone", st / "rooms" / "messages"),
                           ("chat", "Input records of tasks that are gone", st / "input-provenance")):
-        parts = [_part(key, e.path, size_of(e.path)) for e in files_in(d, lambda e: gone_room(e.name))]
+        parts = [_part(key, e.path, size_of(e.path), room=re.sub(r"\.(json|jsonl)$", "", e.name))
+                 for e in files_in(d, lambda e: gone_room(e.name))]
         if parts:
             items.append(_item("housekeeping", f"hk:{key}:{d.name}", label, parts))
+    ptys = {f"{i}.bin" for i in hub.pty_ids()}
     parts = [_part("spool", e.path, e.stat().st_size) for e in files_in(
-        st / "pty-spool", lambda e: e.is_file() and e.stat().st_mtime < min(cutoff, hub.now() - DAY))]
+        st / "pty-spool", lambda e: e.is_file() and e.name not in ptys and e.stat().st_mtime < min(cutoff, day_ago))]
     if parts:
         items.append(_item("housekeeping", "hk:spool", "Old terminal spools", parts))
     parts = [_part("launch", e.path, size_of(e.path)) for e in files_in(
@@ -676,9 +696,8 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
     live = set(hub.live_rooms())
     live_sids = set(hub.live_sessions())
     po_rooms = {(p.get("poRoomId") or "").strip() for p in projects} - {""}
-    current: set[str] = set(live_sids)
-    for r in rooms.values():
-        current |= set(hub.current_sessions(r))
+    seats_of = {k: set(hub.current_sessions(r)) for k, r in rooms.items()}
+    current: set[str] = set(live_sids).union(*seats_of.values())
     cutoff = hub.now() - int(preview.get("days", DEFAULT_DAYS)) * DAY
     done, skipped, freed = [], [], 0
     todo = [it for g in preview.get("groups", []) for it in g.get("items", []) if it.get("id") in want]
@@ -697,12 +716,19 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
                        "a PO's room" if rid in po_rooms else
                        "its terminal is running" if rid in live else
                        "it was moved out of Done since" if _done_at(r) > cutoff else "")
+                wt = next((p for p in it.get("parts", []) if p["kind"] == "worktree"), None)
+                if not why and wt and _git_out(wt["path"], "status", "--porcelain") \
+                        and (how != "manual" or it.get("ticked") is not False):
+                    # Work never committed goes only when the person ticked
+                    # it by hand, seeing the note; never by itself.
+                    why = "its worktree has uncommitted changes"
                 if why:
                     skipped.append({"id": it["id"], "label": it.get("label"), "why": why})
                     continue
-                n, errs = _prune_task(hub, r, by_pid, projects, it, live_sids, how)
+                others = set().union(*(seats for k, seats in seats_of.items() if k != rid))
+                n, errs = _prune_task(hub, r, by_pid, projects, it, live_sids | others, how)
             else:
-                n, errs = _prune_parts(hub, it, current, projects, how)
+                n, errs = _prune_parts(hub, it, current, projects, how, set(rooms))
         except Exception as e:                      # noqa: BLE001
             n, errs = 0, [f"{type(e).__name__}: {e}"]
         freed += n
@@ -729,12 +755,17 @@ def _prune_task(hub: Hub, r: dict, by_pid: dict, projects: list, it: dict, live_
     if wt:
         repo, cwd = wt.get("repo") or "", wt["path"]
         size = size_of(cwd)
+        # Only what git names as this repository's worktree, in Ensemble's folders.
+        listed = is_worktree_of(repo, cwd) and _allowed_path(hub, cwd, projects)
         ok = False
-        try:
-            ok = _git(repo, "worktree", "remove", "--force", cwd, timeout=300).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            ok = False
-        if not ok or os.path.lexists(_long(cwd)):
+        if listed:
+            try:
+                ok = _git(repo, "worktree", "remove", "--force", cwd, timeout=300).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+        # Not listed: no worktree any more, only files in the task folder,
+        # which go with the folder below (under its own checks).
+        if listed and (not ok or os.path.lexists(_long(cwd))):
             # git cannot remove a path past 260 characters on Windows: the
             # folder goes by hand, then git forgets the record.
             try:
@@ -768,10 +799,14 @@ def _prune_task(hub: Hub, r: dict, by_pid: dict, projects: list, it: dict, live_
                 log(hub, f"{label}: task folder", fo["path"], size, how=how)
             except OSError as e:
                 errs.append(f"folder: {e}")
+            if (project or {}).get("isGit") and project.get("path"):
+                _git_out(project["path"], "worktree", "prune")   # a worktree the folder held
     sids_now = {sid for _a, sid in hub.room_sessions(r)}
+    recent = hub.now() - RECENT_S
     for p in it.get("parts", []):
         if p["kind"] == "conversation":
-            if p.get("sid") in live_sids or p.get("sid") not in sids_now:
+            # live_sids: live terminals and every other room's current seats.
+            if p.get("sid") in live_sids or p.get("sid") not in sids_now or _mtime(p["path"]) > recent:
                 continue
             freed += _remove_logged(hub, f"{label}: conversation", p["path"], how, errs)
     up = parts.get("uploads")
@@ -822,13 +857,18 @@ def _allowed_path(hub: Hub, path: str, projects: list) -> bool:
     return True
 
 
-def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str) -> tuple[int, list[str]]:
+def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str,
+                 room_ids: set = frozenset()) -> tuple[int, list[str]]:
     freed, errs = 0, []
     label = it.get("label") or it["id"]
+    recent = hub.now() - RECENT_S
     for p in it.get("parts", []):
         kind, path = p["kind"], p.get("path") or ""
-        if kind == "conversation" and p.get("sid") in current:
-            errs.append(f"{p.get('sid')}: now in use")
+        if kind == "conversation" and (p.get("sid") in current or _mtime(path) > recent):
+            errs.append(f"{p.get('sid')}: in use since the preview, kept")
+            continue
+        if p.get("room") and p["room"] in room_ids:
+            errs.append(f"{p['room']}: its task is back, kept")
             continue
         if kind == "worktree-records":
             n = len([w for w in worktrees(path) if w.get("prunable")])
@@ -909,7 +949,8 @@ def auto_prune(hub: Hub, days: int) -> dict:
     if days <= 0:
         return {"freed": 0, "done": [], "skipped": []}
     preview = scan(hub, days, groups=("done",))
-    ids = [it["id"] for g in preview["groups"] for it in g["items"]]
+    # Only what a preview ticks by itself: never a task with uncommitted work.
+    ids = [it["id"] for g in preview["groups"] for it in g["items"] if it.get("ticked")]
     res = run(hub, preview, ids, how="auto")
     log(hub, f"auto-prune of Done tasks older than {days} days: {len(res['done'])} tasks",
         "", res["freed"], how="auto")

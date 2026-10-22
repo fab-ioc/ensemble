@@ -980,6 +980,13 @@ def slim_room(room_id: str, pruned: dict, notice: str) -> bool:
                              "text": notice, "ts": _now(), "kind": "notice", "rang": [],
                              "noticeKind": "pruned"}]
         _write(slim, removed=len(old))
+        # The copy of the old chat a first log write keeps (#256): the chat is
+        # dropped on purpose here, and the copy would never be let go (its log
+        # lacks the messages it holds).
+        try:
+            (ROOMS_DIR / ORIGINALS_DIR_NAME / f"{room_id}.json").unlink()
+        except FileNotFoundError:
+            pass
         return True
 
 

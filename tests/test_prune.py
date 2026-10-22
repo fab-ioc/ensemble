@@ -236,16 +236,42 @@ class PruneTests(unittest.TestCase):
         age(orphan / "task.json")
         age(orphan)
         log = write(self.state / "logs" / "ensemble.log.1", "old log")
+        age(log, time.time() - 2 * DAY)
+        rotated_today = write(self.state / "logs" / "ensemble.log.2", "rotated just now")
         current_log = write(self.state / "logs" / "ensemble.log", "today")
         sends = write(self.state / "sends" / "room-deadbeef.json", "{}")
+        kept_sends = write(self.state / "sends" / "room-cafebabe.json", "{}")
+        old_spool = write(self.state / "pty-spool" / "pty-00000001.bin", "x")
+        listed_spool = write(self.state / "pty-spool" / "pty-00000002.bin", "x")
+        for f in (old_spool, listed_spool):
+            age(f)
         hub = self.hub()
+        hub.pty_ids = lambda: {"pty-00000002"}
+        # Days = 0: still nothing written today.
+        zero = prune.scan(hub, 0, groups=("housekeeping",))
+        logs0 = [p["path"] for g in zero["groups"] for it in g["items"] if it["id"] == "hk:logs" for p in it["parts"]]
+        self.assertNotIn(str(rotated_today), logs0)
+        self.assertNotIn(str(current_log), logs0)
         preview = prune.scan(hub, 30)
+        spools = [p["path"] for g in preview["groups"] for it in g["items"] if it["id"] == "hk:spool" for p in it["parts"]]
+        self.assertEqual(spools, [str(old_spool)])
+        # A task with that id came back since the preview: its sends stay.
+        for g in preview["groups"]:
+            for it in g["items"]:
+                if it["id"] == "hk:sends:sends":
+                    it["parts"].append(prune._part("sends", str(kept_sends), 2, room="room-cafebabe"))
+        real_rooms = hub.rooms
+        hub.rooms = lambda: real_rooms() + [{"id": "room-cafebabe"}]
         self.assertIn(f"orphan:{prune._norm(str(orphan))}", self.ids(preview, "orphans"))
         self.assertTrue({"hk:logs", "hk:sends:sends"} <= self.ids(preview, "housekeeping"))
         prune.run(hub, preview, self.ids(preview))
         self.assertFalse(orphan.exists())
         self.assertFalse(log.exists())
         self.assertFalse(sends.exists())
+        self.assertTrue(kept_sends.exists())
+        self.assertFalse(old_spool.exists())
+        self.assertTrue(listed_spool.exists())
+        self.assertTrue(rotated_today.exists())
         self.assertTrue(current_log.exists())
         self.assertTrue(self.docs.exists())
 
@@ -266,6 +292,66 @@ class PruneTests(unittest.TestCase):
         res = prune.run(hub, {"days": 30, "groups": [{"id": "housekeeping", "items": [item]}]}, ["hk:x"])
         self.assertTrue(outside.exists())
         self.assertIn("not Ensemble's", res["done"][0]["errors"][0])
+
+    def test_uncommitted_work_never_goes_by_itself(self):
+        clean, fc, cwd_c, *_ = self.task("u1")
+        dirty, fd, cwd_d, *_ = self.task("u2")
+        write(cwd_d / "new.txt", "never committed")
+        hub = self.hub()
+        res = prune.auto_prune(hub, 30)
+        self.assertEqual([d["id"] for d in res["done"]], [f"done:{clean}"])
+        self.assertTrue((cwd_d / "new.txt").exists())
+        # Clean at the preview, dirty by the run: kept.
+        later, fl, cwd_l, *_ = self.task("u3")
+        preview = prune.scan(hub, 30)
+        write(cwd_l / "late.txt", "written after the preview")
+        res = prune.run(hub, preview, [f"done:{later}", f"done:{dirty}"])
+        whys = {s["id"]: s["why"] for s in res["skipped"]}
+        self.assertIn("uncommitted", whys[f"done:{later}"])
+        self.assertTrue((cwd_l / "late.txt").exists())
+        # Unticked in the preview for it, ticked by hand: it goes.
+        self.assertEqual([d["id"] for d in res["done"]], [f"done:{dirty}"])
+        self.assertFalse(fd.exists())
+
+    def test_slim_drops_the_kept_original(self):
+        rid, *_ = self.task("o1")
+        original = write(self.state / "rooms" / "before-message-log" / f"{rid}.json", "x" * 5000)
+        hub = self.hub()
+        prune.run(hub, prune.scan(hub, 30), [f"done:{rid}"])
+        self.assertFalse(original.exists())
+
+    def test_a_cwd_outside_is_never_a_worktree(self):
+        outside = self.tmp / "elsewhere"
+        write(outside / "keep.txt", "not Ensemble's")
+        room = chatroom.create_room("x1", [])
+        room = chatroom.get_room(room["id"], public=False)
+        room.update(projectId="proj-1", workflow="done", workflowAt=OLD, cwd=str(outside), taskDir="",
+                    workspace={"mode": "worktree", "branch": "", "taskDir": ""})
+        chatroom.update_room(room)
+        hub = self.hub()
+        preview = prune.scan(hub, 30)
+        item = next(it for g in preview["groups"] for it in g["items"] if it["id"] == f"done:{room['id']}")
+        self.assertNotIn("worktree", {p["kind"] for p in item["parts"]})
+        prune.run(hub, preview, [item["id"]])
+        self.assertTrue((outside / "keep.txt").exists())
+
+    def test_a_conversation_used_since_the_preview_stays(self):
+        mine = write(self.claude / "elsewhere" / "11111111-2222-3333-4444-666666666666.jsonl", "{}\n")
+        age(mine)
+        hub = self.hub()
+        preview = prune.scan(hub, 30)
+        os.utime(mine, None)                       # resumed outside Ensemble
+        res = prune.run(hub, preview, ["own:11111111-2222-3333-4444-666666666666"])
+        self.assertTrue(mine.exists())
+        self.assertIn("in use", res["done"][0]["errors"][0])
+
+    def test_labels(self):
+        rid, *_ = self.task("l1")
+        room = chatroom.get_room(rid, public=False)
+        room.update(no=18, title="18. Fix the parser")
+        chatroom.update_room(room)
+        item = next(it for g in prune.scan(self.hub(), 30)["groups"] for it in g["items"] if it["id"] == f"done:{rid}")
+        self.assertEqual(item["label"], "#18 Fix the parser")
 
     def test_auto_prune_off_by_default(self):
         rid, folder, *_ = self.task("auto1")
