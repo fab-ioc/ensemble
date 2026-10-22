@@ -6,7 +6,7 @@ Dock v0.11.0 (Ensemble's needs 15 and 16, raised in #148) brings
 uses them and its two stopgaps went:
 
 * the conversation panel is named after what it shows (``pdSyncTitles``: the
-  open task "#12 The title", else "PO chat"), and a chat panel after its task;
+  open task "#12 The title", else its project's name, #261), and a chat panel after its task;
   the library puts the title on the tab, the title bar, the ▾ list, the ⋯ menu's
   name and an open window's ``document.title`` (``popTitle``, asked again),
   and Ensemble's Panels menu reads ``dock.title(id)``. A rename of the task
@@ -18,11 +18,12 @@ uses them and its two stopgaps went:
 
 In headless Chrome over CDP, against a hub in a thread, on a project with a PO
 and two tasks: the conversation's tab, its Panels-menu row and its window's
-title read "PO chat", then the task's name once a task is in the middle, then
+title read the project's name, then the task's name once a task is in the middle, then
 the renamed task after a rename through the hub; a chat panel's tab follows its
 task's rename too; a body class added to the page reaches the window and leaves
-it again, the window's own class staying; on a phone (the narrow dock) the
-conversation's tab keeps reading "Chat" so the tab row needs no scrolling, and
+it again, the window's own class staying; on a phone (the narrow dock) with a
+task in the middle the conversation's tab reads "Chat" (the PO's own is its
+project's name, #261), so the tab row stays short, and
 a computer's shows the task again; the page threw no exception meanwhile
 (CDP ``Runtime.exceptionThrown``). Skipped without Node or Chrome.
 """
@@ -68,9 +69,9 @@ class TheLibraryDoesIt(unittest.TestCase):
 
     def test_the_page_uses_set_title_and_body_attrs(self):
         self.assertIn("bodyAttrs: ['class'],", INDEX)
-        self.assertIn("popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,", INDEX)
+        self.assertIn("popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },", INDEX)
         self.assertIn("function pdSyncTitles() {", INDEX)
-        self.assertIn("d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
+        self.assertIn("d.setTitle('po-chat', d.narrow() && pdTaskWanted() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
         self.assertIn("if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }", INDEX)
         # When: the middle changes, and after each refresh of the rows (a rename).
         self.assertIn("if (PD.dock) pdPopChat(ph.ownerDocument !== document);\n  pdSyncTitles();", INDEX)
@@ -299,13 +300,14 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         # (Ensemble's Panels menu lists the fixed panels; a chat or file panel has no row in it.)
         self.assertEqual(names["menuRow"], title if menu else None, "Ensemble's Panels menu row")
         if window:
-            self.assertEqual(names["win"]["title"], f"{title} · Motors", "the window's document.title")
+            # The project once: the PO's conversation is named after it (#261).
+            self.assertEqual(names["win"]["title"], title if title == "Motors" else f"{title} · Motors", "the window's document.title")
 
-    def test_the_conversation_is_named_po_chat_until_a_task_is_in_it(self):
+    def test_the_conversation_is_named_after_the_project_until_a_task_is_in_it(self):
         g = self.got
         self.assertIsNone(g["poChat"]["win"])
-        self.everywhere(g["poChat"], "PO chat", window=False)
-        self.everywhere(g["poChatOut"], "PO chat")
+        self.everywhere(g["poChat"], "Motors", window=False)
+        self.everywhere(g["poChatOut"], "Motors")
 
     def test_a_task_in_the_middle_names_the_tab_the_menu_row_and_the_window(self):
         g = self.got
