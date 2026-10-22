@@ -49,6 +49,11 @@ class WhatIsAnAgent(unittest.TestCase):
                 (["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)], "agent"),
                 (["wt", "-w", "0", "nt", "pwsh", "-File", str(script)], "agent"),
                 (["cmd", "/c", "codex"], "codex"),
+                # One string for a shell: bash -lc, and the Mac's iTerm launch.
+                (["bash", "-lc", "cd /w && exec codex -c x"], "codex"),
+                (["osascript", "-e", "on run argv", "/w",
+                  "'/usr/local/bin/claude' --session-id s 'do it'", "window"], "claude"),
+                (["bash", "-lc", "echo it's"], ""),
                 (["powershell", "-File", str(plain)], ""),
                 ([sys.executable, "-c", "print('claude')"], ""),
                 (["git", "commit", "-m", "claude"], ""),
@@ -187,9 +192,10 @@ class SignedIn(unittest.TestCase):
         self.cli = mock.patch.object(dashboard.app_setup, "_signed_in", return_value=False)
         self.asked = self.cli.start()
         self.addCleanup(self.cli.stop)
-        p = mock.patch.object(agent_launch.shutil, "which", side_effect=lambda k: f"/bin/{k}")
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(agent_launch.shutil, "which", side_effect=lambda k: f"/bin/{k}"),
+                  mock.patch.dict(agent_launch._cli_yes, clear=True)):
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_codex_without_auth_is_not_started(self):
         with agent_launch.opted_in():
@@ -230,6 +236,28 @@ class SignedIn(unittest.TestCase):
             self.asked.reset_mock()
             dashboard.check_signed_in("codex")     # not installed: its launch says so
             self.asked.assert_not_called()
+
+    def test_a_cli_yes_is_kept_and_an_old_cli_is_not_a_no(self):
+        with agent_launch.opted_in(), mock.patch.dict(agent_launch._cli_yes, clear=True):
+            self.asked.return_value = True
+            dashboard.check_signed_in("claude")
+            dashboard.check_signed_in("claude")
+            self.assertEqual(self.asked.call_count, 1, "a yes is asked once")
+        # A CLI too old for `auth status`: exit 1, no JSON. It would not say.
+        old = types.SimpleNamespace(returncode=1, stdout="error: unknown command 'auth'")
+        with agent_launch.opted_in(), mock.patch.dict(agent_launch._cli_yes, clear=True),                 mock.patch.object(dashboard.app_setup, "_signed_in",
+                                  side_effect=lambda k, e, run: run(["x"]) and False),                 mock.patch.object(agent_launch.subprocess, "run", return_value=old):
+            dashboard.check_signed_in("claude")
+        no = types.SimpleNamespace(returncode=1, stdout='{"loggedIn": false}')
+        with agent_launch.opted_in(), mock.patch.dict(agent_launch._cli_yes, clear=True),                 mock.patch.object(dashboard.app_setup, "_signed_in",
+                                  side_effect=lambda k, e, run: run(["x"]) and False),                 mock.patch.object(agent_launch.subprocess, "run", return_value=no):
+            with self.assertRaises(dashboard.StartRoomError):
+                dashboard.check_signed_in("claude")
+
+    def test_a_switched_off_flag_is_no_login(self):
+        with agent_launch.opted_in(), mock.patch.dict(os.environ, {"CLAUDE_CODE_USE_BEDROCK": "0"}):
+            with self.assertRaises(dashboard.StartRoomError):
+                dashboard.check_signed_in("claude")
 
     def test_an_unknown_agent_and_a_test_process_are_not_asked(self):
         dashboard.check_signed_in("codex")      # not a hub: the spawn guard decides

@@ -7,9 +7,15 @@ agent (#257).
   what it checks is not what a hub does. The agents' own status questions
   (`claude auth status`, `codex login status`) are told apart: the first-run
   check asks them, and a refused one just reads as "could not say".
+
+Run in batches (one process each), the batches share a log: set
+ENSEMBLE_LAUNCH_REFUSED_LOG to one file for every batch and run this module
+last; it reads every refusal the log holds.
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -36,7 +42,12 @@ class TheRunStartedNoAgent(unittest.TestCase):
 
     def test_no_test_reached_an_agent_start(self):
         self.assertFalse(agent_launch.allowed(), "a test left agent launches allowed")
-        starts = [r for r in agent_launch.REFUSED if not _probe(r["argv"])]
+        refused = list(agent_launch.REFUSED)
+        log = os.environ.get("ENSEMBLE_LAUNCH_REFUSED_LOG")
+        if log and os.path.isfile(log):
+            with open(log, encoding="utf-8") as f:
+                refused += [json.loads(line) for line in f if line.strip()]
+        starts = [r for r in refused if not _probe(r["argv"])]
         self.assertEqual(starts, [], "tests whose hub tried to start an agent (refused):\n"
                          + "\n".join(f"  {r['test'] or '(a hub thread)'}: {' '.join(r['argv'])[:160]}"
                                      f"\n{r['stack'][-1200:]}" for r in starts))

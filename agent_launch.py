@@ -28,10 +28,12 @@ import contextlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -116,13 +118,25 @@ def agent_in(argv) -> str:
         return first
     if first not in SHELLS and first not in ("python", "py", "pythonw", "node"):
         return ""
-    for t in tokens[1:]:
+    rest = tokens[1:]
+    if first in SHELLS:
+        # A command handed over as one string: `bash -lc "exec codex ..."`,
+        # osascript's "'/usr/local/bin/claude' --resume x" for iTerm.
+        rest = [w for t in rest for w in (_words(t) if any(c.isspace() for c in t) else [t])]
+    for t in rest:
         n = _name(t)
         if first in SHELLS and n in AGENTS:
             return n
         if t.lower().strip("'\"").endswith(SCRIPT_EXT) and _script_runs_agent(t.strip("'\"")):
             return "agent"
     return ""
+
+
+def _words(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
 
 
 def _current_test() -> str:
@@ -154,7 +168,15 @@ def _refuse(argv, agent: str, where: str) -> None:
 
 
 def _has_env(env: dict | None, *names: str) -> bool:
-    return any((env or {}).get(n) or os.environ.get(n) for n in names)
+    def on(v):
+        return bool(v) and str(v).strip().lower() not in ("0", "false", "no", "off")
+    return any(on((env or {}).get(n) or os.environ.get(n)) for n in names)
+
+
+# A yes from the agent's CLI, kept a while: on a Mac the Claude login is in the
+# keychain (no file), and a boot that restores many rooms asks once, not per room.
+SIGNED_IN_KEEP_S = 600
+_cli_yes: dict[tuple, float] = {}
 
 
 def signed_in(agent: str, env: dict | None = None) -> bool:
@@ -170,10 +192,26 @@ def signed_in(agent: str, env: dict | None = None) -> bool:
     if not exe:
         return True             # not installed: the launch fails on its own
     full = {**os.environ, **(env or {})}
+    key = (agent, full.get("CODEX_HOME", ""), full.get("CLAUDE_CONFIG_DIR", ""))
+    if time.monotonic() - _cli_yes.get(key, -SIGNED_IN_KEEP_S) < SIGNED_IN_KEEP_S:
+        return True
+    said = []
 
     def run(*a, **kw):
-        return subprocess.run(*a, env=full, **kw)
-    return app_setup._signed_in(agent, exe, run) is not False
+        r = subprocess.run(*a, env=full, **kw)
+        said.append(r)
+        return r
+    answer = app_setup._signed_in(agent, exe, run)
+    if answer is False and agent == "claude" and said:
+        # Only a JSON "loggedIn": false is a no: a CLI too old for
+        # `auth status` exits 1 too.
+        try:
+            json.loads(said[-1].stdout or "")
+        except ValueError:
+            answer = None
+    if answer:
+        _cli_yes[key] = time.monotonic()
+    return answer is not False
 
 
 def _login_file(agent: str, env: dict) -> bool:
