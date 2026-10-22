@@ -9,6 +9,12 @@ to. So a refresh lists again only the folders whose time moved, and stats
 again only the files changed lately (HOT_S) or named by the caller (a live
 session's transcript). A full walk, at most every FULL_S, catches the rest:
 an old file appended to after a quiet day shows within a minute.
+
+A folder none of whose files changed for QUIET_S (a finished task's
+transcripts) is not looked at between full walks either (#256: 600 project
+folders cost 46 ms a refresh, most of them for tasks done long ago): a
+session started in it again shows within a minute, and a lookup by session id
+finds it at once (dashboard.find_transcript globs on a miss).
 """
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ import time
 from pathlib import Path
 
 HOT_S = 6 * 3600.0
+QUIET_S = 24 * 3600.0
 FULL_S = 60.0
 # File times tick coarsely (~16 ms on Windows): a file added in the tick a
 # folder was listed in leaves the folder's time as it was. A listing is
@@ -39,7 +46,8 @@ class FileTable:
 
     def _reset(self, root: str) -> None:
         self._root = root
-        self._dirs: dict[str, tuple[int, list[str], list[str], bool]] = {}
+        # folder -> (mtime_ns, sub folders, names, listing settled, newest file's time)
+        self._dirs: dict[str, tuple[int, list[str], list[str], bool, float]] = {}
         self._files: dict[str, tuple[float, int, int]] = {}
         self._full_at = 0.0
         self._at = 0.0
@@ -64,18 +72,28 @@ class FileTable:
             if full:
                 self._full_at = now
             files: dict[str, tuple[float, int, int]] = {}
-            dirs: dict[str, tuple[int, list[str], list[str], bool]] = {}
+            dirs: dict[str, tuple[int, list[str], list[str], bool, float]] = {}
             self._walk(root, 0, full, now, set(hot_names), files, dirs)
             self._dirs, self._files = dirs, files
             return dict(files)
 
     def _walk(self, d: str, level: int, full: bool, now: float, hot: set,
               files: dict, dirs: dict) -> None:
+        seen = self._dirs.get(d)
+        if not full and seen and seen[3] and 0 < level == self._depth and seen[4] < now - QUIET_S \
+                and not any(n.rsplit(".", 1)[0] in hot for n in seen[2]):
+            # quiet for a day: as the last walk had it, until the next full one
+            # (never the root: the rooms are its own files, written by this hub)
+            dirs[d] = seen
+            for name in seen[2]:
+                p = os.path.join(d, name)
+                if p in self._files:
+                    files[p] = self._files[p]
+            return
         try:
             dm = os.stat(d).st_mtime_ns
         except OSError:
             return
-        seen = self._dirs.get(d)
         listed: dict[str, tuple[float, int, int]] = {}
         if not full and seen and seen[3] and seen[0] == dm:
             subs, names, settled = seen[1], seen[2], True
@@ -99,7 +117,6 @@ class FileTable:
                             continue
             except OSError:
                 return
-        dirs[d] = (dm, subs, names, settled)
         for s in subs:
             self._walk(os.path.join(d, s), level + 1, full, now, hot, files, dirs)
         hot_after = now - HOT_S
@@ -117,6 +134,8 @@ class FileTable:
             except OSError:
                 continue
             files[p] = (st.st_mtime, st.st_size, st.st_mtime_ns)
+        newest = max((files[p][0] for p in (os.path.join(d, n) for n in names) if p in files), default=0.0)
+        dirs[d] = (dm, subs, names, settled, newest)
 
 
 _PATHS: dict[str, Path] = {}

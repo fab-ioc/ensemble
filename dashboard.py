@@ -7674,12 +7674,15 @@ def backfill_task_numbers() -> dict:
 
 
 _TASK_INDEX: dict[str, tuple[tuple, dict]] = {}
+_TASK_INDEX_LIST: list[list[dict]] = [[]]   # the last list given: given again while no room changed
 _TASK_INDEX_LOCK = threading.Lock()
 
 
 def _task_index() -> list[dict]:
     """Every room's numbering and the little a reference shows of it, reading
-    again only the room files that changed since the last call."""
+    again only the room files that changed since the last call. The same list
+    while no room changed, so a caller may keep what it worked out of it
+    (points.task_lookup, #256); read only."""
     out: list[dict] = []
     seen = set()
     for name, sig in chatroom.ROOM_FILES.files().items():
@@ -7715,6 +7718,10 @@ def _task_index() -> list[dict]:
     with _TASK_INDEX_LOCK:
         for rid in [r for r in _TASK_INDEX if r not in seen]:
             _TASK_INDEX.pop(rid, None)
+        last = _TASK_INDEX_LIST[0]
+        if len(last) == len(out) and all(a is b for a, b in zip(last, out)):
+            return last
+        _TASK_INDEX_LIST[0] = out
     return out
 
 

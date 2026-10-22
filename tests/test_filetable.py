@@ -144,5 +144,59 @@ class FileTableTest(unittest.TestCase):
         self.assertEqual([str(p) for _, p in rows], [b, a])
 
 
+class QuietFolderTest(FileTableTest):
+    """#256: a folder none of whose files changed for a day is looked at only
+    on the full walk, unless the caller names one of its files."""
+
+    def _quiet(self):
+        p = self._write("old.jsonl", "x", age=filetable.QUIET_S + 100)
+        self._settle()
+        self.table.files()
+        return p
+
+    def _add_new(self):
+        d = os.path.join(self.root, "p")
+        q = self._write("new.jsonl", "x")
+        os.utime(d, (time.time() + 5,) * 2)        # the folder moved
+        return q
+
+    def test_quiet_folder_not_looked_at(self):
+        self._quiet()
+        d = os.path.join(self.root, "p")
+        real = os.stat
+
+        def stat(path, *a, **k):
+            if os.path.normcase(str(path)).startswith(os.path.normcase(d)):
+                raise AssertionError(f"looked at {path}")
+            return real(path, *a, **k)
+        with mock.patch.object(filetable.os, "stat", side_effect=stat):
+            self.assertEqual(len(self.table.files()), 1)
+
+    def test_file_added_to_a_quiet_folder_waits_for_the_full_walk(self):
+        p = self._quiet()
+        q = self._add_new()
+        self.assertEqual(set(self.table.files()), {p})
+        with mock.patch.object(filetable.time, "time",
+                               return_value=time.time() + filetable.FULL_S + 1):
+            self.assertEqual(set(self.table.files()), {p, q})
+        # it is no longer quiet: the next refresh looks at it
+        self._append(q, "yy")
+        self.assertEqual(self.table.files()[q][1], 3)
+
+    def test_named_file_in_a_quiet_folder_looked_at(self):
+        p = self._quiet()
+        self._append(p, "yy")
+        self.assertEqual(self.table.files()[p][1], 1)
+        self.assertEqual(self.table.files(hot_names={"old"})[p][1], 3)
+
+    def test_quiet_root_still_looked_at(self):
+        # depth 0 (the rooms): the root's own files are never left quiet
+        table = filetable.FileTable(lambda: os.path.join(self.root, "p"), 0, _jsonl)
+        p = self._quiet()
+        table.files()
+        q = self._add_new()
+        self.assertEqual(set(table.files()), {p, q})
+
+
 if __name__ == "__main__":
     unittest.main()
