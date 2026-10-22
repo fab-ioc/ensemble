@@ -552,8 +552,13 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
         parts.append(_part("uploads", str(p), size_of(p)))
     no = r.get("no")
     label = f"#{no} {r.get('title') or ''}".strip() if no else (r.get("title") or rid)
+    extra = {}
+    wt = next((p for p in parts if p["kind"] == "worktree"), None)
+    if wt and _git_out(wt["path"], "status", "--porcelain"):
+        # Work never committed would go with the worktree: never by itself.
+        extra = {"note": "its worktree has uncommitted changes", "ticked": False}
     return _item("done", f"done:{rid}", label, parts, room=rid, no=no,
-                 project=(project or {}).get("name") or "", at=_done_at(r))
+                 project=(project or {}).get("name") or "", at=_done_at(r), **extra)
 
 
 def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list) -> list[dict]:
