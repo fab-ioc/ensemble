@@ -169,11 +169,11 @@ def main():
                 entered, release = threading.Event(), threading.Event()
                 original = topics._auto_groups
 
-                def paused(candidates):
+                def paused(*args):
                     entered.set()
                     if not release.wait(5):
                         raise TimeoutError("measurement did not release topic builder")
-                    return original(candidates)
+                    return original(*args)
 
                 def request(path):
                     start = time.perf_counter()
