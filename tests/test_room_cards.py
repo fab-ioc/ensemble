@@ -189,6 +189,54 @@ class Cards(unittest.TestCase):
         chatroom.save_cards(force=True)
         self.assertEqual((self.path / f"{rid}.json").read_text(encoding="utf-8"), raw)
 
+    def _reads_free(self):
+        """_read, wrapped to record whether another thread could take the
+        index lock while a room was read."""
+        import threading
+        free, real = [], chatroom._read
+
+        def take():
+            ok = chatroom._INDEX_LOCK.acquire(timeout=2)
+            if ok:
+                chatroom._INDEX_LOCK.release()
+            free.append(ok)
+
+        def read(rid):
+            t = threading.Thread(target=take)
+            t.start()
+            t.join()
+            return real(rid)
+        return free, mock.patch.object(chatroom, "_read", read)
+
+    def test_a_finished_task_is_read_whole_outside_the_index_lock(self):
+        # PO pre-merge: a 17 MB chat read under the lock held every list.
+        rid = self.done_room(["one", "two", "three"])
+        self.later()
+        self.restart()
+        self.assertTrue(self.entry(rid).get("cold"))
+        free, patch = self._reads_free()
+        with patch:
+            self.assertEqual(len(chatroom.get_room(rid)["messages"]), 3)
+            chatroom._FULL.clear()
+            chatroom.patch_room(rid, title="renamed")
+        self.assertTrue(free and all(free), free)
+        self.assertEqual([m["text"] for m in chatroom.get_room(rid)["messages"]], ["one", "two", "three"])
+
+    def test_a_card_that_cannot_be_saved_leaves_the_list_whole(self):
+        rid = self.done_room()
+        self.later()
+        self.restart()
+        self.entry(rid)
+        chatroom.save_cards(force=True)
+        before = (self.path / chatroom.CARDS_FILE_NAME).read_bytes()
+        chatroom._CARDS[rid]["card"]["bad"] = object()
+        chatroom._CARDS_STATE["dirty"] = True
+        with mock.patch("builtins.print"):
+            self.assertFalse(chatroom.save_cards(force=True))
+            self.assertIn(rid, [r["id"] for r in chatroom.list_rooms()])
+        self.assertTrue(chatroom._CARDS_STATE["dirty"])
+        self.assertEqual((self.path / chatroom.CARDS_FILE_NAME).read_bytes(), before)
+
     def test_a_post_during_a_list_is_in_the_next_list(self):
         # Review 8: the task list caches a room's facts by its revision; that
         # revision is the listed room's, never that of a write made since.

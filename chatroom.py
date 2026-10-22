@@ -279,14 +279,20 @@ def _keep_full(room_id: str, st, room: dict) -> None:
 
 
 def _full_room(room_id: str, st) -> dict | None:
-    """A carded room whole, from its file and log. Under _INDEX_LOCK."""
-    hit = _FULL.get(room_id)
-    if hit and hit[0] == st.st_size and hit[1] == st.st_mtime_ns:
-        _keep_full(room_id, st, hit[2])
-        return hit[2]
+    """A carded room whole, from its file and log. Called with _INDEX_LOCK
+    released: reading a 17 MB chat under it held every list ~0.5 s. The room
+    read is kept only while the index still has the file it was read from."""
+    with _INDEX_LOCK:
+        hit = _FULL.get(room_id)
+        if hit and hit[0] == st.st_size and hit[1] == st.st_mtime_ns:
+            _keep_full(room_id, st, hit[2])
+            return hit[2]
     room = _read(room_id)
     if room is not None:
-        _keep_full(room_id, st, room)
+        with _INDEX_LOCK:
+            e = _INDEX.get(room_id)
+            if e and e.get("cold") and e["size"] == st.st_size and e["mtime"] == st.st_mtime_ns:
+                _keep_full(room_id, st, room)
     return room
 
 
@@ -323,7 +329,9 @@ def save_cards(force: bool = False) -> bool:
         durable.write_tmp(tmp, json.dumps({"version": CARDS_VERSION, "cards": snap}))
         _replace(tmp, path)
         return True
-    except OSError as e:
+    except Exception as e:
+        # Any failure (a card that will not serialise too) leaves the cards
+        # file as it was and the index untouched: the list never empties.
         print(f"[rooms] cards not saved: {e!r}", flush=True)
         with _INDEX_LOCK:
             _CARDS_STATE["dirty"] = True
@@ -650,9 +658,13 @@ def _load(room_id: str) -> dict | None:
         return None
     with _INDEX_LOCK:
         hit = _INDEX.get(room_id)
-        if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
-            room = _full_room(room_id, st) if hit.get("cold") else hit["room"]
-            return _listed_copy(room) if room is not None else None
+        if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns and not hit.get("cold"):
+            return _listed_copy(hit["room"])
+        cold = bool(hit and hit.get("cold") and hit["size"] == st.st_size
+                    and hit["mtime"] == st.st_mtime_ns)
+    if cold:
+        room = _full_room(room_id, st)
+        return _listed_copy(room) if room is not None else None
     return _read(room_id)
 
 
@@ -671,15 +683,19 @@ def _write(room: dict, *, removed: int = 0) -> None:
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
     room["_revision"] = uuid.uuid4().hex
-    with _INDEX_LOCK:
-        prior = _INDEX.get(room["id"])
-        try:
-            old_st = p.stat()
+    # The room as it was; a whole file and log are read outside the index
+    # lock (the writer holds _LOCK, so the room cannot change meanwhile).
+    try:
+        old_st = p.stat()
+        with _INDEX_LOCK:
+            prior = _INDEX.get(room["id"])
             same = prior and prior["size"] == old_st.st_size and prior["mtime"] == old_st.st_mtime_ns
-            old = (_full_room(room["id"], old_st) if prior.get("cold") else prior["room"]) if same else _read(room["id"])
-            old_sig = _entry(old, old_st)["signature"] if old else ""
-        except OSError:
-            old_sig, old = "", None
+            old = prior["room"] if same and not prior.get("cold") else None
+        if old is None:
+            old = _full_room(room["id"], old_st) if same else _read(room["id"])
+        old_sig = _entry(old, old_st)["signature"] if old else ""
+    except OSError:
+        old_sig, old = "", None
     # The log first: a stop between the two leaves a room file that still
     # reads (its old messages, or the log with one message more).
     msgs = room.get("messages") or []
@@ -1118,10 +1134,14 @@ def get_room(room_id: str, public: bool = True, *, copy_room: bool = True,
             _INDEX[room_id] = hit
             _CHANGES.pop(room_id, None)
         src = hit["room"]
-        if hit.get("cold") and messages:
-            src = _full_room(room_id, st)
-            if src is None:
-                return None
+        whole = hit.get("cold") and messages
+        if not whole:
+            r = _listed_copy(src) if copy_room else src
+    if whole:
+        # A carded room's file and log are read outside the index lock.
+        src = _full_room(room_id, st)
+        if src is None:
+            return None
         r = _listed_copy(src) if copy_room else src
     if r is None:
         return None
