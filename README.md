@@ -293,6 +293,8 @@ py -m unittest discover -s tests       # macOS: python3 -m unittest discover -s 
 
 The suite uses only the standard library. Tests of the pages' JavaScript need `node` on `PATH` (no npm packages) and are skipped without it. Some tests need `git`.
 
+Tests never start a real agent. Only a hub started through `dashboard.main()` may start Claude Code or Codex. In any other process, including a test's in-process hub, `agent_launch.py` refuses each process start that would run one: a `claude` or `codex` command, or a shell running an agent launch script. A refused start raises `agent_launch.LaunchRefused` and is listed by `tests/test_zz_no_agent_started.py`, which runs last and also fails if an agent process is running under the test run. A test that needs real agents on purpose runs its own hub through `main()` (see `tests/slash_commands_e2e.py`) or wraps the start in `agent_launch.opted_in()`. A hub does not start an agent that has no login. It reports "not signed in" instead, so no sign-in page opens in the browser.
+
 ## Releasing
 
 1. Set `VERSION` in `app_version.py` (for example `1.0.0`) and merge it to `main`.

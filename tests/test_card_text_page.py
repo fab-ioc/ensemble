@@ -17,6 +17,7 @@ from unittest import mock
 import chatroom
 import dashboard
 import points
+import sends
 from tests import chrome_profile
 from tests.test_task_numbers import Hub
 from tests.test_task_ref_project_page import CDP_JS as TASK_CDP, NODE, CHROME
@@ -108,6 +109,11 @@ class CardLinksPage(Hub):
             p = mock.patch.object(dashboard.Handler, attr, val); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(dashboard, 'SETTINGS_FILE', base / 'settings.json'); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(points, 'sync', side_effect=lambda rid, **kw: points.load(rid)); p.start(); self.addCleanup(p.stop)
+        # Answering the card resumes the room: its agents are never started here (#257).
+        def resume(h, room, text='', to='', key='', quiet=False, **kw):
+            sends.mark(room['id'], [key], 'delivered')
+            return {'delivered': 1}
+        p = mock.patch.object(dashboard.Handler, '_resume_room', resume); p.start(); self.addCleanup(p.stop)
         self.addCleanup(points._CACHE.clear)
         room = self.room('PO', self.ed)
         dashboard.set_project_po(self.ed, room)
