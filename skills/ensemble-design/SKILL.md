@@ -1071,7 +1071,7 @@ Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is 
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
 component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab names what it holds
-on a computer ("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; on a phone (the narrow dock) it keeps reading **Chat** (`PD_TITLES`), so the 390 px tab row grows no longer than it was (Board stays on screen). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
+(`pdSyncTitles`, Dock's `setTitle`): the PO's chat is its **project's name** (#261, P213), on its tab, its window's name (once: `popTitle` adds no second project), and the Panels menu; "#12 The title" with a task in the middle, as a task's chat panel names its task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board has been past a 390 px row's edge since Topics came). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit, v0.22.2 now) of five panels, **PO chat, Needs you, Board, Workspace,
@@ -1136,8 +1136,8 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   `$('#modal')` to open one), a toast, a menu under its button, a selection's Comment button; `$`
   finds an element in a popped-out window when this page has none.
 - **The PO's header** (`poHeadHtml`, #126, the mockup's conversation header): its avatar,
-  "*Project* · PO" at `--fs-400` 600, and one `--fs-200` `--fg-muted` line of what is true: agent
-  and model, the project, its open tasks (`poOpenCount`), the run chip, what needs you. **Resume** is
+  "PO" at `--fs-400` 600 (the tab above is the project's name, #261; a drawer says "*Project* · PO"),
+  and one `--fs-200` `--fg-muted` line of what is true: agent and model, the project (a drawer only), its open tasks (`poOpenCount`), the run chip, what needs you. **Resume** is
   the one button (Default), and only while the PO is not running; Switch agent and the PO's task
   wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`; `poMenuItems` is the data), whose
   items keep their `data-po`. Esc or a click elsewhere closes it; the header is not rewritten while

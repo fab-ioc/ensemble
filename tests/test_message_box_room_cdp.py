@@ -366,8 +366,10 @@ class MessageBoxRoom(unittest.TestCase):
                 self.assertEqual(box["names"], ["PO", "PO", "PO", "PO"], "every seat, also before a switch")
                 self.assertTrue(box["whos"] and set(box["whos"]) <= {"PO", "sam"}, box["whos"])
                 self.assertIn("Message the PO", box["placeholder"])
-                self.assertIn("Motors · PO", o["poHead"])
-                self.assertNotIn("claude", o["poHead"].replace("Motors · PO", ""), "kind and model are in the tooltip")
+                # Its panel's tab is the project's name (#261): the header says "PO", no project.
+                self.assertIn("PO", o["poHead"])
+                self.assertNotIn("Motors", o["poHead"])
+                self.assertNotIn("claude", o["poHead"], "kind and model are in the tooltip")
                 self.assertEqual(o["poHeadTip"], "PO · claude opus")
 
     def test_a_task_keeps_its_seat_names(self):

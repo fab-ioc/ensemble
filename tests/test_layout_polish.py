@@ -131,11 +131,17 @@ class ThePoHeader(unittest.TestCase):
         h = self.r["live"]
         # The PO is called PO; its kind and model are in the tooltip (#232).
         self.assertIn('<span class="av claude" title="PO · claude opus">c</span>', h)
-        self.assertIn('<div class="po-name" title="PO · claude opus">Ensemble Dashboard · PO</div>', h)
-        # A part a span (CSS draws the " · "), so a narrow header cuts the project's name first.
+        # In its panel the tab above is the project's name (#261): the header says only "PO".
+        self.assertIn('<div class="po-name" title="PO · claude opus">PO</div>', h)
         # The state comes first: it is the one place the PO's state is said (#232).
         self.assertIn('<div class="po-sub"><span class="run" data-state-room="po-1" title="idle: running, not working"><span class="dot idle"></span>idle</span>'
-                      '<span class="po-sub-proj">project Ensemble Dashboard</span><span>2 tasks open</span><span class="po-pts"', h)
+                      '<span>2 tasks open</span><span class="po-pts"', h)
+        self.assertNotIn("Ensemble Dashboard", h)
+        # A drawer (peek) has no tab: it names the project. A part a span (CSS draws the " · "), so a
+        # narrow header cuts the project's name first.
+        s = self.r["stopped"]
+        self.assertIn('>Ensemble Dashboard · PO</div>', s)
+        self.assertIn('<span class="po-sub-proj">project Ensemble Dashboard</span><span>2 tasks open</span>', s)
         self.assertIn(".po-sub > * + *::before { content: \"·\";", INDEX)
         self.assertIn(".po-sub > .po-sub-proj { flex-shrink: 1000; }", INDEX)
         self.assertNotIn("Ensemble Dashboard PO", h)  # the row's label is gone from it

@@ -384,8 +384,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("if (!out || pdTask()) { if (own) own.remove(); return; }", INDEX)
         # #154: the library names the window after the panel's title, which follows the task (setTitle),
         # and mirrors the page's body classes itself (bodyAttrs); Ensemble's two stopgaps went.
-        self.assertIn("popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,", INDEX)
-        self.assertIn("d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
+        self.assertIn("popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },", INDEX)
+        self.assertIn("d.setTitle('po-chat', d.narrow() && pdTaskWanted() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
         self.assertIn("bodyAttrs: ['class'],", INDEX)
         for gone in ("function pdPopTitle()", "bodyMo.observe(document.body", "w.document.title = t"):
             self.assertNotIn(gone, INDEX, gone)
@@ -517,7 +517,7 @@ class TheTaskPanel(unittest.TestCase):
         self.assertIsNone(g["sid"])
         self.assertEqual((g["mode"], g["phWhere"], g["own"]), ("window", "window", True), "the window shows the PO's chat")
         self.assertEqual((g["dpWhere"], g["dpHome"]), ("page", True), "the task panel is home")
-        self.assertEqual(g["winTitle"], "PO chat · Motors")
+        self.assertEqual(g["winTitle"], "Motors")   # the PO's chat is the project's name, once (#261)
         r = self.got["reopened"]
         self.task_in(r, "window", "reopened from the list")
         self.assertEqual(r["winTitle"], "Brakes that squeal · Motors")
@@ -585,7 +585,7 @@ class TheTaskPanel(unittest.TestCase):
             self.assertTrue(g["headShown"] and g["menuBtn"], f"{what}: the middle's title bar")
         self.assertEqual(self.got["po"]["taskMore"], 0, "no task panel drawn yet")
         w = self.got["poWindow"]
-        self.assertEqual((w["mode"], w["phWhere"], w["own"], w["winTitle"]), ("window", "window", True, "PO chat · Motors"))
+        self.assertEqual((w["mode"], w["phWhere"], w["own"], w["winTitle"]), ("window", "window", True, "Motors"))
         self.assertEqual(w["interimPo"], 1, "the PO's header, with its ⋯, is in the window")
         b = self.got["poBack"]
         self.assertEqual((b["mode"], b["phWhere"], b["own"]), ("pinned", "page", False))
