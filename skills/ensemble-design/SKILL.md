@@ -1194,6 +1194,10 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
   "Also send to chat" is a quiet line under the input, never in its row. The hint says only what
   happens to a send (sending, an error, a blocked reason); an empty hint takes no room. Latest lives beside Send, never over a
   balloon. The placeholder only names the recipient; routing and shortcuts remain in its title.
+  Every send-like control (Send, answers, Submit comments, the feedback preview) posts through
+  `sendJson` (static/hub-resilience.js) and is never busy past its deadline (20 s; feedback send
+  45 s): it ends sent, "Not sent: …" with the text kept, or "Not confirmed: … Send again, it is
+  posted only once" (#251).
 - **The state is said once, never in the box** (#232): one dot and a word for the conversation,
   working / waiting for you / idle / stopped — reply resumes / resuming…, its seats in the
   tooltip ("claude (engineer): working · claude-2 (reviewer): idle"). The PO's is first on the

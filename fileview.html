@@ -2032,9 +2032,9 @@ async function submitCmts() {
   const sent = CMTS.map(c => c.cid);
   const key = 'fv:' + sent.join(',');
   try {
-    const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '', key }) });
-    let j = null;
-    try { j = await r.json(); } catch (e) {}
+    // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
+    const r = await sendJson('/api/room/resume', { roomId: ROOM, text: body, to: '', key });
+    const j = r.data;
     if (!r.ok || !j || j.error) {
       // Refused but held by the hub: shown in the task's chat as not
       // delivered, with Retry. Anything else keeps them here.

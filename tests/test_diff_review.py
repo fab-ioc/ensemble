@@ -76,6 +76,13 @@ function page(extra) {
       if (r === 'down') throw new TypeError('Failed to fetch');
       return { ok: r[0] < 400, status: r[0], json: async () => r[1] };
     },
+    // static/hub-resilience.js's sendJson over this fetch (#251).
+    sendJson: async (url, body) => {
+      let r;
+      try { r = await ctx.fetch(url, { method: 'POST', body: JSON.stringify(body || {}) }); }
+      catch (e) { throw Object.assign(new Error('the hub could not be reached'), { status: 0, timeout: false, network: true }); }
+      return { ok: r.ok, status: r.status, data: await r.json() };
+    },
   };
   vm.createContext(ctx);
   vm.runInContext(`const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));

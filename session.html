@@ -7514,19 +7514,26 @@ function keptByHub(e) {
   return true;
 }
 // POST that throws unless the hub accepted it, with the hub's status and reason.
+// Given up after 20 s (sendJson, static/hub-resilience.js): a busy button always ends.
 async function postOk(path, body) {
-  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  let d = null;
-  try { d = await r.json(); } catch (e) {}
-  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept), send: d && d.send,
+  const { ok, status, data: d } = await sendJson(path, body);
+  if (!ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + status)), { status, kept: !!(d && d.kept), send: d && d.send,
     points: d && d.points, reason: d && typeof d.message === 'string' ? d.message : '' });
   return d;
+}
+// The hint under the box for a send that failed: the message stays in the box.
+// No answer in time may still have reached the hub, which takes its key once,
+// so Send again cannot post it twice.
+function sendFailText(e) {
+  if (e && e.timeout) return 'Not confirmed: ' + sendErrorText(e) + '. Your message is still in the box: Send again, it is posted only once.';
+  return 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
 }
 // Why a send did not arrive, in words.
 function sendErrorText(e) {
   if (e && e.typed) return 'it was typed into the session but not submitted, so check its terminal before sending again';
   const s = e && e.status;
-  if (!s) return 'the hub did not answer';
+  if (!s) return e && e.timeout ? 'the hub did not answer within 20 seconds' : e && e.network ? 'the hub could not be reached' : 'the hub did not answer';
+  if (s === 403) return 'the hub refused it (reload the page if this repeats)';
   if (s === 404 || s === 410) return 'the session has stopped';
   if (s === 409) return 'the task is handing over to a fresh session, so try again in a moment';
   return (e.message || ('error ' + s));
@@ -7830,7 +7837,7 @@ async function sendNow() {
       try { d = await sendResuming(t, '', key, atts); }
       catch (e) {
         if (keptByHub(e)) return;
-        SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
+        SEND_ERR = sendFailText(e);
         setText($('#hint'), SEND_ERR);
         return;
       }
@@ -7855,7 +7862,7 @@ async function sendNow() {
     try { d = await sendResuming(t, to, msgKey(), atts); }
     catch (e) {
       if (keptByHub(e)) return;
-      SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
+      SEND_ERR = sendFailText(e);
       setText($('#hint'), SEND_ERR);
       return;
     }

@@ -34,18 +34,34 @@ class FeedbackError(ValueError):
     """A validation message safe to show without echoing private input."""
 
 
-def run(*args, input=None):
+def run(*args, input=None, timeout=20):
     return subprocess.run(args, input=input, capture_output=True, text=True,
-                          encoding="utf-8", timeout=20,
+                          encoding="utf-8", timeout=timeout,
                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
-def output(*args):
+def output(*args, timeout=20):
     try:
-        r = run(*args)
+        r = run(*args, timeout=timeout)
         return r.stdout.strip() if r.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+_login = {"at": 0.0, "login": ""}
+LOGIN_TTL_S = 600
+
+
+def gh_login():
+    """The GitHub user gh is signed in as, or "". Asked of GitHub at most every
+    LOGIN_TTL_S once known, and given 8 s: every Preview asked afresh, and a
+    slow network held it up to 20 s, as long as the page waits (#251)."""
+    now = time.monotonic()
+    if _login["login"] and now - _login["at"] < LOGIN_TTL_S:
+        return _login["login"]
+    login = output("gh", "api", "--hostname", "github.com", "user", "--jq", ".login", timeout=8)
+    _login.update(at=now, login=login)
+    return login
 
 
 def valid_repo(value):
@@ -176,7 +192,7 @@ def preview(data, settings, host="", private_values=()):
     relay = settings.get("feedbackRelayUrl") or DEFAULT_RELAY  # an empty saved value (installs from before the relay) takes the default
     if not valid_repo(repo) or not valid_relay(relay):
         raise FeedbackError("Check the feedback repository and HTTPS relay URL in Settings.")
-    login = output("gh", "api", "--hostname", "github.com", "user", "--jq", ".login")
+    login = gh_login()
     route = "gh" if login and not anonymous else "relay" if relay else "browser"
     if not anonymous and route == "relay" and not name.strip():
         raise FeedbackError("Enter a name for the relay, or select Send anonymously.")

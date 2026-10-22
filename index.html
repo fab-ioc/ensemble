@@ -10708,7 +10708,7 @@ function drSubmitState(rv) {
 }
 function drSendError(e) {
   const s = e && e.status;
-  if (!s) return 'the hub did not answer';
+  if (!s) return e && e.timeout ? 'the hub did not answer within 20 seconds' : 'the hub did not answer';
   if (s === 404) return 'the task\'s chat no longer exists';
   return (e.message || ('error ' + s));
 }
@@ -11185,10 +11185,9 @@ async function drSubmit(rv) {
       // Their images: the hub ends the message with one "[image] <path>" line
       // each, copying any stored for another chat into this one's folder.
       const images = batch.flatMap(drImages);
-      const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch), ...(images.length ? { attachments: images } : {}) }) });
-      let j = null;
-      try { j = await r.json(); } catch (e) {}
+      // Given up after 20 s (sendJson): the tray's Sending… always ends.
+      const r = await sendJson('/api/room/resume', { roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch), ...(images.length ? { attachments: images } : {}) });
+      const j = r.data;
       // Refused but held by the hub (shown in the task's chat as not
       // delivered, with Retry): the batch went, as far as this tray is concerned.
       if (!r.ok || !j || j.error) {

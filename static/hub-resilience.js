@@ -9,6 +9,13 @@
   // that the terminal already received it, so only queue it before the send.
   const uncertainOnFailure = new Set(['/api/send']);
   const unavailable = res => [502, 503, 504].includes(res.status);
+  const MAX_REPLAYS = 3;
+  function deadline(ms) {
+    if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+    return ctl.signal;
+  }
 
   function rejectUncertain(p) {
     const path = typeof p.input === 'string' ? p.input.split('?')[0] : '';
@@ -31,10 +38,25 @@
           markOffline();
           break;
         }
-        pending.shift();
+        const i = pending.indexOf(p);
+        if (i >= 0) pending.splice(i, 1);
         p.resolve(reply);
-      } catch {
-        rejectUncertain(p);
+      } catch (e) {
+        if (p.init?.signal?.aborted) {      // its caller gave up meanwhile (hold took it out)
+          const i = pending.indexOf(p);
+          if (i >= 0) pending.splice(i, 1);
+          p.reject(e);
+          continue;
+        }
+        // Lost again while the hub answers other requests: this request, not
+        // the hub, is what fails (#251 measured a send replayed on every
+        // answered poll, 140 a second, its button busy for good). Given up
+        // after MAX_REPLAYS, so its caller says it was not sent.
+        if (!rejectUncertain(p) && ++p.replays >= MAX_REPLAYS) {
+          const i = pending.indexOf(p);
+          if (i >= 0) pending.splice(i, 1);
+          p.reject(e);
+        }
         markOffline();
         break;
       }
@@ -62,8 +84,10 @@
     try {
       // Back once the hub is past its first steps (/api/health, ED-227);
       // a hub from before that answers /api/platform only.
-      let res = await raw('/api/health', { cache: 'no-store' });
-      if (res.status === 404) res = await raw('/api/platform', { cache: 'no-store' });
+      // Each look gives up after 10 s: one that never answered (a connection
+      // lost on the way) kept the page offline, and every send held, for good.
+      let res = await raw('/api/health', { cache: 'no-store', signal: deadline(10000) });
+      if (res.status === 404) res = await raw('/api/platform', { cache: 'no-store', signal: deadline(10000) });
       if (!res.ok) throw new Error('hub unavailable');
       if (res.url.endsWith('/api/health')) {
         const h = await res.json();
@@ -97,17 +121,33 @@
     schedule();
   }
 
+  // A send held for the hub's return gives up with its caller (sendJson's
+  // deadline): it leaves the queue, so it is not sent behind the caller's back.
+  function hold(input, init) {
+    return new Promise((resolve, reject) => {
+      const p = {input, init, resolve, reject, replays: 0};
+      const signal = init?.signal;
+      if (signal?.aborted) return reject(signal.reason || new DOMException('Aborted', 'AbortError'));
+      signal?.addEventListener('abort', () => {
+        const i = pending.indexOf(p);
+        if (i >= 0) pending.splice(i, 1);
+        reject(signal.reason || new DOMException('Aborted', 'AbortError'));
+      }, {once: true});
+      pending.push(p);
+    });
+  }
+
   window.fetch = async (input, init) => {
     const path = typeof input === 'string' ? input.split('?')[0] : '';
     const api = path.startsWith('/api/');
     const queued = retryable.has(path) && (init?.method || 'GET').toUpperCase() === 'POST';
-    if (queued && offline) return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
+    if (queued && offline) return hold(input, init);
     try {
       const res = await raw(input, init);
       if (api && unavailable(res)) {
         markOffline();
         if (queued && !uncertainOnFailure.has(path))
-          return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
+          return hold(input, init);
         throw new Error('hub unavailable');
       }
       if (api && offline && res.ok) {
@@ -122,11 +162,49 @@
       if (!api || e?.name === 'AbortError' || e?.name === 'TimeoutError') throw e;
       markOffline();
       if (queued && !uncertainOnFailure.has(path))
-        return new Promise((resolve, reject) => pending.push({input, init, resolve, reject}));
+        return hold(input, init);
       throw e;
     }
   };
   window.HubResilience = { get offline() { return offline; }, get queued() { return pending.length; }, probe };
+
+  // Every send-like button's request (#251: Send, a quick answer, Retry, a
+  // batch of comments, feedback): POST JSON, its answer read, given up after
+  // ``ms`` (20 s), so the button's busy state always ends. A request that
+  // never answered (a connection lost on the way, a send held above while
+  // the hub never came back) kept "Sending…" until the page was reloaded.
+  // A page the browser put to sleep (a hidden tab, a phone's locked screen)
+  // checks its deadline again when it is shown. Resolves {ok, status, data};
+  // throws an Error with ``timeout`` (no answer in time) or ``network`` (no
+  // connection) set and ``status`` 0. What a send reached is the hub's to
+  // say: a send that carries a key is taken once, so sending it again is safe.
+  const inFlight = new Set();
+  function sendJson(path, body, opts) {
+    const ms = (opts && opts.ms) || 20000;
+    const ctl = new AbortController();
+    const it = {at: Date.now(), ms, stop: () => ctl.abort(new DOMException('Timed out', 'TimeoutError'))};
+    const timer = setTimeout(it.stop, ms);
+    inFlight.add(it);
+    // Settles at the deadline even when the request under it does not.
+    const gaveUp = new Promise((_, reject) => ctl.signal.addEventListener('abort', () => reject(ctl.signal.reason), {once: true}));
+    const asked = (async () => {
+      const r = await window.fetch(path, {method: (opts && opts.method) || 'POST', headers: {'Content-Type': 'application/json'},
+                                          body: JSON.stringify(body || {}), signal: ctl.signal});
+      let data = null;
+      try { data = await r.json(); } catch {}
+      return {ok: r.ok, status: r.status, data};
+    })();
+    return Promise.race([asked, gaveUp]).catch(e => {
+      const timeout = ctl.signal.aborted;
+      throw Object.assign(new Error(timeout ? 'the hub did not answer in time' : 'the hub could not be reached'),
+                          {status: 0, timeout, network: !timeout, cause: e});
+    }).finally(() => { clearTimeout(timer); inFlight.delete(it); });
+  }
+  const recheck = () => { for (const it of [...inFlight]) if (Date.now() - it.at >= it.ms) it.stop(); };
+  document.addEventListener('visibilitychange', recheck);
+  window.addEventListener('pageshow', recheck);
+  window.addEventListener('focus', recheck);
+  window.sendJson = sendJson;
   document.addEventListener('DOMContentLoaded', line);
   // The service worker that shows the start-up page while the hub starts or
   // is not running (static/sw.js, served at /sw.js for the whole site). A

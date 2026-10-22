@@ -84,6 +84,13 @@ function page() {
       const [status, body] = r || [200, { ok: true }];
       return { ok: status < 400, status, json: async () => body };
     },
+    // static/hub-resilience.js's sendJson over this fetch (#251).
+    sendJson: async (url, body) => {
+      let r;
+      try { r = await ctx.fetch(url, { method: 'POST', body: JSON.stringify(body || {}) }); }
+      catch (e) { throw Object.assign(new Error('the hub could not be reached'), { status: 0, timeout: false, network: true }); }
+      return { ok: r.ok, status: r.status, data: await r.json() };
+    },
   };
   els.chatcol = { insertBefore(n) { els[n.id] = n; } };
   els.compose = {};
@@ -284,7 +291,7 @@ class ReviewComments(unittest.TestCase):
 
     def test_a_refused_send_keeps_every_comment(self):
         for case, words in (("gone", "the session has stopped"), ("dead", "codex would not start"), ("handover", "handing over"),
-                            ("down", "did not answer"), ("roomFail", "boom")):
+                            ("down", "could not be reached"), ("roomFail", "boom")):
             with self.subTest(case):
                 r = self.r[case]
                 self.assertEqual(r["kept"], ["one", "two"], "comments dropped after a failed send")
