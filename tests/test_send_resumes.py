@@ -102,12 +102,18 @@ class Resumes(unittest.TestCase):
         self.temp.cleanup()
 
     # ---- helpers ----
-    def room(self, agents=("claude",), mode="solo", launched=True):
+    def room(self, agents=("claude",), mode="solo", launched=True, sessions=True):
         # The second agent is a resumed partner, not a reviewer started per request.
         parts = [{"identity": a, "agent": a, "model": "", "role": "engineer" if i == 0 else "designer"}
                  for i, a in enumerate(agents)]
         r = chatroom.create_room("t", parts)
         full = chatroom.get_room(r["id"], public=False)
+        if sessions:
+            # Each seat ran: it has the conversation its launch recorded, so a
+            # resume carries it on (#248: a seat without one starts fresh).
+            for p in full["participants"]:
+                if p.get("kind") == "agent":
+                    p["sessionId"] = f"sess-{p['identity']}"
         full["mode"] = mode
         full["launched"] = launched
         full["messages"] = [{"id": "m0", "from": "user", "text": "spec", "to": "", "ts": time.time()}]
@@ -145,6 +151,41 @@ class Resumes(unittest.TestCase):
 
     def typed(self):
         return {pid: p.typed for pid, p in self.ptys.items() if p.typed}
+
+    # ---- a seat with no conversation (#248) ----
+    def test_a_seat_with_no_recorded_conversation_starts_fresh_with_the_spec(self):
+        room = self.room(sessions=False)
+        room["spec"] = "the spec"
+        chatroom.update_room(room)
+        h = self.handler()
+        launched = []
+
+        def launch(room_full, part, task, collab=True, **k):
+            launched.append((part["identity"], task))
+            self.ptys["pty-new"] = FakePty("pty-new")
+            return {"ptyId": "pty-new", "cwd": "", "sessionId": "sess-new"}
+
+        with mock.patch.object(h, "_launch_room_agent_pty", launch):
+            out = h._resume_room(room, text="hello")
+        self.join()
+        self.assertEqual(self.starts, 0, "a seat with nothing to resume was resumed")
+        self.assertEqual(launched, [("claude", "the spec")])
+        self.assertEqual(out["queued"], 1)
+        seat = chatroom.participant(chatroom.get_room(room["id"], public=False), "claude")
+        self.assertEqual(seat["sessionId"], "sess-new")
+        # Its first prompt was the spec; the message follows, with no resume note.
+        self.assertEqual(self.ptys["pty-new"].typed, ["hello"])
+
+    def test_a_codex_seat_that_ran_is_resumed_without_its_id(self):
+        # Codex's id is found after launch; a seat that ran without one yet
+        # resumes (its rollout is found in its cwd), it is not launched fresh.
+        room = self.room(agents=("codex",), sessions=False)
+        chatroom.participant(room, "codex")["cwd"] = self.temp.name
+        chatroom.update_room(room)
+        h = self.handler()
+        h._resume_room(room, text="hello")
+        self.join()
+        self.assertEqual(self.starts, 1)
 
     # ---- one resume, one input ----
     def test_a_message_to_a_stopped_owner_is_its_first_input_with_the_note(self):

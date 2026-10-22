@@ -678,6 +678,9 @@ class AllocationTests(unittest.TestCase):
     def test_resumed_task_keeps_its_existing_kind(self):
         preference = [{"agent": "claude", "model": "opus", "role": "engineer"}]
         room = self.room(preference, launched=True)
+        # It ran: its seat has a conversation to resume (#248 starts one
+        # without fresh).
+        chatroom.agent_participants(room)[0]["sessionId"] = "sess-claude"
         room["allocation"] = {"preferred": preference, "chosen": preference,
                               "reason": "Earlier choice.", "changed": False,
                               "at": 1, "usage": {}}
