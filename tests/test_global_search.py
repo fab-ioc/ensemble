@@ -272,6 +272,14 @@ class Rooms(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(gs.warm_rooms(self.dir), 0)
 
+    def test_one_bad_room_does_not_stop_the_rest(self):
+        self.put(room("room-a", 1, "One", msgs=["fine"]))
+        bad = room("room-b", 2, "Two", msgs=["x"])
+        bad["messages"][0]["ts"] = "not a time"
+        self.put(bad)
+        self.assertEqual(gs.warm_rooms(self.dir), 2)
+        self.assertEqual([e["id"] for e in gs.room_entries(self.dir)], ["room-a"])
+
     def test_read_ahead_keeps_no_room_changed_meanwhile(self):
         self.put(room("room-a", 1, "One"))
         gs.warm_rooms(self.dir, between=lambda: self.put(room("room-a", 1, "One renamed")))

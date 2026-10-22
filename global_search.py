@@ -157,7 +157,7 @@ def _read_entry(p: Path, extra, read, prev: dict | None) -> dict | None:
         if entry is not None:
             entry["extra"] = extra(d) if extra else {}
         return entry
-    except (OSError, ValueError):
+    except Exception:       # noqa: BLE001 — a room it cannot read is not listed; the rest are
         return None
 
 
