@@ -10161,6 +10161,24 @@ def _find_room_extra(room: dict) -> dict:
     return {"sids": sorted(sids), "cwds": sorted(cwds)}
 
 
+def _find_room_read(room_id: str) -> dict | None:
+    """A room for search with its messages: a task in progress from the
+    room index the chats are served from (a changed 16 MB PO chat was read
+    from disk again for each search, ~0.1 s), a finished task's from its
+    file (its card in the index has no messages, and reading it whole
+    through the index would push out the chats just opened) (#256)."""
+    r = chatroom.get_room(room_id, public=False, copy_room=False, messages=False)
+    if r is None or chatroom.is_card(r):
+        return chatroom._read(room_id)
+    return r
+
+
+def warm_search() -> int:
+    """The rooms search reads, read ahead behind the pages (#256)."""
+    return global_search.warm_rooms(chatroom.ROOMS_DIR, _find_room_extra, _find_room_read,
+                                    between=lambda: yield_to_pages(quiet_s=0.5))
+
+
 def _find_session_rows() -> list[dict]:
     """The rows the task list built last (whatever its n). None yet (a hub
     just started, no page open): none, rather than a minute's build while
@@ -10254,7 +10272,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
     keys = task_numbers.project_keys(projects)
     pname = {p.get("id"): p.get("name") or "" for p in projects}
     po_of = {p["poRoomId"]: p for p in projects if p.get("poRoomId")}
-    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra, chatroom._read)
+    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra, _find_room_read)
     by_id = {e["id"]: e for e in entries}
     refs: dict[str, list[str]] = {}
     for e in entries:
@@ -10341,8 +10359,17 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
             s["cwd"] = s.get("cwd") or row.get("cwd") or ""
         s.setdefault("title", "")
         s.pop("path", None)
-    # Seats for every task, messages only for a PO's (never a card).
-    full_rooms = {rid: chatroom.get_room(rid, public=False, messages=False) or {} for rid in by_id}
+    # Seats for every task, messages only for a PO's (never a card): read
+    # when a hit needs them, and borrowed from the index but for a PO's,
+    # which a thread build reads on after the search. Copying all ~750 rooms
+    # on each search cost ~0.5 s (#256).
+    full_rooms: dict[str, dict] = {}
+
+    def room_of(rid: str) -> dict:
+        if rid not in full_rooms:
+            full_rooms[rid] = (chatroom.get_room(rid, public=False, copy_room=rid in po_of, messages=False)
+                               or {}) if rid in by_id else {}
+        return full_rooms[rid]
     # A PO room's room.json carries task and hub traffic; the person's and
     # PO's own balloons live in transcripts. Thread indexes keep those turns
     # incrementally and build in the background on their first search.
@@ -10350,7 +10377,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
     latest_cards = []
     po_pending = False
     for rid, project in po_of.items():
-        room = full_rooms.get(rid)
+        room = room_of(rid)
         if not room:
             continue
         found = threads.search_balloons(rid, room, groups)
@@ -10380,7 +10407,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
         seat, own_rid = (addr.group(1), addr.group(2)) if addr else (ident, rid)
         own = by_id.get(own_rid) or {}
         own_po = po_of.get(own_rid)
-        room = full_rooms.get(own_rid) or {}
+        room = room_of(own_rid)
         if own_po and chatroom.po_identity(room) == seat:
             return ("PO" if own_rid == rid
                     else f"{own_po.get('name') or 'Project'} PO")
@@ -12990,6 +13017,12 @@ def _warm_rooms_at_start() -> None:
     t0 = time.time()
     done = warm_rooms()
     _restart_log(f"chats read ahead: {len(done)} in {time.time() - t0:.1f}s")
+    t0 = time.time()
+    try:
+        n = warm_search()
+        _restart_log(f"search read ahead: {n} room(s) in {time.time() - t0:.1f}s")
+    except Exception as e:      # noqa: BLE001 — the first search reads them instead
+        _restart_log(f"search not read ahead: {e!r}")
 
 
 def _warm_saver() -> None:

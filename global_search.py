@@ -121,7 +121,11 @@ _ROOM_CACHE: dict[str, tuple[tuple[int, int], dict | None]] = {}
 _ROOM_LOCK = threading.Lock()      # the hub's request threads share the cache
 
 
-def _room_entry(d: dict) -> dict:
+def _room_entry(d: dict, prev: dict | None = None) -> dict:
+    """``prev``: the room's entry from its last read. A message it already
+    had (same id, time and text) keeps its entry: lowering a PO's ~7,000
+    messages again each time it changed cost ~0.1 s a search (#256)."""
+    had = {m["id"]: m for m in prev["msgs"]} if prev else {}
     msgs = []
     for m in d.get("messages") or []:
         if not isinstance(m, dict):
@@ -129,7 +133,12 @@ def _room_entry(d: dict) -> dict:
         text = m.get("text") if isinstance(m.get("text"), str) else ""
         if not text:
             continue
-        msgs.append({"id": str(m.get("id") or ""), "ts": float(m.get("ts") or 0), "from": str(m.get("from") or ""),
+        mid = str(m.get("id") or "")
+        old = had.get(mid)
+        if old is not None and old["text"] == text and old["ts"] == float(m.get("ts") or 0):
+            msgs.append(old)
+            continue
+        msgs.append({"id": mid, "ts": float(m.get("ts") or 0), "from": str(m.get("from") or ""),
                      "to": str(m.get("to") or ""), "text": text, "low": text.lower(),
                      **{k: m[k] for k in ("kind", "reporter", "taskId", "fromProjectName",
                                           "toProjectName", "senderLabel") if m.get(k) not in (None, "")}})
@@ -141,6 +150,22 @@ def _room_entry(d: dict) -> dict:
             "archived": bool(d.get("archived")), "draft": bool(d.get("draft")), "msgs": msgs}
 
 
+def _read_entry(p: Path, extra, read, prev: dict | None) -> dict | None:
+    try:
+        d = read(p.stem) if read else json.loads(p.read_text(encoding="utf-8-sig"))
+        entry = _room_entry(d, prev) if isinstance(d, dict) else None
+        if entry is not None:
+            entry["extra"] = extra(d) if extra else {}
+        return entry
+    except Exception:       # noqa: BLE001 — a room it cannot read is not listed; the rest are
+        return None
+
+
+def _room_sig(p: Path):
+    st = p.stat()
+    return st.st_mtime_ns, st.st_size
+
+
 def room_entries(rooms_dir: Path, extra=None, read=None) -> list[dict]:
     """Every room, read again only when its file changed (size or time).
     ``extra(room)``: more the caller keeps about a room, under ``"extra"``.
@@ -148,6 +173,40 @@ def room_entries(rooms_dir: Path, extra=None, read=None) -> list[dict]:
     file keeps them in a log beside it since #256), else the file as is."""
     with _ROOM_LOCK:
         return _room_entries(rooms_dir, extra, read)
+
+
+def warm_rooms(rooms_dir: Path, extra=None, read=None, between=None) -> int:
+    """Read the rooms the cache lacks or has stale, ``between()`` before
+    each, outside the lock (a search meanwhile reads what it needs itself),
+    so the first search after a start does not read every room (~1 s for
+    745, #256). How many were read."""
+    n = 0
+    try:
+        paths = list(Path(rooms_dir).glob("room-*.json"))
+    except OSError:
+        return 0
+    for p in paths:
+        key = str(p)
+        try:
+            sig = _room_sig(p)
+        except OSError:
+            continue
+        hit = _ROOM_CACHE.get(key)
+        if hit is not None and hit[0] == sig:
+            continue
+        if between:
+            between()
+        entry = _read_entry(p, extra, read, hit[1] if hit else None)
+        with _ROOM_LOCK:
+            try:
+                same = _room_sig(p) == sig
+            except OSError:
+                same = False
+            cur = _ROOM_CACHE.get(key)
+            if same and (cur is None or cur[0] != sig):
+                _ROOM_CACHE[key] = (sig, entry)
+        n += 1
+    return n
 
 
 def _room_entries(rooms_dir: Path, extra, read=None) -> list[dict]:
@@ -161,20 +220,12 @@ def _room_entries(rooms_dir: Path, extra, read=None) -> list[dict]:
         key = str(p)
         live.add(key)
         try:
-            st = p.stat()
-            sig = (st.st_mtime_ns, st.st_size)
+            sig = _room_sig(p)
         except OSError:
             continue
         hit = _ROOM_CACHE.get(key)
         if hit is None or hit[0] != sig:
-            try:
-                d = read(p.stem) if read else json.loads(p.read_text(encoding="utf-8-sig"))
-                entry = _room_entry(d) if isinstance(d, dict) else None
-                if entry is not None:
-                    entry["extra"] = extra(d) if extra else {}
-            except (OSError, ValueError):
-                entry = None
-            hit = (sig, entry)
+            hit = (sig, _read_entry(p, extra, read, hit[1] if hit else None))
             _ROOM_CACHE[key] = hit
         if hit[1] is not None:
             out.append(hit[1])
