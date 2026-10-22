@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import chatroom  # noqa: E402
@@ -312,6 +313,33 @@ class PruneTests(unittest.TestCase):
         # Unticked in the preview for it, ticked by hand: it goes.
         self.assertEqual([d["id"] for d in res["done"]], [f"done:{dirty}"])
         self.assertFalse(fd.exists())
+
+    def test_a_checkout_git_does_not_list_keeps_its_folder(self):
+        # A worktree git cannot list (the listing failed): its work was never
+        # checked, so the folder that holds it stays, even by auto.
+        rid, folder, cwd, *_ = self.task("n1")
+        write(cwd / "new.txt", "never committed")
+        hub = self.hub()
+        with mock.patch.object(prune, "worktrees", lambda repo: []):
+            preview = prune.scan(hub, 30)
+            item = next(it for g in preview["groups"] for it in g["items"] if it["id"] == f"done:{rid}")
+            self.assertNotIn("folder", {p["kind"] for p in item["parts"]})
+            self.assertTrue(any(k.get("path") == str(folder) and "git does not list" in k["why"]
+                                for k in preview["kept"]), preview["kept"])
+            prune.run(hub, preview, [item["id"]], how="auto")
+        self.assertTrue((cwd / "new.txt").exists())
+        # A leftover repo/ with no .git is only files: it goes with the folder.
+        rid2, folder2, cwd2, *_ = self.task("n2", worktree=False)
+        write(cwd2 / "algo" / "x.txt", "leftover")
+        preview = prune.scan(hub, 30)
+        item = next(it for g in preview["groups"] for it in g["items"] if it["id"] == f"done:{rid2}")
+        self.assertIn("folder", {p["kind"] for p in item["parts"]})
+
+    def test_a_status_that_fails_reads_as_dirty(self):
+        self.assertTrue(prune.dirty(str(self.tmp / "not-a-repo")))
+        self.assertFalse(prune.dirty(str(self.repo)))
+        write(self.repo / "b.txt", "x")
+        self.assertTrue(prune.dirty(str(self.repo)))
 
     def test_slim_drops_the_kept_original(self):
         rid, *_ = self.task("o1")

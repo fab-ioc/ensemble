@@ -7335,9 +7335,11 @@ async function moveTask(rid, col) {
     BOARD_SIG = '';
     // An older server has no /api/room/workflow — say so plainly rather than
     // letting the card snap back with no explanation.
-    toast(/404|not found/i.test(e.message)
+    const pruned = /"error":"pruned","message":"([^"]*)"/.exec(e.message);
+    toast(pruned ? pruned[1]
+      : /404|not found/i.test(e.message)
       ? 'Moving cards needs the hub restarted — the column did not stick'
-      : 'move failed: ' + e.message, 5000, 'err');
+      : 'move failed: ' + e.message, pruned ? 8000 : 5000, 'err');
     renderRows();
   }
 }

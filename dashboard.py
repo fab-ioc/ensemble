@@ -21009,7 +21009,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok, room, err = update_task(rid, workflow=w)
             if not ok:
-                self._send_json(404 if err == "no_such_room" else 400, {"error": err})
+                self._send_json(404 if err == "no_such_room" else 400,
+                                pruned_refusal(chatroom.get_room(rid, public=False) or {})
+                                if err == "pruned" else {"error": err})
                 return
             self._send_json(200, {"ok": True, "workflow": w,
                                   "workflowName": WORKFLOW_LABELS[w]})

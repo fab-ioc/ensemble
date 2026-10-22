@@ -245,12 +245,38 @@ def worktrees(root: str) -> list[dict]:
     return out
 
 
-def is_worktree_of(repo: str, path: str) -> bool:
+def is_worktree_of(repo: str, path: str, cache: dict | None = None) -> bool:
     """``git worktree list`` of ``repo`` names ``path`` (and it is not the
-    repository's own checkout)."""
+    repository's own checkout). ``cache``: repo -> its list, for one scan."""
     if not repo or not path or _norm(path) == _norm(repo):
         return False
-    return any(_norm(w["path"]) == _norm(path) for w in worktrees(repo)[1:])
+    if cache is None:
+        listed = worktrees(repo)
+    else:
+        listed = cache.get(_norm(repo))
+        if listed is None:
+            listed = cache[_norm(repo)] = worktrees(repo)
+    return any(_norm(w["path"]) == _norm(path) for w in listed[1:])
+
+
+def dirty(path: str) -> bool:
+    """The checkout at ``path`` has uncommitted changes. A ``git status``
+    that fails says so too: nothing is taken on a guess."""
+    try:
+        r = _git(path, "status", "--porcelain")
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return r.returncode != 0 or bool(r.stdout.strip())
+
+
+def unlisted_checkout(r: dict, folder: str) -> str:
+    """A git checkout inside a task folder that no worktree part covers (git
+    does not list it, or listing failed): its path, else "". The folder then
+    stays, since its work was never checked."""
+    for c in {r.get("cwd") or "", os.path.join(folder, "repo") if folder else ""}:
+        if c and folder and within(c, folder) and os.path.lexists(_long(os.path.join(c, ".git"))):
+            return c
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +443,7 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
         return rid in att_rooms and not (named_elsewhere.get(rid, set()) - {rid})
 
     cp_counts: dict[str, dict] = {}
+    wt_cache: dict[str, list] = {}          # repo -> git worktree list, once per scan
 
     def cp_count(project: dict | None, rid: str) -> int:
         path = (project or {}).get("path") or ""
@@ -445,7 +472,7 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
                 continue
             items.append(_done_item(hub, r, _project_of(r, by_pid), projects, tidx, live_sids,
                                     uploads_only_of(rid), cp_count(_project_of(r, by_pid), rid), kept,
-                                    stop))
+                                    stop, wt_cache))
 
     # Conversations no current seat holds
     want_conv = {"po", "hub", "own"} & set(groups)
@@ -520,7 +547,8 @@ def _conv_label(agent: str, path: str, who: str, at: float) -> str:
 
 
 def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: dict,
-               live_sids: set, uploads: bool, checkpoints: int, kept: list, stop=None) -> dict:
+               live_sids: set, uploads: bool, checkpoints: int, kept: list, stop=None,
+               wt_cache: dict | None = None) -> dict:
     rid = r["id"]
     parts: list[dict] = []
     ws = r.get("workspace") or {}
@@ -529,7 +557,7 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
     cwd = r.get("cwd") or ""
     if ws.get("mode") == "worktree" and repo and cwd and folder and within(cwd, folder) \
             and _norm(cwd) != _norm(repo) and os.path.isdir(_long(cwd)) \
-            and _allowed_path(hub, cwd, projects) and is_worktree_of(repo, cwd):
+            and _allowed_path(hub, cwd, projects) and is_worktree_of(repo, cwd, wt_cache):
         parts.append(_part("worktree", cwd, size_of(cwd, stop=stop), repo=repo))
     branch = ws.get("branch") or ""
     if branch and repo:
@@ -543,8 +571,10 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
         parts.append(_part("checkpoints", f"refs/ensemble/checkpoints/{rid}", 0, count=checkpoints,
                            repo=repo))
     why = task_folder_ok(hub, folder, project, projects) if folder else "no folder"
+    wt = next((p for p in parts if p["kind"] == "worktree"), None)
+    if not why and not wt and unlisted_checkout(r, folder):
+        why = "it holds a git checkout that git does not list: its work was never checked"
     if not why:
-        wt = next((p for p in parts if p["kind"] == "worktree"), None)
         size = size_of(folder, stop=stop) - (wt["bytes"] if wt else 0)
         parts.append(_part("folder", folder, max(0, size)))
     elif why not in ("no folder", "not there"):
@@ -573,8 +603,7 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
         title = re.sub(rf"^\s*#?{no}[.:)]?\s+", "", title)       # "18. Fix it" is #18 already
     label = f"#{no} {title}".strip() if no else (title or rid)
     extra = {}
-    wt = next((p for p in parts if p["kind"] == "worktree"), None)
-    if wt and _git_out(wt["path"], "status", "--porcelain"):
+    if wt and dirty(wt["path"]):
         # Work never committed would go with the worktree: never by itself.
         extra = {"note": "its worktree has uncommitted changes", "ticked": False}
     return _item("done", f"done:{rid}", label, parts, room=rid, no=no,
@@ -717,7 +746,7 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
                        "its terminal is running" if rid in live else
                        "it was moved out of Done since" if _done_at(r) > cutoff else "")
                 wt = next((p for p in it.get("parts", []) if p["kind"] == "worktree"), None)
-                if not why and wt and _git_out(wt["path"], "status", "--porcelain") \
+                if not why and wt and dirty(wt["path"]) \
                         and (how != "manual" or it.get("ticked") is not False):
                     # Work never committed goes only when the person ticked
                     # it by hand, seeing the note; never by itself.
@@ -789,6 +818,8 @@ def _prune_task(hub: Hub, r: dict, by_pid: dict, projects: list, it: dict, live_
     fo = parts.get("folder")
     if fo:
         why = task_folder_ok(hub, fo["path"], project, projects)
+        if not why and unlisted_checkout(r, fo["path"]):
+            why = "it holds a git checkout that git does not list"
         if why and why != "not there":
             errs.append(f"folder kept: {why}")
         elif not why:
