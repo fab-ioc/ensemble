@@ -48,7 +48,7 @@ class RoomDeltaHttpTests(unittest.TestCase):
             self.assertTrue(delta["delta"])
             self.assertEqual(delta["messages"], room["messages"])
             room["messages"].clear()
-            chatroom._write(room)
+            chatroom._write(room, removed=1)
             self.assertTrue(get(base + "&cursor=" + quote(delta["revision"]))["refetch"])
 
     def test_a_changed_status_comes_as_a_patch_of_what_changed(self):

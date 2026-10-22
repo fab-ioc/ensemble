@@ -73,6 +73,7 @@ Bound to the dashboard module like ``due``: nothing reads ``_d`` at import time.
 from __future__ import annotations
 
 import json
+import marshal
 import os
 import re
 import threading
@@ -472,6 +473,13 @@ def _read_file(p: Path):
     return d if _valid(d) else None
 
 
+def _copy(led: dict) -> dict:
+    """A ledger's own copy. A ledger holds only JSON's types (it is parsed
+    from its file or its saved text), which marshal copies ~3x faster than a
+    JSON round trip: three copies of a PO's 1.6 MB ledger per send (#256)."""
+    return marshal.loads(marshal.dumps(led))
+
+
 def load(room_id: str, *, shared: bool = False) -> dict:
     """A room's ledger (a fresh one when it has none). A damaged file falls
     back to the version before it, kept as ``.prev``; if both are gone the
@@ -487,7 +495,7 @@ def load(room_id: str, *, shared: bool = False) -> dict:
             mt = None
         hit = _CACHE.get(room_id)
         if hit and hit[0] == mt and mt is not None:
-            return hit[1] if shared else json.loads(json.dumps(hit[1]))
+            return hit[1] if shared else _copy(hit[1])
         if mt is None:
             prev = _read_file(p.with_suffix(".json.prev"))
             return _clean(prev, room_id) if prev else _empty(room_id)
@@ -503,10 +511,10 @@ def load(room_id: str, *, shared: bool = False) -> dict:
             d = prev or {**_empty(room_id), "damaged": time.time()}
             led = _clean(d, room_id)
             _save(room_id, led)
-            return json.loads(json.dumps(led))
+            return _copy(led)
         led = _clean(d, room_id)
         _CACHE[room_id] = (mt, led)
-        return json.loads(json.dumps(led))
+        return _copy(led)
 
 
 SAVES: dict[str, int] = {}     # room id → ledger saves by this hub (two in one clock tick share an mtime)
@@ -540,7 +548,7 @@ def _save(room_id: str, led: dict) -> None:
             pass
     SAVES[room_id] = SAVES.get(room_id, 0) + 1
     try:
-        _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(json.dumps(led)))
+        _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(body))
     except OSError:
         _CACHE.pop(room_id, None)
     try:
@@ -950,7 +958,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
             or body.startswith(_d.PO_MESSAGE_PREFIX):
         return text, []
     try:
-        sync(rid, force=True)
+        sync(rid, force=True, room=room if "messages" in room else None)
     except Exception as e:      # answers are looked for again at the next poll
         _log(f"{rid}: answers not read before a new message: {e!r}")
     with _LOCK:
@@ -1302,9 +1310,14 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         # The agents' sessions now are looked at; the ones rotated out of
         # (a PO has a hundred) as the hub's file table has them (#228).
         now_sids = {(a.get("sessionId") or "").strip() for a in _agents(room)}
-        table = {} if force else _d.transcript_stats()
+        # A session rotated out of has ended: the file table's look will do
+        # even for a forced sync. Only the seats' own sessions are looked at
+        # now, and a session not found is not looked for again at once:
+        # ~0.2 s of each send to a PO with a hundred sessions (#256).
+        table = _d.transcript_stats()
         for sid in _session_ids(room, led):
-            st = (None if sid in now_sids else table.get(sid)) or _session_stat(sid, immediate=force)
+            st = (None if sid in now_sids else table.get(sid)) \
+                or _session_stat(sid, immediate=force and sid in now_sids)
             if st is None or _SCANNED.get((room_id, sid)) == st:
                 continue
             if floor is None or st[1] < floor:
@@ -1351,7 +1364,7 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         if changed:
             # A point planned on a task supersedes the older answers about it (#209).
             try:
-                _supersede_by_plans(led, room_id, now)
+                _supersede_by_plans(led, room_id, now, room)
             except Exception as e:  # noqa: BLE001 — they stay until the next change
                 _log(f"{room_id}: superseded points not read: {e!r}")
             _save(room_id, led)
@@ -1673,12 +1686,15 @@ def _point_task(p: dict) -> str:
 
 
 def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str = "",
-               lookup=None) -> list[dict]:
+               lookup=None, among: list[dict] | None = None, point_task=_point_task) -> list[dict]:
     """Points just made (or just planned on a task) close each older answered
-    point about the same task: the later point supersedes it."""
+    point about the same task: the later point supersedes it. ``among``: the
+    points that may be superseded (default all), ``point_task``: a memo of
+    :func:`_point_task`, for a caller that asks for many plans at once."""
     if not made:
         return []
-    cands = [p for p in led["points"] if p["state"] == "delivered" and p not in made and _point_task(p)]
+    cands = [p for p in (led["points"] if among is None else among)
+             if p["state"] == "delivered" and p not in made and point_task(p)]
     if not cands:
         return []
     named: dict[str, dict] = {}
@@ -1703,7 +1719,7 @@ def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str =
             by_task.setdefault(t, q)
     out = []
     for p in cands:
-        q = by_task.get(task_id(_point_task(p)))
+        q = by_task.get(task_id(point_task(p)))
         # Only an answer from before the later point (made, or planned on the
         # task) is superseded: one given after it is still to be seen.
         at = float((last_answer(p) or {}).get("at") or 0)
@@ -1714,7 +1730,7 @@ def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str =
     return out
 
 
-def _supersede_by_plans(led: dict, room_id: str, now: float) -> bool:
+def _supersede_by_plans(led: dict, room_id: str, now: float, room: dict | None = None) -> bool:
     """A point planned on a task since (its plan names it) supersedes the
     older answered points about that task."""
     planned = [q for q in led["points"] if q.get("task") and q["state"] in LIVE + ("acked", "followed")]
@@ -1723,10 +1739,19 @@ def _supersede_by_plans(led: dict, room_id: str, now: float) -> bool:
     tasks = {q["task"] for q in planned}
     if not any(p["state"] == "delivered" and _point_task(p) in tasks for p in led["points"]):
         return False
-    lookup = task_lookup(room_id)
+    lookup = task_lookup(room_id, room)
+    # Each plan looks at the same answered points: their tasks are read once,
+    # not once per plan (a PO's ledger has hundreds of plans, #256).
+    memo: dict[str, str] = {}
+
+    def point_task(p: dict) -> str:
+        if p["id"] not in memo:
+            memo[p["id"]] = _point_task(p)
+        return memo[p["id"]]
+    among = [p for p in led["points"] if p["state"] == "delivered" and point_task(p)]
     done = []
     for q in planned:
-        done += _supersede(led, [q], room_id, now, lookup=lookup)
+        done += _supersede(led, [q], room_id, now, lookup=lookup, among=among, point_task=point_task)
     return bool(done)
 
 
@@ -1912,7 +1937,7 @@ def task_lookup(room_id: str, room: dict | None = None):
         index = _d._task_index()
         keys = _d.project_keys(projects)
         if room is None:
-            room = _d.chatroom.get_room(room_id)
+            room = _d.chatroom.get_room(room_id, copy_room=False)     # read only
         pid = _project_of(room_id, room, projects)
     except Exception as e:      # noqa: BLE001 — the points show without their tasks
         _log(f"{room_id}: tasks not read: {e!r}")

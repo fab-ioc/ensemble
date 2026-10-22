@@ -141,14 +141,16 @@ def _room_entry(d: dict) -> dict:
             "archived": bool(d.get("archived")), "draft": bool(d.get("draft")), "msgs": msgs}
 
 
-def room_entries(rooms_dir: Path, extra=None) -> list[dict]:
+def room_entries(rooms_dir: Path, extra=None, read=None) -> list[dict]:
     """Every room, read again only when its file changed (size or time).
-    ``extra(room)``: more the caller keeps about a room, under ``"extra"``."""
+    ``extra(room)``: more the caller keeps about a room, under ``"extra"``.
+    ``read(room_id)``: the room with its messages (chatroom._read: a room
+    file keeps them in a log beside it since #256), else the file as is."""
     with _ROOM_LOCK:
-        return _room_entries(rooms_dir, extra)
+        return _room_entries(rooms_dir, extra, read)
 
 
-def _room_entries(rooms_dir: Path, extra) -> list[dict]:
+def _room_entries(rooms_dir: Path, extra, read=None) -> list[dict]:
     out = []
     live: set[str] = set()
     try:
@@ -166,7 +168,7 @@ def _room_entries(rooms_dir: Path, extra) -> list[dict]:
         hit = _ROOM_CACHE.get(key)
         if hit is None or hit[0] != sig:
             try:
-                d = json.loads(p.read_text(encoding="utf-8-sig"))
+                d = read(p.stem) if read else json.loads(p.read_text(encoding="utf-8-sig"))
                 entry = _room_entry(d) if isinstance(d, dict) else None
                 if entry is not None:
                     entry["extra"] = extra(d) if extra else {}

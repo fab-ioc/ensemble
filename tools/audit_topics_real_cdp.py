@@ -134,7 +134,7 @@ def main():
             p = source / name
             if p.exists():
                 shutil.copy2(p, state / name)
-        for sub in ("rooms", "points", "threads", "sends", "input-provenance"):
+        for sub in ("rooms", "rooms/messages", "points", "threads", "sends", "input-provenance"):
             (state / sub).mkdir()
             for rid in {rid for rid, _ in ROOMS.values()}:
                 for ext in (".json", ".jsonl"):

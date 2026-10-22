@@ -107,9 +107,8 @@ class PointCardPage(Hub):
         chatroom.post_message(room, 'claude', 'Re P499: why 4.\n\n' + filler, to='user')
         card = chatroom.post_message(room, 'claude', 'Re P499 (the leg limit).', to='user')['message']
         full = chatroom.get_room(room, public=False)
-        for m in full['messages']:
-            if m['id'] == card['id']:
-                m.update(asks=ASK_A, askAudience='user')
+        full['messages'] = [{**m, 'asks': ASK_A, 'askAudience': 'user'} if m['id'] == card['id'] else m
+                            for m in full['messages']]
         chatroom.update_room(full)
         for i in range(4):
             chatroom.post_message(room, 'claude', f'Progress note {i}.\n\n' + filler, to='user')

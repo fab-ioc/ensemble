@@ -35,8 +35,10 @@ from __future__ import annotations
 
 import json
 import copy
+import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import uuid
@@ -171,23 +173,304 @@ def _room_path(room_id: str) -> Path:
     return ROOMS_DIR / f"{room_id}.json"
 
 
+# A room's messages are a log, one JSON line each, beside its file (#256): a
+# message is appended, and a change to the room rewrites only the room. The
+# whole chat in the room file made each change of the 17 MB PO chat a 17 MB
+# write. A room file from before keeps its messages until its first write,
+# which copies it to ORIGINALS_DIR_NAME first. The log has every message: one
+# appended just before a stop lacks only the room file's count.
+LOG_DIR_NAME = "messages"
+ORIGINALS_DIR_NAME = "before-message-log"
+_LOGGED: set[str] = set()       # rooms whose file on disk keeps its messages in the log
+
+
+def _log_path(room_id: str) -> Path:
+    return ROOMS_DIR / LOG_DIR_NAME / f"{room_id}.jsonl"
+
+
+class _Unreadable(Exception):
+    """A room's log is there but cannot be read just now (another process has
+    it open, no access), or is gone while the room file counts messages: the
+    room is not read at all rather than read empty, which the next write
+    would make true (#256, the PO's pre-merge read)."""
+
+
+_DAMAGED: dict[str, int] = {}   # room id -> damaged lines its last read skipped
+
+
+def _read_log(room_id: str, count: int) -> tuple[list[dict], bool]:
+    """The logged messages, and whether the log is whole: a line cut short
+    by a stop mid-append makes the next write rewrite it, so a message
+    appended after it is not glued onto the damaged line. ``count``: the
+    messages the room file says the log has."""
+    try:
+        raw = _log_path(room_id).read_bytes()
+    except FileNotFoundError:
+        if count > 0:
+            print(f"[rooms] {room_id}: the log of {count} messages is missing; the room is not read", flush=True)
+            raise _Unreadable(room_id)
+        return [], False
+    except OSError as e:
+        print(f"[rooms] {room_id}: messages not read: {e!r}", flush=True)
+        raise _Unreadable(room_id) from e
+    out, bad = [], 0
+    for line in raw.split(b"\n"):
+        if not line.strip():
+            continue
+        try:
+            m = json.loads(line)
+        except ValueError:      # a line cut short by a stop mid-append
+            bad += 1
+            continue
+        if isinstance(m, dict):
+            out.append(m)
+    if bad:
+        print(f"[rooms] {room_id}: {bad} damaged message line(s) skipped", flush=True)
+        _DAMAGED[room_id] = bad
+    else:
+        _DAMAGED.pop(room_id, None)
+    return out, not bad and (not raw or raw.endswith(b"\n"))
+
+
+def _logged_count(room: dict) -> int:
+    try:
+        return max(0, int((room.get("messageLog") or {}).get("count") or 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
 def _read(room_id: str) -> dict | None:
     p = _room_path(room_id)
     try:
-        return json.loads(p.read_text(encoding="utf-8-sig"))
+        room = json.loads(p.read_text(encoding="utf-8-sig"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+    if not isinstance(room, dict):
+        return room
+    if isinstance(room.get("messageLog"), dict):
+        try:
+            logged, whole = _read_log(room_id, _logged_count(room))
+        except _Unreadable:
+            _LOGGED.discard(room_id)
+            return None
+        inline = room.get("messages")
+        if isinstance(inline, list):
+            # A hub from before the log wrote this file (a downgrade): its
+            # messages are added to the log's, never put in their place.
+            ids = {m.get("id") for m in logged}
+            logged += [m for m in inline if isinstance(m, dict) and m.get("id") not in ids]
+            whole = False
+        room["messages"] = logged
+        if whole:
+            _LOGGED.add(room_id)
+        else:
+            _LOGGED.discard(room_id)
+    else:
+        _LOGGED.discard(room_id)
+    room.pop("messageLog", None)
+    return room
 
 
-def _write(room: dict) -> None:
+def _append_lines(path: Path, msgs: list[dict]) -> None:
+    with open(path, "ab") as f:
+        f.write(b"".join(json.dumps(m).encode("utf-8") + b"\n" for m in msgs))
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _replace(tmp: Path, path: Path) -> None:
+    # Windows refuses the replace while another process (a virus scanner, a
+    # backup, the indexer) has the file open for a moment: WinError 5 on
+    # 2026-09-23 failed a PO resume after its terminal had started.
+    for attempt in range(8):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
+def _log_text(msgs: list[dict]) -> str:
+    return "".join(json.dumps(m) + "\n" for m in msgs)
+
+
+def _on_disk(room_id: str) -> tuple[bytes, dict | None]:
+    """The room file as it is now: its bytes and its JSON (None when it is
+    not there). A file there that cannot be read raises."""
+    try:
+        raw = _room_path(room_id).read_bytes()
+    except FileNotFoundError:
+        return b"", None
+    try:
+        d = json.loads(raw.decode("utf-8-sig"))
+    except ValueError:
+        return raw, None
+    return raw, d if isinstance(d, dict) else None
+
+
+def _keep_original(room_id: str, raw: bytes) -> None:
+    """The room file from before the log, kept once (whole: a copy cut short
+    by a stop is made again)."""
+    keep = ROOMS_DIR / ORIGINALS_DIR_NAME / f"{room_id}.json"
+    try:
+        if keep.stat().st_size == len(raw):
+            return
+    except OSError:
+        pass
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    tmp = keep.with_name(keep.name + ".tmp")
+    durable.write_tmp(tmp, raw.decode("utf-8-sig"))
+    _replace(tmp, keep)
+
+
+def _write_messages(room_id: str, old: list[dict] | None, new: list[dict], removed: int = 0):
+    """The log holds ``new``: the messages added after ``old`` (the logged
+    ones) are appended; anything else (a first write, a message taken back,
+    a damaged log) writes the log again. Messages are never changed once
+    posted. Returns how to put the log back if the room file then cannot be
+    written. A rewrite never holds fewer messages than the room file counts,
+    but for the ``removed`` ones and the damaged lines skipped: a room read
+    without its messages must not lose them (#256)."""
+    path = _log_path(room_id)
+    if room_id in _LOGGED and old is not None and len(new) >= len(old) and all(
+            a is b or a == b for a, b in zip(old, new)):
+        if len(new) == len(old):
+            return lambda: None
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = None
+        try:
+            _append_lines(path, new[len(old):])
+        except BaseException:
+            # A part of a line may be there: the next write rewrites the log.
+            _LOGGED.discard(room_id)
+            _truncate(path, size)
+            raise
+
+        def undo():
+            if not _truncate(path, size):
+                _LOGGED.discard(room_id)
+        return undo
+    raw, disk = _on_disk(room_id)
+    if disk is not None:
+        inline = disk.get("messages")
+        had = len(inline) if isinstance(inline, list) and "messageLog" not in disk else _logged_count(disk)
+        if isinstance(inline, list) and "messageLog" not in disk:
+            _keep_original(room_id, raw)
+        floor = had - removed - _DAMAGED.get(room_id, 0)
+        if len(new) < floor:
+            print(f"[rooms] {room_id}: refused to write {len(new)} messages over {had}", flush=True)
+            raise RuntimeError(f"{room_id}: the log would lose messages ({len(new)} < {floor})")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if _DAMAGED.get(room_id) and path.exists():
+        try:
+            shutil.copy2(path, path.with_name(f"{path.name}.damaged-{int(time.time())}"))
+        except OSError:
+            pass
+    tmp = path.with_name(path.name + ".tmp")
+    restore = old is not None and disk is not None and "messageLog" in disk
+    durable.write_tmp(tmp, _log_text(new))
+    _replace(tmp, path)
+    _DAMAGED.pop(room_id, None)
+
+    def undo():
+        # The room file still names the old messages: the log holds them
+        # again, or (an old room file) is not read at all.
+        _LOGGED.discard(room_id)
+        if restore:
+            try:
+                durable.write_tmp(tmp, _log_text(old))
+                _replace(tmp, path)
+            except OSError as e:
+                print(f"[rooms] {room_id}: the log was not put back: {e!r}", flush=True)
+    return undo
+
+
+ORIGINALS_KEEP_S = 14 * 86400   # a kept original goes this long after it was made, once verified
+
+
+def prune_originals(now: float | None = None) -> int:
+    """Remove the room files kept from before the log once their room is
+    verified: its file reads, its log is whole, and it holds every message
+    the original had (or the room is gone). Returns how many went."""
+    now = time.time() if now is None else now
+    d = ROOMS_DIR / ORIGINALS_DIR_NAME
+    try:
+        entries = [e for e in os.scandir(d) if e.name.endswith(".json") and e.is_file()]
+    except OSError:
+        return 0
+    gone = 0
+    for e in entries:
+        rid = e.name[:-len(".json")]
+        try:
+            if e.stat().st_mtime > now - ORIGINALS_KEEP_S:
+                continue
+            if _room_path(rid).exists():
+                with _LOCK:
+                    room = _read(rid)
+                if room is None or rid not in _LOGGED:
+                    continue
+                kept = json.loads(Path(e.path).read_text(encoding="utf-8-sig"))
+                ids = {m.get("id") for m in room.get("messages") or []}
+                if any(isinstance(m, dict) and m.get("id") not in ids
+                       for m in (kept.get("messages") or [] if isinstance(kept, dict) else [])):
+                    print(f"[rooms] {rid}: the log lacks messages its original has; the original is kept", flush=True)
+                    continue
+            os.unlink(e.path)
+            gone += 1
+        except (OSError, ValueError):
+            continue
+    return gone
+
+
+def _truncate(path: Path, size: int | None) -> bool:
+    """The log cut back to ``size`` bytes (what it was before an append)."""
+    if size is None:
+        return False
+    try:
+        with open(path, "r+b") as f:
+            f.truncate(size)
+        return True
+    except OSError as e:
+        print(f"[rooms] {path.stem}: the log was not cut back: {e!r}", flush=True)
+        return False
+
+
+def _load(room_id: str) -> dict | None:
+    """The room to change, for a read-modify-write under ``_LOCK``: the
+    indexed room when the file is the one it was read from, else the file.
+    Its own copy but for the message dicts, which are never changed once
+    posted: parsing and copying a 17 MB chat for each change cost ~0.5 s of
+    the hub's lock per message there (#256)."""
+    try:
+        st = _room_path(room_id).stat()
+    except OSError:
+        return None
+    with _INDEX_LOCK:
+        hit = _INDEX.get(room_id)
+        if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
+            return _listed_copy(hit["room"])
+    return _read(room_id)
+
+
+def messages_file(room_id: str) -> str:
+    """Where a room's messages are on disk, as an agent is told it."""
+    if room_id in _LOGGED:
+        return f"~/.ensemble/rooms/{LOG_DIR_NAME}/{room_id}.jsonl"
+    return f"~/.ensemble/rooms/{room_id}.json"
+
+
+def _write(room: dict, *, removed: int = 0) -> None:
+    """Write the room: its log first, then its file. ``removed``: messages
+    taken out of the list on purpose (a withdraw), which a rewrite of the
+    log may drop."""
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
     room["_revision"] = uuid.uuid4().hex
-    durable.write_tmp(tmp, json.dumps(room, indent=2))
-    # Windows refuses the replace while another process (a virus scanner, a
-    # backup, the indexer) has the file open for a moment: WinError 5 on
-    # 2026-09-23 failed a PO resume after its terminal had started.
     with _INDEX_LOCK:
         prior = _INDEX.get(room["id"])
         try:
@@ -196,24 +479,35 @@ def _write(room: dict) -> None:
             old_sig = _entry(old, old_st)["signature"] if old else ""
         except OSError:
             old_sig, old = "", None
-        for attempt in range(8):
-            try:
-                tmp.replace(p)
-                break
-            except PermissionError:
-                if attempt == 7:
-                    raise
-                time.sleep(0.05 * (attempt + 1))
+    # The log first: a stop between the two leaves a room file that still
+    # reads (its old messages, or the log with one message more).
+    msgs = room.get("messages") or []
+    undo = _write_messages(room["id"], (old or {}).get("messages") if old is not None else None, msgs, removed)
+    # A room file that cannot be written takes the log back with it: the
+    # caller's retry would post the message twice (#256).
+    try:
+        durable.write_tmp(tmp, json.dumps({**{k: v for k, v in room.items() if k != "messages"},
+                                           "messageLog": {"count": len(msgs)}}, indent=2))
+    except BaseException:
+        undo()
+        raise
+    with _INDEX_LOCK:
+        try:
+            _replace(tmp, p)
+        except BaseException:
+            undo()
+            raise
+        _LOGGED.add(room["id"])
         st = p.stat()
         new_sig = _entry(room, st)["signature"]
-        _INDEX[room["id"]] = _entry(copy.deepcopy(room), st)
+        _INDEX[room["id"]] = _entry(_listed_copy(room), st)
         old_msgs = (old or {}).get("messages") or []
         new_msgs = room.get("messages") or []
         # A delta can patch changed messages and appends. Deletion or reorder
         # invalidates the chain and tells the browser to reload in full.
         if old is not None and len(new_msgs) >= len(old_msgs) and all(
                 a.get("id") == b.get("id") for a, b in zip(old_msgs, new_msgs)):
-            changed = {b.get("id") for a, b in zip(old_msgs, new_msgs) if a != b}
+            changed = {b.get("id") for a, b in zip(old_msgs, new_msgs) if a is not b and a != b}
             changed.update(m.get("id") for m in new_msgs[len(old_msgs):])
             history = _CHANGES.setdefault(room["id"], [])
             history.append((old_sig, new_sig, changed))
@@ -329,7 +623,7 @@ def set_agents(room_id: str, members: list[dict],
     such room. Messages are untouched: a removed agent's turns stay in the log.
     """
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         existing = [p for p in room.get("participants", []) if p.get("kind") == "agent"]
@@ -457,7 +751,7 @@ def update_room(room: dict) -> None:
     read before it was given, or before a move renumbered it, never undoes it:
     once the file has a number, :data:`NUMBER_FIELDS` are the file's."""
     with _LOCK:
-        disk = _read(room.get("id", "")) or {}
+        disk = _load(room.get("id", "")) or {}
         if disk.get("no"):
             for k in NUMBER_FIELDS:
                 if k in disk:
@@ -480,7 +774,7 @@ def set_task_number(room_id: str, project_id: str, no: int, forget_old: bool = F
     (the hub's start repair) was never its own. Returns the public room, or
     None when it no longer exists."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         old, old_pid = room.get("no"), room.get("noProjectId")
@@ -510,7 +804,7 @@ def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:
     the same lock makes that impossible.
     """
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return False
         hit = False
@@ -531,7 +825,7 @@ def patch_room(room_id: str, **fields) -> dict | None:
     noting something about a task is not activity on it. Returns the full
     room, or None when it no longer exists."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         room.update(fields)
@@ -545,7 +839,7 @@ def record_interrupt(room_id: str, identity: str, pty_id: str = "") -> dict | No
     It deliberately leaves the room status, reads, asks, and pending sends alone.
     """
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         event = {"from": HUMAN_IDENTITY, "identity": identity, "ptyId": pty_id, "ts": _now()}
@@ -564,7 +858,7 @@ def clear_exits(room_id: str) -> bool:
     would silently drop any chat message posted in the meantime.
     """
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return False
         cleared = False
@@ -598,6 +892,8 @@ def list_rooms(*, copy_rooms: bool = True) -> list[dict]:
 def get_room(room_id: str, public: bool = True, *, copy_room: bool = True) -> dict | None:
     # The GET path uses the index, while mutations keep using _read under
     # _LOCK. Copy so status decoration cannot change the indexed source.
+    # The message dicts are shared even in a copy: read them, never change
+    # one in place (replace it in the list), or the log keeps the old one.
     p = _room_path(room_id)
     try:
         st = p.stat()
@@ -612,7 +908,7 @@ def get_room(room_id: str, public: bool = True, *, copy_room: bool = True) -> di
             hit = _entry(fresh, st)
             _INDEX[room_id] = hit
             _CHANGES.pop(room_id, None)
-        r = copy.deepcopy(hit["room"]) if copy_room else hit["room"]
+        r = _listed_copy(hit["room"]) if copy_room else hit["room"]
     if r is None:
         return None
     return _public(r) if public else r
@@ -632,6 +928,12 @@ def delete_room(room_id: str) -> bool:
             _room_path(room_id).unlink()
         except (FileNotFoundError, OSError):
             return False
+        _LOGGED.discard(room_id)
+        _DAMAGED.pop(room_id, None)
+        try:
+            _log_path(room_id).unlink()
+        except OSError:
+            pass
         # Input provenance is room-owned auxiliary state. Keep its lifetime
         # aligned with the room without importing input_provenance here (that
         # module imports chatroom).
@@ -763,7 +1065,7 @@ def patch_participant(room_id: str, identity: str, fields: dict,
     ``append`` adds items to list fields; ``drop`` removes keys. Returns the
     updated participant, or None when the room or the participant is gone."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         part = participant(room, identity)
@@ -791,7 +1093,7 @@ def apply_review_allocation(room_id: str, identity: str, agent: str, model: str,
     caller must use to build the review brief.
     """
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         part = participant(room, identity)
@@ -854,7 +1156,7 @@ def post_message(room_id: str, sender: str, text: str, to: str = "",
     stays active and nothing reads as waiting for them.
     """
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         to_norm = (to or "").strip()
@@ -944,7 +1246,7 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
     to a message stops waiting (the completed report is then what the bell
     holds, by attention's own rule)."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         now = _now()
@@ -990,7 +1292,7 @@ def record_answer(room_id: str, identity: str, at: float) -> dict | None:
     attention._open_to_human), and the room stops waiting on them. Returns the
     participant, or None when the room or the participant is gone."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         part = participant(room, identity) if room is not None else None
         if part is None:
             return None
@@ -1009,7 +1311,7 @@ def record_seen(room_id: str, ts: float) -> float | None:
     once, an ask a day after it was put). ``updatedAt`` is left alone: reading
     is not news. Returns the room's ``seenAt``, or None when the room is gone."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         try:
@@ -1030,7 +1332,7 @@ def record_dealt(room_id: str) -> float | None:
     device (attention.set_aside); a later ask is news again. Returns the
     room's ``dealtAt``, or None when the room is gone."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         now = _now()
@@ -1063,7 +1365,7 @@ def post_report(room_id: str, sender: str, to: str, text: str, meta: dict,
     asks nothing of the PO (a task owner's rotation): it is shown in the room
     but rings nobody, so the attention detector never waits for an answer."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         msg = {"id": uuid.uuid4().hex[:12], "from": sender, "to": to, "text": text,
@@ -1084,7 +1386,7 @@ def post_po_message(room_id: str, sender: str, to: str, text: str, meta: dict) -
     line of its own — and leaves status and the hop count alone, like a
     report. Returns the message, or None if there is no room."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         msg = {"from": sender, "to": to, "text": text, "ts": _now(), "rang": [],
@@ -1101,7 +1403,7 @@ def post_notice(room_id: str, sender: str, text: str, meta: dict) -> dict | None
     room's PO was rotated to a fresh session. Wakes nobody and leaves status
     and the hop count alone. Returns the message, or None if there is no room."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         msg = {"id": uuid.uuid4().hex[:12], "from": sender, "to": HUMAN_IDENTITY,
@@ -1115,7 +1417,7 @@ def post_notice(room_id: str, sender: str, text: str, meta: dict) -> dict | None
 def read_messages(room_id: str, since_ts: float = 0.0, for_identity: str = "") -> list[dict]:
     """Return messages after ``since_ts``. If ``for_identity`` is given, only
     messages that identity should see (addressed to it, to all, or its own)."""
-    room = _read(room_id)
+    room = _load(room_id)
     if room is None:
         return []
     out = []
@@ -1206,7 +1508,7 @@ def withdraw_message(room_id: str, msg_id: str, sender: str = HUMAN_IDENTITY) ->
     has read yet (chat_read moves past it): the Undo of a quick answer sent by
     mistake (#198). False when it is not there, or one of them read it."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return False
         msgs = room.get("messages", [])
@@ -1220,7 +1522,7 @@ def withdraw_message(room_id: str, msg_id: str, sender: str = HUMAN_IDENTITY) ->
                 return False
         msgs.remove(m)
         room["updatedAt"] = _now()
-        _write(room)
+        _write(room, removed=1)
         return True
 
 
@@ -1228,7 +1530,7 @@ def read_new_for(room_id: str, identity: str) -> list[dict]:
     """Return messages visible to ``identity`` that it hasn't read yet, and
     advance its read cursor. Backs the ``chat_read`` tool."""
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return []
         reads = room.setdefault("reads", {})
@@ -1242,7 +1544,7 @@ def read_new_for(room_id: str, identity: str) -> list[dict]:
 
 
 def whoami(room_id: str, identity: str) -> dict:
-    room = _read(room_id)
+    room = _load(room_id)
     if room is None:
         return {}
     partners = [p["identity"] for p in room["participants"]
@@ -1258,7 +1560,7 @@ def whoami(room_id: str, identity: str) -> dict:
 
 def set_status(room_id: str, status: str) -> dict | None:
     with _LOCK:
-        room = _read(room_id)
+        room = _load(room_id)
         if room is None:
             return None
         room["status"] = status
