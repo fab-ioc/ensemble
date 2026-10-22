@@ -11174,12 +11174,37 @@ function drKey(batch) {
   return 'review:' + (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + ':' + batch.length;
 }
 // `only`: the comments to send (a quick reaction's own); every unsent one without.
+// A quick reaction always goes in a message of its own, under its own key, so
+// one tried before (not confirmed) is taken once when sent again: Submit sends
+// the typed comments together, then each reaction alone. A reaction clicked
+// while a send is on its way goes after it; Submit pressed meanwhile, too.
 async function drSubmit(rv, only) {
-  if (rv.sending) return;
-  const due = c => !c.sent && (!only || only.includes(c.cid));
+  const wait = rv.wait || (rv.wait = new Set());
+  if (rv.sending) { if (only) only.forEach(cid => wait.add(cid)); else rv.again = true; return; }
+  if (!only) rv.error = '';    // a reaction's own send leaves the note on the others
+  let ok;
+  if (only) ok = await drSend(rv, c => only.includes(c.cid));
+  else {
+    ok = await drSend(rv, c => !c.react);
+    rv.store.sync();
+    for (const c of rv.store.list.filter(x => x.react && !x.sent)) if (ok) ok = await drSend(rv, x => x.cid === c.cid);
+  }
+  while (ok && wait.size) {
+    const cid = wait.values().next().value;
+    wait.delete(cid);
+    ok = await drSend(rv, c => c.cid === cid);
+  }
+  wait.clear();                // not sent: they wait in the tray, with the reason
+  const again = rv.again && ok; rv.again = false;
+  if (again) drSubmit(rv);
+}
+// One message of the unsent comments `pick` takes; false when it did not go.
+async function drSend(rv, pick) {
+  const due = c => !c.sent && pick(c);
   rv.store.sync();
-  if (!rv.store.list.some(due) || !drSubmitState(rv).can) { drPaintTray(rv); return; }
-  rv.sending = true; rv.error = '';
+  if (!rv.store.list.some(due)) return true;
+  if (!drSubmitState(rv).can) { drPaintTray(rv); return false; }
+  rv.sending = true;
   drChanged(rv);
   let sent = 0, held = '';
   try {
@@ -11222,10 +11247,13 @@ async function drSubmit(rv, only) {
     rv.error = e && !e.status && (e.timeout || e.network)
       ? 'Not confirmed: ' + drSendError(e) + '. Your comments are kept: Submit again without changing them, they are posted only once.'
       : 'Not sent: ' + drSendError(e) + '. Your comments are kept.';
+    return false;
   } finally {
     rv.sending = false;
+    if (!rv.store.list.some(c => !c.sent)) rv.error = '';
     drChanged(rv);
   }
+  return true;
 }
 // A selection across lines of a diff offers a comment on them, as a selection
 // in the chat does, with Copy beside it (static/selbar.js follows the selection,
@@ -11264,8 +11292,8 @@ function drSelComment(c, s) {
 }
 // A quick reaction from the selection bar (#258): the comment on those lines a
 // typed one would be, its words the reaction's ("👍 Agree"), sent at once and
-// on its own; another comment waiting in the tray waits for its Submit. Where
-// it cannot go yet (a send in flight) it waits in the tray like a typed one.
+// on its own; another comment waiting in the tray waits for its Submit, and
+// one clicked while a send is on its way goes right after it.
 const drReviewOf = v => [...DR_REVIEWS.values()].find(rv => rv.view === v) || null;
 function drSelReact(r, c, s) {
   const { v, a, b } = c, rv = drReviewOf(v);
@@ -11273,7 +11301,7 @@ function drSelReact(r, c, s) {
   const q = drRange(v.rows, Math.min(a, b), Math.max(a, b));
   if (!q.rows.length) return;
   const cid = rv.store.id();
-  rv.store.put({ cid, at: rv.store.now(), root: v.root, file: v.file, rows: q.rows, span: q.span, sent: 0, note: SelBar.reactNote(r) });
+  rv.store.put({ cid, at: rv.store.now(), root: v.root, file: v.file, rows: q.rows, span: q.span, sent: 0, note: SelBar.reactNote(r), react: true });
   if (s) s.removeAllRanges();
   drChanged(rv);
   drSubmit(rv, [cid]);

@@ -50,19 +50,27 @@ window.SelBar = (function () {
   const reactNote = r => r.e + ' ' + r.word;
   // The reactions a chat's "## Review comments (N)" message carries: each
   // item that quotes a passage ("**1.** > the words") and says nothing but a
-  // reaction's note under it. [{ r, quote }], in order.
+  // reaction's note under it, optionally followed by " on <link to the
+  // reacted message>" (reactLine). [{ r, quote, mid }], in order; mid is ''
+  // without a link.
   function reactionsIn(text) {
     const t = String(text || '').replace(/^\s+/, '');
     if (!/^## Review comments \(\d+\)/.test(t)) return [];
     const out = [];
     for (const item of t.split(/\r?\n(?=\*\*\d+\.\*\*)/).slice(1)) {
-      const m = /^\*\*\d+\.\*\*[ \t]*>[ \t]?([^\r\n]*)\r?\n\r?\n([^\r\n]*)/.exec(item);
+      const m = /^\*\*\d+\.\*\*[ \t]*>[ \t]?([^\r\n]*)\r?\n\r?\n([^\r\n]*)\s*$/.exec(item);
       if (!m) continue;
-      const note = m[2].trim(), r = REACTIONS.find(x => reactNote(x) === note);
-      if (r && m[1].trim()) out.push({ r, quote: m[1].trim() });
+      const on = /^(.*?) on (\S+)$/.exec(m[2].trim()), note = on ? on[1] : m[2].trim();
+      const r = REACTIONS.find(x => reactNote(x) === note);
+      const mid = on ? (/[?&]msg=([^&#\s]+)/.exec(on[2]) || [])[1] : '';
+      if (!r || !m[1].trim() || (on && !mid)) continue;
+      out.push({ r, quote: m[1].trim(), mid: mid ? decodeURIComponent(mid) : '' });
     }
     return out;
   }
+  // A reaction's line in the message: its note, and the message it is on as a
+  // link, so its chip finds that balloon whatever else quotes the same words.
+  const reactLine = (note, href) => href ? note + ' on ' + href : note;
 
   const docOf = e => {
     const t = e && e.target;
@@ -343,5 +351,5 @@ window.SelBar = (function () {
     return r;
   }
 
-  return { mount, REACTIONS, reactNote, reactionsIn, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
+  return { mount, REACTIONS, reactNote, reactLine, reactionsIn, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
 })();

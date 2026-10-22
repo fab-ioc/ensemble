@@ -211,6 +211,30 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   await Q.drSubmit(rvq, [rvq.store.list.find(x => x.note === '👍 Agree').cid]);
   out.only = { count: posts.length - n0, text: posts[posts.length - 1][1].text, notes: notes(rvq) };
 
+  // Submit: the typed comments in one message, then each reaction alone (its
+  // own key, so one tried before is taken once). A reaction clicked while a
+  // send is on its way goes after it.
+  const react = (r, a, note) => { const q = P.drRange(rows, a, a); r.store.put({ cid: r.store.id(), at: r.store.now(), root: 'C:/r', file: 'app.py', rows: q.rows, span: q.span, note, sent: 0, react: true }); };
+  const S = page(), rvs = S.drReview('task:split', opts);
+  mk(rvs, 1, 1, 'typed a'); react(rvs, 2, '👍 Agree'); mk(rvs, 3, 3, 'typed b'); react(rvs, 4, '❓ Question: explain this');
+  replies = [];
+  n0 = posts.length;
+  await S.drSubmit(rvs);
+  out.split = { texts: posts.slice(n0).map(p => p[1].text), notes: notes(rvs) };
+  const W = page(), rvw = W.drReview('task:wait', opts);
+  mk(rvw, 1, 1, 'typed, on its way');
+  n0 = posts.length;
+  release = gate();
+  const first = W.drSubmit(rvw);
+  await until(() => posts.length > n0);
+  react(rvw, 3, '✅ Done / go ahead');
+  await W.drSubmit(rvw, [rvw.store.list.find(x => x.react).cid]);   // back at once: a send is on its way
+  out.waitBefore = posts.length - n0;
+  release();
+  await first;
+  await until(() => !rvw.sending && rvw.store.list.every(x => x.sent));
+  out.wait = { texts: posts.slice(n0).map(p => p[1].text), notes: notes(rvw) };
+
   // Two copies of the page submit the same comments at the same moment: over
   // plain http both may send, with the same key, so the hub posts once; with
   // the browser's lock (https, localhost) the second finds them sent.
@@ -359,6 +383,22 @@ class DiffReview(unittest.TestCase):
         self.assertTrue(o["text"].endswith("👍 Agree"), o["text"])
         self.assertNotIn("typed, waits", o["text"])
         self.assertEqual(o["notes"], [["typed, waits", False], ["👍 Agree", True]])
+
+    def test_submit_sends_each_reaction_alone(self):
+        t = self.r["split"]["texts"]
+        self.assertEqual(len(t), 3, t)
+        self.assertTrue(t[0].startswith("## Review comments (2)") and "typed a" in t[0] and "typed b" in t[0], t[0])
+        self.assertTrue(t[1].startswith("## Review comments (1)") and t[1].endswith("👍 Agree"), t[1])
+        self.assertTrue(t[2].startswith("## Review comments (1)") and t[2].endswith("❓ Question: explain this"), t[2])
+        self.assertTrue(all(sent for _, sent in self.r["split"]["notes"]))
+
+    def test_a_reaction_during_a_send_goes_after_it(self):
+        self.assertEqual(self.r["waitBefore"], 1, "not sent with the batch on its way")
+        t = self.r["wait"]["texts"]
+        self.assertEqual(len(t), 2, t)
+        self.assertNotIn("Done / go ahead", t[0])
+        self.assertTrue(t[1].startswith("## Review comments (1)") and t[1].endswith("✅ Done / go ahead"), t[1])
+        self.assertEqual(self.r["wait"]["notes"], [["typed, on its way", True], ["✅ Done / go ahead", True]])
 
     def test_a_refused_send_keeps_everything(self):
         # No answer at all may still have arrived: "Not confirmed", same batch again (#251).

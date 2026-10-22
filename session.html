@@ -9033,6 +9033,8 @@ const CMT = cmtStore(CMT_PREFIX, c => typeof c.quote === 'string' && typeof c.no
 const COMMENTS = CMT.list;  // {cid, at, mid, from, start, end, quote, note}
 const CMT_UNSTORED = CMT.unstored;
 let CMT_SENDING = false, CMT_ERROR = '';
+// Quick reactions clicked while a send was on its way: each goes alone after it.
+const REACT_WAIT = new Set();
 let _cmtComposerOpen = false;
 // The bar over a selection in the chat (static/selbar.js), made once the page
 // has run: selShown() is safe before that.
@@ -9152,31 +9154,37 @@ function openComposer(data) {
 }
 // A quick reaction from the selection bar (#258): the passage comment a typed
 // one would be, its words the reaction's ("👍 Agree"), sent at once and on its
-// own (another comment waiting in the tray waits for its Submit). Where it
-// cannot go yet (no room read yet, a send in flight) it waits in the tray.
+// own (another comment waiting in the tray waits for its Submit). Clicked
+// while a send is on its way, it goes right after it; where it cannot go at
+// all (no room read yet) it waits in the tray.
 function selReact(r, data) {
-  const c = { cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note: SelBar.reactNote(r) };
+  const c = { cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note: SelBar.reactNote(r), react: true };
   cmtAdd(c);
   const s = window.getSelection(); if (s) s.removeAllRanges();
   submitComments([c.cid]);
 }
 // The reactions the person sent, by the balloon they are on: read from their
 // "## Review comments" messages (and sends still on their way), so a reload
-// and another device show them too. A reaction's balloon is the nearest one
-// before it holding its quote, compared without spaces and letter case.
+// and another device show them too. A reaction names its balloon by a link
+// (SelBar.reactLine); one without (none is sent so now) goes on the nearest
+// agent's balloon before it holding its quote, compared without spaces and
+// letter case.
 const REACT_SQ = t => String(t || '').replace(/\s+/g, '').toLowerCase();
 const REACT_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
 const reactText = h => String(h || '').replace(/<[^>]*>/g, '').replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (x, n) => REACT_ENT[n]);
+const REACT_TXT = new Map();   // message id -> [its text, its words squeezed], kept across renders
 function reactionsByMid(items, sends, md) {
-  const out = new Map(), seen = new Map();
-  const textOf = j => { if (!seen.has(j)) seen.set(j, REACT_SQ(reactText(md(items[j].text)))); return seen.get(j); };
-  const place = (list, at, mid, ts) => list.forEach(x => {
+  const out = new Map(), at = new Map();
+  items.forEach((m, i) => { if (m && m.id) at.set(m.id, i); });
+  const textOf = m => { let t = REACT_TXT.get(m.id); if (!t || t[0] !== m.text) REACT_TXT.set(m.id, t = [m.text, REACT_SQ(reactText(md(m.text)))]); return t[1]; };
+  const add = (m, x, mid, ts) => { if (!out.has(m.id)) out.set(m.id, []); out.get(m.id).push({ r: x.r, quote: x.quote, mid, ts }); };
+  const place = (list, from, mid, ts) => list.forEach(x => {
+    if (x.mid) { const j = at.get(x.mid); if (j !== undefined && j < from) add(items[j], x, mid, ts); return; }
     const q = REACT_SQ(x.quote);
-    for (let j = at - 1; j >= 0; j--) {
+    for (let j = from - 1; j >= 0; j--) {
       const m = items[j];
-      if (!m || !m.id || !m.text || isHubInput(m) || !textOf(j).includes(q)) continue;
-      if (!out.has(m.id)) out.set(m.id, []);
-      out.get(m.id).push({ r: x.r, quote: x.quote, mid, ts });
+      if (!m || !m.id || !m.text || m.from === 'user' || isHubInput(m) || !textOf(m).includes(q)) continue;
+      add(m, x, mid, ts);
       return;
     }
   });
@@ -9285,22 +9293,42 @@ function cmtTrayClick(e) {
   if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 // `only`: the comments to send (a quick reaction's own); all of them without.
+// A quick reaction always goes in a message of its own, under its own key, so
+// one tried before (not confirmed) is taken once when sent again: Submit sends
+// the typed comments together, then each reaction alone.
 async function submitComments(only) {
-  if (CMT_SENDING || !COMMENTS.length) return;
+  if (CMT_SENDING) { (only || []).forEach(cid => REACT_WAIT.add(cid)); return; }
+  if (!COMMENTS.length) return;
   if (!cmtSubmitState().can) { renderCmtTray(); return; }
   cmtSync();                 // not what another copy of this chat already sent
-  const batch = only ? COMMENTS.filter(c => only.includes(c.cid)) : COMMENTS.slice();
-  if (!batch.length) { renderCmtTray(); return; }
+  const groups = only ? [COMMENTS.filter(c => only.includes(c.cid))]
+    : [COMMENTS.filter(c => !c.react), ...COMMENTS.filter(c => c.react).map(c => [c])];
+  if (!only) CMT_ERROR = '';   // a reaction's own send leaves the note on the others
+  let ok = true;
+  for (const batch of groups) if (batch.length && !(ok = await cmtSend(batch))) break;
+  // Reactions clicked meanwhile, one by one (one clicked during these joins them).
+  while (ok && REACT_WAIT.size) {
+    const cid = REACT_WAIT.values().next().value;
+    REACT_WAIT.delete(cid);
+    const batch = COMMENTS.filter(c => c.cid === cid);
+    if (batch.length) ok = await cmtSend(batch);
+  }
+  REACT_WAIT.clear();          // not sent: they wait in the tray, with the reason
+  renderCmtTray();
+}
+// One message of comments; true when it went (or the hub holds it).
+async function cmtSend(batch) {
   const authors = [...new Set(batch.map(c => c.from))];
   const to = authors.length === 1 ? authors[0] : '';
   const images = batch.flatMap(c => Array.isArray(c.images) ? c.images : []);
   const body = `## Review comments (${batch.length})\n\n` +
-    batch.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}` + (c.note ? `\n\n${c.note}` : '')
+    batch.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}`
+      + (c.note ? '\n\n' + (c.react && c.mid ? SelBar.reactLine(c.note, msgLink(c.mid)) : c.note) : '')
       + (Array.isArray(c.images) && c.images.length ? `\n\n(attached: ${c.images.map(x => x.name).join(', ')})` : '')).join('\n\n');
   // The batch names its attempt by the comments in it (their ids are stable),
   // so the same batch sent again after a lost reply is taken once.
   const key = `cmt:${batch.length}:${batch[0].cid}:${batch[batch.length - 1].cid}`;
-  CMT_SENDING = true; CMT_ERROR = ''; renderCmtTray();
+  CMT_SENDING = true; renderCmtTray();
   let sent = false;
   try {
     // The hub decides: running or resumed; each comment becomes a point.
@@ -9315,10 +9343,11 @@ async function submitComments(only) {
     else CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
   }
   CMT_SENDING = false;
-  if (!sent) { renderCmtTray(); return; }
+  if (!sent) { renderCmtTray(); return false; }
   // Drop what went, and only that: a comment added during the send stays.
   cmtRemove(batch.map(c => c.cid));
   if (SOLO_MODE) setTimeout(checkSolo, 1200); else refresh();
+  return true;
 }
 // Another copy of this chat changed the comments.
 window.addEventListener('storage', e => {

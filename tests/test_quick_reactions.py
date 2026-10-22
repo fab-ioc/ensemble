@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,7 +51,10 @@ out.two = S.reactionsIn('## Review comments (2)\n\n**1.** > Alpha  words\n\n👍
 out.typed = S.reactionsIn('## Review comments (1)\n\n**1.** > Alpha\n\n👍 Agree, and more besides');
 out.mixed = S.reactionsIn('## Review comments (2)\n\n**1.** > Alpha\n\nA typed note\n\n**2.** > Bravo\n\n✅ Done / go ahead');
 out.plain = S.reactionsIn('👍 Agree');
-console.log(JSON.stringify({ ...out, two: out.two.map(x => [x.r.word, x.quote]), typed: out.typed.length,
+out.line = S.reactLine('👍 Agree', 'http://h/session?room=room-1&msg=m%3A9');
+out.linked = S.reactionsIn('## Review comments (1)\n\n**1.** > Alpha\n\n' + out.line).map(x => [x.r.word, x.quote, x.mid]);
+out.badLink = S.reactionsIn('## Review comments (1)\n\n**1.** > Alpha\n\n👍 Agree on something').length;
+console.log(JSON.stringify({ ...out, two: out.two.map(x => [x.r.word, x.quote, x.mid]), typed: out.typed.length,
   mixed: out.mixed.map(x => [x.r.word, x.quote]), plain: out.plain.length }));
 """
 
@@ -141,9 +145,23 @@ async function chat(c) {
   await p.key('Enter', 'Enter', 13, '\r');
   await p.until('[...document.querySelectorAll("#msgs .msg")].some(m => m.textContent.includes("Last balloon") && m.querySelector("a.react-chip"))', 20000);
 
+  // Two reactions while a send is slow: the second goes after the first, each alone.
+  await p.ev('window.__send = window.sendJson; window.sendJson = async (...a) => { await new Promise(r => setTimeout(r, 1500)); return window.__send(...a); }; 0');
+  await p.reset(); await p.pick(M, 'Filler message number 1', 14);
+  await p.click(await p.centre('.sel-bar .sel-react[data-r="1"]'));
+  await p.pick(M, 'Filler message number 2', 14);
+  await p.click(await p.centre('.sel-bar .sel-react[data-r="4"]'));
+  await p.until('[...document.querySelectorAll("#msgs .msg")].some(m => m.textContent.includes("Filler message number 2") && m.querySelector("a.react-chip"))', 20000);
+  out.waitTray = await p.ev('document.querySelectorAll("#cmt-tray .cmt-item").length');
+  await p.ev('window.sendJson = window.__send; 0');
+  // The same passage again: its chip goes on that balloon, not on the person's first reaction quoting it.
+  await p.reset(); await p.pick(M, 'Charlie reply', 13);
+  await p.click(await p.centre('.sel-bar .sel-react[data-r="5"]'));
+  await p.until('[...document.querySelectorAll("#msgs .msg")].some(m => m.textContent.includes("Charlie reply from") && m.querySelectorAll("a.react-chip").length === 2)', 20000);
+
   // Two balloons: Copy only.
   await p.reset();
-  await p.ev(`(() => { const ts = [...document.querySelectorAll(${JSON.stringify(M)})]; const a = ts.find(e => e.textContent.includes('Filler message number 0')), b = ts.find(e => e.textContent.includes('Last balloon'));
+  await p.ev(`(() => { const ts = [...document.querySelectorAll(${JSON.stringify(M)})]; const a = ts.find(e => e.textContent.includes('Filler message number 1')), b = ts.find(e => e.textContent.includes('Last balloon'));
     const fa = document.createTreeWalker(a, NodeFilter.SHOW_TEXT).nextNode(), fb = document.createTreeWalker(b, NodeFilter.SHOW_TEXT).nextNode();
     getSelection().setBaseAndExtent(fa, 0, fb, 4); })(); 0`);
   await sleep(500);
@@ -151,7 +169,7 @@ async function chat(c) {
   out.chips = await p.chips();
   await p.reset();
   await p.go();
-  await p.until('document.querySelectorAll("#msgs .react-chip").length >= 3', 20000);
+  await p.until('[...document.querySelectorAll("#msgs .msg")].some(m => m.textContent.includes("Charlie reply from") && m.querySelectorAll("a.react-chip").length === 2)', 20000);
   out.chipsReloaded = await p.chips();
   await p.ev('document.querySelector("#msgs .react-chip").closest(".msg").scrollIntoView({ block: "center" }); 0'); await sleep(300);
   await p.shot('laptop-chips');
@@ -213,7 +231,10 @@ class TheMessage(unittest.TestCase):
         got = json.loads(out.stdout.strip().splitlines()[-1])
         self.assertEqual(got["notes"], ["👍 Agree", "👎 Disagree", "❓ Question: explain this", "🤔 Not sure: think again",
                                         "✅ Done / go ahead", "❤️ Love it: keep this"])
-        self.assertEqual(got["two"], [["Agree", "Alpha  words"], ["Question: explain this", "Bravo"]])
+        self.assertEqual(got["two"], [["Agree", "Alpha  words", ""], ["Question: explain this", "Bravo", ""]])
+        self.assertEqual(got["line"], "👍 Agree on http://h/session?room=room-1&msg=m%3A9")
+        self.assertEqual(got["linked"], [["Agree", "Alpha", "m:9"]], "the reacted message, from its link")
+        self.assertEqual(got["badLink"], 0)
         self.assertEqual(got["typed"], 0, "a typed note that starts like one is no reaction")
         self.assertEqual(got["mixed"], [["Done / go ahead", "Bravo"]])
         self.assertEqual(got["plain"], 0, "not a review-comments message")
@@ -265,7 +286,7 @@ class InChrome(unittest.TestCase):
         chatroom.post_message(rid, "user", "First question about the motor gearbox.")
         chatroom.post_message(rid, "claude", "Alpha paragraph one has words.\n\nBravo paragraph two follows it.", to="user")
         chatroom.post_message(rid, "codex", "Charlie reply from the reviewer with some words.", to="claude")
-        for i in range(3):
+        for i in range(1, 3):
             chatroom.post_message(rid, "claude", f"Filler message number {i} with text.", to="user")
         chatroom.post_message(rid, "claude", "Last balloon: delta echo foxtrot golf hotel.", to="user")
         sent = cls.sent = []
@@ -328,14 +349,15 @@ class InChrome(unittest.TestCase):
         self.assertFalse(a["bar"]["shown"], a)
         self.assertEqual(a["sel"], "")
         ones = [s for s in self.chat_sends() if "Charlie reply" in s["text"]]
-        self.assertEqual(len(ones), 1, self.sent)
-        self.assertEqual(ones[0]["text"], "## Review comments (1)\n\n**1.** > Charlie reply\n\n👍 Agree")
+        self.assertEqual(len(ones), 2, self.sent)   # 👍, then ❤️ on the same words
+        self.assertRegex(ones[0]["text"], r"\A## Review comments \(1\)\n\n\*\*1\.\*\* > Charlie reply\n\n👍 Agree on "
+                                          r"http://127\.0\.0\.1:\d+/session\?room=" + re.escape(self.room) + r"&msg=[^&\s]+\Z")
         self.assertEqual(ones[0]["to"], "codex", "to the balloon's author")
 
     def test_a_double_click_sends_one(self):
         ones = [s for s in self.chat_sends() if "Bravo paragraph" in s["text"]]
         self.assertEqual(len(ones), 1, self.sent)
-        self.assertTrue(ones[0]["text"].endswith("❓ Question: explain this"), ones[0])
+        self.assertIn("\n\n❓ Question: explain this on http", ones[0]["text"])
 
     def test_tab_and_enter(self):
         g = self.got["chat"]
@@ -343,7 +365,12 @@ class InChrome(unittest.TestCase):
         self.assertEqual(g["tab2"]["active"], "sel-react", g["tab2"])
         ones = [s for s in self.chat_sends() if "Last balloon" in s["text"]]
         self.assertEqual(len(ones), 1, self.sent)
-        self.assertTrue(ones[0]["text"].endswith("\n\n👍 Agree"), ones[0])
+        self.assertIn("\n\n👍 Agree on http", ones[0]["text"])
+
+    def test_a_reaction_during_a_send_goes_after_it_alone(self):
+        notes = [s["text"].split("\n\n")[-1].split(" on http")[0] for s in self.chat_sends() if "> Filler message" in s["text"]]
+        self.assertEqual(notes, ["👎 Disagree", "✅ Done / go ahead"], "each alone, the second after the first")
+        self.assertEqual(self.got["chat"]["waitTray"], 0, "nothing left waiting in the tray")
 
     def test_two_balloons_have_no_reactions(self):
         g = self.got["chat"]["twoBalloons"]
@@ -353,10 +380,15 @@ class InChrome(unittest.TestCase):
     def test_the_chip_shows_and_survives_a_reload(self):
         for k in ("chips", "chipsReloaded"):
             with self.subTest(k):
-                got = {x["text"][:12]: x["chips"] for x in self.got["chat"][k]}
-                self.assertEqual(set(got), {"Alpha paragr", "Charlie repl", "Last balloon"}, got)
-                self.assertEqual([c["t"] for c in got["Charlie repl"]], ["👍"])
-                self.assertEqual([c["t"] for c in got["Alpha paragr"]], ["❓"])
+                got = {x["text"][:23] if x["text"].startswith("Filler") else x["text"][:12]: x["chips"] for x in self.got["chat"][k]}
+                # After the reload the chat opens on its latest balloons: the first one may be out of it.
+                want = {"Alpha paragr", "Charlie repl", "Last balloon", "Filler message number 1", "Filler message number 2"}
+                self.assertLessEqual(set(got), want, got)
+                self.assertLessEqual(want - {"Alpha paragr"} if k == "chipsReloaded" else want, set(got), got)
+                self.assertEqual([c["t"] for c in got.get("Alpha paragr", [{"t": "❓"}])], ["❓"])
+                self.assertEqual([c["t"] for c in got["Filler message number 1"]], ["👎"])
+                self.assertEqual([c["t"] for c in got["Filler message number 2"]], ["✅"])
+                self.assertEqual([c["t"] for c in got["Charlie repl"]], ["👍", "❤️"], "both on the balloon, none on the person's own")
                 self.assertTrue(all(c["link"] and not c["sending"] for v in got.values() for c in v), got)
                 self.assertEqual(got["Charlie repl"][0]["label"], "Your reaction: Agree")
 

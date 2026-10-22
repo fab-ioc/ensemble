@@ -1652,11 +1652,12 @@ function openComposer(data) {
 }
 // A quick reaction from the selection bar (#258): the passage comment a typed
 // one would be, its words the reaction's ("👍 Agree"), sent at once and on its
-// own; another comment waiting in the tray waits for its Submit. Only where a
-// task chat owns the file (canReact): with no chat there is no one to react to.
+// own; another comment waiting in the tray waits for its Submit, and one
+// clicked while a send is on its way goes right after it. Only where a task
+// chat owns the file (canReact): with no chat there is no one to react to.
 function selReact(r, data) {
   const cid = FVC.id();
-  FVC.put({ cid, at: FVC.now(), note: SelBar.reactNote(r), view: CUR_VIEW, start: data.start, end: data.end, quote: data.quote, ...(data.line ? { line: data.line } : {}) });
+  FVC.put({ cid, at: FVC.now(), note: SelBar.reactNote(r), react: true, view: CUR_VIEW, start: data.start, end: data.end, quote: data.quote, ...(data.line ? { line: data.line } : {}) });
   clearHl(); remarkAll(); renderTray();
   const s = (data.doc || document).getSelection(); if (s) s.removeAllRanges();
   submitCmts([cid]);
@@ -2039,14 +2040,40 @@ function showFallback(intro, body) {
   p.querySelector('.cmt-cancel').onclick = () => p.remove();
 }
 // `only`: the comments to send (a quick reaction's own); all of them without.
+// A quick reaction always goes in a message of its own, under its own key, so
+// one tried before (not confirmed) is taken once when sent again: Submit sends
+// the typed comments together, then each reaction alone. One send at a time;
+// a reaction clicked meanwhile goes after it.
+let FV_SENDING = false, FV_AGAIN = false;   // FV_AGAIN: Submit was pressed meanwhile
+const FV_WAIT = new Set();
 async function submitCmts(only) {
-  const list = only ? CMTS.filter(c => only.includes(c.cid)) : CMTS.slice();
-  if (!list.length) return;
+  if (FV_SENDING) { if (only) only.forEach(cid => FV_WAIT.add(cid)); else FV_AGAIN = true; return; }
+  const groups = only ? [CMTS.filter(c => only.includes(c.cid))]
+    : ROOM ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
+  FV_SENDING = true;
+  let ok = true;
+  try {
+    for (const list of groups) if (list.length && !(ok = await sendCmts(list))) break;
+    while (ok && FV_WAIT.size) {
+      const cid = FV_WAIT.values().next().value;
+      FV_WAIT.delete(cid);
+      const list = CMTS.filter(c => c.cid === cid);
+      if (list.length) ok = await sendCmts(list);
+    }
+  } finally {
+    FV_SENDING = false;
+    FV_WAIT.clear();           // not sent: they wait in the tray
+  }
+  const again = FV_AGAIN && ok; FV_AGAIN = false;
+  if (again) submitCmts();
+}
+// One message of comments; true when it went (or the hub holds it).
+async function sendCmts(list) {
   const body = buildBody(list);
   if (!ROOM) {
     try { await navigator.clipboard.writeText(body); toast('No task chat to send to — comments copied.'); }
     catch (e) { showFallback('No task chat to send to. Copy your comments:', body); }
-    return;
+    return false;
   }
   // The hub's resume-or-deliver, never /api/room/say: a task that is not
   // running is resumed for the comments and they are typed in once its owner
@@ -2063,14 +2090,16 @@ async function submitCmts(only) {
       // delivered, with Retry. Anything else keeps them here.
       if (!(j && j.kept)) throw new Error((j && j.error) || r.status);
       dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
-      return;
+      return true;
     }
     dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('✓ Comments sent to the chat');
+    return true;
   } catch (e) {
     // No answer: they may have arrived. The same comments again have the same key, so they count once.
     showFallback(e && !e.status && (e.timeout || e.network)
       ? 'Not confirmed: the hub did not answer. Submit again without changing them (they are posted only once), or copy them:'
       : 'Couldn’t send to the chat. Copy your comments:', body);
+    return false;
   }
 }
 // Download, Copy (a text file) and Share… (where the browser shares files):
