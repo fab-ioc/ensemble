@@ -47,7 +47,7 @@ def validate(after, on_ready, project_id, room_id=""):
 
 
 def view(room):
-    return {"after": [{"task": _d.task_label(_d.chatroom.get_room(g["task"], copy_room=False) or {})
+    return {"after": [{"task": _d.task_label(_d.chatroom.get_room(g["task"], copy_room=False, messages=False) or {})
                                or g["task"], "when": g.get("when", "merged")}
                       for g in room.get("after", [])],
             "onReady": room.get("onReady", "start")}
@@ -59,7 +59,7 @@ def gate_state(room, project_id, git, now):
         return [], 0
     out, times = [], []
     for gate in gates:
-        target = _d.chatroom.get_room(gate["task"], public=False)
+        target = _d.chatroom.get_room(gate["task"], public=False, messages=False)
         if not target or _d.ensemble_tools._project_of_room(target) != project_id:
             return [], 0
         when = gate.get("when", "merged")
@@ -220,7 +220,7 @@ def check(project, now=None):
                     not room.get("after") and _d.priority_of(room) <= 2)):
                 ready.append(room)
         # Reload after launches: normal allocation/start changes the live seats.
-        rooms = [_d.chatroom.get_room(r["id"], copy_room=False) or r for r in rooms]
+        rooms = [_d.chatroom.get_room(r["id"], copy_room=False, messages=False) or r for r in rooms]
         active = [r for r in rooms if r.get("launched", True) and _d.workflow_of(r) != "done"
                   and _d._room_is_live(r)]
         starts = {r["id"]: float(r.get("launchedAt") or 0) for r in rooms}

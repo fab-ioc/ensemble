@@ -86,6 +86,7 @@ def room_index() -> list[dict]:
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     seen = set()
     with _INDEX_LOCK:
+        _cards_here()
         # Listed under the lock, as a write replaces a room under it: a room
         # written meanwhile is never taken for one deleted.
         table = ROOM_FILES.files()
@@ -101,9 +102,19 @@ def room_index() -> list[dict]:
                 hit = _INDEX.get(rid)
                 if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
                     continue
+                # A kept card is taken while its room file is unchanged. A
+                # veto that changed without a write (a room made a PO's, a
+                # seat come alive) and a crash between the log append and the
+                # room file both leave it a card until the room is written:
+                # the chat itself is always read whole from file and log.
+                kept = _CARDS.get(rid)
+                if kept and kept["sig"] == _signature(st):
+                    _INDEX[rid] = _card_entry(kept["card"], st)
+                    _CHANGES.pop(rid, None)
+                    continue
                 room = _read(rid)
                 if room is not None:
-                    _INDEX[rid] = _entry(room, st)
+                    _INDEX[rid] = _index_entry(rid, room, st)
                     # An external write has no recorded message diff.
                     _CHANGES.pop(rid, None)
             except OSError:
@@ -112,7 +123,16 @@ def room_index() -> list[dict]:
             if rid not in seen:
                 _INDEX.pop(rid, None)
                 _CHANGES.pop(rid, None)
-        return list(_INDEX.values())
+        for rid in [r for r in _CARDS if r not in seen]:
+            _CARDS.pop(rid, None)
+            _FULL.pop(rid, None)
+            _CARDS_STATE["dirty"] = True
+        if time.monotonic() - _CARDS_STATE["swept"] >= CARDS_SWEEP_S:
+            _CARDS_STATE["swept"] = time.monotonic()
+            sweep_cards()
+        out = list(_INDEX.values())
+    save_cards()
+    return out
 
 
 def room_is_cold(room: dict, is_live=None, now: float | None = None) -> bool:
@@ -129,6 +149,193 @@ def room_is_cold(room: dict, is_live=None, now: float | None = None) -> bool:
         return False
     changed = max(float(room.get("updatedAt") or 0), stopped_at)
     return changed < now - 86400 and not (is_live and is_live(room))
+
+
+# Finished tasks as cards (#256): a task Done for a day is held in the index
+# as its record without its messages (a card), with a few facts its messages
+# gave (CARD_FACTS), and the cards are kept in CARDS_FILE_NAME, so a start
+# parses neither the ~700 finished rooms nor their chats. The room's file and
+# log stay as they are: they are its archive, read whole only when the task
+# is opened or changed (get_room, _load), the last few kept (FULL_KEEP).
+ARCHIVE_AFTER_S = 86400
+CARDS_FILE_NAME = "cards.json"
+CARDS_VERSION = 1
+CARDS_SAVE_S = 60.0
+CARDS_SWEEP_S = 300.0
+FULL_KEEP = 16
+# Each: room -> True to keep the room whole (a live seat, an open ask, a
+# PO's room). One that raises keeps it whole too.
+ARCHIVE_VETO: list = []
+# Each: room -> a dict of facts its messages give, kept on its card under
+# CARD_KEY ("turns" is always there).
+CARD_FACTS: list = []
+CARD_KEY = "_card"
+_CARDS: dict[str, dict] = {}            # room id -> {"sig": size:mtime of its file, "card": {...}}
+_CARDS_STATE = {"dir": "", "dirty": False, "saved": 0.0, "swept": 0.0}
+_FULL: dict[str, tuple[int, int, dict]] = {}    # room id -> (size, mtime, whole room), newest last
+
+
+def archivable(room: dict, now: float | None = None) -> bool:
+    """Whether a room is held as a card: Done, unchanged for ARCHIVE_AFTER_S,
+    not waiting on the person, and no ARCHIVE_VETO keeps it whole."""
+    if (room.get("workflow") or "").lower() != "done" or room.get("status") == "waiting_human":
+        return False
+    now = _now() if now is None else now
+    try:
+        changed = max(float(room.get("updatedAt") or 0), float(room.get("stoppedAt") or 0),
+                      float(room.get("workflowAt") or 0))
+    except (TypeError, ValueError):
+        return False
+    if changed >= now - ARCHIVE_AFTER_S:
+        return False
+    for veto in ARCHIVE_VETO:
+        try:
+            if veto(room):
+                return False
+        except Exception:       # noqa: BLE001 — not sure: the room stays whole
+            return False
+    return True
+
+
+def is_card(room: dict) -> bool:
+    return CARD_KEY in room
+
+
+def message_count(room: dict) -> int:
+    """How many messages a room has, a card's included."""
+    card = room.get(CARD_KEY)
+    return int(card.get("turns") or 0) if isinstance(card, dict) else len(room.get("messages") or [])
+
+
+def _make_card(room: dict) -> dict:
+    msgs = room.get("messages") or []
+    facts = {"turns": len(msgs)}
+    for fn in CARD_FACTS:
+        try:
+            facts.update(fn(room) or {})
+        except Exception as e:      # noqa: BLE001 — a fact missing shows as none
+            print(f"[rooms] {room.get('id')}: card fact not read: {e!r}", flush=True)
+    card = {k: v for k, v in room.items() if k != "messages"}
+    card[CARD_KEY] = facts
+    return card
+
+
+def _cards_path() -> Path:
+    return ROOMS_DIR / CARDS_FILE_NAME
+
+
+def _cards_here() -> None:
+    """The cards of this ROOMS_DIR, read once: a card is used only while its
+    room's file has the size and time it was made from, so a stale or
+    damaged cards file costs a re-read, never a wrong room."""
+    here = str(ROOMS_DIR)
+    if _CARDS_STATE["dir"] == here:
+        return
+    _CARDS.clear()
+    _FULL.clear()
+    _CARDS_STATE.update(dir=here, dirty=False, saved=0.0, swept=0.0)
+    try:
+        d = json.loads(_cards_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as e:
+        print(f"[rooms] cards not read, the rooms are read instead: {e!r}", flush=True)
+        return
+    if not isinstance(d, dict) or d.get("version") != CARDS_VERSION or not isinstance(d.get("cards"), dict):
+        return
+    for rid, c in d["cards"].items():
+        if (isinstance(c, dict) and isinstance(c.get("sig"), str) and isinstance(c.get("card"), dict)
+                and c["card"].get("id") == rid and isinstance(c["card"].get(CARD_KEY), dict)):
+            _CARDS[rid] = c
+
+
+def _card_entry(card: dict, st) -> dict:
+    e = _entry(card, st)
+    e["cold"] = True
+    return e
+
+
+def _index_entry(room_id: str, room: dict, st, now: float | None = None) -> dict:
+    """The index entry of a room just read or written: a card if it is
+    archivable. Under _INDEX_LOCK."""
+    _cards_here()
+    if archivable(room, now):
+        card = _make_card(room)
+        _CARDS[room_id] = {"sig": _signature(st), "card": card}
+        _CARDS_STATE["dirty"] = True
+        _keep_full(room_id, st, room)
+        return _card_entry(card, st)
+    if _CARDS.pop(room_id, None) is not None:
+        _CARDS_STATE["dirty"] = True
+    _FULL.pop(room_id, None)
+    return _entry(room, st)
+
+
+def _keep_full(room_id: str, st, room: dict) -> None:
+    _FULL.pop(room_id, None)
+    _FULL[room_id] = (st.st_size, st.st_mtime_ns, room)
+    while len(_FULL) > FULL_KEEP:
+        _FULL.pop(next(iter(_FULL)))
+
+
+def _full_room(room_id: str, st) -> dict | None:
+    """A carded room whole, from its file and log. Called with _INDEX_LOCK
+    released: reading a 17 MB chat under it held every list ~0.5 s. The room
+    read is kept only while the index still has the file it was read from."""
+    with _INDEX_LOCK:
+        hit = _FULL.get(room_id)
+        if hit and hit[0] == st.st_size and hit[1] == st.st_mtime_ns:
+            _keep_full(room_id, st, hit[2])
+            return hit[2]
+    room = _read(room_id)
+    if room is not None:
+        with _INDEX_LOCK:
+            e = _INDEX.get(room_id)
+            if e and e.get("cold") and e["size"] == st.st_size and e["mtime"] == st.st_mtime_ns:
+                _keep_full(room_id, st, room)
+    return room
+
+
+def sweep_cards(now: float | None = None) -> int:
+    """Hold the whole rooms that became archivable as cards; how many."""
+    n = 0
+    with _INDEX_LOCK:
+        for rid, e in list(_INDEX.items()):
+            if e.get("cold") or not archivable(e["room"], now):
+                continue
+            try:
+                st = _room_path(rid).stat()
+            except OSError:
+                continue
+            if e["size"] != st.st_size or e["mtime"] != st.st_mtime_ns:
+                continue
+            _INDEX[rid] = _index_entry(rid, e["room"], st, now)
+            n += 1
+    return n
+
+
+def save_cards(force: bool = False) -> bool:
+    """Write the cards file when cards changed, at most every CARDS_SAVE_S."""
+    with _INDEX_LOCK:
+        if not _CARDS_STATE["dirty"] or not _CARDS_STATE["dir"]:
+            return False
+        if not force and time.monotonic() - _CARDS_STATE["saved"] < CARDS_SAVE_S:
+            return False
+        snap = dict(_CARDS)
+        _CARDS_STATE.update(dirty=False, saved=time.monotonic())
+        path = _cards_path()
+    try:
+        tmp = path.with_name(path.name + ".tmp")
+        durable.write_tmp(tmp, json.dumps({"version": CARDS_VERSION, "cards": snap}))
+        _replace(tmp, path)
+        return True
+    except Exception as e:
+        # Any failure (a card that will not serialise too) leaves the cards
+        # file as it was and the index untouched: the list never empties.
+        print(f"[rooms] cards not saved: {e!r}", flush=True)
+        with _INDEX_LOCK:
+            _CARDS_STATE["dirty"] = True
+        return False
 
 
 def room_delta(room_id: str, cursor: str, target: str = "") -> tuple[str, set[str]] | None:
@@ -451,8 +658,13 @@ def _load(room_id: str) -> dict | None:
         return None
     with _INDEX_LOCK:
         hit = _INDEX.get(room_id)
-        if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns:
+        if hit and hit["size"] == st.st_size and hit["mtime"] == st.st_mtime_ns and not hit.get("cold"):
             return _listed_copy(hit["room"])
+        cold = bool(hit and hit.get("cold") and hit["size"] == st.st_size
+                    and hit["mtime"] == st.st_mtime_ns)
+    if cold:
+        room = _full_room(room_id, st)
+        return _listed_copy(room) if room is not None else None
     return _read(room_id)
 
 
@@ -471,14 +683,19 @@ def _write(room: dict, *, removed: int = 0) -> None:
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
     room["_revision"] = uuid.uuid4().hex
-    with _INDEX_LOCK:
-        prior = _INDEX.get(room["id"])
-        try:
-            old_st = p.stat()
-            old = prior["room"] if prior and prior["size"] == old_st.st_size and prior["mtime"] == old_st.st_mtime_ns else _read(room["id"])
-            old_sig = _entry(old, old_st)["signature"] if old else ""
-        except OSError:
-            old_sig, old = "", None
+    # The room as it was; a whole file and log are read outside the index
+    # lock (the writer holds _LOCK, so the room cannot change meanwhile).
+    try:
+        old_st = p.stat()
+        with _INDEX_LOCK:
+            prior = _INDEX.get(room["id"])
+            same = prior and prior["size"] == old_st.st_size and prior["mtime"] == old_st.st_mtime_ns
+            old = prior["room"] if same and not prior.get("cold") else None
+        if old is None:
+            old = _full_room(room["id"], old_st) if same else _read(room["id"])
+        old_sig = _entry(old, old_st)["signature"] if old else ""
+    except OSError:
+        old_sig, old = "", None
     # The log first: a stop between the two leaves a room file that still
     # reads (its old messages, or the log with one message more).
     msgs = room.get("messages") or []
@@ -500,7 +717,7 @@ def _write(room: dict, *, removed: int = 0) -> None:
         _LOGGED.add(room["id"])
         st = p.stat()
         new_sig = _entry(room, st)["signature"]
-        _INDEX[room["id"]] = _entry(_listed_copy(room), st)
+        _INDEX[room["id"]] = _index_entry(room["id"], _listed_copy(room), st)
         old_msgs = (old or {}).get("messages") or []
         new_msgs = room.get("messages") or []
         # A delta can patch changed messages and appends. Deletion or reorder
@@ -881,19 +1098,27 @@ def _listed_copy(room: dict) -> dict:
     return out
 
 
-def list_rooms(*, copy_rooms: bool = True) -> list[dict]:
-    """List rooms; read-only hot paths may borrow nested indexed values."""
+def list_rooms(*, copy_rooms: bool = True, revisions: dict | None = None) -> list[dict]:
+    """List rooms; read-only hot paths may borrow nested indexed values.
+    ``revisions`` gets each listed room's revision, taken with the room: a
+    room_revision() read later may be that of a write made since (#256)."""
+    entries = room_index()
+    if revisions is not None:
+        revisions.update((e["id"], e["signature"]) for e in entries)
     out = [_public(_listed_copy(e["room"]) if copy_rooms else e["room"])
-           for e in room_index()]
+           for e in entries]
     out.sort(key=lambda r: r.get("updatedAt", 0), reverse=True)
     return out
 
 
-def get_room(room_id: str, public: bool = True, *, copy_room: bool = True) -> dict | None:
+def get_room(room_id: str, public: bool = True, *, copy_room: bool = True,
+             messages: bool = True) -> dict | None:
     # The GET path uses the index, while mutations keep using _read under
     # _LOCK. Copy so status decoration cannot change the indexed source.
     # The message dicts are shared even in a copy: read them, never change
     # one in place (replace it in the list), or the log keeps the old one.
+    # A finished task's room is a card in the index: ``messages=False`` takes
+    # the card (its record without messages), else the room is read whole.
     p = _room_path(room_id)
     try:
         st = p.stat()
@@ -905,10 +1130,19 @@ def get_room(room_id: str, public: bool = True, *, copy_room: bool = True) -> di
             fresh = _read(room_id)
             if fresh is None:
                 return None
-            hit = _entry(fresh, st)
+            hit = _index_entry(room_id, fresh, st)
             _INDEX[room_id] = hit
             _CHANGES.pop(room_id, None)
-        r = _listed_copy(hit["room"]) if copy_room else hit["room"]
+        src = hit["room"]
+        whole = hit.get("cold") and messages
+        if not whole:
+            r = _listed_copy(src) if copy_room else src
+    if whole:
+        # A carded room's file and log are read outside the index lock.
+        src = _full_room(room_id, st)
+        if src is None:
+            return None
+        r = _listed_copy(src) if copy_room else src
     if r is None:
         return None
     return _public(r) if public else r
@@ -930,6 +1164,10 @@ def delete_room(room_id: str) -> bool:
             return False
         _LOGGED.discard(room_id)
         _DAMAGED.pop(room_id, None)
+        with _INDEX_LOCK:
+            _FULL.pop(room_id, None)
+            if _CARDS.pop(room_id, None) is not None:
+                _CARDS_STATE["dirty"] = True
         try:
             _log_path(room_id).unlink()
         except OSError:
@@ -959,19 +1197,20 @@ def resolve_token(token: str) -> tuple[str, str] | None:
     # cost an agent's every tool call up to ~0.6 s under the store lock, by
     # where its room fell in the folder (#256). The room last found for a
     # token is looked at first; the index re-reads a room that changed.
-    with _INDEX_LOCK:
-        rid = _TOKEN_ROOMS.get(token)
-        if rid:
-            room = get_room(rid, public=False, copy_room=False)
-            ident = (room or {}).get("tokens", {}).get(token)
-            if ident:
-                return rid, ident
-        for e in room_index():
-            ident = (e["room"].get("tokens") or {}).get(token)
-            if ident:
-                _TOKEN_ROOMS[token] = e["id"]
-                return e["id"], ident
-        _TOKEN_ROOMS.pop(token, None)
+    # The scan is outside the lock: room_index may save the cards file, which
+    # it does with the lock released.
+    rid = _TOKEN_ROOMS.get(token)
+    if rid:
+        room = get_room(rid, public=False, copy_room=False, messages=False)
+        ident = (room or {}).get("tokens", {}).get(token)
+        if ident:
+            return rid, ident
+    for e in room_index():
+        ident = (e["room"].get("tokens") or {}).get(token)
+        if ident:
+            _TOKEN_ROOMS[token] = e["id"]
+            return e["id"], ident
+    _TOKEN_ROOMS.pop(token, None)
     return None
 
 
