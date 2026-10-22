@@ -689,18 +689,18 @@ class ThePage(unittest.TestCase):
         self.assertIn("resuming: ROOM_RESUMING", SESSION)
 
     def test_send_goes_the_resume_way_when_stopped(self):
-        self.assertIn("async function sendResuming(text, to, key, attachments)", SESSION)
+        self.assertIn("async function sendResuming(text, to, key, attachments, now)", SESSION)
         self.assertIn("const body = { roomId: ROOM, text, to: to || '', key: key || '' };", SESSION)
         self.assertIn("return postOk('/api/room/resume', body);", SESSION)
-        send = SESSION[SESSION.index("async function sendNow() {"):]
+        send = SESSION[SESSION.index("async function sendNow(urgent = false) {"):]
         send = send[:send.index("\n}\n$('#send').onclick")]
         # A one-agent chat's too: the hub keeps the person's points (points.py)
         # and types it in, or resumes the session for it.
-        self.assertIn("try { d = await sendResuming(t, '', key, atts); }", send)
+        self.assertIn("try { d = await sendResuming(t, '', key, atts, urgent); }", send)
         self.assertNotIn("/api/pty/input", send)
         # A team's every send goes through the hub's resume-or-deliver: the
         # hub, not the last poll, knows whether the team is still running.
-        self.assertIn("await sendResuming(t, to, msgKey(), atts)", send)
+        self.assertIn("await sendResuming(t, to, msgKey(), atts, urgent)", send)
         self.assertNotIn("/api/room/say", send)
         submit = SESSION[SESSION.index("async function submitComments() {"):]
         submit = submit[:submit.index("\n}\n")]

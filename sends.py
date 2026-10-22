@@ -615,6 +615,31 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
             _log(f"{room_id}: thread replies not marked: {e!r}")
 
 
+def note_how(room_id: str, key: str, how: str) -> None:
+    """Send now: this send reached a busy agent at once (``how``: "into-turn",
+    typed into the running turn; "interrupted", the turn stopped first)."""
+    if not key or not how or not _ROOM_ID.fullmatch(room_id or ""):
+        return
+    try:
+        with _LOCK:
+            items = _load(room_id)
+            s = _find(items, key)
+            if s is None or s.get("how") == how:
+                return
+            s["how"] = how
+            _save(room_id, items)
+    except (OSError, ValueError) as e:     # the delivery itself stands
+        _log(f"{room_id}: send {key} how not noted: {e!r}")
+
+
+def hows(room_id: str) -> dict[str, str]:
+    """{balloon id: how} of the kept sends that went in by Send now."""
+    if not _ROOM_ID.fullmatch(room_id or ""):
+        return {}
+    with _LOCK:
+        return {s["mid"]: s["how"] for s in _load(room_id) if s.get("mid") and s.get("how")}
+
+
 def confirmed_mids(room_id: str) -> dict[str, str]:
     """{key: balloon id} of the sends found in the conversation (kept KEEP_S)."""
     with _LOCK:
@@ -658,7 +683,7 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
                 s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
             continue        # in the conversation (or never to be: a /command)
         row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read",
-                                     "afterRestart", "thread", "also")
+                                     "afterRestart", "thread", "also", "how")
                if s.get(k) not in (None, "", False)}
         if s.get("redeliveries"):
             row["redeliveredAt"] = s["redeliveries"][-1]["at"]     # "typed in again at …"
