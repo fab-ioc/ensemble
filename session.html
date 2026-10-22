@@ -7545,13 +7545,17 @@ function slParse(text) {
   return { ident: m[1] || '', name: m[3], text: (m[2] + (m[4] || '')).trim(), args: !!(m[4] || '').trim() };
 }
 // The box holds a command to send: one known to the agent, or a bare /name
-// (the CLI says if it does not know it). "/tmp is full" stays a message.
+// (Claude says if it does not know it). "/tmp is full" stays a message.
+// Codex keeps a name it does not know in its composer, where the next line
+// would join it: a bare unknown /name is refused there ({ unknown }).
 async function slCommandOf(text) {
   const c = slParse(text);
   if (!c || (typeof ED !== 'undefined' && ED.points && ED.points.length)) return null;
   const cat = await slCatalogue(c.ident);
   const known = (cat.commands || []).find(x => x.name.toLowerCase() === c.name.toLowerCase());
   if (!known && c.args) return null;
+  const part = slTarget(c.ident);
+  if (!known && part && part.agent === 'codex' && !/^(exit|quit)$/i.test(c.name)) return Object.assign(c, { unknown: true });
   return Object.assign(c, { source: known ? known.source : '' });
 }
 function slHide() {
@@ -7649,7 +7653,10 @@ async function sendCommand(c) {
     try {
       d = await postOk('/api/room/command', { roomId: ROOM, text: c.text, identity: c.ident, key: msgKey() });
     } catch (e) {
-      SEND_ERR = 'Not sent: ' + (e.reason || sendErrorText(e)) + '. Your command is still in the box.';
+      // No answer may still have reached the hub, which takes a key once.
+      SEND_ERR = sendUnconfirmed(e)
+        ? 'Not confirmed: ' + sendErrorText(e) + '. Your command is still in the box: Send again, it is typed only once.'
+        : 'Not sent: ' + (e.reason || sendErrorText(e)) + '. Your command is still in the box.';
       setText($('#hint'), SEND_ERR);
       return;
     }
@@ -7760,10 +7767,12 @@ function cmdTick() {
   if (scr.menu != null && scr.menu.trim()) {
     c.sawMenu = true; c.menu = scr.menu;
     cmdPanelShow(c, scr.menu);
+    cmdMenuSay(c, true);
     return;
   }
   cmdPanelHide();
-  if (c.resumed) { CMD = null; return; }
+  cmdMenuSay(c, false);
+  if (c.resumed && !c.key) { CMD = null; return; }
   const out = cmdOutput(c, lines);
   if (age > 600000) return cmdDone(c, out.text);
   if (Date.now() - c.sigAt < 1500 || (out.busy && !c.busy0 && !out.text)) return;
@@ -7777,9 +7786,17 @@ function cmdTick() {
     cmdDone(c, text);
   }
 }
+// The hub holds its own lines to the agent while a menu is open (typed
+// into a picker they would choose an entry): told every 2 s while it is.
+function cmdMenuSay(c, open) {
+  if (!c.pty || (!open && !c.said) || (open && c.said && Date.now() - c.said < 2000)) return;
+  c.said = open ? Date.now() : 0;
+  jpost('/api/room/command-menu', { roomId: ROOM, ptyId: c.pty, open });
+}
 function cmdDone(c, text) {
   if (CMD === c) CMD = null;
   cmdPanelHide();
+  cmdMenuSay(c, false);
   // A new conversation's screen is not something the command said.
   if (!text || !c.key || /^(clear|new|reset)$/.test(c.name || '')) return;
   postOk('/api/room/command-output', { roomId: ROOM, key: c.key, text }).then(() => setTimeout(refresh, 200), () => {});
@@ -7842,8 +7859,16 @@ setInterval(() => {
   if (card && !card.hidden) return;
   const lines = readScreen(part.ptyId);
   const scr = cmdScreen(part.agent, lines, []);
-  if (scr.menu && scr.menu.trim() && CMD_HINT.test(scr.menu))
-    cmdWatch({ key: '', pty: part.ptyId, identity: part.identity, agent: part.agent, text: '', name: '', s0: lines, resumed: true });
+  if (scr.menu && scr.menu.trim() && CMD_HINT.test(scr.menu)) {
+    // The person's last command to this agent, if lately: its output is
+    // posted once the menu closes, as it would have been without the reload.
+    const rec = [...((ROOM_OBJ && ROOM_OBJ.messages) || [])].reverse()
+      .find(m => m.kind === 'notice' && /^command(Output)?$/.test(m.noticeKind || '') && (m.noticeKind === 'commandOutput' ? m.from : m.to) === part.identity);
+    const cmd = rec && rec.noticeKind === 'command' && rec.key && Date.now() / 1000 - (rec.ts || 0) < 3600 ? rec : null;
+    const name = cmd ? (cmd.text.match(/^\/([\w.:-]+)/) || [, ''])[1].toLowerCase() : '';
+    cmdWatch({ key: cmd ? cmd.key : '', pty: part.ptyId, identity: part.identity, agent: part.agent,
+               text: cmd ? cmd.text : '', name, s0: lines, resumed: true });
+  }
 }, 1500);
 // ---- Slash commands: end ------------------------------------------------------
 // Solo: deliver a message to the agent by typing into its terminal (the same
@@ -8207,6 +8232,10 @@ async function sendNow() {
   }
   // A slash command goes to the agent's terminal as it is (#253).
   const cmd = !atts.length && await slCommandOf(t);
+  if (cmd && cmd.unknown) {
+    setText($('#hint'), `Codex has no /${cmd.name} command: pick one from the list under /, or add words to send it as a message.`);
+    return;
+  }
   if (cmd) { await sendCommand(cmd); return; }
   setSendBusy(true);
   setText($('#hint'), 'Sending your message.');

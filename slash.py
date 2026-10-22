@@ -46,23 +46,34 @@ CLAUDE_BUILTINS: tuple[tuple[str, str], ...] = (
     ("todos", "List the current todo items"),
     ("usage", "Show plan usage limits"),
 )
+CLAUDE_NAMES = frozenset(n for n, _ in CLAUDE_BUILTINS)
 CODEX_BUILTINS: tuple[tuple[str, str], ...] = (
     ("approvals", "Choose what Codex may do without asking"),
     ("compact", "Summarise the conversation to free context"),
     ("diff", "Show the git diff, untracked files included"),
+    ("experimental", "Toggle experimental features"),
+    ("fast", "Faster responses, more usage"),
+    ("ide", "Include the IDE's selection and open files"),
     ("init", "Write an AGENTS.md for this codebase"),
+    ("keymap", "Remap the TUI's shortcuts"),
     ("mcp", "List the configured MCP tools"),
     ("mention", "Mention a file"),
     ("model", "Choose the model and reasoning effort"),
     ("new", "Start a new conversation"),
+    ("permissions", "Choose what Codex is allowed to do"),
     ("resume", "Resume an earlier conversation"),
     ("review", "Review the current changes"),
     ("skills", "List and use skills"),
     ("status", "Show the session's configuration and token usage"),
     ("undo", "Undo the last turn's changes"),
+    ("vim", "Toggle Vim mode for the composer"),
 )
 # Commands after which the agent is in a new conversation: the hub follows it.
-NEW_CONVERSATION = {"claude": ("clear", "reset", "new"), "codex": ("new", "clear")}
+# Codex's /resume too: it may go on in another conversation (Claude's
+# /resume says so with its SessionStart hook, source "resume").
+NEW_CONVERSATION = {"claude": ("clear", "reset", "new"), "codex": ("new", "resume")}
+# Typed, these go too, though the list leaves them out.
+UNLISTED = {"claude": ("exit", "quit"), "codex": ("exit", "quit")}
 
 _FRONT = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.S)
 _NAME = re.compile(r"^[A-Za-z0-9][\w.:-]{0,63}$")
@@ -155,6 +166,13 @@ def catalogue(agent: str, cwd: str = "", home: Path | None = None) -> list[dict]
             seen.add(c["name"])
             out.append(c)
     return out
+
+
+def known(agent: str, name: str, cwd: str = "", home: Path | None = None) -> bool:
+    """``name`` (no slash) is a command this agent kind takes."""
+    name = (name or "").lower()
+    return bool(name) and (name in UNLISTED.get(agent, ())
+                           or any(c["name"].lower() == name for c in catalogue(agent, cwd, home)))
 
 
 def command_name(text: str) -> str:

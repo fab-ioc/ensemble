@@ -66,11 +66,15 @@ class Hub(unittest.TestCase):
         for p in self.patches:
             p.start()
         dashboard._COMMANDS.clear()
+        dashboard._MENUS.clear()
+        dashboard._MENU_HELD.clear()
 
     def tearDown(self):
         for p in self.patches:
             p.stop()
         dashboard._COMMANDS.clear()
+        dashboard._MENUS.clear()
+        dashboard._MENU_HELD.clear()
         chatroom.ROOMS_DIR = self.old_dir
         self.temp.cleanup()
 
@@ -157,15 +161,120 @@ class Hub(unittest.TestCase):
         self.assertTrue(dashboard._hub_row({"kind": "notice", "noticeKind": "commandOutput"}))
 
     # ---- the hub follows a new conversation ----
-    def test_codex_new_blanks_the_seat_and_keeps_the_old_conversation(self):
+    def _codex_rollouts(self, latest):
+        """Codex's rollout lookup: ``latest[0]`` is what it finds."""
+        cx = mock.Mock()
+        cx.latest_session_id_for_cwd.side_effect = lambda cwd, since=0.0: latest[0]
+        dashboard._CODEX_SID_TRIED.clear()
+        return mock.patch.object(dashboard.agents, "get_agent", return_value=cx)
+
+    def test_codex_new_keeps_the_seat_until_a_new_rollout_appears(self):
         rid = self.room((("codex", "codex"),))
         dashboard.send_command(rid, "/new", key="k1")
         part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
-        self.assertEqual(part["sessionId"], "")
+        self.assertEqual(part["sessionId"], "sid-codex", "nothing has started yet")
+        self.assertEqual(part["pendingNew"]["fromSessionId"], "sid-codex")
+        latest = ["sid-codex"]          # refused, or no prompt yet: the old one is still the newest
+        with self._codex_rollouts(latest):
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+            part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+            self.assertEqual((part["sessionId"], part.get("cleared")), ("sid-codex", None))
+            latest[0] = "sid-codex-new"
+            dashboard._CODEX_SID_TRIED.clear()
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+        part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+        self.assertEqual(part["sessionId"], "sid-codex-new")
+        self.assertNotIn("pendingNew", part)
         self.assertEqual(part["cleared"][0]["fromSessionId"], "sid-codex")
         self.assertIn("sid-codex", chatroom.agent_conversations(part))
         past = dashboard.room_past_sessions(chatroom.get_room(rid, public=False))
         self.assertEqual([(p["sessionId"], p["via"]) for p in past], [("sid-codex", "clear")])
+
+    def test_codex_resume_can_go_back_to_an_earlier_conversation(self):
+        rid = self.room((("codex", "codex"),))
+        room = chatroom.get_room(rid, public=False)
+        room["participants"][0]["cleared"] = [{"fromSessionId": "sid-old", "toSessionId": "sid-codex", "at": 1.0}]
+        chatroom.update_room(room)
+        dashboard.send_command(rid, "/resume", key="k1")
+        with self._codex_rollouts(["sid-old"]):
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+        self.assertEqual(chatroom.participant(chatroom.get_room(rid, public=False), "codex")["sessionId"], "sid-old")
+
+    def test_an_unknown_codex_command_is_refused(self):
+        rid = self.room((("codex", "codex"),))
+        code, reply = dashboard.send_command(rid, "/nosuchcmd", key="k1")
+        self.assertEqual((code, reply["error"]), (400, "unknown_command"))
+        self.assertEqual(self.ptys["pty-codex"].writes, [])
+        self.assertEqual(dashboard.send_command(rid, "/clear", key="k2")[0], 400, "Codex 0.163 has no /clear")
+        self.assertEqual(dashboard.send_command(rid, "/permissions", key="k3")[0], 200)
+        rid2 = self.room()
+        self.assertEqual(dashboard.send_command(rid2, "/nosuchcmd", key="k4")[0], 200, "Claude says it itself")
+
+    def test_the_same_key_sent_during_the_enter_pause_types_once(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        second = {}
+
+        def write(data):
+            pty.writes.append(data)
+            if data == "/mcp" and not second:
+                second["r"] = dashboard.send_command(rid, "/mcp", key="k1")
+            return 0
+        pty.write = write
+        with mock.patch.object(dashboard, "_COMMAND_WAIT_S", 0.2, create=True):
+            code, _ = dashboard.send_command(rid, "/mcp", key="k1")
+        self.assertEqual(code, 200)
+        self.assertEqual(pty.writes, ["/mcp", "\r"])
+        self.assertEqual(second["r"][0], 409, "still typing: not typed again")
+        self.assertTrue(dashboard.send_command(rid, "/mcp", key="k1")[1].get("duplicate"))
+
+    # ---- the hub's lines wait while a menu is open ----
+    def test_hub_lines_wait_while_a_menu_is_open_then_go_in_order(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        started = []
+        typed = []
+        with mock.patch.object(dashboard.threading, "Thread",
+                               lambda target, args=(), daemon=None: mock.Mock(start=lambda: started.append(args))), \
+             mock.patch.object(dashboard, "_type_input_now",
+                               lambda sess, text, prov=None, record=True, parts=None: typed.append(text) or True):
+            dashboard.send_command(rid, "/model", key="k1")
+            dashboard.menu_report("pty-claude", True)
+            self.assertTrue(dashboard._type_input(pty, "[digest] one"))
+            self.assertTrue(dashboard._type_input(pty, "two"))
+            self.assertEqual(typed, [], "nothing typed into the menu")
+            self.assertEqual(len(started), 1, "one drain")
+            dashboard.menu_report("pty-claude", False)
+            dashboard._menu_drain(pty)
+            self.assertEqual(typed, ["[digest] one", "two"])
+            self.assertNotIn("pty-claude", dashboard._MENU_HELD)
+            self.assertTrue(dashboard._type_input(pty, "three"))
+            self.assertEqual(typed[-1], "three", "no menu: typed at once")
+
+    def test_a_menu_left_open_with_no_page_is_read_off_the_screen(self):
+        self.room()
+        pty = self.ptys["pty-claude"]
+        dashboard.menu_report("pty-claude", True)
+        dashboard._MENUS["pty-claude"]["seen"] = time.time() - 60          # the page went away
+        pty.tail = lambda *a, **k: "Select model\n> 1. Default\nEnter to confirm · Esc to exit"
+        self.assertTrue(dashboard.menu_open(pty))
+        pty.tail = lambda *a, **k: "> \n? for shortcuts"
+        self.assertFalse(dashboard.menu_open(pty))
+        self.assertNotIn("pty-claude", dashboard._MENUS)
+        dashboard.menu_typed("pty-claude")
+        self.assertTrue(dashboard.menu_open(pty), "a command typed, before the page looked")
+        dashboard.menu_report("pty-claude", False)
+        self.assertFalse(dashboard.menu_open(pty))
+
+    def test_the_menu_check_on_the_measured_screens(self):
+        screens = {}
+        for agent in ("claude", "codex"):
+            for block in (FIX / f"slash_screens_{agent}.txt").read_text(encoding="utf-8").split("===== ")[1:]:
+                name, _, body = block.partition(" =====\n")
+                screens[(agent, name)] = body.splitlines()
+        self.assertTrue(dashboard.screen_menu_open(screens[("codex", "model-open")]))
+        self.assertFalse(dashboard.screen_menu_open(screens[("codex", "model-esc")]))
+        self.assertFalse(dashboard.screen_menu_open(screens[("codex", "status")]))
 
     def test_claude_clear_hook_moves_the_seat(self):
         rid = self.room()
@@ -177,6 +286,8 @@ class Hub(unittest.TestCase):
         self.assertEqual(part["cleared"][0]["fromSessionId"], "sid-claude")
         self.assertEqual(self.ptys["pty-claude"].meta["sessionId"], "sid-new")
         self.assertEqual(chatroom.agent_conversations(part), ["sid-new", "sid-claude"])
+        src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
+        self.assertIn('event.get("source") in ("clear", "resume")', src, "/resume is followed too")
 
 
 class Transcript(unittest.TestCase):
@@ -187,12 +298,13 @@ class Transcript(unittest.TestCase):
             {"type": "user", "isCompactSummary": True, "timestamp": "2026-10-22T08:01:05Z",
              "message": {"role": "user", "content": "This session is being continued from a previous conversation."}},
             {"type": "user", "message": {"role": "user", "content": "/usr/bin is broken"}, "timestamp": "2026-10-22T08:02:00Z"},
+            {"type": "user", "message": {"role": "user", "content": "/tmp"}, "timestamp": "2026-10-22T08:03:00Z"},
         ]
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "t.jsonl"
             p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
             turns = dashboard._claude_text_turns(p)
-        self.assertEqual([t.get("hidden") for t in turns], [None, "command", "summary", None])
+        self.assertEqual([t.get("hidden") for t in turns], [None, "command", "summary", None, None])
 
 
 class Catalogue(unittest.TestCase):
