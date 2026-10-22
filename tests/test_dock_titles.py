@@ -21,8 +21,9 @@ and two tasks: the conversation's tab, its Panels-menu row and its window's
 title read the project's name, then the task's name once a task is in the middle, then
 the renamed task after a rename through the hub; a chat panel's tab follows its
 task's rename too; a body class added to the page reaches the window and leaves
-it again, the window's own class staying; on a phone (the narrow dock) the
-conversation's tab keeps reading "Chat" so the tab row needs no scrolling, and
+it again, the window's own class staying; on a phone (the narrow dock) with a
+task in the middle the conversation's tab reads "Chat" (the PO's own is its
+project's name, #261), so the tab row stays short, and
 a computer's shows the task again; the page threw no exception meanwhile
 (CDP ``Runtime.exceptionThrown``). Skipped without Node or Chrome.
 """

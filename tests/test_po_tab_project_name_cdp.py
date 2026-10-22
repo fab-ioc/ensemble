@@ -161,6 +161,31 @@ async function main() {
         await shot(`phone${w}-${key}`, w, 200);
       }
     }
+    // A long press on the cut tab (390 wide, the long name): one toast with the whole name, and no Dock tab menu,
+    // through a touch held (iOS: no contextmenu) and through Android's contextmenu after it.
+    await size(390, 844, true);
+    await open(A.long);
+    await until('PD.dock.narrow()', 15000);
+    await sleep(400);
+    out.longPress = await evalIn(`(async () => {
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      const tab = document.querySelector('.dk-tab[data-dk-tab="po-chat"]'), r = tab.getBoundingClientRect();
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      const el = _toastEl(); el.hidden = true; let writes = 0;
+      new MutationObserver(() => { writes++; }).observe(el, { childList: true });
+      const ev = (type, o = {}) => tab.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: 'touch', clientX: x, clientY: y, ...o }));
+      const menu = () => !!document.querySelector('.dk-menu:not([hidden])');
+      ev('pointerdown'); await wait(700);
+      const ctx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 });
+      tab.dispatchEvent(ctx); await wait(100);
+      const held = { writes, shown: !el.hidden, text: el.querySelector('.msg') && el.querySelector('.msg').textContent, menu: menu(), prevented: ctx.defaultPrevented };
+      ev('pointerup');
+      // A finger that moves (a sideways scroll of the row) is no long press.
+      el.hidden = true; const before = writes;
+      ev('pointerdown'); ev('pointermove', { clientX: x + 30 }); await wait(700);
+      const moved = { writes: writes - before, shown: !el.hidden };
+      ev('pointercancel');
+      return { held, moved, menu: menu() }; })()`);
     out.errors = c.exceptions;
     if (A.dump) fs.writeFileSync(A.dump, JSON.stringify(out, null, 1));
   } finally {
@@ -171,6 +196,14 @@ async function main() {
 }
 main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
+
+
+class TheTaskPanelHeader(unittest.TestCase):
+    def test_a_docked_task_hides_its_title_but_not_a_missing_one(self):
+        index = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("body.dp-docked #detail-panel .dp-head h2:not(.dp-missing) { display:none; }", index)
+        # Its tab cannot say the task is gone (no row): the header still does.
+        self.assertIn('<div class="dp-head"><h2 class="dp-missing">Session not found</h2>', index)
 
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
@@ -307,6 +340,15 @@ class ThePoTabIsTheProject(unittest.TestCase):
                 self.assertLessEqual(p["tab"]["w"], 120, f"{where}: {p['rects']}")
                 if key == "long":
                     self.assertTrue(p["tab"]["cut"], f"{where}: cut with an ellipsis: {p['tab']}")
+
+    def test_a_long_press_on_the_cut_tab_shows_the_whole_name_once_and_no_dock_menu(self):
+        lp = self.got["longPress"]
+        h = lp["held"]
+        self.assertEqual((h["writes"], h["shown"], h["text"]), (1, True, LONG), lp)
+        self.assertTrue(h["prevented"], "Android's contextmenu is answered by the name, not Dock's tab menu")
+        self.assertFalse(h["menu"], lp)
+        self.assertEqual(lp["moved"], {"writes": 0, "shown": False}, "a finger that moves is a scroll")
+        self.assertFalse(lp["menu"], lp)
 
     def test_the_page_threw_no_exception(self):
         self.assertEqual(self.got["errors"], [])
