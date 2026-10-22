@@ -5735,6 +5735,12 @@ function sendsBySize(list) {
 function sendHere(s) {
   return !!s.thread && (s.thread === THREAD || (!!THREAD_MID && s.thread === 'm:' + THREAD_MID));
 }
+// Whether the threads the view was built from hold this send's turn (a
+// thread's view, or a hub before #259, does not say: held).
+function thrHoldsSend(mid) {
+  const held = typeof THR_VIEW !== 'undefined' && THR_VIEW && THR_VIEW.sendMids;
+  return !Array.isArray(held) || held.includes(mid);
+}
 function sendsToShow(items) {
   const thr = typeof threadedView === 'function' && threadedView();
   // A thread (#210) shows what was sent from it (failed too: its Retry is
@@ -5751,8 +5757,11 @@ function sendsToShow(items) {
     const own = s.mid && items.find(m => m.id === s.mid);
     if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid && !s.read) gone.add(s);
     // In the chat, in a thread this view does not show; one sent from here
-    // stays until the thread draws it (never gone, then back).
-    else if (thr && s.state === 'confirmed' && s.mid && !(THREAD_MODE && sendHere(s))) gone.add(s);
+    // stays until the thread draws it (never gone, then back). The channel
+    // says which turns its threads hold (sendMids): a turn they do not hold
+    // yet is one the next build brings, so its send stays till then (#259:
+    // gone at its confirmation, seconds before the channel had its turn).
+    else if (thr && s.state === 'confirmed' && s.mid && !(THREAD_MODE && sendHere(s)) && thrHoldsSend(s.mid)) gone.add(s);
     else open.push({ s, ev });
   }
   for (const { s, ev } of open) {

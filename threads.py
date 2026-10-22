@@ -911,7 +911,11 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
             "state": _state_of(th, pts, open_mids, task_of),
         })
     idx = {**out, "sig": sig, "builtAt": time.time(), "took": round(time.time() - t0, 3),
-           "by_mid": by_mid, "recs": recs}
+           "by_mid": by_mid, "recs": recs,
+           # The sends confirmed whose turns this index holds: a channel that
+           # does not show one has it in a thread; one not held yet is a
+           # turn the next build brings, its send drawn till then (#259).
+           "sendMids": sorted({m for m in claimed.values() if m in by_mid})}
     idx["channel"] = _channel(idx)
     with _LOCK:
         _INDEX[room_id] = (sig, idx)
@@ -1084,7 +1088,7 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
            "items": [_turn(idx, m) for m in shown],
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
            "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
-           "channel": len(ch)}
+           "channel": len(ch), "sendMids": idx.get("sendMids") or []}
     if before or after:
         return out      # a page above or below: the rest the reader holds already
     out["activity"] = _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None
@@ -1132,7 +1136,7 @@ def _quick_channel(room_id: str, room: dict, n: int) -> dict:
     start = len(shown) - len(items)
     return {"sig": "quick:" + str(len(shown)), "quick": True,
             "progress": progress.snapshot().get("thread:" + room_id),
-            "items": items, "threads": {},
+            "items": items, "threads": {}, "sendMids": [],
             "before": start, "n": len(shown) - start, "balloons": len(shown), "channel": len(shown),
             "activity": None, "unreadThreads": []}
 
