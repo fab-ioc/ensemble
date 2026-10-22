@@ -56,6 +56,7 @@ _LOCK = threading.RLock()
 _INDEX: dict[str, dict] = {}
 _CHANGES: dict[str, list[tuple[str, str, set[str]]]] = {}
 _INDEX_LOCK = threading.RLock()
+_TOKEN_ROOMS: dict[str, str] = {}       # bearer token -> the room it was last found in
 
 
 def _signature(st) -> str:
@@ -652,11 +653,23 @@ def resolve_token(token: str) -> tuple[str, str] | None:
     """Map a bearer token to ``(room_id, identity)``, or None if unknown."""
     if not token:
         return None
-    with _LOCK:
-        for p in ROOMS_DIR.glob("room-*.json"):
-            r = _read(p.stem)
-            if r and token in r.get("tokens", {}):
-                return r["id"], r["tokens"][token]
+    # The room index, not the files: parsing rooms until the token turned up
+    # cost an agent's every tool call up to ~0.6 s under the store lock, by
+    # where its room fell in the folder (#256). The room last found for a
+    # token is looked at first; the index re-reads a room that changed.
+    with _INDEX_LOCK:
+        rid = _TOKEN_ROOMS.get(token)
+        if rid:
+            room = get_room(rid, public=False, copy_room=False)
+            ident = (room or {}).get("tokens", {}).get(token)
+            if ident:
+                return rid, ident
+        for e in room_index():
+            ident = (e["room"].get("tokens") or {}).get(token)
+            if ident:
+                _TOKEN_ROOMS[token] = e["id"]
+                return e["id"], ident
+        _TOKEN_ROOMS.pop(token, None)
     return None
 
 

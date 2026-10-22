@@ -795,6 +795,16 @@ def tick(now: float | None = None) -> dict[str, str]:
         for rid in ids:
             if rid in state:
                 state[rid]["current"] = False   # until this look finds it stopped again
+            # Every look needs the task running. Asked once here, on the
+            # indexed room, instead of five copies of every room ever made
+            # (~0.6 s a minute over 732 rooms, #256).
+            try:
+                room = _d.chatroom.get_room(rid, public=False, copy_room=False)
+                if not room or not _d._room_is_live(room):
+                    continue
+            except Exception as e:
+                _log(f"{rid}: {str(e)[:200]}")
+                continue
             dids = []
             for look in (lambda: _look_provider(rid, now),
                          lambda: _look(rid, state, now), lambda: _look_limit(rid, now),

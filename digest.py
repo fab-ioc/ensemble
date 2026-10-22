@@ -373,7 +373,8 @@ def gather(project: dict) -> list[dict]:
         attn = {}
     po_room = (project.get("poRoomId") or "").strip()
     out = []
-    for room in _d.chatroom.list_rooms():
+    # Read only: the indexed rooms, not a copy of every room ever made (#256).
+    for room in _d.chatroom.list_rooms(copy_rooms=False):
         if room["id"] == po_room or not room.get("launched", True):
             continue
         if _d.ensemble_tools._project_of_room(room, links) != project["id"]:

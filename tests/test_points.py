@@ -698,10 +698,10 @@ class Reminder(_Idle):
         self.send(good, "y", at=time.time() - 30 * 60)
         real = points.load
 
-        def load(r):
+        def load(r, **kw):
             if r == bad:
                 raise OSError("no")
-            return real(r)
+            return real(r, **kw)
         with mock.patch.object(points, "load", side_effect=load):
             self.assertEqual(points.tick(), ["P1"])
 
