@@ -552,6 +552,53 @@ def interrupt_agent(room_id: str, identity: str = "") -> tuple[int, dict]:
     return 200, {"ok": True, "identity": target["identity"], "interrupt": event}
 
 
+# Send now (#252, GitHub issue 23). Measured 2026-10-22 in a real ConPTY with
+# Claude Code 2.1.308 and Codex 0.163 (Documents/#252): a line typed into a
+# busy agent and submitted is already taken into its running turn, at its next
+# step — Claude reads it as a queued command once the running tool call ends,
+# Codex as a steer "submitted after next tool call" — so a long tool call holds
+# it until it ends. Send now does not wait for that step. Claude has its own
+# key for it: Ctrl+X Ctrl+S after the queued line hands the line over at once,
+# a running command moved to the background, not stopped. Codex has none
+# ("press esc to interrupt and send immediately"): Esc ends its turn, and the
+# line opens the next one, so the page says "Interrupt and send".
+SEND_NOW_INTO_TURN = "into-turn"        # Claude: in the running turn at once
+SEND_NOW_INTERRUPT = "interrupt"        # Codex: its turn ended first
+SEND_NOW_CHORD = ("\x18", "\x13")       # Claude's Ctrl+X Ctrl+S, "send now"
+SEND_NOW_QUEUED_S = 0.5                 # Claude has queued the line before the chord
+SEND_NOW_ABORT_S = 1.0                  # Codex has ended its turn before the line
+
+
+def send_now_way(part: dict | None) -> str:
+    """How Send now reaches this agent right now: ``into-turn`` (Claude in a
+    turn), ``interrupt`` (Codex in a turn), or "" when it is not working (an
+    idle agent takes a plain send at once). Codex's screen can still read busy
+    after its turn ended (a shell left running), and an Escape at its idle
+    prompt is never sent: its rollout must show the turn still open."""
+    if not part or not part.get("ptyId") or part.get("agent") not in ("claude", "codex"):
+        return ""
+    try:
+        if attention.turn_state(part)[0] != "working":
+            return ""
+        if part.get("agent") == "claude":
+            return SEND_NOW_INTO_TURN
+        path, _ = rotation._transcript_of(part)
+        if path is not None and rotation.read_rollout(path)["turnOver"]:
+            return ""
+    except Exception:       # noqa: BLE001 — unknown is not working: a plain send
+        return ""
+    return SEND_NOW_INTERRUPT
+
+
+def send_now_how(ways) -> str:
+    """What a send says it did (sends.note_how): ``interrupted`` when any agent
+    it reached had its turn ended for it, ``into-turn`` when it went into a
+    running turn, "" when every agent was idle (a plain send)."""
+    ways = set(ways or ())
+    return ("interrupted" if SEND_NOW_INTERRUPT in ways
+            else "into-turn" if SEND_NOW_INTO_TURN in ways else "")
+
+
 def unrecorded_room_ptys(room: dict) -> list[str]:
     """Live terminals of the room that no participant records: an agent the
     hub no longer tracks (it would never be stopped, and a start would add a
@@ -584,12 +631,16 @@ def _annotate_room_liveness(room: dict, with_points: bool = False, first: bool =
             _fail_orphaned_sends(room.get("id", ""))
             sends.sync(room.get("id", ""), room=room)
             room["sends"] = sends.view(room.get("id", ""))
+            room["sendHows"] = sends.hows(room.get("id", ""))   # Send now's balloon note
         except Exception as e:      # noqa: BLE001 — the chat still shows
             print(f"[sends] {room.get('id')}: not listed: {e!r}", flush=True)
     room["participants"] = [
         {**p, "onMention": True} if chatroom.is_on_mention(room, p) else p
         for p in room.get("participants", [])]
     _backfill_codex_session_ids(room)
+    # Who a message to everyone goes to: the chat offers Send now (#252)
+    # while one of them works.
+    room["owners"] = chatroom.owners(room)
     # What the task asked of the person that is still open (attention's rules):
     # the chat holds it in a line above the conversation until it closes.
     try:
@@ -3440,7 +3491,7 @@ def _codex_rollout_start(sess):
 
 def _type_input(sess, text: str, provenance: dict | None = None, *,
                 record: bool = True,
-                parts: list[tuple[str, dict]] | None = None) -> bool:
+                parts: list[tuple[str, dict]] | None = None, now: str = "") -> bool:
     """Type ``text`` into an agent's terminal and submit it as one input. A
     multi-line text goes as a bracketed paste (what the page does), so a TUI
     does not submit it line by line; Enter is a separate write (send_line).
@@ -3450,7 +3501,11 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
 
     The global ordering lock covers only the text write and journal append.
     The TUI's ingestion pause and discrete Enter stay outside it so input in
-    another terminal never waits seconds for a long brief."""
+    another terminal never waits seconds for a long brief.
+
+    ``now`` (send_now_way): Send now's keys around the line, in the same
+    reserved write — Esc before it for ``interrupt``, Claude's send-now chord
+    after it for ``into-turn``."""
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
@@ -3461,7 +3516,7 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
         return False
     ok = False
     try:
-        ok = _type_input_reserved(sess, text, provenance, record=record, parts=parts)
+        ok = _type_input_reserved(sess, text, provenance, record=record, parts=parts, now=now)
         return ok
     finally:
         rotation.release_hub_line(sess, lease)
@@ -3479,7 +3534,7 @@ def _not_typed_cause(sess) -> str:
 
 def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
                          record: bool = True,
-                         parts: list[tuple[str, dict]] | None = None) -> bool:
+                         parts: list[tuple[str, dict]] | None = None, now: str = "") -> bool:
     """Write and confirm one reserved line outside the lifecycle gate."""
     agent = str((getattr(sess, "meta", None) or {}).get("agent") or "")
     codex_path, codex_size = _codex_rollout_start(sess) if agent == "codex" else (None, -1)
@@ -3489,6 +3544,23 @@ def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
     body = "\x1b[200~" + text + "\x1b[201~" if pasted else text
     writer = getattr(sess, "write", None)
     if callable(writer):
+        if now == SEND_NOW_INTERRUPT:
+            # Send now to a Codex turn: Esc ends it (send_now_way checked it
+            # is open), then the line opens the next one. A line that lands
+            # while the turn is still ending is submitted by Codex as it ends.
+            # Stop pressed within the second already sent its Esc: a second
+            # one at the prompt it leaves can quit Codex (interrupt_agent).
+            meta = getattr(sess, "meta", None) or {}
+            key = str(meta.get("room") or ""), str(meta.get("identity") or "")
+            with _INTERRUPT_LOCK:
+                fresh = time.monotonic() - _LAST_INTERRUPT.get(key, -1e9) >= 1.0
+                try:
+                    if fresh and writer("\x1b") is False:
+                        return False
+                except (OSError, EOFError):
+                    return False
+                _LAST_INTERRUPT[key] = time.monotonic()
+            time.sleep(SEND_NOW_ABORT_S)
         with _INPUT_WRITE_LOCK:
             try:
                 took = writer(body)
@@ -3507,6 +3579,18 @@ def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
             return False
         if entered is not False and agent == "codex":
             _verify_codex_submit(sess, writer, text, codex_path, codex_size)
+        if entered is not False and agent == "claude" and now == SEND_NOW_INTO_TURN:
+            # The line is queued in Claude's box; its own send-now hands it
+            # over at once (a reply being written is cut short and resumed).
+            # With nothing queued any more (taken at a step meanwhile) the
+            # chord does nothing.
+            time.sleep(SEND_NOW_QUEUED_S)
+            try:
+                for key in SEND_NOW_CHORD:
+                    writer(key)
+                    time.sleep(0.15)
+            except (OSError, EOFError):
+                pass        # the line is in: it goes at the next step instead
         return entered is not False and sess.alive()
 
     # Compatibility for the small test/adapter sessions that expose only the
@@ -16321,6 +16405,8 @@ class Handler(BaseHTTPRequestHandler):
         # whose agent has nothing new to do (the planned restart brings
         # rooms back this way by itself).
         quiet = data.get("quiet") is True
+        # ``now``: Send now (send_now_way) — reach the busy agent at once.
+        extra = {"now": True} if data.get("now") is True else {}
         # Sent from a thread's reply box of a PO chat (threads.py): the PO
         # is told which thread, the reply stays in it (``also``: and shows
         # in the chat too).
@@ -16377,8 +16463,8 @@ class Handler(BaseHTTPRequestHandler):
                         noted = True
                     except Exception as e:      # noqa: BLE001 — sent; placed by its points instead
                         print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
-                result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
-                          if quiet else self._resume_room(room_full, text=text, to=to, key=key))
+                result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True, **extra)
+                          if quiet else self._resume_room(room_full, text=text, to=to, key=key, **extra))
                 if key:
                     _SAY_KEYS[(rid, key)] = time.time()
                 # Never an ok that did nothing: a send the hub neither
@@ -16432,12 +16518,14 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[points] {room_full.get('id')}: not recorded: {e!r}", flush=True)
             return text, []
 
-    def _ring_recipients(self, room_id: str, result: dict) -> list[str]:
+    def _ring_recipients(self, room_id: str, result: dict, ways: dict | None = None) -> list[str]:
         """Ring each agent recipient's terminal (the keystroke doorbell) so it
         wakes to read the freshly posted message. Recipients are already
         loop-guard filtered by chatroom.post_message (empty when paused/waiting
         on the human). Returns the recipients that could NOT be woken: a
-        stopped agent (the message is in the room, but nobody read it)."""
+        stopped agent (the message is in the room, but nobody read it).
+        ``ways``: Send now; filled with {identity: send_now_way} of the ones
+        reached at once (a reviewer started fresh is not)."""
         recipients = (result or {}).get("recipients") or []
         if not recipients:
             return []
@@ -16457,7 +16545,7 @@ class Handler(BaseHTTPRequestHandler):
                 rest.append(ident)
         if not rest:
             return []
-        rung = self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")))
+        rung = self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")), ways=ways)
         return [ident for ident in rest if ident not in rung]
 
     def _start_review(self, room_id: str, ident: str, msg: dict, note: str = "") -> dict | None:
@@ -16525,11 +16613,12 @@ class Handler(BaseHTTPRequestHandler):
                   f"(pty {info['ptyId']}, asked by {review['askedBy']})", flush=True)
             return review
 
-    def _ring(self, room_id: str, idents: list, wake: str) -> list[str]:
+    def _ring(self, room_id: str, idents: list, wake: str, ways: dict | None = None) -> list[str]:
         """Type ``wake`` into each named agent's terminal and submit it — the
         one thing that wakes an agent, and every wake re-sends its whole
         conversation, so callers ring as few as they can. Returns the
-        identities actually rung (a stopped agent cannot be)."""
+        identities actually rung (a stopped agent cannot be). ``ways``: Send
+        now, as in ``_ring_recipients``."""
         room = chatroom.get_room(room_id)
         if not room:
             return []
@@ -16560,8 +16649,12 @@ class Handler(BaseHTTPRequestHandler):
                 if pty_id:
                     sess = ptyrun.get(pty_id)
             if pty_id:
-                if sess and sess.alive() and _type_input(sess, wake):
+                way = send_now_way(part) if ways is not None else ""
+                if sess and sess.alive() and (_type_input(sess, wake, now=way) if way
+                                              else _type_input(sess, wake)):
                     rung.append(ident)         # typed + discrete Enter, and it took
+                    if way:
+                        ways[ident] = way
                 continue
             # Legacy visible-terminal session → keystroke injection.
             pid = self._resolve_live_pid(part)
@@ -17180,7 +17273,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _resume_room(self, room_full: dict, text: str = "", to: str = "",
                      key: str = "", quiet: bool = False, project: str = "",
-                     origin: str = "human") -> dict:
+                     origin: str = "human", now: bool = False) -> dict:
         """Resume a room, delivering ``text`` (if any) once it is up — or, when
         it is already running, deliver right away. What a failed resume still
         holds comes along with ANY new attempt (a fresh text, a plain Resume,
@@ -17192,10 +17285,13 @@ class Handler(BaseHTTPRequestHandler):
         without the resume note (a room that was only stopped by a hub crash
         or restart); a text still goes in. ``project``: the text is another
         project's PO's message (po_messages), whose bare task numbers are read
-        in that project when the line is typed (ref_project)."""
+        in that project when the line is typed (ref_project). ``now``: Send
+        now, the new text reaches a busy agent at once (send_now_way); held
+        or carried, it goes the settled way."""
         rid = room_full["id"]
-        now = time.time()
-        items = [send_item(text, to, now, key, project, origin)] if text else []
+        items = [send_item(text, to, time.time(), key, project, origin)] if text else []
+        if items and now:
+            items[0]["now"] = True
         start = direct = carried = False
         if restart_drain.holding():
             # A restart is draining: nothing starts and nothing is typed in;
@@ -17570,7 +17666,11 @@ class Handler(BaseHTTPRequestHandler):
                 _posted_send(rid, it, result)
                 if result is None:
                     continue
-                missed = self._ring_recipients(rid, result)
+                ways: dict = {}
+                missed = (self._ring_recipients(rid, result, ways=ways) if it.get("now")
+                          else self._ring_recipients(rid, result))
+                if ways:
+                    sends.note_how(rid, it.get("key"), send_now_how(ways.values()))
                 if missed:
                     it["posted"] = True
                     it["wake"] = missed
@@ -17591,9 +17691,15 @@ class Handler(BaseHTTPRequestHandler):
                           _origin_sender_info(it["text"], it.get("origin") or "human"))
                          for it in items]
             text = "\n\n".join(part for part, _info in delivered)
-        if not _type_input(sess, text, delivered[0][1], parts=delivered):
+        # Send now (send_now_way): into the running turn, or Codex's turn ended first.
+        way = send_now_way(agents_in[0]) if any(it.get("now") for it in items) else ""
+        if not (_type_input(sess, text, delivered[0][1], parts=delivered, now=way) if way
+                else _type_input(sess, text, delivered[0][1], parts=delivered)):
             return items     # it looked alive, but the write found it gone
         _typed_sends(rid, items)
+        if way:
+            for it in items:
+                sends.note_how(rid, it.get("key"), send_now_how([way]))
         if any((it.get("origin") or "human") in {"human", "po"} for it in items):
             note_answer(rid, agents_in[0].get("identity", ""))     # a person's or the PO's
         return []
