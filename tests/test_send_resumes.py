@@ -176,6 +176,17 @@ class Resumes(unittest.TestCase):
         # Its first prompt was the spec; the message follows, with no resume note.
         self.assertEqual(self.ptys["pty-new"].typed, ["hello"])
 
+    def test_a_codex_seat_that_ran_is_resumed_without_its_id(self):
+        # Codex's id is found after launch; a seat that ran without one yet
+        # resumes (its rollout is found in its cwd), it is not launched fresh.
+        room = self.room(agents=("codex",), sessions=False)
+        chatroom.participant(room, "codex")["cwd"] = self.temp.name
+        chatroom.update_room(room)
+        h = self.handler()
+        h._resume_room(room, text="hello")
+        self.join()
+        self.assertEqual(self.starts, 1)
+
     # ---- one resume, one input ----
     def test_a_message_to_a_stopped_owner_is_its_first_input_with_the_note(self):
         room = self.room()
