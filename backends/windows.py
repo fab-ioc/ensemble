@@ -33,7 +33,22 @@ from . import themes
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 LAUNCH_DIR = DASHBOARD_DIR / "_launch"
+# The hub's state dir, read at each agent launch (set by dashboard.py): a test
+# that moves the hub's state moves its launch scripts with it (#257). A
+# LAUNCH_DIR patched by a test still wins.
+state_dir = None
 SCHEME_MARKER = ".wt-scheme"
+
+
+def _agent_launch_dir() -> Path:
+    """Where an agent's launch script goes: the hub's state dir as it is now."""
+    if state_dir is not None and LAUNCH_DIR == DASHBOARD_DIR / "_launch":
+        d = Path(state_dir()) / "_launch"
+    else:
+        d = LAUNCH_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 
 # ---------- Win32 process helpers ----------
 
@@ -513,8 +528,7 @@ class WindowsBackend(Backend):
         """Run `argv` in a headless PTY via a one-shot .ps1 (the same robust
         here-string prompt handling as the WT launcher, minus the window and the
         AGENT_SESS_DIR registry — a PtySession owns liveness now)."""
-        LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
-        script_path = LAUNCH_DIR / f"pty-{uuid.uuid4().hex}.ps1"
+        script_path = _agent_launch_dir() / f"pty-{uuid.uuid4().hex}.ps1"
         line = " ".join(_ps_quote(a) for a in argv)
         if prompt:
             line += " @'\n" + _native_text(prompt) + "\n'@"
@@ -541,8 +555,7 @@ class WindowsBackend(Backend):
         AGENT_SESS_DIR keyed by its own $PID (the hosting shell) before launch
         and removes the record on exit — that's how a codex session becomes
         "live" and injectable (the shell shares the terminal console)."""
-        LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
-        script_path = LAUNCH_DIR / f"{uuid.uuid4().hex}.ps1"
+        script_path = _agent_launch_dir() / f"{uuid.uuid4().hex}.ps1"
         # Build the agent call. argv tokens are simple (no spaces); the prompt is
         # the only free-form part and goes in a literal here-string.
         claude_line = " ".join(_ps_quote(a) for a in claude_argv)
