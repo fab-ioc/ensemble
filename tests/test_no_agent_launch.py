@@ -3,7 +3,7 @@
 On 2026-10-22 a suite run started real Codex agents with an empty CODEX_HOME
 through a test's hub; each opened a ChatGPT sign-in page in the browser and
 the run hung on them. agent_launch.py refuses every agent start in a process
-that is not a hub (dashboard.main() alone allows it), and a hub refuses to
+that is not a hub (only the hub's main() allows it), and a hub refuses to
 start an agent that has no login.
 """
 from __future__ import annotations
@@ -255,30 +255,6 @@ class SignedIn(unittest.TestCase):
             with self.assertRaises(dashboard.StartRoomError):
                 handler._launch_room_agent_pty(room, part, "do it")
         self.assertEqual(made, [])
-
-
-@unittest.skipUnless(sys.platform == "win32", "launch scripts are Windows-only")
-class StaleLaunchScripts(unittest.TestCase):
-    def test_agent_scripts_older_than_a_day_go(self):
-        from backends import windows
-        with tempfile.TemporaryDirectory() as d:
-            d = Path(d)
-            now = time.time()
-            hexid = "0123456789abcdef0123456789abcdef"
-            files = {"old-pty": f"pty-{hexid}.ps1", "old-wt": f"{hexid}.ps1",
-                     "new-pty": f"pty-{hexid[::-1]}.ps1", "old-update": f"update-{hexid}.ps1",
-                     "old-restart": "restart-x.json"}
-            for key, name in files.items():
-                f = d / name
-                f.write_text("x", encoding="utf-8")
-                age = 3600 if key.startswith("new") else 2 * 86400
-                os.utime(f, (now - age, now - age))
-            with mock.patch.dict(windows._pruned_at, clear=True):
-                self.assertEqual(windows._prune_launch_scripts(d, now), 2)
-                # At most once an hour.
-                self.assertEqual(windows._prune_launch_scripts(d, now + 60), 0)
-            self.assertEqual(sorted(p.name for p in d.iterdir()),
-                             sorted(files[k] for k in ("new-pty", "old-update", "old-restart")))
 
 
 class NoAgentProcess(unittest.TestCase):

@@ -172,9 +172,13 @@ def check(project, now=None):
     with _LOCK:
         state = _load()
         rec = state.setdefault(project["id"], {})
-        rooms = [r for r in _d.chatroom.list_rooms()
+        # The project's rooms, picked from the index uncopied and copied
+        # alone: copying all ~730 rooms per project, with the links file read
+        # per room, cost ~0.55 s a project each tick (#256).
+        links = _d.load_session_projects()
+        rooms = [_d.chatroom._listed_copy(r) for r in _d.chatroom.list_rooms(copy_rooms=False)
                  if r["id"] != project.get("poRoomId")
-                 and _d.ensemble_tools._project_of_room(r) == project["id"]]
+                 and _d.ensemble_tools._project_of_room(r, links) == project["id"]]
         git, ready = {}, []
         for room in rooms:
             action = _recover_attempt(room, room.get("gateAction") or {})
@@ -216,7 +220,7 @@ def check(project, now=None):
                     not room.get("after") and _d.priority_of(room) <= 2)):
                 ready.append(room)
         # Reload after launches: normal allocation/start changes the live seats.
-        rooms = [_d.chatroom.get_room(r["id"]) or r for r in rooms]
+        rooms = [_d.chatroom.get_room(r["id"], copy_room=False) or r for r in rooms]
         active = [r for r in rooms if r.get("launched", True) and _d.workflow_of(r) != "done"
                   and _d._room_is_live(r)]
         starts = {r["id"]: float(r.get("launchedAt") or 0) for r in rooms}

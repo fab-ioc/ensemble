@@ -5884,7 +5884,79 @@ def path_is_git(path: str) -> bool:
         return False
 
 
+_PROJECTS_CACHE: dict = {}
+_PROJECTS_CACHE_LOCK = threading.Lock()
+
+
+def _stat_sig(path) -> tuple | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
+
+
+def _projects_files_sig(dirs: list[str]) -> tuple:
+    """The files load_projects read, by stat: the root, its folders'
+    project.json and projects.json. Looked at on every call."""
+    return (str(PROJECTS_ROOT), _stat_sig(PROJECTS_ROOT), str(PROJECTS_FILE),
+            _stat_sig(PROJECTS_FILE),
+            tuple(_stat_sig(os.path.join(d, "project.json")) for d in dirs))
+
+
+def _projects_folders_sig(codes: list[str], out: list[dict]) -> tuple:
+    """The folders it looked at: whether a code folder is there, and whether
+    a project in the root is a repository (one in projects.json keeps its own
+    isGit). Looked at again every PROJECTS_FOLDERS_RECHECK_S."""
+    return (tuple(os.path.isdir(c) for c in codes),
+            tuple(path_is_git(p["path"]) for p in out if p.get("home")))
+
+
+PROJECTS_FOLDERS_RECHECK_S = 5.0
+
+
 def load_projects() -> list[dict]:
+    """The registered projects (:func:`_load_projects_uncached`), read again
+    only when one of the files it read has changed, or a folder it looked at
+    (a code folder there or not, a repository made). Every per-room lookup
+    (the PO of a task, its project) read and parsed them all: ~30 s of the
+    hub's lock in 15 min (#256)."""
+    with _PROJECTS_CACHE_LOCK:
+        hit = _PROJECTS_CACHE.get("hit")
+    if hit and _projects_files_sig(hit["dirs"]) == hit["files"]:
+        now = time.monotonic()
+        if now - hit["checked"] < PROJECTS_FOLDERS_RECHECK_S:
+            return [dict(p) for p in hit["out"]]
+        if _projects_folders_sig(hit["codes"], hit["out"]) == hit["folders"]:
+            hit["checked"] = now
+            return [dict(p) for p in hit["out"]]
+    dirs: list[str] = []
+    codes: list[str] = []
+    out = _load_projects_uncached(dirs, codes)
+    files = _projects_files_sig(dirs)
+    entry = {"files": files, "folders": _projects_folders_sig(codes, out), "dirs": dirs,
+             "codes": codes, "out": [dict(p) for p in out], "checked": time.monotonic()}
+    with _PROJECTS_CACHE_LOCK:
+        _PROJECTS_CACHE["hit"] = entry if _settled(files) else None
+    return out
+
+
+def _settled(sig) -> bool:
+    """No file in a stat signature changed in the last two seconds: one
+    written while it was read, or twice within the clock's step, could carry
+    the same stat as what was read and be missed."""
+    fresh = time.time_ns() - 2_000_000_000
+
+    def ok(x):
+        if isinstance(x, tuple):
+            if len(x) == 2 and all(isinstance(v, int) and not isinstance(v, bool) for v in x):
+                return x[1] < fresh
+            return all(ok(v) for v in x)
+        return True
+    return ok(sig)
+
+
+def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
     """The registered projects — explicit, never guessed. Two sources, merged
     (deduped by id):
       1. layout v2: every <PROJECTS_ROOT>/<dir>/project.json — the project's
@@ -5931,6 +6003,7 @@ def load_projects() -> list[dict]:
     try:
         if PROJECTS_ROOT.is_dir():
             for d in sorted(PROJECTS_ROOT.iterdir()):
+                dirs.append(str(d))
                 pj = d / "project.json"
                 if not d.is_dir() or not pj.is_file():
                     continue
@@ -5944,6 +6017,8 @@ def load_projects() -> list[dict]:
                 # A project registered from an external code folder keeps its
                 # tasks/notes/chats HERE (its home) while ``path`` stays the code.
                 code = (meta.get("code") or "").strip()
+                if code:
+                    codes.append(code)
                 path = os.path.normpath(code) if code and os.path.isdir(code) else home
                 _add({"id": meta["id"], "name": meta.get("name") or d.name,
                       "path": path, "home": home, "isGit": path_is_git(path),
@@ -7043,7 +7118,7 @@ def _history_running(project_id: str, active_within: float | None = None) -> lis
     for rid in sorted(idle):
         if active_within is not None and idle[rid] > active_within:
             continue
-        room = chatroom.get_room(rid)
+        room = chatroom.get_room(rid, copy_room=False)
         if room and _room_project_id(rid, room, links) == project_id:
             out.append({"id": rid, "title": room.get("title", "")})
     return out
@@ -8146,17 +8221,27 @@ def _find_file_by_tail(rel: str, bases: list[str]) -> Path | None:
     return file_refs.find_by_tail(rel, bases)
 
 
+_SESSION_PROJECTS_CACHE: dict = {}
+
+
 def load_session_projects() -> dict[str, str]:
     """Sidecar map {sessionId|roomId: projectId} — the recorded membership link.
     Explicit, so drill-in is never guessed (the Phase-A bug). Porting a legacy
-    session = adding an entry here."""
+    session = adding an entry here. Parsed again only when the file changed
+    (#256: it was read per room)."""
+    sig = (str(SESSION_PROJECTS_FILE), _stat_sig(SESSION_PROJECTS_FILE))
+    hit = _SESSION_PROJECTS_CACHE.get("hit")
+    if hit and hit[0] == sig:
+        return dict(hit[1])
+    out: dict[str, str] = {}
     try:
         d = json.loads(SESSION_PROJECTS_FILE.read_text(encoding="utf-8"))
         if isinstance(d, dict):
-            return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str) and v}
+            out = {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str) and v}
     except (FileNotFoundError, json.JSONDecodeError):
         pass
-    return {}
+    _SESSION_PROJECTS_CACHE["hit"] = (sig, dict(out)) if _settled(sig) else None
+    return out
 
 
 def save_session_projects(m: dict[str, str]) -> None:
@@ -11993,7 +12078,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             first_user = next((m for m in msgs
                                if m.get("from") == "user" and (m.get("text") or "").strip()), None)
             first_txt = ((first_user or (msgs[0] if msgs else {})).get("text") or "")[:200]
-            last_txt = points.strip_point_lines((msgs[-1] if msgs else {}).get("text") or "")[:200]
+            last_txt = ((msgs[-1] if msgs else {}).get("text") or "")
+            if len(last_txt) > 4000:    # whole lines only: a cut point line would show
+                last_txt = last_txt[:last_txt.rfind("\n", 0, 4000) + 1] or last_txt[:4000]
+            last_txt = points.strip_point_lines(last_txt)[:200]
             # The issue view's summary answers "what did this task do", so it
             # needs the last thing an AGENT said. `last` is the last message
             # from anyone, which would happily caption your own question as
@@ -12784,6 +12872,48 @@ def _warm_saver() -> None:
             print(f"[restart] periodic warm save failed: {e!r}", flush=True)
 
 
+# A launch writes a script (_launch) and, for Claude, an MCP config holding
+# its token (_mcp) that the agent reads as it starts; nothing reads them
+# again. Kept forever, they were 6,000 files each and 88 MB by 10-22 (#256).
+# A script goes after a day (#257); an MCP config after 30 days, in case a
+# long-lived agent re-reads its --mcp-config (a /mcp reconnect).
+LAUNCH_FILES_KEEP_S = {"_launch": 86400, "_mcp": 30 * 86400}
+
+
+def prune_launch_files(now: float | None = None) -> int:
+    """Remove launch scripts and MCP configs older than LAUNCH_FILES_KEEP_S.
+    Returns how many went."""
+    now = time.time() if now is None else now
+    gone = 0
+    for name, keep in LAUNCH_FILES_KEEP_S.items():
+        d, cut = DASHBOARD_DIR / name, now - keep
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        for e in entries:
+            try:
+                if e.is_file(follow_symlinks=False) and e.stat().st_mtime < cut:
+                    os.unlink(e.path)
+                    gone += 1
+            except OSError:
+                pass
+    return gone
+
+
+def _launch_file_pruner() -> None:
+    """Once a while after the start, then daily."""
+    time.sleep(600)
+    while True:
+        try:
+            n = prune_launch_files()
+            if n:
+                print(f"[housekeeping] {n} old launch file(s) removed", flush=True)
+        except Exception as e:      # noqa: BLE001 — tomorrow tries again
+            print(f"[housekeeping] launch files not pruned: {e!r}", flush=True)
+        time.sleep(86400)
+
+
 def load_restart_caches() -> None:
     """The last hub's warm parts. A bad cache never stops the hub starting:
     anything it raises is logged, and the hub reads the files instead."""
@@ -12834,7 +12964,7 @@ def _current_restart_lease() -> str:
 def room_run_entry(rid: str, statuses: dict) -> dict | None:
     """What a room's agents are doing now, as a restart snapshot (and the
     running-rooms record) lists it; None when none of them runs, or no room."""
-    room = chatroom.get_room(rid, public=False)
+    room = chatroom.get_room(rid, public=False, copy_room=False)
     if room is None:
         return None
     agents_out = []
@@ -12951,13 +13081,36 @@ class OneProxyPerPty:
     running host's version is unchanged and a hub-only restart keeps the
     agents."""
 
+    # A PTY id is random and never comes back once the host has dropped it;
+    # a finished task keeps its last ptyId for good. Asking the host about
+    # each of those on every liveness check was ~33 s of the hub's lock in
+    # 15 min (#256), so an id the host does not have is remembered as gone.
+    GONE_MAX = 20000
+    # The host's list, shared for a moment: the attention snapshot asked for
+    # it once per room (#256). Any create or kill here drops it.
+    LIST_TTL_S = 0.5
+
     def __init__(self, client):
         self._client = client
         self._proxies: dict[str, object] = {}
         self._lock = threading.Lock()
+        self._gone: set[str] = set()
+        self._list: tuple[float, list] | None = None
+        self._gen = 0       # each create or kill; a list fetched across one is not kept
 
     def __getattr__(self, name):        # pid, version, call, reap, deaths...
         return getattr(self._client, name)
+
+    def list_sessions(self):
+        with self._lock:
+            hit, gen = self._list, self._gen
+        if hit and time.monotonic() - hit[0] < self.LIST_TTL_S:
+            return list(hit[1])
+        out = self._client.list_sessions()
+        with self._lock:
+            if self._gen == gen:
+                self._list = (time.monotonic(), list(out))
+        return out
 
     def _keep(self, proxy):
         with self._lock:
@@ -12975,18 +13128,35 @@ class OneProxyPerPty:
     def create(self, *args, **kwargs):
         # The host spawns in its own process, under no guard of this one.
         agent_launch.guard_spawn(args[0] if args else kwargs.get("argv"), "pty host")
-        return self._keep(self._client.create(*args, **kwargs))
+        proxy = self._client.create(*args, **kwargs)
+        with self._lock:
+            self._list = None
+            self._gen += 1
+            self._gone.discard(proxy.id)
+        return self._keep(proxy)
 
     def get(self, pty_id):
+        with self._lock:
+            if pty_id in self._gone:
+                return None
         proxy = self._client.get(pty_id)
         if proxy is None:
             self._forget(pty_id)
+            with self._lock:
+                if len(self._gone) >= self.GONE_MAX:
+                    self._gone.clear()
+                self._gone.add(pty_id)
             return None
         return self._keep(proxy)
 
     def kill(self, pty_id):
         self._forget(pty_id)
-        return self._client.kill(pty_id)
+        try:
+            return self._client.kill(pty_id)
+        finally:
+            with self._lock:
+                self._list = None
+                self._gen += 1
 
 
 def attach_pty_host() -> None:
@@ -21214,6 +21384,7 @@ def main():
     startup.booted()
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
+    threading.Thread(target=_launch_file_pruner, name="launch-file-pruner", daemon=True).start()
     threading.Thread(target=_warm_rooms_at_start, name="warm-rooms", daemon=True).start()
 
     # Projects backup: the app owns the projects-root repo. Init it now

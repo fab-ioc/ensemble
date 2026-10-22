@@ -37,10 +37,6 @@ LAUNCH_DIR = DASHBOARD_DIR / "_launch"
 # that moves the hub's state moves its launch scripts with it (#257). A
 # LAUNCH_DIR patched by a test still wins.
 state_dir = None
-# An agent's launch script is read by its shell as it starts and deletes itself
-# when the agent exits; one whose agent was killed stays. Gone after a day.
-LAUNCH_SCRIPT_KEEP_S = 86400
-_pruned_at: dict[str, float] = {}
 SCHEME_MARKER = ".wt-scheme"
 
 
@@ -51,33 +47,8 @@ def _agent_launch_dir() -> Path:
     else:
         d = LAUNCH_DIR
     d.mkdir(parents=True, exist_ok=True)
-    _prune_launch_scripts(d)
     return d
 
-
-def _prune_launch_scripts(d: Path, now: float | None = None) -> int:
-    """Remove agent launch scripts (pty-*.ps1, <hex>.ps1) older than
-    LAUNCH_SCRIPT_KEEP_S, at most once an hour per folder. Update and restart
-    scripts are left. Returns how many went."""
-    now = time.time() if now is None else now
-    if now - _pruned_at.get(str(d), 0.0) < 3600:
-        return 0
-    _pruned_at[str(d)] = now
-    gone = 0
-    try:
-        entries = list(os.scandir(d))
-    except OSError:
-        return 0
-    for e in entries:
-        if not re.fullmatch(r"(pty-)?[0-9a-f]{32}\.ps1", e.name):
-            continue
-        try:
-            if e.is_file(follow_symlinks=False) and e.stat().st_mtime < now - LAUNCH_SCRIPT_KEEP_S:
-                os.unlink(e.path)
-                gone += 1
-        except OSError:
-            pass
-    return gone
 
 # ---------- Win32 process helpers ----------
 

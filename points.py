@@ -1292,7 +1292,7 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
     # waiting on someone, is read. What was read is remembered here, not on
     # disk: after a restart it is read once more, and linking again changes
     # nothing.
-    led = load(room_id)
+    led = load(room_id, shared=True)     # read only, until the lock below
     adopt = not led["points"] and not exists(room_id) and room_id not in _ADOPT_SEEN
     reads: dict[str, tuple] = {}
     pre = None
@@ -2300,10 +2300,10 @@ def _done_owed(rid: str, led: dict, now: float, after: float) -> list[dict]:
 
 
 def _tick_room(rid: str, now: float, after: float, done_after: float = 0.0) -> list[str]:
-    if _d.chatroom.get_room(rid) is None:
+    if _d.chatroom.get_room(rid, copy_room=False) is None:
         _GONE.add(rid)                  # a deleted room: its ledger is not read again
         return []
-    led = load(rid)
+    led = load(rid, shared=True)
     if not any(p["state"] == "open" or (p["state"] == "planned" and p.get("task")) for p in led["points"]):
         return []
     try:
