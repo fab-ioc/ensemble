@@ -76,7 +76,7 @@ class Hub:
     live_sessions: Callable[[], set]        # conversation ids a live terminal runs
     room_sessions: Callable[[dict], list]   # [(agent, sid)] every conversation of a room
     current_sessions: Callable[[dict], set]  # its seats' current conversation ids
-    classify: Callable[[str, Path, str], tuple]  # (agent, file, sid) -> ("po", rid) | ("hub", why) | ("own", "")
+    classify: Callable[[str, Path, str], tuple]  # (agent, file, sid) -> ("po", rid) | ("hub", why) | ("own", first words)
     slim_room: Callable[[str, dict], bool]
     forget_checkpoints: Callable[[dict], int]
     checkpoint_counts: Callable[[str], dict]  # repo -> {room: refs}

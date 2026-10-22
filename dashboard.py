@@ -12993,7 +12993,7 @@ def _prune_classify(agent: str, path: Path, sid: str) -> tuple[str, str]:
         return "hub", first_words(first)
     if cwd and any(prune.within(cwd, h) for h in homes):
         return "hub", ""
-    return "own", ""
+    return "own", first_words(first) if first else ""
 
 
 def _prune_hub() -> prune.Hub:
@@ -13039,7 +13039,19 @@ def _prune_hub() -> prune.Hub:
         project_home=lambda p: project_home(p, create=False),
         documents_dir=lambda p: project_documents_dir(p, persist=False),
         scratch_root=lambda cwd: str(_scratch_root_for(cwd) or ""),
-        progress=PRUNE_JOB.progress)
+        progress=PRUNE_JOB.progress,
+        pty_ids=lambda: {x.get("id") for x in ptyrun.list_sessions() if x.get("id")})
+
+
+def pruned_refusal(room: dict) -> dict:
+    """The reply to anything that would start a pruned task's agents again:
+    its folder, worktree and conversations are gone (#260)."""
+    at = (room.get("pruned") or {}).get("at") or time.time()
+    when = time.strftime("%Y-%m-%d", time.localtime(at))
+    return {"error": "pruned",
+            "message": (f"This task was pruned on {when} to free disk space: its folder, worktree "
+                        f"and conversations are gone, so it cannot be resumed. Make a new task "
+                        f"from its spec.")}
 
 
 def prune_state() -> dict:
@@ -15467,6 +15479,9 @@ def update_task(rid: str, title=None, spec=None,
         w = normalize_workflow(workflow)
         if w is None:
             return False, None, "bad_workflow"
+        if room.get("pruned") and w != "done":
+            # Its folder and conversations are gone: it can never run again.
+            return False, None, "pruned"
         room["workflow"] = w
         # When the card was last moved, by anyone: a merge only moves a card
         # nobody has moved since (digest._settle_merges).
@@ -17478,6 +17493,8 @@ class Handler(BaseHTTPRequestHandler):
         room_full = chatroom.get_room(rid, public=False)
         if room_full is None:
             return (404, {"error": "no_such_room"})
+        if room_full.get("pruned"):
+            return (409, pruned_refusal(room_full))
         key = str(data.get("key") or "").strip()[:200]
         # A send queued by a hub since restarted failed: the same key
         # again is its retry (not a duplicate), and Discard can drop it.
@@ -17985,6 +18002,9 @@ class Handler(BaseHTTPRequestHandler):
         ``prompt`` replaces the briefing outright and ``cwd`` the working dir —
         how a reviewer on mention is started with its review brief, in the
         checkout it reviews."""
+        if room_full.get("pruned"):
+            # Launching would make its removed folder again, empty (#260).
+            raise RuntimeError(pruned_refusal(room_full)["message"])
         ident = part["identity"]
         agent_key = part["agent"]
         # The seat's model, else the one Settings chose for its kind.
@@ -18062,6 +18082,8 @@ class Handler(BaseHTTPRequestHandler):
         dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId,
         prompted} — ``prompted`` when there was nothing to resume and it was
         started with ``seed`` as its first prompt instead."""
+        if room_full.get("pruned"):
+            raise RuntimeError(pruned_refusal(room_full)["message"])
         ident = part["identity"]
         agent_key = part["agent"]
         # As at its launch: a resumed conversation carries on on the model

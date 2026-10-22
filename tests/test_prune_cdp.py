@@ -205,6 +205,7 @@ class InChrome(unittest.TestCase):
         logs = state / "logs"
         logs.mkdir()
         (logs / "ensemble.log.1").write_text("old " * 1000, encoding="utf-8")
+        os.utime(logs / "ensemble.log.1", (OLD, OLD))   # one written today is never listed
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
         server.handle_error = lambda *a: None

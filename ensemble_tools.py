@@ -1621,7 +1621,7 @@ def _update_task(ctx, args, handler):
         ok, room2, err = _d.update_task(room["id"], title=title, spec=spec,
                                         priority=priority, workflow=workflow)
         if not ok:
-            raise ToolError(err)
+            raise ToolError(_d.pruned_refusal(room)["message"] if err == "pruned" else err)
         new_spec = room2.get("spec", "") or ""
         if (spec is not None and new_spec.strip() != old_spec.strip()
                 and _status(room2) in ("running", "waiting_user", "paused")):

@@ -7912,8 +7912,12 @@ function prunePaint() {
   dlg.querySelectorAll('input[data-id]').forEach(b => b.onchange = () => { PRUNE.ticks.set(b.dataset.id, b.checked); pruneSync(); });
   dlg.querySelectorAll('input[data-g]').forEach(b => b.onchange = () => {
     const g = s.preview.groups.find(x => x.id === b.dataset.g);
-    for (const it of g.items) PRUNE.ticks.set(it.id, b.checked);
-    dlg.querySelectorAll(`section[data-g="${b.dataset.g}"] input[data-id]`).forEach(x => { x.checked = b.checked; });
+    // Ticking the group never takes an item with a note (uncommitted work):
+    // that one is ticked only by hand. A tick that adds nothing clears all.
+    const add = g.items.filter(it => !it.note && !PRUNE.ticks.get(it.id));
+    const on = b.checked && add.length > 0;
+    for (const it of on ? add : g.items) PRUNE.ticks.set(it.id, on);
+    dlg.querySelectorAll(`section[data-g="${b.dataset.g}"] input[data-id]`).forEach(x => { x.checked = !!PRUNE.ticks.get(x.dataset.id); });
     pruneSync();
   });
   if (q('#pr-go')) q('#pr-go').onclick = async () => {
