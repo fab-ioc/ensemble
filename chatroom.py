@@ -161,6 +161,11 @@ ARCHIVE_AFTER_S = 86400
 CARDS_FILE_NAME = "cards.json"
 CARDS_VERSION = 1
 CARDS_SAVE_S = 60.0
+# The cards file is written by a hub (dashboard.main says so) or into a rooms
+# folder other than the one this process started with (a test's own): a test
+# that happens to read the live rooms never writes into the live state.
+_HOME_ROOMS = ROOMS_DIR
+CARDS_WRITER = False
 CARDS_SWEEP_S = 300.0
 FULL_KEEP = 16
 # Each: room -> True to keep the room whole (a live seat, an open ask, a
@@ -316,6 +321,8 @@ def sweep_cards(now: float | None = None) -> int:
 
 def save_cards(force: bool = False) -> bool:
     """Write the cards file when cards changed, at most every CARDS_SAVE_S."""
+    if not CARDS_WRITER and ROOMS_DIR == _HOME_ROOMS:
+        return False
     with _INDEX_LOCK:
         if not _CARDS_STATE["dirty"] or not _CARDS_STATE["dir"]:
             return False

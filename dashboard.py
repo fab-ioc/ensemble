@@ -21461,6 +21461,7 @@ def main():
     # This process is a hub: from here its launches start real agents. Never
     # earlier, and never in a test's in-process hub (agent_launch.py).
     agent_launch.allow()
+    chatroom.CARDS_WRITER = True    # and it keeps the finished tasks' cards file
     attach_pty_host()
     # Cold or warm start, decided before startup.booted() lets a request launch.
     note_host_at_attach()
