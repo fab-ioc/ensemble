@@ -735,6 +735,23 @@ class Endpoints(tp._World):
         self.assertFalse(whole.get("delta"))
         self.assertEqual([i["mid"] for i in whole["items"]], d["ids"])
 
+    def test_the_channel_names_the_sends_its_threads_hold(self):
+        # #259: a send confirmed before the threads hold its turn is not in a
+        # thread: the page keeps drawing it until the next build brings it.
+        dashboard.sends.accept(self.rid, "k-held", "Make the chart wider")
+        dashboard.sends.mark(self.rid, ["k-held"], "confirmed", mid="sid-1:0")
+        now = time.time() + 2
+        dashboard.sends.accept(self.rid, "k-new", "and taller")
+        dashboard.sends.mark(self.rid, ["k-new"], "confirmed", mid="sid-1:4")
+        threads.build(self.rid, show_progress=False)
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.assertEqual(ch["sendMids"], ["sid-1:0"], "a turn not read yet is not held")
+        self.add("sid-1", tp.turn("user", "and taller", now))
+        threads.build(self.rid, show_progress=False)
+        d = http_get(f"/api/room/channel?id={self.rid}&sig={ch['sig']}")[1]
+        self.assertEqual(d["set"]["sendMids"], ["sid-1:0", "sid-1:4"], "the poll's delta brings it")
+        self.assertIn("sid-1:4", d["ids"])
+
     def test_team_activity_unread_points_to_latest_po_reply_not_hub_traffic(self):
         now = time.time() + 2
         self.add("sid-1", tp.turn("assistant", "An update for you.", now),

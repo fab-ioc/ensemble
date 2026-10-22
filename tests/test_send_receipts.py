@@ -719,5 +719,60 @@ console.log(JSON.stringify(out));
         self.assertNotIn(".msg.pending { opacity", SESSION)
 
 
+@unittest.skipUnless(NODE, "node is not installed")
+class InAPoChannel(unittest.TestCase):
+    """#259: in a PO chat's channel a send confirmed by the hub stayed only
+    while the channel drew its turn: the hub confirms in a second, the
+    channel's threads are built again seconds later (on the live hub, longer),
+    so Send and Send now showed nothing in between. It stays until the
+    channel's threads hold its turn; one they hold the channel does not show
+    is in a thread."""
+
+    @classmethod
+    def setUpClass(cls):
+        block = SESSION[SESSION.index("// ---- What you sent, until the conversation shows it: begin"):
+                        SESSION.index("// ---- What you sent, until the conversation shows it: end")]
+        js = r"""
+const vm = require('vm');
+const code = require('fs').readFileSync(0, 'utf8');
+const ctx = { renderBubbles: () => {}, LAST_ITEMS: [], ROOM: 'room-1', threadedView: () => true,
+  THREAD_MODE: false, THREAD: '', THREAD_MID: '', THR_VIEW: null };
+vm.createContext(ctx);
+vm.runInContext(code, ctx);
+const run = s => vm.runInContext(s, ctx);
+const shown = items => ctx.sendsToShow(items).map(s => s.key);
+const old = [{ id: 's:0', from: 'user', text: 'spec', ts: 10 }, { id: 's:1', from: 'claude', text: 'working', ts: 20 }];
+const sent = { key: 'k', text: 'I just used send now\n\n[point P210]', at: 1000, state: 'confirmed', mid: 's:2' };
+const out = {};
+run('ROOM_SENDS = ' + JSON.stringify([sent]));
+run('THR_VIEW = ' + JSON.stringify({ items: old, sendMids: [] }));
+out.confirmedBeforeBuilt = shown(old);
+run('THR_VIEW = ' + JSON.stringify({ items: old, sendMids: ['s:2'] }));
+out.inAThread = shown(old);
+out.drawn = shown(old.concat([{ id: 's:2', from: 'user', text: sent.text, ts: 1001 }]));
+run('THR_VIEW = ' + JSON.stringify({ items: old }));
+out.oldHub = shown(old);
+// A thread's view says nothing of the channel: one sent from it stays till drawn.
+run('THREAD_MODE = true; THREAD = "P210"; THR_VIEW = ' + JSON.stringify({ items: old }));
+run('ROOM_SENDS = ' + JSON.stringify([Object.assign({}, sent, { thread: 'P210' })]));
+out.threadBox = shown(old);
+console.log(JSON.stringify(out));
+"""
+        r = subprocess.run([NODE, "-e", js], input=block, capture_output=True, text=True,
+                           encoding="utf-8", timeout=60)
+        if r.returncode != 0:
+            raise AssertionError(r.stderr)
+        cls.r = json.loads(r.stdout)
+
+    def test_a_confirmed_send_stays_until_the_threads_hold_its_turn(self):
+        self.assertEqual(self.r["confirmedBeforeBuilt"], ["k"], "gone at its confirmation: P210")
+        self.assertEqual(self.r["drawn"], [])
+
+    def test_one_the_threads_hold_and_the_channel_does_not_show_is_in_a_thread(self):
+        self.assertEqual(self.r["inAThread"], [])
+        self.assertEqual(self.r["oldHub"], [], "a hub that does not say: as before")
+        self.assertEqual(self.r["threadBox"], ["k"])
+
+
 if __name__ == "__main__":
     unittest.main()
