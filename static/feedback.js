@@ -41,10 +41,12 @@
     busy = value;
     for (const field of dialog.querySelectorAll('input, textarea, select, button')) field.disabled = value;
   }
-  async function post(path, data) {
-    const r = await fetch('/api/feedback/' + path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Feedback request failed. Your text is kept.');
+  // Given up after 20 s, a send after 45 s (its relay or GitHub may take 25 s):
+  // the dialog's busy state always ends (sendJson, static/hub-resilience.js).
+  async function post(path, data, ms) {
+    const r = await sendJson('/api/feedback/' + path, data, {ms});
+    const d = r.data || {};
+    if (!r.ok) throw new Error(d.error || `Feedback request failed (error ${r.status}). Your text is kept.`);
     return d;
   }
   function link(url, text) {
@@ -100,14 +102,19 @@
       el('feedback-preview-button').className = 'po-btn def';
       el('feedback-preview-button').textContent = 'Preview again';
       status('Review the text above before sending. Editing a field requires a new preview.');
-    } catch (e) { status(e.message || 'Could not prepare preview. Your text is kept.'); }
+    } catch (e) {
+      if (current !== revision) return;
+      status(e.timeout ? 'The preview did not come back within 20 seconds. Your text is kept: press Preview again.'
+        : e.network ? 'Could not reach Ensemble. Your text is kept: press Preview again.'
+        : e.message || 'Could not prepare preview. Your text is kept.');
+    }
     finally { sending(false); }
   };
   el('feedback-send').onclick = async () => {
     if (!draft || busy || completed) return;
     sending(true); status('Sending…');
     try {
-      const result = await post('send', {id: draft.id});
+      const result = await post('send', {id: draft.id}, 45000);
       if (result.ok) {
         completed = true; el('feedback-send').hidden = true;
         status(images.length && !draft.anonymous ? 'Issue created. Download the screenshots above, then drag them onto the GitHub issue.' : 'Issue created.');

@@ -623,6 +623,11 @@ globalThis.fetch = async (url, o) => {
   if (hold) await hold.p;
   return { ok: true, status: 200, json: async () => ({ ok: true }) };
 };
+// static/hub-resilience.js's sendJson over this fetch (#251).
+globalThis.sendJson = async (url, body) => {
+  const r = await fetch(url, { method: 'POST', body: JSON.stringify(body || {}) });
+  return { ok: r.ok, status: r.status, data: await r.json() };
+};
 const api = async url => {
   if (url.startsWith('/api/git/roots')) return { roots: [{ path: '/r1', name: 'r1' }, { path: '/r2', name: 'r2' }] };
   const root = decodeURIComponent((url.match(/path=([^&]*)/) || [])[1] || '');
