@@ -33,6 +33,7 @@ the doorbell live in ``dashboard.py`` (which injects a ``ring`` callback).
 """
 from __future__ import annotations
 
+import gzip
 import json
 import copy
 import os
@@ -42,6 +43,7 @@ import shutil
 import threading
 import time
 import uuid
+import zlib
 from pathlib import Path
 
 from backends.base import DASHBOARD_DIR
@@ -402,6 +404,23 @@ def _log_path(room_id: str) -> Path:
     return ROOMS_DIR / LOG_DIR_NAME / f"{room_id}.jsonl"
 
 
+# Packed chats (#256 D2): a task Done for PACK_AFTER_S has its messages packed
+# into one gzip of its log (PACK_SUFFIX, beside where the log was), its room
+# file saying so (messageLog.packed); search reads its last reports. The
+# room file or log it was packed from goes to ORIGINALS_DIR_NAME, removed by
+# prune_originals once the pack still reads to the same messages. A packed
+# chat opens as before (read whole from the pack); the first write after it
+# writes the log again and lets the pack go. Messages pack about 6 to 1, and
+# search no longer reads a finished chat whole.
+PACK_AFTER_S = 14 * 86400
+PACK_SUFFIX = ".jsonl.gz"
+_PACKED: set[str] = set()       # rooms whose messages are read from their pack
+
+
+def _pack_path(room_id: str) -> Path:
+    return ROOMS_DIR / LOG_DIR_NAME / f"{room_id}{PACK_SUFFIX}"
+
+
 class _Unreadable(Exception):
     """A room's log is there but cannot be read just now (another process has
     it open, no access), or is gone while the room file counts messages: the
@@ -416,17 +435,27 @@ def _read_log(room_id: str, count: int) -> tuple[list[dict], bool]:
     """The logged messages, and whether the log is whole: a line cut short
     by a stop mid-append makes the next write rewrite it, so a message
     appended after it is not glued onto the damaged line. ``count``: the
-    messages the room file says the log has."""
+    messages the room file says the log has. A packed chat's log is read
+    from its pack, and is never whole: its next write writes the log again."""
+    packed = False
     try:
         raw = _log_path(room_id).read_bytes()
     except FileNotFoundError:
-        if count > 0:
-            print(f"[rooms] {room_id}: the log of {count} messages is missing; the room is not read", flush=True)
-            raise _Unreadable(room_id)
-        return [], False
+        raw = _read_pack(room_id)
+        if raw is None:
+            _PACKED.discard(room_id)
+            if count > 0:
+                print(f"[rooms] {room_id}: the log of {count} messages is missing; the room is not read", flush=True)
+                raise _Unreadable(room_id)
+            return [], False
+        packed = True
     except OSError as e:
         print(f"[rooms] {room_id}: messages not read: {e!r}", flush=True)
         raise _Unreadable(room_id) from e
+    if packed:
+        _PACKED.add(room_id)
+    else:
+        _PACKED.discard(room_id)
     out, bad = [], 0
     for line in raw.split(b"\n"):
         if not line.strip():
@@ -443,7 +472,24 @@ def _read_log(room_id: str, count: int) -> tuple[list[dict], bool]:
         _DAMAGED[room_id] = bad
     else:
         _DAMAGED.pop(room_id, None)
-    return out, not bad and (not raw or raw.endswith(b"\n"))
+    return out, not packed and not bad and (not raw or raw.endswith(b"\n"))
+
+
+def _read_pack(room_id: str) -> bytes | None:
+    """A packed chat's log as it was packed; None when it has no pack. A pack
+    there that cannot be read raises _Unreadable: the room is not read."""
+    try:
+        data = _pack_path(room_id).read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        print(f"[rooms] {room_id}: packed messages not read: {e!r}", flush=True)
+        raise _Unreadable(room_id) from e
+    try:
+        return gzip.decompress(data)
+    except (OSError, EOFError, zlib.error) as e:
+        print(f"[rooms] {room_id}: the packed messages are damaged; the room is not read: {e!r}", flush=True)
+        raise _Unreadable(room_id) from e
 
 
 def _logged_count(room: dict) -> int:
@@ -453,13 +499,20 @@ def _logged_count(room: dict) -> int:
         return 0
 
 
-def _read(room_id: str) -> dict | None:
+def _read(room_id: str, *, unpack: bool = True) -> dict | None:
+    """The room with its messages. ``unpack=False``: a packed chat with only
+    the reports its room file keeps (search, read_unpacked), never written."""
     p = _room_path(room_id)
     try:
         room = json.loads(p.read_text(encoding="utf-8-sig"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
     if not isinstance(room, dict):
+        return room
+    log = room.get("messageLog")
+    if not unpack and isinstance(log, dict) and log.get("packed"):
+        room["messages"] = _kept_reports(room)
+        room.pop("messageLog", None)
         return room
     if isinstance(room.get("messageLog"), dict):
         try:
@@ -481,8 +534,27 @@ def _read(room_id: str) -> dict | None:
             _LOGGED.discard(room_id)
     else:
         _LOGGED.discard(room_id)
+        _PACKED.discard(room_id)
     room.pop("messageLog", None)
     return room
+
+
+def _kept_reports(room: dict) -> list[dict]:
+    """A packed chat's reports as the room keeps them (its last, and its
+    last that was not an update), as the messages they were."""
+    out = []
+    for key in ("lastRealReport", "lastReport"):
+        r = room.get(key)
+        if isinstance(r, dict) and r.get("text") and r.get("messageId") not in {m["id"] for m in out}:
+            out.append({"id": r.get("messageId") or key, "from": r.get("identity") or "", "to": HUMAN_IDENTITY,
+                        "text": r["text"], "ts": r.get("ts") or 0, "kind": "report", "reportKind": r.get("kind")})
+    return out
+
+
+def read_unpacked(room_id: str) -> dict | None:
+    """A room for search: a packed chat's card with its reports, not its
+    whole chat (search covers a finished task's title, spec and reports)."""
+    return _read(room_id, unpack=False)
 
 
 def _append_lines(path: Path, msgs: list[dict]) -> None:
@@ -603,34 +675,166 @@ def _write_messages(room_id: str, old: list[dict] | None, new: list[dict], remov
     return undo
 
 
+def _changed_at(room: dict) -> float:
+    try:
+        return max(float(room.get("updatedAt") or 0), float(room.get("stoppedAt") or 0),
+                   float(room.get("workflowAt") or 0))
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def pack_room(room_id: str, now: float | None = None) -> bool:
+    """Pack a finished chat (see PACK_AFTER_S): its messages into its pack,
+    read back and compared before anything else changes; then its room file
+    without them; then the log or room file it had goes to the originals.
+    Whether it was packed."""
+    now = _now() if now is None else now
+    with _LOCK:
+        try:
+            raw, disk = _on_disk(room_id)
+        except OSError:
+            return False
+        if disk is None:
+            return False
+        log = disk.get("messageLog")
+        if isinstance(log, dict) and log.get("packed"):
+            return False
+        room = _read(room_id)
+        if room is None or _DAMAGED.get(room_id) or room_id in _PACKED:
+            return False
+        # Whole as read: a log every line of which read, or the messages in
+        # the room file alone (not both: a downgrade's file is written first).
+        inline = isinstance(disk.get("messages"), list)
+        if (isinstance(log, dict) and (inline or room_id not in _LOGGED)) or (log is None and not inline):
+            return False
+        if not archivable(room, now) or _changed_at(room) >= now - PACK_AFTER_S:
+            return False
+        msgs = room.get("messages") or []
+        body = _log_text(msgs).encode("utf-8")
+        pack = _pack_path(room_id)
+        pack.parent.mkdir(parents=True, exist_ok=True)
+        tmp = pack.with_name(pack.name + ".tmp")
+        try:
+            with open(tmp, "wb") as f:
+                f.write(gzip.compress(body, 6))
+                f.flush()
+                os.fsync(f.fileno())
+            _replace(tmp, pack)
+            if gzip.decompress(pack.read_bytes()) != body:
+                raise OSError("the pack does not read back to the messages")
+        except (OSError, EOFError, zlib.error) as e:
+            print(f"[rooms] {room_id}: not packed: {e!r}", flush=True)
+            for f in (tmp, pack):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            return False
+        if inline:
+            _keep_original(room_id, raw)
+        p = _room_path(room_id)
+        rtmp = p.with_suffix(".json.tmp")
+        try:
+            # Compact: a finished task's record is read whole, by a program.
+            durable.write_tmp(rtmp, json.dumps({**{k: v for k, v in room.items() if k != "messages"},
+                                                "messageLog": {"count": len(msgs), "packed": True}},
+                                               separators=(",", ":")))
+            with _INDEX_LOCK:
+                _replace(rtmp, p)
+                _LOGGED.discard(room_id)
+                _PACKED.add(room_id)
+                st = p.stat()
+                _INDEX[room_id] = _index_entry(room_id, room, st, now)
+                _CHANGES.pop(room_id, None)
+        except OSError as e:
+            # The room file is as it was (its log or its messages): the pack
+            # beside it is stale, never read while the log is there.
+            print(f"[rooms] {room_id}: not packed, the room file was not written: {e!r}", flush=True)
+            _unpack(room_id)
+            return False
+        if not inline:
+            keep = ROOMS_DIR / ORIGINALS_DIR_NAME / f"{room_id}.jsonl"
+            try:
+                keep.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(_log_path(room_id), keep)
+                os.utime(keep)      # kept ORIGINALS_KEEP_S from now, not from its last message
+            except OSError as e:
+                # The log stays and is read first, as it holds the same messages.
+                print(f"[rooms] {room_id}: the log was not moved to the originals: {e!r}", flush=True)
+                _PACKED.discard(room_id)
+        return True
+
+
+def pack_chats(now: float | None = None, between=None) -> int:
+    """Pack every finished chat due (pack_room), one at a time, calling
+    ``between()`` after each (the hub stands aside for the pages: writers
+    wait on one room's packing at a time). Only a hub packs its own home's
+    rooms (as for the cards file). How many."""
+    if not CARDS_WRITER and ROOMS_DIR == _HOME_ROOMS:
+        return 0
+    now = _now() if now is None else now
+    with _INDEX_LOCK:
+        due = [rid for rid, e in _INDEX.items()
+               if e.get("cold") and rid not in _PACKED and _changed_at(e["room"]) < now - PACK_AFTER_S]
+    n = 0
+    for rid in due:
+        if _pack_path(rid).exists() and not _log_path(rid).exists():
+            continue        # packed by an earlier hub, still a card here
+        try:
+            if pack_room(rid, now):
+                n += 1
+        except Exception as e:      # noqa: BLE001 — the next run tries again
+            print(f"[rooms] {rid}: not packed: {e!r}", flush=True)
+        if between is not None:
+            between()
+    return n
+
+
+def _unpack(room_id: str) -> None:
+    """The pack of a chat whose log was written again: the log is read first,
+    so a pack left behind is never read, only stale."""
+    _PACKED.discard(room_id)
+    try:
+        _pack_path(room_id).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"[rooms] {room_id}: the old pack was not removed: {e!r}", flush=True)
+
+
 ORIGINALS_KEEP_S = 14 * 86400   # a kept original goes this long after it was made, once verified
 
 
 def prune_originals(now: float | None = None) -> int:
-    """Remove the room files kept from before the log once their room is
-    verified: its file reads, its log is whole, and it holds every message
-    the original had (or the room is gone). Returns how many went."""
+    """Remove the room files kept from before the log, and the logs kept from
+    before a pack, once their room is verified: its file reads, its log is
+    whole or its pack reads, and it holds every message the original had (or
+    the room is gone). Returns how many went."""
     now = time.time() if now is None else now
     d = ROOMS_DIR / ORIGINALS_DIR_NAME
     try:
-        entries = [e for e in os.scandir(d) if e.name.endswith(".json") and e.is_file()]
+        entries = [e for e in os.scandir(d) if e.name.endswith((".json", ".jsonl")) and e.is_file()]
     except OSError:
         return 0
     gone = 0
     for e in entries:
-        rid = e.name[:-len(".json")]
+        rid, _dot, ext = e.name.partition(".")
         try:
             if e.stat().st_mtime > now - ORIGINALS_KEEP_S:
                 continue
             if _room_path(rid).exists():
                 with _LOCK:
                     room = _read(rid)
-                if room is None or rid not in _LOGGED:
+                if room is None or (rid not in _LOGGED and rid not in _PACKED):
                     continue
-                kept = json.loads(Path(e.path).read_text(encoding="utf-8-sig"))
+                text = Path(e.path).read_text(encoding="utf-8-sig")
+                if ext == "jsonl":      # a packed chat's log (#256 D2)
+                    had = [json.loads(line) for line in text.splitlines() if line.strip()]
+                else:
+                    kept = json.loads(text)
+                    had = kept.get("messages") or [] if isinstance(kept, dict) else []
                 ids = {m.get("id") for m in room.get("messages") or []}
-                if any(isinstance(m, dict) and m.get("id") not in ids
-                       for m in (kept.get("messages") or [] if isinstance(kept, dict) else [])):
+                if any(isinstance(m, dict) and m.get("id") not in ids for m in had):
                     print(f"[rooms] {rid}: the log lacks messages its original has; the original is kept", flush=True)
                     continue
             os.unlink(e.path)
@@ -679,6 +883,8 @@ def messages_file(room_id: str) -> str:
     """Where a room's messages are on disk, as an agent is told it."""
     if room_id in _LOGGED:
         return f"~/.ensemble/rooms/{LOG_DIR_NAME}/{room_id}.jsonl"
+    if room_id in _PACKED:
+        return f"~/.ensemble/rooms/{LOG_DIR_NAME}/{room_id}{PACK_SUFFIX} (gzip)"
     return f"~/.ensemble/rooms/{room_id}.json"
 
 
@@ -706,6 +912,7 @@ def _write(room: dict, *, removed: int = 0) -> None:
     # The log first: a stop between the two leaves a room file that still
     # reads (its old messages, or the log with one message more).
     msgs = room.get("messages") or []
+    rewrite = room["id"] not in _LOGGED       # the log written whole: a pack it was read from goes after
     undo = _write_messages(room["id"], (old or {}).get("messages") if old is not None else None, msgs, removed)
     # A room file that cannot be written takes the log back with it: the
     # caller's retry would post the message twice (#256).
@@ -722,6 +929,8 @@ def _write(room: dict, *, removed: int = 0) -> None:
             undo()
             raise
         _LOGGED.add(room["id"])
+        if rewrite:
+            _unpack(room["id"])
         st = p.stat()
         new_sig = _entry(room, st)["signature"]
         _INDEX[room["id"]] = _index_entry(room["id"], _listed_copy(room), st)
@@ -1175,10 +1384,12 @@ def delete_room(room_id: str) -> bool:
             _FULL.pop(room_id, None)
             if _CARDS.pop(room_id, None) is not None:
                 _CARDS_STATE["dirty"] = True
-        try:
-            _log_path(room_id).unlink()
-        except OSError:
-            pass
+        for path in (_log_path(room_id), _pack_path(room_id)):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        _PACKED.discard(room_id)
         # Input provenance is room-owned auxiliary state. Keep its lifetime
         # aligned with the room without importing input_provenance here (that
         # module imports chatroom).
