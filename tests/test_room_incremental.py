@@ -74,7 +74,7 @@ class RoomIncrementalTests(unittest.TestCase):
         self.assertEqual(chatroom.room_delta(room["id"], start),
                          (chatroom.room_revision(room["id"]), {"m1", "m2"}))
         room["messages"].pop(0)
-        chatroom._write(room)
+        chatroom._write(room, removed=1)
         self.assertIsNone(chatroom.room_delta(room["id"], start))
 
     def test_snapshot_revision_matches_room(self):

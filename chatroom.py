@@ -188,15 +188,31 @@ def _log_path(room_id: str) -> Path:
     return ROOMS_DIR / LOG_DIR_NAME / f"{room_id}.jsonl"
 
 
-def _read_log(room_id: str) -> tuple[list[dict], bool]:
+class _Unreadable(Exception):
+    """A room's log is there but cannot be read just now (another process has
+    it open, no access), or is gone while the room file counts messages: the
+    room is not read at all rather than read empty, which the next write
+    would make true (#256, the PO's pre-merge read)."""
+
+
+_DAMAGED: dict[str, int] = {}   # room id -> damaged lines its last read skipped
+
+
+def _read_log(room_id: str, count: int) -> tuple[list[dict], bool]:
     """The logged messages, and whether the log is whole: a line cut short
-    by a stop mid-append (or a missing log) makes the next write rewrite it,
-    so a message appended after it is not glued onto the damaged line."""
+    by a stop mid-append makes the next write rewrite it, so a message
+    appended after it is not glued onto the damaged line. ``count``: the
+    messages the room file says the log has."""
     try:
         raw = _log_path(room_id).read_bytes()
+    except FileNotFoundError:
+        if count > 0:
+            print(f"[rooms] {room_id}: the log of {count} messages is missing; the room is not read", flush=True)
+            raise _Unreadable(room_id)
+        return [], False
     except OSError as e:
         print(f"[rooms] {room_id}: messages not read: {e!r}", flush=True)
-        return [], False
+        raise _Unreadable(room_id) from e
     out, bad = [], 0
     for line in raw.split(b"\n"):
         if not line.strip():
@@ -210,7 +226,17 @@ def _read_log(room_id: str) -> tuple[list[dict], bool]:
             out.append(m)
     if bad:
         print(f"[rooms] {room_id}: {bad} damaged message line(s) skipped", flush=True)
+        _DAMAGED[room_id] = bad
+    else:
+        _DAMAGED.pop(room_id, None)
     return out, not bad and (not raw or raw.endswith(b"\n"))
+
+
+def _logged_count(room: dict) -> int:
+    try:
+        return max(0, int((room.get("messageLog") or {}).get("count") or 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
 
 
 def _read(room_id: str) -> dict | None:
@@ -222,7 +248,11 @@ def _read(room_id: str) -> dict | None:
     if not isinstance(room, dict):
         return room
     if isinstance(room.get("messageLog"), dict):
-        logged, whole = _read_log(room_id)
+        try:
+            logged, whole = _read_log(room_id, _logged_count(room))
+        except _Unreadable:
+            _LOGGED.discard(room_id)
+            return None
         inline = room.get("messages")
         if isinstance(inline, list):
             # A hub from before the log wrote this file (a downgrade): its
@@ -248,33 +278,165 @@ def _append_lines(path: Path, msgs: list[dict]) -> None:
         os.fsync(f.fileno())
 
 
-def _write_messages(room_id: str, old: list[dict] | None, new: list[dict]) -> None:
-    """The log holds ``new``: the messages added after ``old`` (the logged
-    ones) are appended; anything else (a first write, a message taken back)
-    writes the log again. Messages are never changed once posted."""
-    path = _log_path(room_id)
-    if room_id in _LOGGED and old is not None and len(new) >= len(old) and all(
-            a is b or a == b for a, b in zip(old, new)):
-        if len(new) > len(old):
-            _append_lines(path, new[len(old):])
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if room_id not in _LOGGED:
-        src = _room_path(room_id)
-        keep = ROOMS_DIR / ORIGINALS_DIR_NAME / src.name
-        if src.exists() and not keep.exists():
-            keep.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, keep)
-    tmp = path.with_name(path.name + ".tmp")
-    durable.write_tmp(tmp, "".join(json.dumps(m) + "\n" for m in new))
+def _replace(tmp: Path, path: Path) -> None:
+    # Windows refuses the replace while another process (a virus scanner, a
+    # backup, the indexer) has the file open for a moment: WinError 5 on
+    # 2026-09-23 failed a PO resume after its terminal had started.
     for attempt in range(8):
         try:
             tmp.replace(path)
-            break
+            return
         except PermissionError:
             if attempt == 7:
                 raise
             time.sleep(0.05 * (attempt + 1))
+
+
+def _log_text(msgs: list[dict]) -> str:
+    return "".join(json.dumps(m) + "\n" for m in msgs)
+
+
+def _on_disk(room_id: str) -> tuple[bytes, dict | None]:
+    """The room file as it is now: its bytes and its JSON (None when it is
+    not there). A file there that cannot be read raises."""
+    try:
+        raw = _room_path(room_id).read_bytes()
+    except FileNotFoundError:
+        return b"", None
+    try:
+        d = json.loads(raw.decode("utf-8-sig"))
+    except ValueError:
+        return raw, None
+    return raw, d if isinstance(d, dict) else None
+
+
+def _keep_original(room_id: str, raw: bytes) -> None:
+    """The room file from before the log, kept once (whole: a copy cut short
+    by a stop is made again)."""
+    keep = ROOMS_DIR / ORIGINALS_DIR_NAME / f"{room_id}.json"
+    try:
+        if keep.stat().st_size == len(raw):
+            return
+    except OSError:
+        pass
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    tmp = keep.with_name(keep.name + ".tmp")
+    durable.write_tmp(tmp, raw.decode("utf-8-sig"))
+    _replace(tmp, keep)
+
+
+def _write_messages(room_id: str, old: list[dict] | None, new: list[dict], removed: int = 0):
+    """The log holds ``new``: the messages added after ``old`` (the logged
+    ones) are appended; anything else (a first write, a message taken back,
+    a damaged log) writes the log again. Messages are never changed once
+    posted. Returns how to put the log back if the room file then cannot be
+    written. A rewrite never holds fewer messages than the room file counts,
+    but for the ``removed`` ones and the damaged lines skipped: a room read
+    without its messages must not lose them (#256)."""
+    path = _log_path(room_id)
+    if room_id in _LOGGED and old is not None and len(new) >= len(old) and all(
+            a is b or a == b for a, b in zip(old, new)):
+        if len(new) == len(old):
+            return lambda: None
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = None
+        try:
+            _append_lines(path, new[len(old):])
+        except BaseException:
+            # A part of a line may be there: the next write rewrites the log.
+            _LOGGED.discard(room_id)
+            _truncate(path, size)
+            raise
+
+        def undo():
+            if not _truncate(path, size):
+                _LOGGED.discard(room_id)
+        return undo
+    raw, disk = _on_disk(room_id)
+    if disk is not None:
+        inline = disk.get("messages")
+        had = len(inline) if isinstance(inline, list) and "messageLog" not in disk else _logged_count(disk)
+        if isinstance(inline, list) and "messageLog" not in disk:
+            _keep_original(room_id, raw)
+        floor = had - removed - _DAMAGED.get(room_id, 0)
+        if len(new) < floor:
+            print(f"[rooms] {room_id}: refused to write {len(new)} messages over {had}", flush=True)
+            raise RuntimeError(f"{room_id}: the log would lose messages ({len(new)} < {floor})")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if _DAMAGED.get(room_id) and path.exists():
+        try:
+            shutil.copy2(path, path.with_name(f"{path.name}.damaged-{int(time.time())}"))
+        except OSError:
+            pass
+    tmp = path.with_name(path.name + ".tmp")
+    restore = old is not None and disk is not None and "messageLog" in disk
+    durable.write_tmp(tmp, _log_text(new))
+    _replace(tmp, path)
+    _DAMAGED.pop(room_id, None)
+
+    def undo():
+        # The room file still names the old messages: the log holds them
+        # again, or (an old room file) is not read at all.
+        _LOGGED.discard(room_id)
+        if restore:
+            try:
+                durable.write_tmp(tmp, _log_text(old))
+                _replace(tmp, path)
+            except OSError as e:
+                print(f"[rooms] {room_id}: the log was not put back: {e!r}", flush=True)
+    return undo
+
+
+ORIGINALS_KEEP_S = 14 * 86400   # a kept original goes this long after it was made, once verified
+
+
+def prune_originals(now: float | None = None) -> int:
+    """Remove the room files kept from before the log once their room is
+    verified: its file reads, its log is whole, and it holds every message
+    the original had (or the room is gone). Returns how many went."""
+    now = time.time() if now is None else now
+    d = ROOMS_DIR / ORIGINALS_DIR_NAME
+    try:
+        entries = [e for e in os.scandir(d) if e.name.endswith(".json") and e.is_file()]
+    except OSError:
+        return 0
+    gone = 0
+    for e in entries:
+        rid = e.name[:-len(".json")]
+        try:
+            if e.stat().st_mtime > now - ORIGINALS_KEEP_S:
+                continue
+            if _room_path(rid).exists():
+                with _LOCK:
+                    room = _read(rid)
+                if room is None or rid not in _LOGGED:
+                    continue
+                kept = json.loads(Path(e.path).read_text(encoding="utf-8-sig"))
+                ids = {m.get("id") for m in room.get("messages") or []}
+                if any(isinstance(m, dict) and m.get("id") not in ids
+                       for m in (kept.get("messages") or [] if isinstance(kept, dict) else [])):
+                    print(f"[rooms] {rid}: the log lacks messages its original has; the original is kept", flush=True)
+                    continue
+            os.unlink(e.path)
+            gone += 1
+        except (OSError, ValueError):
+            continue
+    return gone
+
+
+def _truncate(path: Path, size: int | None) -> bool:
+    """The log cut back to ``size`` bytes (what it was before an append)."""
+    if size is None:
+        return False
+    try:
+        with open(path, "r+b") as f:
+            f.truncate(size)
+        return True
+    except OSError as e:
+        print(f"[rooms] {path.stem}: the log was not cut back: {e!r}", flush=True)
+        return False
 
 
 def _load(room_id: str) -> dict | None:
@@ -301,7 +463,10 @@ def messages_file(room_id: str) -> str:
     return f"~/.ensemble/rooms/{room_id}.json"
 
 
-def _write(room: dict) -> None:
+def _write(room: dict, *, removed: int = 0) -> None:
+    """Write the room: its log first, then its file. ``removed``: messages
+    taken out of the list on purpose (a withdraw), which a rewrite of the
+    log may drop."""
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
@@ -317,21 +482,21 @@ def _write(room: dict) -> None:
     # The log first: a stop between the two leaves a room file that still
     # reads (its old messages, or the log with one message more).
     msgs = room.get("messages") or []
-    _write_messages(room["id"], (old or {}).get("messages") if old is not None else None, msgs)
-    durable.write_tmp(tmp, json.dumps({**{k: v for k, v in room.items() if k != "messages"},
-                                       "messageLog": {"count": len(msgs)}}, indent=2))
-    # Windows refuses the replace while another process (a virus scanner, a
-    # backup, the indexer) has the file open for a moment: WinError 5 on
-    # 2026-09-23 failed a PO resume after its terminal had started.
+    undo = _write_messages(room["id"], (old or {}).get("messages") if old is not None else None, msgs, removed)
+    # A room file that cannot be written takes the log back with it: the
+    # caller's retry would post the message twice (#256).
+    try:
+        durable.write_tmp(tmp, json.dumps({**{k: v for k, v in room.items() if k != "messages"},
+                                           "messageLog": {"count": len(msgs)}}, indent=2))
+    except BaseException:
+        undo()
+        raise
     with _INDEX_LOCK:
-        for attempt in range(8):
-            try:
-                tmp.replace(p)
-                break
-            except PermissionError:
-                if attempt == 7:
-                    raise
-                time.sleep(0.05 * (attempt + 1))
+        try:
+            _replace(tmp, p)
+        except BaseException:
+            undo()
+            raise
         _LOGGED.add(room["id"])
         st = p.stat()
         new_sig = _entry(room, st)["signature"]
@@ -764,6 +929,7 @@ def delete_room(room_id: str) -> bool:
         except (FileNotFoundError, OSError):
             return False
         _LOGGED.discard(room_id)
+        _DAMAGED.pop(room_id, None)
         try:
             _log_path(room_id).unlink()
         except OSError:
@@ -1356,7 +1522,7 @@ def withdraw_message(room_id: str, msg_id: str, sender: str = HUMAN_IDENTITY) ->
                 return False
         msgs.remove(m)
         room["updatedAt"] = _now()
-        _write(room)
+        _write(room, removed=1)
         return True
 
 

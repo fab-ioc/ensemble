@@ -56,7 +56,7 @@ def main():
     source = Path.home() / ".ensemble"
     with tempfile.TemporaryDirectory(prefix="ensemble-topics-lane-") as tmp:
         dest = Path(tmp)
-        for sub in ("rooms", "points", "threads", "sends", "input-provenance"):
+        for sub in ("rooms", "rooms/messages", "points", "threads", "sends", "input-provenance"):
             (dest / sub).mkdir()
             for rid in ROOMS:
                 for ext in (".json", ".jsonl"):

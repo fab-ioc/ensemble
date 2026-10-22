@@ -20,9 +20,14 @@ class _Rooms(unittest.TestCase):
         p = mock.patch.object(chatroom, "ROOMS_DIR", self.path)
         p.start()
         self.addCleanup(p.stop)
-        for cache in (chatroom._INDEX, chatroom._CHANGES, chatroom._TOKEN_ROOMS, chatroom._LOGGED):
+        for cache in (chatroom._INDEX, chatroom._CHANGES, chatroom._TOKEN_ROOMS, chatroom._LOGGED, chatroom._DAMAGED):
             cache.clear()
             self.addCleanup(cache.clear)
+
+    def restart(self):
+        chatroom._INDEX.clear()
+        chatroom._LOGGED.clear()
+        chatroom._DAMAGED.clear()
 
     def room_file(self, rid):
         return json.loads((self.path / f"{rid}.json").read_text(encoding="utf-8"))
@@ -89,10 +94,6 @@ class MessageLog(_Rooms):
         self.assertEqual(msgs[-1]["text"], "one")
         self.assertNotIn("cut", [m.get("id") for m in msgs])
 
-    def restart(self):
-        chatroom._INDEX.clear()
-        chatroom._LOGGED.clear()
-
     def test_a_post_after_a_cut_line_survives_a_restart(self):
         rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
         chatroom.post_message(rid, "claude", "one")
@@ -120,16 +121,126 @@ class MessageLog(_Rooms):
         chatroom._read(old)
         self.assertEqual(chatroom.messages_file(old), f"~/.ensemble/rooms/{old}.json")
 
-    def test_a_missing_log_reads_as_no_messages(self):
+    def test_a_missing_log_of_counted_messages_makes_the_room_unreadable(self):
         rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
         chatroom.post_message(rid, "claude", "one")
         (self.path / "messages" / f"{rid}.jsonl").unlink()
+        self.restart()
+        self.assertIsNone(chatroom._read(rid))
+        self.assertIsNone(chatroom.post_message(rid, "claude", "two"))
+        self.assertFalse((self.path / "messages" / f"{rid}.jsonl").exists())
+
+    def test_a_room_with_no_messages_and_no_log_reads(self):
+        rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        (self.path / "messages" / f"{rid}.jsonl").unlink()
+        self.restart()
+        self.assertEqual(chatroom._read(rid)["messages"], [])
+        chatroom.post_message(rid, "claude", "one")
+        self.assertEqual([json.loads(x)["text"] for x in self.log_lines(rid)], ["one"])
+
+
+class FailedReadsAndWrites(_Rooms):
+    """The PO's pre-merge read of step A: a read or write that fails never
+    costs a message, nor posts one twice."""
+
+    def setUp(self):
+        super().setUp()
+        self.rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]
+        for t in ("1", "2", "3", "4", "5"):
+            chatroom.post_message(self.rid, "claude", t)
+
+    def texts(self):
         chatroom._INDEX.clear()
-        room = chatroom._read(rid)
-        self.assertEqual(room["messages"], [])
-        self.assertNotIn("messageLog", room)
-        self.assertIsNotNone(chatroom.post_message(rid, "claude", "two"))
-        self.assertEqual([json.loads(x)["text"] for x in self.log_lines(rid)], ["two"])
+        chatroom._LOGGED.clear()
+        return [m["text"] for m in chatroom._read(self.rid)["messages"]]
+
+    def log_texts(self):
+        return [json.loads(x)["text"] for x in self.log_lines(self.rid)]
+
+    def test_a_log_that_cannot_be_read_does_not_read_as_empty(self):
+        log = self.path / "messages" / f"{self.rid}.jsonl"
+        real = Path.read_bytes
+
+        def locked(p):
+            if p == log:
+                raise PermissionError(32, "The process cannot access the file")
+            return real(p)
+        chatroom._INDEX.clear()
+        chatroom._LOGGED.clear()
+        with mock.patch.object(Path, "read_bytes", locked):
+            self.assertIsNone(chatroom._read(self.rid))
+            self.assertIsNone(chatroom.get_room(self.rid))
+            self.assertIsNone(chatroom.post_message(self.rid, "claude", "after"))
+        self.assertEqual(self.log_texts(), ["1", "2", "3", "4", "5"])
+        chatroom.post_message(self.rid, "claude", "after")
+        self.assertEqual(self.texts(), ["1", "2", "3", "4", "5", "after"])
+
+    def test_a_rewrite_with_fewer_messages_than_counted_is_refused(self):
+        room = chatroom._read(self.rid)
+        room["messages"] = room["messages"][:1]
+        chatroom._LOGGED.discard(self.rid)
+        with self.assertRaises(RuntimeError):
+            chatroom._write(room)
+        self.assertEqual(self.log_texts(), ["1", "2", "3", "4", "5"])
+
+    def test_a_withdraw_may_rewrite_with_one_less(self):
+        m = chatroom.post_message(self.rid, chatroom.HUMAN_IDENTITY, "oops")["message"]
+        self.assertTrue(chatroom.withdraw_message(self.rid, m["id"]))
+        self.assertEqual(self.texts(), ["1", "2", "3", "4", "5"])
+
+    def test_a_room_file_not_written_takes_its_appended_line_back(self):
+        real = chatroom._replace
+        room_file = self.path / f"{self.rid}.json"
+
+        def busy(tmp, path):
+            if path == room_file:
+                raise PermissionError(5, "Access is denied")
+            return real(tmp, path)
+        with mock.patch.object(chatroom, "_replace", busy):
+            with self.assertRaises(PermissionError):
+                chatroom.post_message(self.rid, "claude", "six")
+        self.assertEqual(self.log_texts(), ["1", "2", "3", "4", "5"])
+        chatroom.post_message(self.rid, "claude", "six")     # the retry
+        self.assertEqual(self.texts(), ["1", "2", "3", "4", "5", "six"])
+
+    def test_a_room_file_not_written_after_a_rewrite_puts_the_log_back(self):
+        m = chatroom.post_message(self.rid, chatroom.HUMAN_IDENTITY, "oops")["message"]
+        real = chatroom._replace
+        room_file = self.path / f"{self.rid}.json"
+
+        def busy(tmp, path):
+            if path == room_file:
+                raise PermissionError(5, "Access is denied")
+            return real(tmp, path)
+        with mock.patch.object(chatroom, "_replace", busy):
+            with self.assertRaises(PermissionError):
+                chatroom.withdraw_message(self.rid, m["id"])
+        self.assertEqual(self.log_texts(), ["1", "2", "3", "4", "5", "oops"])
+        self.assertEqual(self.texts(), ["1", "2", "3", "4", "5", "oops"])
+
+    def test_an_append_that_fails_is_cut_back_and_the_next_write_rewrites(self):
+        def half(path, msgs):
+            with open(path, "ab") as f:
+                f.write(b'{"id": "half", "te')
+            raise OSError(28, "No space left on device")
+        with mock.patch.object(chatroom, "_append_lines", half):
+            with self.assertRaises(OSError):
+                chatroom.post_message(self.rid, "claude", "six")
+        self.assertNotIn(self.rid, chatroom._LOGGED)
+        self.assertEqual(self.log_texts(), ["1", "2", "3", "4", "5"])
+        chatroom.post_message(self.rid, "claude", "six")
+        self.assertEqual(self.texts(), ["1", "2", "3", "4", "5", "six"])
+
+    def test_a_damaged_middle_line_is_kept_aside_when_the_log_is_rewritten(self):
+        log = self.path / "messages" / f"{self.rid}.jsonl"
+        lines = log.read_bytes().splitlines(keepends=True)
+        lines[2] = b'{"broken\n'
+        log.write_bytes(b"".join(lines))
+        chatroom._INDEX.clear()
+        chatroom._LOGGED.clear()
+        chatroom.post_message(self.rid, "claude", "six")
+        self.assertEqual(len(list(log.parent.glob(f"{log.name}.damaged-*"))), 1)
+        self.assertEqual(self.texts()[-1], "six")
 
 
 class OldFormat(_Rooms):
@@ -173,6 +284,36 @@ class OldFormat(_Rooms):
         chatroom._LOGGED.clear()
         self.assertEqual([m["text"] for m in chatroom._read(rid)["messages"]][-4:], ["a", "b", "c", "d"])
         self.assertNotIn("messages", self.room_file(rid))
+
+    def test_an_original_cut_short_is_copied_again(self):
+        rid = self.old_format(["a", "b"])
+        original = (self.path / f"{rid}.json").read_bytes()
+        keep = self.path / "before-message-log" / f"{rid}.json"
+        keep.parent.mkdir()
+        keep.write_bytes(original[:20])         # a stop mid-copy
+        chatroom.post_message(rid, "claude", "c")
+        self.assertEqual(keep.read_bytes(), original)
+
+    def test_verified_originals_are_pruned_after_two_weeks(self):
+        import os
+        import time
+        done = self.old_format(["a", "b"])
+        chatroom.post_message(done, "claude", "c")
+        short = self.old_format(["x", "y"])
+        chatroom.post_message(short, "claude", "z")
+        log = self.path / "messages" / f"{short}.jsonl"
+        log.write_bytes(b"".join(log.read_bytes().splitlines(keepends=True)[1:]))   # "x" lost
+        young = self.old_format(["p"])
+        chatroom.post_message(young, "claude", "q")
+        keep = self.path / "before-message-log"
+        old = time.time() - chatroom.ORIGINALS_KEEP_S - 60
+        for rid in (done, short):
+            os.utime(keep / f"{rid}.json", (old, old))
+        self.restart()
+        self.assertEqual(chatroom.prune_originals(), 1)
+        self.assertFalse((keep / f"{done}.json").exists())
+        self.assertTrue((keep / f"{short}.json").exists())
+        self.assertTrue((keep / f"{young}.json").exists())
 
     def test_a_deleted_room_takes_its_log(self):
         rid = chatroom.create_room("t", [{"agent": "claude"}])["id"]

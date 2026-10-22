@@ -455,6 +455,12 @@ def helper_estimate(home: Path, start: datetime, end: datetime) -> dict:
             room = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if "messages" not in room:      # #256: the messages are in the room's log
+            log = home / ".ensemble" / "rooms" / "messages" / f"{rid}.jsonl"
+            try:
+                room["messages"] = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()]
+            except (OSError, ValueError):
+                room["messages"] = []
         for m in room.get("messages") or []:
             if not isinstance(m, dict) or m.get("from") != "ensemble":
                 continue

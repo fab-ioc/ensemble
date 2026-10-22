@@ -12902,6 +12902,9 @@ def _launch_file_pruner() -> None:
             n = prune_launch_files()
             if n:
                 print(f"[housekeeping] {n} old launch file(s) removed", flush=True)
+            n = chatroom.prune_originals()
+            if n:
+                print(f"[housekeeping] {n} verified room original(s) from before the message log removed", flush=True)
         except Exception as e:      # noqa: BLE001 — tomorrow tries again
             print(f"[housekeeping] launch files not pruned: {e!r}", flush=True)
         time.sleep(86400)
