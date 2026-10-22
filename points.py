@@ -73,6 +73,7 @@ Bound to the dashboard module like ``due``: nothing reads ``_d`` at import time.
 from __future__ import annotations
 
 import json
+import marshal
 import os
 import re
 import threading
@@ -472,6 +473,13 @@ def _read_file(p: Path):
     return d if _valid(d) else None
 
 
+def _copy(led: dict) -> dict:
+    """A ledger's own copy. A ledger holds only JSON's types (it is parsed
+    from its file or its saved text), which marshal copies ~3x faster than a
+    JSON round trip: three copies of a PO's 1.6 MB ledger per send (#256)."""
+    return marshal.loads(marshal.dumps(led))
+
+
 def load(room_id: str, *, shared: bool = False) -> dict:
     """A room's ledger (a fresh one when it has none). A damaged file falls
     back to the version before it, kept as ``.prev``; if both are gone the
@@ -487,7 +495,7 @@ def load(room_id: str, *, shared: bool = False) -> dict:
             mt = None
         hit = _CACHE.get(room_id)
         if hit and hit[0] == mt and mt is not None:
-            return hit[1] if shared else json.loads(json.dumps(hit[1]))
+            return hit[1] if shared else _copy(hit[1])
         if mt is None:
             prev = _read_file(p.with_suffix(".json.prev"))
             return _clean(prev, room_id) if prev else _empty(room_id)
@@ -503,10 +511,10 @@ def load(room_id: str, *, shared: bool = False) -> dict:
             d = prev or {**_empty(room_id), "damaged": time.time()}
             led = _clean(d, room_id)
             _save(room_id, led)
-            return json.loads(json.dumps(led))
+            return _copy(led)
         led = _clean(d, room_id)
         _CACHE[room_id] = (mt, led)
-        return json.loads(json.dumps(led))
+        return _copy(led)
 
 
 SAVES: dict[str, int] = {}     # room id → ledger saves by this hub (two in one clock tick share an mtime)
@@ -1678,12 +1686,15 @@ def _point_task(p: dict) -> str:
 
 
 def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str = "",
-               lookup=None) -> list[dict]:
+               lookup=None, among: list[dict] | None = None, point_task=_point_task) -> list[dict]:
     """Points just made (or just planned on a task) close each older answered
-    point about the same task: the later point supersedes it."""
+    point about the same task: the later point supersedes it. ``among``: the
+    points that may be superseded (default all), ``point_task``: a memo of
+    :func:`_point_task`, for a caller that asks for many plans at once."""
     if not made:
         return []
-    cands = [p for p in led["points"] if p["state"] == "delivered" and p not in made and _point_task(p)]
+    cands = [p for p in (led["points"] if among is None else among)
+             if p["state"] == "delivered" and p not in made and point_task(p)]
     if not cands:
         return []
     named: dict[str, dict] = {}
@@ -1708,7 +1719,7 @@ def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str =
             by_task.setdefault(t, q)
     out = []
     for p in cands:
-        q = by_task.get(task_id(_point_task(p)))
+        q = by_task.get(task_id(point_task(p)))
         # Only an answer from before the later point (made, or planned on the
         # task) is superseded: one given after it is still to be seen.
         at = float((last_answer(p) or {}).get("at") or 0)
@@ -1729,9 +1740,18 @@ def _supersede_by_plans(led: dict, room_id: str, now: float, room: dict | None =
     if not any(p["state"] == "delivered" and _point_task(p) in tasks for p in led["points"]):
         return False
     lookup = task_lookup(room_id, room)
+    # Each plan looks at the same answered points: their tasks are read once,
+    # not once per plan (a PO's ledger has hundreds of plans, #256).
+    memo: dict[str, str] = {}
+
+    def point_task(p: dict) -> str:
+        if p["id"] not in memo:
+            memo[p["id"]] = _point_task(p)
+        return memo[p["id"]]
+    among = [p for p in led["points"] if p["state"] == "delivered" and point_task(p)]
     done = []
     for q in planned:
-        done += _supersede(led, [q], room_id, now, lookup=lookup)
+        done += _supersede(led, [q], room_id, now, lookup=lookup, among=among, point_task=point_task)
     return bool(done)
 
 
