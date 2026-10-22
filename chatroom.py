@@ -1196,6 +1196,45 @@ def delete_room(room_id: str) -> bool:
 # Identity resolution (for the MCP transport)
 # ---------------------------------------------------------------------------
 
+# What a pruned task keeps (#260): enough for its card, its number, a link to
+# it and what it delivered. Its chat, its seats' conversations and tokens go.
+SLIM_KEEP = ("id", "title", "mode", "status", "createdAt", "updatedAt", "projectId", "noProjectId",
+             "no", "previousNos", "workflow", "workflowAt", "mergedAt", "mergedHead", "priority",
+             "spec", "lastReport", "lastRealReport", "taskDir", "cwd", "workspace", "stoppedAt",
+             "kind", "labels", "after", "onReady")
+SLIM_PART_KEEP = ("identity", "kind", "agent", "model", "role")
+
+
+def slim_room(room_id: str, pruned: dict, notice: str) -> bool:
+    """Make a Done task's room its slim record: the fields of SLIM_KEEP, its
+    seats without their conversations, ``pruned`` (when, how much) and one hub
+    line, ``notice``, in place of its chat. Its message log is rewritten to
+    that line. False when there is no such room."""
+    with _LOCK:
+        room = _load(room_id)
+        if room is None:
+            return False
+        old = room.get("messages") or []
+        slim = {k: room[k] for k in SLIM_KEEP if k in room}
+        slim["participants"] = [{k: p[k] for k in SLIM_PART_KEEP if k in p}
+                                for p in room.get("participants") or [] if isinstance(p, dict)]
+        slim["tokens"] = {}
+        slim["pruned"] = dict(pruned)
+        slim["status"] = "stopped" if room.get("status") not in ("stopped", "closed") else room["status"]
+        slim["messages"] = [{"id": uuid.uuid4().hex[:12], "from": "ensemble", "to": HUMAN_IDENTITY,
+                             "text": notice, "ts": _now(), "kind": "notice", "rang": [],
+                             "noticeKind": "pruned"}]
+        _write(slim, removed=len(old))
+        # The copy of the old chat a first log write keeps (#256): the chat is
+        # dropped on purpose here, and the copy would never be let go (its log
+        # lacks the messages it holds).
+        try:
+            (ROOMS_DIR / ORIGINALS_DIR_NAME / f"{room_id}.json").unlink()
+        except FileNotFoundError:
+            pass
+        return True
+
+
 def resolve_token(token: str) -> tuple[str, str] | None:
     """Map a bearer token to ``(room_id, identity)``, or None if unknown."""
     if not token:

@@ -106,6 +106,7 @@ import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
 import history as file_history
 import checkpoints
+import prune
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
 # Moving from claude-dashboard (the predecessor): its state is copied in at startup.
@@ -1876,6 +1877,9 @@ _SETTINGS_DEFAULTS = {
     "backupRemote": "",      # git remote for the projects root; empty = commit locally only
     "backupIntervalMin": 60, # how often to commit (+push if a remote is set)
     "backupEnabled": False,  # scheduler on/off
+    # Freeing disk space (prune.py): Done tasks older than this many days go
+    # by themselves, once a day, logged. 0 = off.
+    "pruneDoneAfterDays": 0,
     # How long an agent that owes a turn may print nothing before the dashboard
     # calls it stalled. Both CLIs repaint a working indicator every second while
     # they think, so real silence is the signal — but how much of it counts as
@@ -2628,6 +2632,12 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(5, min(1440, v))
+        if k == "pruneDoneAfterDays":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(0, min(3650, v))
         if k == "restartDrainMinutes":
             try:
                 v = int(v)
@@ -8367,7 +8377,8 @@ def _export_task_chats() -> int:
             room = chatroom.get_room(rid)            # public=True → no tokens
         except Exception:
             room = None
-        if not room:
+        if not room or room.get("pruned"):
+            # A pruned task (#260) keeps no chat and no folder to write it to.
             continue
         home = project_home(pj)                      # created on demand
         task_dir = room.get("taskDir") or ""
@@ -13082,6 +13093,203 @@ def _launch_file_pruner() -> None:
         time.sleep(86400)
 
 
+# ---------------------------------------------------------------------------
+# Freeing disk space (#260): Settings' preview and delete (prune.py), and the
+# optional retention rule for Done tasks.
+# ---------------------------------------------------------------------------
+PRUNE_JOB = prune.Job()
+PRUNE_AUTO_FILE = DASHBOARD_DIR / "prune-auto.json"
+PRUNE_AUTO_CHECK_S = 3600
+
+
+def _prune_live_sessions() -> set:
+    """Conversation ids a live terminal of the hub runs, and the person's own
+    live Claude sessions."""
+    out: set = set()
+    for x in ptyrun.list_sessions():
+        meta = x.get("meta") or {}
+        if not x.get("alive"):
+            continue
+        if meta.get("sessionId"):
+            out.add(meta["sessionId"])
+        rid, ident = meta.get("room") or "", meta.get("identity") or ""
+        room = chatroom.get_room(rid, public=False, copy_room=False) if rid else None
+        part = chatroom.participant(room, ident) if room else None
+        if part and part.get("sessionId"):
+            out.add(part["sessionId"])
+    try:
+        out |= {s.get("sessionId") for s in _read_session_files() if s.get("sessionId")}
+    except Exception:                               # noqa: BLE001
+        pass
+    return out
+
+
+_PRUNE_FOLDERS: list = [0.0, None]
+
+
+def _prune_folders():
+    """po_seat_folders, read once a minute: a preview asks for every
+    conversation."""
+    if _PRUNE_FOLDERS[1] is None or time.time() - _PRUNE_FOLDERS[0] > 60:
+        _PRUNE_FOLDERS[:] = [time.time(), po_seat_folders(load_projects(), chatroom.list_rooms(copy_rooms=False))]
+    return _PRUNE_FOLDERS[1]
+
+
+def _prune_classify(agent: str, path: Path, sid: str) -> tuple[str, str]:
+    """Whose a conversation no task holds is: a PO's from before its room
+    recorded it (``po``, its room), one the hub started (``hub``: its first
+    words are the hub's, or it ran in Ensemble's state folder), or the
+    person's own."""
+    folders = _prune_folders()
+    if agent == "codex":
+        from agents import codex as _codex
+        s = _codex._parse_rollout(path)
+        cwd, first = (getattr(s, "cwd", "") or ""), (getattr(s, "first", "") or "")
+    else:
+        cwd, first = cwd_of(path), first_last_user(path)[0]
+    po = old_po_room(cwd, first, folders) if cwd else ""
+    if po:
+        return "po", po
+    if _is_rename_artifact(path) if agent == "claude" else False:
+        return "hub", "rename"
+    if first and _hub_words_kind(first) is not None:
+        return "hub", first_words(first)
+    # Ensemble's own state folder is the hub's. A project home is not: the
+    # person also works there by hand, so a conversation in one without the
+    # hub's first words is theirs (listed, never ticked by itself).
+    if cwd and prune.within(cwd, str(DASHBOARD_DIR)):
+        return "hub", ""
+    return "own", first_words(first) if first else ""
+
+
+def _prune_hub() -> prune.Hub:
+    def rooms():
+        # Each with its project as the hub reads it (the links first), a
+        # shallow copy: the index's own rooms are never changed.
+        links = load_session_projects()
+        return [{**r, "projectId": _room_project_id(r.get("id", ""), r, links)}
+                for r in chatroom.list_rooms(copy_rooms=False)]
+
+    def live_rooms():
+        return {(x.get("meta") or {}).get("room") for x in ptyrun.list_sessions()
+                if x.get("alive") and (x.get("meta") or {}).get("room")}
+
+    def room_sessions(room):
+        out = []
+        for pp in room.get("participants") or []:
+            if isinstance(pp, dict) and pp.get("kind") == "agent":
+                out += [(session_agent(pp, sid), sid) for sid in participant_session_ids(pp)]
+        out += [(x.get("agent") or "", x["sessionId"]) for x in room_past_sessions(room)]
+        return out
+
+    def current_sessions(room):
+        return {pp.get("sessionId") for pp in room.get("participants") or []
+                if isinstance(pp, dict) and pp.get("kind") == "agent" and pp.get("sessionId")}
+
+    def slim(rid, meta):
+        when = time.strftime("%Y-%m-%d", time.localtime(meta.get("at") or time.time()))
+        text = (f"This task was pruned on {when} to free disk space: its chat, its agents' "
+                f"conversations, its folder and its worktree were removed. Its spec, its last "
+                f"report and its number are kept; what it put in the Documents folder stays there.")
+        ok = chatroom.slim_room(rid, meta, text)
+        _CP_LIST.pop(rid, None)
+        return ok
+
+    return prune.Hub(
+        state_dir=DASHBOARD_DIR, claude_dir=PROJ_DIR,
+        codex_dir=Path(os.environ.get("CODEX_HOME") or (HOME / ".codex")) / "sessions",
+        projects=load_projects, rooms=rooms, live_rooms=live_rooms,
+        live_sessions=_prune_live_sessions, room_sessions=room_sessions,
+        current_sessions=current_sessions, classify=_prune_classify, slim_room=slim,
+        forget_checkpoints=checkpoint_forget, checkpoint_counts=checkpoints.counts,
+        project_home=lambda p: project_home(p, create=False),
+        documents_dir=lambda p: project_documents_dir(p, persist=False),
+        scratch_root=lambda cwd: str(_scratch_root_for(cwd) or ""),
+        progress=PRUNE_JOB.progress,
+        pty_ids=lambda: {x.get("id") for x in ptyrun.list_sessions() if x.get("id")})
+
+
+def pruned_refusal(room: dict) -> dict:
+    """The reply to anything that would start a pruned task's agents again:
+    its folder, worktree and conversations are gone (#260)."""
+    at = (room.get("pruned") or {}).get("at") or time.time()
+    when = time.strftime("%Y-%m-%d", time.localtime(at))
+    return {"error": "pruned",
+            "message": (f"This task was pruned on {when} to free disk space: its folder, worktree "
+                        f"and conversations are gone, so it cannot be resumed. Make a new task "
+                        f"from its spec.")}
+
+
+def prune_state() -> dict:
+    s = PRUNE_JOB.snapshot()
+    s["autoDays"] = int(load_settings().get("pruneDoneAfterDays") or 0)
+    s["lastAuto"] = _prune_auto_read()
+    return s
+
+
+def prune_scan_start(days: int, groups=None) -> bool:
+    groups = tuple(g for g in (groups or prune.GROUPS) if g in prune.GROUPS) or prune.GROUPS
+
+    def go():
+        PRUNE_JOB._set(preview=None, result=None)
+        preview = prune.scan(_prune_hub(), days, groups=groups, stop=PRUNE_JOB.cancelled)
+        PRUNE_JOB._set(preview=preview)
+    return PRUNE_JOB.start("scan", go)
+
+
+def prune_run_start(ids: list) -> tuple[bool, str]:
+    preview = PRUNE_JOB.snapshot().get("preview")
+    if not preview:
+        return False, "Make a preview first."
+    known = {it["id"] for g in preview["groups"] for it in g["items"]}
+    ids = [i for i in ids if i in known]
+    if not ids:
+        return False, "Nothing ticked."
+
+    def go():
+        res = prune.run(_prune_hub(), preview, ids, stop=PRUNE_JOB.cancelled)
+        PRUNE_JOB._set(result=res, preview=None)
+        print(f"[prune] freed {res['freed']} bytes: {len(res['done'])} items, {len(res['skipped'])} skipped",
+              flush=True)
+    return PRUNE_JOB.start("run", go), ""
+
+
+def _prune_auto_read() -> dict:
+    try:
+        return json.loads(PRUNE_AUTO_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _prune_auto_tick(now: float | None = None) -> bool:
+    """The retention rule, once a day at most: Done tasks older than the
+    setting go, logged. Returns whether it ran."""
+    now = time.time() if now is None else now
+    days = int(load_settings().get("pruneDoneAfterDays") or 0)
+    last = _prune_auto_read()
+    if days <= 0 or now - float(last.get("at") or 0) < 86400:
+        return False
+
+    def go():
+        res = prune.auto_prune(_prune_hub(), days)
+        try:
+            PRUNE_AUTO_FILE.write_text(json.dumps({"at": now, "days": days, "freed": res["freed"],
+                                                   "tasks": len(res["done"])}), encoding="utf-8")
+        except OSError:
+            pass
+    return PRUNE_JOB.start("auto", go)
+
+
+def _prune_auto_loop() -> None:
+    time.sleep(900)
+    while True:
+        try:
+            _prune_auto_tick()
+        except Exception as e:      # noqa: BLE001 — the next hour tries again
+            print(f"[prune] retention rule skipped: {e!r}", flush=True)
+        time.sleep(PRUNE_AUTO_CHECK_S)
+
+
 def load_restart_caches() -> None:
     """The last hub's warm parts. A bad cache never stops the hub starting:
     anything it raises is logged, and the hub reads the files instead."""
@@ -15384,6 +15592,13 @@ def _create_task_locked(title, spec, project_id, project, workspace, prio, prefe
 def _patch_task_json(folder: str, **fields) -> None:
     if not folder:
         return
+    # A pruned task's folder (#260) is not made again for a renumber or a
+    # move: a patch is never a task's whole record.
+    if not os.path.isdir(folder) and any(
+            r.get("pruned") and r.get("taskDir") and prune.within(r["taskDir"], folder)
+            and prune.within(folder, r["taskDir"])
+            for r in chatroom.list_rooms(copy_rooms=False)):
+        return
     p = Path(folder) / "task.json"
     try:
         data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
@@ -15435,6 +15650,9 @@ def update_task(rid: str, title=None, spec=None,
         w = normalize_workflow(workflow)
         if w is None:
             return False, None, "bad_workflow"
+        if room.get("pruned") and w != "done":
+            # Its folder and conversations are gone: it can never run again.
+            return False, None, "pruned"
         room["workflow"] = w
         # When the card was last moved, by anyone: a merge only moves a card
         # nobody has moved since (digest._settle_merges).
@@ -17163,6 +17381,11 @@ class Handler(BaseHTTPRequestHandler):
                                   "intervalMin": bs.get("backupIntervalMin", 60),
                                   "enabled": bool(bs.get("backupEnabled"))})
             return
+        if p == "/api/prune":
+            # Freeing disk space (#260): the preview, the deletion's progress
+            # and its result, and the retention rule's last run.
+            self._send_json(200, prune_state())
+            return
         if p == "/api/rotation/status":
             self._send_json(200, rotation.status())
             return
@@ -17441,6 +17664,8 @@ class Handler(BaseHTTPRequestHandler):
         room_full = chatroom.get_room(rid, public=False)
         if room_full is None:
             return (404, {"error": "no_such_room"})
+        if room_full.get("pruned"):
+            return (409, pruned_refusal(room_full))
         key = str(data.get("key") or "").strip()[:200]
         # A send queued by a hub since restarted failed: the same key
         # again is its retry (not a duplicate), and Discard can drop it.
@@ -17948,6 +18173,9 @@ class Handler(BaseHTTPRequestHandler):
         ``prompt`` replaces the briefing outright and ``cwd`` the working dir —
         how a reviewer on mention is started with its review brief, in the
         checkout it reviews."""
+        if room_full.get("pruned"):
+            # Launching would make its removed folder again, empty (#260).
+            raise RuntimeError(pruned_refusal(room_full)["message"])
         ident = part["identity"]
         agent_key = part["agent"]
         # The seat's model, else the one Settings chose for its kind.
@@ -18025,6 +18253,8 @@ class Handler(BaseHTTPRequestHandler):
         dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId,
         prompted} — ``prompted`` when there was nothing to resume and it was
         started with ``seed`` as its first prompt instead."""
+        if room_full.get("pruned"):
+            raise RuntimeError(pruned_refusal(room_full)["message"])
         ident = part["identity"]
         agent_key = part["agent"]
         # As at its launch: a resumed conversation carries on on the model
@@ -20396,6 +20626,41 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(*checkpoint_restore(str(data.get("room") or ""), n=n, undo=undo))
             return
+        if p in ("/api/prune/scan", "/api/prune/run", "/api/prune/cancel"):
+            # Freeing disk space (#260): {days, groups?} makes a preview,
+            # {ids} deletes what of it was ticked. Only the dashboard page,
+            # never a task's agent.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if p == "/api/prune/cancel":
+                PRUNE_JOB.cancel()
+                self._send_json(200, prune_state())
+                return
+            if p == "/api/prune/scan":
+                try:
+                    days = max(0, min(3650, int(data.get("days", prune.DEFAULT_DAYS))))
+                except (TypeError, ValueError):
+                    self._send_json(400, {"error": "bad_days", "message": "Days must be a number."})
+                    return
+                groups = data.get("groups") if isinstance(data.get("groups"), list) else None
+                if not prune_scan_start(days, groups):
+                    self._send_json(409, {"error": "busy", "message": "A preview or a deletion is already running."})
+                    return
+                self._send_json(200, prune_state())
+                return
+            ids = data.get("ids")
+            if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                self._send_json(400, {"error": "bad_ids", "message": "Tick what should go."})
+                return
+            ok, msg = prune_run_start(ids)
+            if not ok:
+                self._send_json(409 if not msg else 400, {"error": "not_started",
+                                                          "message": msg or "A preview or a deletion is already running."})
+                return
+            self._send_json(200, prune_state())
+            return
         if p == "/api/history/restore":
             # {projectId, rev, path}: put an old version back. A write, so only
             # the dashboard page may, never a task's agent.
@@ -20915,7 +21180,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ok, room, err = update_task(rid, workflow=w)
             if not ok:
-                self._send_json(404 if err == "no_such_room" else 400, {"error": err})
+                self._send_json(404 if err == "no_such_room" else 400,
+                                pruned_refusal(chatroom.get_room(rid, public=False) or {})
+                                if err == "pruned" else {"error": err})
                 return
             self._send_json(200, {"ok": True, "workflow": w,
                                   "workflowName": WORKFLOW_LABELS[w]})
@@ -21554,6 +21821,7 @@ def main():
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
     threading.Thread(target=_launch_file_pruner, name="launch-file-pruner", daemon=True).start()
+    threading.Thread(target=_prune_auto_loop, name="prune-auto", daemon=True).start()
     threading.Thread(target=_warm_rooms_at_start, name="warm-rooms", daemon=True).start()
 
     # Projects backup: the app owns the projects-root repo. Init it now
