@@ -8011,7 +8011,7 @@ function edKeyAction(e, at) {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === 'Enter' && mod) return e.shiftKey ? 'add' : 'send';
   // Alt+Enter (\u2325Enter on a Mac), never with Ctrl/\u2318 (AltGr): Send now (#252).
-  if (e.code === 'Enter' && e.altKey && !e.shiftKey) return 'send-now';
+  if (e.key === 'Enter' && e.altKey && !e.shiftKey) return 'send-now';
   if (at.part !== 'point') return null;
   if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && at.last && !at.empty) return 'add';
   if (e.key === 'Backspace' && !mod && at.empty) return 'remove';

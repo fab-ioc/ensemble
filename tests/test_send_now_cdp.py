@@ -50,9 +50,9 @@ async function main() {
     await send('Emulation.setTouchEmulationEnabled',{enabled:touch,...(touch?{maxTouchPoints:5}:{})},s);
     await send('Emulation.setEmitTouchEventsForMouse',{enabled:touch},s);
   };
-  const altEnter=async () => {
+  const altEnter=async (code='Enter') => {
     for (const type of ['rawKeyDown','keyUp'])
-      await send('Input.dispatchKeyEvent',{type,modifiers:1,key:'Enter',code:'Enter',windowsVirtualKeyCode:13},s);
+      await send('Input.dispatchKeyEvent',{type,modifiers:1,key:'Enter',code,windowsVirtualKeyCode:13},s);
   };
   // What the page shows: the split part, its menu's words, its geometry and colours.
   const look = `(() => {
@@ -106,6 +106,7 @@ async function main() {
     out.sent={};
     await open(A.claude,'light'); await ev(capture);
     await type('alt enter'); await altEnter(); await sleep(300);
+    await type('keypad'); await altEnter('NumpadEnter'); await sleep(300);
     await type('plain'); await ev(`document.getElementById('send').click(); 0`); await sleep(300);
     await type('from menu'); await ev(`document.getElementById('send-more').click(); document.getElementById('send-now').click(); 0`); await sleep(300);
     out.sent.claude=await ev('window.__bodies');
@@ -236,7 +237,7 @@ class SendNowPage(unittest.TestCase):
     def test_alt_enter_and_the_menu_send_now(self):
         claude = self.got['sent']['claude']
         self.assertEqual([(b['text'], b.get('now', False)) for b in claude],
-                         [('alt enter', True), ('plain', False), ('from menu', True)])
+                         [('alt enter', True), ('keypad', True), ('plain', False), ('from menu', True)])
         self.assertEqual([(b['text'], b.get('now', False)) for b in self.got['sent']['idle']],
                          [('idle alt', False)])
 

@@ -95,6 +95,17 @@ class TypeInput(unittest.TestCase):
         self.assertEqual(way, "")
         self.assertEqual(keys, ["fix the title", "\r"])
 
+    def test_codex_turn_ending_while_the_line_waits_gets_no_escape(self):
+        # send_now_way read an open turn; it ended before the line's slot.
+        sess = FakeSess("codex")
+        way = dashboard.send_now_way(part("codex"))
+        self.assertEqual(way, dashboard.SEND_NOW_INTERRUPT)
+        self.turn_over = True
+        with mock.patch.object(dashboard, "_codex_rollout_start", lambda s: (Path("x.jsonl"), 0)):
+            self.assertTrue(dashboard._type_input(sess, "fix the title", now=way))
+        self.assertEqual(sess.keys, ["fix the title", "\r"])
+        self.assertNotIn((RID, "codex"), dashboard._LAST_INTERRUPT)
+
     def test_an_idle_agent_gets_a_plain_send(self):
         self.turn = "idle"
         for agent in ("claude", "codex"):
