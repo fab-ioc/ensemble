@@ -4952,8 +4952,9 @@ function offerTerminalSendRetry(pid, text) {
   retry.onclick = async () => {
     retry.disabled = true;
     try {
-      const r = await api('/api/send', { method: 'POST',
-        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pid, text}) });
+      // Given up after 20 s (sendJson, #251): no answer offers Retry again.
+      const { ok, status, data: r } = await sendJson('/api/send', {pid, text});
+      if (!ok || !r) throw new Error('error ' + status);
       if (r.result === 'ok') toast('message sent', 1800, 'ok');
       else toast('send failed: ' + r.result, 5000, 'err');
     } catch { offerTerminalSendRetry(pid, text); }
@@ -10708,7 +10709,7 @@ function drSubmitState(rv) {
 }
 function drSendError(e) {
   const s = e && e.status;
-  if (!s) return 'the hub did not answer';
+  if (!s) return e && e.timeout ? 'the hub did not answer within 20 seconds' : e && e.network ? 'the hub could not be reached' : 'the hub did not answer';
   if (s === 404) return 'the task\'s chat no longer exists';
   return (e.message || ('error ' + s));
 }
@@ -11185,10 +11186,9 @@ async function drSubmit(rv) {
       // Their images: the hub ends the message with one "[image] <path>" line
       // each, copying any stored for another chat into this one's folder.
       const images = batch.flatMap(drImages);
-      const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch), ...(images.length ? { attachments: images } : {}) }) });
-      let j = null;
-      try { j = await r.json(); } catch (e) {}
+      // Given up after 20 s (sendJson): the tray's Sending… always ends.
+      const r = await sendJson('/api/room/resume', { roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch), ...(images.length ? { attachments: images } : {}) });
+      const j = r.data;
       // Refused but held by the hub (shown in the task's chat as not
       // delivered, with Retry): the batch went, as far as this tray is concerned.
       if (!r.ok || !j || j.error) {
@@ -11206,7 +11206,11 @@ async function drSubmit(rv) {
     if (sent && held) toast(`Not delivered: ${held}. The ${sent > 1 ? 'comments are' : 'comment is'} kept in the task's chat: Retry there.`, 6000, 'warn');
     else if (sent) toast(`Sent ${sent} comment${sent > 1 ? 's' : ''} to the chat`, 2500, 'ok');
   } catch (e) {
-    rv.error = 'Not sent: ' + drSendError(e) + '. Your comments are kept.';
+    // No answer: the batch may have arrived. The same batch again has the
+    // same key (drKey), so the hub takes it once; a changed one would not.
+    rv.error = e && !e.status && (e.timeout || e.network)
+      ? 'Not confirmed: ' + drSendError(e) + '. Your comments are kept: Submit again without changing them, they are posted only once.'
+      : 'Not sent: ' + drSendError(e) + '. Your comments are kept.';
   } finally {
     rv.sending = false;
     drChanged(rv);
@@ -14217,7 +14221,9 @@ async function pdPointAct(id, act, btn) {
   PD_PT_BUSY.add(k);
   if (btn) btn.disabled = true;
   try {
-    const r = await api('/api/room/points', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: room, id, action: act }) });
+    // Given up after 20 s (sendJson, #251): the button never stays disabled.
+    const { ok, status, data: r } = await sendJson('/api/room/points', { roomId: room, id, action: act });
+    if (!ok) throw new Error((r && r.error) || ('error ' + status));
     const f = pdChatFrame();
     if (r && r.points && f && f.contentWindow && f.contentWindow.pointsChanged) f.contentWindow.pointsChanged(r.points, f.contentWindow.ptTicket());
   } catch (e) { toast('Not done: ' + ((e && e.message) || 'the hub did not answer'), 5000, 'err'); }
@@ -20510,11 +20516,9 @@ document.addEventListener('click', async (ev) => {
     if (!text) return;
     sendBtn.classList.add('busy');
     try {
-      const r = await api('/api/send', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({pid, text}),
-      });
+      // Given up after 20 s (sendJson, #251): the button never stays busy.
+      const { ok, status, data: r } = await sendJson('/api/send', {pid, text});
+      if (!ok || !r) throw new Error('error ' + status);
       if (r.result === 'ok') toast('message sent', 1800, 'ok');
       else toast('send failed: ' + r.result, 5000, 'err');
     } catch (e) { offerTerminalSendRetry(pid, text); }

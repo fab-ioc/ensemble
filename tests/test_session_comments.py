@@ -84,6 +84,13 @@ function page() {
       const [status, body] = r || [200, { ok: true }];
       return { ok: status < 400, status, json: async () => body };
     },
+    // static/hub-resilience.js's sendJson over this fetch (#251).
+    sendJson: async (url, body) => {
+      let r;
+      try { r = await ctx.fetch(url, { method: 'POST', body: JSON.stringify(body || {}) }); }
+      catch (e) { throw Object.assign(new Error('the hub could not be reached'), { status: 0, timeout: false, network: true }); }
+      return { ok: r.ok, status: r.status, data: await r.json() };
+    },
   };
   els.chatcol = { insertBefore(n) { els[n.id] = n; } };
   els.compose = {};
@@ -180,7 +187,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   await sending;
   out.afterSend = B.notes(); out.storedAfterSend = stored();
   out.sentTyped = posts.slice(n0).map(p => p[1].text);
-  out.errorCleared = !/Not sent/.test(html(B));
+  out.errorCleared = !/Not (sent|confirmed)/.test(html(B));
 
   A.storage.forEach(f => f({ key: prefix + 'x' }));   // the other copy hears of it
   out.otherCopy = A.notes();
@@ -237,7 +244,7 @@ class ReviewComments(unittest.TestCase):
     def setUpClass(cls):
         code = ("let CHAT_VIEW = null;\n" + STORE + "\n".join(js_function(SRC, n) for n in (
             "sendResuming", "hasMessageRefs", "refOfUrl", "postOk",
-            "sendErrorText"))
+            "sendErrorText", "sendUnconfirmed"))
                 + comments_block(SRC))
         out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "prefix": PREFIX}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
@@ -284,12 +291,13 @@ class ReviewComments(unittest.TestCase):
 
     def test_a_refused_send_keeps_every_comment(self):
         for case, words in (("gone", "the session has stopped"), ("dead", "codex would not start"), ("handover", "handing over"),
-                            ("down", "did not answer"), ("roomFail", "boom")):
+                            ("down", "could not be reached"), ("roomFail", "boom")):
             with self.subTest(case):
                 r = self.r[case]
                 self.assertEqual(r["kept"], ["one", "two"], "comments dropped after a failed send")
                 self.assertEqual(r["stored"], ["one", "two"], "stored comments dropped after a failed send")
-                self.assertIn("Not sent", r["html"])
+                # No answer at all: it may have arrived (#251).
+                self.assertIn("Not confirmed" if case == "down" else "Not sent", r["html"])
                 self.assertIn(words, r["html"])
 
     def test_a_send_that_went_drops_only_what_went(self):

@@ -2032,9 +2032,9 @@ async function submitCmts() {
   const sent = CMTS.map(c => c.cid);
   const key = 'fv:' + sent.join(',');
   try {
-    const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '', key }) });
-    let j = null;
-    try { j = await r.json(); } catch (e) {}
+    // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
+    const r = await sendJson('/api/room/resume', { roomId: ROOM, text: body, to: '', key });
+    const j = r.data;
     if (!r.ok || !j || j.error) {
       // Refused but held by the hub: shown in the task's chat as not
       // delivered, with Retry. Anything else keeps them here.
@@ -2043,7 +2043,12 @@ async function submitCmts() {
       return;
     }
     dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('✓ Comments sent to the chat');
-  } catch (e) { showFallback('Couldn’t send to the chat. Copy your comments:', body); }
+  } catch (e) {
+    // No answer: they may have arrived. The same comments again have the same key, so they count once.
+    showFallback(e && !e.status && (e.timeout || e.network)
+      ? 'Not confirmed: the hub did not answer. Submit again without changing them (they are posted only once), or copy them:'
+      : 'Couldn’t send to the chat. Copy your comments:', body);
+  }
 }
 // Download, Copy (a text file) and Share… (where the browser shares files):
 // the file or its content for someone outside Ensemble, never the hub's
