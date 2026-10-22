@@ -45,7 +45,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -53,6 +53,8 @@ DAY = 86400
 DEFAULT_DAYS = 30
 RECENT_S = 3600                 # a conversation written this recently is never listed
 LOG_NAME = "prune.log"
+# A task's copy of a project with no git: what it changed may be in no other place.
+COPY_NOTE = "its repo/ is a copy with no git: its work may exist nowhere else"
 GROUPS = ("done", "po", "hub", "own", "orphans", "housekeeping")
 # Ticked by itself in a preview: everything but the person's own conversations.
 TICKED = {"done": True, "po": True, "hub": True, "own": False, "orphans": True, "housekeeping": True}
@@ -269,6 +271,68 @@ def dirty(path: str) -> bool:
     return r.returncode != 0 or bool(r.stdout.strip())
 
 
+def checkout_risk(folder: str, repo: str) -> tuple[str, str]:
+    """``(keep, note)`` for a folder no task names that may hold a git
+    checkout (itself, or its ``repo/``): ``keep`` when a commit in it is not in
+    the project's repository (a clone's own branch, or one git cannot read),
+    ``note`` when it has uncommitted changes (a ``git status`` that fails says
+    so too)."""
+    keep, notes = "", []
+    for c in (folder, os.path.join(folder, "repo")):
+        g = os.path.join(c, ".git")
+        if not os.path.lexists(_long(g)):
+            continue
+        if dirty(c):
+            notes.append("it has uncommitted changes")
+        heads = [_git_out(c, "rev-parse", "HEAD")]
+        if os.path.isdir(_long(g)):                 # a clone: every branch of its own
+            heads += _git_out(c, "for-each-ref", "--format=%(objectname)", "refs/heads").split()
+        heads = [h for h in heads if h]
+        if not heads:
+            keep = keep or "its git checkout cannot be read"
+        for h in heads:
+            try:
+                ok = bool(repo) and _git(repo, "cat-file", "-e", f"{h}^{{commit}}").returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+            if not ok:
+                keep = keep or "it holds commits the project's repository does not have"
+                break
+    return keep, "; ".join(dict.fromkeys(notes))
+
+
+def _unread_rooms(hub: Hub, room_ids: set) -> tuple[set, set, set]:
+    """Rooms on disk the hub could not read (their file or log does not
+    parse): never "gone". ``(ids, folders, session ids)`` found in their raw
+    text, so nothing of theirs is listed."""
+    ids, folders, sids = set(), set(), set()
+    try:
+        files = [e for e in os.scandir(hub.state_dir / "rooms") if e.is_file() and e.name.startswith("room-")
+                 and e.name.endswith(".json")]
+    except OSError:
+        files = []
+    for e in files:
+        rid = e.name[:-5]
+        if rid in room_ids:
+            continue
+        ids.add(rid)
+        try:
+            raw = Path(e.path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in re.finditer(r'"(?:taskDir|cwd)"\s*:\s*"((?:[^"\\]|\\.)*)"', raw):
+            try:
+                folders.add(_norm(json.loads(f'"{m.group(1)}"')))
+            except ValueError:
+                pass
+        sids |= set(re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", raw))
+    return ids, folders, sids
+
+
+def room_on_disk(hub: Hub, rid: str) -> bool:
+    return os.path.exists(hub.state_dir / "rooms" / f"{rid}.json")
+
+
 def unlisted_checkout(r: dict, folder: str) -> str:
     """A git checkout inside a task folder that no worktree part covers (git
     does not list it, or listing failed): its path, else "". The folder then
@@ -406,6 +470,7 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
     by_pid = {p.get("id"): p for p in projects}
     rooms = [r for r in hub.rooms() if isinstance(r, dict) and r.get("id")]
     room_ids = {r["id"] for r in rooms}
+    unread_ids, unread_folders, unread_sids = _unread_rooms(hub, room_ids)
     live = set(hub.live_rooms())
     live_sids = set(hub.live_sessions())
     po_rooms = {(p.get("poRoomId") or "").strip() for p in projects} - {""}
@@ -418,8 +483,12 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
             if sid:
                 held.setdefault(sid, r["id"])
         current |= set(hub.current_sessions(r))
+    current |= unread_sids                  # a room not read is still a room
     items: list[dict] = []
     kept: list[dict] = []                   # what stays and why (unmerged branches…)
+    for rid in sorted(unread_ids):
+        kept.append({"room": rid, "what": "room", "path": str(hub.state_dir / "rooms" / f"{rid}.json"),
+                     "why": "its record could not be read: nothing of it is listed"})
 
     # Uploads: a room's own folder, unless another room's chat names it.
     att_dir = hub.state_dir / "attachments"
@@ -523,9 +592,9 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
                                f"{'' if len(parts) == 1 else 's'}", parts, room=rid))
 
     if "orphans" in groups:
-        items += _orphans(hub, projects, rooms, cutoff, kept)
+        items += _orphans(hub, projects, rooms, cutoff, kept, unread_folders)
     if "housekeeping" in groups:
-        items += _housekeeping(hub, room_ids, live, cutoff)
+        items += _housekeeping(hub, room_ids | unread_ids, live, cutoff)
 
     out_groups = []
     for g in GROUPS:
@@ -606,13 +675,18 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
     if wt and dirty(wt["path"]):
         # Work never committed would go with the worktree: never by itself.
         extra = {"note": "its worktree has uncommitted changes", "ticked": False}
+    elif ws.get("mode") == "copy" and any(p["kind"] == "folder" for p in parts) \
+            and os.path.isdir(_long(os.path.join(folder, "repo"))) \
+            and not os.path.lexists(_long(os.path.join(folder, "repo", ".git"))):
+        extra = {"note": COPY_NOTE, "ticked": False}
     return _item("done", f"done:{rid}", label, parts, room=rid, no=no,
                  project=(project or {}).get("name") or "", at=_done_at(r), **extra)
 
 
-def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list) -> list[dict]:
+def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list,
+             unread_folders: set = frozenset()) -> list[dict]:
     items = []
-    named = set()
+    named = set(unread_folders)
     for r in rooms:
         for k in ("taskDir", "cwd"):
             if r.get(k):
@@ -642,17 +716,23 @@ def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list) -
                 if why:
                     kept.append({"what": "folder", "path": e.path, "why": why})
                     continue
-                parts = [_part("folder", e.path, size_of(e.path))]
+                repo = (pj.get("path") or "") if pj.get("isGit") else ""
+                # A checkout in it: commits only it holds keep it; work not
+                # committed lists it unticked (failing to read it counts as that).
+                keep, note = checkout_risk(e.path, repo)
+                if keep:
+                    kept.append({"what": "folder", "path": e.path, "why": keep})
+                    continue
+                parts = [_part("folder", e.path, size_of(e.path), repo=repo)]
                 repo_dir = os.path.join(e.path, "repo")
-                note = ""
-                if pj.get("isGit") and os.path.isdir(repo_dir):
+                has_git = os.path.lexists(_long(os.path.join(repo_dir, ".git")))
+                if os.path.isdir(repo_dir) and not has_git and not pj.get("isGit"):
+                    note = (note + "; " if note else "") + COPY_NOTE
+                if repo and has_git and is_worktree_of(repo, repo_dir):
                     br = _git_out(repo_dir, "rev-parse", "--abbrev-ref", "HEAD")
-                    if br and br != "HEAD" and branch_state(pj.get("path") or "", br) == "unmerged":
-                        note = f"its branch {br} is not merged into main: it is kept"
-                    dirty = _git_out(repo_dir, "status", "--porcelain")
-                    if dirty:
-                        note = (note + "; " if note else "") + "it has uncommitted changes"
-                    parts.insert(0, _part("worktree", repo_dir, 0, repo=pj.get("path") or ""))
+                    if br and br != "HEAD" and branch_state(repo, br) == "unmerged":
+                        note = (note + "; " if note else "") + f"its branch {br} is not merged into main: the branch is kept"
+                    parts.insert(0, _part("worktree", repo_dir, 0, repo=repo))
                 items.append(_item("orphans", f"orphan:{_norm(e.path)}", os.path.basename(e.path), parts,
                                    project=pj.get("name") or "", note=note,
                                    **({"ticked": False} if note else {})))
@@ -686,15 +766,18 @@ def _housekeeping(hub: Hub, room_ids: set, live: set, cutoff: float) -> list[dic
     if parts:
         items.append(_item("housekeeping", "hk:logs", "Old and rotated logs", parts))
 
-    def gone_room(name: str) -> bool:
-        rid = re.sub(r"\.(json|jsonl)$", "", name)
-        return rid.startswith("room-") and rid not in room_ids
+    def gone_room(e) -> bool:
+        # Gone only when its record is not on disk at all (one that does not
+        # parse is still a task), and only once older than the days asked.
+        rid = re.sub(r"\.(json|jsonl)$", "", e.name)
+        return (rid.startswith("room-") and rid not in room_ids and not room_on_disk(hub, rid)
+                and _mtime(e.path) < cutoff)
     for key, label, d in (("uploads", "Uploads of tasks that are gone", st / "attachments"),
                           ("sends", "Sends of tasks that are gone", st / "sends"),
                           ("chat", "Message logs of tasks that are gone", st / "rooms" / "messages"),
                           ("chat", "Input records of tasks that are gone", st / "input-provenance")):
         parts = [_part(key, e.path, size_of(e.path), room=re.sub(r"\.(json|jsonl)$", "", e.name))
-                 for e in files_in(d, lambda e: gone_room(e.name))]
+                 for e in files_in(d, gone_room)]
         if parts:
             items.append(_item("housekeeping", f"hk:{key}:{d.name}", label, parts))
     ptys = {f"{i}.bin" for i in hub.pty_ids()}
@@ -726,7 +809,7 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
     live_sids = set(hub.live_sessions())
     po_rooms = {(p.get("poRoomId") or "").strip() for p in projects} - {""}
     seats_of = {k: set(hub.current_sessions(r)) for k, r in rooms.items()}
-    current: set[str] = set(live_sids).union(*seats_of.values())
+    current: set[str] = set(live_sids).union(*seats_of.values()) | _unread_rooms(hub, set(rooms))[2]
     cutoff = hub.now() - int(preview.get("days", DEFAULT_DAYS)) * DAY
     done, skipped, freed = [], [], 0
     todo = [it for g in preview.get("groups", []) for it in g.get("items", []) if it.get("id") in want]
@@ -893,12 +976,20 @@ def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str,
     freed, errs = 0, []
     label = it.get("label") or it["id"]
     recent = hub.now() - RECENT_S
+    fo = next((p for p in it.get("parts", []) if p["kind"] == "folder"), None)
+    if it.get("group") == "orphans" and fo:
+        # Checked again, before its worktree goes: a commit only it holds
+        # keeps it; uncommitted work goes only when the person ticked it by
+        # hand, seeing the note, never by itself, never if new since.
+        keep, note = checkout_risk(fo["path"], fo.get("repo") or "")
+        if keep or (note and (how != "manual" or it.get("ticked") is not False)):
+            return 0, [f"{fo['path']}: {keep or note}, kept"]
     for p in it.get("parts", []):
         kind, path = p["kind"], p.get("path") or ""
         if kind == "conversation" and (p.get("sid") in current or _mtime(path) > recent):
             errs.append(f"{p.get('sid')}: in use since the preview, kept")
             continue
-        if p.get("room") and p["room"] in room_ids:
+        if p.get("room") and (p["room"] in room_ids or room_on_disk(hub, p["room"])):
             errs.append(f"{p['room']}: its task is back, kept")
             continue
         if kind == "worktree-records":

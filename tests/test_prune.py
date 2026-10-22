@@ -242,6 +242,8 @@ class PruneTests(unittest.TestCase):
         current_log = write(self.state / "logs" / "ensemble.log", "today")
         sends = write(self.state / "sends" / "room-deadbeef.json", "{}")
         kept_sends = write(self.state / "sends" / "room-cafebabe.json", "{}")
+        age(sends)
+        age(kept_sends)
         old_spool = write(self.state / "pty-spool" / "pty-00000001.bin", "x")
         listed_spool = write(self.state / "pty-spool" / "pty-00000002.bin", "x")
         for f in (old_spool, listed_spool):
@@ -275,6 +277,120 @@ class PruneTests(unittest.TestCase):
         self.assertTrue(rotated_today.exists())
         self.assertTrue(current_log.exists())
         self.assertTrue(self.docs.exists())
+
+    def orphan(self, name):
+        folder = self.home / name
+        write(folder / "task.json", "{}")
+        return folder
+
+    def aged(self, *folders):
+        for f in folders:
+            for dirpath, _dirs, files in os.walk(f):
+                for x in files:
+                    age(Path(dirpath) / x)
+            age(f)
+
+    def test_an_orphan_clone_with_its_own_commits_stays(self):
+        # A clone in repo/ (a project with no git link, or a branch only the
+        # clone has): its commits are nowhere else, so its folder is kept.
+        clone_home = self.orphan("cloned")
+        git(self.tmp, "clone", "-q", str(self.repo), str(clone_home / "repo"))
+        git(clone_home / "repo", "config", "user.email", "t@t")
+        git(clone_home / "repo", "config", "user.name", "t")
+        git(clone_home / "repo", "checkout", "-q", "-b", "only-here")
+        write(clone_home / "repo" / "c.txt", "committed only in the clone\n")
+        git(clone_home / "repo", "add", "-A")
+        git(clone_home / "repo", "commit", "-q", "-m", "only here")
+        git(clone_home / "repo", "checkout", "-q", "main")       # HEAD is in the project; a branch is not
+        plain = self.orphan("plain_clone")                        # a clone with nothing of its own goes
+        git(self.tmp, "clone", "-q", str(self.repo), str(plain / "repo"))
+        self.aged(clone_home, plain)
+        hub = self.hub()
+        preview = prune.scan(hub, 30)
+        ids = self.ids(preview, "orphans")
+        self.assertNotIn(f"orphan:{prune._norm(str(clone_home))}", ids)
+        self.assertTrue(any(k.get("path") == str(clone_home) and "does not have" in k["why"]
+                            for k in preview["kept"]), preview["kept"])
+        self.assertIn(f"orphan:{prune._norm(str(plain))}", ids)
+        # With isGit off the project's repository is not asked: any commit keeps it.
+        self.project["isGit"] = False
+        self.assertNotIn(f"orphan:{prune._norm(str(plain))}", self.ids(prune.scan(hub, 30), "orphans"))
+
+    def test_an_orphan_with_uncommitted_work_is_unticked_and_checked_at_run(self):
+        dirty_one = self.orphan("dirty_clone")
+        git(self.tmp, "clone", "-q", str(self.repo), str(dirty_one / "repo"))
+        write(dirty_one / "repo" / "new.txt", "never committed")
+        late = self.orphan("late_clone")
+        git(self.tmp, "clone", "-q", str(self.repo), str(late / "repo"))
+        self.aged(dirty_one, late)
+        hub = self.hub()
+        preview = prune.scan(hub, 30)
+        items = {it["id"]: it for g in preview["groups"] for it in g["items"]}
+        d = items[f"orphan:{prune._norm(str(dirty_one))}"]
+        self.assertFalse(d["ticked"])
+        self.assertIn("uncommitted", d["note"])
+        self.assertTrue(items[f"orphan:{prune._norm(str(late))}"]["ticked"])
+        # Dirty since the preview: kept, even ticked. Unticked for it and
+        # ticked by hand: it goes.
+        write(late / "repo" / "late.txt", "after the preview")
+        res = prune.run(hub, preview, [f"orphan:{prune._norm(str(late))}"], how="auto")
+        self.assertTrue((late / "repo" / "late.txt").exists())
+        self.assertIn("uncommitted", " ".join(res["done"][0]["errors"]))
+        prune.run(hub, preview, [d["id"]])
+        self.assertFalse(dirty_one.exists())
+
+    def test_a_failing_status_keeps_an_orphan(self):
+        broken = self.orphan("broken")
+        write(broken / "repo" / ".git", "gitdir: C:/nowhere/at/all")   # a worktree whose record is gone
+        self.aged(broken)
+        preview = prune.scan(self.hub(), 30)
+        self.assertNotIn(f"orphan:{prune._norm(str(broken))}", self.ids(preview, "orphans"))
+        self.assertTrue(any(k.get("path") == str(broken) for k in preview["kept"]))
+
+    def test_a_room_that_does_not_parse_is_not_gone(self):
+        rid = "room-0badf00d"
+        sid = "abcdef01-2345-6789-abcd-ef0123456789"
+        folder = self.orphan("unreadable_task")
+        conv = write(self.claude / "proj" / f"{sid}.jsonl", '{"type":"user"}\n')
+        log_ = write(self.state / "rooms" / "messages" / f"{rid}.jsonl", "{}")
+        sends = write(self.state / "sends" / f"{rid}.json", "{}")
+        write(self.state / "rooms" / f"{rid}.json",
+              '{"id": "%s", "taskDir": %s, "participants": [{"sessionId": "%s"}], BROKEN'
+              % (rid, json.dumps(str(folder)), sid))
+        self.aged(folder)
+        for f in (conv, log_, sends):
+            age(f)
+        hub = self.hub()
+        hub.classify = lambda agent, path, s: ("hub", "")
+        preview = prune.scan(hub, 30)
+        paths = {p["path"] for g in preview["groups"] for it in g["items"] for p in it["parts"]}
+        for f in (folder, conv, log_, sends):
+            self.assertNotIn(str(f), paths)
+        self.assertTrue(any(k.get("room") == rid for k in preview["kept"]))
+        # Truly gone (no record on disk), but written lately: not yet.
+        fresh = write(self.state / "sends" / "room-0000aaaa.json", "{}")
+        self.assertNotIn(str(fresh), {p["path"] for g in prune.scan(hub, 30)["groups"]
+                                      for it in g["items"] for p in it["parts"]})
+        # Its record back on disk between preview and run: kept.
+        gone = write(self.state / "sends" / "room-0000bbbb.json", "{}")
+        age(gone)
+        preview = prune.scan(hub, 30)
+        write(self.state / "rooms" / "room-0000bbbb.json", "not json either")
+        prune.run(hub, preview, ["hk:sends:sends"])
+        self.assertTrue(gone.exists())
+
+    def test_a_copy_mode_task_is_unticked(self):
+        rid, folder, cwd, *_ = self.task("copy1", worktree=False)
+        write(cwd / "work.py", "the only copy")
+        room = chatroom.get_room(rid, public=False)
+        room["workspace"] = {"mode": "copy", "taskDir": str(folder)}
+        chatroom.update_room(room)
+        hub = self.hub()
+        item = next(it for g in prune.scan(hub, 30)["groups"] for it in g["items"] if it["id"] == f"done:{rid}")
+        self.assertFalse(item["ticked"])
+        self.assertIn("copy with no git", item["note"])
+        prune.auto_prune(hub, 30)
+        self.assertTrue((cwd / "work.py").exists())
 
     def test_own_conversations_listed_unticked(self):
         mine = write(self.claude / "elsewhere" / "11111111-2222-3333-4444-555555555555.jsonl", "{}\n")

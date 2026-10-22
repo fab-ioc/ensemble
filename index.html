@@ -7849,7 +7849,7 @@ function pruneKeptHtml(kept) {
   if (!kept || !kept.length) return '';
   const row = k => k.what === 'branch'
     ? `${k.no ? `#${k.no} ` : ''}branch <code>${esc(k.branch)}</code>: ${esc(k.why)}`
-    : `${k.no ? `#${k.no} ` : ''}folder <code>${esc(tildeify(k.path || ''))}</code>: ${esc(k.why)}`;
+    : `${k.no ? `#${k.no} ` : ''}${k.what === 'room' ? 'task record' : 'folder'} <code>${esc(tildeify(k.path || ''))}</code>: ${esc(k.why)}`;
   return `<details class="pr-kept"><summary>${prunePlural(kept.length, 'thing')} stay${kept.length === 1 ? 's' : ''} whatever is ticked</summary>`
     + `<ul class="pr-items">${kept.slice(0, 200).map(k => `<li class="pr-im">${row(k)}</li>`).join('')}</ul></details>`;
 }

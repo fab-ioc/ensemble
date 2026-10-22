@@ -12962,22 +12962,20 @@ def _prune_live_sessions() -> set:
 _PRUNE_FOLDERS: list = [0.0, None]
 
 
-def _prune_folders() -> tuple:
-    """po_seat_folders and Ensemble's own folders, read once a minute: a
-    preview asks for every conversation."""
+def _prune_folders():
+    """po_seat_folders, read once a minute: a preview asks for every
+    conversation."""
     if _PRUNE_FOLDERS[1] is None or time.time() - _PRUNE_FOLDERS[0] > 60:
-        projects = load_projects()
-        homes = [str(DASHBOARD_DIR)] + [h for h in (project_home(p, create=False) for p in projects) if h]
-        _PRUNE_FOLDERS[:] = [time.time(), (po_seat_folders(projects, chatroom.list_rooms(copy_rooms=False)), homes)]
+        _PRUNE_FOLDERS[:] = [time.time(), po_seat_folders(load_projects(), chatroom.list_rooms(copy_rooms=False))]
     return _PRUNE_FOLDERS[1]
 
 
 def _prune_classify(agent: str, path: Path, sid: str) -> tuple[str, str]:
     """Whose a conversation no task holds is: a PO's from before its room
     recorded it (``po``, its room), one the hub started (``hub``: its first
-    words are the hub's, or it ran in Ensemble's own folders), or the
+    words are the hub's, or it ran in Ensemble's state folder), or the
     person's own."""
-    folders, homes = _prune_folders()
+    folders = _prune_folders()
     if agent == "codex":
         from agents import codex as _codex
         s = _codex._parse_rollout(path)
@@ -12991,7 +12989,10 @@ def _prune_classify(agent: str, path: Path, sid: str) -> tuple[str, str]:
         return "hub", "rename"
     if first and _hub_words_kind(first) is not None:
         return "hub", first_words(first)
-    if cwd and any(prune.within(cwd, h) for h in homes):
+    # Ensemble's own state folder is the hub's. A project home is not: the
+    # person also works there by hand, so a conversation in one without the
+    # hub's first words is theirs (listed, never ticked by itself).
+    if cwd and prune.within(cwd, str(DASHBOARD_DIR)):
         return "hub", ""
     return "own", first_words(first) if first else ""
 
