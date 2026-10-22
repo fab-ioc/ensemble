@@ -237,7 +237,7 @@ class Hub(unittest.TestCase):
         with mock.patch.object(dashboard.threading, "Thread",
                                lambda target, args=(), daemon=None: mock.Mock(start=lambda: started.append(args))), \
              mock.patch.object(dashboard, "_type_input_now",
-                               lambda sess, text, prov=None, record=True, parts=None: typed.append(text) or True):
+                               lambda sess, text, prov=None, record=True, parts=None, now="": typed.append(text) or True):
             dashboard.send_command(rid, "/model", key="k1")
             dashboard.menu_report("pty-claude", True)
             self.assertTrue(dashboard._type_input(pty, "[digest] one"))

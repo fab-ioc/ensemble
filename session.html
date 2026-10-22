@@ -1233,6 +1233,23 @@
   #stop-choices { position:absolute; z-index:70; right:0; bottom:calc(100% + var(--s-100)); min-width:180px; padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); }
   #stop-choices button { display:block; width:100%; min-height:var(--touch-min); padding:0 var(--s-200); text-align:left; border:0; background:transparent; color:var(--fg); font:inherit; cursor:pointer; }
   #stop-choices button:hover { background:var(--hover); }
+  /* Send now (#252): Send's split part, only while the agent the message goes
+     to is working; its menu is shaped like Stop's choices. */
+  #send-split { display:flex; align-items:stretch; }
+  #send-split:has(#send-menu:not([hidden])) { position:relative; }   /* the menu's anchor, only while open: no new layer at rest */
+  #send-more[hidden], #send-menu[hidden] { display:none; }
+  #send-split:has(#send-more:not([hidden])) #send { border-top-right-radius:0; border-bottom-right-radius:0; }
+  #send-more { min-width:32px; padding:0 var(--s-100); border-left-width:0; border-top-left-radius:0; border-bottom-left-radius:0; }
+  #send-menu { position:absolute; z-index:70; right:0; bottom:calc(100% + var(--s-100)); width:max-content; max-width:min(320px, calc(100vw - 2 * var(--s-400)));
+    padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); }
+  #send-menu button { display:flex; flex-direction:column; align-items:flex-start; gap:var(--s-050); width:100%; min-height:var(--touch-min); padding:var(--s-100) var(--s-200);
+    text-align:left; border:0; border-radius:var(--r-100); background:transparent; color:var(--fg); font:inherit; cursor:pointer; }
+  #send-menu button:hover { background:var(--hover); }
+  #send-menu .sm-name { font-weight:500; }
+  #send-menu .sm-sub { font-size:var(--fs-200); color:var(--fg-muted); }
+  #send-menu kbd { font-family:var(--font-mono); font-size:var(--fs-100); padding:0 var(--s-050); border:1px solid var(--border); border-radius:var(--r-100); }
+  #send-more:focus-visible, #send-menu button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .msg .from .send-how { margin-left:var(--s-100); color:var(--fg-subtle); }
   #stop-note { flex:0 0 auto; padding:var(--s-100) var(--s-300); color:var(--fg-muted); font-size:var(--fs-200); text-align:center; }
 
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
@@ -1301,6 +1318,9 @@
     #send:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
     #send:disabled { border-color:var(--border); background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
     #send:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+    #send-more { height:var(--touch-min); border:1px solid var(--accent); border-left:1px solid var(--accent-fg); background:var(--accent); color:var(--accent-fg); }
+    #send-more:hover { background:var(--accent-hover); border-color:var(--accent-hover); border-left-color:var(--accent-fg); }
+    #send-more:disabled { border-color:var(--border); background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
     .msg.user:not(.hub) { align-self:flex-end; max-width:85%; border:1px solid transparent; background:var(--hover); }
     .msg.user.pending { border:1px dashed var(--border-strong); }
     .msg.user.pending.failed { border-color:var(--c-danger-bold); }
@@ -1337,7 +1357,7 @@
     #compose { padding: 8px; gap: 4px; }
     /* The editor's controls are a finger's size, and the box itself takes at
        most half of what the keyboard leaves. */
-    .ed-btn, #add-point { min-height: var(--touch-min); min-width: var(--touch-min); }
+    .ed-btn, #add-point, #send-more { min-height: var(--touch-min); min-width: var(--touch-min); }
     .ed-pt .ed-n { padding-top: 12px; }
     .ed-pt textarea.ed-text { min-height: var(--touch-min); }
     .ed-refs a.ref-chip, .ed-refs a.task-chip { min-height: var(--touch-min); align-items: center; }
@@ -1618,7 +1638,7 @@
         <input type="file" id="attach-input" accept="image/*" multiple hidden>
         <span class="grow"></span>
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
-        <button id="send" disabled>Send</button>
+        <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
       </div>
       <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
     </div>
@@ -3891,13 +3911,20 @@ function chatStamp(ts) {
   return isNaN(d) ? '' : `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 const stampHtml = ts => { const s = chatStamp(ts); return s ? `<span class="at">${s}</span>` : ''; };
+// Send now (#252): how the person's message reached a busy agent, beside its
+// time (SEND_HOW_WORDS is with the sends, below).
+function sendHowHtml(m) {
+  const hows = typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.sendHows;
+  const how = m.from === 'user' && m.id && hows && hows[m.id];
+  return how && SEND_HOW_WORDS[how] ? `<span class="send-how">· ${SEND_HOW_WORDS[how]}</span>` : '';
+}
 // One balloon drawn as a row or in full. o: { md, open, un, idle, superseded }.
 // The same item draws the same markup, so a poll keeps its element (patchChildren).
 function foldBalloonHtml(m, i, how, o) {
   const key = esc(foldKey(m, i));
   const hub = isHubInput(m);
   const cls = (m.from === 'user' ? 'user' : esc(agentClass(m.from))) + (hub ? ' hub' : '');
-  const who = whoHtml(m) + stampHtml(m.ts);
+  const who = whoHtml(m) + stampHtml(m.ts) + (hub ? '' : sendHowHtml(m));
   if (how === 'row') {
     const chips = foldChips(m, o.un, o.idle, o.superseded);
     // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
@@ -5737,6 +5764,8 @@ function sendsToShow(items) {
 // A send as a balloon: the words as sent, and under them where it is, in words.
 // "17:18" today, "Oct 8, 17:18" before (the chat's own chatWhen; this block
 // stands on its own).
+// How a send reached a busy agent by Send now (the hub's sends.note_how).
+const SEND_HOW_WORDS = { 'into-turn': 'Sent into the running turn', interrupted: 'Interrupted, then sent' };
 function sendWhen(ts, day = true) {
   if (!ts) return '';
   const d = new Date(ts * 1000), hm = { hour: '2-digit', minute: '2-digit', hour12: false };
@@ -5753,6 +5782,7 @@ function sendHtml(s, md) {
   const when = sendWhen(s.at);
   const sent = when ? `<span class="pend-when">Sent ${esc(when)}&nbsp;·</span> ` : '';
   const again = s.redeliveredAt ? sendWhen(s.redeliveredAt, false) : '';
+  const how = SEND_HOW_WORDS[s.how] ? SEND_HOW_WORDS[s.how] + '; ' : '';
   const st = s.state === 'failed'
     ? `<div class="pend-state" role="status">${sent}Not delivered: ${esc(s.error || 'it did not go in')}. `
       + `<button type="button" class="send-retry" data-send="${esc(s.key)}">Retry</button>`
@@ -5762,9 +5792,10 @@ function sendHtml(s, md) {
           ? 'Queued: it will be delivered after the restart.'
           : 'Queued: it goes in once the session is up.'}</div>`
       : read
-        ? `<div class="pend-state ok" role="status">${sent}Read by the agent.</div>`
+        ? `<div class="pend-state ok" role="status">${sent}${how ? how + 'read' : 'Read'} by the agent.</div>`
       : `<div class="pend-state ok" role="status">${sent}${again && s.state === 'delivered'
-        ? `Typed in again at ${esc(again)}; not yet read by the agent.` : 'Delivered, not yet read by the agent.'}`
+        ? `Typed in again at ${esc(again)}; not yet read by the agent.`
+        : how ? how + 'not yet read by the agent.' : 'Delivered, not yet read by the agent.'}`
         + (s.state === 'delivered' ? ` <button type="button" class="send-hide" data-send="${esc(s.key)}" title="Stop showing it here (it was typed in)">Hide</button>` : '') + '</div>';
   return `<div class="msg user${read ? '' : ' pending'}${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
     + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div><div class="text md">${md(stripPointLines(s.text))}</div>${sendPointsHtml(s.text)}${st}</div>`;
@@ -7107,7 +7138,70 @@ function updateStopControl(ptyMap, liveMap) {
   wrap.hidden = !STOP_TARGETS.length;
   if (!STOP_TARGETS.length) choices.hidden = true;
   $('#stop-agent').disabled = STOP_PENDING;
+  updateSendNow();
 }
+// Send now (#252, GitHub issue 23). Send already reaches a busy agent at its
+// next step; Send now reaches it at once: Claude takes it into the running
+// turn (its own Ctrl+X Ctrl+S), Codex's turn is interrupted first (Esc), so
+// its words say so. Offered only while the agent the message goes to works:
+// the one agent of a solo chat, else the @-addressed one, else the owners (as
+// the hub routes it). The hub decides again as it types (send_now_way).
+let SEND_NOW_WAY = '';      // '' | 'into-turn' | 'interrupt'
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+function sendNowTargets() {
+  if (!ROOM_OBJ || !STOP_TARGETS.length) return [];
+  let ids;
+  if (SOLO_MODE) ids = ROOM_AGENTS.slice(0, 1).map(a => a.identity);
+  else {
+    const m = $('#input').value.trim().match(/^@([\w-]+)\b/);
+    if (m && m[1] === 'user') return [];
+    ids = m && ROOM_IDENTS.includes(m[1]) ? [m[1]] : (ROOM_OBJ.owners || []);
+  }
+  return STOP_TARGETS.filter(a => ids.includes(a.identity) && (a.agent === 'claude' || a.agent === 'codex'));
+}
+function updateSendNow() {
+  const targets = sendNowTargets();
+  const way = !targets.length ? '' : targets.some(a => a.agent === 'codex') ? 'interrupt' : 'into-turn';
+  const more = $('#send-more');
+  more.disabled = SEND_IN_FLIGHT;
+  if (way === SEND_NOW_WAY) return;
+  SEND_NOW_WAY = way;
+  more.hidden = !way;
+  if (!way) closeSendMenu(false);
+  const key = IS_MAC ? '⌥Enter' : 'Alt+Enter';
+  const [name, sub] = way === 'interrupt'
+    ? ['Interrupt and send', 'Stops its turn, then sends']
+    : ['Send now', 'Into the running turn, at once'];
+  const item = $('#send-now');
+  item.querySelector('.sm-name').textContent = name;
+  item.querySelector('.sm-sub').innerHTML = `${esc(sub)} · <kbd>${esc(key)}</kbd>`;
+  item.title = `${name} (${key}). Send waits for the agent's next step.`;
+}
+function openSendMenu() {
+  if (!SEND_NOW_WAY || SEND_IN_FLIGHT) return;
+  $('#send-menu').hidden = false;
+  $('#send-more').setAttribute('aria-expanded', 'true');
+  $('#send-now').focus();
+}
+function closeSendMenu(refocus) {
+  const menu = $('#send-menu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  $('#send-more').setAttribute('aria-expanded', 'false');
+  if (refocus) $('#send-more').focus();
+}
+$('#send-more').addEventListener('click', () => $('#send-menu').hidden ? openSendMenu() : closeSendMenu(true));
+$('#send-more').addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openSendMenu(); }
+});
+$('#send-now').addEventListener('click', () => { closeSendMenu(false); sendNow(true); });
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#send-split')) closeSendMenu(false);
+}, true);
+$('#send-menu').addEventListener('focusout', e => {
+  if (!e.relatedTarget || !e.relatedTarget.closest('#send-split')) closeSendMenu(false);
+});
+$('#input').addEventListener('input', () => { if (!SOLO_MODE) updateSendNow(); });
 async function stopAgent(identity = '') {
   if (STOP_PENDING || !STOP_TARGETS.length || performance.now() - STOP_LAST < 1000) return;
   if (!identity && STOP_TARGETS.length > 1) {
@@ -7150,6 +7244,7 @@ $('#stop-choices').addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (!$('#send-menu').hidden) { closeSendMenu(true); e.preventDefault(); return; }
   const choices = $('#stop-choices');
   if (!choices.hidden) { choices.hidden = true; $('#stop-agent').focus(); e.preventDefault(); return; }
   // Open cards and popovers get Escape first. Any editor other than the empty
@@ -7884,8 +7979,9 @@ setInterval(() => {
 // from here on drops nothing. ``key`` names this attempt: sent again after a
 // lost reply, the hub takes it once. A team's every send goes this way: the
 // hub, not the last poll, decides whether the team is running.
-async function sendResuming(text, to, key, attachments) {
+async function sendResuming(text, to, key, attachments, now) {
   const body = { roomId: ROOM, text, to: to || '', key: key || '' };
+  if (now) body.now = true;     // Send now (#252): reach the busy agent at once
   // From a thread's box (#210): the hub tells the PO which thread. A thread
   // with no point of its own (a task's, or one started on a balloon) goes
   // with its first message's link, so the PO knows what it answers.
@@ -8203,9 +8299,12 @@ function setSendBusy(busy) {
   box.querySelectorAll('textarea').forEach(ta => { ta.readOnly = busy; });
   send.disabled = busy || !ROOM_OBJ;
   send.textContent = busy ? 'Sending\u2026' : 'Send';
+  $('#send-more').disabled = busy;
+  if (busy) closeSendMenu(false);
   if (!busy && !SEND_ERR && $('#hint').textContent === 'Sending your message.') setText($('#hint'), '');
 }
-async function sendNow() {
+// urgent: Send now (#252), offered while its agent works (updateSendNow).
+async function sendNow(urgent = false) {
   if (SEND_IN_FLIGHT) {
     setText($('#hint'), 'Sending your message.');
     return;
@@ -8249,7 +8348,7 @@ async function sendNow() {
       // Through the hub, running or not: it keeps the person's points and adds
       // their lines (and the images'), and types it in (or resumes the session).
       let d;
-      try { d = await sendResuming(t, '', key, atts); }
+      try { d = await sendResuming(t, '', key, atts, urgent); }
       catch (e) {
         if (keptByHub(e)) return;
         SEND_ERR = sendFailText(e);
@@ -8274,7 +8373,7 @@ async function sendNow() {
     // last poll is resumed for the message instead of the message being posted
     // to a room nobody is reading.
     let d;
-    try { d = await sendResuming(t, to, msgKey(), atts); }
+    try { d = await sendResuming(t, to, msgKey(), atts, urgent); }
     catch (e) {
       if (keptByHub(e)) return;
       SEND_ERR = sendFailText(e);
@@ -8288,9 +8387,12 @@ async function sendNow() {
   }
 }
 $('#send').onclick = () => sendNow();
+// Alt+Enter (\u2325Enter): Send now while it is offered, else a plain send.
+function sendNowKey() { if (!$('#send').disabled) sendNow(!!SEND_NOW_WAY); }
 $('#input').addEventListener('keydown', e => {
   const act = edKeyAction(e, { part: 'head', empty: !$('#input').value.trim(), last: !ED.points.length });
   if (act === 'send') { e.preventDefault(); $('#send').click(); }
+  else if (act === 'send-now') { e.preventDefault(); sendNowKey(); }
   else if (act === 'add') { e.preventDefault(); edAddLast(); }
 });
 // ---- The message editor: begin ---------------------------------------------
@@ -8330,6 +8432,8 @@ function edMovePoint(m, i, d) {
 function edKeyAction(e, at) {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === 'Enter' && mod) return e.shiftKey ? 'add' : 'send';
+  // Alt+Enter (\u2325Enter on a Mac), never with Ctrl/\u2318 (AltGr): Send now (#252).
+  if (e.key === 'Enter' && e.altKey && !e.shiftKey) return 'send-now';
   if (at.part !== 'point') return null;
   if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && at.last && !at.empty) return 'add';
   if (e.key === 'Backspace' && !mod && at.empty) return 'remove';
@@ -8483,6 +8587,7 @@ function edPointKey(e, p) {
   const i = ED.points.indexOf(p);
   const act = edKeyAction(e, { part: 'point', empty: !edUsed(p), last: i === ED.points.length - 1 });
   if (act === 'send') { e.preventDefault(); $('#send').click(); }
+  else if (act === 'send-now') { e.preventDefault(); sendNowKey(); }
   else if (act === 'add') { e.preventDefault(); edAddAt(i + 1); }
   else if (act === 'remove') { e.preventDefault(); edRemoveAt(i); }
 }
