@@ -55,6 +55,7 @@ class FeedbackEndpoint(unittest.TestCase):
         self.settings = dict(feedbackRepo='fab-ioc/ensemble', feedbackRelayUrl='https://relay.example')
         self.patches = [patch.object(dashboard, 'load_settings', return_value=self.settings),
                         patch.object(feedback, 'output', return_value=''),
+                        patch.dict(feedback._login, {'at': 0.0, 'login': ''}),
                         patch.object(feedback, 'identities', return_value=['Alice', 'alice-gh'])]
         for p in self.patches: p.start(); self.addCleanup(p.stop)
         self.data = dict(title='A bug', description='Please fix this', kind='bug', name='Alice', technical=False)

@@ -10495,6 +10495,7 @@ def _gzip_cached(etag: str, data: bytes) -> bytes:
 # requests, and revalidates an answer it holds (If-None-Match) by itself, which
 # it does not do for an HTTP/1.0 answer to a URL with a query string.
 KEEPALIVE_IDLE_S = 15           # a connection with no request for this long is closed
+SLOW_REQUEST_S = 5              # an answer that took this long is logged
 BODY_DRAIN_MAX = 1 << 20        # an unread request body up to this is read before the answer
 BODY_DRAIN_S = 10
 # GET answers a browser may keep and revalidate get an ETag and "no-cache".
@@ -14855,8 +14856,16 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         finally:
             self._waiting = False
-            if _ANSWERING.pop(threading.get_ident(), None) is not None:
+            began = _ANSWERING.pop(threading.get_ident(), None)
+            if began is not None:
                 _ANSWERED[0] = time.monotonic()
+                # A slow answer, in the log (#251: a page gives a send up
+                # after 20 s, and nothing told how long the hub had taken).
+                # A terminal's stream and an agent's tool call are long by nature.
+                took = _ANSWERED[0] - began
+                path = str(getattr(self, "path", "")).split("?", 1)[0]
+                if took >= SLOW_REQUEST_S and path not in ("/api/pty/stream", "/mcp"):
+                    print(f"[slow] {getattr(self, 'command', '')} {path} took {took:.1f}s", flush=True)
             body = self.rfile
             if isinstance(body, _RequestBody):
                 self.rfile = body.raw
