@@ -43,6 +43,7 @@ any other.
 """
 from __future__ import annotations
 
+import functools
 import re
 import threading
 import time
@@ -1044,10 +1045,13 @@ _WORD = re.compile(r"[\w'’-]+")
 _PREF = re.compile(r"(?<![\w#])P(\d{1,5}[a-z]?)\b")
 
 
+@functools.lru_cache(maxsize=16384)
 def _same_ask(a: str, b: str) -> bool:
     """Two questions ask the same: they name the same points (P131) and the
     same task, or share most of their words ("Still waiting on you: P131 …"
-    asked three times, "Item 9: …" asked again in other words)."""
+    asked three times, "Item 9: …" asked again in other words). Pure, so
+    remembered: a chat's every poll compared each open ask with the others
+    (~8 s of the hub's lock in 15 min on the trading PO's 43, #256)."""
     pa, pb = set(_PREF.findall(a)), set(_PREF.findall(b))
     if pa and pa == pb and _d.points.task_refs(a) == _d.points.task_refs(b):
         return True

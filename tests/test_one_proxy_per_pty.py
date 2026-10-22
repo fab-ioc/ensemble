@@ -74,8 +74,31 @@ class OneProxyPerPtyTest(unittest.TestCase):
         host.kill(made.id)
         self.assertEqual(client.killed, [made.id])
         self.assertIsNone(host.get(made.id))
-        client.live.add(made.id)                    # the id comes back (a new host)
-        self.assertIsNot(host.get(made.id), made)
+        # A PTY id never comes back (#256): a gone one is not asked about
+        # again, unless this hub creates a PTY of that id.
+        before = client.lookups
+        self.assertIsNone(host.get(made.id))
+        self.assertEqual(client.lookups, before)
+        client.live.clear()
+        again = host.create(["x"])
+        self.assertEqual(again.id, made.id)
+        self.assertIsNot(again, made)
+        self.assertIs(host.get(made.id), again)
+
+    def test_the_host_list_is_shared_for_a_moment(self):
+        client = _FreshPerLookupClient()
+        host = dashboard.OneProxyPerPty(client)
+        calls = []
+        real = client.list_sessions
+        client.list_sessions = lambda: calls.append(1) or real()
+        host.list_sessions()
+        host.list_sessions()
+        self.assertEqual(len(calls), 1)
+        made = host.create(["x"])               # a create drops it
+        self.assertEqual([x["id"] for x in host.list_sessions()], [made.id])
+        host.kill(made.id)                      # and so does a kill
+        self.assertEqual(host.list_sessions(), [])
+        self.assertEqual(len(calls), 3)
 
     def test_everything_else_reaches_the_client(self):
         client = _FreshPerLookupClient()

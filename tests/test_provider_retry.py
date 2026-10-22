@@ -333,7 +333,7 @@ class ProviderRetryTest(unittest.TestCase):
              mock.patch.object(stall, "_look", return_value=""), \
              mock.patch.object(stall, "_look_limit", return_value=""), \
              mock.patch.object(stall, "_look_silent", return_value=""), \
-             mock.patch.object(stall, "_look_permission", return_value=""):
+             mock.patch.object(stall, "_look_permission", return_value=""),              mock.patch.object(dashboard.chatroom, "get_room", return_value={"id": "room-kept"}),              mock.patch.object(dashboard, "_room_is_live", return_value=True):
             rooms.glob.return_value = [room_path]
             stall.tick(1000)
             looked.assert_called_once_with("room-kept", 1000)
