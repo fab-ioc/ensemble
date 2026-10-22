@@ -828,6 +828,8 @@ def _open_to_human(room: dict, msgs: list, po: str | None = None,
     carried_on: set[str] = set()   # agents that updated or spoke to the person later
     message = None          # the newest plain message to the person
     for m in reversed(msgs):
+        if _d.chatroom.is_command_record(m):
+            continue            # a slash command and its output (#253): no ask, no answer
         frm = m.get("from", "")
         if frm == "user":
             break

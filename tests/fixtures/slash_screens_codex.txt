@@ -1,0 +1,837 @@
+
+===== start =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== after-trust =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== slash-typed =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› /model         choose what model and reasoning effort to use                                                          
+  /fast          2x speed, increased usage
+  /daybreak      Learn about broader access for cybersecurity work
+  /ide           include current selection, open files, and other context from your IDE
+  /permissions   choose what Codex is allowed to do
+  /keymap        remap TUI shortcuts
+  /vim           toggle Vim mode for the composer
+  /experimental  toggle experimental features
+
+› /
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx
+
+===== prompt1 =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+ 
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== model-typed =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+ 
+› /model  choose what model and reasoning effort to use                                                                 
+
+› /model
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+
+===== model-open =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+
+
+
+
+
+
+
+ 
+  Select Model and Effort
+
+
+  1. GPT-6.1-Sol            Latest workhorse model for coding and everyday work.
+› 2. GPT-6-Astra (current)  Frontier intelligence for the most demanding work.                                          
+  3. GPT-6-Sol              Previous generation workhorse model.
+  4. GPT-6-Luna             Fast and affordable model for easier tasks.
+  5. GPT-5.6-Sol            Older generation workhorse model.
+  6. GPT-5.6-Terra          Older balanced model for straightforward work.
+  7. GPT-5.6-Luna           Older fast and efficient model.
+
+  enter select · esc back                                                                                               
+
+===== model-down =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+
+
+
+
+
+
+
+ 
+  Select Model and Effort
+
+
+  1. GPT-6.1-Sol            Latest workhorse model for coding and everyday work.
+  2. GPT-6-Astra (current)  Frontier intelligence for the most demanding work.
+› 3. GPT-6-Sol              Previous generation workhorse model.                                                        
+  4. GPT-6-Luna             Fast and affordable model for easier tasks.
+  5. GPT-5.6-Sol            Older generation workhorse model.
+  6. GPT-5.6-Terra          Older balanced model for straightforward work.
+  7. GPT-5.6-Luna           Older fast and efficient model.
+
+  enter select · esc back                                                                                               
+
+===== model-esc =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+
+
+
+
+
+
+
+ 
+
+
+
+
+ 
+ 
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== model-esc2 =====
+ 
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+  To get started, describe a task or try one of these commands:
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+
+
+
+
+
+
+
+ 
+
+
+
+
+ 
+ 
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  esc again to edit previous message
+
+===== status =====
+ 
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› Reply with the single word: ready
+
+
+• ready
+
+  Worked for 3s • 8:24 AM                                                                                               
+ 
+/status
+
+  >_ OpenAI Codex (v0.163.0)
+
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+
+  Context window:      99% left (15.1K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== mcp =====
+ 
+
+• ready
+ 
+  Worked for 3s • 8:24 AM                                                                                               
+ 
+/status
+
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      99% left (15.1K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+/mcp
+ 
+🔌   MCP Tools
+ 
+  • codex_apps: connected (216 tools)
+  • codex_worktrees: connected (3 tools)
+ 
+  Use /mcp verbose for tools and resources.
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== skills-open =====
+› Reply with the single word: ready
+
+/status
+ 
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+ 
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      99% left (15.1K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+/mcp
+ 
+🔌   MCP Tools
+ 
+  • codex_apps: connected (216 tools)
+  • codex_worktrees: connected (3 tools)
+ 
+  Use /mcp verbose for tools and resources.
+ 
+ 
+  Skills
+  Choose an action
+ 
+
+› 1. List skills            Tip: press $ to open this list directly                                                     
+  2. Enable/Disable Skills  Enable or disable skills
+
+  enter select · esc back                                                                                               
+
+===== skills-esc =====
+ 
+
+• ready
+ 
+  Worked for 3s • 8:24 AM                                                                                               
+ 
+/status
+
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+ 
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      99% left (15.1K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+/mcp
+ 
+🔌   MCP Tools
+ 
+  • codex_apps: connected (216 tools)
+  • codex_worktrees: connected (3 tools)
+ 
+  Use /mcp verbose for tools and resources.
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== compact =====
+› Reply with the single word: ready
+ 
+/status
+ 
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+ 
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      99% left (15.1K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+/mcp
+ 
+🔌   MCP Tools
+ 
+  • codex_apps: connected (216 tools)
+  • codex_worktrees: connected (3 tools)
+ 
+  Use /mcp verbose for tools and resources.
+ 
+• Context compacted · 11s
+ 
+  Worked for 11s • 8:25 AM                                                                                              
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== busy =====
+› Reply with the single word: ready
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      99% left (15.1K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+/mcp
+ 
+🔌m  MCP Tools
+ 
+  • codex_apps: connected (216 tools)
+  • codex_worktrees: connected (3 tools)
+ 
+  Use /mcp verbose for tools and resources.
+ 
+• Context compacted · 11s
+ 
+  Worked for 11s • 8:25 AM                                                                                              
+ 
+ 
+› Run the shell command: ping -n 20 127.0.0.1
+ 
+ 
+• I’ll run the ping command now.
+ 
+◦ Working (10s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== busy-status =====
+› Reply with the single word: ready
+  Use /mcp verbose for tools and resources.
+ 
+• Context compacted · 11s
+ 
+  Worked for 11s • 8:25 AM                                                                                              
+ 
+ 
+› Run the shell command: ping -n 20 127.0.0.1
+ 
+ 
+• I’ll run the ping command now.
+ 
+/status
+ 
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+ 
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      100% left (8.72K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+• Working (14s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== busy-model =====
+ 
+ 
+› Run the shell command: ping -n 20 127.0.0.1
+ 
+ 
+• I’ll run the ping command now.
+ 
+/status
+ 
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+ 
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      100% left (8.72K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+ 
+  Select Model and Effort
+ 
+ 
+  1. GPT-6.1-Sol            Latest workhorse model for coding and everyday work.
+› 2. GPT-6-Astra (current)  Frontier intelligence for the most demanding work.                                          
+  3. GPT-6-Sol              Previous generation workhorse model.
+  4. GPT-6-Luna             Fast and affordable model for easier tasks.
+  5. GPT-5.6-Sol            Older generation workhorse model.
+  6. GPT-5.6-Terra          Older balanced model for straightforward work.
+  7. GPT-5.6-Luna           Older fast and efficient model.
+
+  enter select · esc back                                                                                               
+
+===== busy-after =====
+ 
+ 
+• I’ll run the ping command now.
+ 
+/status
+ 
+  >_ OpenAI Codex (v0.163.0)
+ 
+  Visit https://chatgpt.com/settings/usage for up-to-date
+  information on rate limits and credits
+ 
+  Model:               GPT-6-Astra (reasoning low, summaries auto)
+  Model provider:      openai
+  Directory:           ~\AppData\Local\Temp\slmx
+  Permissions:         Full Access
+  Agents.md:           <none>
+  Account:             someone@example.com (Pro 100)
+  Thread name:         Reply ready
+  Collaboration mode:  Default
+  Session:             01a16248-53be-7903-9115-c80b91607cc9
+ 
+  Context window:      100% left (8.72K used / 258K)
+  Weekly limit:        [█████████████░░░░░░░] 65% left (resets 7:32 AM on 27 Oct)
+ 
+• Ran ping -n 20 127.0.0.1
+  └     Packets: Sent = 20, Received = 20, Lost = 0 (0% loss),
+    Approximate round trip times in milli-seconds:
+        Minimum = 0ms, Maximum = 0ms, Average = 0ms
+    + 24 lines (ctrl+t to expand)                                                                                       
+ 
+• Completed successfully: 20 packets sent, 20 received, 0% loss. All replies took less than 1 ms.
+  └ Tip: Use /copy or press ctrl+o to copy the latest agent response as Markdown.
+ 
+  Worked for 27s • 8:26 AM                                                                                              
+ 
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx · Reply ready
+  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view
+
+===== new =====
+
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+
+
+
+
+
+
+                                                       ⣀⣤⣤⣤⣀⣀
+                                                    ⣠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣦⣤⣤⣤⣤⣤⣤⡀
+                                                  ⢀⣾⣿⣿⠿⠋⠉⠉⢉⣭⣿⣿⣿⣿⣿⠿⣿⣿⣿⣿⣷⣄
+                                                 ⣀⣾⣿⣿⠃ ⣀⣴⣾⣿⣿⡿⠟⠋ ⣀⡀ ⠈⠙⢿⣿⣿⣧
+                                              ⣀⣶⣿⣿⣿⣿⡇ ⢸⣿⣿⡿⠛⠉⢀⣠⣴⣿⣿⣿⣷⣦⣀⠈⢻⣿⣿⡇
+                                             ⣰⣿⣿⡿⢿⣿⣿⡇ ⢸⣿⣿⢀⣤⣶⣿⣿⣿⠟⠛⠻⣿⣿⣿⣿⣮⣿⣿⡷
+                                            ⢰⣿⣿⡟⠁⢸⣿⣿⡇ ⢸⣿⣿⣿⣿⠿⠿⣿⣿⣿⣦⣄⡀⠈⠛⠿⣿⣿⣿⣧⡀
+                                            ⣾⣿⣿⠃ ⢸⣿⣿⡇ ⢸⣿⣿⠋⠁  ⠈⠙⢻⣿⣿⣿⣶⣤⡀ ⠹⢿⣿⣷⡄
+                                            ⢸⣿⣿⣇ ⠸⣿⣿⣷⣦⣼⣿⣿      ⢸⣿⣿⠻⢿⣿⣿⡇ ⠘⣿⣿⣿
+                                            ⠈⢿⣿⣿⣦⡀⠈⠛⠿⣿⣿⣿⣿⣄⡀  ⢀⣠⣼⣿⣿  ⣿⣿⡇  ⣿⣿⣿⠇
+                                              ⢻⣿⣿⣿⣷⣦⣀⠈⠙⠻⣿⣿⣿⣶⣶⣿⣿⣿⣿⣿  ⣿⣿⡇ ⣠⣿⣿⣿
+                                              ⢸⣿⣿⡿⢿⣿⣿⣿⣦⣠⣴⣿⣿⣿⡿⠟⠋⢸⣿⣿  ⣿⣿⣷⣴⣿⣿⣿⠃
+                                              ⠘⣿⣿⣷ ⠈⠛⢿⣿⣿⣿⠿⠋⠉ ⣠⣴⣿⣿⣿  ⣿⣿⣿⣿⣿⠟⠁
+                                               ⠻⣿⣿⣿⣤⣀ ⠈⠉ ⢀⣤⣶⣿⣿⣿⠿⠟⠁ ⣰⣿⣿⡟⠋⠁
+                                                ⠈⠿⣿⣿⣿⣿⣶⣾⣿⣿⣿⣿⠟⠋⠁  ⣠⣼⣿⣿⡟
+                                                   ⠙⠛⠛⠛⠻⠛⢿⣿⣿⣿⣿⣷⣾⣿⣿⣿⡿⠏
+                                                          ⠈⠙⠛⠿⠿⠿⠿⠛⠉
+
+
+
+
+
+
+
+
+› Ask Codex to do anything
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx
+  ? for shortcuts
+
+===== unknown =====
+
+  >_ OpenAI Codex (v0.163.0)
+     ~\AppData\Local\Temp\slmx
+  permissions: YOLO mode
+
+• Unrecognized command '/nosuchcmd'. Type "/" for a list of supported commands.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› /nosuchcmd
+
+  GPT-6-Astra low · ~\AppData\Local\Temp\slmx

@@ -124,6 +124,8 @@ import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
 import sends
+# Slash commands from the chat: what to suggest, what a command is (#253).
+import slash
 # A project's Documents folder: its tasks' reports, newest first.
 import project_docs
 # Task numbers (#18, ED-18) and project keys.
@@ -436,6 +438,10 @@ def _backfill_codex_session_ids(room: dict) -> None:
         cwd = pp.get("cwd") or room.get("cwd") or ""
         rots = [r for r in pp.get("rotations") or [] if isinstance(r, dict)]
         p_since = max(since, float(rots[-1].get("startedAt") or 0)) if rots else since
+        # After a /new (#253): only a rollout written since is the new one.
+        clr = [r for r in pp.get("cleared") or [] if isinstance(r, dict)]
+        if clr:
+            p_since = max(p_since, float(clr[-1].get("at") or 0))
         try:
             sid = cx.latest_session_id_for_cwd(cwd, since=p_since)
         except Exception:
@@ -3546,6 +3552,167 @@ def _verify_codex_submit(sess, writer, text: str, path=None, before=-1) -> None:
         pass
 
 
+# ---- Slash commands from the chat (#253) -----------------------------------
+# A command goes into the agent's terminal as the person typed it: no hub
+# wrapper, no message refs, no point, no queue (both CLIs take one while a
+# turn runs). The room keeps a notice of it (noticeKind "command") and of what
+# it printed ("commandOutput", posted by the page that watched the screen),
+# which the chats show and agents never read (chatroom.is_command_record).
+_COMMANDS: dict[tuple[str, str], dict] = {}      # (room, key) -> {identity, text, at, reply, output}
+_COMMANDS_MAX = 200
+_COMMANDS_LOCK = threading.Lock()
+COMMAND_OUTPUT_MAX = 8000
+
+
+def command_target(room: dict, identity: str = "") -> dict | None:
+    """The agent a command goes to: the one named, else a one-agent chat's
+    agent, else the task's owner (its first agent that is not started per
+    review)."""
+    agents_in = [p for p in room.get("participants") or [] if p.get("kind") == "agent"]
+    if identity:
+        return next((p for p in agents_in if p.get("identity") == identity), None)
+    if not agents_in:
+        return None
+    return next((p for p in agents_in if not chatroom.is_on_mention(room, p)), agents_in[0])
+
+
+def _type_command(sess, text: str) -> str:
+    """Type a slash command and Enter, raw. "" when typed, else why not
+    (rotation.reserve_hub_line's cause, or "gone"). No Codex submit check:
+    a command that opened a picker must not get a second Enter."""
+    why: list[str] = []
+    lease = rotation.reserve_hub_line(sess, why)
+    if lease is None:
+        hub_typing.record(sess, False, why[0] if why else "refused")
+        return why[0] if why else "refused"
+    ok = False
+    try:
+        writer = getattr(sess, "write", None)
+        try:
+            with _INPUT_WRITE_LOCK:
+                took = writer(text) if callable(writer) else sess.send_line(text)
+                ok = took is not False and sess.alive()
+                if ok:
+                    _record_typed_input_safely(sess, text, _origin_sender_info(text, "human"))
+            if ok and callable(writer):
+                # The CLI's own list filters on the text first; Enter after it.
+                time.sleep(0.3)
+                ok = writer("\r") is not False and sess.alive()
+        except (OSError, EOFError):
+            ok = False
+        return "" if ok else _not_typed_cause(sess)
+    finally:
+        rotation.release_hub_line(sess, lease)
+        hub_typing.record(sess, ok, "" if ok else _not_typed_cause(sess))
+
+
+def _follow_new_conversation(room_id: str, identity: str, agent: str) -> None:
+    """A Codex agent sent ``/new``: its next rollout is a new conversation.
+    The seat's id is blanked so _backfill_codex_session_ids adopts it, and
+    the old one is kept in ``cleared`` (a past conversation of the task).
+    Claude's new id comes with its SessionStart hook (_follow_cleared)."""
+    if agent != "codex":
+        return
+    full = chatroom.get_room(room_id, public=False)
+    part = chatroom.participant(full, identity) if full else None
+    if not part:
+        return
+    old = str(part.get("sessionId") or "")
+    part.setdefault("cleared", []).append({"fromSessionId": old, "toSessionId": "", "at": time.time()})
+    part["sessionId"] = ""
+    chatroom.update_room(full)
+    _CODEX_SID_TRIED.pop(room_id, None)
+
+
+def _follow_cleared(room_id: str, identity: str, pty_id: str, session_id: str) -> bool:
+    """Claude's ``/clear`` started a new conversation in the same terminal
+    (its SessionStart hook, source "clear"): the seat follows it, the old one
+    is kept in ``cleared``. True when the seat moved."""
+    full = chatroom.get_room(room_id, public=False) if room_id else None
+    part = chatroom.participant(full, identity) if full else None
+    if not part or not session_id or part.get("ptyId") != pty_id:
+        return False
+    old = str(part.get("sessionId") or "")
+    if old == session_id:
+        return False
+    part.setdefault("cleared", []).append({"fromSessionId": old, "toSessionId": session_id,
+                                           "at": time.time()})
+    part["sessionId"] = session_id
+    sess = ptyrun.get(pty_id)
+    if sess is not None and isinstance(getattr(sess, "meta", None), dict):
+        sess.meta["sessionId"] = session_id
+    chatroom.update_room(full)
+    print(f"[command] {room_id}/{identity}: /clear moved the seat to session {session_id}", flush=True)
+    return True
+
+
+def send_command(room_id: str, text: str, identity: str = "", key: str = "") -> tuple[int, dict]:
+    """Type the person's slash command into an agent's terminal. Returns
+    (status, reply); the reply names the agent and the room record."""
+    text = (text or "").strip()
+    if not slash.is_command(text):
+        return 400, {"error": "not_a_command", "message": "A command is one line that starts with /name."}
+    room = chatroom.get_room(room_id, public=False) if room_id else None
+    if room is None:
+        return 404, {"error": "no_such_room"}
+    key = str(key or "")[:80]
+    if key:
+        with _COMMANDS_LOCK:
+            held = _COMMANDS.get((room_id, key))
+        if held and held.get("reply"):
+            return 200, dict(held["reply"], duplicate=True)
+    part = command_target(room, str(identity or ""))
+    if part is None:
+        return 404, {"error": "no_such_agent", "message": "No agent of this task has that name."}
+    ident, agent = part.get("identity", ""), part.get("agent", "")
+    name = "the agent" if len([p for p in room["participants"] if p.get("kind") == "agent"]) < 2 else ident
+    sess = ptyrun.get(part.get("ptyId")) if part.get("ptyId") else None
+    if sess is None or not sess.alive():
+        return 409, {"error": "not_running",
+                     "message": f"{name} is not running: start the task, then send the command again"}
+    cause = _type_command(sess, text)
+    if cause:
+        msg = {"rotating": "the task is handing over to a fresh session, so try again in a moment",
+               "busy": f"the hub is typing into {name} right now, so try again in a moment",
+               "gone": f"{name} stopped"}.get(cause, f"{name}'s terminal did not take it ({cause})")
+        return 409, {"error": "not_typed", "cause": cause, "message": msg}
+    sess.last_input = time.time()
+    rec = chatroom.post_notice(room_id, chatroom.HUMAN_IDENTITY, text,
+                               {"noticeKind": "command", "to": ident, "agent": agent, "key": key})
+    if slash.starts_new_conversation(agent, text):
+        _follow_new_conversation(room_id, ident, agent)
+    reply = {"ok": True, "identity": ident, "agent": agent, "ptyId": part.get("ptyId"),
+             "message": rec, "key": key}
+    with _COMMANDS_LOCK:
+        _COMMANDS[(room_id, key or (rec or {}).get("id", ""))] = {
+            "identity": ident, "text": text, "at": time.time(), "reply": reply, "output": None}
+        while len(_COMMANDS) > _COMMANDS_MAX:
+            _COMMANDS.pop(next(iter(_COMMANDS)))
+    return 200, reply
+
+
+def command_output(room_id: str, key: str, text: str) -> tuple[int, dict]:
+    """What a command the person sent printed, as the page read it off the
+    agent's screen: once per command, as a balloon from that agent."""
+    with _COMMANDS_LOCK:
+        held = _COMMANDS.get((room_id, str(key or "")))
+        if held is None:
+            return 404, {"error": "no_such_command"}
+        if held.get("output") is not None:
+            return 200, {"ok": True, "duplicate": True, "message": held["output"]}
+        held["output"] = {}
+    text = str(text or "").strip()
+    if len(text) > COMMAND_OUTPUT_MAX:
+        text = text[:COMMAND_OUTPUT_MAX].rstrip() + "\n..."
+    if not text:
+        return 200, {"ok": True, "message": None}
+    rec = chatroom.post_notice(room_id, held["identity"], text,
+                               {"noticeKind": "commandOutput", "command": held["text"], "key": str(key)})
+    with _COMMANDS_LOCK:
+        held["output"] = rec or {}
+    return 200, {"ok": True, "message": rec}
+
+
 def _typed_sends(room_id: str, items: list[dict]) -> None:
     """The person's sends among ``items`` were typed into a one-agent chat's
     terminal: delivered, until its transcript shows them (sends.sync). A
@@ -3876,6 +4043,11 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                 # that follows it; only the reply that ends its turn answers.
                 if t == "assistant" and msg.get("stop_reason") == "tool_use":
                     turn["interim"] = True
+                # A slash command (Claude logs /compact raw) and the summary a
+                # compaction writes as a user turn: counted, so the turns after
+                # keep their ids, but not the person's words (#253).
+                if t == "user" and (d.get("isCompactSummary") or slash.is_command(stripped)):
+                    turn["hidden"] = "summary" if d.get("isCompactSummary") else "command"
                 turns.append(turn)
     except OSError:
         pass
@@ -4939,8 +5111,9 @@ def room_past_sessions(room: dict) -> list[dict]:
     """The conversations a task's seats have left behind, oldest first:
     ``{sessionId, identity, agent, at, via}``, ``via`` being ``rotation`` (a
     rotation, a PO switch or an owner's handover moved the seat out of it),
-    ``review`` (an earlier review) or ``retired`` (its agent was taken off the
-    task). A seat's current conversation is not one of them. Reads the room
+    ``review`` (an earlier review), ``clear`` (the person's ``/clear`` or
+    ``/new`` started a new one, #253) or ``retired`` (its agent was taken off
+    the task). A seat's current conversation is not one of them. Reads the room
     record only."""
     parts = [p for p in room.get("participants") or [] if isinstance(p, dict)]
     current = {str(p.get("sessionId") or "").strip()
@@ -4970,6 +5143,10 @@ def room_past_sessions(room: dict) -> list[dict]:
             if isinstance(r, dict):
                 sid = r.get("sessionId") or ""
                 add(sid, ident, session_agent(p, sid), r.get("startedAt"), "review")
+        for r in p.get("cleared") or []:
+            if isinstance(r, dict):
+                sid = r.get("fromSessionId") or ""
+                add(sid, ident, session_agent(p, sid), r.get("at"), "clear")
     for r in room.get("retiredSessions") or []:
         if isinstance(r, dict):
             add(r.get("sessionId"), r.get("identity", ""), r.get("agent", ""), r.get("at"), "retired")
@@ -10575,9 +10752,11 @@ def room_pm_index(messages: list[dict], before_id: str) -> list[dict]:
 
 def _hub_row(m: dict) -> bool:
     """A room message a one-agent chat shows among its transcript's turns
-    (session.html withHubRows): a restart notice, a PO's message, a card."""
+    (session.html withHubRows): a restart notice, a PO's message, a card,
+    a slash command the person ran and its output (#253)."""
     return ((m.get("kind") == "notice" and m.get("noticeKind") == "restart")
-            or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list))
+            or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list)
+            or chatroom.is_command_record(m))
 
 
 def channel_hub_rows(out: dict, room: dict) -> dict:
@@ -15870,6 +16049,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, topics.view(project, room, chatroom.ROOMS_DIR))
             return
+        if p == "/api/room/commands":
+            # ?roomId=&identity= the slash commands to suggest for the agent a
+            # command from this chat goes to (#253, slash.catalogue).
+            q = parse_qs(u.query)
+            rid = (q.get("roomId", [""])[0] or "").strip()
+            room = chatroom.get_room(rid, public=False) if rid else None
+            if room is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            part = command_target(room, (q.get("identity", [""])[0] or "").strip())
+            if part is None:
+                self._send_json(404, {"error": "no_such_agent"})
+                return
+            agent = part.get("agent", "")
+            self._send_json(200, {"identity": part.get("identity", ""), "agent": agent,
+                                  "commands": slash.catalogue(agent, part.get("cwd") or room.get("cwd") or "")})
+            return
         if p in ("/api/room/channel", "/api/room/thread"):
             # A PO chat as threads (threads.py): ?id=&n= the channel (its
             # last n entries, each thread's parent with its reply line;
@@ -18560,6 +18756,12 @@ class Handler(BaseHTTPRequestHandler):
                                        payload.get("identity"), event.get("session_id"))).start()
                 threading.Thread(target=checkpoint_turn, daemon=True,
                                  args=(payload.get("room") or "", payload.get("identity") or "")).start()
+            if (event.get("hook_event_name") == "SessionStart" and event.get("source") == "clear"
+                    and not event.get("agent_id")):
+                # /clear (#253): the same terminal, a new conversation.
+                threading.Thread(target=_follow_cleared, daemon=True,
+                                 args=(payload.get("room") or "", payload.get("identity") or "",
+                                       payload.get("ptyId") or "", event.get("session_id") or "")).start()
 
     def _feedback_post(self, path):
         if self.headers.get("Origin") and not self._same_origin_request():
@@ -19817,6 +20019,24 @@ class Handler(BaseHTTPRequestHandler):
             number_adopted_room(room_full)
             self._send_json(200, {"ok": True,
                                   "room": chatroom.get_room(room["id"])})
+            return
+        if p in ("/api/room/command", "/api/room/command-output"):
+            # {roomId, text, identity?, key}: the person's slash command, typed
+            # raw into the agent's terminal (#253, send_command). {roomId, key,
+            # text}: what it printed, read off the screen by the page. Only the
+            # page: an agent must not type into another's terminal.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if p == "/api/room/command":
+                self._send_json(*send_command(rid, str(data.get("text") or ""),
+                                              str(data.get("identity") or "").strip(),
+                                              str(data.get("key") or "")))
+            else:
+                self._send_json(*command_output(rid, str(data.get("key") or ""),
+                                                str(data.get("text") or "")))
             return
         if p == "/api/room/resume":
             # Recover an ended session after a restart: relaunch each agent in a
