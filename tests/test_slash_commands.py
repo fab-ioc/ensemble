@@ -251,6 +251,78 @@ class Hub(unittest.TestCase):
             self.assertTrue(dashboard._type_input(pty, "three"))
             self.assertEqual(typed[-1], "three", "no menu: typed at once")
 
+    def test_a_held_line_the_terminal_refuses_is_tried_again_in_order(self):
+        self.room()
+        pty = self.ptys["pty-claude"]
+        typed, refuse = [], ["once"]
+
+        def type_now(sess, text, prov=None, record=True, parts=None, now=""):
+            if refuse:
+                refuse.pop()
+                return False        # another hub line was being typed
+            typed.append(text)
+            return True
+        dashboard._MENU_HELD["pty-claude"] = [("one", None, True, None, ""), ("two", None, True, None, "")]
+        with mock.patch.object(dashboard, "_type_input_now", type_now), \
+             mock.patch.object(dashboard.rotation, "hold_wake", return_value=False):
+            dashboard._menu_drain(pty)
+        self.assertEqual(typed, ["one", "two"])
+        self.assertNotIn("pty-claude", dashboard._MENU_HELD)
+
+    def test_held_lines_go_to_the_fresh_session_when_the_agent_rotates(self):
+        rid = self.room()
+        pty = self.ptys["pty-claude"]
+        held = []
+        dashboard._MENU_HELD["pty-claude"] = [("one", None, True, None, ""), ("two", None, True, None, "")]
+        with mock.patch.object(dashboard, "_type_input_now", return_value=False), \
+             mock.patch.object(dashboard.rotation, "hold_wake",
+                               lambda r, i, text: held.append((r, i, text)) or True):
+            dashboard._menu_drain(pty)       # refused: the terminal is being handed over
+        self.assertEqual(held, [(rid, "claude", "one"), (rid, "claude", "two")])
+        self.assertNotIn("pty-claude", dashboard._MENU_HELD)
+        held.clear()
+        dashboard._MENU_HELD["pty-claude"] = [("three", None, True, None, "")]
+        pty._alive = False
+        with mock.patch.object(dashboard.rotation, "hold_wake",
+                               lambda r, i, text: held.append((r, i, text)) or True):
+            dashboard._menu_drain(pty)       # the old terminal stopped first
+        self.assertEqual(held, [(rid, "claude", "three")])
+
+    def test_codex_stayed_in_its_conversation_ends_the_wait(self):
+        rid = self.room((("codex", "codex"),))
+        rollout = Path(self.temp.name) / "rollout.jsonl"
+        rollout.write_text('{"x": 1}\n', encoding="utf-8")
+        size = rollout.stat().st_size
+        with mock.patch.object(dashboard, "_codex_rollout_start", return_value=(rollout, size)):
+            dashboard.send_command(rid, "/new", key="k1")
+        part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+        self.assertEqual((part["pendingNew"]["rollout"], part["pendingNew"]["size"]), (str(rollout), size))
+        prompts = [False]
+        with self._codex_rollouts(["sid-codex"]), \
+             mock.patch.object(dashboard.rotation, "read_rollout",
+                               lambda path, since=0: {"promptSince": prompts[0]}):
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+            self.assertIn("pendingNew", chatroom.participant(chatroom.get_room(rid, public=False), "codex"))
+            prompts[0] = True        # Codex refused the /new and took the next prompt there
+            dashboard._CODEX_SID_TRIED.clear()
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+        part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+        self.assertNotIn("pendingNew", part)
+        self.assertEqual((part["sessionId"], part.get("cleared")), ("sid-codex", None), "no move")
+
+    def test_a_rotation_ends_the_wait_for_a_new_conversation(self):
+        rid = self.room((("codex", "codex"),))
+        dashboard.send_command(rid, "/new", key="k1")
+        room = chatroom.get_room(rid, public=False)
+        room["participants"][0]["sessionId"] = ""           # handed over to a fresh session
+        chatroom.update_room(room)
+        with self._codex_rollouts(["sid-fresh"]):
+            dashboard._backfill_codex_session_ids(chatroom.get_room(rid, public=False))
+        part = chatroom.participant(chatroom.get_room(rid, public=False), "codex")
+        self.assertEqual(part["sessionId"], "sid-fresh")
+        self.assertNotIn("pendingNew", part)
+        self.assertIsNone(part.get("cleared"))
+
     def test_a_menu_left_open_with_no_page_is_read_off_the_screen(self):
         self.room()
         pty = self.ptys["pty-claude"]

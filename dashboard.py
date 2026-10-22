@@ -434,6 +434,7 @@ def _backfill_codex_session_ids(room: dict) -> None:
     for pp in room.get("participants", []):
         taken.update(participant_session_ids(pp))
     found = {}
+    stayed: list[str] = []
     for pp in pending:
         cwd = pp.get("cwd") or room.get("cwd") or ""
         rots = [r for r in pp.get("rotations") or [] if isinstance(r, dict)]
@@ -442,6 +443,9 @@ def _backfill_codex_session_ids(room: dict) -> None:
         # the conversation it went on in. Any but the current one may be: a
         # /resume can go back to one of the seat's own earlier conversations.
         new = _pending_new(pp)
+        if new and _stayed(new):
+            stayed.append(pp["identity"])
+            continue
         avoid = taken
         if new:
             p_since = max(p_since, float(new.get("at") or 0))
@@ -458,17 +462,22 @@ def _backfill_codex_session_ids(room: dict) -> None:
             taken.add(sid)
             found[pp["identity"]] = (sid, new)
             pp["sessionId"] = sid
-    if not found:
+    if not found and not stayed:
         return
     # Persist on the full room (the caller holds the token-stripped view).
     full = chatroom.get_room(rid, public=False)
     if full is None:
         return
     for pp in full.get("participants", []):
+        if pp.get("identity") in stayed:
+            pp.pop("pendingNew", None)
         if pp.get("identity") not in found:
             continue
         sid, new = found[pp["identity"]]
-        if new and pp.get("pendingNew"):
+        if not new:
+            # A fresh session's id (a rotation): a /new before it is over.
+            pp.pop("pendingNew", None)
+        elif pp.get("pendingNew"):
             pp.pop("pendingNew", None)
             if (pp.get("sessionId") or "") and pp.get("sessionId") != sid:
                 pp.setdefault("cleared", []).append({"fromSessionId": pp["sessionId"],
@@ -479,6 +488,18 @@ def _backfill_codex_session_ids(room: dict) -> None:
 
 
 PENDING_NEW_MAX_S = 86400
+
+
+def _stayed(new: dict) -> bool:
+    """The rollout a /new or /resume was typed into took a prompt since:
+    Codex refused it, or the person left the picker, and went on there."""
+    path = new.get("rollout")
+    if not path:
+        return False
+    try:
+        return bool(rotation.read_rollout(Path(path), since=int(new.get("size") or 0))["promptSince"])
+    except Exception:       # noqa: BLE001 — unreadable: keep waiting
+        return False
 
 
 def _pending_new(pp: dict) -> dict | None:
@@ -3744,15 +3765,16 @@ def _type_command(sess, text: str) -> str:
         hub_typing.record(sess, ok, "" if ok else _not_typed_cause(sess))
 
 
-def _follow_new_conversation(room_id: str, identity: str, agent: str) -> None:
+def _follow_new_conversation(room_id: str, identity: str, agent: str, sess=None) -> None:
     """A Codex agent sent ``/new`` or ``/resume``: it may go on in another
     conversation, whose rollout Codex writes only at the next prompt. The
     seat keeps its id meanwhile and notes ``pendingNew``;
     _backfill_codex_session_ids moves it once a rollout of this cwd is
     written after that moment (the old one, then in ``cleared``, is a past
     conversation of the task). A /new Codex refused, or a /resume left with
-    Esc, changes nothing: the old rollout stays the newest. Claude's new id
-    comes with its SessionStart hook (_follow_cleared)."""
+    Esc, changes nothing: the old rollout stays the newest, and the wait
+    ends once that rollout takes a prompt (Codex stayed there). Claude's new
+    id comes with its SessionStart hook (_follow_cleared)."""
     if agent != "codex":
         return
     full = chatroom.get_room(room_id, public=False)
@@ -3760,6 +3782,9 @@ def _follow_new_conversation(room_id: str, identity: str, agent: str) -> None:
     if not part:
         return
     part["pendingNew"] = {"fromSessionId": str(part.get("sessionId") or ""), "at": time.time()}
+    path, size = _codex_rollout_start(sess) if sess is not None else (None, -1)
+    if path and size >= 0:
+        part["pendingNew"].update(rollout=str(path), size=size)
     chatroom.update_room(full)
     _CODEX_SID_TRIED.pop(room_id, None)
 
@@ -3840,7 +3865,7 @@ def send_command(room_id: str, text: str, identity: str = "", key: str = "") -> 
     rec = chatroom.post_notice(room_id, chatroom.HUMAN_IDENTITY, text,
                                {"noticeKind": "command", "to": ident, "agent": agent, "key": key})
     if slash.starts_new_conversation(agent, text):
-        _follow_new_conversation(room_id, ident, agent)
+        _follow_new_conversation(room_id, ident, agent, sess)
     reply = {"ok": True, "identity": ident, "agent": agent, "ptyId": part.get("ptyId"),
              "message": rec, "key": key}
     with _COMMANDS_LOCK:
@@ -3962,8 +3987,18 @@ def _menu_hold(sess, text, provenance, record, parts, now="") -> bool:
     return True
 
 
+MENU_TRIES = 60             # refusals of one held line (busy, write) before it is given up
+
+
 def _menu_drain(sess) -> None:
+    """Type the lines held for this terminal, in order, once no menu is
+    open. Their callers were told they went, so one the terminal refuses is
+    not dropped: tried again (another hub line was being typed), or handed to
+    the fresh session while the agent is handed over (rotation.hold_wake)."""
     pid = str(sess.id)
+    meta = getattr(sess, "meta", None) or {}
+    rid, ident = str(meta.get("room") or ""), str(meta.get("identity") or "")
+    tries = 0
     while True:
         time.sleep(MENU_POLL_S)
         try:
@@ -3972,8 +4007,10 @@ def _menu_drain(sess) -> None:
             alive = False
         if not alive:
             with _MENU_LOCK:
-                lost = _MENU_HELD.pop(pid, [])
-            print(f"[command] pty {pid}: stopped with {len(lost)} held line(s) not typed", flush=True)
+                left = _MENU_HELD.pop(pid, [])
+            kept = [it for it in left if rid and ident and rotation.hold_wake(rid, ident, it[0])]
+            print(f"[command] pty {pid}: stopped with {len(left)} held line(s); "
+                  f"{len(kept)} kept for the fresh session", flush=True)
             return
         if menu_open(sess):
             continue
@@ -3982,8 +4019,22 @@ def _menu_drain(sess) -> None:
             if not items:
                 _MENU_HELD.pop(pid, None)
                 return
-            text, provenance, record, parts, now = items.pop(0)
-        _type_input_now(sess, text, provenance, record=record, parts=parts, now=now)
+            head = items[0]
+        text, provenance, record, parts, now = head
+        ok = _type_input_now(sess, text, provenance, record=record, parts=parts, now=now)
+        if not ok and rid and ident and rotation.hold_wake(rid, ident, text):
+            ok = True               # typed into the fresh session once it settles
+        tries = 0 if ok else tries + 1
+        if not ok and tries < MENU_TRIES:
+            continue
+        if not ok:
+            print(f"[command] pty {pid}: a held line was refused {tries} times and is "
+                  f"given up", flush=True)
+            tries = 0
+        with _MENU_LOCK:
+            items = _MENU_HELD.get(pid) or []
+            if items and items[0] is head:
+                items.pop(0)
 
 
 def _typed_sends(room_id: str, items: list[dict]) -> None:
