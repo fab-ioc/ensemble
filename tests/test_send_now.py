@@ -28,6 +28,7 @@ RID = "room-0000abcd"
 class FakeSess:
     def __init__(self, agent="claude"):
         self.meta = {"agent": agent, "room": RID, "identity": agent}
+        self.id = "pty-" + agent
         self.keys: list[str] = []
         self.last_input = 0.0
 
@@ -51,23 +52,31 @@ class TypeInput(unittest.TestCase):
         dashboard._LAST_INTERRUPT.clear()
         self.turn = "working"
         self.turn_over = False
+        self.rollout = Path("x.jsonl")
+        self.interrupts: list[dict] = []
         patches = [
             mock.patch.object(dashboard, "checkpoint_wait_restore", lambda *a, **k: None),
             mock.patch.object(dashboard.rotation, "reserve_hub_line", lambda sess, why: object()),
             mock.patch.object(dashboard.rotation, "release_hub_line", lambda sess, lease: None),
             mock.patch.object(dashboard.hub_typing, "record", lambda *a, **k: None),
             mock.patch.object(dashboard, "_record_typed_input_safely", lambda *a, **k: None),
-            mock.patch.object(dashboard, "_codex_rollout_start", lambda sess: (None, -1)),
+            mock.patch.object(dashboard, "_codex_rollout_start", lambda sess: (self.rollout, 0)),
+            mock.patch.object(dashboard.chatroom, "record_interrupt", self.record_interrupt),
             mock.patch.object(dashboard, "_verify_codex_submit", lambda *a, **k: None),
             mock.patch.object(dashboard.time, "sleep", lambda s: None),
             mock.patch.object(dashboard.attention, "turn_state", lambda p: (self.turn, "")),
-            mock.patch.object(dashboard.rotation, "_transcript_of", lambda p: (Path("x.jsonl"), None)),
+            mock.patch.object(dashboard.rotation, "_transcript_of", lambda p: (self.rollout, None)),
             mock.patch.object(dashboard.rotation, "read_rollout",
                               lambda path, **k: {"turnOver": self.turn_over}),
         ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
+
+    def record_interrupt(self, rid, ident, pty_id=""):
+        event = {"from": "user", "identity": ident, "ptyId": pty_id, "ts": 10.0}
+        self.interrupts.append(event)
+        return event
 
     def send(self, agent, text="fix the title"):
         sess = FakeSess(agent)
@@ -101,10 +110,41 @@ class TypeInput(unittest.TestCase):
         way = dashboard.send_now_way(part("codex"))
         self.assertEqual(way, dashboard.SEND_NOW_INTERRUPT)
         self.turn_over = True
-        with mock.patch.object(dashboard, "_codex_rollout_start", lambda s: (Path("x.jsonl"), 0)):
-            self.assertTrue(dashboard._type_input(sess, "fix the title", now=way))
+        self.assertTrue(dashboard._type_input(sess, "fix the title", now=way))
         self.assertEqual(sess.keys, ["fix the title", "\r"])
         self.assertNotIn((RID, "codex"), dashboard._LAST_INTERRUPT)
+        self.assertEqual(self.interrupts, [])
+
+    def test_codex_without_a_rollout_gets_no_escape(self):
+        # No rollout to read: its turn cannot be shown open, so a plain send.
+        self.rollout = None
+        keys, way = self.send("codex")
+        self.assertEqual(way, "")
+        self.assertEqual(keys, ["fix the title", "\r"])
+        # Even when asked to interrupt (the rollout gone since send_now_way).
+        sess = FakeSess("codex")
+        self.assertTrue(dashboard._type_input(sess, "again", now=dashboard.SEND_NOW_INTERRUPT))
+        self.assertEqual(sess.keys, ["again", "\r"])
+        self.assertEqual(self.interrupts, [])
+
+    def test_send_now_escape_is_recorded_so_a_later_stop_sends_no_second(self):
+        keys, way = self.send("codex")
+        self.assertEqual(keys[0], "\x1b")
+        self.assertEqual(self.interrupts, [{"from": "user", "identity": "codex",
+                                            "ptyId": "pty-codex", "ts": 10.0}])
+        # Stop two seconds later, Codex's screen still busy, no newer message
+        # (the Send now text was posted before its Esc): no second Esc.
+        dashboard._LAST_INTERRUPT[(RID, "codex")] -= 2
+        stopped = FakeSess("codex")
+        room = {"id": RID, "participants": [part("codex")], "messages": [{"from": "user", "ts": 9.0}],
+                "interrupts": self.interrupts}
+        with mock.patch.object(dashboard.chatroom, "get_room", return_value=room), \
+                mock.patch.object(dashboard, "_room_is_live", return_value=True), \
+                mock.patch.object(dashboard.ptyrun, "get", return_value=stopped):
+            code, result = dashboard.interrupt_agent(RID, "codex")
+        self.assertEqual(code, 200)
+        self.assertTrue(result["duplicate"])
+        self.assertEqual(stopped.keys, [])
 
     def test_an_idle_agent_gets_a_plain_send(self):
         self.turn = "idle"

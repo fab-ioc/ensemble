@@ -583,8 +583,8 @@ def send_now_way(part: dict | None) -> str:
         if part.get("agent") == "claude":
             return SEND_NOW_INTO_TURN
         path, _ = rotation._transcript_of(part)
-        if path is not None and rotation.read_rollout(path)["turnOver"]:
-            return ""
+        if path is None or rotation.read_rollout(path)["turnOver"]:
+            return ""       # no rollout: the turn cannot be shown open, a plain send
     except Exception:       # noqa: BLE001 — unknown is not working: a plain send
         return ""
     return SEND_NOW_INTERRUPT
@@ -3551,15 +3551,17 @@ def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
             # Stop pressed within the second already sent its Esc: a second
             # one at the prompt it leaves can quit Codex (interrupt_agent).
             # The turn can end while the line waits for its slot: the rollout
-            # is read again here, and an ended turn takes a plain send.
+            # is read again here, and an ended turn (or none to read) takes a
+            # plain send. The Esc is recorded as Stop's is, so a Stop after it
+            # does not send Codex a second one (interrupt_agent).
             meta = getattr(sess, "meta", None) or {}
             key = str(meta.get("room") or ""), str(meta.get("identity") or "")
             with _INTERRUPT_LOCK:
                 fresh = time.monotonic() - _LAST_INTERRUPT.get(key, -1e9) >= 1.0
                 try:
-                    over = codex_path is not None and rotation.read_rollout(codex_path)["turnOver"]
-                except Exception:       # noqa: BLE001 — unread: send_now_way's reading stands
-                    over = False
+                    over = codex_path is None or rotation.read_rollout(codex_path)["turnOver"]
+                except Exception:       # noqa: BLE001 — unread: not shown open
+                    over = True
                 try:
                     if fresh and not over and writer("\x1b") is False:
                         return False
@@ -3567,6 +3569,8 @@ def _type_input_reserved(sess, text: str, provenance: dict | None = None, *,
                     return False
                 if not over:
                     _LAST_INTERRUPT[key] = time.monotonic()
+                    if fresh:
+                        chatroom.record_interrupt(key[0], key[1], str(getattr(sess, "id", "") or ""))
             if not over:
                 time.sleep(SEND_NOW_ABORT_S)
         with _INPUT_WRITE_LOCK:
