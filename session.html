@@ -1103,6 +1103,20 @@
   .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
   .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
   .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* Quick reactions (#258): Subtle emoji buttons; the bar wraps rather than leave the window. */
+  .sel-bar { flex-wrap: wrap; max-width: calc(100vw - 2 * var(--s-200)); box-sizing: border-box; }
+  .sel-bar .sel-reacts { display: flex; gap: var(--s-050); }
+  .sel-bar .sel-react { min-width: 28px; padding: 0 var(--s-100); background: transparent; color: var(--fg); }
+  .sel-bar .sel-react:hover { background: var(--hover); }
+  .sel-bar .sel-react:active { background: var(--pressed); }
+  /* The person's reactions on a balloon: quiet chips, each a link to the message that sent it. */
+  .react-row { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
+  .react-chip { display: inline-flex; align-items: center; gap: var(--s-050); height: 20px; padding: 0 var(--s-100); background: var(--surface-sunken);
+    border: 1px solid var(--border); border-radius: var(--r-full); color: var(--fg-subtle); font-size: var(--fs-200); line-height: 16px; text-decoration: none; }
+  a.react-chip:hover { background: var(--hover); color: var(--fg); }
+  .react-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .react-chip.sending { border-style: dashed; }
+  .react-n { font-weight: 500; font-variant-numeric: tabular-nums; }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.55); padding:14px; }
   .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--border-strong); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
@@ -1350,6 +1364,11 @@
     header .grow { display: none; }
     .sel-bar { gap: var(--s-200); }
     .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+    /* The reactions take a row of their own under Comment and Copy, spread across it. */
+    .sel-bar .sel-reacts { order: 3; flex-basis: 100%; justify-content: space-between; gap: 0; }
+    .sel-bar .sel-react { padding: 0; min-width: var(--touch-min); }
+    .react-chip { position: relative; }
+    .react-chip::after { content: ''; position: absolute; inset: -12px -4px; }
     /* While you type, the header and info bar step aside: a landscape phone
        with its keyboard up leaves about 200px, and Send ended 1px under the
        keyboard at 300px with them showing. */
@@ -3938,7 +3957,8 @@ function foldBalloonHtml(m, i, how, o) {
   // o.pts: the bar of the person's points it holds or answers (pointBarHtml).
   // o.body: the text and its bars drawn otherwise (a message of numbered points).
   const body = (o.body && o.body(m)) || `<div class="text md">${o.md(m.text)}</div>${o.pts ? o.pts(m) : ''}`;
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}</div>`;
+  // o.reacts: the person's quick reactions to it (reactRowHtml).
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}</div>`;
 }
 // ---- A task's older messages fold under its latest -------------------------
 // Between two of the person's own messages, what belongs to one task (its
@@ -4596,7 +4616,8 @@ function renderBubbles(items, opt = {}) {
   // selection / the open composer). Highlights are re-applied after each render.
   if (_cmtComposerOpen || selShown()) { DRAW_HELD = true; return; }
   const _liveSel = window.getSelection();
-  if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
+  // Blank (the stray line end a double click on a quick reaction leaves) holds nothing.
+  if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount && _liveSel.toString().trim() &&
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) { DRAW_HELD = true; return; }
   // A press on the chat, or one just over: drawn after it (#198).
   if (typeof pgHolding === 'function' && pgHolding()) { DRAW_HELD = true; return; }
@@ -4694,7 +4715,8 @@ function renderBubbles(items, opt = {}) {
     TASK_REF_PID = taskRefProject(m);
     try {
       return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-        act: actHtml, plain: t => pmPlain(refPlain(t)), lineHtml: foldedPointHtml, superseded: sup.has(i), pts: ptBar, body });
+        act: actHtml, plain: t => pmPlain(refPlain(t)), lineHtml: foldedPointHtml, superseded: sup.has(i), pts: ptBar, body,
+        reacts: m => reactRowHtml(m, reacts) });
     } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
@@ -4724,6 +4746,7 @@ function renderBubbles(items, opt = {}) {
   // bottom with no time, under the answers that came after it).
   const shown = sendsToShow(given);
   const due = shown.slice();
+  const reacts = reactionsByMid(items, shown, md);
   if (threadList) {
     const tids = THR_UNREAD.map(t => t.id).filter(t => t !== 'team:activity');
     for (const tid of tids) rows.push(threadCardHtml(tid));
@@ -9127,6 +9150,62 @@ function openComposer(data) {
     if (e.key === 'Escape') { e.preventDefault(); close(); }
   });
 }
+// A quick reaction from the selection bar (#258): the passage comment a typed
+// one would be, its words the reaction's ("👍 Agree"), sent at once and on its
+// own (another comment waiting in the tray waits for its Submit). Where it
+// cannot go yet (no room read yet, a send in flight) it waits in the tray.
+function selReact(r, data) {
+  const c = { cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note: SelBar.reactNote(r) };
+  cmtAdd(c);
+  const s = window.getSelection(); if (s) s.removeAllRanges();
+  submitComments([c.cid]);
+}
+// The reactions the person sent, by the balloon they are on: read from their
+// "## Review comments" messages (and sends still on their way), so a reload
+// and another device show them too. A reaction's balloon is the nearest one
+// before it holding its quote, compared without spaces and letter case.
+const REACT_SQ = t => String(t || '').replace(/\s+/g, '').toLowerCase();
+const REACT_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+const reactText = h => String(h || '').replace(/<[^>]*>/g, '').replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (x, n) => REACT_ENT[n]);
+function reactionsByMid(items, sends, md) {
+  const out = new Map(), seen = new Map();
+  const textOf = j => { if (!seen.has(j)) seen.set(j, REACT_SQ(reactText(md(items[j].text)))); return seen.get(j); };
+  const place = (list, at, mid, ts) => list.forEach(x => {
+    const q = REACT_SQ(x.quote);
+    for (let j = at - 1; j >= 0; j--) {
+      const m = items[j];
+      if (!m || !m.id || !m.text || isHubInput(m) || !textOf(j).includes(q)) continue;
+      if (!out.has(m.id)) out.set(m.id, []);
+      out.get(m.id).push({ r: x.r, quote: x.quote, mid, ts });
+      return;
+    }
+  });
+  items.forEach((m, i) => {
+    if (!m || m.from !== 'user' || isHubInput(m)) return;
+    const l = SelBar.reactionsIn(m.text);
+    if (l.length) place(l, i, m.id || '', m.ts || 0);
+  });
+  (sends || []).forEach(x => { const l = SelBar.reactionsIn(x && x.text); if (l.length) place(l, items.length, '', x.at || 0); });
+  return out;
+}
+// The chips under a reacted balloon: one per reaction, a count when sent more
+// than once; each leads to the message that sent it, its quotes in its tooltip.
+function reactRowHtml(m, by) {
+  const list = m && m.id && by.get(m.id);
+  if (!list || !list.length) return '';
+  const chips = SelBar.REACTIONS.map(r => {
+    const xs = list.filter(x => x.r === r);
+    if (!xs.length) return '';
+    const last = xs[xs.length - 1], cut = q => q.length > 60 ? q.slice(0, 60) + '…' : q;
+    const tip = 'You: ' + r.word + ' (' + r.e + ') on ' + xs.slice(-3).map(x => '“' + cut(x.quote) + '”').join(', ');
+    const n = xs.length > 1 ? `<span class="react-n">${xs.length}</span>` : '';
+    const label = `Your reaction: ${r.word}${xs.length > 1 ? ', ' + xs.length + ' times' : ''}`;
+    return last.mid
+      ? `<a class="react-chip msg-link" href="${esc(refHref(ROOM, last.mid))}" data-ref-msg="${esc(last.mid)}" title="${esc(tip)}" aria-label="${esc(label)}">${r.e}${n}</a>`
+      : `<span class="react-chip sending" title="${esc(tip + ' · on its way')}" aria-label="${esc(label + ', on its way')}">${r.e}${n}</span>`;
+  }).join('');
+  return `<div class="react-row">${chips}</div>`;
+}
 // What Submit can do now, and in words what it will do. A stopped session is
 // resumed by the hub, which holds the comments and types them in with its own
 // resume note as one input once the agent's screen has settled: nothing races.
@@ -9205,12 +9284,13 @@ function cmtTrayClick(e) {
   }
   if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
-async function submitComments() {
+// `only`: the comments to send (a quick reaction's own); all of them without.
+async function submitComments(only) {
   if (CMT_SENDING || !COMMENTS.length) return;
   if (!cmtSubmitState().can) { renderCmtTray(); return; }
   cmtSync();                 // not what another copy of this chat already sent
-  if (!COMMENTS.length) { renderCmtTray(); return; }
-  const batch = COMMENTS.slice();
+  const batch = only ? COMMENTS.filter(c => only.includes(c.cid)) : COMMENTS.slice();
+  if (!batch.length) { renderCmtTray(); return; }
   const authors = [...new Set(batch.map(c => c.from))];
   const to = authors.length === 1 ? authors[0] : '';
   const images = batch.flatMap(c => Array.isArray(c.images) ? c.images : []);
@@ -9481,7 +9561,7 @@ function refClickHandler(ev) {
 }
 document.addEventListener('click', refClickHandler);
 $('#goto-note .goto-x').addEventListener('click', () => showGotoNote(''));
-SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data) });
+SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data), react: selReact });
 // In a solo session the terminal is the main surface — refocus it when the
 // window regains focus so you can just start typing.
 window.addEventListener('focus', () => {

@@ -1,4 +1,4 @@
-// ---- The selection bar: 💬 Comment · Copy -----------------------------------
+// ---- The selection bar: 💬 Comment · 👍 👎 ❓ 🤔 ✅ ❤️ · Copy ------------------
 // session.html (a chat's balloons), fileview.html (a file) and index.html (a
 // diff's lines) offer the same bar over a text selection, with this one code:
 //
@@ -15,7 +15,13 @@
 //   room, kept inside the window, and it follows a scroll (hidden while the
 //   selection is scrolled out of view);
 // * Copy writes the selected words as plain text (navigator.clipboard, or
-//   execCommand over plain http), says "Copied" and keeps the selection.
+//   execCommand over plain http), says "Copied" and keeps the selection;
+// * quick reactions (#258, REACTIONS): where the page passes `react`, a row of
+//   emoji beside Comment, each a passage comment sent in one click with its
+//   meaning in words ("👍 Agree"), through the page's own comment path. The
+//   bar goes on the click, so a double click sends one;
+// * Tab, while the bar is up and nothing else has the focus, goes into it;
+//   Escape there closes it.
 //
 // Its listeners go on `document`: index.html copies those to a panel popped out
 // into a window of its own, so each handler works on the document its event
@@ -29,6 +35,34 @@ window.SelBar = (function () {
   const COARSE = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   // A phone's selection handles hang under the words: the bar clears them.
   const GAP = COARSE ? 30 : 8, EDGE = 8;
+
+  // The quick reactions, in the bar's order: what an agent is most often told
+  // about a passage of its answer. `word` is what the agent reads after the
+  // emoji and the tooltip says; a balloon's chip is drawn from the same list.
+  const REACTIONS = [
+    { e: '👍', word: 'Agree' },
+    { e: '👎', word: 'Disagree' },
+    { e: '❓', word: 'Question: explain this' },
+    { e: '🤔', word: 'Not sure: think again' },
+    { e: '✅', word: 'Done / go ahead' },
+    { e: '❤️', word: 'Love it: keep this' },
+  ];
+  const reactNote = r => r.e + ' ' + r.word;
+  // The reactions a chat's "## Review comments (N)" message carries: each
+  // item that quotes a passage ("**1.** > the words") and says nothing but a
+  // reaction's note under it. [{ r, quote }], in order.
+  function reactionsIn(text) {
+    const t = String(text || '').replace(/^\s+/, '');
+    if (!/^## Review comments \(\d+\)/.test(t)) return [];
+    const out = [];
+    for (const item of t.split(/\r?\n(?=\*\*\d+\.\*\*)/).slice(1)) {
+      const m = /^\*\*\d+\.\*\*[ \t]*>[ \t]?([^\r\n]*)\r?\n\r?\n([^\r\n]*)/.exec(item);
+      if (!m) continue;
+      const note = m[2].trim(), r = REACTIONS.find(x => reactNote(x) === note);
+      if (r && m[1].trim()) out.push({ r, quote: m[1].trim() });
+    }
+    return out;
+  }
 
   const docOf = e => {
     const t = e && e.target;
@@ -119,6 +153,10 @@ window.SelBar = (function () {
   //   `comment` the page's data for a comment on it, or null for Copy only.
   // opts.comment(data, sel, doc): Comment was clicked.
   // opts.copyText(sel, info): the words Copy takes (default: the selection's).
+  // opts.react(reaction, data, sel, doc): a quick reaction was clicked; the
+  //   page sends `data` as a comment whose words are reactNote(reaction).
+  //   Without it the bar has no reactions; opts.canReact(data) may say no
+  //   for one selection (a file no chat would receive).
   function mount(opts) {
     let bar = null, barDoc = null, cur = null, down = false, timer = 0, raf = 0, copiedT = 0;
     const frames = new Map();                             // a watched frame's document → its <iframe>
@@ -143,7 +181,11 @@ window.SelBar = (function () {
       b.className = 'sel-bar';
       b.setAttribute('role', 'toolbar');
       b.setAttribute('aria-label', 'Selected text');
+      const esc = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
       b.innerHTML = '<button type="button" class="sel-cmt">💬 Comment</button>'
+        + (opts.react ? '<span class="sel-reacts" role="group" aria-label="Quick reactions, each sent at once">'
+          + REACTIONS.map((r, i) => `<button type="button" class="sel-react" data-r="${i}" title="${esc(r.word)}: sent at once"`
+            + ` aria-label="${esc(r.word)} (${r.e}), sent at once">${r.e}</button>`).join('') + '</span>' : '')
         + '<span class="sel-sep" aria-hidden="true">·</span>'
         + '<button type="button" class="sel-copy">Copy</button>'
         + '<span class="sel-said" role="status"></span>';
@@ -155,6 +197,20 @@ window.SelBar = (function () {
         const { info, sel, doc: d } = now;
         hide();
         opts.comment(info.comment, sel, d);
+      });
+      const reacts = b.querySelector('.sel-reacts');
+      if (reacts) reacts.addEventListener('click', e => {
+        const btn = e.target.closest && e.target.closest('.sel-react');
+        const now = (cur && read(cur.doc)) || cur;
+        if (!btn || !now || !now.info.comment || !canReact(now.info)) return;
+        const { info, sel, doc: d } = now;
+        hide();                                            // gone before a second click can land on it
+        opts.react(REACTIONS[+btn.dataset.r], info.comment, sel, d);
+      });
+      b.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        hide();
       });
       b.querySelector('.sel-copy').addEventListener('click', async () => {
         const now = (cur && read(cur.doc)) || cur;
@@ -174,6 +230,7 @@ window.SelBar = (function () {
       doc.body.appendChild(b);
       return b;
     }
+    const canReact = info => !!opts.react && !!info.comment && (!opts.canReact || !!opts.canReact(info.comment));
     function update(doc) {
       const now = read(doc);
       if (!now) { if (!bar || barDoc === doc) hide(); return; }
@@ -184,6 +241,8 @@ window.SelBar = (function () {
       bar.querySelector('.sel-cmt').hidden = !now.info.comment;
       bar.querySelector('.sel-sep').hidden = !now.info.comment;
       bar.classList.toggle('copy-only', !now.info.comment);
+      const rx = bar.querySelector('.sel-reacts');
+      if (rx) rx.hidden = !canReact(now.info);
       if (!same) { clearTimeout(copiedT); bar.querySelector('.sel-copy').textContent = 'Copy'; }
       position();
     }
@@ -213,6 +272,16 @@ window.SelBar = (function () {
       // A release outside the window never reaches the page: the next move says so.
       doc.addEventListener('mousemove', e => { if (down && !(e.buttons & 1)) { down = false; soon(docOf(e), 10); } });
       doc.addEventListener('touchend', e => soon(docOf(e), 300));
+      // Tab with the bar up and the focus nowhere in particular: into the bar.
+      doc.addEventListener('keydown', e => {
+        if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || !bar || bar.hidden || !bar.isConnected) return;
+        const a = bar.ownerDocument.activeElement;
+        if (a && (bar.contains(a) || a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.isContentEditable)) return;
+        const first = [...bar.querySelectorAll('button')].find(x => !x.hidden && !x.closest('[hidden]'));
+        if (!first) return;
+        e.preventDefault();
+        first.focus({ preventScroll: true });
+      });
       doc.addEventListener('scroll', () => {
         if (!bar || raf) return;
         raf = requestAnimationFrame(() => { raf = 0; position(); });
@@ -274,5 +343,5 @@ window.SelBar = (function () {
     return r;
   }
 
-  return { mount, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
+  return { mount, REACTIONS, reactNote, reactionsIn, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
 })();

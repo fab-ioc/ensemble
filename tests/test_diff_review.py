@@ -203,6 +203,14 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   await K.drSubmit(rvk);
   out.kept = { notes: notes(rvk), error: rvk.error };
 
+  // A quick reaction (#258) goes alone: the typed comment waiting beside it stays.
+  const Q = page(), rvq = Q.drReview('task:only', opts);
+  mk(rvq, 1, 1, 'typed, waits'); mk(rvq, 3, 4, '👍 Agree');
+  replies = [[200, { ok: true }]];
+  n0 = posts.length;
+  await Q.drSubmit(rvq, [rvq.store.list.find(x => x.note === '👍 Agree').cid]);
+  out.only = { count: posts.length - n0, text: posts[posts.length - 1][1].text, notes: notes(rvq) };
+
   // Two copies of the page submit the same comments at the same moment: over
   // plain http both may send, with the same key, so the hub posts once; with
   // the browser's lock (https, localhost) the second finds them sent.
@@ -343,6 +351,14 @@ class DiffReview(unittest.TestCase):
 
     def test_comments_the_hub_kept_after_a_refusal_are_let_go(self):
         self.assertEqual(self.r["kept"], {"notes": [["held by the hub", True]], "error": ""})
+
+    def test_a_quick_reaction_is_sent_alone(self):
+        o = self.r["only"]
+        self.assertEqual(o["count"], 1)
+        self.assertTrue(o["text"].startswith("## Review comments (1)"), o["text"])
+        self.assertTrue(o["text"].endswith("👍 Agree"), o["text"])
+        self.assertNotIn("typed, waits", o["text"])
+        self.assertEqual(o["notes"], [["typed, waits", False], ["👍 Agree", True]])
 
     def test_a_refused_send_keeps_everything(self):
         # No answer at all may still have arrived: "Not confirmed", same batch again (#251).

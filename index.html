@@ -1938,6 +1938,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
   .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
   .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* Quick reactions (#258): Subtle emoji buttons; the bar wraps rather than leave the window. */
+  .sel-bar { flex-wrap: wrap; max-width: calc(100vw - 2 * var(--s-200)); box-sizing: border-box; }
+  .sel-bar .sel-reacts { display: flex; gap: var(--s-050); }
+  .sel-bar .sel-react { min-width: 28px; padding: 0 var(--s-100); background: transparent; color: var(--fg); }
+  .sel-bar .sel-react:hover { background: var(--hover); }
+  .sel-bar .sel-react:active { background: var(--pressed); }
   /* The unsent comments and the one Submit, docked under the diff as the
      chat's tray is docked above its composer. */
   .cmt-tray { flex: 0 0 auto; max-height: 36vh; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--border); overflow: hidden; }
@@ -3548,7 +3554,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .att-chip, .att-chip .att-x { height: var(--touch-min); }
     .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-to { height: auto; min-height: var(--touch-min); }
     .sel-bar { gap: var(--s-200); }
+    /* The reactions take a row of their own under Comment and Copy, spread across it. */
+    .sel-bar .sel-reacts { order: 3; flex-basis: 100%; justify-content: space-between; gap: 0; }
     .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+    .sel-bar .sel-react { padding: 0; min-width: var(--touch-min); }
     .cmt-item { padding-right: calc(var(--touch-min) + var(--s-100)); }
     .cmt-item-x { top: 0; right: 0; width: var(--touch-min); height: var(--touch-min); }
 
@@ -11164,10 +11173,12 @@ function drKey(batch) {
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return 'review:' + (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + ':' + batch.length;
 }
-async function drSubmit(rv) {
+// `only`: the comments to send (a quick reaction's own); every unsent one without.
+async function drSubmit(rv, only) {
   if (rv.sending) return;
+  const due = c => !c.sent && (!only || only.includes(c.cid));
   rv.store.sync();
-  if (!rv.store.list.some(c => !c.sent) || !drSubmitState(rv).can) { drPaintTray(rv); return; }
+  if (!rv.store.list.some(due) || !drSubmitState(rv).can) { drPaintTray(rv); return; }
   rv.sending = true; rv.error = '';
   drChanged(rv);
   let sent = 0, held = '';
@@ -11175,7 +11186,7 @@ async function drSubmit(rv) {
     await drExclusive(rv, async () => {
       // Picked once no other copy is sending: what one sent meanwhile is not sent again.
       rv.store.sync();
-      const batch = rv.store.list.filter(c => !c.sent);
+      const batch = rv.store.list.filter(due);
       const s = drSubmitState({ ...rv, sending: false });
       if (!batch.length || !s.can) return;
       const went = new Map(batch.map(c => [c.cid, drRev(c)]));
@@ -11251,7 +11262,25 @@ function drSelComment(c, s) {
   v.draft = { a: Math.min(a, b), b: Math.max(a, b), note: d && !d.cid ? d.note : '', focus: true };
   drPaint(v);
 }
-const DR_SEL = SelBar.mount({ resolve: drSelResolve, comment: drSelComment });
+// A quick reaction from the selection bar (#258): the comment on those lines a
+// typed one would be, its words the reaction's ("👍 Agree"), sent at once and
+// on its own; another comment waiting in the tray waits for its Submit. Where
+// it cannot go yet (a send in flight) it waits in the tray like a typed one.
+const drReviewOf = v => [...DR_REVIEWS.values()].find(rv => rv.view === v) || null;
+function drSelReact(r, c, s) {
+  const { v, a, b } = c, rv = drReviewOf(v);
+  if (!rv) return;
+  const q = drRange(v.rows, Math.min(a, b), Math.max(a, b));
+  if (!q.rows.length) return;
+  const cid = rv.store.id();
+  rv.store.put({ cid, at: rv.store.now(), root: v.root, file: v.file, rows: q.rows, span: q.span, sent: 0, note: SelBar.reactNote(r) });
+  if (s) s.removeAllRanges();
+  drChanged(rv);
+  drSubmit(rv, [cid]);
+}
+// Reactions only where the review has a task chat to send them to.
+const drCanReact = c => { const rv = drReviewOf(c.v); return !!(rv && rv.target && rv.target(rv)); };
+const DR_SEL = SelBar.mount({ resolve: drSelResolve, comment: drSelComment, react: drSelReact, canReact: drCanReact });
 // Another copy of the page changed a review's comments.
 window.addEventListener('storage', e => {
   DR_REVIEWS.forEach(rv => { if (rv.store.hears(e.key)) drChanged(rv); });
