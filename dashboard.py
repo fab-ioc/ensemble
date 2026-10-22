@@ -15424,9 +15424,14 @@ def _create_task_locked(title, spec, project_id, project, workspace, prio, prefe
 
 
 def _patch_task_json(folder: str, **fields) -> None:
-    # A folder that is gone (a pruned task's, #260) is not made again for a
-    # renumber or a move: a patch is never a task's whole record.
-    if not folder or not os.path.isdir(folder):
+    if not folder:
+        return
+    # A pruned task's folder (#260) is not made again for a renumber or a
+    # move: a patch is never a task's whole record.
+    if not os.path.isdir(folder) and any(
+            r.get("pruned") and r.get("taskDir") and prune.within(r["taskDir"], folder)
+            and prune.within(folder, r["taskDir"])
+            for r in chatroom.list_rooms(copy_rooms=False)):
         return
     p = Path(folder) / "task.json"
     try:

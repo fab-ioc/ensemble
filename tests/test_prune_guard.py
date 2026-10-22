@@ -53,6 +53,18 @@ class PrunedTaskStaysDone(_Hub):
         ok, _room, err = dashboard.update_task(self.rid, workflow="done", priority=1)
         self.assertTrue(ok, err)
 
+    def test_its_removed_folder_is_not_made_again(self):
+        gone = self.dir / "home" / "pruned_task"
+        full = chatroom.get_room(self.rid, public=False)
+        full["taskDir"] = str(gone)
+        chatroom.update_room(full)
+        dashboard._patch_task_json(str(gone), no=7)
+        self.assertFalse(gone.exists())
+        # Any other task's missing folder is still written (a move, a renumber).
+        other = self.dir / "home" / "other_task"
+        dashboard._patch_task_json(str(other), no=8)
+        self.assertTrue((other / "task.json").exists())
+
     def test_the_board_tool_says_why(self):
         ctx = {"room": chatroom.get_room(self.rid, public=False), "identity": "claude"}
         room = chatroom.get_room(self.rid, public=False)
