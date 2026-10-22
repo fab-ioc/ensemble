@@ -285,7 +285,7 @@ def _settle_merges(tasks: list[dict]) -> list[str]:
     for t in tasks:
         if not t.get("merged") or not t.get("sha"):
             continue
-        room = _d.chatroom.get_room(t["id"], public=False)
+        room = _d.chatroom.get_room(t["id"], public=False, messages=False)
         if room is None or room.get("mergedHead") == t["sha"]:
             continue                        # this merge was already dealt with
         now = time.time()
