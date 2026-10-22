@@ -133,8 +133,10 @@ def agent_in(argv) -> str:
 
 
 def _words(command: str) -> list[str]:
+    """The words of a shell command: POSIX quoting, plus the plain words, as
+    POSIX quoting drops the backslashes of an unquoted Windows path."""
     try:
-        return shlex.split(command)
+        return shlex.split(command) + command.split()
     except ValueError:
         return command.split()
 

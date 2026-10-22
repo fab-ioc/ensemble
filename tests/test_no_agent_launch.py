@@ -8,6 +8,7 @@ start an agent that has no login.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -54,6 +55,7 @@ class WhatIsAnAgent(unittest.TestCase):
                 (["osascript", "-e", "on run argv", "/w",
                   "'/usr/local/bin/claude' --session-id s 'do it'", "window"], "claude"),
                 (["bash", "-lc", "echo it's"], ""),
+                (["cmd", "/c", "C:\\tools\\codex.exe --yolo"], "codex"),
                 (["powershell", "-File", str(plain)], ""),
                 ([sys.executable, "-c", "print('claude')"], ""),
                 (["git", "commit", "-m", "claude"], ""),
@@ -232,7 +234,8 @@ class SignedIn(unittest.TestCase):
             with mock.patch.object(agent_launch.subprocess, "run") as sub:
                 run(["x"])
             self.assertEqual(sub.call_args.kwargs["env"]["CODEX_HOME"], str(self.root / "seat"))
-        with agent_launch.opted_in(),                 mock.patch.object(agent_launch.shutil, "which", return_value=None):
+        with agent_launch.opted_in(), \
+                mock.patch.object(agent_launch.shutil, "which", return_value=None):
             self.asked.reset_mock()
             dashboard.check_signed_in("codex")     # not installed: its launch says so
             self.asked.assert_not_called()
@@ -244,13 +247,21 @@ class SignedIn(unittest.TestCase):
             dashboard.check_signed_in("claude")
             self.assertEqual(self.asked.call_count, 1, "a yes is asked once")
         # A CLI too old for `auth status`: exit 1, no JSON. It would not say.
-        old = types.SimpleNamespace(returncode=1, stdout="error: unknown command 'auth'")
-        with agent_launch.opted_in(), mock.patch.dict(agent_launch._cli_yes, clear=True),                 mock.patch.object(dashboard.app_setup, "_signed_in",
-                                  side_effect=lambda k, e, run: run(["x"]) and False),                 mock.patch.object(agent_launch.subprocess, "run", return_value=old):
+        def cli_says(stdout):
+            # app_setup reads exit 1 as "no"; what the CLI printed decides.
+            return (agent_launch.opted_in(),
+                    mock.patch.dict(agent_launch._cli_yes, clear=True),
+                    mock.patch.object(dashboard.app_setup, "_signed_in",
+                                      side_effect=lambda k, e, run: run(["x"]) and False),
+                    mock.patch.object(agent_launch.subprocess, "run",
+                                      return_value=types.SimpleNamespace(returncode=1, stdout=stdout)))
+        with contextlib.ExitStack() as stack:
+            for c in cli_says("error: unknown command 'auth'"):
+                stack.enter_context(c)
             dashboard.check_signed_in("claude")
-        no = types.SimpleNamespace(returncode=1, stdout='{"loggedIn": false}')
-        with agent_launch.opted_in(), mock.patch.dict(agent_launch._cli_yes, clear=True),                 mock.patch.object(dashboard.app_setup, "_signed_in",
-                                  side_effect=lambda k, e, run: run(["x"]) and False),                 mock.patch.object(agent_launch.subprocess, "run", return_value=no):
+        with contextlib.ExitStack() as stack:
+            for c in cli_says('{"loggedIn": false}'):
+                stack.enter_context(c)
             with self.assertRaises(dashboard.StartRoomError):
                 dashboard.check_signed_in("claude")
 
