@@ -492,6 +492,19 @@ def rooms_in(path: str) -> list[str]:
     return sorted({r[len(PREFIX) + 1:].split("/", 1)[0] for r in refs if r.startswith(PREFIX + "/")})
 
 
+def counts(path: str) -> dict[str, int]:
+    """How many checkpoint refs each room has in the checkout at ``path``."""
+    root = git_root(path)
+    if not root:
+        return {}
+    out: dict[str, int] = {}
+    for r in _git(root, "for-each-ref", "--format=%(refname)", f"{PREFIX}/", check=False).split():
+        if r.startswith(PREFIX + "/"):
+            room = r[len(PREFIX) + 1:].split("/", 1)[0]
+            out[room] = out.get(room, 0) + 1
+    return out
+
+
 def diff(path: str, room: str, n: int, file: str = "") -> dict:
     """What turn ``n`` changed: the diff from the state before it to it, for
     one file or (without ``file``) the list of files."""

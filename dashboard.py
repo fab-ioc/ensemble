@@ -106,6 +106,7 @@ import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
 import history as file_history
 import checkpoints
+import prune
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
 # Moving from claude-dashboard (the predecessor): its state is copied in at startup.
@@ -12915,6 +12916,186 @@ def _launch_file_pruner() -> None:
         except Exception as e:      # noqa: BLE001 — tomorrow tries again
             print(f"[housekeeping] launch files not pruned: {e!r}", flush=True)
         time.sleep(86400)
+
+
+# ---------------------------------------------------------------------------
+# Freeing disk space (#260): Settings' preview and delete (prune.py), and the
+# optional retention rule for Done tasks.
+# ---------------------------------------------------------------------------
+PRUNE_JOB = prune.Job()
+PRUNE_AUTO_FILE = DASHBOARD_DIR / "prune-auto.json"
+PRUNE_AUTO_CHECK_S = 3600
+
+
+def _prune_live_sessions() -> set:
+    """Conversation ids a live terminal of the hub runs, and the person's own
+    live Claude sessions."""
+    out: set = set()
+    for x in ptyrun.list_sessions():
+        meta = x.get("meta") or {}
+        if not x.get("alive"):
+            continue
+        if meta.get("sessionId"):
+            out.add(meta["sessionId"])
+        rid, ident = meta.get("room") or "", meta.get("identity") or ""
+        room = chatroom.get_room(rid, public=False, copy_room=False) if rid else None
+        part = chatroom.participant(room, ident) if room else None
+        if part and part.get("sessionId"):
+            out.add(part["sessionId"])
+    try:
+        out |= {s.get("sessionId") for s in _read_session_files() if s.get("sessionId")}
+    except Exception:                               # noqa: BLE001
+        pass
+    return out
+
+
+_PRUNE_FOLDERS: list = [0.0, None]
+
+
+def _prune_folders() -> tuple:
+    """po_seat_folders and Ensemble's own folders, read once a minute: a
+    preview asks for every conversation."""
+    if _PRUNE_FOLDERS[1] is None or time.time() - _PRUNE_FOLDERS[0] > 60:
+        projects = load_projects()
+        homes = [str(DASHBOARD_DIR)] + [h for h in (project_home(p, create=False) for p in projects) if h]
+        _PRUNE_FOLDERS[:] = [time.time(), (po_seat_folders(projects, chatroom.list_rooms(copy_rooms=False)), homes)]
+    return _PRUNE_FOLDERS[1]
+
+
+def _prune_classify(agent: str, path: Path, sid: str) -> tuple[str, str]:
+    """Whose a conversation no task holds is: a PO's from before its room
+    recorded it (``po``, its room), one the hub started (``hub``: its first
+    words are the hub's, or it ran in Ensemble's own folders), or the
+    person's own."""
+    folders, homes = _prune_folders()
+    if agent == "codex":
+        from agents import codex as _codex
+        s = _codex._parse_rollout(path)
+        cwd, first = (getattr(s, "cwd", "") or ""), (getattr(s, "first", "") or "")
+    else:
+        cwd, first = cwd_of(path), first_last_user(path)[0]
+    po = old_po_room(cwd, first, folders) if cwd else ""
+    if po:
+        return "po", po
+    if _is_rename_artifact(path) if agent == "claude" else False:
+        return "hub", "rename"
+    if first and _hub_words_kind(first) is not None:
+        return "hub", first_words(first)
+    if cwd and any(prune.within(cwd, h) for h in homes):
+        return "hub", ""
+    return "own", ""
+
+
+def _prune_hub() -> prune.Hub:
+    def rooms():
+        return chatroom.list_rooms(copy_rooms=False)
+
+    def live_rooms():
+        return {(x.get("meta") or {}).get("room") for x in ptyrun.list_sessions()
+                if x.get("alive") and (x.get("meta") or {}).get("room")}
+
+    def room_sessions(room):
+        out = []
+        for pp in room.get("participants") or []:
+            if isinstance(pp, dict) and pp.get("kind") == "agent":
+                out += [(session_agent(pp, sid), sid) for sid in participant_session_ids(pp)]
+        out += [(x.get("agent") or "", x["sessionId"]) for x in room_past_sessions(room)]
+        return out
+
+    def current_sessions(room):
+        return {pp.get("sessionId") for pp in room.get("participants") or []
+                if isinstance(pp, dict) and pp.get("kind") == "agent" and pp.get("sessionId")}
+
+    def slim(rid, meta):
+        when = time.strftime("%Y-%m-%d", time.localtime(meta.get("at") or time.time()))
+        text = (f"This task was pruned on {when} to free disk space: its chat, its agents' "
+                f"conversations, its folder and its worktree were removed. Its spec, its last "
+                f"report and its number are kept; what it put in the Documents folder stays there.")
+        ok = chatroom.slim_room(rid, meta, text)
+        _CP_LIST.pop(rid, None)
+        return ok
+
+    return prune.Hub(
+        state_dir=DASHBOARD_DIR, claude_dir=PROJ_DIR,
+        codex_dir=Path(os.environ.get("CODEX_HOME") or (HOME / ".codex")) / "sessions",
+        projects=load_projects, rooms=rooms, live_rooms=live_rooms,
+        live_sessions=_prune_live_sessions, room_sessions=room_sessions,
+        current_sessions=current_sessions, classify=_prune_classify, slim_room=slim,
+        forget_checkpoints=checkpoint_forget, checkpoint_counts=checkpoints.counts,
+        project_home=lambda p: project_home(p, create=False),
+        documents_dir=lambda p: project_documents_dir(p, persist=False),
+        scratch_root=lambda cwd: str(_scratch_root_for(cwd) or ""),
+        progress=PRUNE_JOB.progress)
+
+
+def prune_state() -> dict:
+    s = PRUNE_JOB.snapshot()
+    s["autoDays"] = int(load_settings().get("pruneDoneAfterDays") or 0)
+    s["lastAuto"] = _prune_auto_read()
+    return s
+
+
+def prune_scan_start(days: int, groups=None) -> bool:
+    groups = tuple(g for g in (groups or prune.GROUPS) if g in prune.GROUPS) or prune.GROUPS
+
+    def go():
+        PRUNE_JOB._set(preview=None, result=None)
+        preview = prune.scan(_prune_hub(), days, groups=groups, stop=PRUNE_JOB.cancelled)
+        PRUNE_JOB._set(preview=preview)
+    return PRUNE_JOB.start("scan", go)
+
+
+def prune_run_start(ids: list) -> tuple[bool, str]:
+    preview = PRUNE_JOB.snapshot().get("preview")
+    if not preview:
+        return False, "Make a preview first."
+    known = {it["id"] for g in preview["groups"] for it in g["items"]}
+    ids = [i for i in ids if i in known]
+    if not ids:
+        return False, "Nothing ticked."
+
+    def go():
+        res = prune.run(_prune_hub(), preview, ids, stop=PRUNE_JOB.cancelled)
+        PRUNE_JOB._set(result=res, preview=None)
+        print(f"[prune] freed {res['freed']} bytes: {len(res['done'])} items, {len(res['skipped'])} skipped",
+              flush=True)
+    return PRUNE_JOB.start("run", go), ""
+
+
+def _prune_auto_read() -> dict:
+    try:
+        return json.loads(PRUNE_AUTO_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _prune_auto_tick(now: float | None = None) -> bool:
+    """The retention rule, once a day at most: Done tasks older than the
+    setting go, logged. Returns whether it ran."""
+    now = time.time() if now is None else now
+    days = int(load_settings().get("pruneDoneAfterDays") or 0)
+    last = _prune_auto_read()
+    if days <= 0 or now - float(last.get("at") or 0) < 86400:
+        return False
+
+    def go():
+        res = prune.auto_prune(_prune_hub(), days)
+        try:
+            PRUNE_AUTO_FILE.write_text(json.dumps({"at": now, "days": days, "freed": res["freed"],
+                                                   "tasks": len(res["done"])}), encoding="utf-8")
+        except OSError:
+            pass
+    return PRUNE_JOB.start("auto", go)
+
+
+def _prune_auto_loop() -> None:
+    time.sleep(900)
+    while True:
+        try:
+            _prune_auto_tick()
+        except Exception as e:      # noqa: BLE001 — the next hour tries again
+            print(f"[prune] retention rule skipped: {e!r}", flush=True)
+        time.sleep(PRUNE_AUTO_CHECK_S)
 
 
 def load_restart_caches() -> None:
