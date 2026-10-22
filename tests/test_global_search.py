@@ -249,6 +249,36 @@ class Rooms(unittest.TestCase):
         self.assertEqual(gs.room_entries(self.dir), [])
 
 
+    def test_messages_it_had_keep_their_entries(self):
+        """A changed chat lowers only its new or edited messages (#256)."""
+        self.put(room("room-a", 1, "One", msgs=["Alpha", "Beta"]))
+        first = gs.room_entries(self.dir)[0]["msgs"]
+        d = room("room-a", 1, "One", msgs=["Alpha", "Beta edited", "Gamma"])
+        self.put(d)
+        again = gs.room_entries(self.dir)[0]["msgs"]
+        self.assertIs(again[0], first[0])
+        self.assertEqual([m["low"] for m in again], ["alpha", "beta edited", "gamma"])
+        tasks, msgs = gs.search_rooms(gs.room_entries(self.dir), gs.parse_query("edited"))
+        self.assertEqual([m["msgId"] for m in msgs], ["m1"])
+
+    def test_read_ahead(self):
+        """warm_rooms reads what the cache lacks, so a search reads nothing."""
+        self.put(room("room-a", 1, "One"))
+        self.put(room("room-b", 2, "Two"))
+        steps, calls = [], []
+        n = gs.warm_rooms(self.dir, lambda d: calls.append(d["id"]) or {}, between=lambda: steps.append(1))
+        self.assertEqual((n, len(steps), sorted(calls)), (2, 2, ["room-a", "room-b"]))
+        self.assertEqual(len(gs.room_entries(self.dir, lambda d: calls.append(d["id"]) or {})), 2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(gs.warm_rooms(self.dir), 0)
+
+    def test_read_ahead_keeps_no_room_changed_meanwhile(self):
+        self.put(room("room-a", 1, "One"))
+        gs.warm_rooms(self.dir, between=lambda: self.put(room("room-a", 1, "One renamed")))
+        self.assertEqual(gs._ROOM_CACHE.get(str(self.dir / "room-a.json")), None)
+        self.assertEqual(gs.room_entries(self.dir)[0]["title"], "One renamed")
+
+
 class GlobalFind(unittest.TestCase):
     """Hits land on the task that held the conversation, wherever it was."""
 
@@ -284,6 +314,18 @@ class GlobalFind(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
         self.addCleanup(gs._ROOM_CACHE.clear)
+
+    def test_a_task_in_progress_is_read_from_the_room_index(self):
+        """Search takes a running task's chat from the index the chats are
+        served from; a finished task's card has no messages, so its file."""
+        a = dashboard._find_room_read("room-a")
+        self.assertIs(dashboard._find_room_read("room-a"), a)
+        self.assertEqual(a["title"], "Rotated task")
+        old = time.time() - 3 * 86400
+        done = room("room-d", 7, "Done task", msgs=["finished words"], workflow="done", updatedAt=old)
+        (self.dir / "room-d.json").write_text(json.dumps(done), encoding="utf-8")
+        self.assertTrue(dashboard.chatroom.is_card(dashboard.chatroom.get_room("room-d", messages=False)))
+        self.assertEqual([m["text"] for m in dashboard._find_room_read("room-d")["messages"]], ["finished words"])
 
     def test_quick_half_alone(self):
         st, r = dashboard.global_find("tranche")
