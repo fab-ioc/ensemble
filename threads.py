@@ -1012,7 +1012,7 @@ LINK_BELOW = 40                 # … and below it; nearer the end, to the end
 
 
 def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
-          frm: str = "", after: str = "", to: str = "") -> tuple[int, int]:
+          frm: str = "", after: str = "", to: str = "", upto_ts: float = 0.0) -> tuple[int, int]:
     """Which of ``seq`` (balloon ids in order) a page shows, as [start, end):
     the last ``n``; ``before``: the ``n`` before that balloon (a page further
     up, as the reader scrolls); ``after``: the ``n`` after it (further down,
@@ -1021,7 +1021,9 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
     or of a window); ``upto``: a window around a balloon a link lands on.
     Never more than CHANNEL_LIMIT: from a balloon older than that, the
     window starts at it (#247 review 4). A balloon no longer in ``seq``
-    (moved into a thread) is placed by its time."""
+    (moved into a thread) is placed by its time, and so is a room message
+    (a card, a PO's message: the page puts it among the turns), whose time
+    is ``upto_ts`` (#262)."""
     def at(mid: str, past: bool = False) -> int | None:
         try:
             return seq.index(mid) + past
@@ -1046,8 +1048,8 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
             end = at(to, past=True) if to else None
             end = len(seq) if end is None else max(start, end)
             return start, min(end, start + CHANNEL_LIMIT)
-    if upto and upto in idx["by_mid"]:
-        i = at(upto)
+    if upto and (upto in idx["by_mid"] or upto_ts):
+        i = at(upto) if upto in idx["by_mid"] else             next((k for k, m in enumerate(seq) if (idx["by_mid"][m]["ts"] or 0) >= upto_ts), len(seq))
         if i is not None:
             start = max(0, i - LINK_ABOVE)
             end = max(start + n, i + 1 + LINK_BELOW)
@@ -1078,7 +1080,18 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
         # A topic: only the balloons of its threads (#246).
         ch = [mid for mid in ch if topic_tids.intersection(idx["parent"].get(mid) or [])
               or topic_tids.intersection(idx["of"].get(mid) or [])]
-    start, end = _span(idx, ch, n, upto, before, frm, after, to)
+    # A link's message the transcripts do not hold: a room message the page
+    # draws among the turns (a card, a PO's message), placed by its time
+    # (#262: a link to a card opened an empty thread).
+    upto_ts, upto_at = 0.0, ""
+    if upto:
+        if upto in idx["by_mid"]:
+            upto_at = "balloon"
+        else:
+            m = next((m for m in reversed(room.get("messages") or []) if m.get("id") == upto), None)
+            if m is not None:
+                upto_ts, upto_at = _num(m.get("ts")) or 0.0, "room"
+    start, end = _span(idx, ch, n, upto, before, frm, after, to, upto_ts)
     shown = ch[start:end]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     # A reply also in the chat names its thread ("replied to a thread: …").
@@ -1089,6 +1102,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
            "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
            "channel": len(ch), "sendMids": idx.get("sendMids") or []}
+    if upto:
+        out["uptoAt"] = upto_at     # "balloon", "room" (a room message), "" (not in this chat)
     if before or after:
         return out      # a page above or below: the rest the reader holds already
     out["activity"] = _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None

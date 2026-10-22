@@ -5540,9 +5540,7 @@ function landPending() {
     if (!(LAST_ITEMS || []).some(m => m.id === GOTO)) {
       // An older message of the chat: ask for the channel back to it first.
       if (THR_ASKED !== GOTO) { renderThreaded(true); return; }
-      const target = GOTO, passage = GOTO_PART;
-      GOTO = ''; GOTO_PART = '';
-      openThread('', target, passage);
+      thrNotShown(THR_VIEW);
       const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
       return;
     }
@@ -6565,7 +6563,10 @@ async function renderThreaded(force) {
     }
     if (!r.ok || d.error) {
       globalThis.EnsembleProgress?.clear('thread-build');
-      if (THREAD_MODE) { setText($('#title'), 'This thread is not in the chat any more'); renderBubbles([]); }
+      if (THREAD_MODE) {
+        setText($('#title'), THREAD ? 'This thread is not in the chat any more' : 'The linked message is not in a thread of this chat');
+        renderBubbles([]);
+      }
       return;
     }
     THR_SIG = d.sig || '';
@@ -6608,14 +6609,11 @@ function thrDraw(roomTs, d = THR_VIEW) {
       t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {},
       t.workLog ? { workLog: true } : {}));
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
-    // A balloon link lands in the thread containing that balloon, once the
-    // channel was asked to reach it (else landPending asks first).
-    if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && !items.some(m => m.id === GOTO)) {
-      const target = GOTO, part = GOTO_PART;
-      GOTO = ''; GOTO_PART = '';
-      openThread('', target, part);
-    }
     if (!THREAD_MODE) items = withHubRows(items, ROOM_OBJ, THR_HUB);
+    // A balloon link lands in the thread containing that balloon, once the
+    // channel was asked to reach it (else landPending asks first). A card or
+    // a PO's message is among the hub's rows, never in a thread (#262).
+    if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && !items.some(m => m.id === GOTO)) thrNotShown(d);
     document.body.classList.toggle('po-thread-channel', !THREAD_MODE);
     const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !THR_BEFORE;
     CHAT_DRAWN = THR_DRAWN = true;
@@ -6624,6 +6622,17 @@ function thrDraw(roomTs, d = THR_VIEW) {
     if (THREAD_MODE) { THR_ITEMS = items; threadSeen(items); }
     else if (!SIDE_RESTORED) { SIDE_RESTORED = true; sideRestore(); }
   }
+}
+// A link's balloon the channel reached for but does not show: a balloon of
+// the transcripts is in a thread (the hub's uptoAt "balloon"; an older hub
+// does not say); any other is not in this chat, said so, never an empty
+// thread (#262).
+function thrNotShown(d) {
+  const target = GOTO, part = GOTO_PART, at = d && d.uptoAt;
+  GOTO = ''; GOTO_PART = '';
+  if (at === undefined || at === 'balloon') { openThread('', target, part); return; }
+  showGotoNote(at === 'room' ? 'The linked message is not shown in this chat.'
+    : 'The linked message was not found in this conversation.');
 }
 // The thread's title over its messages, and the way back on a phone.
 function threadHead() {
