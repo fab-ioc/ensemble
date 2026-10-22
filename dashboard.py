@@ -124,6 +124,8 @@ import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
 import sends
+# Slash commands from the chat: what to suggest, what a command is (#253).
+import slash
 # A project's Documents folder: its tasks' reports, newest first.
 import project_docs
 # Task numbers (#18, ED-18) and project keys.
@@ -410,7 +412,7 @@ def _backfill_codex_session_ids(room: dict) -> None:
     """
     pending = [pp for pp in room.get("participants", [])
                if pp.get("kind") == "agent" and pp.get("agent") == "codex"
-               and not (pp.get("sessionId") or "").strip()]
+               and (not (pp.get("sessionId") or "").strip() or _pending_new(pp))]
     if not pending:
         return
     rid = room.get("id", "")
@@ -432,28 +434,81 @@ def _backfill_codex_session_ids(room: dict) -> None:
     for pp in room.get("participants", []):
         taken.update(participant_session_ids(pp))
     found = {}
+    stayed: list[str] = []
     for pp in pending:
         cwd = pp.get("cwd") or room.get("cwd") or ""
         rots = [r for r in pp.get("rotations") or [] if isinstance(r, dict)]
         p_since = max(since, float(rots[-1].get("startedAt") or 0)) if rots else since
+        # After a /new or /resume (#253): only a rollout written since then is
+        # the conversation it went on in. Any but the current one may be: a
+        # /resume can go back to one of the seat's own earlier conversations.
+        new = _pending_new(pp)
+        if new and _stayed(new):
+            stayed.append(pp["identity"])
+            continue
+        avoid = taken
+        if new:
+            p_since = max(p_since, float(new.get("at") or 0))
+            avoid = {s for q in room.get("participants", []) if q is not pp
+                     for s in participant_session_ids(q)} | {pp.get("sessionId") or ""}
+        clr = [r for r in pp.get("cleared") or [] if isinstance(r, dict)]
+        if clr:
+            p_since = max(p_since, float(clr[-1].get("at") or 0))
         try:
             sid = cx.latest_session_id_for_cwd(cwd, since=p_since)
         except Exception:
             sid = ""
-        if sid and sid not in taken:
+        if sid and sid not in avoid:
             taken.add(sid)
-            found[pp["identity"]] = sid
+            found[pp["identity"]] = (sid, new)
             pp["sessionId"] = sid
-    if not found:
+    if not found and not stayed:
         return
     # Persist on the full room (the caller holds the token-stripped view).
     full = chatroom.get_room(rid, public=False)
     if full is None:
         return
     for pp in full.get("participants", []):
-        if pp.get("identity") in found:
-            pp["sessionId"] = found[pp["identity"]]
+        if pp.get("identity") in stayed:
+            pp.pop("pendingNew", None)
+        if pp.get("identity") not in found:
+            continue
+        sid, new = found[pp["identity"]]
+        if not new:
+            # A fresh session's id (a rotation): a /new before it is over.
+            pp.pop("pendingNew", None)
+        elif pp.get("pendingNew"):
+            pp.pop("pendingNew", None)
+            if (pp.get("sessionId") or "") and pp.get("sessionId") != sid:
+                pp.setdefault("cleared", []).append({"fromSessionId": pp["sessionId"],
+                                                     "toSessionId": sid, "at": new.get("at")})
+            print(f"[command] {rid}/{pp.get('identity')}: the seat moved to session {sid}", flush=True)
+        pp["sessionId"] = sid
     chatroom.update_room(full)
+
+
+PENDING_NEW_MAX_S = 86400
+
+
+def _stayed(new: dict) -> bool:
+    """The rollout a /new or /resume was typed into took a prompt since:
+    Codex refused it, or the person left the picker, and went on there."""
+    path = new.get("rollout")
+    if not path:
+        return False
+    try:
+        return bool(rotation.read_rollout(Path(path), since=int(new.get("size") or 0))["promptSince"])
+    except Exception:       # noqa: BLE001 — unreadable: keep waiting
+        return False
+
+
+def _pending_new(pp: dict) -> dict | None:
+    """The /new or /resume a Codex seat waits on (_follow_new_conversation),
+    while it has an id to wait from and for at most a day."""
+    new = pp.get("pendingNew")
+    if not isinstance(new, dict) or not (pp.get("sessionId") or "").strip():
+        return None
+    return new if time.time() - float(new.get("at") or 0) < PENDING_NEW_MAX_S else None
 
 
 # The port this hub serves on, set by main(). A background job that launches an
@@ -3505,7 +3560,19 @@ def _type_input(sess, text: str, provenance: dict | None = None, *,
 
     ``now`` (send_now_way): Send now's keys around the line, in the same
     reserved write — Esc before it for ``interrupt``, Claude's send-now chord
-    after it for ``into-turn``."""
+    after it for ``into-turn``.
+
+    While a menu a slash command opened is on the agent's screen, the line
+    waits and is typed once it closes (_menu_hold, #253): typed into the
+    menu it would pick an entry. True then: it is the hub's to deliver."""
+    if _menu_hold(sess, text, provenance, record, parts, now):
+        return True
+    return _type_input_now(sess, text, provenance, record=record, parts=parts, now=now)
+
+
+def _type_input_now(sess, text: str, provenance: dict | None = None, *,
+                    record: bool = True,
+                    parts: list[tuple[str, dict]] | None = None, now: str = "") -> bool:
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
@@ -3640,6 +3707,334 @@ def _verify_codex_submit(sess, writer, text: str, path=None, before=-1) -> None:
                   f"{str((sess.meta or {}).get('room') or '')}", flush=True)
     except (OSError, EOFError, AttributeError):
         pass
+
+
+# ---- Slash commands from the chat (#253) -----------------------------------
+# A command goes into the agent's terminal as the person typed it: no hub
+# wrapper, no message refs, no point, no queue (both CLIs take one while a
+# turn runs). The room keeps a notice of it (noticeKind "command") and of what
+# it printed ("commandOutput", posted by the page that watched the screen),
+# which the chats show and agents never read (chatroom.is_command_record).
+_COMMANDS: dict[tuple[str, str], dict] = {}      # (room, key) -> {identity, text, at, reply, output}
+_COMMANDS_MAX = 200
+_COMMANDS_LOCK = threading.Lock()
+_COMMAND_WAIT_S = 5.0         # a second request with the key waits this long for the first
+COMMAND_OUTPUT_MAX = 8000
+
+
+def command_target(room: dict, identity: str = "") -> dict | None:
+    """The agent a command goes to: the one named, else a one-agent chat's
+    agent, else the task's owner (its first agent that is not started per
+    review)."""
+    agents_in = [p for p in room.get("participants") or [] if p.get("kind") == "agent"]
+    if identity:
+        return next((p for p in agents_in if p.get("identity") == identity), None)
+    if not agents_in:
+        return None
+    return next((p for p in agents_in if not chatroom.is_on_mention(room, p)), agents_in[0])
+
+
+def _type_command(sess, text: str) -> str:
+    """Type a slash command and Enter, raw. "" when typed, else why not
+    (rotation.reserve_hub_line's cause, or "gone"). No Codex submit check:
+    a command that opened a picker must not get a second Enter."""
+    why: list[str] = []
+    lease = rotation.reserve_hub_line(sess, why)
+    if lease is None:
+        hub_typing.record(sess, False, why[0] if why else "refused")
+        return why[0] if why else "refused"
+    ok = False
+    try:
+        writer = getattr(sess, "write", None)
+        try:
+            with _INPUT_WRITE_LOCK:
+                took = writer(text) if callable(writer) else sess.send_line(text)
+                ok = took is not False and sess.alive()
+                if ok:
+                    _record_typed_input_safely(sess, text, _origin_sender_info(text, "human"))
+                    menu_typed(str(getattr(sess, "id", "") or ""))
+            if ok and callable(writer):
+                # The CLI's own list filters on the text first; Enter after it.
+                time.sleep(0.3)
+                ok = writer("\r") is not False and sess.alive()
+        except (OSError, EOFError):
+            ok = False
+        return "" if ok else _not_typed_cause(sess)
+    finally:
+        rotation.release_hub_line(sess, lease)
+        hub_typing.record(sess, ok, "" if ok else _not_typed_cause(sess))
+
+
+def _follow_new_conversation(room_id: str, identity: str, agent: str, sess=None) -> None:
+    """A Codex agent sent ``/new`` or ``/resume``: it may go on in another
+    conversation, whose rollout Codex writes only at the next prompt. The
+    seat keeps its id meanwhile and notes ``pendingNew``;
+    _backfill_codex_session_ids moves it once a rollout of this cwd is
+    written after that moment (the old one, then in ``cleared``, is a past
+    conversation of the task). A /new Codex refused, or a /resume left with
+    Esc, changes nothing: the old rollout stays the newest, and the wait
+    ends once that rollout takes a prompt (Codex stayed there). Claude's new
+    id comes with its SessionStart hook (_follow_cleared)."""
+    if agent != "codex":
+        return
+    full = chatroom.get_room(room_id, public=False)
+    part = chatroom.participant(full, identity) if full else None
+    if not part:
+        return
+    part["pendingNew"] = {"fromSessionId": str(part.get("sessionId") or ""), "at": time.time()}
+    path, size = _codex_rollout_start(sess) if sess is not None else (None, -1)
+    if path and size >= 0:
+        part["pendingNew"].update(rollout=str(path), size=size)
+    chatroom.update_room(full)
+    _CODEX_SID_TRIED.pop(room_id, None)
+
+
+def _follow_cleared(room_id: str, identity: str, pty_id: str, session_id: str) -> bool:
+    """Claude's ``/clear`` or ``/resume`` put another conversation in the same
+    terminal (its SessionStart hook, source "clear" or "resume"): the seat
+    follows it, the old one is kept in ``cleared``. True when the seat moved."""
+    full = chatroom.get_room(room_id, public=False) if room_id else None
+    part = chatroom.participant(full, identity) if full else None
+    if not part or not session_id or part.get("ptyId") != pty_id:
+        return False
+    old = str(part.get("sessionId") or "")
+    if old == session_id:
+        return False
+    part.setdefault("cleared", []).append({"fromSessionId": old, "toSessionId": session_id,
+                                           "at": time.time()})
+    part["sessionId"] = session_id
+    sess = ptyrun.get(pty_id)
+    if sess is not None and isinstance(getattr(sess, "meta", None), dict):
+        sess.meta["sessionId"] = session_id
+    chatroom.update_room(full)
+    print(f"[command] {room_id}/{identity}: the seat moved to session {session_id}", flush=True)
+    return True
+
+
+def send_command(room_id: str, text: str, identity: str = "", key: str = "") -> tuple[int, dict]:
+    """Type the person's slash command into an agent's terminal. Returns
+    (status, reply); the reply names the agent and the room record."""
+    text = (text or "").strip()
+    if not slash.is_command(text):
+        return 400, {"error": "not_a_command", "message": "A command is one line that starts with /name."}
+    room = chatroom.get_room(room_id, public=False) if room_id else None
+    if room is None:
+        return 404, {"error": "no_such_room"}
+    key = str(key or "")[:80]
+    part = command_target(room, str(identity or ""))
+    if part is None:
+        return 404, {"error": "no_such_agent", "message": "No agent of this task has that name."}
+    ident, agent = part.get("identity", ""), part.get("agent", "")
+    name = "the agent" if len([p for p in room["participants"] if p.get("kind") == "agent"]) < 2 else ident
+    # Codex leaves a command it does not know in its composer, where the next
+    # line typed would join it: only the ones it lists go.
+    if agent == "codex" and not slash.known(agent, slash.command_name(text), part.get("cwd") or room.get("cwd") or ""):
+        return 400, {"error": "unknown_command",
+                     "message": f"Codex has no /{slash.command_name(text)} command: pick one from the list under /"}
+    sess = ptyrun.get(part.get("ptyId")) if part.get("ptyId") else None
+    if sess is None or not sess.alive():
+        return 409, {"error": "not_running",
+                     "message": f"{name} is not running: start the task, then send the command again"}
+    if key:
+        # Claimed before typing: the same key sent again meanwhile (a retry
+        # during the Enter pause) waits for this one's answer.
+        with _COMMANDS_LOCK:
+            held = _COMMANDS.get((room_id, key))
+            if held is None:
+                _COMMANDS[(room_id, key)] = {"identity": ident, "text": text, "at": time.time(),
+                                             "reply": None, "output": None}
+        if held is not None:
+            end = time.time() + _COMMAND_WAIT_S
+            while not held.get("reply") and not held.get("failed") and time.time() < end:
+                time.sleep(0.1)
+            if held.get("reply"):
+                return 200, dict(held["reply"], duplicate=True)
+            return 409, {"error": "not_typed", "cause": "busy",
+                         "message": f"the hub is typing into {name} right now, so try again in a moment"}
+    cause = _type_command(sess, text)
+    if cause:
+        if key:
+            with _COMMANDS_LOCK:
+                if (_COMMANDS.get((room_id, key)) or {}).get("reply") is None:
+                    _COMMANDS.pop((room_id, key), {})["failed"] = True
+        msg = {"rotating": "the task is handing over to a fresh session, so try again in a moment",
+               "busy": f"the hub is typing into {name} right now, so try again in a moment",
+               "gone": f"{name} stopped"}.get(cause, f"{name}'s terminal did not take it ({cause})")
+        return 409, {"error": "not_typed", "cause": cause, "message": msg}
+    sess.last_input = time.time()
+    rec = chatroom.post_notice(room_id, chatroom.HUMAN_IDENTITY, text,
+                               {"noticeKind": "command", "to": ident, "agent": agent, "key": key})
+    if slash.starts_new_conversation(agent, text):
+        _follow_new_conversation(room_id, ident, agent, sess)
+    reply = {"ok": True, "identity": ident, "agent": agent, "ptyId": part.get("ptyId"),
+             "message": rec, "key": key}
+    with _COMMANDS_LOCK:
+        held = _COMMANDS.setdefault((room_id, key or (rec or {}).get("id", "")), {
+            "identity": ident, "text": text, "at": time.time(), "reply": None, "output": None})
+        held["reply"] = reply
+        while len(_COMMANDS) > _COMMANDS_MAX:
+            _COMMANDS.pop(next(iter(_COMMANDS)))
+    return 200, reply
+
+
+def command_output(room_id: str, key: str, text: str) -> tuple[int, dict]:
+    """What a command the person sent printed, as the page read it off the
+    agent's screen: once per command, as a balloon from that agent."""
+    with _COMMANDS_LOCK:
+        held = _COMMANDS.get((room_id, str(key or "")))
+        if held is None:
+            return 404, {"error": "no_such_command"}
+        if held.get("output") is not None:
+            return 200, {"ok": True, "duplicate": True, "message": held["output"]}
+        held["output"] = {}
+    text = str(text or "").strip()
+    if len(text) > COMMAND_OUTPUT_MAX:
+        text = text[:COMMAND_OUTPUT_MAX].rstrip() + "\n..."
+    if not text:
+        return 200, {"ok": True, "message": None}
+    rec = chatroom.post_notice(room_id, held["identity"], text,
+                               {"noticeKind": "commandOutput", "command": held["text"], "key": str(key)})
+    with _COMMANDS_LOCK:
+        held["output"] = rec or {}
+    return 200, {"ok": True, "message": rec}
+
+
+# A menu on an agent's screen (#253): what the hub would type meanwhile (a
+# digest, a report, the PO's wake, the person's next message) is held and
+# typed once it closes, since in a picker text and Enter choose an entry.
+# The page that shows the menu panel says so (POST /api/room/command-menu),
+# renewing it while the menu is open; a command typed counts as one until
+# the page has looked. With no page renewing (closed meanwhile), the hub
+# reads the screen's last lines itself, for at most MENU_HOLD_MAX_S.
+_MENUS: dict[str, dict] = {}            # ptyId -> {typed, seen, open}
+_MENU_HELD: dict[str, list] = {}        # ptyId -> [(text, provenance, record, parts, now)]
+_MENU_LOCK = threading.Lock()
+MENU_LEASE_S = 6.0          # the page renews every 2 s
+MENU_COMMAND_S = 10.0       # a command typed, before the page has looked
+MENU_HOLD_MAX_S = 1800.0
+MENU_POLL_S = 1.0
+_MENU_HINT = re.compile(r"\b(enter|⏎)\s+(to\s+)?(select|confirm|choose)|\besc(ape)?\s+(to\s+)?"
+                        r"(back|cancel|close|exit|dismiss|go back)|↑/↓|\bto navigate\b", re.I)
+_MENU_COMPOSER = re.compile(r"for shortcuts|bypass permissions|shift\+tab to cycle|context left", re.I)
+
+
+def menu_typed(pty_id: str) -> None:
+    """A slash command went into this terminal: it may open a menu."""
+    with _MENU_LOCK:
+        _MENUS[pty_id] = {"typed": time.time(), "seen": 0.0, "open": False}
+
+
+def menu_report(pty_id: str, is_open: bool) -> None:
+    """The page's reading of the screen: a menu open (renewed), or none."""
+    with _MENU_LOCK:
+        if is_open:
+            st = _MENUS.setdefault(pty_id, {"typed": 0.0})
+            st.update(seen=time.time(), open=True)
+        else:
+            _MENUS.pop(pty_id, None)
+
+
+def screen_menu_open(lines: list[str]) -> bool:
+    """A menu's key hint at the foot of the screen, with no composer there."""
+    foot = [ln for ln in lines if ln.strip()][-4:]
+    return any(_MENU_HINT.search(ln) for ln in foot) and not any(_MENU_COMPOSER.search(ln) for ln in foot)
+
+
+def menu_open(sess) -> bool:
+    """A menu is (or may be) on this terminal's screen."""
+    pid = str(getattr(sess, "id", "") or "")
+    with _MENU_LOCK:
+        st = dict(_MENUS.get(pid) or {})
+    if not st:
+        return False
+    now = time.time()
+    if st.get("open") and now - st["seen"] < MENU_LEASE_S:
+        return True
+    if not st.get("open") and now - st.get("typed", 0) < MENU_COMMAND_S:
+        return True
+    if now - max(st.get("seen") or 0, st.get("typed") or 0) < MENU_HOLD_MAX_S:
+        try:
+            if screen_menu_open((sess.tail(lines=12) or "").splitlines()):
+                return True
+        except Exception:       # noqa: BLE001 — unreadable: not held
+            pass
+    with _MENU_LOCK:
+        if _MENUS.get(pid, {}).get("seen") == st.get("seen") and _MENUS.get(pid, {}).get("typed") == st.get("typed"):
+            _MENUS.pop(pid, None)
+    return False
+
+
+def _menu_hold(sess, text, provenance, record, parts, now="") -> bool:
+    """Hold a hub line while a menu is open (or lines held before it wait):
+    True when held, typed in order by _menu_drain once the menu closes."""
+    pid = str(getattr(sess, "id", "") or "")
+    if not pid:
+        return False
+    with _MENU_LOCK:
+        if pid not in _MENU_HELD and pid not in _MENUS:
+            return False
+        queued = pid in _MENU_HELD
+    if not queued and not menu_open(sess):
+        return False
+    with _MENU_LOCK:
+        start = pid not in _MENU_HELD
+        _MENU_HELD.setdefault(pid, []).append((text, provenance, record, parts, now))
+    if start:
+        meta = getattr(sess, "meta", None) or {}
+        print(f"[command] {meta.get('room', '')}/{meta.get('identity', '')}: a menu is open, "
+              f"so the hub's lines wait until it closes", flush=True)
+        threading.Thread(target=_menu_drain, args=(sess,), daemon=True).start()
+    return True
+
+
+MENU_TRIES = 60             # refusals of one held line (busy, write) before it is given up
+
+
+def _menu_drain(sess) -> None:
+    """Type the lines held for this terminal, in order, once no menu is
+    open. Their callers were told they went, so one the terminal refuses is
+    not dropped: tried again (another hub line was being typed), or handed to
+    the fresh session while the agent is handed over (rotation.hold_wake)."""
+    pid = str(sess.id)
+    meta = getattr(sess, "meta", None) or {}
+    rid, ident = str(meta.get("room") or ""), str(meta.get("identity") or "")
+    tries = 0
+    while True:
+        time.sleep(MENU_POLL_S)
+        try:
+            alive = sess.alive()
+        except Exception:       # noqa: BLE001
+            alive = False
+        if not alive:
+            with _MENU_LOCK:
+                left = _MENU_HELD.pop(pid, [])
+            kept = [it for it in left if rid and ident and rotation.hold_wake(rid, ident, it[0])]
+            print(f"[command] pty {pid}: stopped with {len(left)} held line(s); "
+                  f"{len(kept)} kept for the fresh session", flush=True)
+            return
+        if menu_open(sess):
+            continue
+        with _MENU_LOCK:
+            items = _MENU_HELD.get(pid) or []
+            if not items:
+                _MENU_HELD.pop(pid, None)
+                return
+            head = items[0]
+        text, provenance, record, parts, now = head
+        ok = _type_input_now(sess, text, provenance, record=record, parts=parts, now=now)
+        if not ok and rid and ident and rotation.hold_wake(rid, ident, text):
+            ok = True               # typed into the fresh session once it settles
+        tries = 0 if ok else tries + 1
+        if not ok and tries < MENU_TRIES:
+            continue
+        if not ok:
+            print(f"[command] pty {pid}: a held line was refused {tries} times and is "
+                  f"given up", flush=True)
+            tries = 0
+        with _MENU_LOCK:
+            items = _MENU_HELD.get(pid) or []
+            if items and items[0] is head:
+                items.pop(0)
 
 
 def _typed_sends(room_id: str, items: list[dict]) -> None:
@@ -3972,6 +4367,13 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                 # that follows it; only the reply that ends its turn answers.
                 if t == "assistant" and msg.get("stop_reason") == "tool_use":
                     turn["interim"] = True
+                # One of Claude's own commands it logs raw (/compact) and the
+                # summary a compaction writes as a user turn: counted, so the
+                # turns after keep their ids, but not the person's words (#253).
+                # "/tmp is full" is the person's.
+                if t == "user" and (d.get("isCompactSummary") or (
+                        slash.is_command(stripped) and slash.command_name(stripped) in slash.CLAUDE_NAMES)):
+                    turn["hidden"] = "summary" if d.get("isCompactSummary") else "command"
                 turns.append(turn)
     except OSError:
         pass
@@ -5035,8 +5437,9 @@ def room_past_sessions(room: dict) -> list[dict]:
     """The conversations a task's seats have left behind, oldest first:
     ``{sessionId, identity, agent, at, via}``, ``via`` being ``rotation`` (a
     rotation, a PO switch or an owner's handover moved the seat out of it),
-    ``review`` (an earlier review) or ``retired`` (its agent was taken off the
-    task). A seat's current conversation is not one of them. Reads the room
+    ``review`` (an earlier review), ``clear`` (the person's ``/clear`` or
+    ``/new`` started a new one, #253) or ``retired`` (its agent was taken off
+    the task). A seat's current conversation is not one of them. Reads the room
     record only."""
     parts = [p for p in room.get("participants") or [] if isinstance(p, dict)]
     current = {str(p.get("sessionId") or "").strip()
@@ -5066,6 +5469,10 @@ def room_past_sessions(room: dict) -> list[dict]:
             if isinstance(r, dict):
                 sid = r.get("sessionId") or ""
                 add(sid, ident, session_agent(p, sid), r.get("startedAt"), "review")
+        for r in p.get("cleared") or []:
+            if isinstance(r, dict):
+                sid = r.get("fromSessionId") or ""
+                add(sid, ident, session_agent(p, sid), r.get("at"), "clear")
     for r in room.get("retiredSessions") or []:
         if isinstance(r, dict):
             add(r.get("sessionId"), r.get("identity", ""), r.get("agent", ""), r.get("at"), "retired")
@@ -10672,9 +11079,11 @@ def room_pm_index(messages: list[dict], before_id: str) -> list[dict]:
 
 def _hub_row(m: dict) -> bool:
     """A room message a one-agent chat shows among its transcript's turns
-    (session.html withHubRows): a restart notice, a PO's message, a card."""
+    (session.html withHubRows): a restart notice, a PO's message, a card,
+    a slash command the person ran and its output (#253)."""
     return ((m.get("kind") == "notice" and m.get("noticeKind") == "restart")
-            or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list))
+            or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list)
+            or chatroom.is_command_record(m))
 
 
 def channel_hub_rows(out: dict, room: dict) -> dict:
@@ -15975,6 +16384,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, topics.view(project, room, chatroom.ROOMS_DIR))
             return
+        if p == "/api/room/commands":
+            # ?roomId=&identity= the slash commands to suggest for the agent a
+            # command from this chat goes to (#253, slash.catalogue).
+            q = parse_qs(u.query)
+            rid = (q.get("roomId", [""])[0] or "").strip()
+            room = chatroom.get_room(rid, public=False) if rid else None
+            if room is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            part = command_target(room, (q.get("identity", [""])[0] or "").strip())
+            if part is None:
+                self._send_json(404, {"error": "no_such_agent"})
+                return
+            agent = part.get("agent", "")
+            self._send_json(200, {"identity": part.get("identity", ""), "agent": agent,
+                                  "commands": slash.catalogue(agent, part.get("cwd") or room.get("cwd") or "")})
+            return
         if p in ("/api/room/channel", "/api/room/thread"):
             # A PO chat as threads (threads.py): ?id=&n= the channel (its
             # last n entries, each thread's parent with its reply line;
@@ -18687,6 +19113,12 @@ class Handler(BaseHTTPRequestHandler):
                                        payload.get("identity"), event.get("session_id"))).start()
                 threading.Thread(target=checkpoint_turn, daemon=True,
                                  args=(payload.get("room") or "", payload.get("identity") or "")).start()
+            if (event.get("hook_event_name") == "SessionStart"
+                    and event.get("source") in ("clear", "resume") and not event.get("agent_id")):
+                # /clear, /resume (#253): the same terminal, another conversation.
+                threading.Thread(target=_follow_cleared, daemon=True,
+                                 args=(payload.get("room") or "", payload.get("identity") or "",
+                                       payload.get("ptyId") or "", event.get("session_id") or "")).start()
 
     def _feedback_post(self, path):
         if self.headers.get("Origin") and not self._same_origin_request():
@@ -19944,6 +20376,35 @@ class Handler(BaseHTTPRequestHandler):
             number_adopted_room(room_full)
             self._send_json(200, {"ok": True,
                                   "room": chatroom.get_room(room["id"])})
+            return
+        if p in ("/api/room/command", "/api/room/command-output", "/api/room/command-menu"):
+            # {roomId, text, identity?, key}: the person's slash command, typed
+            # raw into the agent's terminal (#253, send_command). {roomId, key,
+            # text}: what it printed, read off the screen by the page.
+            # {roomId, ptyId, open}: a menu on that agent's screen, or none
+            # (menu_report). Only the page: an agent must not type into
+            # another's terminal.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if p == "/api/room/command-menu":
+                room = chatroom.get_room(rid, public=False) if rid else None
+                pty_id = str(data.get("ptyId") or "")
+                if room is None or not pty_id or not any(
+                        q.get("ptyId") == pty_id for q in room.get("participants") or []):
+                    self._send_json(404, {"error": "no_such_agent"})
+                    return
+                menu_report(pty_id, bool(data.get("open")))
+                self._send_json(200, {"ok": True})
+            elif p == "/api/room/command":
+                self._send_json(*send_command(rid, str(data.get("text") or ""),
+                                              str(data.get("identity") or "").strip(),
+                                              str(data.get("key") or "")))
+            else:
+                self._send_json(*command_output(rid, str(data.get("key") or ""),
+                                                str(data.get("text") or "")))
             return
         if p == "/api/room/resume":
             # Recover an ended session after a restart: relaunch each agent in a

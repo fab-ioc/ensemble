@@ -760,7 +760,8 @@ class ThePage(unittest.TestCase):
         self.assertIn("function msgKey() {", SESSION)
         self.assertIn("if (!SEND_KEY) SEND_KEY = 'send:'", SESSION)
         self.assertIn("SEND_KEY = '';             // edited, so it is a new message", SESSION)
-        self.assertEqual(SESSION.count("SEND_ERR = ''; SEND_KEY = '';"), 2, "a sent message keeps its key")
+        # A message to a solo agent, to a team, and a slash command (#253).
+        self.assertEqual(SESSION.count("SEND_ERR = ''; SEND_KEY = '';"), 3, "a sent message keeps its key")
         self.assertIn("const key = `cmt:${batch.length}:${batch[0].cid}:${batch[batch.length - 1].cid}`;", SESSION)
 
     def test_no_function_is_declared_twice(self):

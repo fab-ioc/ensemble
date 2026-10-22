@@ -1175,7 +1175,30 @@
   #promptcard .pc-btn.go { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
   #promptcard .pc-btn.esc:hover { border-color:var(--c-danger-fg); color:var(--c-danger-fg); }
   #promptcard .pc-hint { font-size:11px; color:var(--dim); margin-top:7px; }
-  #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
+  /* Slash commands (#253): the list a leading "/" opens over the box, and the
+     agent's menu, read off its screen, with the keys to drive it. */
+  #compose { position:relative; }
+  #slashpop { position:absolute; left:10px; right:10px; bottom:100%; margin-bottom:6px; z-index:40; max-height:min(320px, 45vh); overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.18); padding:4px; }
+  #slashpop .sl-opt { display:flex; gap:10px; align-items:baseline; width:100%; text-align:left; background:transparent; border:none; border-radius:7px; padding:7px 10px; color:var(--fg); cursor:pointer; font:inherit; }
+  #slashpop .sl-opt:hover { background:var(--hover); }
+  #slashpop .sl-opt.sel { background:var(--selected-bg); color:var(--selected-fg); }
+  #slashpop .sl-name { font:600 12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:nowrap; }
+  #slashpop .sl-desc { font-size:12px; color:var(--dim); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #slashpop .sl-src { margin-left:auto; font-size:11px; color:var(--dim); white-space:nowrap; }
+  #slashpop .sl-none { padding:7px 10px; font-size:12px; color:var(--dim); }
+  #cmdpanel { flex:0 0 auto; margin:0 12px 8px; border:1px solid var(--border); background:var(--surface); border-radius:10px; padding:10px 12px; outline:none; }
+  #cmdpanel:focus-visible { box-shadow:0 0 0 2px var(--focus-ring); }
+  #cmdpanel .cp-head { font-size:12px; font-weight:700; color:var(--fg); margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+  #cmdpanel .cp-head .cp-cmd { font:600 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  #cmdpanel .cp-head .cp-note { font-weight:400; color:var(--dim); margin-left:auto; }
+  #cmdpanel .cp-body { margin:0; max-height:42vh; overflow:auto; -webkit-overflow-scrolling:touch; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; color:var(--fg); background:var(--bg); border:1px solid var(--border); border-radius:7px; padding:8px 10px; }
+  #cmdpanel .cp-keys { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+  #cmdpanel .cp-key { background:var(--surface); color:var(--fg); border:1px solid var(--border); font-size:12px; font-weight:600; padding:6px 12px; border-radius:7px; cursor:pointer; min-width:40px; }
+  #cmdpanel .cp-key:hover { background:var(--hover); }
+  #cmdpanel .cp-key.go { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
+  #cmdpanel .cp-type { display:flex; gap:6px; margin-top:8px; }
+  #cmdpanel .cp-type input { flex:1 1 auto; min-width:0; font:inherit; font-size:13px; padding:6px 9px; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--fg); }
+  #cmdpanel .cp-hint { font-size:11px; color:var(--dim); margin-top:7px; }  #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
   /* The box is a small editor: the words, then numbered points, each a block
      with its own text, images (chips) and balloon links (chips). It never
@@ -1345,6 +1368,8 @@
     .qa-opt, .qa-send, .qa-undo { min-height: var(--touch-min); }
     .qa-cm textarea { min-height: var(--touch-min); font-size: var(--fs-400); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
+    #cmdpanel .cp-key, #cmdpanel .cp-type input, #slashpop .sl-opt { min-height: var(--touch-min); }
+    #slashpop .sl-src { display:none; }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
     /* Needs you: every link in the list and under a balloon is a tap target, and each fold's head. */
@@ -1585,9 +1610,11 @@
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
     <div id="promptcard" hidden></div>
+    <div id="cmdpanel" tabindex="0" role="group" aria-label="The agent's menu" hidden></div>
     <div id="livetail" hidden></div>
     <div id="stop-note" role="status" hidden></div>
     <div id="compose">
+      <div id="slashpop" role="listbox" aria-label="Commands" hidden></div>
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
         <div class="ed-head">
@@ -2759,6 +2786,9 @@ const FOLD_MIN = 10, FOLD_MAX = 25;
 // A line across the chat, not a balloon: a rotation, or the hub's row that it
 // was restarted (posted to a PO that was idle then: nothing was typed into it).
 const isHubRow = m => !!m && m.kind === 'notice' && m.noticeKind === 'restart';
+// A slash command the person ran from the chat, and what it printed (#253):
+// rows of the room a one-agent chat shows among its turns.
+const isCmdRow = m => !!m && m.kind === 'notice' && (m.noticeKind === 'command' || m.noticeKind === 'commandOutput');
 // A checkpoint of the task's code (#197) is a line too (cpItems).
 const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation) || isHubRow(m) || m.cp || m.cpr);
 const foldKey = (m, i) => m.id || ('#' + i);
@@ -2850,7 +2880,8 @@ const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Repo
   points: 'Your open asks', pomsg: 'From another PO', stalled: 'Stall check', po: 'From the PO',
   issue: 'GitHub issue', issuecomment: 'GitHub issue comment', board: 'Board update', spec: 'Spec changed',
   brief: 'Task brief', reviewbrief: 'Review brief', hub: 'Hub message' };
-const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
+// A slash command the person ran (#253) is theirs, not the hub's.
+const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human' && m.noticeKind !== 'command';
 // A message between two projects' POs (po_messages.py), kept in both POs'
 // rooms: a balloon of its own, never folded as hub traffic.
 const isPoMsg = m => !!m && m.kind === 'pomsg';
@@ -4571,6 +4602,11 @@ function renderBubbles(items, opt = {}) {
   DRAW_HELD = false;
   const stick = STICK && !opt.anchor;
   const place = stick ? null : readingPlace(box, opt.anchor || (typeof pgPointed === 'function' ? pgPointed(box) : null));
+  // A slash command as the transcript logged it, and a compaction's summary
+  // (#253): the room's command record shows the one, nothing the other.
+  // What a command printed is the terminal's text, drawn as such.
+  items = items.filter(m => !(m && m.hidden)).map(m => m && m.noticeKind === 'commandOutput' && isCmdRow(m) && !/^```/.test(m.text || '')
+    ? Object.assign({}, m, { text: '```\n' + String(m.text || '').replace(/`{3,}/g, '`` `') + '\n```' }) : m);
   const given = items;       // as the conversation has them, point lines and all (sendsToShow)
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   items = withCheckpoints(items, ROOM_OBJ && ROOM_OBJ.checkpoints);
@@ -6021,7 +6057,7 @@ function withHubRows(items, room, hub) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
   }
-  let rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks));
+  let rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks) || (m.kind === 'notice' && /^command(Output)?$/.test(m.noticeKind || '')));
   if (hub && hub.size) {
     const ids = new Set(rows.map(m => m.id));
     rows = [...hub.values()].filter(m => !ids.has(m.id)).concat(rows).sort((a, b) => (a.ts || 0) - (b.ts || 0));
@@ -6066,7 +6102,7 @@ function soloItems(raw, sid, agentId, keep, base) {
     taskId: t.taskId, reporter: t.reporter, senderType: t.senderType,
     senderId: t.senderId, senderLabel: t.senderLabel, fromProject: t.fromProject,
     fromProjectName: t.fromProjectName,
-    poKind: t.poKind, provenance: t.provenance, inputId: t.inputId,
+    poKind: t.poKind, provenance: t.provenance, inputId: t.inputId, hidden: t.hidden,
   }
     : t.answers ? { answers: t.answers } : {}));
 }
@@ -6995,7 +7031,7 @@ function refreshShow(room, ticket, sendsGen) {
     SOLO_ROT = SOLO_ROTS.slice(-1)[0] || null;
     // What the hub holds for it changed (sent, delivered, failed): draw again.
     // …or the hub put a row of its own in the room (it was restarted).
-    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m)).length;
+    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isCmdRow(m)).length;
     const rowsChanged = hubRows !== HUB_ROWS_N;
     HUB_ROWS_N = hubRows;
     const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;
@@ -7515,6 +7551,7 @@ function moveSelection(target) {
 function renderPromptCard() {
   const card = document.getElementById('promptcard');
   if (!card) return;
+  if (!$('#cmdpanel').hidden) { hidePromptCard(); return; }   // the command's panel shows it (#253)
   ensureSoloTerm();
   let lines = readScreen(SOLO_PTY);
   let a = 0, b = lines.length;
@@ -7565,6 +7602,370 @@ function hidePromptCard() {
   const card = document.getElementById('promptcard');
   if (card && !card.hidden) card.hidden = true;
 }
+// ---- Slash commands from the chat (#253): begin -----------------------------
+// A message that is one line starting with /name goes to the agent's terminal
+// as a command (POST /api/room/command): typed raw, never a point, never
+// queued. A leading "/" in the box lists the agent's commands (the hub's
+// slash.catalogue). After a command the page watches the agent's screen: a
+// menu or picker the CLI opens shows as a panel with its keys, and what the
+// command printed goes back to the hub once (/api/room/command-output), shown
+// as a balloon from the agent.
+let SL_CAT = {};          // identity ('' = the default agent) -> Promise of {agent, identity, commands}
+let SL_POP = null;        // the suggestion list shown: {items, sel, ident}
+let CMD = null;           // the command watched: {key, pty, identity, agent, text, s0, ...}
+let CMD_TIMER = 0;
+// The agent a command goes to: the one named, else this chat's agent, else
+// the task's owner (as the hub's command_target).
+function slTarget(ident) {
+  const parts = ((ROOM_OBJ && ROOM_OBJ.participants) || []).filter(p => p.kind === 'agent');
+  if (ident) return parts.find(p => p.identity === ident) || null;
+  return parts.find(p => !p.onMention) || parts[0] || null;
+}
+function slCatalogue(ident) {
+  const k = ident || '';
+  if (!SL_CAT[k]) {
+    SL_CAT[k] = fetch('/api/room/commands?roomId=' + encodeURIComponent(ROOM) + (k ? '&identity=' + encodeURIComponent(k) : ''))
+      .then(r => r.ok ? r.json() : null)
+      .then(d => (d && Array.isArray(d.commands)) ? d : { commands: [] })
+      .catch(() => { delete SL_CAT[k]; return { commands: [] }; });
+    setTimeout(() => { delete SL_CAT[k]; }, 120000);     // skills added meanwhile show
+  }
+  return SL_CAT[k];
+}
+// "@ident /name args" (a team) or "/name args": the command and its agent.
+function slParse(text) {
+  const m = String(text || '').trim().match(/^(?:@([\w-]+)\s+)?(\/([A-Za-z0-9][\w.:-]*))(\s[^\n]*)?$/);
+  if (!m) return null;
+  if (m[1] && (SOLO_MODE || !ROOM_IDENTS.includes(m[1]))) return null;
+  return { ident: m[1] || '', name: m[3], text: (m[2] + (m[4] || '')).trim(), args: !!(m[4] || '').trim() };
+}
+// The box holds a command to send: one known to the agent, or a bare /name
+// (Claude says if it does not know it). "/tmp is full" stays a message.
+// Codex keeps a name it does not know in its composer, where the next line
+// would join it: a bare unknown /name is refused there ({ unknown }).
+async function slCommandOf(text) {
+  const c = slParse(text);
+  if (!c || (typeof ED !== 'undefined' && ED.points && ED.points.length)) return null;
+  const cat = await slCatalogue(c.ident);
+  const known = (cat.commands || []).find(x => x.name.toLowerCase() === c.name.toLowerCase());
+  if (!known && c.args) return null;
+  const part = slTarget(c.ident);
+  if (!known && part && part.agent === 'codex' && !/^(exit|quit)$/i.test(c.name)) return Object.assign(c, { unknown: true });
+  return Object.assign(c, { source: known ? known.source : '' });
+}
+function slHide() {
+  SL_POP = null;
+  const pop = $('#slashpop');
+  if (pop && !pop.hidden) { pop.hidden = true; pop.innerHTML = ''; }
+  $('#input').removeAttribute('aria-activedescendant');
+}
+// While the box holds "/" and a name being typed: the commands that match.
+async function slSuggest() {
+  const v = $('#input').value;
+  const m = v.match(/^(?:@([\w-]+)\s+)?\/([\w.:-]*)$/);
+  if (!m || !ROOM_OBJ || (m[1] && (SOLO_MODE || !ROOM_IDENTS.includes(m[1])))) { slHide(); return; }
+  const ident = m[1] || '', q = m[2].toLowerCase();
+  const part = slTarget(ident);
+  if (part && part.ptyId) ensureTermFor(part.ptyId);     // its screen, read before the command goes
+  const cat = await slCatalogue(ident);
+  if ($('#input').value !== v) return;                    // typed on meanwhile
+  const all = cat.commands || [];
+  const items = all.filter(x => x.name.toLowerCase().startsWith(q))
+    .concat(q ? all.filter(x => !x.name.toLowerCase().startsWith(q) && x.name.toLowerCase().includes(q)) : [])
+    .slice(0, 60);
+  SL_POP = { items, sel: 0, ident };
+  slDraw();
+}
+const SL_SRC = { builtin: '', skill: 'skill', command: 'command', prompt: 'prompt' };
+function slDraw() {
+  const pop = $('#slashpop');
+  if (!SL_POP) return;
+  const { items, sel } = SL_POP;
+  pop.innerHTML = items.length
+    ? items.map((x, i) => `<button type="button" class="sl-opt${i === sel ? ' sel' : ''}" role="option" id="sl-${i}" aria-selected="${i === sel}" data-i="${i}">`
+        + `<span class="sl-name">/${esc(x.name)}</span><span class="sl-desc">${esc(x.description || '')}</span>`
+        + (SL_SRC[x.source] ? `<span class="sl-src">${esc(SL_SRC[x.source])}</span>` : '') + `</button>`).join('')
+    : `<div class="sl-none">No command of this agent starts like that. Send it as it is, or keep typing.</div>`;
+  pop.hidden = false;
+  if (items.length) {
+    $('#input').setAttribute('aria-activedescendant', 'sl-' + sel);
+    const cur = pop.querySelector('.sl-opt.sel');
+    if (cur) cur.scrollIntoView({ block: 'nearest' });
+  }
+}
+function slPick(i) {
+  if (!SL_POP || !SL_POP.items[i]) return;
+  const x = SL_POP.items[i];
+  const ta = $('#input');
+  ta.value = (SL_POP.ident ? '@' + SL_POP.ident + ' ' : '') + '/' + x.name + ' ';
+  slHide();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.dispatchEvent(new Event('input'));
+}
+$('#input').addEventListener('input', () => { slSuggest(); });
+$('#input').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('#input')) slHide(); }, 150));
+// Before the editor's own keys: the list takes ↑ ↓ Enter Tab Esc while open.
+$('#input').addEventListener('keydown', e => {
+  if (!SL_POP || $('#slashpop').hidden || e.isComposing) return;
+  const n = SL_POP.items.length;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); slHide(); return; }
+  if (!n || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    SL_POP.sel = (SL_POP.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+    slDraw();
+  } else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    slPick(SL_POP.sel);
+  }
+}, true);
+$('#slashpop').addEventListener('mousedown', e => e.preventDefault());   // the box keeps the caret
+$('#slashpop').addEventListener('click', e => {
+  const b = e.target.closest('.sl-opt');
+  if (b) slPick(+b.dataset.i);
+});
+// The screen before the command: a terminal mounted just now replays what
+// it has drawn, so wait (up to 3 s) until it holds still.
+async function slScreen(pty) {
+  if (!pty || !ensureTermFor(pty)) return [];
+  let last = null;
+  for (let i = 0; i < 15; i++) {
+    const s = readScreen(pty), sig = s.join('\n');
+    if (sig.trim() && sig === last) return s;
+    last = sig;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return readScreen(pty);
+}
+async function sendCommand(c) {
+  setSendBusy(true);
+  setText($('#hint'), 'Sending the command.');
+  try {
+    const part = slTarget(c.ident);
+    const s0 = await slScreen(part && part.ptyId);
+    let d;
+    try {
+      d = await postOk('/api/room/command', { roomId: ROOM, text: c.text, identity: c.ident, key: msgKey() });
+    } catch (e) {
+      // No answer may still have reached the hub, which takes a key once.
+      SEND_ERR = sendUnconfirmed(e)
+        ? 'Not confirmed: ' + sendErrorText(e) + '. Your command is still in the box: Send again, it is typed only once.'
+        : 'Not sent: ' + (e.reason || sendErrorText(e)) + '. Your command is still in the box.';
+      setText($('#hint'), SEND_ERR);
+      return;
+    }
+    SEND_ERR = ''; SEND_KEY = '';
+    edClear(); slHide();
+    // A skill or custom command is a prompt: the agent's reply is its answer.
+    const quiet = !!c.source && c.source !== 'builtin';
+    cmdWatch({ key: d.key || '', pty: d.ptyId || (part && part.ptyId) || '', identity: d.identity, agent: d.agent,
+               text: c.text, name: c.name.toLowerCase(), s0, quiet });
+    setText($('#hint'), '');
+    setTimeout(refresh, 300);
+  } finally {
+    setSendBusy(false);
+  }
+}
+// ---- Reading the agent's screen ----
+const CMD_HINT = /\b(enter|⏎)\s+(to\s+)?(select|confirm|choose)|\besc(ape)?\s+(to\s+)?(back|cancel|close|exit|dismiss|go back)|↑\/↓|\bto navigate\b/i;
+const CMD_RULE = l => /^\s*[─━]{10,}\s*$/.test(l);
+const cmdSpin = l => /esc to interrupt/i.test(l) || /^\s*[^\w\s⎿❯›>●•│─━▔]\s+\S[^\n]*…/.test(l);
+// Claude's composer: a rule, the ❯ line (and the lines it wraps to), a rule.
+function cmdComposerAt(agent, lines) {
+  if (agent === 'codex') {
+    for (let i = lines.length - 1; i >= 0; i--) if (/^\s*›\s/.test(lines[i]) || /^\s*›$/.test(lines[i])) return i;
+    return -1;
+  }
+  for (let i = lines.length - 3; i >= 0; i--) {
+    if (!CMD_RULE(lines[i]) || !/^\s*[❯>]/.test(lines[i + 1] || '')) continue;
+    for (let j = i + 2; j < Math.min(lines.length, i + 9); j++) if (CMD_RULE(lines[j])) return i;
+  }
+  return -1;
+}
+const trimEnds = a => { let x = 0, y = a.length; while (x < y && !a[x].trim()) x++; while (y > x && !a[y - 1].trim()) y--; return a.slice(x, y); };
+// Lines cut to the left edge they share, and of their trailing blanks.
+const dedent = a => { const n = Math.min(...a.filter(l => l.trim()).map(l => l.match(/^\s*/)[0].length), 99); return a.map(l => l.slice(n).replace(/\s+$/, '')); };
+// What is on screen now: the menu open (its text), or null for the composer.
+function cmdScreen(agent, lines, s0) {
+  const tail = lines.filter(l => l.trim()).slice(-4).join('\n');
+  const composer = agent === 'codex' ? /\?\s*for shortcuts/i.test(tail) || !CMD_HINT.test(tail)
+    : cmdComposerAt(agent, lines) >= 0 || !CMD_HINT.test(lines.join('\n'));
+  if (composer) return { menu: null };
+  let top = -1;
+  if (agent !== 'codex') for (let i = lines.length - 1; i >= 0; i--) if (/^\s*▔{10,}/.test(lines[i])) { top = i; break; }
+  let body;
+  if (top >= 0) body = lines.slice(top + 1);
+  else {
+    const had = new Set((s0 || []).map(l => l.trim()).filter(Boolean));
+    const first = lines.findIndex(l => l.trim() && !had.has(l.trim()));
+    body = first < 0 ? lines.slice(-12) : lines.slice(first);
+  }
+  return { menu: dedent(trimEnds(body)).join('\n') };
+}
+const cmdNoise = l => !l.trim() || cmdSpin(l) || CMD_RULE(l) || /^\s*[✻✽✶✳✢]\s/.test(l)
+  || /^\s*Worked for \d/.test(l) || /·\s*\/effort\s*$/.test(l) || /^\s*\?\s*for shortcuts/i.test(l);
+function cmdEcho(c, l) {
+  const t = l.trim();
+  return t === c.text || t.startsWith(c.text + ' ') || /^[❯>›]\s/.test(t) && (t.slice(2).trim() === c.text || t.slice(2).trim().startsWith(c.text + ' '));
+}
+// What the command printed: the lines under its echo, else the new ones.
+function cmdOutput(c, lines) {
+  const at = cmdComposerAt(c.agent, lines);
+  const region = at >= 0 ? lines.slice(0, at) : lines;
+  const echoes = [];
+  region.forEach((l, i) => { if (cmdEcho(c, l)) echoes.push(i); });
+  let out;
+  const echoed = echoes.length > c.echo0;
+  if (echoed) out = region.slice(echoes[echoes.length - 1] + 1);
+  else {
+    // No echo (the CLI drew the screen again): what is new since the command
+    // went; for Claude only its own result lines (⎿ and what they wrap to),
+    // never a turn of the conversation it drew again.
+    const had = new Set(c.s0.map(l => l.trim()).filter(Boolean));
+    out = region.filter(l => !had.has(l.trim()));
+    if (c.agent !== 'codex') {
+      const keep = [];
+      let inRes = false;
+      for (const l of out) {
+        if (/^\s*⎿/.test(l)) inRes = true;
+        else if (!/^\s{4,}\S/.test(l)) inRes = false;
+        if (inRes) keep.push(l);
+      }
+      out = keep;
+    }
+  }
+  out = out.filter(l => !cmdNoise(l) && !cmdEcho(c, l));
+  // An agent's reply under the command's own echo: it ran as a prompt.
+  const prompt = echoed && out.some(l => /^\s*●/.test(l));
+  const busy = region.some(cmdSpin);
+  out = out.map(l => l.replace(/^(\s*)⎿\s?/, '$1   '));
+  return { text: dedent(out).join('\n').trim(), prompt, busy };
+}
+const cmdMenuText = m => trimEnds(String(m || '').split('\n').filter(l => !CMD_HINT.test(l))).join('\n');
+function cmdWatch(c) {
+  const busy0 = c.s0.some(cmdSpin);
+  CMD = Object.assign(c, { t0: Date.now(), sig: '', sigAt: Date.now(), sawMenu: false, menu: '', busy0,
+                           echo0: c.s0.filter(l => cmdEcho(c, l)).length });
+  if (!CMD_TIMER) CMD_TIMER = setInterval(cmdTick, 400);
+  cmdTick();
+}
+function cmdTick() {
+  const c = CMD;
+  if (!c) { clearInterval(CMD_TIMER); CMD_TIMER = 0; cmdPanelHide(); return; }
+  const age = Date.now() - c.t0;
+  if (!c.pty || !ensureTermFor(c.pty)) { if (age > 15000) cmdDone(c, ''); return; }
+  const lines = readScreen(c.pty);
+  const sig = lines.filter(l => !cmdSpin(l)).join('\n');
+  if (sig !== c.sig) { c.sig = sig; c.sigAt = Date.now(); }
+  const scr = cmdScreen(c.agent, lines, c.s0);
+  if (scr.menu != null && scr.menu.trim()) {
+    c.sawMenu = true; c.menu = scr.menu;
+    cmdPanelShow(c, scr.menu);
+    cmdMenuSay(c, true);
+    return;
+  }
+  cmdPanelHide();
+  cmdMenuSay(c, false);
+  if (c.resumed && !c.key) { CMD = null; return; }
+  const out = cmdOutput(c, lines);
+  if (age > 600000) return cmdDone(c, out.text);
+  if (Date.now() - c.sigAt < 1500 || (out.busy && !c.busy0 && !out.text)) return;
+  if (c.quiet || out.prompt) return age > 3000 || c.sawMenu ? cmdDone(c, '') : undefined;
+  if (out.text || c.sawMenu || age > 8000) {
+    let text = out.text;
+    // A panel closed with nothing said (/cost, /status, /mcp): what it
+    // showed, as it was before the person moved in it (a picker left with
+    // Esc changed nothing).
+    if (c.sawMenu && (!text || /\b(dismissed|cancell?ed)\b/i.test(text))) text = cmdMenuText(c.menu0 || c.menu);
+    cmdDone(c, text);
+  }
+}
+// The hub holds its own lines to the agent while a menu is open (typed
+// into a picker they would choose an entry): told every 2 s while it is.
+function cmdMenuSay(c, open) {
+  if (!c.pty || (!open && !c.said) || (open && c.said && Date.now() - c.said < 2000)) return;
+  c.said = open ? Date.now() : 0;
+  jpost('/api/room/command-menu', { roomId: ROOM, ptyId: c.pty, open });
+}
+function cmdDone(c, text) {
+  if (CMD === c) CMD = null;
+  cmdPanelHide();
+  cmdMenuSay(c, false);
+  // A new conversation's screen is not something the command said.
+  if (!text || !c.key || /^(clear|new|reset)$/.test(c.name || '')) return;
+  postOk('/api/room/command-output', { roomId: ROOM, key: c.key, text }).then(() => setTimeout(refresh, 200), () => {});
+}
+// ---- The menu panel ----
+const CMD_KEYS = [['up', '↑', 'Up'], ['down', '↓', 'Down'], ['left', '←', 'Left'], ['right', '→', 'Right'],
+  ['enter', 'Enter', 'Enter: choose'], ['esc', 'Esc', 'Esc: back or close'], ['tab', 'Tab', 'Tab'], ['space', 'Space', 'Space: toggle']];
+function cmdKey(seq) {
+  if (!CMD || !CMD.pty) return;
+  if (CMD.menu0 == null) CMD.menu0 = CMD.menu;
+  jpost('/api/pty/input', { id: CMD.pty, data: seq });
+}
+function cmdPanelShow(c, menu) {
+  const el = $('#cmdpanel');
+  const fresh = el.hidden || el.dataset.key !== (c.key || c.pty);
+  if (fresh) {
+    el.dataset.key = c.key || c.pty;
+    const who = SOLO_MODE ? '' : ' · ' + esc(seatName(c.identity));
+    el.innerHTML = `<div class="cp-head">${c.text ? `<span class="cp-cmd">${esc(c.text)}</span>` : '<span>The agent’s menu</span>'}<span>${who}</span><span class="cp-note">live from the agent’s screen</span></div>`
+      + `<pre class="cp-body"></pre>`
+      + `<div class="cp-keys">` + CMD_KEYS.map(([k, label, title]) => `<button type="button" class="cp-key${k === 'enter' ? ' go' : ''}" data-k="${k}" title="${esc(title)}">${esc(label)}</button>`).join('') + `</div>`
+      + `<form class="cp-type"><input type="text" autocomplete="off" placeholder="Type into the menu" aria-label="Type into the menu"><button type="submit" class="cp-key">Type</button></form>`
+      + `<div class="cp-hint">Arrow keys, Enter, Esc, Tab and Space work while this panel has focus. It closes when the agent leaves the menu.</div>`;
+    el.querySelectorAll('.cp-key[data-k]').forEach(b => b.onclick = () => cmdKey(PC_KEYS[b.dataset.k]));
+    el.querySelector('.cp-type').onsubmit = ev => {
+      ev.preventDefault();
+      const inp = el.querySelector('.cp-type input');
+      if (inp.value) { cmdKey(inp.value); inp.value = ''; }
+    };
+    el.dataset.txt = '';
+    el.hidden = false;
+    hidePromptCard();
+    const a = document.activeElement;
+    if (!a || a === document.body || a === $('#input') || a === $('#send')) el.focus({ preventScroll: true });
+  }
+  if (el.dataset.txt !== menu) { el.dataset.txt = menu; el.querySelector('.cp-body').textContent = menu; }
+}
+function cmdPanelHide() {
+  const el = $('#cmdpanel');
+  if (!el || el.hidden) return;
+  const had = el.contains(document.activeElement);
+  el.hidden = true; el.innerHTML = ''; el.dataset.key = ''; el.dataset.txt = '';
+  if (had) $('#input').focus({ preventScroll: true });
+}
+const CMD_KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc', Tab: 'tab', ' ': 'space' };
+$('#cmdpanel').addEventListener('keydown', e => {
+  if (e.target.closest('.cp-type') || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (e.target.closest('.cp-key') && (e.key === 'Enter' || e.key === ' ')) return;   // the button's own press
+  const k = CMD_KEYMAP[e.key];
+  if (!k) return;
+  e.preventDefault(); e.stopPropagation();
+  cmdKey(PC_KEYS[k]);
+});
+// A menu left open (the page reloaded, or opened in the terminal): shown too.
+setInterval(() => {
+  if (CMD || !ROOM_OBJ || document.hidden) return;
+  const part = slTarget('');
+  if (!part || !part.ptyId || !terms[part.ptyId]) return;
+  const card = $('#promptcard');
+  if (card && !card.hidden) return;
+  const lines = readScreen(part.ptyId);
+  const scr = cmdScreen(part.agent, lines, []);
+  if (scr.menu && scr.menu.trim() && CMD_HINT.test(scr.menu)) {
+    // The person's last command to this agent, if lately: its output is
+    // posted once the menu closes, as it would have been without the reload.
+    const rec = [...((ROOM_OBJ && ROOM_OBJ.messages) || [])].reverse()
+      .find(m => m.kind === 'notice' && /^command(Output)?$/.test(m.noticeKind || '') && (m.noticeKind === 'commandOutput' ? m.from : m.to) === part.identity);
+    const cmd = rec && rec.noticeKind === 'command' && rec.key && Date.now() / 1000 - (rec.ts || 0) < 3600 ? rec : null;
+    const name = cmd ? (cmd.text.match(/^\/([\w.:-]+)/) || [, ''])[1].toLowerCase() : '';
+    cmdWatch({ key: cmd ? cmd.key : '', pty: part.ptyId, identity: part.identity, agent: part.agent,
+               text: cmd ? cmd.text : '', name, s0: lines, resumed: true });
+  }
+}, 1500);
+// ---- Slash commands: end ------------------------------------------------------
 // Solo: deliver a message to the agent by typing into its terminal (the same
 // path the xterm uses). Bracketed paste keeps multi-line input from submitting
 // line-by-line; the trailing CR submits.
@@ -7928,6 +8329,13 @@ async function sendNow(urgent = false) {
     setText($('#hint'), SEND_ERR);
     return;
   }
+  // A slash command goes to the agent's terminal as it is (#253).
+  const cmd = !atts.length && await slCommandOf(t);
+  if (cmd && cmd.unknown) {
+    setText($('#hint'), `Codex has no /${cmd.name} command: pick one from the list under /, or add words to send it as a message.`);
+    return;
+  }
+  if (cmd) { await sendCommand(cmd); return; }
   setSendBusy(true);
   setText($('#hint'), 'Sending your message.');
   try {

@@ -304,7 +304,10 @@ def _session_balloons(sid: str, on_turn=None) -> list[dict]:
     entries = _d.page_turn_ids(sid, turns)
     recs = []
     for number, (mid, turn) in enumerate(entries, 1):
-        recs.append(_rec(sid, mid, turn))
+        # A slash command or a compaction's summary (#253): the room's own
+        # command record shows the command, nothing shows the summary.
+        if not turn.get("hidden"):
+            recs.append(_rec(sid, mid, turn))
         if on_turn and (number == 1 or number % 50 == 0 or number == len(entries)):
             on_turn(number, len(entries))
     if st is not None:

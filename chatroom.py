@@ -431,10 +431,12 @@ def set_agents(room_id: str, members: list[dict],
 
 def agent_conversations(part: dict) -> list[str]:
     """An agent's conversations on its task: its current one, one per review,
-    and each one a rotation, switch or handover moved it out of."""
+    each one a rotation, switch or handover moved it out of, and each one the
+    person's ``/clear`` left (#253)."""
     sids = [part.get("sessionId") or ""]
     sids += [r.get("sessionId") or "" for r in part.get("reviews") or [] if isinstance(r, dict)]
     sids += [r.get("fromSessionId") or "" for r in part.get("rotations") or [] if isinstance(r, dict)]
+    sids += [r.get("fromSessionId") or "" for r in part.get("cleared") or [] if isinstance(r, dict)]
     out: list[str] = []
     for s in sids:
         s = s.strip()
@@ -1168,7 +1170,19 @@ MCP_TOOLS = [
 ]
 
 
+# A slash command the person ran from the chat and what it printed (#253):
+# notices (``noticeKind``), the chat's record of what went into a terminal,
+# never news for an agent.
+COMMAND_KINDS = ("command", "commandOutput")
+
+
+def is_command_record(msg: dict) -> bool:
+    return msg.get("kind") == "notice" and msg.get("noticeKind") in COMMAND_KINDS
+
+
 def _visible_to(msg: dict, identity: str) -> bool:
+    if is_command_record(msg):
+        return False
     to = (msg.get("to") or "").lower()
     return (msg["from"] == identity or to in ("", "all", "everyone", "*")
             or msg.get("to") == identity)
