@@ -5919,16 +5919,16 @@ def load_projects() -> list[dict]:
     if hit and _projects_files_sig(hit["dirs"]) == hit["files"]:
         now = time.monotonic()
         if now - hit["checked"] < PROJECTS_FOLDERS_RECHECK_S:
-            return [dict(p) for p in hit["out"]]
+            return copy.deepcopy(hit["out"])
         if _projects_folders_sig(hit["codes"], hit["out"]) == hit["folders"]:
             hit["checked"] = now
-            return [dict(p) for p in hit["out"]]
+            return copy.deepcopy(hit["out"])
     dirs: list[str] = []
     codes: list[str] = []
     out = _load_projects_uncached(dirs, codes)
     files = _projects_files_sig(dirs)
     entry = {"files": files, "folders": _projects_folders_sig(codes, out), "dirs": dirs,
-             "codes": codes, "out": [dict(p) for p in out], "checked": time.monotonic()}
+             "codes": codes, "out": copy.deepcopy(out), "checked": time.monotonic()}
     with _PROJECTS_CACHE_LOCK:
         _PROJECTS_CACHE["hit"] = entry if _settled(files) else None
     return out
@@ -10209,7 +10209,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
     keys = task_numbers.project_keys(projects)
     pname = {p.get("id"): p.get("name") or "" for p in projects}
     po_of = {p["poRoomId"]: p for p in projects if p.get("poRoomId")}
-    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra)
+    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra, chatroom._read)
     by_id = {e["id"]: e for e in entries}
     refs: dict[str, list[str]] = {}
     for e in entries:
@@ -13098,11 +13098,11 @@ class OneProxyPerPty:
         with self._lock:
             hit, gen = self._list, self._gen
         if hit and time.monotonic() - hit[0] < self.LIST_TTL_S:
-            return list(hit[1])
+            return [dict(x) for x in hit[1]]
         out = self._client.list_sessions()
         with self._lock:
             if self._gen == gen:
-                self._list = (time.monotonic(), list(out))
+                self._list = (time.monotonic(), [dict(x) for x in out])
         return out
 
     def _keep(self, proxy):

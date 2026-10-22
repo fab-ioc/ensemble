@@ -540,7 +540,7 @@ def _save(room_id: str, led: dict) -> None:
             pass
     SAVES[room_id] = SAVES.get(room_id, 0) + 1
     try:
-        _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(json.dumps(led)))
+        _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(body))
     except OSError:
         _CACHE.pop(room_id, None)
     try:
@@ -950,7 +950,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
             or body.startswith(_d.PO_MESSAGE_PREFIX):
         return text, []
     try:
-        sync(rid, force=True)
+        sync(rid, force=True, room=room if "messages" in room else None)
     except Exception as e:      # answers are looked for again at the next poll
         _log(f"{rid}: answers not read before a new message: {e!r}")
     with _LOCK:
@@ -1302,9 +1302,14 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         # The agents' sessions now are looked at; the ones rotated out of
         # (a PO has a hundred) as the hub's file table has them (#228).
         now_sids = {(a.get("sessionId") or "").strip() for a in _agents(room)}
-        table = {} if force else _d.transcript_stats()
+        # A session rotated out of has ended: the file table's look will do
+        # even for a forced sync. Only the seats' own sessions are looked at
+        # now, and a session not found is not looked for again at once:
+        # ~0.2 s of each send to a PO with a hundred sessions (#256).
+        table = _d.transcript_stats()
         for sid in _session_ids(room, led):
-            st = (None if sid in now_sids else table.get(sid)) or _session_stat(sid, immediate=force)
+            st = (None if sid in now_sids else table.get(sid)) \
+                or _session_stat(sid, immediate=force and sid in now_sids)
             if st is None or _SCANNED.get((room_id, sid)) == st:
                 continue
             if floor is None or st[1] < floor:
@@ -1351,7 +1356,7 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         if changed:
             # A point planned on a task supersedes the older answers about it (#209).
             try:
-                _supersede_by_plans(led, room_id, now)
+                _supersede_by_plans(led, room_id, now, room)
             except Exception as e:  # noqa: BLE001 — they stay until the next change
                 _log(f"{room_id}: superseded points not read: {e!r}")
             _save(room_id, led)
@@ -1714,7 +1719,7 @@ def _supersede(led: dict, made: list[dict], room_id: str, now: float, key: str =
     return out
 
 
-def _supersede_by_plans(led: dict, room_id: str, now: float) -> bool:
+def _supersede_by_plans(led: dict, room_id: str, now: float, room: dict | None = None) -> bool:
     """A point planned on a task since (its plan names it) supersedes the
     older answered points about that task."""
     planned = [q for q in led["points"] if q.get("task") and q["state"] in LIVE + ("acked", "followed")]
@@ -1723,7 +1728,7 @@ def _supersede_by_plans(led: dict, room_id: str, now: float) -> bool:
     tasks = {q["task"] for q in planned}
     if not any(p["state"] == "delivered" and _point_task(p) in tasks for p in led["points"]):
         return False
-    lookup = task_lookup(room_id)
+    lookup = task_lookup(room_id, room)
     done = []
     for q in planned:
         done += _supersede(led, [q], room_id, now, lookup=lookup)
@@ -1912,7 +1917,7 @@ def task_lookup(room_id: str, room: dict | None = None):
         index = _d._task_index()
         keys = _d.project_keys(projects)
         if room is None:
-            room = _d.chatroom.get_room(room_id)
+            room = _d.chatroom.get_room(room_id, copy_room=False)     # read only
         pid = _project_of(room_id, room, projects)
     except Exception as e:      # noqa: BLE001 — the points show without their tasks
         _log(f"{room_id}: tasks not read: {e!r}")

@@ -1045,7 +1045,7 @@ _WORD = re.compile(r"[\w'’-]+")
 _PREF = re.compile(r"(?<![\w#])P(\d{1,5}[a-z]?)\b")
 
 
-@functools.lru_cache(maxsize=16384)
+@functools.lru_cache(maxsize=4096)
 def _same_ask(a: str, b: str) -> bool:
     """Two questions ask the same: they name the same points (P131) and the
     same task, or share most of their words ("Still waiting on you: P131 …"
