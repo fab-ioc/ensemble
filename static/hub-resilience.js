@@ -20,7 +20,8 @@
   function rejectUncertain(p) {
     const path = typeof p.input === 'string' ? p.input.split('?')[0] : '';
     if (!uncertainOnFailure.has(path)) return false;
-    pending.shift();
+    const i = pending.indexOf(p);   // its caller may have taken it out already
+    if (i >= 0) pending.splice(i, 1);
     p.reject(new Error('May not have been delivered - check the chat, then Retry.'));
     return true;
   }

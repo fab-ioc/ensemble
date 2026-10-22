@@ -162,10 +162,13 @@ class SendJsonTest(unittest.TestCase):
     """sendJson, every send-like button's request (#251): it always settles."""
 
     def run_node(self, body: str):
-        # The real setTimeout keeps the probe loop alive, so exit explicitly.
-        result = _node(PAGE + "(async () => {\n" + body + "\n})().then(() => process.exit(0),"
+        # The real setTimeout keeps the probe loop alive, so exit explicitly;
+        # node also exits by itself on an awaited promise nothing will settle,
+        # so the body's end is checked for.
+        result = _node(PAGE + "(async () => {\n" + body + "\n})().then(() => { console.log('#done'); process.exit(0); },"
                        " e => { console.error(e); process.exit(1); });")
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("#done", result.stdout, "an awaited promise was never settled")
 
     def test_an_answer_is_read(self):
         self.run_node(r"""
@@ -243,6 +246,31 @@ const given = assert.rejects(window.sendJson('/api/room/resume', {}, { ms: 5000 
 for (let i = 0; i < 10; i++) { await window.fetch('/api/room'); await new Promise(r => setTimeout(r, 5)); }
 await given;
 assert.strictEqual(sends, 4);       // the first try and three replays
+assert.strictEqual(window.HubResilience.queued, 0);
+""")
+
+    def test_a_send_given_up_mid_replay_takes_out_only_itself(self):
+        # Its caller gave up while its replay was answered 503: the next held
+        # send stays queued and is delivered (review 1 of #251).
+        self.run_node(r"""
+let up = false, resumes = 0;
+const ctl = new AbortController();
+load(async (path) => {
+  if (!up) throw new TypeError('Failed to fetch');
+  if (path === '/api/send') { ctl.abort(); return json(503, {}); }
+  if (path === '/api/room/resume') resumes++;
+  return { ...json(200, {}), url: path };
+});
+await assert.rejects(window.fetch('/api/sessions'));
+const send = assert.rejects(window.fetch('/api/send', { method: 'POST', signal: ctl.signal }));
+const resume = window.fetch('/api/room/resume', { method: 'POST' });
+assert.strictEqual(window.HubResilience.queued, 2);
+up = true;
+await window.HubResilience.probe();
+await send;
+await window.HubResilience.probe();
+assert.strictEqual((await resume).status, 200);
+assert.strictEqual(resumes, 1);
 assert.strictEqual(window.HubResilience.queued, 0);
 """)
 

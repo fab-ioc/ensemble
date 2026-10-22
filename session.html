@@ -3594,6 +3594,9 @@ async function askSend(key, option, post) {
       askDraftSet(key, '');
       pointsNote('Your answer is kept but not delivered yet: Retry it in the chat.');
       setTimeout(refresh, 400);
+    } else if (sendUnconfirmed(e)) {
+      // The hub takes an answer to a card once, so answering again is safe.
+      pointsNote('Not confirmed: ' + sendErrorText(e) + '. Answer again, it is taken only once.');
     } else {
       pointsNote('Not sent: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '. Try again.');
     }
@@ -7524,8 +7527,12 @@ async function postOk(path, body) {
 // The hint under the box for a send that failed: the message stays in the box.
 // No answer in time may still have reached the hub, which takes its key once,
 // so Send again cannot post it twice.
+// No answer, or the connection lost after replays: it may have arrived.
+function sendUnconfirmed(e) {
+  return !!(e && !e.status && (e.timeout || e.network));
+}
 function sendFailText(e) {
-  if (e && e.timeout) return 'Not confirmed: ' + sendErrorText(e) + '. Your message is still in the box: Send again, it is posted only once.';
+  if (sendUnconfirmed(e)) return 'Not confirmed: ' + sendErrorText(e) + '. Your message is still in the box: Send again, it is posted only once.';
   return 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
 }
 // Why a send did not arrive, in words.
@@ -8706,6 +8713,8 @@ async function submitComments() {
     // Refused, but the hub holds them: they show in the chat as not
     // delivered, with Retry, so the tray lets them go like a sent batch.
     if (e && e.kept) sent = true;
+    // No answer: they may have arrived; the same batch again has the same key.
+    else if (sendUnconfirmed(e)) CMT_ERROR = 'Not confirmed: ' + sendErrorText(e) + '. Your comments are kept: Submit again without changing them, they are posted only once.';
     else CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
   }
   CMT_SENDING = false;

@@ -336,7 +336,7 @@ class SendNeverSticks(unittest.TestCase):
                 self.free(r["after"], "drop, health held")
                 self.assertLess(r["took"], 24000)
                 self.assertEqual(r["after"]["box"], f"Message dropped at {w}")
-                self.assertTrue(r["after"]["hint"].startswith("Not sent: the hub could not be reached"), r["after"]["hint"])
+                self.assertTrue(r["after"]["hint"].startswith("Not confirmed: the hub could not be reached"), r["after"]["hint"])
                 # The first try and three replays, each of which Chrome itself
                 # tries up to three times: not thousands (measured before #251).
                 self.assertLessEqual(r["tries"], 16)

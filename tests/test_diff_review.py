@@ -345,10 +345,12 @@ class DiffReview(unittest.TestCase):
         self.assertEqual(self.r["kept"], {"notes": [["held by the hub", True]], "error": ""})
 
     def test_a_refused_send_keeps_everything(self):
-        for case, words in (("refused", "no longer exists"), ("down", "did not answer")):
+        # No answer at all may still have arrived: "Not confirmed", same batch again (#251).
+        for case, words, said in (("refused", "no longer exists", "Not sent"),
+                                  ("down", "could not be reached", "Not confirmed")):
             with self.subTest(case):
                 self.assertEqual(self.r[case]["notes"], [["first", False], ["second", False]])
-                self.assertIn("Not sent", self.r[case]["error"])
+                self.assertIn(said, self.r[case]["error"])
                 self.assertIn(words, self.r[case]["error"])
 
     def test_one_submit_sends_one_message_and_keeps_them_as_sent(self):

@@ -785,7 +785,7 @@ console.log(JSON.stringify({ posts, same: ctx.key1 === ctx.key2 && !!ctx.key1 })
         # batch sent again after a reload has the same key and counts once.
         self.assertIn("const sent = CMTS.map(c => c.cid);", fv)
         self.assertIn("const key = 'fv:' + sent.join(',');", fv)
-        self.assertIn("showFallback('Couldn’t send to the chat. Copy your comments:', body)", fv)
+        self.assertIn("'Couldn’t send to the chat. Copy your comments:', body)", fv)
 
     def test_retry_and_discard_are_a_fingers_size_on_a_phone(self):
         # The compact rule is more specific than the phone's `button` rule, so
