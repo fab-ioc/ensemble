@@ -147,6 +147,9 @@ import workspace_search
 import global_search
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun, ptyhost
+# Only a hub (main) starts real agents; an in-process test hub cannot (#257).
+import agent_launch
+agent_launch.install_spawn_guard()
 # What was running, for a hub that starts with an empty PTY host (P190), and
 # whether the lines the hub types into agents arrive.
 import running_rooms
@@ -170,6 +173,10 @@ def _run(argv, **kw):
     return subprocess.run(argv, **kw)
 
 BACKEND = get_backend()
+if "backends.windows" in sys.modules:
+    # Agent launch scripts follow DASHBOARD_DIR as it is at each launch, so a
+    # test's state dir holds its own (#257).
+    sys.modules["backends.windows"].state_dir = lambda: DASHBOARD_DIR
 # The tools module calls back into this module's task/launch primitives; the
 # dashboard runs as __main__, so hand it the live module object.
 ensemble_tools.bind(sys.modules[__name__])
@@ -12989,9 +12996,9 @@ def _warm_saver() -> None:
 # A launch writes a script (_launch) and, for Claude, an MCP config holding
 # its token (_mcp) that the agent reads as it starts; nothing reads them
 # again. Kept forever, they were 6,000 files each and 88 MB by 10-22 (#256).
-# A script goes after a week; an MCP config after 30 days, in case a long-lived
-# agent re-reads its --mcp-config (a /mcp reconnect).
-LAUNCH_FILES_KEEP_S = {"_launch": 7 * 86400, "_mcp": 30 * 86400}
+# A script goes after a day (#257); an MCP config after 30 days, in case a
+# long-lived agent re-reads its --mcp-config (a /mcp reconnect).
+LAUNCH_FILES_KEEP_S = {"_launch": 86400, "_mcp": 30 * 86400}
 
 
 def prune_launch_files(now: float | None = None) -> int:
@@ -13243,6 +13250,8 @@ class OneProxyPerPty:
             self._proxies.pop(pty_id, None)
 
     def create(self, *args, **kwargs):
+        # The host spawns in its own process, under no guard of this one.
+        agent_launch.guard_spawn(args[0] if args else kwargs.get("argv"), "pty host")
         proxy = self._client.create(*args, **kwargs)
         with self._lock:
             self._list = None
@@ -14034,6 +14043,16 @@ PRODUCT_OWNER_ROLE = chatroom.PRODUCT_OWNER_ROLE
 
 class StartRoomError(Exception):
     """A first launch that cannot be satisfied by an installed agent kind."""
+
+
+def check_signed_in(agent_key: str, env: dict | None = None) -> None:
+    """Before the hub starts ``agent_key``: one with no login is not started,
+    and the start fails saying so, instead of an agent that opens a sign-in
+    page in the browser (#257: a Codex with an empty CODEX_HOME)."""
+    try:
+        agent_launch.check(agent_key, env)
+    except agent_launch.NotSignedIn as e:
+        raise StartRoomError(str(e)) from e
 
 
 OWNER_ONLY_WORKFLOW = ("done",)
@@ -17792,6 +17811,7 @@ class Handler(BaseHTTPRequestHandler):
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         tools = self._task_agent_tools(room_full)
+        check_signed_in(agent_key)
         if agent_key == "codex":
             command = ["codex",
                        # never prompt for tool approval — the whole point is
@@ -17930,6 +17950,7 @@ class Handler(BaseHTTPRequestHandler):
         env.update(rtk_env)
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
+        check_signed_in(agent_key, env)
         if agent_key == "codex":
             argv = (["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
                     + _codex_task_args(room_full) + _codex_model_args(model, effort))
@@ -18003,6 +18024,7 @@ class Handler(BaseHTTPRequestHandler):
         env.update(rtk_env)
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
+        check_signed_in(agent_key, env)
         if agent_key == "codex":
             argv = (["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
                     + _codex_task_args(room_full) + _codex_model_args(model, effort))
@@ -21014,6 +21036,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not ag.installed():
                     self._send_json(400, {"error": f"{agent_key}_not_installed"})
                     return
+                try:
+                    check_signed_in(agent_key)
+                except StartRoomError as e:
+                    self._send_json(409, {"error": "not_signed_in", "message": str(e)})
+                    return
                 combined = "\n\n".join(p for p in (desc, user_prompt) if p)
                 # Pre-authorize the folder so codex doesn't block at its
                 # interactive directory-trust gate (no one's there to confirm).
@@ -21044,6 +21071,11 @@ class Handler(BaseHTTPRequestHandler):
             # has written its first transcript line. Otherwise the dashboard
             # would show "(no turns)" for the brief window between launch and
             # first user message.
+            try:
+                check_signed_in("claude")
+            except StartRoomError as e:
+                self._send_json(409, {"error": "not_signed_in", "message": str(e)})
+                return
             new_sid = str(uuid.uuid4())
             labels = load_labels()
             labels[new_sid] = desc
@@ -21422,6 +21454,9 @@ def main():
     # The PTY owner is outside the hub's process tree. A new web process
     # attaches to the same host and the same terminal IDs after a restart.
     startup.step("Connecting to the agents' terminals")
+    # This process is a hub: from here its launches start real agents. Never
+    # earlier, and never in a test's in-process hub (agent_launch.py).
+    agent_launch.allow()
     attach_pty_host()
     # Cold or warm start, decided before startup.booted() lets a request launch.
     note_host_at_attach()
