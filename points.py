@@ -552,6 +552,7 @@ def _save(room_id: str, led: dict) -> None:
         _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(body))
     except OSError:
         _CACHE.pop(room_id, None)
+    _PARTS.pop(room_id, None)      # worked out of the ledger before: let it go
     try:
         _d.invalidate_session_listing()
     except Exception:

@@ -13,8 +13,10 @@ an old file appended to after a quiet day shows within a minute.
 A folder none of whose files changed for QUIET_S (a finished task's
 transcripts) is not looked at between full walks either (#256: 600 project
 folders cost 46 ms a refresh, most of them for tasks done long ago): a
-session started in it again shows within a minute, and a lookup by session id
-finds it at once (dashboard.find_transcript globs on a miss).
+session started in it again shows within a minute, and so does a lookup by
+session id that does not glob on a miss (dashboard.find_transcript with
+immediate=False: a points sync between sends); a send's lookup finds it at
+once. A folder made or changed lately is not quiet, files or not.
 """
 from __future__ import annotations
 
@@ -134,7 +136,9 @@ class FileTable:
             except OSError:
                 continue
             files[p] = (st.st_mtime, st.st_size, st.st_mtime_ns)
-        newest = max((files[p][0] for p in (os.path.join(d, n) for n in names) if p in files), default=0.0)
+        newest = max((files[p][0] for p in (os.path.join(d, n) for n in names) if p in files),
+                     default=0.0)
+        newest = max(newest, dm / 1e9)     # an empty folder just made is not quiet
         dirs[d] = (dm, subs, names, settled, newest)
 
 

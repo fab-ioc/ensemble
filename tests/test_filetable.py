@@ -151,6 +151,8 @@ class QuietFolderTest(FileTableTest):
     def _quiet(self):
         p = self._write("old.jsonl", "x", age=filetable.QUIET_S + 100)
         self._settle()
+        t = time.time() - filetable.QUIET_S - 100       # a finished task's folder: changed long ago
+        os.utime(os.path.join(self.root, "p"), (t, t))
         self.table.files()
         return p
 
@@ -188,6 +190,13 @@ class QuietFolderTest(FileTableTest):
         self._append(p, "yy")
         self.assertEqual(self.table.files()[p][1], 1)
         self.assertEqual(self.table.files(hot_names={"old"})[p][1], 3)
+
+    def test_a_new_empty_folder_is_not_quiet(self):
+        # a project folder made a moment ago, listed before its first file
+        self._settle()
+        self.assertEqual(self.table.files(), {})
+        q = self._add_new()
+        self.assertEqual(set(self.table.files()), {q})
 
     def test_quiet_root_still_looked_at(self):
         # depth 0 (the rooms): the root's own files are never left quiet
