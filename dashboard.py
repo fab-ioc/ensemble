@@ -1415,14 +1415,16 @@ def compute_codex_session_cost(session_id: str) -> dict:
     return result
 
 
-def compute_room_cost(room: dict, *, immediate: bool = False) -> dict:
+def compute_room_cost(room: dict, *, immediate: bool = False, files: dict | None = None) -> dict:
     """Aggregate cost across a collaboration's agent members — sum each member's
     conversations and merge the per-model breakdowns — so a room shows the same
     Cost section a single-agent session does. Every conversation counts: each
     review, and each session a rotated owner or PO was handed out of. Claude
     conversations carry dollars and tokens from their transcripts; Codex ones
     carry tokens from their rollouts and no price. Same shape as
-    compute_session_cost."""
+    compute_session_cost. ``files``: the transcripts as a walk of CLAUDE_FILES
+    just found them, so a transcript whose cost is known for its time is not
+    looked at again (the task list, every 2 s, #256)."""
     total = {
         "dollars": 0.0,
         "tokens": {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0},
@@ -1436,6 +1438,12 @@ def compute_room_cost(room: dict, *, immediate: bool = False) -> dict:
         for sid in participant_session_ids(pp):
             if session_agent(pp, sid) == "codex":
                 costs.append(compute_codex_session_cost(sid))
+                continue
+            path = _TRANSCRIPT_PATHS.get(sid) if files is not None else None
+            listed = files.get(str(path)) if path is not None else None
+            cached = _COST_CACHE.get(path) if listed else None
+            if cached and cached[0] == listed[0]:
+                costs.append(cached[1])
             else:
                 costs.append(compute_session_cost(find_transcript(sid, immediate=immediate)))
     for c in costs:
@@ -1464,20 +1472,10 @@ def _news_landmark(m: dict) -> bool:
         bool(m.get("rotation")) or m.get("noticeKind") == "restart"))
 
 
-def room_news_at(room: dict) -> float:
-    """When a task's chat last got something for its reader: epoch seconds, 0
-    for never. The page compares it with the read point the chat keeps per
-    viewer (its catch-up line's) to show an unread dot.
-
-    A chat of agents is its messages: the last one that is not the person's own,
-    a hub-only room note or a landmark. Reports and PO-to-PO messages still
-    count because their represented sender is not ``ensemble``. A one-agent chat is
-    its transcript (session.html's soloMode): the agent's last text, which the
-    cost pass found (compute_room_cost runs first), and the messages between
-    POs it shows among the turns. Reads no file."""
+def _news_in_messages(room: dict) -> float:
+    """room_news_at's part read from the room's messages."""
     parts = [p for p in room.get("participants") or [] if isinstance(p, dict) and p.get("kind") == "agent"]
     solo = room.get("mode") == "solo" or len(parts) == 1
-    news = 0.0
     for m in reversed(room.get("messages") or []):
         if not isinstance(m, dict):
             continue
@@ -1488,10 +1486,27 @@ def room_news_at(room: dict) -> float:
               or (m.get("from") == "user" and (m.get("kind") or "human") == "human")):
             continue
         try:
-            news = float(m.get("ts") or 0)
+            return float(m.get("ts") or 0)
         except (TypeError, ValueError):
             continue
-        break
+    return 0.0
+
+
+def room_news_at(room: dict, msg_news: float | None = None) -> float:
+    """When a task's chat last got something for its reader: epoch seconds, 0
+    for never. The page compares it with the read point the chat keeps per
+    viewer (its catch-up line's) to show an unread dot.
+
+    A chat of agents is its messages: the last one that is not the person's own,
+    a hub-only room note or a landmark. Reports and PO-to-PO messages still
+    count because their represented sender is not ``ensemble``. A one-agent chat is
+    its transcript (session.html's soloMode): the agent's last text, which the
+    cost pass found (compute_room_cost runs first), and the messages between
+    POs it shows among the turns. Reads no file. ``msg_news``: what its
+    messages say, worked out before (a finished task's card)."""
+    parts = [p for p in room.get("participants") or [] if isinstance(p, dict) and p.get("kind") == "agent"]
+    solo = room.get("mode") == "solo" or len(parts) == 1
+    news = _news_in_messages(room) if msg_news is None else msg_news
     if solo:
         for pp in parts:
             for sid in participant_session_ids(pp):
@@ -7677,8 +7692,9 @@ def _task_index() -> list[dict]:
             out.append(hit[1])
             continue
         # Read in place: a first call reads every room, and a copy of each
-        # doubled a cold chat's first open (#247). The entry copies what it keeps.
-        room = chatroom.get_room(rid, copy_room=False)
+        # doubled a cold chat's first open (#247). The entry copies what it keeps,
+        # none of it messages: a finished task's card will do (#256).
+        room = chatroom.get_room(rid, copy_room=False, messages=False)
         if room is None:
             continue
         rep = room.get("lastReport") if isinstance(room.get("lastReport"), dict) else {}
@@ -8282,6 +8298,21 @@ def _project_for_cwd(cwd: str, projects: list[dict]) -> str:
     return best
 
 
+_PO_THERE: dict[str, tuple[float, bool]] = {}
+
+
+def _po_room_there(po: str) -> bool:
+    """Whether a PO's room file is there, looked at once a second: the task
+    list asks it for every task (#256)."""
+    now = time.monotonic()
+    hit = _PO_THERE.get(po)
+    if hit and now - hit[0] < 1.0:
+        return hit[1]
+    there = chatroom._room_path(po).exists()
+    _PO_THERE[po] = (now, there)
+    return there
+
+
 def room_po_id(room: dict, projects: list[dict] | None = None,
                links: dict | None = None) -> str:
     """The room of the PO a task reports to: its project's PO, or "" when the
@@ -8295,7 +8326,7 @@ def room_po_id(room: dict, projects: list[dict] | None = None,
     links = load_session_projects() if links is None else links
     pid = links.get(rid) or room.get("projectId") or _project_for_cwd(room.get("cwd", ""), projects)
     po = next(((p.get("poRoomId") or "").strip() for p in projects if p.get("id") == pid), "")
-    if not po or po == rid or not chatroom._room_path(po).exists():
+    if not po or po == rid or not _po_room_there(po):
         return ""
     return po
 
@@ -10303,7 +10334,8 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
             s["cwd"] = s.get("cwd") or row.get("cwd") or ""
         s.setdefault("title", "")
         s.pop("path", None)
-    full_rooms = {rid: chatroom.get_room(rid, public=False) or {} for rid in by_id}
+    # Seats for every task, messages only for a PO's (never a card).
+    full_rooms = {rid: chatroom.get_room(rid, public=False, messages=False) or {} for rid in by_id}
     # A PO room's room.json carries task and hub traffic; the person's and
     # PO's own balloons live in transcripts. Thread indexes keep those turns
     # incrementally and build in the background on their first search.
@@ -11724,6 +11756,97 @@ def _spec_rev(spec) -> str:
     return hashlib.sha1(spec.encode("utf-8", "replace")).hexdigest()[:10]
 
 
+def _message_facts(room: dict) -> dict:
+    """What a task row says from the room's messages: how many, the first
+    the person wrote, the last, the last an agent wrote and room_news_at's
+    part (newsMsgAt). Also kept on a finished task's card (chatroom.CARD_FACTS)."""
+    msgs = room.get("messages", []) or []
+    first_user = next((m for m in msgs
+                       if m.get("from") == "user" and (m.get("text") or "").strip()), None)
+    first_txt = ((first_user or (msgs[0] if msgs else {})).get("text") or "")[:200]
+    last_txt = ((msgs[-1] if msgs else {}).get("text") or "")
+    if len(last_txt) > 4000:    # whole lines only: a cut point line would show
+        last_txt = last_txt[:last_txt.rfind("\n", 0, 4000) + 1] or last_txt[:4000]
+    last_txt = points.strip_point_lines(last_txt)[:200]
+    # The issue view's summary answers "what did this task do", so it
+    # needs the last thing an AGENT said. `last` is the last message
+    # from anyone, which would happily caption your own question as
+    # "what happened".
+    last_agent = next((m for m in reversed(msgs)
+                       if m.get("from") != "user" and (m.get("text") or "").strip()), None)
+    return {"turns": len(msgs), "first": first_txt, "last": last_txt,
+            "lastAgent": ((last_agent or {}).get("text") or "")[:400],
+            "newsMsgAt": _news_in_messages(room)}
+
+
+def _keeps_room_whole(room: dict) -> bool:
+    """chatroom.ARCHIVE_VETO: a task a card cannot stand for: a project's PO,
+    one with a live seat, one whose last ask to a person is open."""
+    rid = room.get("id")
+    if rid and rid in {p.get("poRoomId") for p in load_projects()}:
+        return True
+    if any(isinstance(p, dict) and p.get("kind") == "agent" and p.get("ptyId")
+           for p in room.get("participants") or []) and _room_is_live(room):
+        return True
+    item = attention._open_to_human(room, room.get("messages") or [], "", False)
+    return bool(item and item.get("kind") in ("question", "blocked", "message"))
+
+
+chatroom.ARCHIVE_VETO.append(_keeps_room_whole)
+chatroom.CARD_FACTS.append(_message_facts)
+
+
+# Per room, by its revision (#256): what the task list works out of a room
+# that has not changed since the last list (every 2 s) is not worked out again.
+_HOLDS: dict[str, tuple[str, tuple[set, set, set]]] = {}
+_FACTS: dict[str, tuple[str, dict]] = {}
+_COLD_ROWS: dict[str, tuple[tuple, dict]] = {}
+
+
+def _room_holds(rooms: list[dict], revs: dict[str, str]) -> dict[str, tuple[set, set, set]]:
+    """Each room's agent conversations and folders (which make no rows of
+    their own) and the conversations its seats left behind (rotations,
+    switches, handovers, reviews, an agent taken off it):
+    {room id: (session ids, normalized folders, past session ids)}."""
+    out = {}
+    for rm in rooms:
+        rid = rm["id"]
+        rev = revs.get(rid, "")
+        hit = _HOLDS.get(rid)
+        if hit and rev and hit[0] == rev:
+            out[rid] = hit[1]
+            continue
+        note_session_owners(rm)
+        sids, cwds = set(), set()
+        for pp in rm.get("participants") or []:
+            if not isinstance(pp, dict) or pp.get("kind") != "agent":
+                continue
+            if pp.get("sessionId"):
+                sids.add(pp["sessionId"])
+            if pp.get("cwd"):
+                cwds.add(os.path.normcase(os.path.normpath(pp["cwd"])))
+        past = {x["sessionId"] for x in room_past_sessions(rm)}
+        out[rid] = (sids | past, cwds, past)
+        if rev:
+            _HOLDS[rid] = (rev, out[rid])
+    for gone in [r for r in _HOLDS if r not in out]:
+        _HOLDS.pop(gone, None)
+        _FACTS.pop(gone, None)
+    return out
+
+
+def _room_facts(room: dict, rev: str) -> dict:
+    """_message_facts, worked out again only when the room changed."""
+    rid = room.get("id", "")
+    hit = _FACTS.get(rid)
+    if hit and rev and hit[0] == rev:
+        return hit[1]
+    facts = _message_facts(room)
+    if rev:
+        _FACTS[rid] = (rev, facts)
+    return facts
+
+
 def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
     """At most `n` task rows, and only a finished task is ever left out: one
     that runs, needs someone, is a project's PO or sits in any column before
@@ -11756,7 +11879,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     their own window (SESSION_LIST_OWN_CAP), so tasks never push one out."""
     live_by_sid = {s["sessionId"]: s for s in load_live()}
     # Newest first; a live session's transcript is looked at on every load.
-    rows = filetable.newest_first(CLAUDE_FILES.files(hot_names=live_by_sid))
+    claude_files = CLAUDE_FILES.files(hot_names=live_by_sid)
+    rows = filetable.newest_first(claude_files)
     if progress_key:
         progress.set_progress(progress_key, "Reading session files", 0, len(rows))
     labels = load_labels()
@@ -11772,25 +11896,21 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     own_cap = SESSION_LIST_OWN_CAP
     def _norm_cwd(p: str) -> str:
         return os.path.normcase(os.path.normpath(p)) if p else ""
+    # Each room's revision is taken with the room: one read later could be
+    # that of a post made meanwhile, and the caches below would keep facts of
+    # the room before it under the revision after it.
+    revs: dict[str, str] = {}
     try:
-        rooms = chatroom.list_rooms(copy_rooms=False)
+        rooms = chatroom.list_rooms(copy_rooms=False, revisions=revs)
     except Exception:
         rooms = []
-    for rm in rooms:
-        note_session_owners(rm)
     collab_sids: set[str] = set()
     collab_cwds: set[str] = set()
+    holds = _room_holds(rooms, revs)
     for rm in rooms:
-        for pp in rm.get("participants") or []:
-            if not isinstance(pp, dict) or pp.get("kind") != "agent":
-                continue
-            if pp.get("sessionId"):
-                collab_sids.add(pp["sessionId"])
-            if pp.get("cwd"):
-                collab_cwds.add(_norm_cwd(pp["cwd"]))
-        # What its seats left behind (rotations, switches, handovers, reviews,
-        # an agent taken off it) is the task's too.
-        collab_sids.update(x["sessionId"] for x in room_past_sessions(rm))
+        sids, cwds, _past = holds[rm["id"]]
+        collab_sids |= sids
+        collab_cwds |= cwds
     # A PO's conversations from before its room recorded them, by their
     # folder and first words (old_po_room): {roomId: [row]}, for its list of
     # past conversations, and off the board.
@@ -12042,7 +12162,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
         run_state, run_since = {}, {}
     try:
         po_room_ids = {p.get("poRoomId") for p in load_projects() if p.get("poRoomId")}
+        shown_sig = (seat_model_shown("claude"), seat_model_shown("codex"))
         cold_done_kept = 0
+        for gone in [r for r in _COLD_ROWS if r not in holds]:
+            _COLD_ROWS.pop(gone, None)
         for rm in sorted(rooms, key=lambda r: r.get("updatedAt") or 0, reverse=True):
             rid = rm["id"]
             # The Board and task list are built from these rows. A cold task
@@ -12057,6 +12180,18 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 # response, while the Board's larger n still sees its rows.
                 if cold_done_kept > n:
                     continue
+            # A cold task's row changes only with its room, its label and the
+            # models seats without one show: the row made last time is used.
+            rev = revs.get(rid, "")
+            cold_key = (rev, labels.get(rid), shown_sig) if cold and rev else None
+            hit = _COLD_ROWS.get(rid) if cold_key else None
+            if hit and hit[0] == cold_key:
+                row = dict(hit[1])
+                pend = pending_input(rid)
+                row.update(board.view(rm), waitingOnPo=po_waits.get(rid), reported=reported.get(rid),
+                           resuming=bool(pend) and pend.get("state") != "failed")
+                room_rows.append(row)
+                continue
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
             live = False if cold else _room_is_live(rm)
@@ -12074,22 +12209,11 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             # printed in the last moments: every run dot reads this, and green
             # is an agent working (GitHub issue 13, point P157).
             busy = run_state.get(rm["id"]) == "working"
-            msgs = rm.get("messages", []) or []
-            first_user = next((m for m in msgs
-                               if m.get("from") == "user" and (m.get("text") or "").strip()), None)
-            first_txt = ((first_user or (msgs[0] if msgs else {})).get("text") or "")[:200]
-            last_txt = ((msgs[-1] if msgs else {}).get("text") or "")
-            if len(last_txt) > 4000:    # whole lines only: a cut point line would show
-                last_txt = last_txt[:last_txt.rfind("\n", 0, 4000) + 1] or last_txt[:4000]
-            last_txt = points.strip_point_lines(last_txt)[:200]
-            # The issue view's summary answers "what did this task do", so it
-            # needs the last thing an AGENT said. `last` is the last message
-            # from anyone, which would happily caption your own question as
-            # "what happened".
-            last_agent = next((m for m in reversed(msgs)
-                               if m.get("from") != "user" and (m.get("text") or "").strip()), None)
-            last_agent_txt = ((last_agent or {}).get("text") or "")[:400]
-            room_cost = {} if cold else compute_room_cost(rm)
+            # A finished task's card has these from when it was made.
+            facts = rm.get(chatroom.CARD_KEY) or _room_facts(rm, rev)
+            first_txt, last_txt = facts.get("first", ""), facts.get("last", "")
+            last_agent_txt = facts.get("lastAgent", "")
+            room_cost = {} if cold else compute_room_cost(rm, files=claude_files)
             pend = pending_input(rid)
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
@@ -12137,7 +12261,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "resuming": bool(pend) and pend.get("state") != "failed",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
-                "turns": len(rm.get("messages", [])),
+                "turns": facts.get("turns", 0),
                 "idleSeconds": (idle if live else None),
                 "pid": None, "archived": False,
                 "parent": "", "jira": [],
@@ -12147,7 +12271,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "costTokens": room_cost.get("tokens"),
                 # When its chat last got something to read (the unread dot),
                 # and a worktree branch's change against main (+N −N).
-                "newsAt": room_news_at(rm),
+                "newsAt": room_news_at(rm, facts.get("newsMsgAt")),
                 "changes": (branch_changes(rm.get("cwd", ""))
                             if not cold and (rm.get("workspace") or {}).get("mode") == "worktree" else None),
                 "currentTheme": "",
@@ -12173,9 +12297,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "points": None if cold else _points_counts(rid),
                 # How many conversations it has left behind (past_conversations).
                 "pastConversations": (0 if cold else len(
-                    {x["sessionId"] for x in room_past_sessions(rm)}
-                    | {x["sessionId"] for x in past_found.get(rid, [])})),
+                    holds[rid][2] | {x["sessionId"] for x in past_found.get(rid, [])})),
             })
+            if cold_key:
+                _COLD_ROWS[rid] = (cold_key, dict(room_rows[-1]))
     except Exception:
         pass
     global _PAST_FOUND
