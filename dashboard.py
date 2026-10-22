@@ -10254,7 +10254,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
     keys = task_numbers.project_keys(projects)
     pname = {p.get("id"): p.get("name") or "" for p in projects}
     po_of = {p["poRoomId"]: p for p in projects if p.get("poRoomId")}
-    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra, chatroom.read_unpacked)
+    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra, chatroom._read)
     by_id = {e["id"]: e for e in entries}
     refs: dict[str, list[str]] = {}
     for e in entries:
@@ -13033,25 +13033,6 @@ def prune_launch_files(now: float | None = None) -> int:
     return gone
 
 
-CHAT_PACK_EVERY_S = 6 * 3600
-
-
-def _chat_packer() -> None:
-    """Pack the finished chats due (#256 D2: chatroom.pack_chats), a while
-    after the start, then every CHAT_PACK_EVERY_S: a task Done 14 days ago
-    becomes due as the days go by."""
-    time.sleep(900)
-    while True:
-        try:
-            t = time.monotonic()
-            n = chatroom.pack_chats(between=lambda: (yield_to_pages(quiet_s=0.5), time.sleep(0.05)))
-            if n:
-                print(f"[housekeeping] {n} finished chat(s) packed in {time.monotonic() - t:.1f}s", flush=True)
-        except Exception as e:      # noqa: BLE001 — the next run tries again
-            print(f"[housekeeping] chats not packed: {e!r}", flush=True)
-        time.sleep(CHAT_PACK_EVERY_S)
-
-
 def _launch_file_pruner() -> None:
     """Once a while after the start, then daily."""
     time.sleep(600)
@@ -13062,8 +13043,7 @@ def _launch_file_pruner() -> None:
                 print(f"[housekeeping] {n} old launch file(s) removed", flush=True)
             n = chatroom.prune_originals()
             if n:
-                print(f"[housekeeping] {n} verified room original(s) from before the message log or a pack removed",
-                      flush=True)
+                print(f"[housekeeping] {n} verified room original(s) from before the message log removed", flush=True)
         except Exception as e:      # noqa: BLE001 — tomorrow tries again
             print(f"[housekeeping] launch files not pruned: {e!r}", flush=True)
         time.sleep(86400)
@@ -21541,7 +21521,6 @@ def main():
     threading.Thread(target=_warm_first_lists, name="warm-first-lists", daemon=True).start()
     threading.Thread(target=_warm_saver, name="warm-saver", daemon=True).start()
     threading.Thread(target=_launch_file_pruner, name="launch-file-pruner", daemon=True).start()
-    threading.Thread(target=_chat_packer, name="chat-packer", daemon=True).start()
     threading.Thread(target=_warm_rooms_at_start, name="warm-rooms", daemon=True).start()
 
     # Projects backup: the app owns the projects-root repo. Init it now
