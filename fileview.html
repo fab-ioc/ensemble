@@ -634,6 +634,12 @@
   .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
   .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
   .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* Quick reactions (#258): Subtle emoji buttons; the bar wraps rather than leave the window. */
+  .sel-bar { flex-wrap: wrap; max-width: calc(100vw - 2 * var(--s-200)); box-sizing: border-box; }
+  .sel-bar .sel-reacts { display: flex; gap: var(--s-050); }
+  .sel-bar .sel-react { min-width: 28px; padding: 0 var(--s-100); background: transparent; color: var(--fg); }
+  .sel-bar .sel-react:hover { background: var(--hover); }
+  .sel-bar .sel-react:active { background: var(--pressed); }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); padding:14px; }
   .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--selected-fg); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
@@ -685,6 +691,9 @@
   @media (pointer: coarse) {
     .sel-bar { gap: var(--s-200); }
     .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+    /* The reactions take a row of their own under Comment and Copy, spread across it. */
+    .sel-bar .sel-reacts { order: 3; flex-basis: 100%; justify-content: space-between; gap: 0; }
+    .sel-bar .sel-react { padding: 0; min-width: var(--touch-min); }
     header a.btn, header button.btn, .cmt-composer button, #cmt-tray button {
       min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
     }
@@ -1641,6 +1650,18 @@ function openComposer(data) {
   };
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); p.querySelector('.cmt-add').click(); } if (e.key === 'Escape') { e.preventDefault(); close(); } });
 }
+// A quick reaction from the selection bar (#258): the passage comment a typed
+// one would be, its words the reaction's ("👍 Agree"), sent at once and on its
+// own; another comment waiting in the tray waits for its Submit, and one
+// clicked while a send is on its way goes right after it. Only where a task
+// chat owns the file (canReact): with no chat there is no one to react to.
+function selReact(r, data) {
+  const cid = FVC.id();
+  FVC.put({ cid, at: FVC.now(), note: SelBar.reactNote(r), react: true, view: CUR_VIEW, start: data.start, end: data.end, quote: data.quote, ...(data.line ? { line: data.line } : {}) });
+  clearHl(); remarkAll(); renderTray();
+  const s = (data.doc || document).getSelection(); if (s) s.removeAllRanges();
+  submitCmts([cid]);
+}
 function dropCmts(cids) { FVC.remove(cids); cids.forEach(cid => LOST.delete(cid)); }
 function renderTray() {
   let tray = document.getElementById('cmt-tray');
@@ -1669,7 +1690,7 @@ function renderTray() {
     };
     list.appendChild(it);
   });
-  tray.querySelector('.cmt-submit').onclick = submitCmts;
+  tray.querySelector('.cmt-submit').onclick = () => submitCmts();
   tray.querySelector('.cmt-clear').onclick = () => { dropCmts(CMTS.map(c => c.cid)); clearHl(); renderTray(); };
 }
 // Re-apply the highlights for every comment that has a passage. Called after
@@ -1693,15 +1714,16 @@ function remarkAll() {
 // it is on. A passage is quoted; an element is named so it can be found in the
 // source: its locator and words, the line it starts on when that is certain,
 // its CSS path, where it sat on the page and its HTML (long values cut).
-function buildBody() {
+// `list`: the comments to write up (a quick reaction's own); all of them without.
+function buildBody(list = CMTS) {
   const base = document.getElementById('name').textContent || 'file';
   const path = new URLSearchParams(location.search).get('path') || '';
   const gone = c => LOST.has(c.cid) ? '\n_(The file changed since: this spot is not in it now.)_' : '';
   const fence = s => { let f = '```'; while (s.includes(f)) f += '`'; return f; };
   // A code span no backtick in its text can end early.
   const code = s => { s = String(s); let f = '`'; while (s.includes(f)) f += '`'; return f.length > 1 || /^`|`$/.test(s) ? f + ' ' + s + ' ' + f : f + s + f; };
-  return `## Review comments on ${code(base)} (${CMTS.length})\nFile: ${code(path)}\n\n` +
-    CMTS.map((c, i) => {
+  return `## Review comments on ${code(base)} (${list.length})\nFile: ${code(path)}\n\n` +
+    list.map((c, i) => {
       if (c.kind === 'el') {
         const e = c.el, f = fence(e.html || '');
         return `**${i + 1}.** On the element ${code(e.label)}${e.text ? ' “' + e.text + '”' : ''}${e.hint ? ' (' + e.hint + ')' : ''}${e.line ? ' at line ' + e.line : ''} of the page`
@@ -2017,19 +2039,47 @@ function showFallback(intro, body) {
   ta.focus(); ta.select();
   p.querySelector('.cmt-cancel').onclick = () => p.remove();
 }
-async function submitCmts() {
-  if (!CMTS.length) return;
-  const body = buildBody();
+// `only`: the comments to send (a quick reaction's own); all of them without.
+// A quick reaction always goes in a message of its own, under its own key, so
+// one tried before (not confirmed) is taken once when sent again: Submit sends
+// the typed comments together, then each reaction alone. One send at a time;
+// a reaction clicked meanwhile goes after it.
+let FV_SENDING = false, FV_AGAIN = false;   // FV_AGAIN: Submit was pressed meanwhile
+const FV_WAIT = new Set();
+async function submitCmts(only) {
+  if (FV_SENDING) { if (only) only.forEach(cid => FV_WAIT.add(cid)); else FV_AGAIN = true; return; }
+  const groups = only ? [CMTS.filter(c => only.includes(c.cid))]
+    : ROOM ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
+  FV_SENDING = true;
+  let ok = true;
+  try {
+    for (const list of groups) if (list.length && !(ok = await sendCmts(list))) break;
+    while (ok && FV_WAIT.size) {
+      const cid = FV_WAIT.values().next().value;
+      FV_WAIT.delete(cid);
+      const list = CMTS.filter(c => c.cid === cid);
+      if (list.length) ok = await sendCmts(list);
+    }
+  } finally {
+    FV_SENDING = false;
+    FV_WAIT.clear();           // not sent: they wait in the tray
+  }
+  const again = FV_AGAIN && ok; FV_AGAIN = false;
+  if (again) submitCmts();
+}
+// One message of comments; true when it went (or the hub holds it).
+async function sendCmts(list) {
+  const body = buildBody(list);
   if (!ROOM) {
     try { await navigator.clipboard.writeText(body); toast('No task chat to send to — comments copied.'); }
     catch (e) { showFallback('No task chat to send to. Copy your comments:', body); }
-    return;
+    return false;
   }
   // The hub's resume-or-deliver, never /api/room/say: a task that is not
   // running is resumed for the comments and they are typed in once its owner
   // is up. The key names this batch by its comments' ids, which are kept
   // with them: sent again after a lost reply or a reload, it counts once.
-  const sent = CMTS.map(c => c.cid);
+  const sent = list.map(c => c.cid);
   const key = 'fv:' + sent.join(',');
   try {
     // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
@@ -2040,14 +2090,16 @@ async function submitCmts() {
       // delivered, with Retry. Anything else keeps them here.
       if (!(j && j.kept)) throw new Error((j && j.error) || r.status);
       dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
-      return;
+      return true;
     }
     dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('✓ Comments sent to the chat');
+    return true;
   } catch (e) {
     // No answer: they may have arrived. The same comments again have the same key, so they count once.
     showFallback(e && !e.status && (e.timeout || e.network)
       ? 'Not confirmed: the hub did not answer. Submit again without changing them (they are posted only once), or copy them:'
       : 'Couldn’t send to the chat. Copy your comments:', body);
+    return false;
   }
 }
 // Download, Copy (a text file) and Share… (where the browser shares files):
@@ -2128,7 +2180,7 @@ function enableComments(root) {
 function mountSel() {
   if (_cDocWired) return;                       // one document listener, not one per render
   _cDocWired = true;
-  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data) });
+  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data), react: selReact, canReact: () => !!ROOM });
 }
 
 // ---- Rendering ------------------------------------------------------------
