@@ -874,14 +874,17 @@ def _cards_sig(room: dict | None) -> tuple[list, list, tuple]:
     current ones, and the signature its cards are kept under."""
     if room is None:
         return [], [], ()
-    sids, current = [], []
+    sids, current, seen = [], [], set()
     if (room.get("mode") or "") == "solo":
         for p in _d.chatroom.agent_participants(room):
             current.append((p.get("sessionId") or "").strip())
             for sid in [p.get("sessionId")] + [r.get(k) for r in p.get("rotations") or []
                                                for k in ("fromSessionId", "toSessionId")]:
                 sid = (sid or "").strip()
-                if sid and sid not in [s for s, _w in sids]:
+                # A set: a PO chat rotated 227 sessions, and a list's test made
+                # each poll's signature 2.4 ms (#256).
+                if sid and sid not in seen:
+                    seen.add(sid)
                     sids.append((sid, p.get("identity") or ""))
     sig = (room.get("updatedAt"), len(room.get("messages") or []), tuple(s for s, _w in sids),
            tuple(tuple(_d.points._session_stat(sid) or ()) for sid in current if sid))

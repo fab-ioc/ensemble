@@ -237,6 +237,18 @@ class Cards(unittest.TestCase):
         self.assertTrue(chatroom._CARDS_STATE["dirty"])
         self.assertEqual((self.path / chatroom.CARDS_FILE_NAME).read_bytes(), before)
 
+    def test_only_a_hub_writes_the_cards_file_into_its_own_home(self):
+        # A test that read the live rooms wrote the live cards file (#256).
+        rid = self.done_room()
+        self.later()
+        self._patch("_HOME_ROOMS", self.path)
+        self.entry(rid)
+        self.assertFalse(chatroom.save_cards(force=True))
+        self.assertFalse((self.path / chatroom.CARDS_FILE_NAME).exists())
+        self._patch("CARDS_WRITER", True)
+        self.assertTrue(chatroom.save_cards(force=True))
+        self.assertTrue((self.path / chatroom.CARDS_FILE_NAME).exists())
+
     def test_a_post_during_a_list_is_in_the_next_list(self):
         # Review 8: the task list caches a room's facts by its revision; that
         # revision is the listed room's, never that of a write made since.

@@ -72,6 +72,7 @@ Bound to the dashboard module like ``due``: nothing reads ``_d`` at import time.
 """
 from __future__ import annotations
 
+import functools
 import json
 import marshal
 import os
@@ -551,6 +552,7 @@ def _save(room_id: str, led: dict) -> None:
         _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(body))
     except OSError:
         _CACHE.pop(room_id, None)
+    _PARTS.pop(room_id, None)      # worked out of the ledger before: let it go
     try:
         _d.invalidate_session_listing()
     except Exception:
@@ -1826,8 +1828,10 @@ _TRY_ASK = re.compile(r"\b(?:please|you\s+can(?:\s+now)?|you\s+could|could\s+you
                       re.I)
 
 
+@functools.lru_cache(maxsize=4096)
 def asks_action(text: str) -> bool:
-    """An answer's words ask the person to try or check something."""
+    """An answer's words ask the person to try or check something. Kept per
+    text: every poll asks it of every answered point (#256)."""
     t = _prose(text or "")
     return bool(_TRY_START.search(t) or _TRY_ASK.search(t))
 
@@ -1910,12 +1914,12 @@ def counts(room_id: str) -> dict | None:
             # Counting only reads the ledger. The cached copy is safe under
             # this lock, and avoids cloning it on every task-list poll.
             led = hit[1] if hit and hit[0] == mt else load(room_id)
-        c = _counts(led)
+        parts = _parts(room_id, led)
+        c = dict(parts["counts"])
         # Needs you (#209): what the counter shows. Decisions as the chat's last
         # view worked them out (reading cards here would cost a listing seconds).
-        kinds = [needs_you(p) for p in led["points"]]
         c.update(decisions=len((_LAST_DECISIONS.get(room_id) or ([], []))[0]),
-                 totry=kinds.count("try"), news=kinds.count("new"))
+                 totry=parts["totry"], news=parts["news"])
         return c if any(c.values()) else None
 
 
@@ -1942,12 +1946,24 @@ def task_lookup(room_id: str, room: dict | None = None):
     except Exception as e:      # noqa: BLE001 — the points show without their tasks
         _log(f"{room_id}: tasks not read: {e!r}")
         return lambda ref: None
-    by_id = {r.get("id"): r for r in index}
-    memo: dict[str, dict | None] = {}
+    # Kept while the task index is the same list (no room changed) and the
+    # project and its keys are as they were: a PO chat polls every two seconds.
+    key = (pid, tuple(sorted(keys.items())))
+    with _LOCK:
+        hit = _LOOKUPS.get(room_id)
+        if hit is not None and hit[0] is index and hit[1] == key:
+            memo = hit[2]
+        else:
+            memo = {}
+            _LOOKUPS[room_id] = (index, key, memo)
+    by_id: dict = {}
 
     def get(ref: str) -> dict | None:
         if ref in memo:
-            return memo[ref]
+            info = memo[ref]
+            return dict(info) if info is not None else None
+        if not by_id:
+            by_id.update((r.get("id"), r) for r in index)
         rid, _why = _d.task_numbers.find_task(index, ref, pid, keys, any_project=not pid)
         r = by_id.get(rid) if rid else None
         info = None
@@ -1961,8 +1977,11 @@ def task_lookup(room_id: str, room: dict | None = None):
                 except (TypeError, ValueError):
                     info["doneAt"] = None
         memo[ref] = info
-        return info
+        return dict(info) if info is not None else None
     return get
+
+
+_LOOKUPS: dict[str, tuple] = {}   # room id -> (task index, (project, keys), {ref: task info})
 
 
 def _item(p: dict, task=None) -> dict:
@@ -2019,6 +2038,34 @@ def view(room_id: str, room: dict | None = None, quick: bool = False) -> dict:
     except Exception as e:
         _log(f"{room_id}: answers not read: {e!r}")
         led = load(room_id, shared=True)
+    parts = _parts(room_id, led)
+    pts = parts["shown"]
+    task = task_lookup(room_id, room) if any(_uses_task(p) for p in pts) else None
+    items = parts["items"]
+    return {"items": [_item(p, task) if _uses_task(p) else dict(items[i]) for i, p in enumerate(pts)],
+            **parts["counts"],
+            "approvals": sorted(led.get("approvals") or {}),
+            "asks": json.loads(json.dumps(led.get("asks") or {})),
+            "asksSettledAt": float(led.get("asksSettledAt") or 0),
+            "needs": {} if quick else _needs_view(room_id, room, led)}
+
+
+def _uses_task(p: dict) -> bool:
+    """The point's item shows its task as it is now (not the ledger alone)."""
+    return bool(p.get("task")) and p["state"] in LIVE
+
+
+_PARTS: dict[str, tuple] = {}   # room id -> (ledger, parts): what view and counts work out of it
+
+
+def _parts(room_id: str, led: dict) -> dict:
+    """What the chat's view and the counts work out of the whole ledger, once
+    per ledger as kept (#256): a poll of a PO chat went through all its
+    points, most of them closed long ago, every two seconds. A ledger kept in
+    the cache is replaced on each save and never changed in place."""
+    hit = _PARTS.get(room_id)
+    if hit is not None and hit[0] is led:
+        return hit[1]
     order = lambda p: (p["createdAt"], p["id"])     # noqa: E731
     pts = sorted(led["points"], key=order, reverse=True)
     # Every point still waiting on someone, however old, with the points it
@@ -2032,13 +2079,18 @@ def view(room_id: str, room: dict | None = None, quick: bool = False) -> dict:
             cur = by_id.get(cur["replyTo"])
     live = [p for p in pts if p["id"] in keep]
     shut = [p for p in pts if p["id"] not in keep][:max(0, VIEW_MAX - len(live))]
-    pts = sorted(live + shut, key=order, reverse=True)
-    task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
-    return {"items": [_item(p, task) for p in pts], **_counts(led),
-            "approvals": sorted(led.get("approvals") or {}),
-            "asks": json.loads(json.dumps(led.get("asks") or {})),
-            "asksSettledAt": float(led.get("asksSettledAt") or 0),
-            "needs": {} if quick else _needs_view(room_id, room, led)}
+    shown = sorted(live + shut, key=order, reverse=True)
+    kinds = [needs_you(p) for p in led["points"]]
+    closed = sorted((p for p in led["points"] if p["state"] == "acked" and p.get("ackedBy") in AUTO),
+                    key=lambda p: (p.get("stateAt") or 0, p["createdAt"], p["id"]), reverse=True)
+    parts = {"shown": shown, "items": [None if _uses_task(p) else _item(p) for p in shown],
+             "counts": _counts(led), "news": kinds.count("new"), "totry": kinds.count("try"),
+             "closed": [_closed_item(p) for p in closed[:CLOSED_MAX]], "closedCount": len(closed)}
+    with _LOCK:
+        cached = _CACHE.get(room_id)
+        if cached is not None and cached[1] is led:
+            _PARTS[room_id] = (led, parts)
+    return parts
 
 
 def _closed_item(p: dict) -> dict:
@@ -2072,13 +2124,11 @@ def _needs_view(room_id: str, room: dict | None, led: dict) -> dict:
     except Exception as e:      # noqa: BLE001 — the answers still show
         _log(f"{room_id}: open cards not read: {e!r}")
         decisions, older = [], []
-    kinds = [needs_you(p) for p in led["points"]]
-    shut = sorted((p for p in led["points"] if p["state"] == "acked" and p.get("ackedBy") in AUTO),
-                  key=lambda p: (p.get("stateAt") or 0, p["createdAt"], p["id"]), reverse=True)
+    parts = _parts(room_id, led)
     return {"decisions": decisions, "older": older[:CLOSED_MAX], "olderCount": len(older),
             **({"pending": True} if pending else {}),
-            "news": kinds.count("new"), "totry": kinds.count("try"),
-            "closed": [_closed_item(p) for p in shut[:CLOSED_MAX]], "closedCount": len(shut)}
+            "news": parts["news"], "totry": parts["totry"],
+            "closed": [dict(c) for c in parts["closed"]], "closedCount": parts["closedCount"]}
 
 
 _LAST_DECISIONS: dict[str, tuple] = {}   # room id → the last (decisions, older) worked out
