@@ -50,7 +50,7 @@ BUDGETS = {
     "poll_p95_ms": 50,          # an endpoint the page asks at least once a minute
     "max_ms": 1000,             # any request the page makes
     "send_shown_ms": 100,       # the balloon on screen after Send
-    "send_sent_ms": 300,        # … and held by the hub
+    "send_sent_ms": 600,        # … and held by the hub: typed in, a 250 ms pause, Enter (_type_input_reserved)
     "per_key_per_min": 36,      # one endpoint, one query: once per 2 s poll (and its jitter)
     "per_endpoint_per_min": 120,
     "lag_ms": 500,              # the interpreter held this long by one thing
