@@ -2859,6 +2859,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .usage-win-pct.unknown { color: var(--fg-muted); }
   .usage-win-reset { font-size: var(--fs-100); color: var(--fg-muted); width: 96px; flex: none; }
+  .usage-why a { color: var(--link); }
   .usage-why {
     font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px; line-height: 1.45;
   }
@@ -2892,22 +2893,69 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   tr.row.needs-you td.topic::before {
     content: '⚠'; color: var(--c-danger-fg); margin-right: 5px; font-size: 11px;
   }
+  /* Settings (P215): a dialog over the page, IntelliJ's shape. A tab per
+     section on the left, that section's page alone on the right, scrolling on
+     its own. #settings-panel is the dimmed backdrop; .sp-dlg the window. Under
+     the toast (80), so a save's message shows; the prune preview (#modal) is a
+     <dialog> in the top layer, above it. */
   #settings-panel {
-    /* Fixed, and as tall as the room under its button: the page is a fixed-height
-       shell (body.mid), so a panel hung off the document could not be scrolled
-       into view. Its own scrollbar reaches the last section. */
-    position: fixed; top: calc(var(--top-h) + var(--s-200)); right: 16px; z-index: 50;
-    max-height: calc(100dvh - var(--sp-top, var(--top-h)) - var(--s-300));
-    overflow-y: auto; overscroll-behavior: contain;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.12);
-    padding: 16px; min-width: 280px;
+    position: fixed; inset: 0; z-index: 75;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.5);
   }
   #settings-panel[hidden] { display: none; }
-  #settings-panel h4 {
-    margin: 0 0 10px; font-size: 11px; font-weight: 600;
-    color: var(--fg-subtle); text-transform: uppercase; letter-spacing: 0.06em;
+  #settings-panel .sp-dlg {
+    width: min(1100px, 92vw); height: min(760px, 88vh);
+    display: grid; grid-template-rows: auto minmax(0, 1fr);
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
+    overflow: hidden;
   }
+  #settings-panel .sp-head {
+    display: flex; align-items: center; gap: var(--s-200);
+    height: 48px; padding: 0 var(--s-200) 0 var(--s-400);
+    border-bottom: 1px solid var(--border);
+  }
+  #settings-panel .sp-head h3 { margin: 0; flex: 1; min-width: 0; font-size: var(--fs-400); font-weight: 600; }
+  #settings-panel .sp-icon-btn {
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    width: 32px; height: 32px; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-500); line-height: 1; cursor: pointer;
+  }
+  #settings-panel .sp-icon-btn:hover { background: var(--hover); color: var(--fg); }
+  #settings-panel .sp-back { display: none; margin-left: calc(-1 * var(--s-200)); }
+  #settings-panel .sp-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 0; }
+  #settings-panel .sp-nav {
+    display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto;
+    padding: var(--s-200); background: var(--surface-sunken); border-right: 1px solid var(--border);
+  }
+  #settings-panel .sp-tab {
+    display: flex; align-items: center; gap: var(--s-200); flex: 0 0 auto;
+    min-height: 32px; padding: var(--s-100) var(--s-300); text-align: left;
+    border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg-subtle);
+    font: inherit; font-size: var(--fs-300); font-weight: 500; cursor: pointer;
+  }
+  #settings-panel .sp-tab svg { flex: 0 0 auto; width: 16px; height: 16px; }
+  #settings-panel .sp-tab span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #settings-panel .sp-tab .sp-chev { display: none; margin-left: auto; color: var(--fg-muted); }
+  #settings-panel .sp-tab:hover { background: var(--hover); color: var(--fg); }
+  #settings-panel .sp-tab[aria-selected="true"] { background: var(--selected-bg); color: var(--selected-fg); }
+  #settings-panel .sp-tab:focus-visible, #settings-panel .sp-icon-btn:focus-visible {
+    outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
+  }
+  #settings-panel .sp-pages {
+    min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    padding: var(--s-600) var(--s-800) var(--s-800);
+  }
+  #settings-panel .settings-section { max-width: 680px; }
+  #settings-panel .settings-section[hidden] { display: none; }
+  #settings-panel h4 { margin: 0 0 var(--s-300); font-size: var(--fs-500); font-weight: 600; color: var(--fg); }
+  /* A long page's own sub-headings. */
+  #settings-panel .sp-sub {
+    margin: var(--s-600) 0 var(--s-200); padding-top: var(--s-300); border-top: 1px solid var(--border);
+    font-size: var(--fs-300); font-weight: 600; color: var(--fg);
+  }
+  #settings-panel h4 + .sp-sub { margin-top: var(--s-300); padding-top: 0; border-top: 0; }
   #accent-input {
     width: 100%; min-width: 0; padding: var(--s-200);
     border: 1px solid var(--border); border-radius: var(--r-200);
@@ -2920,9 +2968,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
   }
   #accent-input::placeholder { color: var(--fg-muted); }
-  #settings-panel .settings-section + .settings-section {
-    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
-  }
   #settings-panel .cfg-grid {
     margin: 0; display: grid; grid-template-columns: max-content 1fr;
     column-gap: 10px; row-gap: 4px;
@@ -3464,8 +3509,37 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     input, select, textarea { font-size: var(--fs-400) !important; }
 
     /* Trays and menus fit the screen, and their rows are finger-sized. */
-    #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
+    #usage-tray { left: var(--s-200); right: var(--s-200); width: auto; }
+    /* Settings is the whole screen: the tab list first, a tap opens that
+       page with a Back arrow to the list (.sp-page). */
+    #settings-panel { align-items: stretch; justify-content: stretch; }
+    #settings-panel .sp-dlg {
+      width: 100%; height: var(--vv-h, 100dvh); border: 0; border-radius: 0; box-shadow: none;
+    }
+    #settings-panel .sp-head { height: auto; min-height: var(--touch-min); padding: 0 var(--s-100) 0 var(--s-300); }
+    #settings-panel .sp-icon-btn { width: var(--touch-min); height: var(--touch-min); }
+    #settings-panel .sp-body { grid-template-columns: minmax(0, 1fr); }
+    #settings-panel .sp-nav { border-right: 0; background: var(--surface); padding: var(--s-200) var(--s-200); }
+    #settings-panel .sp-tab { min-height: var(--touch-min); font-size: var(--fs-400); }
+    #settings-panel .sp-tab .sp-chev { display: inline; }
+    #settings-panel .sp-pages { display: none; padding: var(--s-400) var(--s-400) var(--s-800); }
+    #settings-panel .sp-dlg.sp-page .sp-nav { display: none; }
+    #settings-panel .sp-dlg.sp-page .sp-pages { display: block; }
+    #settings-panel .sp-dlg.sp-page .sp-back { display: inline-flex; }
     #settings-panel .pref-select { height: var(--touch-min); }
+    /* Every control on a page is finger-sized; a checkbox's label is its target. */
+    #settings-panel .sp-pages :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea, button) {
+      min-height: var(--touch-min);
+    }
+    #settings-panel .sp-pages button { min-width: var(--touch-min); }
+    #settings-panel .sp-pages a[href] {
+      display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min);
+    }
+    #settings-panel .sp-pages label:has(> input[type="checkbox"]) {
+      display: inline-flex; align-items: center; gap: var(--s-200); min-height: var(--touch-min); min-width: var(--touch-min);
+    }
+    #settings-panel .sp-pages label:has(> input[type="checkbox"])[hidden] { display: none; }
+    #settings-panel .sp-pages input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
     #settings-models .pref-row, #settings-models .cfg-hint { max-width: none; }
     .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt, .cm-item { min-height: var(--touch-min); }
     /* Create's menu: the width of the screen less the gutters, under the bar. */
@@ -4193,6 +4267,16 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="usage-foot" id="usage-foot"></div>
 </div>
 <div id="settings-panel" hidden>
+<div class="sp-dlg" role="dialog" aria-modal="true" aria-labelledby="sp-title">
+  <div class="sp-head">
+    <button type="button" class="sp-icon-btn sp-back" id="sp-back" aria-label="Back to the list of settings" title="Back to the list">&larr;</button>
+    <h3 id="sp-title">Settings</h3>
+    <button type="button" class="sp-icon-btn" id="sp-close" aria-label="Close settings" title="Close (Esc)">&times;</button>
+  </div>
+  <div class="sp-body">
+  <!-- One tab per .settings-section, built from them (spTabs). -->
+  <div class="sp-nav" id="sp-nav" role="tablist" aria-orientation="vertical" aria-label="Settings sections"></div>
+  <div class="sp-pages" id="sp-pages">
   <div class="settings-section" id="settings-app">
     <h4>Ensemble as an app</h4>
     <button type="button" id="install-app-btn" class="po-btn def" hidden
@@ -4218,6 +4302,7 @@ window.DOC_LISTENERS_PAUSED = false;
        (agent_models.py): one choice per agent kind, from what the agent offers. -->
   <div class="settings-section" id="settings-models">
     <h4>Agent models</h4>
+    <h5 class="sp-sub">Which agent</h5>
     <!-- P205: the kind every seat the hub chooses goes to while it is usable. -->
     <div class="pref-row">
       <span class="pref-label" id="pref-prefer-label">Prefer</span>
@@ -4228,6 +4313,7 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <p class="cfg-hint" id="pref-prefer-note">Claude or Codex: new tasks, reviews, handovers and PO switches go to that agent whenever it is usable, at any percent below its limit; the other one is used only while it is spent (at 100%, stopped by its limit or a login, or not installed), and it comes back at the next start once it is usable. Weekly pacing is not used then. Balanced: the hub moves work to the agent with more room, by the warning and the week's pace below. A task that keeps its agents is not moved either way.</p>
+    <h5 class="sp-sub">Models</h5>
     <div class="pref-row" style="margin-top: 16px;">
       <label class="pref-label" for="pref-model-claude">Claude model</label>
       <select id="pref-model-claude" class="pref-select" data-kind="claude" data-field="model" disabled></select>
@@ -4245,6 +4331,7 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
     <p class="cfg-hint" id="pref-effort-codex-note" role="status" hidden></p>
     <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers and PO switches. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
+    <h5 class="sp-sub">Task agents’ tools</h5>
     <div class="pref-row" style="margin-top: 16px;">
       <label class="pref-label" for="pref-task-agent-tools">Task agents' tools</label>
       <select id="pref-task-agent-tools" class="pref-select">
@@ -4253,6 +4340,7 @@ window.DOC_LISTENERS_PAUSED = false;
       </select>
     </div>
     <p class="cfg-hint" data-noun="The default for task owners, reviewers and owner handovers, including tasks in no {project}. Each {project} can override it from its menu. A change applies only when an agent is launched or resumed after the change; POs and sessions you open from history keep your own tools.">The default for task owners, reviewers and owner handovers, including tasks in no project. Each project can override it from its menu. A change applies only when an agent is launched or resumed after the change; POs and sessions you open from history keep your own tools.</p>
+    <h5 class="sp-sub">Weekly pacing</h5>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label" id="pref-pace-label">Pace each agent's week</span>
@@ -4289,12 +4377,14 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
   <div class="settings-section" id="settings-prefs">
     <h4>Preferences</h4>
+    <h5 class="sp-sub">You</h5>
     <div class="pref-row">
       <span class="pref-label">What the agents call you</span>
       <input type="text" id="pref-nickname" placeholder="your git user name (default)"
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
+    <h5 class="sp-sub">Stalls and restarts</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call an agent stalled after</span>
       <input type="number" id="pref-stall-seconds" min="60" max="86400" step="60"
@@ -4307,6 +4397,7 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span>
     </div>
     <p class="cfg-hint">A restart or an update first asks every working agent to reach a safe point and waits for all of them, at most this long.</p>
+    <h5 class="sp-sub">Fresh sessions</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Start the PO afresh past</span>
       <input type="number" id="pref-po-rotate" min="0" max="5000000" step="10000"
@@ -4319,6 +4410,7 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="200000" autocomplete="off"> <span class="pref-label">tokens</span>
     </div>
     <p class="cfg-hint">The same for the engineer (or only agent) of a running task: it writes <code>TASK-HANDOVER.md</code> in the task folder and a fresh session carries on from it. 0 = never.</p>
+    <h5 class="sp-sub">Command output</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">RTK for task agents</span>
       <div class="seg pref-seg" id="pref-rtk-tasks">
@@ -4327,6 +4419,7 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <p class="cfg-hint">Compresses command output for task owners and reviewers on their next launch. PO rooms, adopted sessions and your own terminals are never changed.</p>
+    <h5 class="sp-sub">Words</h5>
     <!-- The word for a board (static/noun.js), one per hub: projectNoun. -->
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call a board</span>
@@ -4360,6 +4453,7 @@ window.DOC_LISTENERS_PAUSED = false;
       <button type="button" id="backup-now-btn" class="secondary" style="margin-left: auto;">Back up now</button>
     </div>
     <p class="cfg-hint" id="backup-status">—</p>
+    <h5 class="sp-sub" id="pref-rearrange-head">Terminal windows</h5>
     <div class="pref-row" id="pref-rearrange-row" style="margin-top: 14px;">
       <span class="pref-label">Rearrange existing sessions</span>
       <div class="pref-btn-row">
@@ -4389,6 +4483,9 @@ window.DOC_LISTENERS_PAUSED = false;
     <dl class="cfg-grid"></dl>
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
   </div>
+  </div>
+  </div>
+</div>
 </div>
 <main>
   <section id="view"></section>
@@ -5063,6 +5160,7 @@ function applyPlatformChrome() {
   if (!feat('consolidate') && !feat('split')) {
     hideIf('pref-rearrange-row', true);
     hideIf('pref-rearrange-hint', true);
+    hideIf('pref-rearrange-head', true);
   }
 }
 
@@ -17726,7 +17824,7 @@ function closeCreateMenu(back) {
 }
 function openCreateMenu() {
   const m = $('#create-menu'), b = $('#new-btn');
-  closeMeMenu(); closeProjMenu(); $('#settings-panel').hidden = true;
+  closeMeMenu(); closeProjMenu(); closeSettings(false);
   m.innerHTML = createMenuHtml(createMenuItems(createMenuCtx()));
   m.hidden = false;
   b.setAttribute('aria-expanded', 'true');
@@ -18905,13 +19003,13 @@ function usageSourceHtml(src) {
   if (used) {
     // The model a seat that names none is started on: the one chosen in
     // Settings (Agent models), else the agent's own default.
-    const from = used.from === 'settings' ? ', chosen in Settings'
-      : used.from === 'config' ? `, ${name}’s own default` : '';
-    const how = used.model ? ` (model ${used.model}${from})` : '';
+    const from = used.from === 'settings' ? ', chosen in <a href="#settings-models" class="usage-set">Settings › Agent models</a>'
+      : used.from === 'config' ? `, ${esc(name)}’s own default` : '';
+    const how = used.model ? ` (model ${esc(used.model)}${from})` : '';
     const unread = pools.some(p => p.inUse) ? ''
       : ' There is no reading for that pool yet.';
     inUse = `<div class="usage-why">${esc(name)} sessions currently use the
-      ${esc(usageCodexPoolName(used))}${esc(how)}.${unread}</div>`;
+      ${esc(usageCodexPoolName(used))}${how}.${unread}</div>`;
     const idleHot = (USAGE.notices || []).filter(n => n.source === src.source);
     if (idleHot.length) {
       const n = idleHot[0];
@@ -19617,17 +19715,175 @@ queueMicrotask(() => {
 // Settings used to be a ⚙ of its own in the bar. It lives behind the avatar
 // now — "everything about me" in one place — which is one control fewer up
 // there and the conventional home for it.
-function openSettingsPanel(anchor) {
+// ---- Settings: a dialog with a tab per section (P215) -----------------------
+// Each .settings-section in #sp-pages is a page; its tab is built from it (its
+// h4 is the name, so the board word follows). One page shows at a time. The
+// tab is remembered per browser (cd-settings-tab) and named by a link:
+// openSettings('models'), #settings-models in the address, or any element
+// with data-settings-tab="models". A phone shows the list first, then a page
+// with a Back arrow (.sp-page); a link to a tab opens its page straight away.
+const SP_TAB_KEY = 'cd-settings-tab';
+const SP_ICONS = {
+  app: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  agents: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/>',
+  feedback: '<path d="M4 5h16v11H9l-5 4z"/>',
+  models: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  prefs: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+  backup: '<path d="M7 18a5 5 0 0 1-.5-9.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"/><path d="M12 16v-5M9.5 13.5 12 11l2.5 2.5"/>',
+  prune: '<rect x="3" y="13" width="18" height="7" rx="2"/><path d="m5 13 2-8h10l2 8M17 16.5h.01"/>',
+  runtime: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
+};
+const SP = { tab: '', opener: null };
+const spSections = () => [...document.querySelectorAll('#sp-pages > .settings-section')];
+const spKey = sec => sec.id.replace(/^settings-/, '');
+function spTabs() {
+  const nav = $('#sp-nav');
+  const html = spSections().filter(s => s.style.display !== 'none').map(sec => {
+    const k = spKey(sec), h = sec.querySelector('h4');
+    const icon = SP_ICONS[k] || SP_ICONS.prefs;
+    return `<button type="button" class="sp-tab" role="tab" id="sp-tab-${k}" data-tab="${k}" aria-controls="${sec.id}" aria-selected="false" tabindex="-1">`
+      + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`
+      + `<span>${esc(h ? h.textContent.trim() : k)}</span><span class="sp-chev" aria-hidden="true">›</span></button>`;
+  }).join('');
+  if (nav.innerHTML !== html) nav.innerHTML = html;
+  spSections().forEach(sec => { sec.setAttribute('role', 'tabpanel'); sec.setAttribute('aria-labelledby', 'sp-tab-' + spKey(sec)); });
+}
+function spHasTab(k) { return !!k && !!document.getElementById('sp-tab-' + k); }
+function spShow(k, page) {
+  spTabs();
+  if (!spHasTab(k)) { const first = $('#sp-nav .sp-tab'); k = first ? first.dataset.tab : ''; }
+  SP.tab = k;
+  try { localStorage.setItem(SP_TAB_KEY, k); } catch (e) {}
+  for (const sec of spSections()) sec.hidden = spKey(sec) !== k;
+  for (const b of $('#sp-nav').querySelectorAll('.sp-tab')) {
+    const on = b.dataset.tab === k;
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+    b.tabIndex = on ? 0 : -1;
+  }
+  $('#sp-pages').scrollTop = 0;
+  $('#settings-panel .sp-dlg').classList.toggle('sp-page', !!page);
+  const sec = document.getElementById('settings-' + k);
+  $('#sp-title').textContent = page && isPhone() && sec && sec.querySelector('h4') ? sec.querySelector('h4').textContent : 'Settings';
+}
+// tab: a section's key ('models', 'prune', …) or its id; none opens the one
+// last shown. opener: where the focus goes back to on close.
+function openSettings(tab, opener) {
   const panel = $('#settings-panel');
+  closeMeMenu(); closeCreateMenu();
+  $('#usage-tray').hidden = true;
+  if (panel.hidden) SP.opener = opener || document.activeElement;
   panel.hidden = false;
-  const r = anchor.getBoundingClientRect();
-  panel.style.top = Math.round(r.bottom + 6) + 'px';
-  panel.style.setProperty('--sp-top', Math.round(r.bottom + 6) + 'px');
-  // A phone's rule insets both edges; only a desktop hangs it off the avatar.
-  panel.style.right = isPhone() ? '' : Math.round(window.innerWidth - r.right) + 'px';
-  panel.style.left = isPhone() ? '' : 'auto';
+  let k = String(tab || '').replace(/^#?settings-/, '');
+  spTabs();
+  const asked = spHasTab(k);
+  if (!asked) { try { k = localStorage.getItem(SP_TAB_KEY) || ''; } catch (e) { k = ''; } }
+  // A phone opens on the list unless a link named the page.
+  spShow(k, asked || !isPhone());
+  const focus = asked && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
+  if (focus) focus.focus();
   loadAgentModels();            // what the agents offer may have changed
 }
+// Kept for the tests and any caller that hangs Settings off a control.
+function openSettingsPanel(anchor, tab) { openSettings(tab, anchor); }
+// Where the focus goes back to: the opener while it is still on screen, else
+// the avatar (the avatar menu's item is gone with its menu).
+function spReturnTo(o) {
+  return o && o.isConnected && o.getClientRects().length && o !== document.body ? o : $('#me-btn');
+}
+// restore false: the caller moves the focus on (Feedback's dialog) and is
+// given the element to bring it back to.
+function closeSettings(restore = true) {
+  const panel = $('#settings-panel');
+  if (panel.hidden) return null;
+  panel.hidden = true;
+  const o = SP.opener; SP.opener = null;
+  const back = spReturnTo(o);
+  if (restore && back) back.focus();
+  return back;
+}
+// A section shown or hidden while Settings is open (applyPlatformChrome and
+// the like set style.display): the tabs follow, and a page that went away
+// gives way to the first tab left.
+const spVisibleKeys = () => spSections().filter(s => s.style.display !== 'none').map(spKey).join(' ');
+let spKeys = '';
+const spWatch = new MutationObserver(() => {
+  const keys = spVisibleKeys();
+  if (keys === spKeys) return;
+  spKeys = keys;
+  const panel = $('#settings-panel');
+  if (panel.hidden) return;
+  // Rebuilding the list drops a focused tab: the selected one takes it.
+  const inPage = $('#settings-panel .sp-dlg').classList.contains('sp-page');
+  const hadFocus = panel.contains(document.activeElement);
+  spShow(SP.tab, inPage || !isPhone());
+  const a = document.activeElement;
+  if (hadFocus && !(panel.contains(a) && a.getClientRects().length)) {
+    const b = inPage && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
+    if (b) b.focus();
+  }
+});
+spSections().forEach(s => spWatch.observe(s, { attributes: true, attributeFilter: ['style'] }));
+window.openSettings = openSettings;
+window.closeSettings = closeSettings;
+$('#sp-close').addEventListener('click', () => closeSettings());
+$('#sp-back').addEventListener('click', () => {
+  spShow(SP.tab, false);
+  const b = $('#sp-nav .sp-tab[aria-selected="true"]'); if (b) b.focus();
+});
+$('#sp-nav').addEventListener('click', (ev) => {
+  const b = ev.target.closest('.sp-tab');
+  if (!b) return;
+  spShow(b.dataset.tab, true);
+  if (isPhone()) $('#sp-back').focus(); else b.focus();
+});
+$('#settings-panel').addEventListener('mousedown', (ev) => {
+  // A press on the dimmed page closes; one inside the window never does.
+  if (ev.target === ev.currentTarget) { ev.preventDefault(); closeSettings(); }
+});
+$('#settings-panel').addEventListener('keydown', (ev) => {
+  const panel = ev.currentTarget;
+  // Keys stay inside: the page's own shortcuts (/, r, Esc on a task) are not
+  // for a field in Settings.
+  ev.stopPropagation();
+  if (ev.key === 'Escape') {
+    ev.preventDefault(); closeSettings(); return;
+  }
+  const tab = ev.target.closest('.sp-tab');
+  if (tab && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(ev.key)) {
+    const all = [...$('#sp-nav').querySelectorAll('.sp-tab')];
+    let i = all.indexOf(tab);
+    i = ev.key === 'Home' ? 0 : ev.key === 'End' ? all.length - 1
+      : (i + (ev.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length;
+    all.forEach(b => { b.tabIndex = b === all[i] ? 0 : -1; });
+    all[i].focus(); ev.preventDefault();
+    return;
+  }
+  if (ev.key !== 'Tab') return;
+  // The focus stays in the window: Tab past the last control comes back to the first.
+  const els = [...panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(e => !e.disabled && e.tabIndex >= 0 && e.getClientRects().length);
+  if (!els.length) return;
+  const first = els[0], last = els[els.length - 1];
+  if (ev.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) { last.focus(); ev.preventDefault(); }
+  else if (!ev.shiftKey && document.activeElement === last) { first.focus(); ev.preventDefault(); }
+});
+// Any control or link that names a tab opens Settings there.
+document.addEventListener('click', (ev) => {
+  const a = ev.target.closest && ev.target.closest('[data-settings-tab], a[href^="#settings"]');
+  if (!a || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  ev.preventDefault(); ev.stopPropagation();
+  openSettings(a.dataset.settingsTab || a.getAttribute('href').slice(1), a);
+}, true);
+// #settings or #settings-<tab> in the address opens it there.
+function spFromHash() {
+  const m = /^#settings(?:-([a-z]+))?$/.exec(location.hash);
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  openSettings(m[1] || '');
+  return true;
+}
+window.addEventListener('hashchange', spFromHash);
+if (/^#settings/.test(location.hash)) setTimeout(spFromHash, 0);
 function closeMeMenu() {
   setAppearanceSubmenu(null, false);
   $('#me-menu').hidden = true;
@@ -19638,7 +19894,7 @@ $('#me-btn').addEventListener('click', (ev) => {
   closeCreateMenu();
   const m = $('#me-menu');
   const opening = m.hidden;
-  $('#settings-panel').hidden = true;
+  closeSettings(false);
   m.hidden = !opening;
   $('#me-btn').setAttribute('aria-expanded', opening ? 'true' : 'false');
   if (opening) {
@@ -19694,10 +19950,8 @@ $('#accent-input').addEventListener('input', (ev) => {
   else if (window.cdTheme && cdTheme.rgbOf(v)) setAccent(v, true);
 });
 document.addEventListener('click', (ev) => {
-  if (ev.target.closest('#me-btn') || ev.target.closest('#me-menu')
-      || ev.target.closest('#settings-panel')) return;
+  if (ev.target.closest('#me-btn') || ev.target.closest('#me-menu')) return;
   closeMeMenu();
-  $('#settings-panel').hidden = true;
 });
 
 // ---- Ensemble as an app (Settings) ------------------------------------------

@@ -813,7 +813,8 @@ class TheTraySaysWhichModel(unittest.TestCase):
 
     def test_the_line_names_the_model_and_where_it_was_chosen(self):
         self.assertIn("Codex sessions currently use the reserve pool "
-                      "(model gpt-reserve, chosen in Settings).", self.html["chosen"])
+                      "(model gpt-reserve, chosen in <a href=\"#settings-models\" class=\"usage-set\">"
+                      "Settings › Agent models</a>).", self.html["chosen"])
         self.assertIn("Codex sessions currently use the main pool "
                       "(model gpt-6-astra, Codex’s own default).", self.html["own"])
         # A reading from a hub before this setting says no more than it knows.

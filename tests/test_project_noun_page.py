@@ -137,13 +137,20 @@ async function main() {
       res.createText = await p.evalIn(`document.getElementById('modal').innerText`);
       await p.shot(`noun-${name}-create`);
       await p.evalIn(`document.getElementById('modal').close(), 0`);
-      await p.evalIn(`openSettingsPanel(document.getElementById('me-btn')), 0`);
-      await sleep(300);
-      res.settings = await p.evalIn(SCAN('#settings-panel'));
-      res.settingsText = await p.evalIn(`document.getElementById('settings-panel').innerText`);
+      // Settings shows one tab at a time (#264): scan every tab's page.
+      res.settings = []; res.settingsText = '';
+      const tabs = await p.evalIn(`(openSettings(), [...document.querySelectorAll('#sp-nav .sp-tab')].map(b => b.dataset.tab))`);
+      for (const t of tabs) {
+        await p.evalIn(`openSettings(${JSON.stringify(t)}), 0`);
+        await sleep(150);
+        res.settings.push(...await p.evalIn(SCAN('#settings-panel')));
+        res.settingsText += await p.evalIn(`document.getElementById('settings-panel').innerText`) + '\n';
+      }
+      await p.evalIn(`openSettings('prefs'), 0`);
+      await sleep(150);
       // The five choices sit in one row inside the panel, none cut off.
       res.fits = await p.evalIn(`(() => { const s = document.getElementById('pref-noun'), bs = [...s.querySelectorAll('button')];
-        const r = s.getBoundingClientRect(), pr = document.getElementById('settings-panel').getBoundingClientRect();
+        const r = s.getBoundingClientRect(), pr = document.querySelector('#settings-panel .sp-dlg').getBoundingClientRect();
         return { inPanel: r.left >= pr.left - 1 && r.right <= pr.right + 1, noOverflow: s.scrollWidth <= s.clientWidth + 1,
                  oneRow: new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size === 1,
                  panelLeft: Math.round(pr.left), segW: Math.round(r.width), panelW: Math.round(pr.width) }; })()`);
