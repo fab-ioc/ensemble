@@ -993,7 +993,10 @@ def _meta(th: dict) -> dict:
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     r = idx["by_mid"][mid]
     out = {**r["turn"], "mid": mid}
-    if tid and tid != "team:activity" and mid in idx.get("work", ()):
+    # A thread's first message is what it is about, never folded into its
+    # work log (#265: a thread started on a PO note opened as a closed row).
+    root = (idx["threads"].get(tid) or {}).get("root") or (tid[2:] if tid.startswith("m:") else "")
+    if tid and tid != "team:activity" and mid in idx.get("work", ()) and mid != root:
         out["workLog"] = True
     thr = [t for t in idx["parent"].get(mid) or [] if t != "team:activity"]
     if thr:

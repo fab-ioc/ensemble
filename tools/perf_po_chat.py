@@ -179,7 +179,7 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
                "sends": sends, "links": links, "threads": threads,
                "opens": [s for s in steps if s.get("do") == "open"],
                "lag": {"max": worst_lag, "p99": pct([x["ms"] for x in lag], .99), "over100": sum(1 for x in lag if x["ms"] > 100)},
-               "budgets": budgets, "fails": fails}
+               "budgets": budgets, "notAvailable": not_available(steps), "fails": fails}
     (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     (out / "summary.md").write_text(markdown(summary), encoding="utf-8")
     return summary
@@ -200,6 +200,8 @@ def coverage(steps: list[dict], budgets=BUDGETS) -> list[str]:
     if len(links) < budgets["min_links"]:
         need.append(f"{len(links)} point links followed < {budgets['min_links']}")
     for kind, what in (("old", "a deleted conversation"), ("cross", "another room"), ("closed", "a closed point")):
+        if kind in not_available(steps):
+            continue
         if not any((s.get("kinds") or {}).get(kind) for s in landed):
             need.append(f"no point link into {what} landed")
     if len([s for s in steps if s.get("do") == "send"]) < budgets["min_sends"]:
@@ -209,6 +211,15 @@ def coverage(steps: list[dict], budgets=BUDGETS) -> list[str]:
     if not any(s.get("opened") and not s.get("empty") for s in threads):
         need.append("no thread was shown with its messages")
     return ["coverage: " + x for x in need]
+
+
+def not_available(steps: list[dict]) -> list[str]:
+    """The kinds of point link the project has none of: every look for one
+    found no chip and no point the hub knows (a project whose points are all
+    in its PO room has no link into another room)."""
+    looks = [s for s in steps if s.get("do") == "point" and s.get("want") == "cross"]
+    seen = any((s.get("kinds") or {}).get("cross") for s in steps if s.get("do") in ("point", "point-link"))
+    return ["cross"] if looks and not seen and all(not s.get("found") and not s.get("far") for s in looks) else []
 
 
 def markdown(s: dict) -> str:
@@ -221,7 +232,8 @@ def markdown(s: dict) -> str:
     L += ["", "Sends (ms from Send to the balloon shown / held by the hub): "
           + ", ".join(f"{x.get('shownMs')}/{x.get('sentMs')}" for x in s["sends"]),
           "", f"Point links: {len(s['links'])}, landed {sum(1 for x in s['links'] if x.get('landed'))}, "
-          f"empty threads {sum(1 for x in s['links'] if x.get('empty'))}",
+          f"empty threads {sum(1 for x in s['links'] if x.get('empty'))}"
+          + ("; links into another room: not available (this project has none)" if "cross" in s.get("notAvailable", []) else ""),
           f"Opens (s to the chat drawn): " + ", ".join(str(x.get('s')) for x in s["opens"]),
           f"Interpreter held at once: max {s['lag']['max']} ms, p99 {s['lag']['p99']} ms, {s['lag']['over100']} s over 100 ms",
           "", "Over budget:" if s["fails"] else "Within every budget."]

@@ -163,6 +163,12 @@ class AssignTest(unittest.TestCase):
         idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
         self.assertTrue(threads._turn(idx, "s:3", "P1")["workLog"])
         self.assertNotIn("workLog", threads._turn(idx, "s:5", "P1"))
+        # A thread started on one of them (from its menu, #265): its first
+        # message shows, not a closed Work log row.
+        self.assertNotIn("workLog", threads._turn(idx, "s:3", "m:s:3"))
+        self.assertTrue(threads._turn({**idx, "threads": {**idx["threads"], "m:s:2": {"id": "m:s:2", "root": "s:2",
+                                                                                      "members": ["s:2", "s:3"]}}},
+                                      "s:3", "m:s:2")["workLog"])
 
     def test_real_case_answers_survive_handover_lane(self):
         cases = [

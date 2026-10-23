@@ -97,6 +97,15 @@ async function main() {
         msgs: w.document.querySelectorAll('#msgs .msg[data-mid]').length,
         landed: [...w.document.querySelectorAll('.landed')].map(e => (e.closest('[data-mid]') || {dataset: {}}).dataset.mid || '?').slice(0, 3),
         note: (n => n && !n.hidden ? n.textContent.trim().slice(0, 120) : '')(w.document.getElementById('goto-note')) }; } catch (e) { return null; } }).filter(Boolean) };`;
+  // Every chat the board shows (its Dock panels: this chat, another room's
+  // a link opened, a thread's panel) and the frames in each (a side
+  // thread): where a link or a thread went.
+  const lookAll = () => ev(`(() => { const out = [];
+    const see = (w, where) => { try { if (w.location.pathname !== '/session') return;
+      const v = w.eval(${JSON.stringify('(() => {' + look + '})()')}); delete v.pane; out.push({where, ...v}); } catch (e) {} };
+    for (const f of document.querySelectorAll('iframe')) { const w = f.contentWindow; see(w, 'panel');
+      try { for (const g of w.document.querySelectorAll('iframe')) see(g.contentWindow, 'side'); } catch (e) {} }
+    return out; })()`).catch(() => []);
 
   async function scroll() {
     const t = now();
@@ -139,6 +148,14 @@ async function main() {
       pool = [];
       for (const ch of chips) if (await isKept(ch.msg)) pool.push(ch);
     } else if (want !== 'any') pool = chips.filter(ch => ch[want]);
+    if (!pool.length && (want === 'old' || want === 'cross')) {
+      // None on screen: a point of that kind the hub knows, followed the way
+      // its chip is (refClickHandler), so the kind is covered in every run.
+      const far = await farPoint(want, chips);
+      step({do: 'point', chips: chips.length, want, found: 0, far: far ? far.ref : null});
+      if (far) await follow(far, [{text: '(chip, ' + want + ')', room: far.room, msg: far.msg, part: far.part}], true);
+      return;
+    }
     const pick = (pool.length ? pool : chips)[rand(pool.length || chips.length)];
     pick.old = await isKept(pick.msg);
     step({do: 'point', chips: chips.length, want, found: pool.length, ref: pick.ref, kinds: {old: pick.old, cross: pick.cross, closed: pick.closed}});
@@ -147,32 +164,65 @@ async function main() {
       const c = document.querySelector('.task-card'); if (!c) return {card: false};
       return {card: true, links: [...c.querySelectorAll('a.tc-title, a.tc-link')].map(l => ({ text: l.textContent.trim().slice(0, 40),
         room: l.dataset.refRoom, msg: l.dataset.refMsg, part: l.dataset.refPart }))};`);
-    const links = (card && card.links) || [];
+    await follow(pick, (card && card.links) || [], false);
+  }
+
+  // The points of this project the hub has, newest first (300 at most),
+  // asked once: where farPoint finds one of a kind no chip on screen is.
+  let farPoints = null, keptAsked = 0;
+  async function farPoint(want, chips) {
+    if (!farPoints) {
+      const top = Math.max(1, ...chips.map(c => +((c.ref.match(/^P(\d+)/) || [0, 0])[1])));
+      const ids = [];
+      for (let n = top + 20; n > 0 && ids.length < 300; n--) ids.push('P' + n);
+      farPoints = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const d = await inChat(`return fetch('/api/point/refs?ids=${ids.slice(i, i + 100).join(',')}&project=${encodeURIComponent(A.project)}&room=${encodeURIComponent(A.room)}')
+          .then(r => r.json()).then(d => d.points || {}, () => ({}));`).catch(() => ({}));
+        for (const p of Object.values(d || {})) if (p && p.mid) farPoints.push({ref: p.id, room: p.roomId, msg: p.mid, part: 'pt:' + p.id, closed: p.stage === 'acked'});
+      }
+    }
+    const pool = [];
+    for (const p of farPoints) {
+      if (want === 'cross' ? p.room !== A.room : (p.room === A.room && keptAsked++ < 60 && await isKept(p.msg))) pool.push(p);
+      if (pool.length >= 20) break;
+    }
+    return pool.length ? pool[rand(pool.length)] : null;
+  }
+
+  // Each link of a chip's card (or the chip itself), opened again for the
+  // next one; ``synthetic``: a point no chip on screen shows, clicked
+  // through the page's own handler.
+  async function follow(pick, links, synthetic) {
     for (let k = 0; k < Math.max(1, links.length); k++) {
       const l = links[k] || {text: '(chip)', room: pick.room, msg: pick.msg, part: pick.part};
+      // The thread panels already open (an earlier step's): not this link's.
+      const was = new Set((await lookAll()).filter(x => x.thread).map(x => x.where + '|' + x.thread));
       const t = now();
-      // Each link from the chip's card, opened again for the next one.
-      await inChat(`const a = [...document.querySelectorAll('#msgs a.point-chip')].find(a => a.textContent.trim() === ${JSON.stringify(pick.ref)});
+      if (synthetic) await inChat(`const a = document.createElement('a'); a.dataset.point = 'true';
+        a.dataset.refRoom = ${JSON.stringify(l.room)}; a.dataset.refMsg = ${JSON.stringify(l.msg)}; a.dataset.refPart = ${JSON.stringify(l.part)};
+        a.href = '/session?room=' + encodeURIComponent(a.dataset.refRoom) + '&msg=' + encodeURIComponent(a.dataset.refMsg) + '&part=' + a.dataset.refPart;
+        refClickHandler({target: a, button: 0, preventDefault() {}}); return true;`);
+      else await inChat(`const a = [...document.querySelectorAll('#msgs a.point-chip')].find(a => a.textContent.trim() === ${JSON.stringify(pick.ref)});
         if (!a) return false; if (!document.querySelector('.task-card')) a.click();
         const l = [...document.querySelectorAll('.task-card a.tc-title, .task-card a.tc-link')][${k}];
         (l || a).dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, button: 0, detail: 1})); return true;`);
-      // Where it went: a landed mark on the message (here or in the chat it opened),
-      // a thread with its messages, or a note: within 8 s.
-      let seen = null;
+      // Where it went: a landed mark on the message (in this chat, the chat
+      // it opened, or a thread's panel), or a note: within 8 s.
+      let views = [];
       const end = Date.now() + 8000;
       while (Date.now() < end) {
         await sleep(250);
-        seen = await ev(`(() => { const w = ${FR}; if (!w) return null; return w.eval(${JSON.stringify('(() => {' + look + '})()')}); })()`).catch(() => null);
-        const all = seen ? [seen, ...(seen.pane || [])] : [];
-        if (all.some(x => (x.landed || []).includes(l.msg)) || all.some(x => x.note)) break;
+        views = await lookAll();
+        if (views.some(x => (x.landed || []).includes(l.msg)) || views.some(x => x.note)) break;
       }
-      const all = seen ? [seen, ...(seen.pane || [])] : [];
-      const landed = all.some(x => (x.landed || []).includes(l.msg));
-      const empty = all.some(x => x.thread && x.msgs === 0);
-      step({do: 'point-link', ref: pick.ref, link: l.text, room: l.room, msg: l.msg, part: l.part,
-        kinds: {old: await isKept(l.msg), cross: !!l.room && l.room !== A.room, closed: pick.closed},
-        landed, empty, note: all.map(x => x.note).filter(Boolean)[0] || '', s: +(now() - t).toFixed(2),
-        where: seen ? {thread: seen.thread, msgs: seen.msgs, pane: (seen.pane || []).filter(p => p.thread || (p.landed || []).length || p.note)} : null});
+      const landed = views.some(x => (x.landed || []).includes(l.msg));
+      const empty = views.some(x => x.thread && x.msgs === 0 && !was.has(x.where + '|' + x.thread));
+      step({do: 'point-link', synthetic, ref: pick.ref, link: l.text, room: l.room, msg: l.msg, part: l.part,
+        kinds: {old: await isKept(l.msg), cross: !!l.room && l.room !== A.room, closed: !!pick.closed},
+        landed, empty, note: views.map(x => x.note).filter(Boolean)[0] || '', s: +(now() - t).toFixed(2),
+        where: views.filter(v => v.thread || (v.landed || []).length || v.note)
+          .map(v => ({where: v.where, room: v.room, thread: v.thread, msgs: v.msgs, landed: v.landed, note: v.note}))});
       // Back to the channel for the next step.
       await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
       await sleep(500);
@@ -209,17 +259,16 @@ async function main() {
       const ids = Object.values(THR_META || {}).filter(t => t && t.id && t.id !== 'team:activity').map(t => t.id);
       if (!ids.length) return {threaded: true, none: true};
       const id = ids[${rand(100000)} % ids.length]; openThread(id, ''); return {threaded: true, id};`).catch(e => ({error: String(e).slice(0, 100)}));
-    // The thread shows in the chat or in its side frame: wait up to 8 s for
-    // its messages there.
-    let seen = null, shown = [];
+    // The thread shows in a Dock panel of its own, in the chat's side frame,
+    // or in the chat: wait up to 8 s for its messages there.
+    let shown = [];
     const end = Date.now() + 8000;
-    while (Date.now() < end) {
+    while (r && r.id && Date.now() < end) {
       await sleep(250);
-      seen = await inChat(look).catch(() => null);
-      shown = seen ? [seen, ...(seen.pane || [])].filter(x => x.thread) : [];
+      shown = (await lookAll()).filter(x => x.thread === r.id);
       if (shown.some(x => x.msgs > 0)) break;
     }
-    step({do: 'thread', ...r, opened: shown.length > 0, where: shown.map(x => (x === seen ? 'chat' : 'side')),
+    step({do: 'thread', ...r, opened: shown.length > 0, where: shown.map(x => x.where),
       thread: shown.map(x => x.thread)[0] || '', msgs: shown.map(x => x.msgs)[0],
       empty: shown.length > 0 && !shown.some(x => x.msgs > 0), s: +(now() - t).toFixed(2)});
     await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
