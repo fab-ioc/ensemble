@@ -49,7 +49,8 @@ const POINT = { id: 'P215', text: 'should the test set-up let you choose', stage
   project: 'Ensemble Dashboard', projectId: 'proj-ed', createdAt: 1, card: { mid: 'card0000215', n: 0, open: true, question: 'Which set-up?' } };
 function fetch(url) {
   if (url.startsWith('/api/task/projects')) return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(PROJECTS_CTX) });
-  if (url.startsWith('/api/point/ref') && url.includes('ref=P215')) return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(POINT) });
+  if (url.startsWith('/api/point/refs')) return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ points: Object.fromEntries(
+    new URL(url, 'http://h').searchParams.get('ids').split(',').map(id => [id, id === 'P215' ? POINT : null])) }) });
   return Promise.resolve({ status: 404, ok: false, json: () => Promise.resolve({}) });
 }
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r)); };

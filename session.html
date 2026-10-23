@@ -2578,11 +2578,16 @@ let ROOM_LIVE = false;
 let THEME_NAME = null;     // the scheme applied, '' when following the theme
 let SCHEME_ON = false;     // the folder's scheme is switched on for this chat
 let CUR_COLORS = null;     // full scheme palette, for xterm + chat
-async function ensureTheme(cwd) {
+// Asked when the folder changes, after a change made here (force), and else
+// once a minute (one made in another window), not on every 2 s refresh (#265).
+let THEME_ASKED = { cwd: null, at: 0 };
+async function ensureTheme(cwd, force) {
   if (!cwd) return;
+  if (!force && THEME_ASKED.cwd === cwd && Date.now() - THEME_ASKED.at < 60000) return;
+  THEME_ASKED = { cwd, at: Date.now() };
   let t;
   try { t = await fetch('/api/theme-colors?cwd=' + encodeURIComponent(cwd)).then(r => r.json()); }
-  catch (e) { return; }
+  catch (e) { THEME_ASKED.at = 0; return; }
   SCHEME_ON = !!(t && t.override);
   const name = SCHEME_ON ? ((t && t.theme) || '') : '';
   if (name === (THEME_NAME || '')) return;
@@ -4868,6 +4873,7 @@ function pointsChanged(pv, ticket) {
   const sig = JSON.stringify(pv || null);
   if (sig === POINTS_SIG) { pointsAges(); return; }
   POINTS_SIG = sig;
+  POINT_REFS.refresh();      // the chips' stages and cards: asked again when drawn
   POINTS = pointMaps(pv);
   pointsTell(pv);
   showPointsLine();
@@ -5675,11 +5681,23 @@ function noteSent(s) {
   SENT_LOCAL.set(s.key, { s, gen: SENDS_GEN });
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
+// Shown the moment Send is pressed, as "Sending" until the hub holds it
+// (noteSent) or says no (unnoteSending: the words stay in the box) (#265).
+function noteSending(key, text, to) {
+  noteSent({ key, text, to: to || '', state: 'sending', at: Date.now() / 1000 });
+}
+function unnoteSending(key) {
+  const v = SENT_LOCAL.get(key);
+  if (v && v.s.state === 'sending') { SENT_LOCAL.delete(key); if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
+}
 // A poll's list (``gen``: the ticket it took when it asked). Returns whether
 // what shows changed.
 function sendsFromPoll(list, gen) {
   ROOM_SENDS = Array.isArray(list) ? list : [];
-  for (const [k, v] of SENT_LOCAL) if (gen > v.gen) SENT_LOCAL.delete(k);
+  // One still on its way stays (a poll answered meanwhile cannot have it
+  // yet) until the hub lists it, or for a minute.
+  for (const [k, v] of SENT_LOCAL) if (gen > v.gen && (v.s.state !== 'sending'
+    || ROOM_SENDS.some(x => x.key === k) || Date.now() / 1000 - v.s.at > 60)) SENT_LOCAL.delete(k);
   const sig = JSON.stringify([ROOM_SENDS, [...SENT_LOCAL.keys()]]);
   if (sig === SENDS_SIG) return false;
   SENDS_SIG = sig;
@@ -5818,6 +5836,8 @@ function sendHtml(s, md) {
     ? `<div class="pend-state" role="status">${sent}Not delivered: ${esc(s.error || 'it did not go in')}. `
       + `<button type="button" class="send-retry" data-send="${esc(s.key)}">Retry</button>`
       + `<button type="button" class="send-discard" data-send="${esc(s.key)}">Discard</button></div>`
+    : s.state === 'sending'
+      ? `<div class="pend-state ok" role="status">Sending…</div>`
     : s.state === 'queued'
       ? `<div class="pend-state ok" role="status">${sent}${s.afterRestart
           ? 'Queued: it will be delivered after the restart.'
@@ -8393,9 +8413,11 @@ async function sendNow(urgent = false) {
       // Through the hub, running or not: it keeps the person's points and adds
       // their lines (and the images'), and types it in (or resumes the session).
       let d;
+      noteSending(key, t, '');
       try { d = await sendResuming(t, '', key, atts, urgent); }
       catch (e) {
         if (keptByHub(e)) return;
+        unnoteSending(key);
         SEND_ERR = sendFailText(e);
         setText($('#hint'), SEND_ERR);
         return;
@@ -8418,9 +8440,12 @@ async function sendNow(urgent = false) {
     // last poll is resumed for the message instead of the message being posted
     // to a room nobody is reading.
     let d;
-    try { d = await sendResuming(t, to, msgKey(), atts, urgent); }
+    const key = msgKey();
+    noteSending(key, t, to);
+    try { d = await sendResuming(t, to, key, atts, urgent); }
     catch (e) {
       if (keptByHub(e)) return;
+      unnoteSending(key);
       SEND_ERR = sendFailText(e);
       setText($('#hint'), SEND_ERR);
       return;
@@ -8945,7 +8970,7 @@ const ACTS = {
   },
   async 'chat-colours'() {
     const cwd = actCwd(); if (!cwd) return;
-    try { await jpost('/api/chat-scheme', { cwd, on: !SCHEME_ON }); await ensureTheme(cwd); } catch (e) {}
+    try { await jpost('/api/chat-scheme', { cwd, on: !SCHEME_ON }); await ensureTheme(cwd, true); } catch (e) {}
     ACTIONS_HTML = ''; renderActions();
   },
   async 'keep-agents'() {
@@ -9014,7 +9039,7 @@ async function openThemeMenuS(trigger) {
     if (!e.target.closest('.name')) return;
     closeThemeMenuS(true);
     SessionActions.closeMenu({ focus: true });
-    try { await jpost('/api/theme', { cwd, theme }); ensureTheme(cwd); } catch (err) {}
+    try { await jpost('/api/theme', { cwd, theme }); ensureTheme(cwd, true); } catch (err) {}
   });
   setTimeout(() => document.addEventListener('mousedown', _themeMenuOutS), 0);
 }

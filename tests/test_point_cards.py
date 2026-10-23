@@ -181,8 +181,8 @@ class Chip(unittest.TestCase):
         code = r'''
 globalThis.TaskCard = require('./static/taskcard.js'); const P = require('./static/pointrefs.js');
 const CARD = %s;
-globalThis.fetch = async url => ({ok: true, status: 200, json: async () => ({id: 'P5', roomId: 'room-po', mid: 'his-P5',
-  text: 'his words', stage: 'delivered', createdAt: 10, projectId: 'ed', project: 'E', ...(CARD ? {card: CARD} : {})})});
+globalThis.fetch = async url => ({ok: true, status: 200, json: async () => ({points: {P5: {id: 'P5', roomId: 'room-po', mid: 'his-P5',
+  text: 'his words', stage: 'delivered', createdAt: 10, projectId: 'ed', project: 'E', ...(CARD ? {card: CARD} : {})}}})});
 const ctx = {own: 'ed', projects: [{id: 'ed', key: 'ED', name: 'E'}]};
 const p = P.create({room: 'room-po', changed() {}});
 (async () => {
@@ -206,7 +206,7 @@ const p = P.create({room: 'room-po', changed() {}});
         self.assertEqual(self.attr(html, 'data-ref-part'), 'ask:0')
         self.assertIn('msg=q1&part=ask:0', self.attr(html, 'href'))
         card = json.loads(self.attr(html, 'data-card'))
-        self.assertEqual([l['text'] for l in card['links']], ['Answer the question ↓', 'His message'])
+        self.assertEqual([l['text'] for l in card['links']], ['Answer the question ↓', "The point's message"])
         self.assertEqual([l['point']['msg'] for l in card['links']], ['q1', 'his-P5'])
         self.assertEqual(card['links'][1]['point']['part'], 'pt:P5')
 
@@ -218,7 +218,7 @@ const p = P.create({room: 'room-po', changed() {}});
         for html in (phrase, before):
             self.assertEqual(self.attr(html, 'data-ref-msg'), 'q1')
             card = json.loads(self.attr(html, 'data-card'))
-            self.assertEqual([l['text'] for l in card['links']], ['The question ↓', 'His message'])
+            self.assertEqual([l['text'] for l in card['links']], ['The question ↓', "The point's message"])
 
     def test_no_card_is_todays_chip(self):
         [html] = self.chips(['The P5 card.'], None)

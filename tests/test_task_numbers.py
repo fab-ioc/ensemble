@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -646,6 +647,17 @@ class Addresses(Hub):
         self.assertEqual(json.loads(body)["roomId"], self.x, "read in the chat's own project")
         status, _, body = self.call("GET", f"/api/task/ref?ref=%235&room={self.a}")
         self.assertEqual(status, 404)
+
+    def test_a_pages_chips_in_one_request(self):
+        # #265: every number of a draw at once, in order; one naming no task is null.
+        refs = json.dumps([["#2", ""], ["O-1", ""], ["#5", ""], ["#1", self.ot]])
+        status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote(refs))
+        got = json.loads(body)["tasks"]
+        self.assertEqual(status, 200)
+        self.assertEqual([t and t["roomId"] for t in got], [self.b, self.x, None, self.x])
+        self.assertEqual([t and t["inProject"] for t in got], [True, False, None, False])
+        status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=nonsense")
+        self.assertEqual((status, json.loads(body)), (200, {"tasks": []}))
 
     def test_a_chip_says_whether_the_task_is_the_rooms_projects(self):
         # #152: the chip shows #2 for the room's own project's task, ED-2 / O-1

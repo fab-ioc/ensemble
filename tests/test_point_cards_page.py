@@ -133,7 +133,7 @@ class PointCardPage(Hub):
                 self.assertEqual(row['chips'], [{'msg': card['id'], 'part': 'ask:0'}] * 2,
                                  'the open card takes both chips, "the P499 card" and a bare P499')
                 self.assertEqual([(l['text'], l['msg'], l['part']) for l in row['card']['links']],
-                                 [('Answer the question ↓', card['id'], 'ask:0'), ('His message', his['id'], 'pt:P499')])
+                                 [('Answer the question ↓', card['id'], 'ask:0'), ("The point's message", his['id'], 'pt:P499')])
                 self.assertEqual(row['card']['coarse'], row['width'] == 390)
                 if row['width'] == 390:
                     self.assertTrue(all(l['h'] >= 44 for l in row['card']['links']), row['card']['links'])

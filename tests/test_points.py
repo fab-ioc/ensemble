@@ -482,6 +482,40 @@ class SessionsLookedAt(_World):
             points.sync(rid)
         self.assertEqual([c.args[0] for c in stat.call_args_list], ["sid-now"])
 
+    def test_an_ended_session_the_tables_lack_is_not_looked_for(self):
+        """#265: a Codex PO's 156 ended sessions with no file were looked for
+        one glob each on every sync (2 s, every 3 s, under every lookup)."""
+        rid = self.solo_room("sid-now")
+        room = chatroom.get_room(rid, public=False)
+        room["participants"][0]["rotations"] = [{"n": n, "fromSessionId": f"sid-gone-{n}", "toSessionId": "sid-now"}
+                                                for n in range(50)]
+        chatroom.update_room(room)
+        self.table = {"sid-now": [0, 1.0]}
+        with mock.patch.object(points, "_session_stat", side_effect=lambda sid, **_kw: None) as stat:
+            points.sync(rid)
+        self.assertEqual([c.args[0] for c in stat.call_args_list], ["sid-now"])
+
+
+class CodexFileTable(unittest.TestCase):
+    def test_the_file_table_has_codex_sessions_too(self):
+        """#265: a Codex session's rollouts, summed, as a Claude transcript's file."""
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name) / "codex" / "sessions"
+        day = root / "2026" / "10" / "23"
+        day.mkdir(parents=True)
+        sid = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+        (day / f"rollout-2026-10-23T10-00-00-{sid}.jsonl").write_text("x" * 10, encoding="utf-8")
+        (day / f"rollout-2026-10-23T11-00-00-{sid}.jsonl").write_text("y" * 5, encoding="utf-8")
+
+        class Codex:
+            def sessions_dir(self):
+                return root
+        with mock.patch.object(dashboard.CLAUDE_FILES, "files", return_value={}), \
+                mock.patch.object(dashboard.agents, "get_agent", side_effect=lambda n: Codex() if n == "codex" else None):
+            got = dashboard.transcript_stats()
+        self.assertEqual(got[sid][0], 15)
+
 
 class Storage(_World):
     def test_it_survives_a_reload_of_the_module(self):

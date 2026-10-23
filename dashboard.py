@@ -18,6 +18,7 @@ Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
+import collections
 import contextlib
 import copy
 import difflib
@@ -1200,13 +1201,25 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
 
 
 def transcript_stats() -> dict[str, list]:
-    """{session id: [size, mtime]} of every Claude transcript, from the file
-    table (a look up to 10 s old; the task list looks every refresh): a
+    """{session id: [size, mtime]} of every Claude transcript and every Codex
+    session (its rollouts' sizes summed, the newest time), from the file
+    tables (a look up to 10 s old; the task list looks every refresh): a
     past session's file is not stat'ed one by one (#228: a PO's 165 sessions
-    on every points sync). For sessions that ended: a live one is looked at."""
+    on every points sync), nor looked for when it has none (#265: a Codex
+    PO's 156 ended sessions, a glob each, 2 s of every sync). For sessions
+    that ended: a live one is looked at."""
     out: dict[str, list] = {}
     for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
         out.setdefault(filetable.as_path(p).stem, [size, round(mtime, 3)])
+    cx = agents.get_agent("codex")
+    root = cx.sessions_dir() if cx is not None and hasattr(cx, "sessions_dir") else None
+    if root is not None and root.exists():
+        from agents import codex as _cx
+        for p, (mtime, size, _ns) in _cx._rollout_table(root, 10.0).items():
+            m = _ROLLOUT_ID_RE.match(os.path.basename(p))
+            if m:
+                st = out.get(m.group(1))
+                out[m.group(1)] = [st[0] + size, max(st[1], round(mtime, 3))] if st else [size, round(mtime, 3)]
     return out
 
 
@@ -7834,7 +7847,58 @@ def ref_context(own: str = "", projects: list[dict] | None = None) -> dict:
     return {"projects": task_numbers.project_names(rows, titles), "own": own or "", "nouns": nouns}
 
 
-def point_ref(point_id: str, project_id: str) -> dict | None:
+def _task_chip(ref: str, pid: str, ctx_pid: str) -> tuple[dict | None, str]:
+    """What a task chip shows of ``ref`` (/api/task/ref): read in ``pid``,
+    else ``ctx_pid`` (the chat's project); (None, why) when it names none."""
+    rid, why = resolve_task_ref(ref, pid or ctx_pid)
+    info = task_ref_info(rid) if rid else None
+    if info is None:
+        return None, why
+    info.pop("report", None)
+    shown = ctx_pid or pid
+    info["inProject"] = bool(shown) and info.get("projectId") == shown
+    return info, ""
+
+
+# {project id: (built at, points.SAVED then, {point id: [task index entry]})}
+_POINT_INDEX: dict[str, tuple[float, int, dict]] = {}
+_POINT_INDEX_LOCK = threading.Lock()
+_POINT_INDEX_TTL_S = 10.0       # a room moved between projects, a ledger another hub wrote
+_POINT_INDEX_MISS_S = 1.0       # a point not in it: looked for again after this
+
+
+def _point_index(project: dict, projects: list[dict], point_id: str = "") -> dict[str, list[dict]]:
+    """Which rooms of ``project`` hold each point number (#265): worked out
+    once from the ledgers and kept until one is saved, a room may have moved
+    (_POINT_INDEX_TTL_S), or ``point_id`` is not in it a second later (a
+    room new since). A chat full of point chips asks for each; walking every
+    room and ledger per chip held the hub for seconds."""
+    pid = project["id"]
+    now = time.monotonic()
+    with _POINT_INDEX_LOCK:
+        hit = _POINT_INDEX.get(pid)
+    if hit is not None and hit[1] == points.SAVED and now - hit[0] < _POINT_INDEX_TTL_S \
+            and (not point_id or point_id in hit[2] or now - hit[0] < _POINT_INDEX_MISS_S):
+        return hit[2]
+    saved = points.SAVED
+    links = load_session_projects()
+    ledgers = points.with_ledgers()
+    idx: dict[str, list[dict]] = {}
+    for room in _task_index():
+        rid = room["id"]
+        if rid not in ledgers:
+            continue
+        if rid != project.get("poRoomId") and _task_project(room, links, projects) != pid:
+            continue
+        for p in points.load(rid, shared=True)["points"]:
+            rooms = idx.setdefault(p["id"], [])
+            rooms.append(room)      # twice in one room is ambiguous as well
+    with _POINT_INDEX_LOCK:
+        _POINT_INDEX[pid] = (now, saved, idx)
+    return idx
+
+
+def point_ref(point_id: str, project_id: str, projects: list[dict] | None = None) -> dict | None:
     """A unique point in a project, including closed points outside view's cap.
 
     Ledgers number per room. Never choose one of two same-numbered points.
@@ -7842,31 +7906,19 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
     """
     if not re.fullmatch(r"P[1-9][0-9]{0,5}[a-z]?", point_id):
         return None
-    projects = load_projects()
+    projects = load_projects() if projects is None else projects
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
         return None
-    links = load_session_projects()
-    found = []
-    ledgers = points.with_ledgers()
-    for room in _task_index():
-        rid = room["id"]
-        if rid not in ledgers:
-            continue
-        if rid != project.get("poRoomId") and _task_project(room, links, projects) != project_id:
-            continue
-        matches = [p for p in points.load(rid, shared=True)["points"] if p["id"] == point_id]
-        for point in matches:
-            found.append((room, point))
-        if len(found) > 1:
-            return None
-    if not found:
+    rooms = _point_index(project, projects, point_id).get(point_id) or []
+    if len(rooms) != 1:
         return None
-    room, point = found[0]
+    room = rooms[0]
     rid = room["id"]
-    # Read current replies only for the matching ledger, never all transcripts.
-    point = next((p for p in points.sync(rid, shared=True)["points"] if p["id"] == point_id), point)
-    if not point.get("mid"):
+    # The ledger as the room's own sync left it (its chat's poll, a send):
+    # a lookup reads no transcript (#265: 2 s each on a PO's ended sessions).
+    point = next((p for p in points.load(rid, shared=True)["points"] if p["id"] == point_id), None)
+    if not point or not point.get("mid"):
         return None
     out = {"id": point_id, "roomId": rid, "mid": point["mid"],
            "text": points.strip_point_lines(point.get("text") or "")[:400],
@@ -15964,6 +16016,26 @@ def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
         time.sleep(0.005)
 
 
+# The hub's slow answers (#265): what the log says as [slow] lines, counted
+# for /api/health, so a regression shows in a number the same day.
+_SLOW: collections.deque = collections.deque(maxlen=5000)   # (answered, "GET /api/…", seconds)
+
+
+def slow_requests(window_s: float = 3600.0) -> dict:
+    """The answers that took SLOW_REQUEST_S or more in the last ``window_s``:
+    ``{n, since, by: {"GET /api/…": {n, maxS}}}``, the most first."""
+    cut = time.monotonic() - window_s
+    by: dict[str, dict] = {}
+    for at, what, took in list(_SLOW):
+        if at < cut:
+            continue
+        b = by.setdefault(what, {"n": 0, "maxS": 0.0})
+        b["n"] += 1
+        b["maxS"] = round(max(b["maxS"], took), 1)
+    return {"n": sum(b["n"] for b in by.values()), "windowS": int(window_s), "overS": SLOW_REQUEST_S,
+            "by": dict(sorted(by.items(), key=lambda kv: -kv[1]["n"]))}
+
+
 class Handler(BaseHTTPRequestHandler):
     # Kept-alive connections and revalidated answers (#231). Every answer
     # says where it ends (Content-Length), or closes the connection after it.
@@ -16022,6 +16094,7 @@ class Handler(BaseHTTPRequestHandler):
                 path = str(getattr(self, "path", "")).split("?", 1)[0]
                 if took >= SLOW_REQUEST_S and path not in ("/api/pty/stream", "/mcp"):
                     print(f"[slow] {getattr(self, 'command', '')} {path} took {took:.1f}s", flush=True)
+                    _SLOW.append((_ANSWERED[0], f"{getattr(self, 'command', '')} {path}", took))
             body = self.rfile
             if isinstance(body, _RequestBody):
                 self.rfile = body.raw
@@ -16624,7 +16697,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
             self._send_json(200, {**startup.health(), "version": app_version.VERSION,
-                                  "pid": os.getpid()})
+                                  "pid": os.getpid(), "slow": slow_requests()})
             return
         if p == "/startup":
             self._send_startup_page()
@@ -17165,21 +17238,43 @@ class Handler(BaseHTTPRequestHandler):
             if ctx_room:
                 rm = chatroom.get_room(ctx_room, copy_room=False)
                 ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
-            rid, why = resolve_task_ref(q.get("ref", [""])[0], pid or ctx_pid)
-            info = task_ref_info(rid) if rid else None
+            info, why = _task_chip(q.get("ref", [""])[0], pid, ctx_pid)
             if info is None:
                 self._send_json(404, {"error": "no_such_task", "message": why or "no such task"})
                 return
-            info.pop("report", None)
-            shown = ctx_pid or pid
-            info["inProject"] = bool(shown) and info.get("projectId") == shown
             self._send_json(200, info)
+            return
+        if p == "/api/task/refs":
+            # Every task chip a page shows, in one request (#265): ?refs= a
+            # JSON list of [ref, project] (200 at most) and ?room= as for
+            # /api/task/ref; {tasks: [what it says, or null], ...in order}.
+            q = parse_qs(u.query)
+            ctx_room = (q.get("room", [""])[0] or "").strip()
+            ctx_pid = ""
+            if ctx_room:
+                rm = chatroom.get_room(ctx_room, copy_room=False)
+                ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
+            try:
+                refs = json.loads(q.get("refs", ["[]"])[0] or "[]")
+            except ValueError:
+                refs = []
+            refs = [r for r in refs if isinstance(r, list) and len(r) == 2][:200] if isinstance(refs, list) else []
+            self._send_json(200, {"tasks": [_task_chip(str(r[0] or ""), str(r[1] or "").strip(), ctx_pid)[0] for r in refs]})
             return
         if p == "/api/point/ref":
             q = parse_qs(u.query)
             pid = q.get("project", [""])[0] or room_project(q.get("room", [""])[0])
             info = point_ref(q.get("ref", [""])[0], pid)
             self._send_json(200 if info else 404, info or {"error": "no_unique_point"})
+            return
+        if p == "/api/point/refs":
+            # Every point a page shows, in one request (#265): {points: {Pn:
+            # what /api/point/ref says, or null}}; ?ids=P1,P2 (200 at most).
+            q = parse_qs(u.query)
+            pid = q.get("project", [""])[0] or room_project(q.get("room", [""])[0])
+            ids = [i for i in (q.get("ids", [""])[0] or "").split(",") if i][:200]
+            projects = load_projects()
+            self._send_json(200, {"points": {i: point_ref(i, pid, projects) for i in ids}})
             return
         if p == "/api/task/projects":
             # What the pages need to read a text's bare numbers in the right
