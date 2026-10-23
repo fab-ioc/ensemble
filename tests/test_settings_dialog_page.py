@@ -139,7 +139,7 @@ async function main() {
   // A phone's controls on the shown page under 44 px either way (a checkbox's
   // target is its label).
   const TARGETS = `(() => { const sec = [...document.getElementById('sp-pages').querySelectorAll(':scope > .settings-section')].find(s => s.getClientRects().length);
-    return [...sec.querySelectorAll('input, select, textarea, button')].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+    return [...sec.querySelectorAll('input, select, textarea, button, a[href]')].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
       .map(e => { const t = /^(checkbox|radio)$/.test(e.type) ? (e.closest('label') || e) : e, r = t.getBoundingClientRect();
         return { id: e.id || e.textContent.trim().slice(0, 20) || e.className, w: Math.round(r.width), h: Math.round(r.height) }; })
       .filter(x => x.w < 44 || x.h < 44); })()`;
@@ -166,7 +166,11 @@ async function main() {
         t.scroll = await evalIn(SCROLL);
         if (name === 'd1728' || name === 'p390') await shot(`settings-${w}-${tab}`);
         if (mobile) {
+          // A missing agent's row carries an install link (checkAgents' markup).
+          if (tab === 'agents') await evalIn(`document.querySelector('#settings-agents .agent-rows').insertAdjacentHTML('beforeend',
+            '<p class="agent-row" id="sp-test-row">Codex is not installed. <a href="https://example.com/codex" target="_blank" rel="noopener">Install Codex</a></p>'); 0`);
           t.small = await evalIn(TARGETS);
+          if (tab === 'agents') { t.installLink = await evalIn(`!!document.querySelector('#sp-test-row a').getClientRects().length`); await evalIn(`document.getElementById('sp-test-row').remove(); 0`); }
           await evalIn('document.getElementById("sp-back").click(); 0');
           t.backed = await evalIn(STATE);
         }
@@ -406,6 +410,8 @@ class SettingsDialogInAPage(unittest.TestCase):
             for tab, s in g["tabs"].items():
                 with self.subTest(f"{name} {tab}"):
                     self.assertEqual(s["small"], [])
+                    if tab == "agents":
+                        self.assertTrue(s["installLink"], "the install link was measured")
 
     def test_feedback_gives_the_focus_back(self):
         for name in ("d1440", "p390"):

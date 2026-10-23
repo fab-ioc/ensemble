@@ -3532,6 +3532,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       min-height: var(--touch-min);
     }
     #settings-panel .sp-pages button { min-width: var(--touch-min); }
+    #settings-panel .sp-pages a[href] {
+      display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min);
+    }
     #settings-panel .sp-pages label:has(> input[type="checkbox"]) {
       display: inline-flex; align-items: center; gap: var(--s-200); min-height: var(--touch-min); min-width: var(--touch-min);
     }
