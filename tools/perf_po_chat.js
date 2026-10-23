@@ -66,10 +66,15 @@ async function main() {
     while (Date.now() < end) { try { const v = await ev(expression, 10000); if (v) return v; } catch (e) {} await sleep(every); }
     return null;
   };
-  // The chat frame of the dock (its window), evaluated in: F`expr`.
-  const FR = `(() => { const f = [...document.querySelectorAll('iframe')].find(f => { try { const l = f.contentWindow.location;
+  // The chat frame of the dock (its window), evaluated in: F`expr`. The one
+  // on screen first: a chat the board put away (another project's PO opened
+  // by a cross-room link) keeps its frame, hidden, where nothing lands.
+  const FR = `(() => { const fs = [...document.querySelectorAll('iframe')].filter(f => { try { const l = f.contentWindow.location;
     const q = new URLSearchParams(l.search); return l.pathname === '/session' && (q.get('id') || q.get('room')) === ${JSON.stringify(A.room)}; } catch (e) { return false; } });
+    const f = fs.find(f => f.getClientRects().length && f.clientHeight > 0) || fs[0];
     return f ? f.contentWindow : null; })()`;
+  // Whether that chat is on screen.
+  const SHOWN = `(() => { const w = ${FR}; const f = w && w.frameElement; return !!f && f.getClientRects().length > 0 && f.clientHeight > 0; })()`;
   const inChat = (body) => ev(`(() => { const w = ${FR}; if (!w) return null; return w.eval(${JSON.stringify('(() => {' + body + '})()')}); })()`);
 
   async function open() {
@@ -112,6 +117,14 @@ async function main() {
   async function closeThreads() {
     await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
     await ev(`(() => { try { if (PD.dock && PD.rt.has(PD_THREAD)) PD.dock.removePanel(PD_THREAD); } catch (e) {} return true; })()`).catch(() => {});
+    await inChat(`if (typeof sideClose === 'function' && typeof TS !== 'undefined' && TS) sideClose(); return true;`).catch(() => {});
+    // A link into another room opened that room's chat (another project's
+    // PO): back to this PO, as its project on the board does.
+    if (!(await ev(SHOWN).catch(() => false))) {
+      await ev(`(() => { const pj = registeredProjects().find(p => p.id === ${JSON.stringify(A.project)}); if (pj) openPoOf(pj); return !!pj; })()`).catch(() => {});
+      const back = await until(`(() => { if (!${SHOWN}) return false; try { return !!${FR}.eval('CHAT_DRAWN'); } catch (e) { return false; } })()`, 30000, 200);
+      step({do: 'back', ok: !!back});
+    }
   }
 
   async function scroll() {
@@ -225,9 +238,15 @@ async function main() {
       }
       const landed = views.some(x => (x.landed || []).includes(l.msg));
       const empty = views.some(x => x.thread && x.msgs === 0 && !was.has(x.where + '|' + x.thread));
-      step({do: 'point-link', synthetic, ref: pick.ref, link: l.text, room: l.room, msg: l.msg, part: l.part,
+      const note = views.map(x => x.note).filter(Boolean)[0] || '';
+      // "Not shown in this chat" for a room message filed as the CEO's that no
+      // transcript holds (an agent posted it with the CEO's token, /api/room/say):
+      // the chat has no balloon for it, and says so. Listed, not failed.
+      const roomUser = !landed && /not shown in this chat/.test(note) && await inChat(`return fetch('/api/room/msg?room=' + encodeURIComponent(${JSON.stringify(l.room || A.room)}) + '&msg=' + encodeURIComponent(${JSON.stringify(l.msg)}))
+        .then(r => r.ok ? r.json() : {}).then(d => d.from === 'user' && !String(d.id || '').includes(':'), () => false);`).catch(() => false);
+      step({do: 'point-link', synthetic, ref: pick.ref, link: l.text, room: l.room, msg: l.msg, part: l.part, ...(roomUser ? {roomUser: true} : {}),
         kinds: {old: await isKept(l.msg), cross: !!l.room && l.room !== A.room, closed: !!pick.closed},
-        landed, empty, note: views.map(x => x.note).filter(Boolean)[0] || '', s: +(now() - t).toFixed(2),
+        landed, empty, note, s: +(now() - t).toFixed(2),
         where: views.filter(v => v.thread || (v.landed || []).length || v.note)
           .map(v => ({where: v.where, room: v.room, thread: v.thread, msgs: v.msgs, landed: v.landed, note: v.note}))});
       // Back to the channel for the next step.

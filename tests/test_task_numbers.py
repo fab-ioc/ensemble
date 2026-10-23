@@ -651,7 +651,10 @@ class Addresses(Hub):
     def test_a_pages_chips_in_one_request(self):
         # #265: every number of a draw at once, in order; one naming no task is null.
         refs = json.dumps([["#2", ""], ["O-1", ""], ["#5", ""], ["#1", self.ot]])
-        status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote(refs))
+        # The rooms are walked once for the request, not twice per chip.
+        with mock.patch.object(dashboard, "_task_index", wraps=dashboard._task_index) as walk:
+            status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote(refs))
+        self.assertEqual(walk.call_count, 1)
         got = json.loads(body)["tasks"]
         self.assertEqual(status, 200)
         self.assertEqual([t and t["roomId"] for t in got], [self.b, self.x, None, self.x])

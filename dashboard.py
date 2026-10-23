@@ -7837,19 +7837,21 @@ def task_arg(room: dict) -> str:
     return task_label(room) or room.get("id", "")
 
 
-def resolve_task_ref(ref, project_id: str = "", any_project: bool = False) -> tuple[str, str]:
+def resolve_task_ref(ref, project_id: str = "", any_project: bool = False,
+                     index: list[dict] | None = None, projects: list[dict] | None = None) -> tuple[str, str]:
     """(room id, "") for a task address — room-…, #18 or 18 in ``project_id``,
-    ED-18 anywhere — else ("", a sentence saying why)."""
-    projects = load_projects()
-    return task_numbers.find_task(_task_index(), ref, (project_id or "").strip(), project_keys(projects),
+    ED-18 anywhere — else ("", a sentence saying why). ``index`` /
+    ``projects``: _task_index() and load_projects() read once for a batch."""
+    projects = load_projects() if projects is None else projects
+    return task_numbers.find_task(_task_index() if index is None else index, ref, (project_id or "").strip(), project_keys(projects),
                                   {p["id"]: p.get("name", "") for p in projects}, any_project=any_project)
 
 
-def task_ref_info(rid: str, projects: list[dict] | None = None) -> dict | None:
+def task_ref_info(rid: str, projects: list[dict] | None = None, index: list[dict] | None = None) -> dict | None:
     """What a reference to a task shows: ``{roomId, no, label, ref, key,
     projectId, project, title, status, workflow, workflowName, live, agents,
     branch, report}`` (``ref`` is the full form, ED-18)."""
-    entry = next((e for e in _task_index() if e["id"] == rid), None)
+    entry = next((e for e in (_task_index() if index is None else index) if e["id"] == rid), None)
     if entry is None:
         return None
     projects = load_projects() if projects is None else projects
@@ -7906,11 +7908,15 @@ def ref_context(own: str = "", projects: list[dict] | None = None) -> dict:
     return {"projects": task_numbers.project_names(rows, titles), "own": own or "", "nouns": nouns}
 
 
-def _task_chip(ref: str, pid: str, ctx_pid: str) -> tuple[dict | None, str]:
+def _task_chip(ref: str, pid: str, ctx_pid: str, index: list[dict] | None = None,
+               projects: list[dict] | None = None) -> tuple[dict | None, str]:
     """What a task chip shows of ``ref`` (/api/task/ref): read in ``pid``,
-    else ``ctx_pid`` (the chat's project); (None, why) when it names none."""
-    rid, why = resolve_task_ref(ref, pid or ctx_pid)
-    info = task_ref_info(rid) if rid else None
+    else ``ctx_pid`` (the chat's project); (None, why) when it names none.
+    ``index`` / ``projects``: read once for all the chips of a request
+    (#265: twice per chip, a walk of every room file each, held a chat's
+    /api/task/refs for 400 ms)."""
+    rid, why = resolve_task_ref(ref, pid or ctx_pid, index=index, projects=projects)
+    info = task_ref_info(rid, projects, index) if rid else None
     if info is None:
         return None, why
     info.pop("report", None)
@@ -17366,17 +17372,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "too_many_refs"})
                 return
             ctx_room = (q.get("room", [""])[0] or "").strip()
-            ctx_pid = ""
-            if ctx_room:
-                rm = chatroom.get_room(ctx_room, copy_room=False)
-                ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
             try:
                 refs = json.loads(raw)
             except (ValueError, RecursionError):
                 self._send_json(400, {"error": "bad_refs"})
                 return
             refs = [r for r in refs if isinstance(r, list) and len(r) == 2][:200] if isinstance(refs, list) else []
-            self._send_json(200, {"tasks": [_task_chip(str(r[0] or ""), str(r[1] or "").strip(), ctx_pid)[0] for r in refs]})
+            projects = load_projects()
+            ctx_pid = ""
+            if ctx_room:
+                rm = chatroom.get_room(ctx_room, copy_room=False, messages=False)
+                ctx_pid = _task_project(rm, load_session_projects(), projects) if rm else ""
+            index = _task_index()
+            self._send_json(200, {"tasks": [_task_chip(str(r[0] or ""), str(r[1] or "").strip(), ctx_pid, index, projects)[0]
+                                            for r in refs]})
             return
         if p == "/api/point/ref":
             q = parse_qs(u.query)
