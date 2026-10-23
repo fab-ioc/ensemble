@@ -147,6 +147,33 @@ class TurnStoreTest(unittest.TestCase):
             self.assertEqual([x["text"] for x in turns], ["the old ask", "the old answer"])
             self.assertEqual(dashboard.points._session_stat(sid), [st.st_size, round(st.st_mtime_ns / 1e9, 3)])
             self.assertIsNone(dashboard.read_session_turns("0199a1b2-c3d4-4e5f-8a9b-000000000000"))
+            # The store loses the row after it was listed: no kept session
+            # (a 404), not an empty one.
+            with turnstore._LOCK:
+                conn = turnstore._conn(dashboard._turnstore_db())
+                with conn:
+                    conn.execute("DELETE FROM turns WHERE path=?", (str(t),))
+            self.assertIsNone(dashboard.kept_session(sid))
+            self.assertIsNone(dashboard.read_session_turns(sid))
+
+    def test_a_transcript_is_deleted_only_once_this_reading_is_stored(self):
+        """#265 review: an older row of the file, a store that does not
+        write, or a file that cannot be read keeps the file."""
+        sid = "0199a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5c"
+        t = Path(self.tmp.name) / "proj2" / f"{sid}.jsonl"
+        t.parent.mkdir()
+        t.write_text(_line("user", "ask", "2026-10-12T10:00:00Z"), encoding="utf-8")
+        st = t.stat()
+        db = dashboard._turnstore_db()
+        # A row from a later reading (another hub, a newer mtime) stays and
+        # this reading is not stored: the file is not given up.
+        turnstore.put(db, str(t), (st.st_size + 5, st.st_mtime_ns + 10**9), dashboard._turnstore_version(),
+                      [{"role": "user", "text": "other"}], force=True)
+        self.assertFalse(dashboard.keep_conversation_text("claude", sid, str(t)))
+        with mock.patch.object(dashboard.turnstore, "put", return_value=False):
+            self.assertFalse(dashboard.keep_conversation_text("claude", sid, str(t)))
+        with mock.patch.object(Path, "open", side_effect=PermissionError("locked")):
+            self.assertFalse(dashboard.keep_conversation_text("claude", sid, str(t)))
 
     def test_the_turns_kept_in_memory_stay_well_under_150_mb(self):
         # The PO's read: 96 M chars was ~480 MB of the hub at ~5 MB per

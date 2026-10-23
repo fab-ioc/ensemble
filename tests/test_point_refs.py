@@ -91,6 +91,34 @@ const p = P.create({room: 'room', changed() {}}), settle = () => new Promise(r =
         self.assertEqual(len(got['calls']), 4, got['calls'])
 
 
+    def test_a_refresh_while_a_lookup_is_out_asks_again_after_it(self):
+        """#265 review: the points changed while the answer was on its way:
+        that answer shows, and the chip is asked again at the next draw,
+        not five minutes later."""
+        code = r'''
+const ctx = CTX, calls = [], held = [];
+let stage = 'open';
+globalThis.fetch = url => new Promise(res => held.push(() => {
+  calls.push(url);
+  res({ok: true, status: 200, json: async () => ({points: {P23: {id: 'P23', roomId: 'r', mid: 'm1', text: 't', stage, projectId: 'ed', project: 'ed'}}})});
+}));
+let draws = 0;
+const p = P.create({room: 'room', changed() { draws++; }}), settle = () => new Promise(r => setImmediate(r));
+(async () => {
+  p.replace('P23', ctx); await settle();
+  p.refresh(); stage = 'acked';        // the ledger changed while the old answer was out
+  held.shift()(); await settle();
+  const first = p.replace('P23', ctx); await settle();
+  const asked = held.length; if (asked) held.shift()(); await settle();
+  console.log(JSON.stringify({first, asked, draws, last: p.replace('P23', ctx)}));
+})();
+'''.replace('CTX', json.dumps(self.CTX))
+        got = self.run_js(code)
+        self.assertEqual(got['asked'], 1, 'asked again after the obsolete answer')
+        self.assertGreaterEqual(got['draws'], 1)
+        self.assertIn('acknowledged', got['last'])
+
+
 class Lookup(Hub):
     def setUp(self):
         super().setUp()
@@ -148,6 +176,22 @@ class Lookup(Hub):
                 dashboard.point_ref('P291', self.ed)
         self.assertEqual(walk.call_count, 0, 'the rooms are not walked per lookup')
         points.sync.assert_not_called()
+
+    def test_a_warm_lookup_is_the_kept_answer_and_a_move_is_seen_at_once(self):
+        """#265 review: a warm lookup reads no ledger and no card; a task
+        moved to another project answers there, not in its old one."""
+        task = self.room('Task', self.ed)
+        self.seed(task, 'P400', 'Task ask', 'open')
+        self.assertEqual(dashboard.point_ref('P400', self.ed)['roomId'], task)
+        with mock.patch.object(points, 'load', wraps=points.load) as load, \
+                mock.patch.object(dashboard.asks, 'point_card') as card:
+            got = dashboard.point_ref('P400', self.ed)
+        self.assertEqual((got['text'], load.call_count, card.call_count), ('Task ask', 0, 0))
+        got['text'] = 'changed by a caller'
+        self.assertEqual(dashboard.point_ref('P400', self.ed)['text'], 'Task ask')
+        self.assertTrue(dashboard.move_task(task, self.ot))
+        self.assertIsNone(dashboard.point_ref('P400', self.ed))
+        self.assertEqual(dashboard.point_ref('P400', self.ot)['projectId'], self.ot)
 
 
 if __name__ == '__main__':

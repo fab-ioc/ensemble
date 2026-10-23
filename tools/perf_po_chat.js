@@ -109,12 +109,39 @@ async function main() {
     step({do: 'scroll', before: r, after, s: +(now() - t).toFixed(2)});
   }
 
+  // Whether a message id's conversation is gone and read from the hub's
+  // kept text (Free disk space deleted it): asked once per session.
+  const keptSid = new Map();
+  async function isKept(msg) {
+    const sid = (String(msg || '').match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/) || [])[1];
+    if (!sid) return false;
+    if (!keptSid.has(sid)) keptSid.set(sid, await inChat(`return fetch('/api/session/${sid}?stat=1').then(r => r.ok ? r.json() : {}).then(d => !!d.kept, () => false);`).catch(() => false));
+    return keptSid.get(sid);
+  }
+  // Each point step looks for a chip of the next kind in turn: one into a
+  // conversation that was deleted (kept), one of another room, a closed one,
+  // any. The run fails when a kind was never found (analyse).
+  const KINDS = ['old', 'cross', 'closed', 'any'];
+  let pointN = 0;
   async function point() {
     // A point chip in the chat, as the CEO opens one: its card, then each of its links.
     const chips = await inChat(`return [...document.querySelectorAll('#msgs a.point-chip')].map((a, i) => ({ i,
-      ref: a.textContent.trim(), room: a.dataset.refRoom, msg: a.dataset.refMsg, part: a.dataset.refPart }));`);
+      ref: a.textContent.trim(), room: a.dataset.refRoom, msg: a.dataset.refMsg, part: a.dataset.refPart,
+      state: (() => { try { return JSON.parse(a.dataset.card || '{}').state || ''; } catch (e) { return ''; } })() }));`);
     if (!chips || !chips.length) { step({do: 'point', chips: 0}); return; }
-    const pick = chips[rand(chips.length)];
+    for (const ch of chips) {
+      ch.cross = !!ch.room && ch.room !== A.room;
+      ch.closed = /^acknowledged/.test(ch.state);
+    }
+    const want = KINDS[pointN++ % KINDS.length];
+    let pool = chips;
+    if (want === 'old') {
+      pool = [];
+      for (const ch of chips) if (await isKept(ch.msg)) pool.push(ch);
+    } else if (want !== 'any') pool = chips.filter(ch => ch[want]);
+    const pick = (pool.length ? pool : chips)[rand(pool.length || chips.length)];
+    pick.old = await isKept(pick.msg);
+    step({do: 'point', chips: chips.length, want, found: pool.length, ref: pick.ref, kinds: {old: pick.old, cross: pick.cross, closed: pick.closed}});
     const card = await inChat(`const a = [...document.querySelectorAll('#msgs a.point-chip')][${pick.i}]; if (!a) return null;
       a.scrollIntoView({block: 'center'}); a.click();
       const c = document.querySelector('.task-card'); if (!c) return {card: false};
@@ -143,6 +170,7 @@ async function main() {
       const landed = all.some(x => (x.landed || []).includes(l.msg));
       const empty = all.some(x => x.thread && x.msgs === 0);
       step({do: 'point-link', ref: pick.ref, link: l.text, room: l.room, msg: l.msg, part: l.part,
+        kinds: {old: await isKept(l.msg), cross: !!l.room && l.room !== A.room, closed: pick.closed},
         landed, empty, note: all.map(x => x.note).filter(Boolean)[0] || '', s: +(now() - t).toFixed(2),
         where: seen ? {thread: seen.thread, msgs: seen.msgs, pane: (seen.pane || []).filter(p => p.thread || (p.landed || []).length || p.note)} : null});
       // Back to the channel for the next step.
@@ -181,9 +209,19 @@ async function main() {
       const ids = Object.values(THR_META || {}).filter(t => t && t.id && t.id !== 'team:activity').map(t => t.id);
       if (!ids.length) return {threaded: true, none: true};
       const id = ids[${rand(100000)} % ids.length]; openThread(id, ''); return {threaded: true, id};`).catch(e => ({error: String(e).slice(0, 100)}));
-    await sleep(3000);
-    const seen = await inChat(look).catch(() => null);
-    step({do: 'thread', ...r, thread: seen && seen.thread, msgs: seen && seen.msgs, empty: !!(seen && seen.thread && seen.msgs === 0), s: +(now() - t).toFixed(2)});
+    // The thread shows in the chat or in its side frame: wait up to 8 s for
+    // its messages there.
+    let seen = null, shown = [];
+    const end = Date.now() + 8000;
+    while (Date.now() < end) {
+      await sleep(250);
+      seen = await inChat(look).catch(() => null);
+      shown = seen ? [seen, ...(seen.pane || [])].filter(x => x.thread) : [];
+      if (shown.some(x => x.msgs > 0)) break;
+    }
+    step({do: 'thread', ...r, opened: shown.length > 0, where: shown.map(x => (x === seen ? 'chat' : 'side')),
+      thread: shown.map(x => x.thread)[0] || '', msgs: shown.map(x => x.msgs)[0],
+      empty: shown.length > 0 && !shown.some(x => x.msgs > 0), s: +(now() - t).toFixed(2)});
     await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
   }
 

@@ -60,9 +60,9 @@ const PointRefs = (() => {
   // chat's hundreds of chips asked each a minute, and queued its sends).
   const AGE_MS = 300000, RETRY_MS = 15000, BATCH = 100;
   function create(o) {
-    const cache = new Map();      // "project:Pn" → { at, value, pending?, stale? }
+    const cache = new Map();      // "project:Pn" → { at, value, pending?, stale?, gen? }
     const queue = new Map();      // project → Set of point ids to ask
-    let timer = null;
+    let timer = null, gen = 0;    // gen: refresh() calls so far
     function flush() {
       timer = null;
       for (const [project, set] of queue) {
@@ -78,8 +78,10 @@ const PointRefs = (() => {
           let changed = false;
           for (const id of ids) {
             const key = project + ':' + id, old = cache.get(key), value = (d && d.points && d.points[id]) || null;
-            if (!old || JSON.stringify(old.value) !== JSON.stringify(value)) changed = true;
-            cache.set(key, { at: Date.now(), value });
+            // Asked before the points last changed: shown, and asked again next draw.
+            const stale = !!old && old.gen !== gen;
+            if (!old || stale || JSON.stringify(old.value) !== JSON.stringify(value)) changed = true;
+            cache.set(key, { at: Date.now(), value, stale });
           }
           if (changed) o.changed();
         })
@@ -89,14 +91,15 @@ const PointRefs = (() => {
     function info(id, project) {
       const key = project + ':' + id, old = cache.get(key);
       if (old && (old.pending || (!old.stale && Date.now() - old.at < AGE_MS))) return old.value;
-      cache.set(key, { at: old ? old.at : 0, value: old ? old.value : null, pending: true });
+      cache.set(key, { at: old ? old.at : 0, value: old ? old.value : null, pending: true, gen });
       if (!queue.has(project)) queue.set(project, new Set());
       queue.get(project).add(id);
       if (!timer) timer = Promise.resolve().then(flush);   // after this draw: its chips in one request
       return old ? old.value : null;
     }
     // The chat's points changed: each is asked again when next drawn.
-    function refresh() { for (const c of cache.values()) if (!c.pending) c.stale = true; }
+    // One asked meanwhile is asked again once its answer is in (ask).
+    function refresh() { gen++; for (const c of cache.values()) if (!c.pending) c.stale = true; }
     function chip(r, ctx) {
       const p = info(r.id, r.project);
       // A weaker project mention with the same point is ambiguous: attach nothing.

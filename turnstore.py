@@ -123,6 +123,15 @@ def kept(db: Path) -> dict[str, tuple[str, int, int]]:
     return out
 
 
+def has(db: Path, path: str) -> bool:
+    """Whether a row for ``path`` is stored."""
+    try:
+        with _LOCK:
+            return _conn(db).execute("SELECT 1 FROM turns WHERE path=?", (path,)).fetchone() is not None
+    except (OSError, sqlite3.Error):
+        return False
+
+
 def get_kept(db: Path, path: str) -> list[dict] | None:
     """The turns stored for ``path`` whatever the file and the parser are
     now: for a file that is gone, the best there is."""

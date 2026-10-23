@@ -656,8 +656,14 @@ class Addresses(Hub):
         self.assertEqual(status, 200)
         self.assertEqual([t and t["roomId"] for t in got], [self.b, self.x, None, self.x])
         self.assertEqual([t and t["inProject"] for t in got], [True, False, None, False])
-        status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=nonsense")
-        self.assertEqual((status, json.loads(body)), (200, {"tasks": []}))
+        # Malformed, too deep or too long: refused, never parsed or split.
+        for bad in ("nonsense", "[" * 100000, json.dumps([["#1", ""]] * 3000)):
+            status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote(bad))
+            self.assertEqual(status, 400, bad[:20])
+        status, _, body = self.call("GET", f"/api/point/refs?ids={','.join(['P1'] * 8000)}&project={self.ed}")
+        self.assertEqual((status, json.loads(body)), (400, {"error": "too_many_ids"}))
+        status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote("[[1, 2], 3]"))
+        self.assertEqual((status, [t for t in json.loads(body)["tasks"]]), (200, [None]))
 
     def test_a_chip_says_whether_the_task_is_the_rooms_projects(self):
         # #152: the chip shows #2 for the room's own project's task, ED-2 / O-1

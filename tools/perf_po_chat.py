@@ -54,6 +54,8 @@ BUDGETS = {
     "per_key_per_min": 36,      # one endpoint, one query: once per 2 s poll (and its jitter)
     "per_endpoint_per_min": 120,
     "lag_ms": 500,              # the interpreter held this long by one thing
+    "min_links": 6,             # coverage: point links followed in the run
+    "min_sends": 3,
 }
 # Long by nature: a terminal's stream, an agent's tool call, a long poll.
 NOT_TIMED = {"/api/pty/stream", "/mcp", "/api/events"}
@@ -169,6 +171,7 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
             fails.append(f"step {s.get('do')} at {s['at']} s failed: {s['error'][:160]}")
         if s.get("do") == "open" and not s.get("ok"):
             fails.append(f"the page did not open its chat at {s['at']} s")
+    fails += coverage(steps, budgets)
     worst_lag = max((x["ms"] for x in lag), default=0)
     if worst_lag > budgets["lag_ms"]:
         fails.append(f"the interpreter was held {worst_lag} ms at once > {budgets['lag_ms']} ms")
@@ -180,6 +183,32 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
     (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     (out / "summary.md").write_text(markdown(summary), encoding="utf-8")
     return summary
+
+
+def coverage(steps: list[dict], budgets=BUDGETS) -> list[str]:
+    """What the run must have done to say anything (#265 review): chips
+    found, links that landed into a deleted (kept) conversation, another
+    room and a closed point, sends, a reload that opened the chat again,
+    and a thread shown with its messages."""
+    links = [s for s in steps if s.get("do") == "point-link"]
+    landed = [s for s in links if s.get("landed") and not s.get("empty")]
+    opens = [s for s in steps if s.get("do") == "open"]
+    threads = [s for s in steps if s.get("do") == "thread"]
+    need = []
+    if not any(s.get("chips") for s in steps if s.get("do") == "point"):
+        need.append("no point chip was found in the chat")
+    if len(links) < budgets["min_links"]:
+        need.append(f"{len(links)} point links followed < {budgets['min_links']}")
+    for kind, what in (("old", "a deleted conversation"), ("cross", "another room"), ("closed", "a closed point")):
+        if not any((s.get("kinds") or {}).get(kind) for s in landed):
+            need.append(f"no point link into {what} landed")
+    if len([s for s in steps if s.get("do") == "send"]) < budgets["min_sends"]:
+        need.append(f"fewer than {budgets['min_sends']} sends")
+    if not any(s.get("do") == "reload" for s in steps) or len(opens) < 2 or not opens[-1].get("ok"):
+        need.append("no reload that drew the chat again")
+    if not any(s.get("opened") and not s.get("empty") for s in threads):
+        need.append("no thread was shown with its messages")
+    return ["coverage: " + x for x in need]
 
 
 def markdown(s: dict) -> str:
@@ -206,7 +235,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--snapshot", default=str(perf_snapshot.default_dest()))
     ap.add_argument("--fresh", action="store_true", help="copy the live state again first")
-    ap.add_argument("--minutes", type=float, default=6)
+    ap.add_argument("--minutes", type=float, default=30, help="a long-open page: 30 or more")
     ap.add_argument("--project", default="proj-0db97f64")
     ap.add_argument("--room", default="room-8d56cd21")
     ap.add_argument("--port", type=int, default=8798)

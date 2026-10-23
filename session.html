@@ -5690,14 +5690,21 @@ function unnoteSending(key) {
   const v = SENT_LOCAL.get(key);
   if (v && v.s.state === 'sending') { SENT_LOCAL.delete(key); if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
 }
+// The request ended without an answer to show (the hub kept it all the
+// same): from now the hub's list says, or a minute.
+function settleSending(key) {
+  const v = SENT_LOCAL.get(key);
+  if (v && v.s.state === 'sending') v.settledAt = Date.now() / 1000;
+}
 // A poll's list (``gen``: the ticket it took when it asked). Returns whether
 // what shows changed.
 function sendsFromPoll(list, gen) {
   ROOM_SENDS = Array.isArray(list) ? list : [];
   // One still on its way stays (a poll answered meanwhile cannot have it
-  // yet) until the hub lists it, or for a minute.
+  // yet) while its request is out, however long, then until the hub lists
+  // it or for a minute.
   for (const [k, v] of SENT_LOCAL) if (gen > v.gen && (v.s.state !== 'sending'
-    || ROOM_SENDS.some(x => x.key === k) || Date.now() / 1000 - v.s.at > 60)) SENT_LOCAL.delete(k);
+    || ROOM_SENDS.some(x => x.key === k) || (v.settledAt && Date.now() / 1000 - v.settledAt > 60))) SENT_LOCAL.delete(k);
   const sig = JSON.stringify([ROOM_SENDS, [...SENT_LOCAL.keys()]]);
   if (sig === SENDS_SIG) return false;
   SENDS_SIG = sig;
@@ -8416,7 +8423,7 @@ async function sendNow(urgent = false) {
       noteSending(key, t, '');
       try { d = await sendResuming(t, '', key, atts, urgent); }
       catch (e) {
-        if (keptByHub(e)) return;
+        if (keptByHub(e)) { settleSending(key); return; }
         unnoteSending(key);
         SEND_ERR = sendFailText(e);
         setText($('#hint'), SEND_ERR);
@@ -8444,7 +8451,7 @@ async function sendNow(urgent = false) {
     noteSending(key, t, to);
     try { d = await sendResuming(t, to, key, atts, urgent); }
     catch (e) {
-      if (keptByHub(e)) return;
+      if (keptByHub(e)) { settleSending(key); return; }
       unnoteSending(key);
       SEND_ERR = sendFailText(e);
       setText($('#hint'), SEND_ERR);

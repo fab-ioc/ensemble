@@ -4613,8 +4613,9 @@ def _queued_prompt_text(prompt) -> str | None:
     return None
 
 
-def _claude_text_turns(tpath: Path) -> list[dict]:
-    """A Claude transcript's user and assistant text turns, unclassified."""
+def _claude_text_turns(tpath: Path, *, strict: bool = False) -> list[dict]:
+    """A Claude transcript's user and assistant text turns, unclassified.
+    ``strict``: a file that cannot be read raises, not reads as empty."""
     turns = []
     try:
         with tpath.open(encoding="utf-8", errors="replace") as f:
@@ -4676,7 +4677,8 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                     turn["hidden"] = "summary" if d.get("isCompactSummary") else "command"
                 turns.append(turn)
     except OSError:
-        pass
+        if strict:
+            raise
     for turn in turns:
         turn.pop("_img", None)
         turn.pop("_placed", None)
@@ -4881,6 +4883,9 @@ def kept_session(sid: str) -> tuple[Path, list] | None:
         _KEPT[1] = turnstore.kept(_turnstore_db())
         _KEPT[0] = time.monotonic()
     hit = _KEPT[1].get(sid)
+    if hit and not turnstore.has(_turnstore_db(), hit[0]):
+        _KEPT[1].pop(sid, None)     # the store lost it since it was listed
+        hit = None
     return (Path(hit[0]), [hit[1], round(hit[2] / 1e9, 3)]) if hit else None
 
 
@@ -7885,27 +7890,33 @@ def _task_chip(ref: str, pid: str, ctx_pid: str) -> tuple[dict | None, str]:
     return info, ""
 
 
-# {project id: (built at, points.SAVED then, {point id: [task index entry]})}
-_POINT_INDEX: dict[str, tuple[float, int, dict]] = {}
+# /api/point/refs and /api/task/refs: a query longer than 200 of the
+# longest refs a page sends is refused, not split or parsed.
+_REFS_QUERY_MAX = 20_000
+# {project id: (built at, (points.SAVED, the links file) then, {point id: [task index entry]})}
+_POINT_INDEX: dict[str, tuple[float, tuple, dict]] = {}
+# {(project id, point id): (the index entry's built at, point_ref's answer)}
+_POINT_ANSWERS: dict[tuple[str, str], tuple[float, dict | None]] = {}
 _POINT_INDEX_LOCK = threading.Lock()
-_POINT_INDEX_TTL_S = 10.0       # a room moved between projects, a ledger another hub wrote
+_POINT_INDEX_TTL_S = 10.0       # a ledger another hub wrote, a card in a transcript
 _POINT_INDEX_MISS_S = 1.0       # a point not in it: looked for again after this
 
 
-def _point_index(project: dict, projects: list[dict], point_id: str = "") -> dict[str, list[dict]]:
-    """Which rooms of ``project`` hold each point number (#265): worked out
-    once from the ledgers and kept until one is saved, a room may have moved
-    (_POINT_INDEX_TTL_S), or ``point_id`` is not in it a second later (a
-    room new since). A chat full of point chips asks for each; walking every
-    room and ledger per chip held the hub for seconds."""
+def _point_index(project: dict, projects: list[dict], point_id: str = "") -> tuple[float, dict[str, list[dict]]]:
+    """Which rooms of ``project`` hold each point number (#265), and when
+    that was worked out: from the ledgers, kept until one is saved, a room
+    moves to another project (the links file changes), _POINT_INDEX_TTL_S
+    pass, or ``point_id`` is not in it a second later (a room new since). A
+    chat full of point chips asks for each; walking every room and ledger
+    per chip held the hub for seconds."""
     pid = project["id"]
     now = time.monotonic()
+    saved = (points.SAVED, _stat_sig(SESSION_PROJECTS_FILE))
     with _POINT_INDEX_LOCK:
         hit = _POINT_INDEX.get(pid)
-    if hit is not None and hit[1] == points.SAVED and now - hit[0] < _POINT_INDEX_TTL_S \
+    if hit is not None and hit[1] == saved and now - hit[0] < _POINT_INDEX_TTL_S \
             and (not point_id or point_id in hit[2] or now - hit[0] < _POINT_INDEX_MISS_S):
-        return hit[2]
-    saved = points.SAVED
+        return hit[0], hit[2]
     links = load_session_projects()
     ledgers = points.with_ledgers()
     idx: dict[str, list[dict]] = {}
@@ -7920,7 +7931,9 @@ def _point_index(project: dict, projects: list[dict], point_id: str = "") -> dic
             rooms.append(room)      # twice in one room is ambiguous as well
     with _POINT_INDEX_LOCK:
         _POINT_INDEX[pid] = (now, saved, idx)
-    return idx
+        for key in [k for k in _POINT_ANSWERS if k[0] == pid]:
+            del _POINT_ANSWERS[key]
+    return now, idx
 
 
 def point_ref(point_id: str, project_id: str, projects: list[dict] | None = None) -> dict | None:
@@ -7935,9 +7948,23 @@ def point_ref(point_id: str, project_id: str, projects: list[dict] | None = None
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
         return None
-    rooms = _point_index(project, projects, point_id).get(point_id) or []
+    built, idx = _point_index(project, projects, point_id)
+    with _POINT_INDEX_LOCK:
+        hit = _POINT_ANSWERS.get((project_id, point_id))
+    if hit is not None and hit[0] == built:
+        return copy.deepcopy(hit[1])        # the whole answer, card and all, until the index changes
+    out = _point_answer(point_id, project, idx.get(point_id) or [])
+    with _POINT_INDEX_LOCK:
+        if (_POINT_INDEX.get(project_id) or (0.0,))[0] == built:
+            _POINT_ANSWERS[(project_id, point_id)] = (built, copy.deepcopy(out))
+    return out
+
+
+def _point_answer(point_id: str, project: dict, rooms: list[dict]) -> dict | None:
+    """point_ref's answer for the rooms the index says hold ``point_id``."""
     if len(rooms) != 1:
         return None
+    project_id = project["id"]
     room = rooms[0]
     rid = room["id"]
     # The ledger as the room's own sync left it (its chat's poll, a send):
@@ -13296,13 +13323,15 @@ def keep_conversation_text(agent: str, sid: str, path: str) -> bool:
     tpath = Path(path[4:] if path.startswith("\\\\?\\") else path)    # prune's long-path form
     try:
         st = tpath.stat()
+        turns = _claude_text_turns(tpath, strict=True)
     except OSError:
+        return False        # unreadable: kept on disk, not stored as empty
+    db, sig, ver = _turnstore_db(), (st.st_size, st.st_mtime_ns), _turnstore_version()
+    if not turnstore.put(db, str(tpath), sig, ver, turns, force=True):
         return False
-    db = _turnstore_db()
-    turnstore.put(db, str(tpath), (st.st_size, st.st_mtime_ns), _turnstore_version(),
-                  _claude_text_turns(tpath), force=True)
     _KEPT[0] = 0.0          # listed again on the next lookup
-    return turnstore.get_kept(db, str(tpath)) is not None
+    # This reading, not an older row of the file: anything else keeps it.
+    return turnstore.get(db, str(tpath), sig, ver) is not None
 
 
 def pruned_refusal(room: dict) -> dict:
@@ -16923,7 +16952,7 @@ class Handler(BaseHTTPRequestHandler):
                 if kept is not None:
                     # Deleted to free disk space: its text as the hub kept it (#265).
                     if want_stat:
-                        self._send_json(200, {"sessionId": sid, "size": kept[1][0], "mtime": kept[1][1]})
+                        self._send_json(200, {"sessionId": sid, "size": kept[1][0], "mtime": kept[1][1], "kept": True})
                         return
                     body = full_turns(claude_turns_classified(kept[0])) if full else {"turns": []}
                     self._send_json(200, {"sessionId": sid, "cwd": "", **body, "kept": True,
@@ -17303,15 +17332,20 @@ class Handler(BaseHTTPRequestHandler):
             # JSON list of [ref, project] (200 at most) and ?room= as for
             # /api/task/ref; {tasks: [what it says, or null], ...in order}.
             q = parse_qs(u.query)
+            raw = q.get("refs", ["[]"])[0] or "[]"
+            if len(raw) > _REFS_QUERY_MAX:
+                self._send_json(400, {"error": "too_many_refs"})
+                return
             ctx_room = (q.get("room", [""])[0] or "").strip()
             ctx_pid = ""
             if ctx_room:
                 rm = chatroom.get_room(ctx_room, copy_room=False)
                 ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
             try:
-                refs = json.loads(q.get("refs", ["[]"])[0] or "[]")
-            except ValueError:
-                refs = []
+                refs = json.loads(raw)
+            except (ValueError, RecursionError):
+                self._send_json(400, {"error": "bad_refs"})
+                return
             refs = [r for r in refs if isinstance(r, list) and len(r) == 2][:200] if isinstance(refs, list) else []
             self._send_json(200, {"tasks": [_task_chip(str(r[0] or ""), str(r[1] or "").strip(), ctx_pid)[0] for r in refs]})
             return
@@ -17325,8 +17359,12 @@ class Handler(BaseHTTPRequestHandler):
             # Every point a page shows, in one request (#265): {points: {Pn:
             # what /api/point/ref says, or null}}; ?ids=P1,P2 (200 at most).
             q = parse_qs(u.query)
+            raw = q.get("ids", [""])[0] or ""
+            if len(raw) > _REFS_QUERY_MAX:
+                self._send_json(400, {"error": "too_many_ids"})
+                return
             pid = q.get("project", [""])[0] or room_project(q.get("room", [""])[0])
-            ids = [i for i in (q.get("ids", [""])[0] or "").split(",") if i][:200]
+            ids = [i for i in raw.split(",") if i][:200]
             projects = load_projects()
             self._send_json(200, {"points": {i: point_ref(i, pid, projects) for i in ids}})
             return
