@@ -136,6 +136,42 @@ for mod, fn in ((D.backup, "start_scheduler"), (D.backup, "ensure_repo"), (D.fil
 
 threading.Thread(target=_lag, daemon=True).start()
 
+_WAITS = ("wait", "sleep", "select", "accept", "recv", "readinto", "read", "_wait_for_tstate_lock", "get", "poll")
+
+
+def _sample() -> None:
+    """PERF_SAMPLE=1: every 10 ms, where each thread not waiting is (its
+    innermost repo frames, 8 in a request), counted; DIR/samples.txt, rewritten each 30 s."""
+    import collections
+    import traceback
+    me, counts, n, last = threading.get_ident(), collections.Counter(), 0, time.time()
+    names = {}
+    while True:
+        time.sleep(0.01)
+        n += 1
+        for tid, fr in sys._current_frames().items():
+            if tid == me or fr.f_code.co_name in _WAITS:
+                continue
+            stack = traceback.extract_stack(fr)
+            mine = [f for f in stack if str(ROOT) in f.filename and "tools" not in f.filename]
+            if not mine:
+                continue
+            if tid not in names:
+                names[tid] = next((t.name for t in threading.enumerate() if t.ident == tid), str(tid))
+            depth = 8 if any(f.name in ("do_GET", "do_POST") for f in mine) else 4
+            top = " < ".join(f"{Path(f.filename).stem}:{f.name}" for f in reversed(mine[-depth:]))
+            counts[(names[tid].split("-")[0], top)] += 1
+        if time.time() - last > 30:
+            last = time.time()
+            with open(OUT / "samples.txt", "w", encoding="utf-8") as f:
+                f.write(f"{n} samples of 10 ms\n")
+                for (who, top), c in counts.most_common():
+                    f.write(f"{c:6d}  {who:12s} {top}\n")
+
+
+if os.environ.get("PERF_SAMPLE") == "1":
+    threading.Thread(target=_sample, daemon=True).start()
+
 
 def _after_boot() -> None:
     # Started (begin() ran), then ready: the first task list is read, as on

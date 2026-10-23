@@ -107,6 +107,13 @@ async function main() {
       try { for (const g of w.document.querySelectorAll('iframe')) see(g.contentWindow, 'side'); } catch (e) {} }
     return out; })()`).catch(() => []);
 
+  // Back to the channel, and a thread's Dock panel closed as its × does: a
+  // run measures one open chat (each open view of it polls on its own).
+  async function closeThreads() {
+    await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
+    await ev(`(() => { try { if (PD.dock && PD.rt.has(PD_THREAD)) PD.dock.removePanel(PD_THREAD); } catch (e) {} return true; })()`).catch(() => {});
+  }
+
   async function scroll() {
     const t = now();
     const r = await inChat(`const box = document.getElementById('msgs'); if (!box) return null;
@@ -224,7 +231,7 @@ async function main() {
         where: views.filter(v => v.thread || (v.landed || []).length || v.note)
           .map(v => ({where: v.where, room: v.room, thread: v.thread, msgs: v.msgs, landed: v.landed, note: v.note}))});
       // Back to the channel for the next step.
-      await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
+      await closeThreads();
       await sleep(500);
     }
   }
@@ -271,7 +278,7 @@ async function main() {
     step({do: 'thread', ...r, opened: shown.length > 0, where: shown.map(x => x.where),
       thread: shown.map(x => x.thread)[0] || '', msgs: shown.map(x => x.msgs)[0],
       empty: shown.length > 0 && !shown.some(x => x.msgs > 0), s: +(now() - t).toFixed(2)});
-    await inChat(`if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && typeof closeThread === 'function') closeThread(); return true;`).catch(() => {});
+    await closeThreads();
   }
 
   await open();

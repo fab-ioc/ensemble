@@ -33,5 +33,40 @@ class SlowRequests(Hub):
         self.assertEqual(json.loads(body)["slow"]["by"]["GET /api/room"], {"n": 1, "maxS": 5.5})
 
 
+class GitChangedCount(unittest.TestCase):
+    """A project list asks each project's changed files: an old count is
+    answered at once and read again in the background (#265)."""
+
+    def setUp(self):
+        for name, val in (("_GIT_STAT_CACHE", {}), ("_GIT_STAT_BUSY", set())):
+            p = mock.patch.object(dashboard, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_first_read_waits_then_old_one_does_not(self):
+        import threading
+        gate, calls = threading.Event(), []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if len(calls) > 1:
+                gate.wait(5)
+            return mock.Mock(stdout=" M a\n M b\n" if len(calls) == 1 else " M a\n")
+        with mock.patch.object(dashboard, "_run", run):
+            self.assertEqual(dashboard.git_changed_count("R"), 2)
+            dashboard._GIT_STAT_CACHE["R"] = (time.time() - 60, 2)
+            t = time.perf_counter()
+            self.assertEqual(dashboard.git_changed_count("R"), 2)        # the old count, git still running
+            self.assertEqual(dashboard.git_changed_count("R"), 2)        # one read again at a time
+            self.assertLess(time.perf_counter() - t, 1)
+            gate.set()
+            for _ in range(100):
+                if not dashboard._GIT_STAT_BUSY:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(dashboard.git_changed_count("R"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

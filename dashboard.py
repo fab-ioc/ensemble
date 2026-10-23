@@ -4900,10 +4900,12 @@ def read_session_turns(sid: str) -> list[dict] | None:
     tpath = find_transcript(sid)
     if tpath:
         return claude_turns_classified(tpath)
+    kept = kept_session(sid)        # asked before Codex, whose miss globs its rollouts
+    if kept:
+        return claude_turns_classified(kept[0])
     cx = agents.get_agent("codex")
     if cx is None or cx.session_stat(sid) is None:
-        kept = kept_session(sid)
-        return claude_turns_classified(kept[0]) if kept else None
+        return None
     room_id, identity = _session_input_context(sid)
     return classify_turns(cx.read_turns(sid), room_id=room_id,
                           identity=identity, session_id=sid)
@@ -5918,13 +5920,40 @@ def git_root(cwd: str) -> str:
     return root
 
 
+_GIT_STAT_BUSY: set = set()     # roots whose count is being read again
+
+
 def git_changed_count(root: str) -> int:
     """Number of changed (dirty) files in ``root``; cached ~12s (git status is
-    slow on large repos, and dirtiness doesn't change second-to-second)."""
-    now = time.time()
+    slow on large repos, and dirtiness doesn't change second-to-second). An
+    older count is answered at once and read again in the background (#265:
+    /api/projects ran git once per project every 12 s, 1.4 s a poll); only a
+    first read waits."""
     hit = _GIT_STAT_CACHE.get(root)
-    if hit and now - hit[0] < 12:
+    if hit and time.time() - hit[0] < 12:
         return hit[1]
+    if hit:
+        with _GIT_STAT_LOCK:
+            if root in _GIT_STAT_BUSY:
+                return hit[1]
+            _GIT_STAT_BUSY.add(root)
+
+        def again() -> None:
+            try:
+                _git_changed_read(root)
+            finally:
+                with _GIT_STAT_LOCK:
+                    _GIT_STAT_BUSY.discard(root)
+        threading.Thread(target=again, name="git-changed", daemon=True).start()
+        return hit[1]
+    return _git_changed_read(root)
+
+
+_GIT_STAT_LOCK = threading.Lock()
+
+
+def _git_changed_read(root: str) -> int:
+    now = time.time()
     n = 0
     try:
         out = _run(["git", "-C", root, "status", "--porcelain"],

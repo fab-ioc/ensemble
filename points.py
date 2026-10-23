@@ -1121,12 +1121,14 @@ def _session_stat(sid: str, *, immediate: bool = False) -> list | None:
         if tp:
             st = Path(tp).stat()
             return [st.st_size, round(st.st_mtime, 3)]
+        # Deleted, its text kept by the hub (#265): asked before Codex, whose
+        # miss globs its whole rollout tree (seconds a minute in a replay).
+        kept = _d.kept_session(sid)
+        if kept:
+            return kept[1]
         cx = _d.agents.get_agent("codex")
         st = cx.session_stat(sid) if cx is not None else None
-        if st:
-            return [st["size"], round(st["mtime"], 3)]
-        kept = _d.kept_session(sid)     # deleted, its text kept by the hub (#265)
-        return kept[1] if kept else None
+        return [st["size"], round(st["mtime"], 3)] if st else None
     except (OSError, TypeError, KeyError, AttributeError):
         return None
 
