@@ -63,7 +63,7 @@ async function main() {
       const o = {};
       await send('Page.navigate', { url: A.base + '/' }, sessionId);
       await until(`typeof renderPrunePrefs === 'function' && document.querySelector('#pref-prune-auto option')`);
-      await evalIn(`openSettingsPanel(document.querySelector('#me-btn')); document.querySelector('#settings-prune').scrollIntoView(); 0`);
+      await evalIn(`openSettings('prune'); 0`);
       await sleep(300);
       o.section = await evalIn(`(() => { const s = document.querySelector('#settings-prune'); const sel = s.querySelector('#pref-prune-auto');
         return { text: s.innerText, options: [...sel.options].map(x => x.textContent), value: sel.value,

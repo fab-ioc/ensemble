@@ -69,7 +69,7 @@ async function main() {
       await evalIn('document.getElementById("me-btn").click(); 0');
       await evalIn('[...document.querySelectorAll("#me-menu .me-item")].find(b => /^Settings/.test(b.textContent)).click(); 0');
       await until('!document.getElementById("settings-panel").hidden && !document.getElementById("pref-model-codex").disabled');
-      const MEASURE = `(() => { const p = document.getElementById('settings-panel'), sec = document.getElementById('settings-models');
+      const MEASURE = `(() => { openSettings('models'); const p = document.querySelector('#settings-panel .sp-dlg'), sec = document.getElementById('settings-models');
         sec.scrollIntoView({ block: 'start' });
         const pr = p.getBoundingClientRect();
         const rows = [...sec.querySelectorAll('select')].map(s => { const r = s.getBoundingClientRect(), cs = getComputedStyle(s), l = sec.querySelector('label[for="' + s.id + '"]');
@@ -314,7 +314,8 @@ class AgentModelsInSettings(unittest.TestCase):
                                             "Older models spend the allowance more slowly.")
                 self.assertEqual(r["efforts"], ["", "low", "medium", "high", "xhigh", "max"])
                 self.assertIn("Codex sessions currently use the reserve pool "
-                              "(model gpt-reserve, chosen in Settings).", r["tray"])
+                              "(model gpt-reserve, chosen in <a href=\"#settings-models\" class=\"usage-set\">"
+                              "Settings › Agent models</a>).", r["tray"])
                 self.assertRegex(r["tray"], r'reserve pool</span> <span class="usage-pool-use">in use')
                 self.assertIn("reserve", r["chip"])
                 self.assertIn("3%", r["chip"])

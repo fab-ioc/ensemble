@@ -51,7 +51,7 @@ async function main() {
       await evalIn('document.getElementById("me-btn").click(); 0');
       await evalIn('[...document.querySelectorAll("#me-menu .me-item")].find(b => /^Settings/.test(b.textContent)).click(); 0');
       await until('!document.getElementById("settings-panel").hidden');
-      const MEASURE = `(() => { const p = document.getElementById('settings-panel'), sec = document.getElementById('settings-models');
+      const MEASURE = `(() => { openSettings('models'); const p = document.querySelector('#settings-panel .sp-dlg'), sec = document.getElementById('settings-models');
         sec.scrollIntoView({ block: 'start' });
         const seg = document.getElementById('pref-prefer'), pr = p.getBoundingClientRect();
         const firstRow = sec.querySelector('.pref-row');

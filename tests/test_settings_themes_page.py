@@ -62,17 +62,19 @@ async function main() {
       await evalIn('document.getElementById("me-btn").click(); 0');
       await evalIn('[...document.querySelectorAll("#me-menu .me-item")].find(b => /^Settings/.test(b.textContent)).click(); 0');
       await until('!document.getElementById("settings-panel").hidden');
-      o.settings = await evalIn(`(() => { const p = document.getElementById('settings-panel');
-        const last = [...p.querySelectorAll('.settings-section')].pop();
+      // Settings is a tab per section (#264): open the last tab, its page scrolls.
+      o.settings = await evalIn(`(() => { const last = [...document.querySelectorAll('#sp-pages .settings-section')].pop();
+        openSettings(last.id.replace(/^settings-/, ''));
+        const p = document.getElementById('sp-pages'), dlg = document.querySelector('#settings-panel .sp-dlg');
         const before = { scroll: p.scrollHeight, client: p.clientHeight, bottom: p.getBoundingClientRect().bottom, vh: innerHeight, lastBefore: last.getBoundingClientRect().bottom };
         p.scrollTop = p.scrollHeight;
         const lr = last.getBoundingClientRect(), pr = p.getBoundingClientRect();
-        const pr0 = p.getBoundingClientRect(), fields = [...p.querySelectorAll('input, button')].filter(e => e.getBoundingClientRect().width);
+        const pr0 = dlg.getBoundingClientRect(), fields = [...dlg.querySelectorAll('input, button')].filter(e => e.getBoundingClientRect().width);
         before.horizontal = { l: pr0.left, r: pr0.right, vw: innerWidth, fieldsLeft: Math.min(...fields.map(e => e.getBoundingClientRect().left)), fieldsRight: Math.max(...fields.map(e => e.getBoundingClientRect().right)) };
         return { ...before, scrolled: p.scrollTop, lastId: last.id, lastBottom: lr.bottom, panelBottom: pr.bottom, lastInPanel: lr.bottom <= pr.bottom + 1 }; })()`);
       o.settingsAppearance = await evalIn(`document.querySelectorAll('#settings-panel .theme-opt, #settings-panel #accent-input, #settings-panel .swatch, #settings-themes').length`);
       o.settingsHeadings = await evalIn(`[...document.querySelectorAll('#settings-panel h4')].map(e => e.textContent)`);
-      await evalIn('document.getElementById("settings-panel").hidden = true; 0');
+      await evalIn('closeSettings(false); 0');
       // Theme submenu.
       await evalIn('document.getElementById("me-btn").click(); 0');
       o.closedBefore = await evalIn('document.getElementById("me-themes").hidden');

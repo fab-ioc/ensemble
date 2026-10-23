@@ -515,7 +515,7 @@ async function main() {
                  hint: getComputedStyle(h).color, muted: rgb(tok('--fg-muted')), first: document.querySelector('#settings-panel .settings-section').id,
                  theme: document.querySelector('meta[name="theme-color"]').content, surfaceTok: tok('--surface') }; })()`);
       if (A.shots) { const r = await c.send('Page.captureScreenshot', { format: 'png' }, p.sessionId); fs.writeFileSync(path.join(A.shots, 'install-settings.png'), Buffer.from(r.data, 'base64')); }
-      await p.evalIn('document.getElementById("settings-panel").hidden = true; 0');
+      await p.evalIn('closeSettings(false); 0');
       await goPo(p); await p.until(poReady, 30000); await sleep(500);
       out.tabPop = await popBoard(c, p);
     } finally { ch.kill(); }
