@@ -67,6 +67,30 @@ class GitChangedCount(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertEqual(dashboard.git_changed_count("R"), 1)
 
+    def test_first_reads_at_once_run_git_once(self):
+        """#265 review 2: two first asks run one git; a read that began
+        earlier and ends later does not replace a newer count."""
+        import threading
+        gate, calls, out = threading.Event(), [], []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            gate.wait(5)
+            return mock.Mock(stdout=" M a\n")
+        with mock.patch.object(dashboard, "_GIT_STAT_FIRST", {}), mock.patch.object(dashboard, "_run", run):
+            ts = [threading.Thread(target=lambda: out.append(dashboard.git_changed_count("R"))) for _ in range(2)]
+            for t in ts:
+                t.start()
+            time.sleep(0.2)
+            gate.set()
+            for t in ts:
+                t.join(5)
+            self.assertEqual((len(calls), out), (1, [1, 1]))
+        dashboard._GIT_STAT_CACHE["R"] = (time.time() + 60, 7)       # a newer count
+        with mock.patch.object(dashboard, "_run", return_value=mock.Mock(stdout="")):
+            self.assertEqual(dashboard._git_changed_read("R"), 7)
+        self.assertEqual(dashboard._GIT_STAT_CACHE["R"][1], 7)
+
 
 if __name__ == "__main__":
     unittest.main()

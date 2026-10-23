@@ -48,8 +48,8 @@ from tests import chrome_profile  # noqa: E402
 import perf_snapshot  # noqa: E402
 
 BUDGETS = {
-    # An endpoint the page asks at least once a minute: what one costs (p50),
-    # and its tail (p95). The tail is the hub's background work holding the
+    # What one request costs (p50: endpoints the page asks at least once a
+    # minute) and the tail (p95: every endpoint). The tail is the hub's background work holding the
     # interpreter (the session list refresh, the start-up warmers: 100-700 ms
     # stalls, every endpoint at once), not the chat's; before #265 the chat's
     # own endpoints were at 1.9-7 s p95 and its point lookups at 37 s.
@@ -66,6 +66,9 @@ BUDGETS = {
     "min_sends": 3,
 }
 GIT_BACKED = ("/api/history/", "/api/git/")
+# Waits on another server (GitHub's releases), not on the hub: held to the
+# max only.
+EXTERNAL = ("/api/update-check",)
 # Long by nature: a terminal's stream, an agent's tool call, a long poll.
 NOT_TIMED = {"/api/pty/stream", "/mcp", "/api/events"}
 
@@ -155,11 +158,16 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
     threads = [s for s in steps if s.get("do") == "thread"]
     fails = []
     for row in rows:
-        git = row["endpoint"].split(" ", 1)[1].startswith(GIT_BACKED)
+        path = row["endpoint"].split(" ", 1)[1]
+        git = path.startswith(GIT_BACKED)
+        if path.startswith(EXTERNAL):
+            if row["max"] > budgets["max_ms"]:
+                fails.append(f"{row['endpoint']}: max {row['max']} ms > {budgets['max_ms']} ms")
+            continue
         p50 = budgets["git_p50_ms"] if git else budgets["poll_p50_ms"]
         if row["perMin"] >= 1 and row["p50"] > p50:
             fails.append(f"{row['endpoint']}: p50 {row['p50']} ms > {p50} ms")
-        if row["perMin"] >= 1 and row["p95"] > budgets["poll_p95_ms"]:
+        if row["p95"] > budgets["poll_p95_ms"]:
             fails.append(f"{row['endpoint']}: p95 {row['p95']} ms > {budgets['poll_p95_ms']} ms")
         if row["max"] > budgets["max_ms"]:
             fails.append(f"{row['endpoint']}: max {row['max']} ms > {budgets['max_ms']} ms")
@@ -167,6 +175,11 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
             fails.append(f"{row['endpoint']}: one key asked {row['peakKeyMin']} times in a minute > {budgets['per_key_per_min']}")
         if row["peakMin"] > budgets["per_endpoint_per_min"]:
             fails.append(f"{row['endpoint']}: {row['peakMin']} requests in a minute > {budgets['per_endpoint_per_min']}")
+    # A page request still out when the run ended (no answer at all) counts
+    # once it was out longer than any request may take.
+    for r in page:
+        if r.get("open") and r.get("status") is None and r.get("endAt") is not None                 and (r["endAt"] - r["at"]) * 1000 > budgets["max_ms"]:
+            fails.append(f"{r['m']} {r['p']} at {r['at']} s: no answer after {round(r['endAt'] - r['at'], 1)} s > {budgets['max_ms']} ms")
     for s in sends:
         if s.get("shownMs") is None or s["shownMs"] > budgets["send_shown_ms"]:
             fails.append(f"send at {s['at']} s: shown after {s.get('shownMs')} ms > {budgets['send_shown_ms']} ms")
@@ -188,6 +201,8 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
             fails.append(f"the page did not open its chat at {s['at']} s")
         if s.get("do") == "back" and not s.get("ok"):
             fails.append(f"the board did not show this chat again after a link into another room at {s['at']} s")
+        if s.get("do") == "active" and not s.get("ok"):
+            fails.append(f"this chat was not the one on screen after a step at {s['at']} s ({s.get('why') or ''})")
     fails += coverage(steps, budgets)
     worst_lag = max((x["ms"] for x in lag), default=0)
     if worst_lag > budgets["lag_ms"]:

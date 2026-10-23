@@ -4869,6 +4869,7 @@ def _stored_text_turns(tpath: Path, sig: tuple[int, int]) -> list[dict]:
 
 
 _KEPT: list = [0.0, {}]         # [listed at, turnstore.kept()]
+_KEPT_READ: dict = {}           # path -> its row reads as turns (until the next listing)
 _KEPT_TTL_S = 300.0
 
 
@@ -4882,9 +4883,16 @@ def kept_session(sid: str) -> tuple[Path, list] | None:
     if time.monotonic() - _KEPT[0] > _KEPT_TTL_S:
         _KEPT[1] = turnstore.kept(_turnstore_db())
         _KEPT[0] = time.monotonic()
+        _KEPT_READ.clear()
     hit = _KEPT[1].get(sid)
     if hit and not turnstore.has(_turnstore_db(), hit[0]):
         _KEPT[1].pop(sid, None)     # the store lost it since it was listed
+        hit = None
+    if hit and hit[0] not in _KEPT_READ:
+        # A row that does not read (damaged) is no kept session: a 404,
+        # not an empty chat.
+        _KEPT_READ[hit[0]] = _kept_turns(Path(hit[0])) is not None
+    if hit and not _KEPT_READ[hit[0]]:
         hit = None
     return (Path(hit[0]), [hit[1], round(hit[2] / 1e9, 3)]) if hit else None
 
@@ -5921,6 +5929,7 @@ def git_root(cwd: str) -> str:
 
 
 _GIT_STAT_BUSY: set = set()     # roots whose count is being read again
+_GIT_STAT_FIRST: dict = {}      # root -> lock: one first read at a time
 
 
 def git_changed_count(root: str) -> int:
@@ -5946,7 +5955,14 @@ def git_changed_count(root: str) -> int:
                     _GIT_STAT_BUSY.discard(root)
         threading.Thread(target=again, name="git-changed", daemon=True).start()
         return hit[1]
-    return _git_changed_read(root)
+    # A first read waits; others asking meanwhile wait for its count.
+    with _GIT_STAT_LOCK:
+        first = _GIT_STAT_FIRST.setdefault(root, threading.Lock())
+    with first:
+        hit = _GIT_STAT_CACHE.get(root)
+        if hit:
+            return hit[1]
+        return _git_changed_read(root)
 
 
 _GIT_STAT_LOCK = threading.Lock()
@@ -5961,7 +5977,11 @@ def _git_changed_read(root: str) -> int:
         n = sum(1 for ln in (out.stdout or "").splitlines() if ln.strip())
     except (OSError, subprocess.SubprocessError):
         n = 0
-    _GIT_STAT_CACHE[root] = (now, n)
+    with _GIT_STAT_LOCK:
+        hit = _GIT_STAT_CACHE.get(root)
+        if hit and hit[0] > now:
+            return hit[1]       # a read begun later answered first: it stands
+        _GIT_STAT_CACHE[root] = (now, n)
     return n
 
 
@@ -13365,7 +13385,14 @@ def keep_conversation_text(agent: str, sid: str, path: str) -> bool:
     if not turnstore.put(db, str(tpath), sig, ver, turns, force=True):
         return False
     _KEPT[0] = 0.0          # listed again on the next lookup
-    # This reading, not an older row of the file: anything else keeps it.
+    # This reading, not an older row of the file, and the file as it was
+    # read (not written to meanwhile): anything else keeps it.
+    try:
+        now = tpath.stat()
+    except OSError:
+        return False
+    if (now.st_size, now.st_mtime_ns) != sig:
+        return False
     return turnstore.get(db, str(tpath), sig, ver) is not None
 
 
@@ -16978,9 +17005,12 @@ class Handler(BaseHTTPRequestHandler):
                 # No Claude transcript — this may be a Codex session, which keeps
                 # its own rollout files. Serve those in the same shape so the
                 # solo chat view renders a codex session's turns as bubbles too.
-                cx = agents.get_agent("codex")
+                # A Claude conversation deleted to free disk space (kept) is
+                # asked first, as read_session_turns does: one answer for an
+                # id on both paths, and no Codex rollout glob for it.
+                kept = kept_session(sid)
+                cx = agents.get_agent("codex") if kept is None else None
                 st = cx.session_stat(sid) if cx is not None else None
-                kept = kept_session(sid) if st is None else None
                 if st is None and kept is None:
                     self._send_json(404, {"error": "not_found"})
                     return

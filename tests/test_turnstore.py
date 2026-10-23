@@ -147,6 +147,21 @@ class TurnStoreTest(unittest.TestCase):
             self.assertEqual([x["text"] for x in turns], ["the old ask", "the old answer"])
             self.assertEqual(dashboard.points._session_stat(sid), [st.st_size, round(st.st_mtime_ns / 1e9, 3)])
             self.assertIsNone(dashboard.read_session_turns("0199a1b2-c3d4-4e5f-8a9b-000000000000"))
+            # A row that no longer reads (damaged): no kept session either.
+            with turnstore._LOCK:
+                conn = turnstore._conn(dashboard._turnstore_db())
+                with conn:
+                    good = conn.execute("SELECT data FROM turns WHERE path=?", (str(t),)).fetchone()[0]
+                    conn.execute("UPDATE turns SET data=? WHERE path=?", (b"garbage", str(t)))
+            dashboard._KEPT[0] = 0.0
+            self.assertIsNone(dashboard.kept_session(sid))
+            self.assertIsNone(dashboard.read_session_turns(sid))
+            with turnstore._LOCK:
+                conn = turnstore._conn(dashboard._turnstore_db())
+                with conn:
+                    conn.execute("UPDATE turns SET data=? WHERE path=?", (good, str(t)))
+            dashboard._KEPT[0] = 0.0
+            self.assertIsNotNone(dashboard.kept_session(sid))
             # The store loses the row after it was listed: no kept session
             # (a 404), not an empty one.
             with turnstore._LOCK:
@@ -174,6 +189,18 @@ class TurnStoreTest(unittest.TestCase):
             self.assertFalse(dashboard.keep_conversation_text("claude", sid, str(t)))
         with mock.patch.object(Path, "open", side_effect=PermissionError("locked")):
             self.assertFalse(dashboard.keep_conversation_text("claude", sid, str(t)))
+        # Written to while it was read (review 2): kept on disk.
+        real = dashboard._claude_text_turns
+
+        def read_then_append(tpath, **kw):
+            out = real(tpath, **kw)
+            with open(tpath, "a", encoding="utf-8") as f:
+                f.write(_line("assistant", "late", "2026-10-12T10:00:05Z"))
+            return out
+        with mock.patch.object(dashboard, "_claude_text_turns", read_then_append):
+            self.assertFalse(dashboard.keep_conversation_text("claude", sid, str(t)))
+        os.utime(t, ns=(st.st_atime_ns, st.st_mtime_ns + 2 * 10**9))     # newer than the other hub's row
+        self.assertTrue(dashboard.keep_conversation_text("claude", sid, str(t)))
 
     def test_the_turns_kept_in_memory_stay_well_under_150_mb(self):
         # The PO's read: 96 M chars was ~480 MB of the hub at ~5 MB per

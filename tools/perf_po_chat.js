@@ -75,6 +75,11 @@ async function main() {
     return f ? f.contentWindow : null; })()`;
   // Whether that chat is on screen.
   const SHOWN = `(() => { const w = ${FR}; const f = w && w.frameElement; return !!f && f.getClientRects().length > 0 && f.clientHeight > 0; })()`;
+  // This chat is the one on screen: shown, and no other room's chat beside it.
+  const ACTIVE = `(() => { if (!${SHOWN}) return 'this chat is not shown';
+    const other = [...document.querySelectorAll('iframe')].find(f => { try { const l = f.contentWindow.location; const q = new URLSearchParams(l.search);
+      return l.pathname === '/session' && (q.get('id') || q.get('room')) !== ${JSON.stringify(A.room)} && f.getClientRects().length > 0 && f.clientHeight > 0; } catch (e) { return false; } });
+    return other ? 'another chat is on screen: ' + other.contentWindow.location.search.slice(0, 80) : ''; })()`;
   const inChat = (body) => ev(`(() => { const w = ${FR}; if (!w) return null; return w.eval(${JSON.stringify('(() => {' + body + '})()')}); })()`);
 
   async function open() {
@@ -106,10 +111,11 @@ async function main() {
   // a link opened, a thread's panel) and the frames in each (a side
   // thread): where a link or a thread went.
   const lookAll = () => ev(`(() => { const out = [];
-    const see = (w, where) => { try { if (w.location.pathname !== '/session') return;
-      const v = w.eval(${JSON.stringify('(() => {' + look + '})()')}); delete v.pane; out.push({where, ...v}); } catch (e) {} };
-    for (const f of document.querySelectorAll('iframe')) { const w = f.contentWindow; see(w, 'panel');
-      try { for (const g of w.document.querySelectorAll('iframe')) see(g.contentWindow, 'side'); } catch (e) {} }
+    const shown = (f) => f.getClientRects().length > 0 && f.clientHeight > 0;
+    const see = (w, where, vis) => { try { if (w.location.pathname !== '/session') return;
+      const v = w.eval(${JSON.stringify('(() => {' + look + '})()')}); delete v.pane; out.push({where, vis, ...v}); } catch (e) {} };
+    for (const f of document.querySelectorAll('iframe')) { const w = f.contentWindow; const vis = shown(f); see(w, 'panel', vis);
+      try { for (const g of w.document.querySelectorAll('iframe')) see(g.contentWindow, 'side', vis && shown(g)); } catch (e) {} }
     return out; })()`).catch(() => []);
 
   // Back to the channel, and a thread's Dock panel closed as its × does: a
@@ -120,11 +126,15 @@ async function main() {
     await inChat(`if (typeof sideClose === 'function' && typeof TS !== 'undefined' && TS) sideClose(); return true;`).catch(() => {});
     // A link into another room opened that room's chat (another project's
     // PO): back to this PO, as its project on the board does.
-    if (!(await ev(SHOWN).catch(() => false))) {
+    const why = await ev(ACTIVE).catch(e => String(e).slice(0, 80));
+    if (why) {
       await ev(`(() => { const pj = registeredProjects().find(p => p.id === ${JSON.stringify(A.project)}); if (pj) openPoOf(pj); return !!pj; })()`).catch(() => {});
-      const back = await until(`(() => { if (!${SHOWN}) return false; try { return !!${FR}.eval('CHAT_DRAWN'); } catch (e) { return false; } })()`, 30000, 200);
-      step({do: 'back', ok: !!back});
+      const back = await until(`(() => { if (${ACTIVE}) return false; try { return !!${FR}.eval('CHAT_DRAWN'); } catch (e) { return false; } })()`, 30000, 200);
+      step({do: 'back', ok: !!back, why});
     }
+    // Every step ends in this chat, on screen.
+    const left = await ev(ACTIVE).catch(e => String(e).slice(0, 80));
+    step({do: 'active', ok: !left, ...(left ? {why: left} : {})});
   }
 
   async function scroll() {
@@ -218,6 +228,11 @@ async function main() {
       const l = links[k] || {text: '(chip)', room: pick.room, msg: pick.msg, part: pick.part};
       // The thread panels already open (an earlier step's): not this link's.
       const was = new Set((await lookAll()).filter(x => x.thread).map(x => x.where + '|' + x.thread));
+      // A landed mark stays a few seconds: an earlier link's mark is not this one's.
+      await ev(`(() => { const clear = (d) => { try { d.querySelectorAll('.landed').forEach(e => e.classList.remove('landed'));
+        d.querySelectorAll('iframe').forEach(f => clear(f.contentWindow.document)); } catch (e) {} }; clear(document); return true; })()`).catch(() => {});
+      const want = l.room || A.room;
+      const at = (x) => x.vis && x.room === want && (x.landed || []).includes(l.msg);
       const t = now();
       if (synthetic) await inChat(`const a = document.createElement('a'); a.dataset.point = 'true';
         a.dataset.refRoom = ${JSON.stringify(l.room)}; a.dataset.refMsg = ${JSON.stringify(l.msg)}; a.dataset.refPart = ${JSON.stringify(l.part)};
@@ -234,11 +249,14 @@ async function main() {
       while (Date.now() < end) {
         await sleep(250);
         views = await lookAll();
-        if (views.some(x => (x.landed || []).includes(l.msg)) || views.some(x => x.note)) break;
+        if (views.some(at) || views.some(x => x.vis && x.note)) break;
       }
-      const landed = views.some(x => (x.landed || []).includes(l.msg));
-      const empty = views.some(x => x.thread && x.msgs === 0 && !was.has(x.where + '|' + x.thread));
-      const note = views.map(x => x.note).filter(Boolean)[0] || '';
+      // Landed: the mark on the message, in a chat of the room the link
+      // names, on screen (a hidden frame or another room does not count).
+      const landed = views.some(at);
+      const hidden = !landed && views.some(x => (x.landed || []).includes(l.msg));
+      const empty = views.some(x => x.vis && x.thread && x.msgs === 0 && !was.has(x.where + '|' + x.thread));
+      const note = views.filter(x => x.vis).map(x => x.note).filter(Boolean)[0] || '';
       // "Not shown in this chat" for a room message filed as the CEO's that no
       // transcript holds (an agent posted it with the CEO's token, /api/room/say):
       // the chat has no balloon for it, and says so. Listed, not failed.
@@ -246,9 +264,9 @@ async function main() {
         .then(r => r.ok ? r.json() : {}).then(d => d.from === 'user' && !String(d.id || '').includes(':'), () => false);`).catch(() => false);
       step({do: 'point-link', synthetic, ref: pick.ref, link: l.text, room: l.room, msg: l.msg, part: l.part, ...(roomUser ? {roomUser: true} : {}),
         kinds: {old: await isKept(l.msg), cross: !!l.room && l.room !== A.room, closed: !!pick.closed},
-        landed, empty, note, s: +(now() - t).toFixed(2),
+        landed, ...(hidden ? {landedHidden: true} : {}), empty, note, s: +(now() - t).toFixed(2),
         where: views.filter(v => v.thread || (v.landed || []).length || v.note)
-          .map(v => ({where: v.where, room: v.room, thread: v.thread, msgs: v.msgs, landed: v.landed, note: v.note}))});
+          .map(v => ({where: v.where, vis: v.vis, room: v.room, thread: v.thread, msgs: v.msgs, landed: v.landed, note: v.note}))});
       // Back to the channel for the next step.
       await closeThreads();
       await sleep(500);
@@ -291,7 +309,7 @@ async function main() {
     const end = Date.now() + 8000;
     while (r && r.id && Date.now() < end) {
       await sleep(250);
-      shown = (await lookAll()).filter(x => x.thread === r.id);
+      shown = (await lookAll()).filter(x => x.vis && x.thread === r.id);
       if (shown.some(x => x.msgs > 0)) break;
     }
     step({do: 'thread', ...r, opened: shown.length > 0, where: shown.map(x => x.where),
@@ -319,7 +337,7 @@ async function main() {
     if (left > 0) await sleep(Math.min(left, Math.max(0, end - Date.now())));
   }
   // Requests still out at the end are written as such.
-  for (const r of reqs.values()) { r.ms = null; r.open = true; delete r.t; pageLog.write(JSON.stringify(r) + '\n'); }
+  for (const r of reqs.values()) { r.ms = null; r.open = true; r.endAt = now(); delete r.t; pageLog.write(JSON.stringify(r) + '\n'); }
   await new Promise(r => pageLog.end(r)); await new Promise(r => stepLog.end(r));
   try { await send('Browser.close'); } catch (e) {}
   ch.kill();
