@@ -54,7 +54,7 @@
     a.target = '_blank'; a.rel = 'noopener noreferrer'; el('feedback-status').append(' ', a);
   }
   window.feedbackOpen = () => {
-    el('settings-panel').hidden = true;
+    if (window.closeSettings) window.closeSettings(false); else el('settings-panel').hidden = true;
     if (!dialog.open) dialog.showModal();
     el('feedback-title').focus();
   };
