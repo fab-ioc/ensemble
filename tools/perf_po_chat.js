@@ -176,9 +176,11 @@ async function main() {
 
   async function thread() {
     const t = now();
+    // One of the chat's threads, as its row in the channel opens it (openThread).
     const r = await inChat(`if (typeof THREADED === 'undefined' || !THREADED) return {threaded: false};
-      const b = [...document.querySelectorAll('#msgs .thr-reply, #msgs [data-thread], #msgs .thr-count')];
-      const x = b[${rand(5)} % Math.max(1, b.length)]; if (!x) return {threaded: true, none: true}; x.click(); return {threaded: true};`).catch(e => ({error: String(e).slice(0, 100)}));
+      const ids = Object.values(THR_META || {}).filter(t => t && t.id && t.id !== 'team:activity').map(t => t.id);
+      if (!ids.length) return {threaded: true, none: true};
+      const id = ids[${rand(100000)} % ids.length]; openThread(id, ''); return {threaded: true, id};`).catch(e => ({error: String(e).slice(0, 100)}));
     await sleep(3000);
     const seen = await inChat(look).catch(() => null);
     step({do: 'thread', ...r, thread: seen && seen.thread, msgs: seen && seen.msgs, empty: !!(seen && seen.thread && seen.msgs === 0), s: +(now() - t).toFixed(2)});
