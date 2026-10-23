@@ -53,12 +53,22 @@
     const a = document.createElement('a'); a.href = url; a.textContent = text;
     a.target = '_blank'; a.rel = 'noopener noreferrer'; el('feedback-status').append(' ', a);
   }
+  // Opened from Settings, the focus comes back to what opened Settings (or the
+  // avatar) when the dialog closes, however it closes.
+  let returnTo = null;
   window.feedbackOpen = () => {
-    if (window.closeSettings) window.closeSettings(false); else el('settings-panel').hidden = true;
-    if (!dialog.open) dialog.showModal();
+    const from = document.activeElement;
+    let back = null;
+    if (window.closeSettings) back = window.closeSettings(false); else el('settings-panel').hidden = true;
+    if (!dialog.open) { returnTo = back || from; dialog.showModal(); }
     el('feedback-title').focus();
   };
   el('feedback-close').onclick = () => dialog.close();
+  dialog.addEventListener('close', () => {
+    const b = returnTo; returnTo = null;
+    const t = b && b.isConnected && b.getClientRects().length && b !== document.body ? b : el('me-btn');
+    if (t) t.focus();
+  });
   dialog.addEventListener('cancel', e => { e.stopPropagation(); if (busy) e.preventDefault(); });
   dialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
   el('feedback-form').addEventListener('input', invalidate);

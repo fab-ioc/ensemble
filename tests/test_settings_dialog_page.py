@@ -136,6 +136,13 @@ async function main() {
     const r = { scrollH: pages.scrollHeight, clientH: pages.clientHeight, scrolled: pages.scrollTop, lastBottom: Math.round(lastB),
       pagesBottom: Math.round(pages.getBoundingClientRect().bottom), navTopBefore: before, navTopAfter: nav.getClientRects().length ? nav.getBoundingClientRect().top : null };
     pages.scrollTop = 0; return r; })()`;
+  // A phone's controls on the shown page under 44 px either way (a checkbox's
+  // target is its label).
+  const TARGETS = `(() => { const sec = [...document.getElementById('sp-pages').querySelectorAll(':scope > .settings-section')].find(s => s.getClientRects().length);
+    return [...sec.querySelectorAll('input, select, textarea, button')].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+      .map(e => { const t = /^(checkbox|radio)$/.test(e.type) ? (e.closest('label') || e) : e, r = t.getBoundingClientRect();
+        return { id: e.id || e.textContent.trim().slice(0, 20) || e.className, w: Math.round(r.width), h: Math.round(r.height) }; })
+      .filter(x => x.w < 44 || x.h < 44); })()`;
   // A canvas resolves any colour (color-mix computes to color(srgb …)) to bytes.
   const rgb = `const cx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
     const rgb = c => { cx.fillStyle = '#fff'; cx.fillRect(0, 0, 1, 1); cx.fillStyle = c; cx.fillRect(0, 0, 1, 1); return [...cx.getImageData(0, 0, 1, 1).data].slice(0, 3); };
@@ -159,6 +166,7 @@ async function main() {
         t.scroll = await evalIn(SCROLL);
         if (name === 'd1728' || name === 'p390') await shot(`settings-${w}-${tab}`);
         if (mobile) {
+          t.small = await evalIn(TARGETS);
           await evalIn('document.getElementById("sp-back").click(); 0');
           t.backed = await evalIn(STATE);
         }
@@ -198,6 +206,36 @@ async function main() {
       // A press on the dimmed page closes it.
       o.backdrop = await evalIn(`(() => { openSettings('app'); const p = document.getElementById('settings-panel');
         p.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); return p.hidden; })()`);
+      if (name === 'd1440' || name === 'p390') {
+        // Settings > Send feedback: closing Feedback (button or Esc) gives the
+        // focus back to the avatar, not to the closed dialog.
+        const fbOpen = `document.getElementById('feedback-title').closest('dialog').open`;
+        o.feedback = {};
+        for (const how of ['button', 'esc']) {
+          await evalIn('document.getElementById("me-btn").click(); 0');
+          await evalIn('document.querySelector("#me-menu [data-me=settings]").click(); 0');
+          await evalIn(`openSettings('feedback'); document.getElementById('feedback-open').click(); 0`);
+          await until(fbOpen);
+          if (how === 'button') await evalIn(`document.getElementById('feedback-close').click(); 0`);
+          else await key('Escape', 'Escape', 27);
+          await sleep(100);
+          o.feedback[how] = await evalIn(`({ open: ${fbOpen}, settings: !document.getElementById('settings-panel').hidden, focus: document.activeElement.id })`);
+        }
+        // A section hidden while Settings is open: its tab goes, the first
+        // tab left is shown and focused; shown again, its tab comes back.
+        await evalIn(`openSettings('backup'); 0`);
+        await evalIn(`document.getElementById('settings-backup').style.display = 'none'; 0`);
+        await sleep(50);
+        o.hidden = await evalIn(STATE);
+        await evalIn(`document.getElementById('settings-backup').style.display = ''; 0`);
+        await sleep(50);
+        o.unhidden = await evalIn(STATE);
+        // A hidden first section is not the fallback either.
+        o.firstHidden = await evalIn(`(() => { const a = document.getElementById('settings-app'); a.style.display = 'none';
+          spShow('nope', true); const r = ${STATE}; a.style.display = ''; return r; })()`);
+        await sleep(50);
+        await evalIn('closeSettings(); 0');
+      }
       // Disk space's preview opens above Settings.
       if (name === 'd1440') {
         await evalIn(`openSettings('prune'); document.getElementById('prune-preview-btn').click(); 0`);
@@ -360,6 +398,35 @@ class SettingsDialogInAPage(unittest.TestCase):
             self.assertEqual(g["links"]["hash"]["hashLeft"], "")
             self.assertTrue(g["links"]["anchor"]["focusBack"])
             self.assertTrue(g["links"]["usage"]["trayHidden"])
+
+    def test_phone_controls_are_finger_sized(self):
+        for name, g in self.got.items():
+            if not g["mobile"]:
+                continue
+            for tab, s in g["tabs"].items():
+                with self.subTest(f"{name} {tab}"):
+                    self.assertEqual(s["small"], [])
+
+    def test_feedback_gives_the_focus_back(self):
+        for name in ("d1440", "p390"):
+            for how, f in self.got[name]["feedback"].items():
+                with self.subTest(f"{name} {how}"):
+                    self.assertEqual(f, {"open": False, "settings": False, "focus": "me-btn"})
+
+    def test_a_section_hidden_while_open(self):
+        for name in ("d1440", "p390"):
+            g = self.got[name]
+            with self.subTest(name):
+                h = g["hidden"]
+                self.assertNotIn("backup", h["tabs"])
+                self.assertEqual(h["selected"], h["tabs"][0])
+                self.assertEqual(h["shown"], ["settings-" + h["tabs"][0]])
+                self.assertTrue(h["focusIn"])
+                self.assertIn("backup", g["unhidden"]["tabs"])
+                f = g["firstHidden"]
+                self.assertNotIn("app", f["tabs"])
+                self.assertEqual(f["selected"], f["tabs"][0])
+                self.assertEqual(f["shown"], ["settings-" + f["tabs"][0]])
 
     def test_prune_preview_opens_above(self):
         p = self.got["d1440"]["prune"]

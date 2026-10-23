@@ -3527,6 +3527,16 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #settings-panel .sp-dlg.sp-page .sp-pages { display: block; }
     #settings-panel .sp-dlg.sp-page .sp-back { display: inline-flex; }
     #settings-panel .pref-select { height: var(--touch-min); }
+    /* Every control on a page is finger-sized; a checkbox's label is its target. */
+    #settings-panel .sp-pages :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea, button) {
+      min-height: var(--touch-min);
+    }
+    #settings-panel .sp-pages button { min-width: var(--touch-min); }
+    #settings-panel .sp-pages label:has(> input[type="checkbox"]) {
+      display: inline-flex; align-items: center; gap: var(--s-200); min-height: var(--touch-min); min-width: var(--touch-min);
+    }
+    #settings-panel .sp-pages label:has(> input[type="checkbox"])[hidden] { display: none; }
+    #settings-panel .sp-pages input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
     #settings-models .pref-row, #settings-models .cfg-hint { max-width: none; }
     .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt, .cm-item { min-height: var(--touch-min); }
     /* Create's menu: the width of the screen less the gutters, under the bar. */
@@ -19738,7 +19748,7 @@ function spTabs() {
 function spHasTab(k) { return !!k && !!document.getElementById('sp-tab-' + k); }
 function spShow(k, page) {
   spTabs();
-  if (!spHasTab(k)) k = spKey(spSections()[0]);
+  if (!spHasTab(k)) { const first = $('#sp-nav .sp-tab'); k = first ? first.dataset.tab : ''; }
   SP.tab = k;
   try { localStorage.setItem(SP_TAB_KEY, k); } catch (e) {}
   for (const sec of spSections()) sec.hidden = spKey(sec) !== k;
@@ -19772,16 +19782,44 @@ function openSettings(tab, opener) {
 }
 // Kept for the tests and any caller that hangs Settings off a control.
 function openSettingsPanel(anchor, tab) { openSettings(tab, anchor); }
+// Where the focus goes back to: the opener while it is still on screen, else
+// the avatar (the avatar menu's item is gone with its menu).
+function spReturnTo(o) {
+  return o && o.isConnected && o.getClientRects().length && o !== document.body ? o : $('#me-btn');
+}
+// restore false: the caller moves the focus on (Feedback's dialog) and is
+// given the element to bring it back to.
 function closeSettings(restore = true) {
   const panel = $('#settings-panel');
-  if (panel.hidden) return;
+  if (panel.hidden) return null;
   panel.hidden = true;
   const o = SP.opener; SP.opener = null;
-  if (!restore) return;
-  // The avatar menu's item is gone with its menu: the avatar takes it.
-  const back = o && o.isConnected && o.getClientRects().length && o !== document.body ? o : $('#me-btn');
-  if (back) back.focus();
+  const back = spReturnTo(o);
+  if (restore && back) back.focus();
+  return back;
 }
+// A section shown or hidden while Settings is open (applyPlatformChrome and
+// the like set style.display): the tabs follow, and a page that went away
+// gives way to the first tab left.
+const spVisibleKeys = () => spSections().filter(s => s.style.display !== 'none').map(spKey).join(' ');
+let spKeys = '';
+const spWatch = new MutationObserver(() => {
+  const keys = spVisibleKeys();
+  if (keys === spKeys) return;
+  spKeys = keys;
+  const panel = $('#settings-panel');
+  if (panel.hidden) return;
+  // Rebuilding the list drops a focused tab: the selected one takes it.
+  const inPage = $('#settings-panel .sp-dlg').classList.contains('sp-page');
+  const hadFocus = panel.contains(document.activeElement);
+  spShow(SP.tab, inPage || !isPhone());
+  const a = document.activeElement;
+  if (hadFocus && !(panel.contains(a) && a.getClientRects().length)) {
+    const b = inPage && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
+    if (b) b.focus();
+  }
+});
+spSections().forEach(s => spWatch.observe(s, { attributes: true, attributeFilter: ['style'] }));
 window.openSettings = openSettings;
 window.closeSettings = closeSettings;
 $('#sp-close').addEventListener('click', () => closeSettings());
