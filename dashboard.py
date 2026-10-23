@@ -4770,7 +4770,8 @@ def claude_turns_classified(tpath: Path) -> list[dict]:
         sig = (st.st_size, st.st_mtime_ns)
     except OSError:
         room_id, identity = _session_input_context(tpath.stem)
-        return classify_turns(_claude_text_turns(tpath), room_id=room_id,
+        kept = _kept_turns(tpath)       # deleted since: its text as stored (#265)
+        return classify_turns(kept if kept is not None else _claude_text_turns(tpath), room_id=room_id,
                               identity=identity, session_id=tpath.stem)
     key = str(tpath)
     file_sig = sig
@@ -4865,6 +4866,29 @@ def _stored_text_turns(tpath: Path, sig: tuple[int, int]) -> list[dict]:
     return turns
 
 
+_KEPT: list = [0.0, {}]         # [listed at, turnstore.kept()]
+_KEPT_TTL_S = 300.0
+
+
+def kept_session(sid: str) -> tuple[Path, list] | None:
+    """A Claude session whose transcript is gone but whose text the turn
+    store keeps (#265: Free disk space deleted a PO's past conversations, and
+    every link into them led nowhere): (its old path, [size, mtime] as
+    points._session_stat says it). Ask only once no file was found."""
+    if not sid or not _UUID_RE.fullmatch(sid):
+        return None
+    if time.monotonic() - _KEPT[0] > _KEPT_TTL_S:
+        _KEPT[1] = turnstore.kept(_turnstore_db())
+        _KEPT[0] = time.monotonic()
+    hit = _KEPT[1].get(sid)
+    return (Path(hit[0]), [hit[1], round(hit[2] / 1e9, 3)]) if hit else None
+
+
+def _kept_turns(tpath: Path) -> list[dict] | None:
+    """The stored text turns of a transcript that is gone (kept_session)."""
+    return turnstore.get_kept(_turnstore_db(), str(tpath))
+
+
 def read_session_turns(sid: str) -> list[dict] | None:
     """A session's chat turns as /api/session/<sid>?full=1 serves them (Claude
     or Codex), or None when there is no such session."""
@@ -4873,7 +4897,8 @@ def read_session_turns(sid: str) -> list[dict] | None:
         return claude_turns_classified(tpath)
     cx = agents.get_agent("codex")
     if cx is None or cx.session_stat(sid) is None:
-        return None
+        kept = kept_session(sid)
+        return claude_turns_classified(kept[0]) if kept else None
     room_id, identity = _session_input_context(sid)
     return classify_turns(cx.read_turns(sid), room_id=room_id,
                           identity=identity, session_id=sid)
@@ -13257,8 +13282,27 @@ def _prune_hub() -> prune.Hub:
         project_home=lambda p: project_home(p, create=False),
         documents_dir=lambda p: project_documents_dir(p, persist=False),
         scratch_root=lambda cwd: str(_scratch_root_for(cwd) or ""),
-        progress=PRUNE_JOB.progress,
+        progress=PRUNE_JOB.progress, keep_text=keep_conversation_text,
         pty_ids=lambda: {x.get("id") for x in ptyrun.list_sessions() if x.get("id")})
+
+
+def keep_conversation_text(agent: str, sid: str, path: str) -> bool:
+    """Store a Claude conversation's text turns in the turn store before its
+    file is deleted to free disk space, and say whether they are there (#265:
+    the PO chats' history went with their files). A Codex conversation's text
+    has no store: it is not deleted."""
+    if agent != "claude":
+        return False
+    tpath = Path(path[4:] if path.startswith("\\\\?\\") else path)    # prune's long-path form
+    try:
+        st = tpath.stat()
+    except OSError:
+        return False
+    db = _turnstore_db()
+    turnstore.put(db, str(tpath), (st.st_size, st.st_mtime_ns), _turnstore_version(),
+                  _claude_text_turns(tpath), force=True)
+    _KEPT[0] = 0.0          # listed again on the next lookup
+    return turnstore.get_kept(db, str(tpath)) is not None
 
 
 def pruned_refusal(room: dict) -> dict:
@@ -16872,8 +16916,18 @@ class Handler(BaseHTTPRequestHandler):
                 # solo chat view renders a codex session's turns as bubbles too.
                 cx = agents.get_agent("codex")
                 st = cx.session_stat(sid) if cx is not None else None
-                if st is None:
+                kept = kept_session(sid) if st is None else None
+                if st is None and kept is None:
                     self._send_json(404, {"error": "not_found"})
+                    return
+                if kept is not None:
+                    # Deleted to free disk space: its text as the hub kept it (#265).
+                    if want_stat:
+                        self._send_json(200, {"sessionId": sid, "size": kept[1][0], "mtime": kept[1][1]})
+                        return
+                    body = full_turns(claude_turns_classified(kept[0])) if full else {"turns": []}
+                    self._send_json(200, {"sessionId": sid, "cwd": "", **body, "kept": True,
+                                          "label": load_labels().get(sid, "")})
                     return
                 if want_stat:
                     self._send_json(200, {"sessionId": sid, "size": st["size"],

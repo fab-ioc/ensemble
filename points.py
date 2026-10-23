@@ -1123,7 +1123,10 @@ def _session_stat(sid: str, *, immediate: bool = False) -> list | None:
             return [st.st_size, round(st.st_mtime, 3)]
         cx = _d.agents.get_agent("codex")
         st = cx.session_stat(sid) if cx is not None else None
-        return [st["size"], round(st["mtime"], 3)] if st else None
+        if st:
+            return [st["size"], round(st["mtime"], 3)]
+        kept = _d.kept_session(sid)     # deleted, its text kept by the hub (#265)
+        return kept[1] if kept else None
     except (OSError, TypeError, KeyError, AttributeError):
         return None
 

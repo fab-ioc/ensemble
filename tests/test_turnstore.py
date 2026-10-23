@@ -125,6 +125,29 @@ class TurnStoreTest(unittest.TestCase):
         out = dashboard._stored_text_turns(self.t, sig)
         self.assertEqual([x["text"] for x in out], ["hello", "hi there"])
 
+    def test_a_deleted_transcript_is_read_from_the_store(self):
+        """#265: Free disk space deleted the PO chats' past conversations;
+        the hub keeps their text first (keep_conversation_text) and reads it
+        from the store: the chat, its links and threads have it as before."""
+        sid = "0199a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5b"
+        t = Path(self.tmp.name) / "proj" / f"{sid}.jsonl"
+        t.parent.mkdir()
+        t.write_text(_line("user", "the old ask", "2026-10-12T10:00:00Z")
+                     + _line("assistant", "the old answer", "2026-10-12T10:00:01Z"), encoding="utf-8")
+        st = t.stat()
+        self.assertTrue(dashboard.keep_conversation_text("claude", sid, "\\\\?\\" + str(t) if os.name == "nt" else str(t)))
+        self.assertFalse(dashboard.keep_conversation_text("codex", sid, str(t)), "a Codex text has no store")
+        t.unlink()
+        turnstore.close()
+        dashboard._KEPT[0] = 0.0
+        self.addCleanup(dashboard._KEPT.__setitem__, 0, 0.0)
+        with mock.patch.object(dashboard, "find_transcript", return_value=None), \
+                mock.patch.object(dashboard.agents, "get_agent", return_value=None):
+            turns = dashboard.read_session_turns(sid)
+            self.assertEqual([x["text"] for x in turns], ["the old ask", "the old answer"])
+            self.assertEqual(dashboard.points._session_stat(sid), [st.st_size, round(st.st_mtime_ns / 1e9, 3)])
+            self.assertIsNone(dashboard.read_session_turns("0199a1b2-c3d4-4e5f-8a9b-000000000000"))
+
     def test_the_turns_kept_in_memory_stay_well_under_150_mb(self):
         # The PO's read: 96 M chars was ~480 MB of the hub at ~5 MB per
         # million measured on the real state. Filled past its cap, the cache
