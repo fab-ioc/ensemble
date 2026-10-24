@@ -668,6 +668,20 @@ out.lateSettled = run("[...SENT_LOCAL.keys()]");
 run('SENT_LOCAL.get("late").settledAt -= 61;');
 ctx.sendsFromPoll([], 13);
 out.lateGone = run("[...SENT_LOCAL.keys()]");
+// #266 review 1: a confirmed send the hub stops listing stays until this
+// page draws its turn (the hub's index had it, this page's channel not yet).
+run('SENT_LOCAL.clear(); SENT_KEPT.clear(); ROOM_SENDS = []; SENDS_GEN = 20;');
+const conf = Object.assign({}, sent, { key: 'conf', state: 'confirmed', mid: 's:3' });
+ctx.sendsFromPoll([conf], 21);
+ctx.sendsFromPoll([], 22);
+out.keptUndrawn = ctx.sendsToShow(more).map(s => s.key);
+out.keptDrawn = ctx.sendsToShow(more.concat([turn])).map(s => s.key);
+out.keptAfter = run('[...SENT_KEPT.keys()]');
+// Review 2: however many leave the hub's list undrawn, none is dropped.
+const many = Array.from({ length: 51 }, (_, i) => Object.assign({}, sent, { key: 'm' + i, text: 'note ' + i, state: 'confirmed', mid: 's:m' + i }));
+ctx.sendsFromPoll(many, 23);
+ctx.sendsFromPoll([], 24);
+out.keptMany = ctx.sendsToShow(more).map(s => s.key);
 // Each state in words.
 out.html = ['queued', 'delivered', 'failed'].map(state => ctx.sendHtml(Object.assign({}, sent, { state, error: 'the task did not start' }), md));
 console.log(JSON.stringify(out));
@@ -718,6 +732,14 @@ console.log(JSON.stringify(out));
         self.assertEqual(self.r["lateOut"], ["late"], "dropped while its request was out")
         self.assertEqual(self.r["lateSettled"], ["late"])
         self.assertEqual(self.r["lateGone"], [])
+
+    def test_a_confirmed_send_the_hub_stops_listing_stays_until_drawn(self):
+        self.assertEqual(self.r["keptUndrawn"], ["conf"], "gone before this page drew its turn")
+        self.assertEqual(self.r["keptDrawn"], [])
+        self.assertEqual(self.r["keptAfter"], [])
+
+    def test_no_kept_send_is_dropped_however_many(self):
+        self.assertEqual(self.r["keptMany"], ["m%d" % i for i in range(51)])
 
     def test_each_state_in_words(self):
         queued, delivered, failed = self.r["html"]

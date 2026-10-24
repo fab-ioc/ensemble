@@ -5680,6 +5680,10 @@ function withTaskBubble(items, spec, key) {
 let ROOM_SENDS = [];
 const SENT_LOCAL = new Map();   // key -> {s, gen}
 let SENDS_GEN = 0, SENDS_SIG = '[]';
+// A confirmed send the hub stopped listing while this page has not drawn its
+// turn (#266: the hub's index has it, this page's channel not yet, or a poll
+// failed): kept here till sendsToShow finds it drawn.
+const SENT_KEPT = new Map();    // key -> send
 function noteSent(s) {
   if (!s || !s.key) return;
   SENT_LOCAL.set(s.key, { s, gen: SENDS_GEN });
@@ -5703,13 +5707,17 @@ function settleSending(key) {
 // A poll's list (``gen``: the ticket it took when it asked). Returns whether
 // what shows changed.
 function sendsFromPoll(list, gen) {
+  const was = ROOM_SENDS;
   ROOM_SENDS = Array.isArray(list) ? list : [];
+  const listed = new Set(ROOM_SENDS.map(x => x.key));
+  for (const s of was) if (s.state === 'confirmed' && s.mid && !s.read && !listed.has(s.key)) SENT_KEPT.set(s.key, s);
+  for (const k of listed) SENT_KEPT.delete(k);
   // One still on its way stays (a poll answered meanwhile cannot have it
   // yet) while its request is out, however long, then until the hub lists
   // it or for a minute.
   for (const [k, v] of SENT_LOCAL) if (gen > v.gen && (v.s.state !== 'sending'
     || ROOM_SENDS.some(x => x.key === k) || (v.settledAt && Date.now() / 1000 - v.settledAt > 60))) SENT_LOCAL.delete(k);
-  const sig = JSON.stringify([ROOM_SENDS, [...SENT_LOCAL.keys()]]);
+  const sig = JSON.stringify([ROOM_SENDS, [...SENT_LOCAL.keys()], [...SENT_KEPT.keys()]]);
   if (sig === SENDS_SIG) return false;
   SENDS_SIG = sig;
   return true;
@@ -5786,8 +5794,10 @@ function sendHere(s) {
   return !!s.thread && (s.thread === THREAD || (!!THREAD_MID && s.thread === 'm:' + THREAD_MID));
 }
 // Whether the threads the view was built from hold this send's turn (a
-// thread's view, or a hub before #259, does not say: held).
+// thread's view, or a hub before #259, does not say: held). No view yet (the
+// pages started again, #266 review 1): not held, the send stays till one comes.
 function thrHoldsSend(mid) {
+  if (typeof THR_VIEW !== 'undefined' && !THR_VIEW && typeof THREADED !== 'undefined' && THREADED) return false;
   const held = typeof THR_VIEW !== 'undefined' && THR_VIEW && THR_VIEW.sendMids;
   return !Array.isArray(held) || held.includes(mid);
 }
@@ -5799,6 +5809,7 @@ function sendsToShow(items) {
   const mine = !thr ? () => true : THREAD_MODE ? s => !s.thread || sendHere(s) : s => !s.thread || !!s.also;
   const all = ROOM_SENDS.filter(s => (!thr || s.thread || !THREAD_MODE) && mine(s));
   for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k) && mine(v.s)) all.push(v.s);
+  for (const [k, s] of SENT_KEPT) if (!all.some(x => x.key === k) && mine(s)) all.push(s);
   all.sort((a, b) => (a.at || 0) - (b.at || 0));
   const turns = new Map(), gone = new Set();
   const turn = m => { if (!turns.has(m.id)) turns.set(m.id, sendTurn(m.text)); return turns.get(m.id); };
@@ -5819,6 +5830,7 @@ function sendsToShow(items) {
     if (ev.kind && items.some(m => m.from === 'user' && m.id
       && (!m.ts || m.ts >= (s.at || 0) - 120) && turn(m).take(ev))) gone.add(s);
   }
+  for (const s of gone) SENT_KEPT.delete(s.key);     // drawn: its turn replaces it
   return all.filter(s => !gone.has(s));
 }
 // A send as a balloon: the words as sent, and under them where it is, in words.
@@ -5881,7 +5893,7 @@ function sendAction(bt) {
   bt.disabled = true;
   if (act === 'retry') bt.textContent = 'Retrying…';
   postOk('/api/room/resume', { roomId: ROOM, key, [act]: true })
-    .then(d => { SEND_ERR = ''; setText($('#hint'), ''); if (act === 'retry' && d && d.send) noteSent(d.send); else SENT_LOCAL.delete(key); })
+    .then(d => { SEND_ERR = ''; setText($('#hint'), ''); if (act === 'retry' && d && d.send) noteSent(d.send); else { SENT_LOCAL.delete(key); SENT_KEPT.delete(key); } })
     .catch(e => {
       if (e && e.send) noteSent(e.send);
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. The message is still shown here.';
@@ -6437,6 +6449,7 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 // the window, fetched a page at a time as the reader scrolls down (&after=),
 // and its polls keep to it (&to=); "Latest" goes to the newest.
 let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0, THR_DOWN = null;
+let THR_GEN = 0;           // the pages' start: a response asked before thrRestart is not drawn (#266)
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
 // A PO chat seen before is asked for its channel beside the room's first read,
 // not after it (#247: a round trip of a phone's open). The page keeps which
@@ -6488,18 +6501,18 @@ function thrUrl(sig) {
   return thrBase() + page + (sig ? '&sig=' + encodeURIComponent(sig) : '');
 }
 // The pages from the newest again (a topic chosen or cleared).
-function thrRestart() { THR_SIG = ''; THR_N = 40; THR_FROM = ''; THR_VIEW = null; THR_OLDER = []; THR_HUB = new Map(); THR_BEFORE = 0; THR_AFTER = 0; }
+function thrRestart() { THR_GEN++; THR_SIG = ''; THR_N = 40; THR_FROM = ''; THR_VIEW = null; THR_OLDER = []; THR_HUB = new Map(); THR_BEFORE = 0; THR_AFTER = 0; }
 const thrLast = () => ((THR_VIEW && THR_VIEW.items) || []).slice(-1).map(t => t.mid)[0] || '';
 // The page below a window's last entry, as the reader nears its end: added
 // under what is drawn, so the reading place stays.
 function thrLoadDown() {
   if (THR_DOWN || !THR_AFTER || !THR_VIEW) return THR_DOWN || Promise.resolve(false);
-  const last = thrLast();
+  const last = thrLast(), gen = THR_GEN;
   if (!last) return Promise.resolve(false);
   THR_DOWN = (async () => {
     try {
       const d = await pollFetch(thrBase() + '&n=100&after=' + encodeURIComponent(last), null, 90000).then(r => r.json());
-      if (!d || !Array.isArray(d.items) || d.error || d.pending || thrLast() !== last) return false;
+      if (!d || !Array.isArray(d.items) || d.error || d.pending || gen !== THR_GEN || thrLast() !== last) return false;
       const held = new Set(THR_VIEW.items.map(t => t.mid));
       THR_VIEW.items = THR_VIEW.items.concat(d.items.filter(t => !held.has(t.mid)));
       THR_AFTER = d.after || 0;
@@ -6523,12 +6536,13 @@ function thrLoadUp() {
   if (THR_UP || !THR_BEFORE || !THR_VIEW) return THR_UP || Promise.resolve(false);
   const first = (THR_OLDER[0] || (THR_VIEW.items || [])[0] || {}).mid;
   if (!first) return Promise.resolve(false);
+  const gen = THR_GEN;
   THR_UP = (async () => {
     try {
       const d = await pollFetch(thrBase() + '&n=100&before=' + encodeURIComponent(first), null, 90000).then(r => r.json());
       if (!d || !Array.isArray(d.items) || d.error || d.pending) return false;
       const head = (THR_OLDER[0] || (THR_VIEW.items || [])[0] || {}).mid;
-      if (head !== first) return false;     // the pages started again meanwhile
+      if (gen !== THR_GEN || head !== first) return false;     // the pages started again meanwhile
       THR_OLDER = d.items.concat(THR_OLDER);
       THR_BEFORE = d.before || 0;
       Object.assign(THR_META, d.threads || {});
@@ -6562,13 +6576,16 @@ function thrApply(v, d) {
 async function renderThreaded(force) {
   if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
   THR_FETCHING = true;
-  const roomTs = roomLatestTs(ROOM_OBJ);
+  const roomTs = roomLatestTs(ROOM_OBJ), gen = THR_GEN;
   try {
     const asked = !THREAD_MODE && !!GOTO;
     const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
     THR_PRE = null;
     const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
     let d = await r.json();
+    // Asked for the pages before they started again ("Latest", a send from a
+    // link's window): the old window's, so asked again from the new start.
+    if (gen !== THR_GEN) { THR_AGAIN = true; return; }
     if (d && d.delta) {
       const v = THR_VIEW && thrApply(THR_VIEW, d);
       if (!v) { THR_SIG = ''; THR_AGAIN = true; return; }    // not the view held: ask for it whole
@@ -8415,6 +8432,9 @@ async function sendNow(urgent = false) {
     return;
   }
   if (cmd) { await sendCommand(cmd); return; }
+  // Sent from a link's window (#266): the latest first, where the send and
+  // its answer show (the window's polls keep to its end).
+  if (ROOM_WIN || SOLO_WIN || (THREADED && THR_AFTER)) toLatest();
   setSendBusy(true);
   setText($('#hint'), 'Sending your message.');
   try {

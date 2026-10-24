@@ -5,7 +5,9 @@
 // beside it, as the CEO keeps it), lets the page's own polls run, and on a
 // fixed script (the same `seed`, the same session): scrolls the chat up and
 // back, opens a point chip's card and follows its links, sends a message,
-// opens a thread, and reloads the page once at the middle. Every request the
+// opens a thread, and reloads the page once at the middle. At a quarter the
+// PO rotates and the CEO's sequence of 10-24 is sent (#266), and again at
+// three quarters, on the page reloaded since. Every request the
 // page makes is written to out/page.jsonl; every step and what it led to
 // (where a link landed, how long a send took) to out/steps.jsonl.
 const {spawn} = require('child_process');
@@ -299,6 +301,78 @@ async function main() {
     step({do: 'send', ok: !!press && ready !== null, shownMs: shown, sentMs: sent, state, s: +(now() - t).toFixed(2)});
   }
 
+  // The hub's replay controls (perf_hub): the PO's rotation, its answers.
+  const replay = (what) => fetch(A.base + '/__replay/' + what, {method: 'POST', body: '{}'}).then(r => r.json());
+  async function rotate() {
+    const r = await replay('rotate').catch(e => ({ok: false, error: String(e).slice(0, 200)}));
+    step({do: 'rotate', ok: !!r.ok, ...(r.ok ? {} : {why: r.error || ''})});
+  }
+  // The CEO's sequence of 10-24 (#266), after a rotation: a question and its
+  // answer, the quick answer that was interrupted, a second question, a third
+  // sent as that answer lands, a re-ask, "are you getting my messages". Each
+  // balloon must never leave the chat, each answer must show without a reload.
+  const SEQUENCE = [['How far is the backtest?', 1], ['Yes, start now', 0], ['actually walk me through the plan first', 0],
+    ['and show me visuals', 1], ['Walk me through the plan first', 1], ['Are you getting my messages?', 1]];
+  let seqN = 0;
+  async function sequence() {
+    const t = now(), run = seqN++;
+    const sent = SEQUENCE.map(([words, wait], i) => ({tok: 'perf-' + A.seed + '-' + (900 + run * 10 + i) + '-' + Date.now().toString(36) + i,
+      words, wait, answer: !words.startsWith('Yes,')}));
+    const seen = {}, gone = [], shownAt = {};
+    let sampling = true;
+    const toks = JSON.stringify(sent.map(x => x.tok));
+    const sampler = (async () => {
+      while (sampling) {
+        const v = await inChat(`const box = document.getElementById('msgs'); if (!box) return null;
+          const out = {in: [], ans: []}, all = box.textContent || '';
+          for (const tok of ${toks}) {
+            const b = [...box.querySelectorAll('.msg')].find(m => (m.textContent || '').includes(tok) && !(m.textContent || '').includes('Replay answer ' + tok));
+            if (b) out.in.push(tok);
+            const l = b && b.nextElementSibling, n = l && l.classList.contains('thr-line') && l.querySelector('.thr-count');
+            if (all.includes('Replay answer ' + tok) || (n && /[1-9]/.test(n.textContent))) out.ans.push(tok);
+          }
+          return out;`).catch(() => null);
+        if (v) {
+          for (const tok of v.in) seen[tok] = seen[tok] || Date.now();
+          for (const tok of Object.keys(seen)) if (!v.in.includes(tok) && !gone.includes(tok)) gone.push(tok);
+          for (const tok of v.ans) shownAt[tok] = shownAt[tok] || Date.now();
+        }
+        await sleep(250);
+      }
+    })();
+    const press = async x => {
+      await until(`(() => { const w = ${FR}; return !!w && !w.document.getElementById('send').disabled
+        || (!!w && (w.document.getElementById('input').value = ' ', w.document.getElementById('input').dispatchEvent(new w.Event('input')), false)); })()`, 20000, 200);
+      x.at = Date.now();
+      await inChat(`const i = document.getElementById('input'); i.value = ${JSON.stringify('')} + ${JSON.stringify(x.tok)} + ' ' + ${JSON.stringify(x.words)};
+        i.dispatchEvent(new Event('input', {bubbles: true})); document.getElementById('send').click(); return true;`);
+    };
+    const written = async (tok, ms) => { const end = Date.now() + ms; let w = {};
+      while (Date.now() < end && !(w = await replay('written').catch(() => ({})))[tok]) await sleep(100);
+      return w[tok] ? w[tok] * 1000 : 0; };
+    for (let i = 0; i < sent.length; i++) {
+      const x = sent[i];
+      // "and show me visuals": the moment the answer before it is written.
+      if (i > 0 && !sent[i - 1].wait && sent[i - 1].answer) await written(sent[i - 1].tok, 15000);
+      await press(x);
+      if (x.wait) await written(x.tok, 20000); else await sleep(x.answer ? 300 : 2500);
+    }
+    // Every answer written, then long enough to show (the budget) and for a
+    // confirmed send to have left the hub's list if nothing held it (2 min).
+    for (const x of sent) if (x.answer) x.writtenAt = await written(x.tok, 20000);
+    const settle = Date.now() + Math.max(budgetsReplyMs(), 125000);
+    while (Date.now() < settle) await sleep(500);
+    sampling = false; await sampler;
+    for (const x of sent) {
+      x.shownMs = seen[x.tok] ? seen[x.tok] - x.at : null;
+      x.answerMs = x.answer ? (shownAt[x.tok] && x.writtenAt ? Math.max(0, shownAt[x.tok] - x.writtenAt) : null) : undefined;
+      x.gone = gone.includes(x.tok);
+    }
+    step({do: 'sequence', run, sends: sent.map(({tok, words, shownMs, answerMs, gone}) => ({tok, words, shownMs, answerMs, gone})),
+      s: +(now() - t).toFixed(2)});
+  }
+  const budgetsReplyMs = () => A.replyShownMs || 8000;
+
   async function thread() {
     const t = now();
     // One of the chat's threads, as its row in the channel opens it (openThread).
@@ -323,13 +397,15 @@ async function main() {
 
   await open();
   const minutes = A.minutes || 30, end = T0 + minutes * 60000;
-  let n = 0, reloaded = false;
+  let n = 0, reloaded = false, rotated = false, again = false;
   // The script: every 20 s one step, in a fixed rotation.
   const plan = ['point', 'scroll', 'point', 'send', 'point', 'thread'];
   while (Date.now() < end) {
     const what = plan[n % plan.length];
     try {
-      if (!reloaded && Date.now() > T0 + minutes * 30000) { reloaded = true; step({do: 'reload'}); await open(); }
+      if (!rotated && Date.now() > T0 + minutes * 15000) { rotated = true; await rotate(); await sequence(); }
+      else if (!reloaded && Date.now() > T0 + minutes * 30000) { reloaded = true; step({do: 'reload'}); await open(); }
+      else if (!again && Date.now() > T0 + minutes * 45000) { again = true; await sequence(); }
       else if (what === 'point') await point();
       else if (what === 'scroll') await scroll();
       else if (what === 'send') await sendMsg(n);

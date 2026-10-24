@@ -72,6 +72,8 @@ TITLE_WORDS = 14                # a thread's title: its first words
 PREVIEW_MAX = 240               # what a reply line quotes of the last reply
 ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon within this
 SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
+YIELD_BUDGET_S = 1.0            # a build stands aside for the pages this long in all (#266)
+SLOW_BUILD_S = 2.0              # a build taking longer says so in the log
 
 # A PO message that says something is live: "Live: main 1a2b3c", "#240 is live".
 _LIVE = re.compile(r"(?im)^[ \t>*_-]*live\b[ \t*_]*[:—–-]|\b(?:is|are|now|went|goes|be|been)[ \t]+live\b")
@@ -845,8 +847,15 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
     led = points.load(room_id)
     side = load_side(room_id)
     key = "thread:" + room_id
+    waited = [0.0]
     def announce(phase, done=0, total=0):
-        _d.yield_to_pages()
+        # A build stands aside for the pages only up to YIELD_BUDGET_S in all:
+        # it yields ~500 times, and a hub always answering something kept a
+        # PO chat's index ~5.5 min old, its sends and replies not shown (#266).
+        if waited[0] < YIELD_BUDGET_S:
+            w0 = time.monotonic()
+            _d.yield_to_pages(most_s=min(1.0, YIELD_BUDGET_S - waited[0]))
+            waited[0] += time.monotonic() - w0
         if show_progress:
             progress.set_progress(key, phase, done, total)
 
@@ -920,7 +929,19 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
     with _LOCK:
         _INDEX[room_id] = (sig, idx)
     progress.clear(key)
+    if idx["took"] >= SLOW_BUILD_S:
+        _log(f"{room_id}: built in {idx['took']:.1f} s ({waited[0]:.1f} s standing aside)")
     return idx
+
+
+def holds_mid(room_id: str, mid: str) -> bool | None:
+    """Whether the chat's current index holds the turn ``mid``, read without
+    building; None when the chat has no index yet."""
+    with _LOCK:
+        hit = _INDEX.get(room_id)
+    if hit is None:
+        return None
+    return mid in hit[1].get("by_mid", {})
 
 
 def _channel(idx: dict) -> list[str]:

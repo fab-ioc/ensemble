@@ -58,6 +58,7 @@ STATES = ("queued", "delivered", "failed", "confirmed")
 BOOT = uuid.uuid4().hex[:12]    # this hub process: a queue lives in its memory
 KEEP_S = 24 * 3600              # a confirmed send is remembered this long (its key)
 SHOW_CONFIRMED_S = 120          # and shown this long, until the page's own copy has it
+HOLD_UNSHOWN_S = 1800           # … or while a threaded chat's channel does not hold it yet, at most (#266)
 STOPPED_AFTER_S = 30            # delivered, the agent gone this long after: not read
 STARTED_AT = time.time()        # a hub restart: its rooms are brought back after this
 SLACK_S = 120                   # a transcript's clock and the hub's may differ this much
@@ -668,20 +669,27 @@ def reconcile(room_id: str, now: float | None = None) -> list[dict]:
     return items
 
 
-def view(room_id: str, now: float | None = None) -> list[dict]:
+def view(room_id: str, now: float | None = None, held=None) -> list[dict]:
     """What a room's page shows: every send not yet confirmed, oldest first,
     and one confirmed a moment ago (until the page's own copy of the
     conversation has it). A send queued by a hub that has since stopped is
-    failed here: its queue went with that hub."""
+    failed here: its queue went with that hub. ``held(mid)``: for a threaded
+    chat, whether the channel the page is served holds that turn yet (None:
+    not known); a confirmed send it does not hold stays listed past
+    SHOW_CONFIRMED_S, up to HOLD_UNSHOWN_S, so its balloon is never gone
+    from the page while its turn is not shown either (#266)."""
     now = time.time() if now is None else now
     if not _ROOM_ID.fullmatch(room_id or ""):
         return []
     items = reconcile(room_id, now)
     out = []
     for s in sorted(items, key=lambda s: s["at"]):
-        if s["state"] == "confirmed" and not s.get("read") and (not s.get("mid") or now - float(
-                s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
-            continue        # in the conversation (or never to be: a /command)
+        if s["state"] == "confirmed" and not s.get("read"):
+            age = now - float(s.get("confirmedAt") or s["stateAt"])
+            if not s.get("mid") or age > HOLD_UNSHOWN_S:
+                continue    # never to be in it (a /command), or long since
+            if age > SHOW_CONFIRMED_S and (held is None or held(s["mid"]) is not False):
+                continue    # in the conversation
         row = {k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid", "read",
                                      "afterRestart", "thread", "also", "how")
                if s.get(k) not in (None, "", False)}

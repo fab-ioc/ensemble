@@ -48,6 +48,23 @@ class Analyse(unittest.TestCase):
                  {"at": 6.0, "do": "active", "ok": True}]
         self.assertEqual(len([f for f in self.run_on(steps=steps) if "not the one on screen" in f]), 1)
 
+    def test_a_send_gone_or_an_answer_late_after_a_rotation_counts(self):
+        steps = [{"at": 5.0, "do": "rotate", "ok": True},
+                 {"at": 6.0, "do": "sequence", "run": 0, "sends": [
+                     {"tok": "a", "words": "How far is it?", "shownMs": 20, "answerMs": 900, "gone": False},
+                     {"tok": "b", "words": "Yes, start now", "shownMs": 20, "gone": True},
+                     {"tok": "c", "words": "and show me visuals", "shownMs": 20, "answerMs": 33000, "gone": False},
+                     {"tok": "d", "words": "Are you getting my messages?", "shownMs": 20, "answerMs": None, "gone": False}]}]
+        fails = [f for f in self.run_on(steps=steps) if f.startswith("sequence")]
+        self.assertEqual(len(fails), 3, fails)
+        self.assertIn("Yes, start now", fails[0])
+        self.assertTrue(all("How far" not in f for f in fails))
+
+    def test_a_run_without_a_rotation_says_so(self):
+        fails = self.run_on(steps=[])
+        self.assertIn("coverage: no PO rotation", fails)
+        self.assertIn("coverage: no CEO sequence after a rotation", fails)
+
 
 if __name__ == "__main__":
     unittest.main()

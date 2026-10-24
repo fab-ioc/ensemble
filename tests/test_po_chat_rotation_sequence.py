@@ -1,0 +1,514 @@
+"""CDP coverage for #266: a PO chat open across a PO rotation, on a busy hub.
+
+The opTen PO chat (10-24) lost the person's sends and the PO's replies until
+a reload: its thread index was rebuilt behind ~500 stands-aside for the
+pages, each up to a second while any page request was being answered, so
+the channel the page polled stayed minutes old; and a confirmed send left
+the hub's list after SHOW_CONFIRMED_S whether or not that channel held its
+turn yet, so its balloon went. This drives the person's sequence of that
+afternoon on the real page, right after a rotation, with a request always
+being answered: a question and its answer, a quick answer that interrupts
+the turn, a second question, a third sent as that answer lands, a re-ask and
+"are you getting my messages". Each sent balloon must never leave the page,
+and each answer must show without a reload. Skipped without Node and Chrome.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import chatroom  # noqa: E402
+import dashboard  # noqa: E402
+import points  # noqa: E402
+import sends  # noqa: E402
+import threads  # noqa: E402
+from tests import chrome_profile  # noqa: E402
+from tests.test_page_update import CHROME  # noqa: E402
+
+NODE = shutil.which("node")
+OLD_SESSIONS = 40           # the PO rotated this often before: a build reads each
+REPLY_WITHIN_MS = 8000      # an answer shows this soon after the PO wrote it
+
+# The person's sends, in order: (token, words, what the PO does with it).
+SEQUENCE = [
+    ("ASK1", "How far is the backtest?", "answer"),
+    ("ASK2", "Yes, start now", "interrupt"),          # the quick answer, its turn interrupted
+    ("ASK3", "actually walk me through the plan first", "answer"),
+    ("ASK4", "and show me visuals", "answer"),        # sent the moment ASK3's answer lands
+    ("ASK5", "Walk me through the plan first", "answer"),
+    ("ASK6", "Are you getting my messages?", "answer"),
+    ("ASK7", "Sent while reading an old message", "answer"),   # from a link's window
+]
+
+CDP_JS = chrome_profile.JS + r"""
+const { spawn } = require('child_process');
+const A = JSON.parse(process.argv[2]);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function launch() {
+  const udd = chromeProfile(A);
+  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
+    '--disable-gpu', '--hide-scrollbars', '--window-size=1280,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const ws = await new Promise((res, rej) => {
+    let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
+    ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
+  });
+  return { ch, ws };
+}
+class Cdp {
+  constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); }
+  open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
+    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
+  send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
+}
+async function hub(path, body) {
+  const r = await fetch(A.base + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  return r.json();
+}
+async function main() {
+  const { ch, ws } = await launch();
+  const c = new Cdp(ws); await c.open();
+  const out = { samples: 0, gone: [], goneAt: {}, backAt: {}, seen: {}, answered: {}, late: [], errors: [] };
+  try {
+    const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
+    await c.send('Page.enable', {}, sessionId);
+    await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+    const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
+    const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.room }, sessionId);
+    await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && document.querySelectorAll("#msgs .msg[data-mid]").length > 0', 30000);
+    await sleep(800);
+    // The PO rotates to a fresh session while the chat is open; the hub is busy from now on.
+    await hub('/__test/rotate', {});
+    await sleep(1500);
+    // The chat's words; an answer in the thread of a send counts by the
+    // thread line under that send ("1 reply"): ans, by the send's token.
+    const text = `(() => { const m = document.getElementById('msgs'), ans = [];
+      for (const l of m.querySelectorAll('.thr-line')) {
+        const p = l.previousElementSibling, k = p && (p.textContent.match(/ASK\\d+/) || [])[0];
+        const n = l.querySelector('.thr-count');
+        if (k && n && /[1-9]/.test(n.textContent)) ans.push(k);
+      }
+      return { t: m.textContent || '', ans }; })()`;
+    // Every 250 ms: which sent tokens and which answers the chat shows.
+    let sampling = true;
+    const sampler = (async () => {
+      while (sampling) {
+        let v = { t: '', ans: [] };
+        try { v = await evalIn(text); } catch (e) { out.errors.push(String(e).slice(0, 200)); }
+        out.samples++;
+        for (const [tok] of A.sequence) {
+          const has = v.t.includes(tok + ' ');
+          if (has && !out.seen[tok]) out.seen[tok] = Date.now();
+          // The link's window holds none of the sends before it (they are below it).
+          else if (!has && out.seen[tok] && !out.gone.includes(tok) && (!out.window || tok === 'ASK7')) { out.gone.push(tok); out.goneAt[tok] = [Date.now(), v.t.length]; }
+          if (has && out.gone.includes(tok) && !out.backAt[tok]) out.backAt[tok] = Date.now();
+          if (v.ans.includes(tok) && !out.answered[tok]) out.answered[tok] = Date.now();
+        }
+        await sleep(250);
+      }
+    })();
+    const send = async words => {
+      await evalIn(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input')); document.getElementById('send').click(); return 0; })()`);
+    };
+    for (const [tok, words, what] of A.sequence) {
+      if (tok === 'ASK4') {
+        // The same second the answer to the one before is written.
+        const t0 = Date.now();
+        while (Date.now() - t0 < 15000 && !(await hub('/__test/written', {}))['ANS-ASK3']) await sleep(50);
+      }
+      if (tok === 'ASK7') {
+        // A link to an old message opened (a point's chip): the chat holds a
+        // window around it, with later entries below it, and the person sends.
+        const ch = await hub('/api/room/channel?id=' + A.room + '&n=40');
+        const up = await hub('/api/room/channel?id=' + A.room + '&n=100&before=' + encodeURIComponent(ch.items[0].mid));
+        const old = up.items[5].mid;
+        await evalIn(`gotoMsg(${JSON.stringify(old)}); 0`);
+        out.window = true;
+        await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${old}"]')`, 20000);
+        // Sent while one of the window's polls is still out (review 1): its
+        // answer must not bring the window back.
+        await hub('/__test/slow', {});
+        // One the hub is holding (not one asked before /__test/slow).
+        const t1 = Date.now();
+        while (!((await hub('/__test/slowing', {})).n > 0 && await evalIn('THR_FETCHING && THR_AFTER > 0'))) {
+          if (Date.now() - t1 > 20000) throw new Error('no window poll held');
+          await sleep(50);
+        }
+      }
+      await send(tok + ' ' + words);
+      if (what === 'answer' && tok !== 'ASK3') {
+        const t0 = Date.now();
+        let at = 0;
+        while (Date.now() - t0 < 30000 && !(at = (await hub('/__test/written', {}))['ANS-' + tok])) await sleep(100);
+        // Time from the answer written to the answer shown.
+        const shownBy = Date.now() + 0;
+        while (!out.answered[tok] && Date.now() - shownBy < A.replyWithinMs) await sleep(100);
+        if (!out.answered[tok]) out.late.push(tok);
+      } else {
+        await sleep(2500);
+      }
+    }
+    if (!out.answered.ASK3) { await sleep(A.replyWithinMs); if (!out.answered.ASK3) out.late.push('ASK3'); }
+    // Long enough for a confirmed send to have left the hub's list.
+    await sleep(A.holdMs);
+    sampling = false;
+    await sampler;
+    out.final = await evalIn(text);
+    await c.send('Target.closeTarget', { targetId });
+  } finally {
+    try { await c.send('Browser.close'); } catch (e) {}
+    ch.kill();
+  }
+  console.log(JSON.stringify(out));
+}
+main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+def _turn(sid: str, role: str, text: str, at: float) -> dict:
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(at)) + ".000Z"
+    if role == "user":
+        return {"type": "user", "timestamp": ts, "sessionId": sid, "message": {"role": "user", "content": text}}
+    return {"type": "assistant", "timestamp": ts, "sessionId": sid,
+            "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": text}]}}
+
+
+@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
+class PoChatRotationSequence(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix="ens-rot-", ignore_cleanup_errors=True)
+        base = Path(cls.tmp.name)
+        state = base / "state"
+        state.mkdir()
+        root = base / "EnsembleProjects"
+        root.mkdir()
+        cls.tdir = base / "transcripts" / "C--po"
+        cls.tdir.mkdir(parents=True)
+        (base / "cs").mkdir()
+        cls.lock = threading.Lock()
+        cls.lines: dict[str, list] = {}
+        cls.written: dict[str, float] = {}
+        cls.busy = threading.Event()
+        cls.stop = threading.Event()
+        cls.slow = threading.Event()
+        cls.slowing = []     # the &to= polls held now
+
+        def resume(h, room, text="", to="", key="", quiet=False):
+            # The PO's seat: the send goes into its current conversation, and
+            # it answers a moment later (or the person interrupts it).
+            sid = cls.current
+            # Typed into its terminal, as the hub's own delivery says.
+            dashboard._typed_sends(room["id"], [{"key": key, "text": text}])
+
+            def run():
+                time.sleep(0.4)
+                cls._append(sid, _turn(sid, "user", text, time.time()))
+                tok = next((t for t, _w, _x in SEQUENCE if (t + " ") in text), "")
+                what = next((x for t, _w, x in SEQUENCE if t == tok), "answer")
+                time.sleep(1.2)
+                if what == "interrupt":
+                    cls._append(sid, _turn(sid, "user", "[Request interrupted by user]", time.time()))
+                    return
+                cls._append(sid, _turn(sid, "assistant", f"Here it is, answer {tok[3:]}.", time.time()))
+                cls.written[f"ANS-{tok}"] = time.time()
+            threading.Thread(target=run, daemon=True).start()
+            return {"delivered": 1}
+
+        orig_post = dashboard.Handler.do_POST
+
+        def do_post(h):
+            # The test's own controls, on loopback beside the page's hub.
+            if h.path == "/__test/rotate":
+                cls._rotate()
+                return h._send_json(200, {"ok": True})
+            if h.path == "/__test/written":
+                return h._send_json(200, dict(cls.written))
+            if h.path == "/__test/slow":
+                cls.slow.set()
+                return h._send_json(200, {"ok": True})
+            if h.path == "/__test/slowing":
+                return h._send_json(200, {"n": len(cls.slowing)})
+            return orig_post(h)
+
+        orig_get = dashboard.Handler.do_GET
+
+        def do_get(h):
+            # A link window's poll answered slowly once asked (/__test/slow).
+            if cls.slow.is_set() and h.path.startswith("/api/room/channel") and "&to=" in h.path:
+                cls.slowing.append(h.path)
+                try:
+                    time.sleep(3)
+                finally:
+                    cls.slowing.remove(h.path)
+            return orig_get(h)
+
+        cls.patches = [
+            mock.patch.object(dashboard, "PROJECTS_ROOT", root),
+            mock.patch.object(dashboard, "DASHBOARD_DIR", state),
+            mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
+            mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
+            mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
+            mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
+            mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
+            mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
+            mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+            mock.patch.object(sends, "SHOW_CONFIRMED_S", 3),
+            mock.patch.object(dashboard, "load_live", lambda: []),
+            mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
+            mock.patch.object(dashboard, "operator_name", return_value="sam"),
+            mock.patch.object(dashboard, "_send_left_behind", return_value=""),
+            mock.patch.object(dashboard.Handler, "_resume_room", resume),
+            mock.patch.object(dashboard.Handler, "do_POST", do_post),
+            mock.patch.object(dashboard.Handler, "do_GET", do_get),
+            mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
+            mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+            mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+        ]
+        for p in cls.patches:
+            p.start()
+            cls.addClassCleanup(p.stop)
+        points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
+        threads.forget()
+        cls.room = cls._po_room()
+        threads.build(cls.room, show_progress=False)
+
+        def keep_busy():
+            # A hub always answering something (the live one answers its
+            # agents' tool calls and every open page's polls).
+            while not cls.stop.is_set():
+                if cls.busy.is_set():
+                    dashboard._ANSWERING[-266] = time.monotonic()
+                time.sleep(0.05)
+            dashboard._ANSWERING.pop(-266, None)
+        threading.Thread(target=keep_busy, daemon=True).start()
+        cls.addClassCleanup(cls.stop.set)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        cls.server.daemon_threads = True
+        cls.server.handle_error = lambda *a: None
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        try:
+            cls.got = cls._chrome()
+        finally:
+            cls.busy.clear()
+
+    @classmethod
+    def _append(cls, sid, line):
+        with cls.lock:
+            cls.lines.setdefault(sid, []).append(line)
+            (cls.tdir / f"{sid}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in cls.lines[sid]),
+                                                   encoding="utf-8")
+
+    @classmethod
+    def _po_room(cls) -> str:
+        ok, proj, _ = dashboard.register_project("Options")
+        assert ok, proj
+        t0 = time.time() - 6 * 3600
+        sids = [f"old{i:02d}" for i in range(OLD_SESSIONS)] + ["cur"]
+        for i, sid in enumerate(sids):
+            at = t0 + i * 300
+            cls._append(sid, _turn(sid, "assistant", f"I've taken over as PO ({i}).", at))
+            cls._append(sid, _turn(sid, "user", f"[digest] Options: quiet hour {i}.", at + 10))
+            cls._append(sid, _turn(sid, "assistant", f"Noted {i}, nothing to do.", at + 11))
+        for j in range(100):
+            # The person's talk with this PO: more than a page of the channel.
+            cls._append("cur", _turn("cur", "user", f"Earlier question {j}?", at + 20 + j * 2))
+            cls._append("cur", _turn("cur", "assistant", f"Earlier answer {j}.", at + 21 + j * 2))
+        rots = [{"n": i + 1, "at": t0 + (i + 1) * 300, "fromSessionId": a, "toSessionId": b}
+                for i, (a, b) in enumerate(zip(sids, sids[1:]))]
+        po = chatroom.create_room("PO", [{"identity": "claude", "agent": "claude", "role": "Product owner",
+                                          "sessionId": "cur", "rotations": rots}])
+        rid = po["id"]
+        room = chatroom.get_room(rid, public=False)
+        room["mode"] = "solo"
+        chatroom.update_room(room)
+        dashboard.assign_session_project(rid, proj["id"])
+        ok, why = dashboard.set_project_po(proj["id"], rid)
+        assert ok, why
+        points.sync(rid, force=True)
+        threads._ensure_since(rid, t0 - 60)
+        cls.current = "cur"
+        return rid
+
+    @classmethod
+    def _rotate(cls):
+        new = "fresh"
+        cls._append(new, _turn(new, "assistant", "I've read the handover and taken over as PO.", time.time()))
+        rec = {"n": OLD_SESSIONS + 1, "at": time.time(), "fromSessionId": cls.current, "toSessionId": new}
+        chatroom.patch_participant(cls.room, "claude", {"sessionId": new}, append={"rotations": rec})
+        chatroom.post_notice(cls.room, "Ensemble", "**New PO session** — the hub started a fresh one.",
+                             {"noticeKind": "rotation", "rotation": rec})
+        cls.current = new
+        cls.busy.set()
+
+    @classmethod
+    def _chrome(cls):
+        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name,
+                "base": f"http://127.0.0.1:{cls.server.server_address[1]}", "room": cls.room,
+                "sequence": SEQUENCE, "replyWithinMs": REPLY_WITHIN_MS, "holdMs": 6000}
+        script = Path(cls.tmp.name) / "rotation_cdp.js"
+        script.write_text(CDP_JS, encoding="utf-8")
+        out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8",
+                             timeout=400)
+        assert out.returncode == 0, out.stderr[-4000:]
+        got = json.loads(out.stdout.strip().splitlines()[-1])
+        if os.environ.get("ENS_DEBUG"):
+            Path(os.environ["ENS_DEBUG"]).write_text(json.dumps(got, indent=1), encoding="utf-8")
+        return got
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.tmp.cleanup()
+
+    def test_every_send_shows_at_once_and_never_leaves(self):
+        self.assertGreater(self.got["samples"], 40)
+        self.assertEqual([t for t, _w, _x in SEQUENCE if t not in self.got["seen"]], [],
+                         "a send was never shown")
+        self.assertEqual(self.got["gone"], [], "a sent balloon left the chat before a reload")
+
+    def test_a_send_from_a_links_window_shows_with_its_answer(self):
+        self.assertTrue(self.got.get("window"), "the link's window was not opened")
+        self.assertIn("ASK7", self.got["seen"])
+        self.assertNotIn("ASK7", self.got["gone"])
+        self.assertNotIn("ASK7", self.got["late"])
+
+    def test_every_answer_shows_without_a_reload(self):
+        self.assertEqual(self.got["late"], [], f"answers not shown within {REPLY_WITHIN_MS} ms")
+        for tok, _w, what in SEQUENCE:
+            if what == "answer":
+                self.assertIn(tok, self.got["final"]["ans"])
+
+
+class HoldAndBudget(unittest.TestCase):
+    """The two halves of the fix, without a browser."""
+
+    def test_a_confirmed_send_stays_listed_while_the_channel_lacks_its_turn(self):
+        rid = "room-266aaaa1"
+        sent = {"key": "k1", "text": "hi", "to": "", "at": 100.0, "state": "confirmed", "stateAt": 101.0,
+                "confirmedAt": 101.0, "mid": "s:4"}
+        with mock.patch.object(sends, "reconcile", lambda *_a, **_k: [dict(sent)]):
+            later = 101.0 + sends.SHOW_CONFIRMED_S + 5
+            self.assertEqual(sends.view(rid, now=later), [], "no channel to ask: gone as before")
+            self.assertEqual(sends.view(rid, now=later, held=lambda m: True), [])
+            self.assertEqual(sends.view(rid, now=later, held=lambda m: None), [], "not known: gone as before")
+            self.assertEqual([s["key"] for s in sends.view(rid, now=later, held=lambda m: False)], ["k1"])
+            self.assertEqual(sends.view(rid, now=101.0 + sends.HOLD_UNSHOWN_S + 1, held=lambda m: False), [],
+                             "held at most HOLD_UNSHOWN_S")
+
+    def test_holds_mid_reads_the_index_without_building(self):
+        with mock.patch.dict(threads._INDEX, {"room-266aaaa2": ("sig", {"by_mid": {"s:1": {}}})}, clear=False):
+            self.assertIs(threads.holds_mid("room-266aaaa2", "s:1"), True)
+            self.assertIs(threads.holds_mid("room-266aaaa2", "s:2"), False)
+        self.assertIsNone(threads.holds_mid("room-266aaaa3", "s:1"))
+
+    def test_a_build_stands_aside_at_most_its_budget(self):
+        waits = []
+
+        def yield_to_pages(most_s=1.0, quiet_s=0.0):
+            waits.append(most_s)
+            time.sleep(min(most_s, 0.05))
+        room = {"id": "room-266aaaa4", "participants": []}
+        many = [{"mid": f"s:{i}", "ts": float(i)} for i in range(5)]
+
+        def balloons(_room, _led, on_session=None, on_turn=None):
+            for i in range(200):
+                on_session(i + 1, 200)
+            return many
+        with mock.patch.object(threads, "YIELD_BUDGET_S", 0.3),                 mock.patch.object(dashboard, "yield_to_pages", yield_to_pages),                 mock.patch.object(threads, "_ensure_since", lambda *_a: None),                 mock.patch.object(threads, "_signature", lambda *_a: "sig-x"),                 mock.patch.object(threads, "balloons", balloons),                 mock.patch.object(threads, "assign", lambda *a, **k: {"threads": {}, "of": {}, "parent": {}, "also": {},
+                                                                      "order": [], "work": set(), "paired": {}}),                 mock.patch.object(points, "load", lambda _r: {"points": []}),                 mock.patch.object(points, "task_lookup", lambda *_a: (lambda _ref: None)),                 mock.patch.object(threads, "load_side", lambda _r: {}),                 mock.patch.dict(threads._INDEX, {}, clear=False):
+            t0 = time.monotonic()
+            threads.build("room-266aaaa4", room, show_progress=False)
+            took = time.monotonic() - t0
+        self.assertLess(len(waits), 12, "it stops standing aside once the budget is spent")
+        self.assertLess(took, 1.0)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class StalePageLoads(unittest.TestCase):
+    """Review 2: a page above or below asked before the pages started again
+    (a topic chosen) is not added to the new view, even when both views share
+    the entry it was asked from."""
+
+    @classmethod
+    def setUpClass(cls):
+        page = (ROOT / "session.html").read_text(encoding="utf-8")
+
+        def fn(name, end="\n}\n"):
+            at = page.index("function " + name + "(")
+            return page[at:page.index(end, at) + len(end)]
+        code = "".join([fn("thrRestart", "}\n"), page[page.index("const thrLast = "):page.index("\n", page.index("const thrLast = ")) + 1],
+                        fn("thrLoadDown"), fn("thrKeepHub", "}\n"), fn("thrLoadUp")]).replace("\r\n", "\n")
+        js = r"""
+const vm = require('vm');
+const code = require('fs').readFileSync(0, 'utf8');
+let answer;
+const box = { scrollTop: 0, scrollHeight: 0, children: [], querySelectorAll: () => [] };
+const ctx = { pollFetch: () => new Promise(r => { answer = d => r({ json: () => d }); }), thrBase: () => '',
+  thrDraw: () => {}, roomLatestTs: () => 0, ROOM_OBJ: null, $: () => box, readingPlace: () => null, showLatest: () => {},
+  DRAW_HELD: false, STICK: true, Promise };
+vm.createContext(ctx);
+vm.runInContext('var THR_GEN = 0, THR_SIG = "", THR_N = 40, THR_FROM = "", THR_VIEW = null, THR_OLDER = [], THR_HUB = new Map(),'
+  + ' THR_BEFORE = 0, THR_AFTER = 0, THR_UP = null, THR_DOWN = null, THR_META = {};\n' + code, ctx);
+const run = s => vm.runInContext(s, ctx);
+const view = mids => JSON.stringify({ items: mids.map(mid => ({ mid })) });
+(async () => {
+  const out = {};
+  // Above: the unfiltered view's page arrives after a topic's view with the same first entry.
+  run('THR_VIEW = ' + view(['a', 'b']) + '; THR_BEFORE = 1;');
+  const up = ctx.thrLoadUp();
+  run('thrRestart(); THR_VIEW = ' + view(['a', 'c']) + '; THR_BEFORE = 5;');
+  answer({ items: [{ mid: 'old' }], before: 0 });
+  out.upDrawn = await up;
+  out.up = run('[THR_OLDER.map(t => t.mid), THR_BEFORE]');
+  // Below: the same with the last entry.
+  run('THR_VIEW = ' + view(['x', 'z']) + '; THR_AFTER = 1;');
+  const down = ctx.thrLoadDown();
+  run('thrRestart(); THR_VIEW = ' + view(['y', 'z']) + '; THR_AFTER = 7;');
+  answer({ items: [{ mid: 'zz' }], after: 0 });
+  out.downDrawn = await down;
+  out.down = run('[THR_VIEW.items.map(t => t.mid), THR_AFTER]');
+  // Not started again: the page is added.
+  run('THR_VIEW = ' + view(['a', 'b']) + '; THR_BEFORE = 1; THR_OLDER = [];');
+  const kept = ctx.thrLoadUp();
+  answer({ items: [{ mid: 'older' }], before: 0 });
+  out.keptDrawn = await kept;
+  out.kept = run('THR_OLDER.map(t => t.mid)');
+  console.log(JSON.stringify(out));
+})();
+"""
+        res = subprocess.run([NODE, "-e", js], input=code, capture_output=True, encoding="utf-8", timeout=60)
+        if res.returncode:
+            raise AssertionError(res.stderr)
+        cls.r = json.loads(res.stdout)
+
+    def test_a_page_above_asked_before_a_topic_switch_is_not_added(self):
+        self.assertFalse(self.r["upDrawn"])
+        self.assertEqual(self.r["up"], [[], 5])
+
+    def test_a_page_below_asked_before_a_topic_switch_is_not_added(self):
+        self.assertFalse(self.r["downDrawn"])
+        self.assertEqual(self.r["down"], [["y", "z"], 7])
+
+    def test_a_page_asked_in_the_same_view_is_added(self):
+        self.assertTrue(self.r["keptDrawn"])
+        self.assertEqual(self.r["kept"], ["older"])
+
+
+if __name__ == "__main__":
+    unittest.main()
