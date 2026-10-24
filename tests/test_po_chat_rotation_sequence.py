@@ -50,6 +50,7 @@ SEQUENCE = [
     ("ASK4", "and show me visuals", "answer"),        # sent the moment ASK3's answer lands
     ("ASK5", "Walk me through the plan first", "answer"),
     ("ASK6", "Are you getting my messages?", "answer"),
+    ("ASK7", "Sent while reading an old message", "answer"),   # from a link's window
 ]
 
 CDP_JS = chrome_profile.JS + r"""
@@ -112,7 +113,8 @@ async function main() {
         for (const [tok] of A.sequence) {
           const has = v.t.includes(tok + ' ');
           if (has && !out.seen[tok]) out.seen[tok] = Date.now();
-          else if (!has && out.seen[tok] && !out.gone.includes(tok)) out.gone.push(tok);
+          // The link's window holds none of the sends before it (they are below it).
+          else if (!has && out.seen[tok] && !out.gone.includes(tok) && (!out.window || tok === 'ASK7')) out.gone.push(tok);
           if (v.ans.includes(tok) && !out.answered[tok]) out.answered[tok] = Date.now();
         }
         await sleep(250);
@@ -126,6 +128,16 @@ async function main() {
         // The same second the answer to the one before is written.
         const t0 = Date.now();
         while (Date.now() - t0 < 15000 && !(await hub('/__test/written', {}))['ANS-ASK3']) await sleep(50);
+      }
+      if (tok === 'ASK7') {
+        // A link to an old message opened (a point's chip): the chat holds a
+        // window around it, with later entries below it, and the person sends.
+        const ch = await hub('/api/room/channel?id=' + A.room + '&n=40');
+        const up = await hub('/api/room/channel?id=' + A.room + '&n=100&before=' + encodeURIComponent(ch.items[0].mid));
+        const old = up.items[5].mid;
+        await evalIn(`gotoMsg(${JSON.stringify(old)}); 0`);
+        out.window = true;
+        await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${old}"]')`, 20000);
       }
       await send(tok + ' ' + words);
       if (what === 'answer' && tok !== 'ASK3') {
@@ -282,6 +294,10 @@ class PoChatRotationSequence(unittest.TestCase):
             cls._append(sid, _turn(sid, "assistant", f"I've taken over as PO ({i}).", at))
             cls._append(sid, _turn(sid, "user", f"[digest] Options: quiet hour {i}.", at + 10))
             cls._append(sid, _turn(sid, "assistant", f"Noted {i}, nothing to do.", at + 11))
+        for j in range(100):
+            # The person's talk with this PO: more than a page of the channel.
+            cls._append("cur", _turn("cur", "user", f"Earlier question {j}?", at + 20 + j * 2))
+            cls._append("cur", _turn("cur", "assistant", f"Earlier answer {j}.", at + 21 + j * 2))
         rots = [{"n": i + 1, "at": t0 + (i + 1) * 300, "fromSessionId": a, "toSessionId": b}
                 for i, (a, b) in enumerate(zip(sids, sids[1:]))]
         po = chatroom.create_room("PO", [{"identity": "claude", "agent": "claude", "role": "Product owner",
@@ -335,6 +351,12 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertEqual([t for t, _w, _x in SEQUENCE if t not in self.got["seen"]], [],
                          "a send was never shown")
         self.assertEqual(self.got["gone"], [], "a sent balloon left the chat before a reload")
+
+    def test_a_send_from_a_links_window_shows_with_its_answer(self):
+        self.assertTrue(self.got.get("window"), "the link's window was not opened")
+        self.assertIn("ASK7", self.got["seen"])
+        self.assertNotIn("ASK7", self.got["gone"])
+        self.assertNotIn("ASK7", self.got["late"])
 
     def test_every_answer_shows_without_a_reload(self):
         self.assertEqual(self.got["late"], [], f"answers not shown within {REPLY_WITHIN_MS} ms")

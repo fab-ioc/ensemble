@@ -67,7 +67,7 @@ BUDGETS = {
     "lag_ms": 500,              # the interpreter held this long by one thing
     "min_links": 6,             # coverage: point links followed in the run
     "min_sends": 3,
-    "reply_shown_ms": 5000,     # a PO's answer in the chat after it was written, no reload (#266)
+    "reply_shown_ms": 8000,     # a PO's answer in the chat after it was written, no reload (#266): a 2 s poll, a ~2 s build, the next poll
 }
 GIT_BACKED = ("/api/history/", "/api/git/")
 # Waits on another server (GitHub's releases), not on the hub: held to the
@@ -75,6 +75,8 @@ GIT_BACKED = ("/api/history/", "/api/git/")
 EXTERNAL = ("/api/update-check",)
 # Long by nature: a terminal's stream, an agent's tool call, a long poll.
 NOT_TIMED = {"/api/pty/stream", "/mcp", "/api/events"}
+# The replay's own controls (perf_hub), not the page's.
+NOT_TIMED |= {"/__replay/rotate", "/__replay/written"}
 
 
 def pct(xs, q):

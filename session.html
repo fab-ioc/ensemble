@@ -8415,6 +8415,9 @@ async function sendNow(urgent = false) {
     return;
   }
   if (cmd) { await sendCommand(cmd); return; }
+  // Sent from a link's window (#266): the latest first, where the send and
+  // its answer show (the window's polls keep to its end).
+  if (ROOM_WIN || SOLO_WIN || (THREADED && THR_AFTER)) toLatest();
   setSendBusy(true);
   setText($('#hint'), 'Sending your message.');
   try {

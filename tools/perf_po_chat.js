@@ -371,7 +371,7 @@ async function main() {
     step({do: 'sequence', run, sends: sent.map(({tok, words, shownMs, answerMs, gone}) => ({tok, words, shownMs, answerMs, gone})),
       s: +(now() - t).toFixed(2)});
   }
-  const budgetsReplyMs = () => A.replyShownMs || 5000;
+  const budgetsReplyMs = () => A.replyShownMs || 8000;
 
   async function thread() {
     const t = now();
