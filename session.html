@@ -5582,6 +5582,10 @@ function landPending() {
       // Not drawn in the channel after all (#234): in its thread beside it.
       const passage = GOTO_PART;
       GOTO = ''; GOTO_PART = '';
+      // A room message (its id has no "<session>:"), not a transcript's
+      // balloon, is in no thread: one filed as the CEO's that no transcript
+      // holds (a script posted it, #265) is said so, never an empty thread.
+      if (!String(mid).includes(':')) { showGotoNote('The linked message is not shown in this chat.'); return; }
       openThread('', mid, passage);
       return;
     }

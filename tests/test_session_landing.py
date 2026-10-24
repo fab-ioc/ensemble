@@ -199,5 +199,20 @@ class LandedCueCss(unittest.TestCase):
         self.assertIn("@keyframes landed", block)
 
 
+class RoomMessageNotDrawn(unittest.TestCase):
+    """#265: a link to a room message the channel does not draw (one filed
+    as the CEO's that no transcript holds: a script posted it) said so; it
+    opened an empty thread. Only a transcript's balloon ("<session>:<n>")
+    is in a thread."""
+
+    def test_a_room_message_gets_the_note_not_a_thread(self):
+        body = js_function("landPending")
+        branch = body[body.index("Not drawn in the channel after all"):]
+        branch = branch[:branch.index("return;\n    }") + 6]
+        guard = branch.index("if (!String(mid).includes(':'))")
+        self.assertIn("showGotoNote('The linked message is not shown in this chat.')", branch[guard:])
+        self.assertLess(guard, branch.index("openThread('', mid, passage)"))
+
+
 if __name__ == "__main__":
     unittest.main()
