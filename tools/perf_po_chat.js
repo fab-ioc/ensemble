@@ -69,16 +69,19 @@ async function main() {
   // The chat frame of the dock (its window), evaluated in: F`expr`. The one
   // on screen first: a chat the board put away (another project's PO opened
   // by a cross-room link) keeps its frame, hidden, where nothing lands.
+  // On screen: laid out, and not hidden by CSS (a Dock tab put away is
+  // visibility: hidden and keeps its size).
+  const VIS = `(f => f.getClientRects().length > 0 && f.clientHeight > 0 && (!f.checkVisibility || f.checkVisibility({visibilityProperty: true, opacityProperty: true})))`;
   const FR = `(() => { const fs = [...document.querySelectorAll('iframe')].filter(f => { try { const l = f.contentWindow.location;
     const q = new URLSearchParams(l.search); return l.pathname === '/session' && (q.get('id') || q.get('room')) === ${JSON.stringify(A.room)}; } catch (e) { return false; } });
-    const f = fs.find(f => f.getClientRects().length && f.clientHeight > 0) || fs[0];
+    const f = fs.find(${VIS}) || fs[0];
     return f ? f.contentWindow : null; })()`;
   // Whether that chat is on screen.
-  const SHOWN = `(() => { const w = ${FR}; const f = w && w.frameElement; return !!f && f.getClientRects().length > 0 && f.clientHeight > 0; })()`;
+  const SHOWN = `(() => { const w = ${FR}; const f = w && w.frameElement; return !!f && ${VIS}(f); })()`;
   // This chat is the one on screen: shown, and no other room's chat beside it.
   const ACTIVE = `(() => { if (!${SHOWN}) return 'this chat is not shown';
     const other = [...document.querySelectorAll('iframe')].find(f => { try { const l = f.contentWindow.location; const q = new URLSearchParams(l.search);
-      return l.pathname === '/session' && (q.get('id') || q.get('room')) !== ${JSON.stringify(A.room)} && f.getClientRects().length > 0 && f.clientHeight > 0; } catch (e) { return false; } });
+      return l.pathname === '/session' && (q.get('id') || q.get('room')) !== ${JSON.stringify(A.room)} && ${VIS}(f); } catch (e) { return false; } });
     return other ? 'another chat is on screen: ' + other.contentWindow.location.search.slice(0, 80) : ''; })()`;
   const inChat = (body) => ev(`(() => { const w = ${FR}; if (!w) return null; return w.eval(${JSON.stringify('(() => {' + body + '})()')}); })()`);
 
@@ -111,7 +114,7 @@ async function main() {
   // a link opened, a thread's panel) and the frames in each (a side
   // thread): where a link or a thread went.
   const lookAll = () => ev(`(() => { const out = [];
-    const shown = (f) => f.getClientRects().length > 0 && f.clientHeight > 0;
+    const shown = ${VIS};
     const see = (w, where, vis) => { try { if (w.location.pathname !== '/session') return;
       const v = w.eval(${JSON.stringify('(() => {' + look + '})()')}); delete v.pane; out.push({where, vis, ...v}); } catch (e) {} };
     for (const f of document.querySelectorAll('iframe')) { const w = f.contentWindow; const vis = shown(f); see(w, 'panel', vis);

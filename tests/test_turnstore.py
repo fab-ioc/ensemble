@@ -162,6 +162,14 @@ class TurnStoreTest(unittest.TestCase):
                     conn.execute("UPDATE turns SET data=? WHERE path=?", (good, str(t)))
             dashboard._KEPT[0] = 0.0
             self.assertIsNotNone(dashboard.kept_session(sid))
+            # Damaged after a read found it whole (review 3): no session,
+            # not an empty one, though the listing still names it.
+            with turnstore._LOCK:
+                conn = turnstore._conn(dashboard._turnstore_db())
+                with conn:
+                    conn.execute("UPDATE turns SET data=? WHERE path=?", (b"garbage", str(t)))
+            self.assertIsNone(dashboard.read_session_turns(sid))
+            self.assertIsNone(dashboard.kept_session(sid))
             # The store loses the row after it was listed: no kept session
             # (a 404), not an empty one.
             with turnstore._LOCK:

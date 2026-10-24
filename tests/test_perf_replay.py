@@ -33,10 +33,13 @@ class Analyse(unittest.TestCase):
     def test_a_page_request_without_an_answer_counts(self):
         page = [{"at": 10.0, "m": "GET", "p": "/api/room", "q": "", "ms": None, "open": True, "endAt": 15.0},
                 {"at": 14.5, "m": "GET", "p": "/api/live", "q": "", "ms": None, "open": True, "endAt": 15.0},
-                {"at": 1.0, "m": "POST", "p": "/api/attention/seen", "q": "", "status": 200, "ms": None, "open": True, "endAt": 15.0}]
+                {"at": 1.0, "m": "POST", "p": "/api/attention/seen", "q": "", "status": 200, "ms": None, "open": True, "endAt": 15.0},
+                # Its answer began (headers) and never finished (review 3).
+                {"at": 2.0, "m": "GET", "p": "/api/projects", "q": "", "status": 200, "ms": None, "open": True, "endAt": 15.0}]
         fails = [f for f in self.run_on(page=page) if "no answer" in f]
-        self.assertEqual(len(fails), 1)
+        self.assertEqual(len(fails), 2)
         self.assertIn("/api/room", fails[0])
+        self.assertIn("/api/projects", fails[1])
 
     def test_a_step_that_ends_away_from_the_chat_counts(self):
         steps = [{"at": 5.0, "do": "active", "ok": False, "why": "another chat is on screen"},

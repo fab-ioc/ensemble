@@ -4902,6 +4902,19 @@ def _kept_turns(tpath: Path) -> list[dict] | None:
     return turnstore.get_kept(_turnstore_db(), str(tpath))
 
 
+def kept_turns_classified(tpath: Path) -> list[dict] | None:
+    """A kept session's chat turns, or None when its row no longer reads
+    (damaged since it was listed): no session, not an empty one."""
+    if tpath.exists():
+        return claude_turns_classified(tpath)
+    kept = _kept_turns(tpath)
+    if kept is None:
+        _KEPT_READ[str(tpath)] = False
+        return None
+    room_id, identity = _session_input_context(tpath.stem)
+    return classify_turns(kept, room_id=room_id, identity=identity, session_id=tpath.stem)
+
+
 def read_session_turns(sid: str) -> list[dict] | None:
     """A session's chat turns as /api/session/<sid>?full=1 serves them (Claude
     or Codex), or None when there is no such session."""
@@ -4910,7 +4923,7 @@ def read_session_turns(sid: str) -> list[dict] | None:
         return claude_turns_classified(tpath)
     kept = kept_session(sid)        # asked before Codex, whose miss globs its rollouts
     if kept:
-        return claude_turns_classified(kept[0])
+        return kept_turns_classified(kept[0])
     cx = agents.get_agent("codex")
     if cx is None or cx.session_stat(sid) is None:
         return None
@@ -17019,7 +17032,11 @@ class Handler(BaseHTTPRequestHandler):
                     if want_stat:
                         self._send_json(200, {"sessionId": sid, "size": kept[1][0], "mtime": kept[1][1], "kept": True})
                         return
-                    body = full_turns(claude_turns_classified(kept[0])) if full else {"turns": []}
+                    turns = kept_turns_classified(kept[0])
+                    if turns is None:
+                        self._send_json(404, {"error": "not_found"})
+                        return
+                    body = full_turns(turns) if full else {"turns": []}
                     self._send_json(200, {"sessionId": sid, "cwd": "", **body, "kept": True,
                                           "label": load_labels().get(sid, "")})
                     return

@@ -175,10 +175,13 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
             fails.append(f"{row['endpoint']}: one key asked {row['peakKeyMin']} times in a minute > {budgets['per_key_per_min']}")
         if row["peakMin"] > budgets["per_endpoint_per_min"]:
             fails.append(f"{row['endpoint']}: {row['peakMin']} requests in a minute > {budgets['per_endpoint_per_min']}")
-    # A page request still out when the run ended (no answer at all) counts
-    # once it was out longer than any request may take.
+    # A page request still out when the run ended counts once it was out
+    # longer than any request may take: no answer, or a GET whose answer
+    # began and did not finish. (A POST the page sends as a beacon, with
+    # keepalive, has its answer but Chrome never reports it finished.)
     for r in page:
-        if r.get("open") and r.get("status") is None and r.get("endAt") is not None                 and (r["endAt"] - r["at"]) * 1000 > budgets["max_ms"]:
+        if r.get("open") and (r.get("status") is None or r["m"] == "GET") and r.get("endAt") is not None \
+                and (r["endAt"] - r["at"]) * 1000 > budgets["max_ms"]:
             fails.append(f"{r['m']} {r['p']} at {r['at']} s: no answer after {round(r['endAt'] - r['at'], 1)} s > {budgets['max_ms']} ms")
     for s in sends:
         if s.get("shownMs") is None or s["shownMs"] > budgets["send_shown_ms"]:
