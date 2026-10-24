@@ -142,7 +142,12 @@ async function main() {
         // Sent while one of the window's polls is still out (review 1): its
         // answer must not bring the window back.
         await hub('/__test/slow', {});
-        await until('THR_FETCHING && THR_AFTER > 0', 20000);
+        // One the hub is holding (not one asked before /__test/slow).
+        const t1 = Date.now();
+        while (!((await hub('/__test/slowing', {})).n > 0 && await evalIn('THR_FETCHING && THR_AFTER > 0'))) {
+          if (Date.now() - t1 > 20000) throw new Error('no window poll held');
+          await sleep(50);
+        }
       }
       await send(tok + ' ' + words);
       if (what === 'answer' && tok !== 'ASK3') {
@@ -201,6 +206,7 @@ class PoChatRotationSequence(unittest.TestCase):
         cls.busy = threading.Event()
         cls.stop = threading.Event()
         cls.slow = threading.Event()
+        cls.slowing = []     # the &to= polls held now
 
         def resume(h, room, text="", to="", key="", quiet=False):
             # The PO's seat: the send goes into its current conversation, and
@@ -235,6 +241,8 @@ class PoChatRotationSequence(unittest.TestCase):
             if h.path == "/__test/slow":
                 cls.slow.set()
                 return h._send_json(200, {"ok": True})
+            if h.path == "/__test/slowing":
+                return h._send_json(200, {"n": len(cls.slowing)})
             return orig_post(h)
 
         orig_get = dashboard.Handler.do_GET
@@ -242,7 +250,11 @@ class PoChatRotationSequence(unittest.TestCase):
         def do_get(h):
             # A link window's poll answered slowly once asked (/__test/slow).
             if cls.slow.is_set() and h.path.startswith("/api/room/channel") and "&to=" in h.path:
-                time.sleep(3)
+                cls.slowing.append(h.path)
+                try:
+                    time.sleep(3)
+                finally:
+                    cls.slowing.remove(h.path)
             return orig_get(h)
 
         cls.patches = [
@@ -425,6 +437,77 @@ class HoldAndBudget(unittest.TestCase):
             took = time.monotonic() - t0
         self.assertLess(len(waits), 12, "it stops standing aside once the budget is spent")
         self.assertLess(took, 1.0)
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class StalePageLoads(unittest.TestCase):
+    """Review 2: a page above or below asked before the pages started again
+    (a topic chosen) is not added to the new view, even when both views share
+    the entry it was asked from."""
+
+    @classmethod
+    def setUpClass(cls):
+        page = (ROOT / "session.html").read_text(encoding="utf-8")
+
+        def fn(name, end="\n}\n"):
+            at = page.index("function " + name + "(")
+            return page[at:page.index(end, at) + len(end)]
+        code = "".join([fn("thrRestart", "}\n"), page[page.index("const thrLast = "):page.index("\n", page.index("const thrLast = ")) + 1],
+                        fn("thrLoadDown"), fn("thrKeepHub", "}\n"), fn("thrLoadUp")]).replace("\r\n", "\n")
+        js = r"""
+const vm = require('vm');
+const code = require('fs').readFileSync(0, 'utf8');
+let answer;
+const box = { scrollTop: 0, scrollHeight: 0, children: [], querySelectorAll: () => [] };
+const ctx = { pollFetch: () => new Promise(r => { answer = d => r({ json: () => d }); }), thrBase: () => '',
+  thrDraw: () => {}, roomLatestTs: () => 0, ROOM_OBJ: null, $: () => box, readingPlace: () => null, showLatest: () => {},
+  DRAW_HELD: false, STICK: true, Promise };
+vm.createContext(ctx);
+vm.runInContext('var THR_GEN = 0, THR_SIG = "", THR_N = 40, THR_FROM = "", THR_VIEW = null, THR_OLDER = [], THR_HUB = new Map(),'
+  + ' THR_BEFORE = 0, THR_AFTER = 0, THR_UP = null, THR_DOWN = null, THR_META = {};\n' + code, ctx);
+const run = s => vm.runInContext(s, ctx);
+const view = mids => JSON.stringify({ items: mids.map(mid => ({ mid })) });
+(async () => {
+  const out = {};
+  // Above: the unfiltered view's page arrives after a topic's view with the same first entry.
+  run('THR_VIEW = ' + view(['a', 'b']) + '; THR_BEFORE = 1;');
+  const up = ctx.thrLoadUp();
+  run('thrRestart(); THR_VIEW = ' + view(['a', 'c']) + '; THR_BEFORE = 5;');
+  answer({ items: [{ mid: 'old' }], before: 0 });
+  out.upDrawn = await up;
+  out.up = run('[THR_OLDER.map(t => t.mid), THR_BEFORE]');
+  // Below: the same with the last entry.
+  run('THR_VIEW = ' + view(['x', 'z']) + '; THR_AFTER = 1;');
+  const down = ctx.thrLoadDown();
+  run('thrRestart(); THR_VIEW = ' + view(['y', 'z']) + '; THR_AFTER = 7;');
+  answer({ items: [{ mid: 'zz' }], after: 0 });
+  out.downDrawn = await down;
+  out.down = run('[THR_VIEW.items.map(t => t.mid), THR_AFTER]');
+  // Not started again: the page is added.
+  run('THR_VIEW = ' + view(['a', 'b']) + '; THR_BEFORE = 1; THR_OLDER = [];');
+  const kept = ctx.thrLoadUp();
+  answer({ items: [{ mid: 'older' }], before: 0 });
+  out.keptDrawn = await kept;
+  out.kept = run('THR_OLDER.map(t => t.mid)');
+  console.log(JSON.stringify(out));
+})();
+"""
+        res = subprocess.run([NODE, "-e", js], input=code, capture_output=True, encoding="utf-8", timeout=60)
+        if res.returncode:
+            raise AssertionError(res.stderr)
+        cls.r = json.loads(res.stdout)
+
+    def test_a_page_above_asked_before_a_topic_switch_is_not_added(self):
+        self.assertFalse(self.r["upDrawn"])
+        self.assertEqual(self.r["up"], [[], 5])
+
+    def test_a_page_below_asked_before_a_topic_switch_is_not_added(self):
+        self.assertFalse(self.r["downDrawn"])
+        self.assertEqual(self.r["down"], [["y", "z"], 7])
+
+    def test_a_page_asked_in_the_same_view_is_added(self):
+        self.assertTrue(self.r["keptDrawn"])
+        self.assertEqual(self.r["kept"], ["older"])
 
 
 if __name__ == "__main__":

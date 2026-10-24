@@ -5712,7 +5712,6 @@ function sendsFromPoll(list, gen) {
   const listed = new Set(ROOM_SENDS.map(x => x.key));
   for (const s of was) if (s.state === 'confirmed' && s.mid && !s.read && !listed.has(s.key)) SENT_KEPT.set(s.key, s);
   for (const k of listed) SENT_KEPT.delete(k);
-  while (SENT_KEPT.size > 50) SENT_KEPT.delete(SENT_KEPT.keys().next().value);
   // One still on its way stays (a poll answered meanwhile cannot have it
   // yet) while its request is out, however long, then until the hub lists
   // it or for a minute.
@@ -6508,12 +6507,12 @@ const thrLast = () => ((THR_VIEW && THR_VIEW.items) || []).slice(-1).map(t => t.
 // under what is drawn, so the reading place stays.
 function thrLoadDown() {
   if (THR_DOWN || !THR_AFTER || !THR_VIEW) return THR_DOWN || Promise.resolve(false);
-  const last = thrLast();
+  const last = thrLast(), gen = THR_GEN;
   if (!last) return Promise.resolve(false);
   THR_DOWN = (async () => {
     try {
       const d = await pollFetch(thrBase() + '&n=100&after=' + encodeURIComponent(last), null, 90000).then(r => r.json());
-      if (!d || !Array.isArray(d.items) || d.error || d.pending || thrLast() !== last) return false;
+      if (!d || !Array.isArray(d.items) || d.error || d.pending || gen !== THR_GEN || thrLast() !== last) return false;
       const held = new Set(THR_VIEW.items.map(t => t.mid));
       THR_VIEW.items = THR_VIEW.items.concat(d.items.filter(t => !held.has(t.mid)));
       THR_AFTER = d.after || 0;
@@ -6537,12 +6536,13 @@ function thrLoadUp() {
   if (THR_UP || !THR_BEFORE || !THR_VIEW) return THR_UP || Promise.resolve(false);
   const first = (THR_OLDER[0] || (THR_VIEW.items || [])[0] || {}).mid;
   if (!first) return Promise.resolve(false);
+  const gen = THR_GEN;
   THR_UP = (async () => {
     try {
       const d = await pollFetch(thrBase() + '&n=100&before=' + encodeURIComponent(first), null, 90000).then(r => r.json());
       if (!d || !Array.isArray(d.items) || d.error || d.pending) return false;
       const head = (THR_OLDER[0] || (THR_VIEW.items || [])[0] || {}).mid;
-      if (head !== first) return false;     // the pages started again meanwhile
+      if (gen !== THR_GEN || head !== first) return false;     // the pages started again meanwhile
       THR_OLDER = d.items.concat(THR_OLDER);
       THR_BEFORE = d.before || 0;
       Object.assign(THR_META, d.threads || {});

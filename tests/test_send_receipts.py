@@ -677,6 +677,11 @@ ctx.sendsFromPoll([], 22);
 out.keptUndrawn = ctx.sendsToShow(more).map(s => s.key);
 out.keptDrawn = ctx.sendsToShow(more.concat([turn])).map(s => s.key);
 out.keptAfter = run('[...SENT_KEPT.keys()]');
+// Review 2: however many leave the hub's list undrawn, none is dropped.
+const many = Array.from({ length: 51 }, (_, i) => Object.assign({}, sent, { key: 'm' + i, text: 'note ' + i, state: 'confirmed', mid: 's:m' + i }));
+ctx.sendsFromPoll(many, 23);
+ctx.sendsFromPoll([], 24);
+out.keptMany = ctx.sendsToShow(more).map(s => s.key);
 // Each state in words.
 out.html = ['queued', 'delivered', 'failed'].map(state => ctx.sendHtml(Object.assign({}, sent, { state, error: 'the task did not start' }), md));
 console.log(JSON.stringify(out));
@@ -732,6 +737,9 @@ console.log(JSON.stringify(out));
         self.assertEqual(self.r["keptUndrawn"], ["conf"], "gone before this page drew its turn")
         self.assertEqual(self.r["keptDrawn"], [])
         self.assertEqual(self.r["keptAfter"], [])
+
+    def test_no_kept_send_is_dropped_however_many(self):
+        self.assertEqual(self.r["keptMany"], ["m%d" % i for i in range(51)])
 
     def test_each_state_in_words(self):
         queued, delivered, failed = self.r["html"]
