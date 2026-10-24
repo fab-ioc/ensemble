@@ -6661,8 +6661,11 @@ function thrDraw(roomTs, d = THR_VIEW) {
 function thrNotShown(d) {
   const target = GOTO, part = GOTO_PART, at = d && d.uptoAt;
   GOTO = ''; GOTO_PART = '';
-  if (at === undefined || at === 'balloon') { openThread('', target, part); return; }
-  showGotoNote(at === 'room' ? 'The linked message is not shown in this chat.'
+  // A room message (no "<session>:") is in no thread, also when a later poll
+  // has replaced the answer that said so (#265: P894 opened an empty thread).
+  const room = !String(target).includes(':');
+  if (at === 'balloon' || (at === undefined && !room)) { openThread('', target, part); return; }
+  showGotoNote(at === 'room' || (at == null && room) ? 'The linked message is not shown in this chat.'
     : 'The linked message was not found in this conversation.');
 }
 // The thread's title over its messages, and the way back on a phone.

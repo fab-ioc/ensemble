@@ -213,6 +213,28 @@ class RoomMessageNotDrawn(unittest.TestCase):
         self.assertIn("showGotoNote('The linked message is not shown in this chat.')", branch[guard:])
         self.assertLess(guard, branch.index("openThread('', mid, passage)"))
 
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_a_poll_that_replaced_the_answer_does_not_open_a_thread(self):
+        # The after-run (P894): the channel's answer said "room", a later poll
+        # without uptoAt replaced it, and the page took that for an older hub.
+        def run(target: str, view: str) -> dict:
+            return run_node("\n".join([
+                f"let GOTO = {json.dumps(target)}, GOTO_PART = '';",
+                "const out = { thread: null, note: null };",
+                "function openThread(t, m) { out.thread = m; }",
+                "function showGotoNote(s) { out.note = s; }",
+                js_function("thrNotShown"),
+                f"thrNotShown({view});",
+                "console.log(JSON.stringify(out));"]))
+        for view in ("{}", "{ uptoAt: 'room' }", "null"):
+            out = run("8bc0df64c4cd", view)
+            self.assertIsNone(out["thread"], view)
+            self.assertEqual(out["note"], "The linked message is not shown in this chat.", view)
+        self.assertEqual(run("sess-1:12", "{}")["thread"], "sess-1:12", "a transcript's balloon still opens its thread")
+        self.assertEqual(run("sess-1:12", "{ uptoAt: 'balloon' }")["thread"], "sess-1:12")
+        for target in ("sess-1:12", "8bc0df64c4cd"):
+            self.assertEqual(run(target, "{ uptoAt: '' }")["note"], "The linked message was not found in this conversation.")
+
 
 if __name__ == "__main__":
     unittest.main()
