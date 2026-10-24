@@ -719,7 +719,8 @@ def _annotate_room_liveness(room: dict, with_points: bool = False, first: bool =
         try:
             _fail_orphaned_sends(room.get("id", ""))
             sends.sync(room.get("id", ""), room=room)
-            room["sends"] = sends.view(room.get("id", ""))
+            rid = room.get("id", "")
+            room["sends"] = sends.view(rid, held=lambda mid: threads.holds_mid(rid, mid))
             room["sendHows"] = sends.hows(room.get("id", ""))   # Send now's balloon note
         except Exception as e:      # noqa: BLE001 — the chat still shows
             print(f"[sends] {room.get('id')}: not listed: {e!r}", flush=True)

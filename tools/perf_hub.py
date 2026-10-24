@@ -121,6 +121,92 @@ def _stand_in(rid: str) -> None:
     print(f"perf_hub: {rid} has a stand-in agent", flush=True)
 
 
+# The PO's rotation and its answers (#266). POST /__replay/rotate gives a
+# --live chat's PO a fresh session, as the hub's rotation does (its record,
+# its notice), in a folder of this run's own (the others are the snapshot's,
+# read only). From then on what is typed to its stand-in goes into that
+# session as a user turn, and a moment later a reply: "Replay answer <token>"
+# (a send whose words hold "Yes, start now" is interrupted instead, as the
+# CEO's quick answer was on 10-24). POST /__replay/written: {token: when its
+# answer was written}.
+_ROT_DIR = Path(D.PROJ_DIR) / "C--replay-rotated"
+_ROTATED: dict[str, str] = {}       # room id -> the session it was rotated to
+_WRITTEN: dict[str, float] = {}
+_TOKEN = __import__("re").compile(r"perf-\d+-\d+-[0-9a-z]+")
+_tlock = threading.Lock()
+
+
+def _transcript_line(sid: str, role: str, text: str) -> None:
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + f".{int(time.time() * 1000) % 1000:03d}Z"
+    if role == "user":
+        rec = {"type": "user", "timestamp": ts, "sessionId": sid, "message": {"role": "user", "content": text}}
+    else:
+        rec = {"type": "assistant", "timestamp": ts, "sessionId": sid,
+               "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": text}]}}
+    with _tlock, open(_ROT_DIR / f"{sid}.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def _rotate(rid: str) -> dict:
+    import uuid
+    room = D.chatroom.get_room(rid, public=False)
+    part = next((p for p in (room or {}).get("participants", []) if p.get("kind") == "agent"), None)
+    if part is None:
+        return {"ok": False, "error": "no agent in " + rid}
+    _ROT_DIR.mkdir(parents=True, exist_ok=True)
+    sid = str(uuid.uuid4())
+    _transcript_line(sid, "assistant", "I've read the handover and taken over as PO.")
+    rec = {"n": len(part.get("rotations") or []) + 1, "at": time.time(), "fromSessionId": part.get("sessionId") or "",
+           "toSessionId": sid, "replay": True}
+    D.chatroom.patch_participant(rid, part["identity"], {"sessionId": sid}, append={"rotations": rec})
+    D.chatroom.post_notice(rid, D.rotation.SENDER, "**New PO session** (the replay's rotation).",
+                           {"noticeKind": "rotation", "rotation": rec})
+    _ROTATED[rid] = sid
+    print(f"perf_hub: {rid} rotated to {sid}", flush=True)
+    return {"ok": True, "sessionId": sid}
+
+
+def _answer(sid: str, text: str) -> None:
+    time.sleep(0.5)
+    _transcript_line(sid, "user", text)
+    time.sleep(1.5)
+    tok = (_TOKEN.findall(text) or [""])[0]
+    if "Yes, start now" in text:
+        _transcript_line(sid, "user", "[Request interrupted by user]")
+        return
+    _transcript_line(sid, "assistant", f"Replay answer {tok}: here it is.")
+    if tok:
+        _WRITTEN[tok] = time.time()
+
+
+_typed = D._type_input_reserved
+
+
+def _type_input_reserved(sess, text, *a, **k):
+    ok = _typed(sess, text, *a, **k)
+    sid = _ROTATED.get(str((getattr(sess, "meta", None) or {}).get("room") or ""))
+    if ok and sid and not str(text).startswith(("[", "/")):
+        threading.Thread(target=_answer, args=(sid, str(text)), daemon=True).start()
+    return ok
+
+
+D._type_input_reserved = _type_input_reserved
+_post = D.Handler.do_POST
+
+
+def do_POST(self):
+    path = str(self.path).split("?", 1)[0]
+    if path in ("/__replay/rotate", "/__replay/written"):
+        if self.client_address[0] != "127.0.0.1":
+            return self._send_json(403, {"error": "loopback only"})
+        if path == "/__replay/written":
+            return self._send_json(200, dict(_WRITTEN))
+        return self._send_json(200, _rotate(next(filter(None, args.live.split(",")), "").strip()))
+    return _post(self)
+
+
+D.Handler.do_POST = do_POST
+
 # What main() starts that a replay must not.
 D.attach_pty_host = lambda: ptyrun.use_local()
 D.agent_launch.allow = lambda: None

@@ -14,6 +14,8 @@ What it does, in one command:
    (tools/perf_po_chat.js): its polls run, and every 20 s one step of a fixed
    script: open a point chip and follow each link of its card, scroll up and
    back, send a message, open a thread; the page is reloaded once halfway;
+   at a quarter the PO rotates to a fresh session and the CEO's sequence of
+   10-24 is sent, at three quarters again (#266);
 4. the numbers against the budgets below. Exit 1 when one is over, with the
    table of what was measured (and DIR/summary.json, DIR/summary.md).
 
@@ -23,7 +25,8 @@ any request under 2 s; a send shown at once and
 held by the hub under 1 s; no endpoint asked for one key more than once
 per 2 s poll on average over a minute (a storm), and no endpoint over 120
 requests a minute in all; every point link lands on its message or card,
-never on an empty thread or nowhere. Port 8799 is never used (the PO's
+never on an empty thread or nowhere; after a rotation, a sent balloon never
+leaves the chat and each answer shows within 5 s of being written. Port 8799 is never used (the PO's
 merge proof); 8798 is the default.
 """
 from __future__ import annotations
@@ -64,6 +67,7 @@ BUDGETS = {
     "lag_ms": 500,              # the interpreter held this long by one thing
     "min_links": 6,             # coverage: point links followed in the run
     "min_sends": 3,
+    "reply_shown_ms": 5000,     # a PO's answer in the chat after it was written, no reload (#266)
 }
 GIT_BACKED = ("/api/history/", "/api/git/")
 # Waits on another server (GitHub's releases), not on the hub: held to the
@@ -85,30 +89,61 @@ def _free(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
+def _link(src: Path, dst: Path) -> None:
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(src), str(dst))
+    else:
+        os.symlink(src, dst)
+
+
+def _is_link(p: Path) -> bool:
+    return p.is_symlink() or (os.name == "nt" and p.exists() and os.path.isjunction(p))
+
+
 def _run_home(snap: Path, out: Path) -> Path:
     """This run's home: the state copied (a run writes it), the transcripts
-    linked (read only, 4 GB)."""
+    linked (read only, 4 GB). Claude's are a folder of this run's with each
+    project folder linked, so a session the replay starts (its rotation,
+    perf_hub) is written beside them, never into the snapshot."""
     home = out / "home"
     shutil.copytree(snap / ".ensemble", home / ".ensemble")
-    for sub in (Path(".claude") / "projects", Path(".codex") / "sessions"):
-        src = snap / sub
-        if not src.is_dir():
-            continue
-        (home / sub).parent.mkdir(parents=True, exist_ok=True)
-        if os.name == "nt":
-            import _winapi
-            _winapi.CreateJunction(str(src), str(home / sub))
-        else:
-            os.symlink(src, home / sub)
+    claude = snap / ".claude" / "projects"
+    if claude.is_dir():
+        (home / ".claude" / "projects").mkdir(parents=True)
+        skipped = 0
+        for d in claude.iterdir():
+            if d.is_dir():
+                try:
+                    _link(d, home / ".claude" / "projects" / d.name)
+                except OSError:
+                    # A name too long for a link here (a scratch folder's
+                    # sessions): not a PO's, left out.
+                    skipped += 1
+                    p = home / ".claude" / "projects" / d.name
+                    if p.is_dir() and not _is_link(p) and not any(p.iterdir()):
+                        p.rmdir()
+        if skipped:
+            print(f"{skipped} transcript folders left out (names too long to link)", flush=True)
+    codex = snap / ".codex" / "sessions"
+    if codex.is_dir():
+        (home / ".codex").mkdir(parents=True, exist_ok=True)
+        _link(codex, home / ".codex" / "sessions")
     (home / ".snapshot").write_text((snap / ".snapshot").read_text(encoding="utf-8"), encoding="utf-8")
     return home
 
 
 def _unlink_home(home: Path) -> None:
-    for sub in (Path(".claude") / "projects", Path(".codex") / "sessions"):
-        p = home / sub
-        if p.is_symlink() or (os.name == "nt" and p.exists() and os.path.isjunction(p)):
+    # The links first: removing the tree through one would empty the snapshot.
+    projects = home / ".claude" / "projects"
+    for p in list(projects.iterdir()) if projects.is_dir() and not _is_link(projects) else [projects]:
+        if _is_link(p):
             os.unlink(p) if os.name != "nt" else os.rmdir(p)
+    p = home / ".codex" / "sessions"
+    if _is_link(p):
+        os.unlink(p) if os.name != "nt" else os.rmdir(p)
+    if any(_is_link(x) for x in (projects.iterdir() if projects.is_dir() else [])):
+        return      # a link left: never rmtree through it
     shutil.rmtree(home, ignore_errors=True)
 
 
@@ -189,6 +224,17 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
             fails.append(f"send at {s['at']} s: shown after {s.get('shownMs')} ms > {budgets['send_shown_ms']} ms")
         if s.get("sentMs") is None or s["sentMs"] > budgets["send_sent_ms"]:
             fails.append(f"send at {s['at']} s: held by the hub after {s.get('sentMs')} ms > {budgets['send_sent_ms']} ms ({s.get('state')})")
+    for q in steps:
+        if q.get("do") != "sequence":
+            continue
+        for x in q.get("sends") or []:
+            if x.get("shownMs") is None:
+                fails.append(f"sequence {q.get('run')} '{x['words']}': never shown")
+            if x.get("gone"):
+                fails.append(f"sequence {q.get('run')} '{x['words']}': its balloon left the chat before a reload")
+            if "answerMs" in x and (x["answerMs"] is None or x["answerMs"] > budgets["reply_shown_ms"]):
+                fails.append(f"sequence {q.get('run')} '{x['words']}': its answer shown after {x['answerMs']} ms "
+                             f"> {budgets['reply_shown_ms']} ms")
     for s in links:
         if s.get("roomUser") and not s.get("empty"):
             continue    # a room message filed as the CEO's that no transcript holds: listed (roomUser)
@@ -212,7 +258,7 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
     if worst_lag > budgets["lag_ms"]:
         fails.append(f"the interpreter was held {worst_lag} ms at once > {budgets['lag_ms']} ms")
     summary = {"minutes": minutes, "requests": len(hub), "pageRequests": len(page), "endpoints": rows,
-               "sends": sends, "links": links, "threads": threads,
+               "sends": sends, "links": links, "sequences": [s for s in steps if s.get("do") == "sequence"], "threads": threads,
                "opens": [s for s in steps if s.get("do") == "open"],
                "lag": {"max": worst_lag, "p99": pct([x["ms"] for x in lag], .99), "over100": sum(1 for x in lag if x["ms"] > 100)},
                "budgets": budgets, "notAvailable": not_available(steps), "fails": fails}
@@ -246,6 +292,10 @@ def coverage(steps: list[dict], budgets=BUDGETS) -> list[str]:
         need.append("no reload that drew the chat again")
     if not any(s.get("opened") and not s.get("empty") for s in threads):
         need.append("no thread was shown with its messages")
+    if not any(s.get("do") == "rotate" and s.get("ok") for s in steps):
+        need.append("no PO rotation")
+    if not any(s.get("do") == "sequence" for s in steps):
+        need.append("no CEO sequence after a rotation")
     return ["coverage: " + x for x in need]
 
 
@@ -272,6 +322,9 @@ def markdown(s: dict) -> str:
           + ("; links into another room: not available (this project has none)" if "cross" in s.get("notAvailable", []) else "")
           + "".join(f"; {x.get('ref')}: a room message filed as the CEO's that no transcript holds (the chat says it is not shown)"
                     for x in {x.get('ref'): x for x in s['links'] if x.get('roomUser')}.values()),
+          "Sequences after a rotation (ms: shown / answer shown after written; gone = left the chat): "
+          + "; ".join(", ".join(f"{x.get('shownMs')}/{x.get('answerMs', '-')}{' gone' if x.get('gone') else ''}"
+                                for x in q.get("sends") or []) for q in s.get("sequences", [])),
           f"Opens (s to the chat drawn): " + ", ".join(str(x.get('s')) for x in s["opens"]),
           f"Interpreter held at once: max {s['lag']['max']} ms, p99 {s['lag']['p99']} ms, {s['lag']['over100']} s over 100 ms",
           "", "Over budget:" if s["fails"] else "Within every budget."]
@@ -322,7 +375,8 @@ def main() -> int:
             sys.exit("the hub did not come up in 3 minutes")
         print(f"hub up in {time.time() - t0:.0f} s; replaying {a.minutes} min of {a.room}", flush=True)
         args = {**chrome_profile.node_args(), "tmp": str(out), "base": base, "out": str(out),
-                "project": a.project, "room": a.room, "minutes": a.minutes, "seed": a.seed}
+                "project": a.project, "room": a.room, "minutes": a.minutes, "seed": a.seed,
+                "replyShownMs": BUDGETS["reply_shown_ms"]}
         js = chrome_profile.JS + (ROOT / "tools" / "perf_po_chat.js").read_text(encoding="utf-8")
         (out / "driver.js").write_text(js, encoding="utf-8")
         node = subprocess.run(["node", str(out / "driver.js"), json.dumps(args)], cwd=str(out),
