@@ -1062,6 +1062,23 @@ def _same_ask(a: str, b: str) -> bool:
     return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= _SAME_WORDS
 
 
+@functools.lru_cache(maxsize=64)
+def _repeats(questions: tuple) -> frozenset:
+    """The positions in ``questions`` (newest first) asked again by an earlier
+    one kept (:func:`_same_ask`). Remembered per list: the OTE PO chat's
+    ~100 open asks made ~4.9k comparisons on every poll, more than
+    :func:`_same_ask`'s own memory holds, so each one ran its regexes again
+    (~125 ms of a 130 ms poll, #265)."""
+    kept: list[str] = []
+    out = set()
+    for i, q in enumerate(questions):
+        if any(_same_ask(q, k) for k in kept):
+            out.add(i)
+        else:
+            kept.append(q)
+    return frozenset(out)
+
+
 def decisions(summary: dict, led: dict | None = None, now: float | None = None) -> tuple[list, list]:
     """Needs you's Decisions, split: ``(waiting, older)``. Of the open asks
     (:func:`open_cards`, newest first) one asked again later (:func:`_same_ask`)
@@ -1076,12 +1093,13 @@ def decisions(summary: dict, led: dict | None = None, now: float | None = None) 
         led = _d.points.load(rid, shared=True) if rid and _d.points.exists(rid) else {}
     last = max([float(led.get("lastPersonAt") or 0)]
                + [float(p.get("createdAt") or 0) for p in led.get("points") or []])
-    waiting, older, kept = [], [], []
-    for c in open_cards(summary, led):
-        if any(_same_ask(c["question"], k["question"]) for k in kept):
+    waiting, older = [], []
+    cards = open_cards(summary, led)
+    repeats = _repeats(tuple(c["question"] for c in cards))
+    for i, c in enumerate(cards):
+        if i in repeats:
             older.append({**c, "why": "repeat"})
             continue
-        kept.append(c)
         if c["ts"] < now - DECISION_KEEP_S and c["ts"] < last:
             older.append({**c, "why": "old"})
         else:
