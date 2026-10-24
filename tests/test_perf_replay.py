@@ -35,7 +35,9 @@ class Analyse(unittest.TestCase):
                 {"at": 14.5, "m": "GET", "p": "/api/live", "q": "", "ms": None, "open": True, "endAt": 15.0},
                 {"at": 1.0, "m": "POST", "p": "/api/attention/seen", "q": "", "status": 200, "ms": None, "open": True, "endAt": 15.0},
                 # Its answer began (headers) and never finished (review 3).
-                {"at": 2.0, "m": "GET", "p": "/api/projects", "q": "", "status": 200, "ms": None, "open": True, "endAt": 15.0}]
+                {"at": 2.0, "m": "GET", "p": "/api/projects", "q": "", "status": 200, "ms": None, "open": True, "endAt": 15.0},
+                # A 404 whose body the page never reads (a chip's /api/room/msg).
+                {"at": 3.0, "m": "GET", "p": "/api/room/msg", "q": "", "status": 404, "ms": None, "open": True, "endAt": 15.0}]
         fails = [f for f in self.run_on(page=page) if "no answer" in f]
         self.assertEqual(len(fails), 2)
         self.assertIn("/api/room", fails[0])

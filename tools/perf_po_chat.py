@@ -178,9 +178,10 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
     # A page request still out when the run ended counts once it was out
     # longer than any request may take: no answer, or a GET whose answer
     # began and did not finish. (A POST the page sends as a beacon, with
-    # keepalive, has its answer but Chrome never reports it finished.)
+    # keepalive, has its answer but Chrome never reports it finished; so
+    # does an error the page reads only the status of, a chip's 404.)
     for r in page:
-        if r.get("open") and (r.get("status") is None or r["m"] == "GET") and r.get("endAt") is not None \
+        if r.get("open") and (r.get("status") is None or (r["m"] == "GET" and r["status"] < 400))                 and r.get("endAt") is not None \
                 and (r["endAt"] - r["at"]) * 1000 > budgets["max_ms"]:
             fails.append(f"{r['m']} {r['p']} at {r['at']} s: no answer after {round(r['endAt'] - r['at'], 1)} s > {budgets['max_ms']} ms")
     for s in sends:
