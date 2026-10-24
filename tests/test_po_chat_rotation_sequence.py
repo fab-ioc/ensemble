@@ -80,7 +80,7 @@ async function hub(path, body) {
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
-  const out = { samples: 0, gone: [], seen: {}, answered: {}, late: [], errors: [] };
+  const out = { samples: 0, gone: [], goneAt: {}, backAt: {}, seen: {}, answered: {}, late: [], errors: [] };
   try {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
@@ -114,7 +114,8 @@ async function main() {
           const has = v.t.includes(tok + ' ');
           if (has && !out.seen[tok]) out.seen[tok] = Date.now();
           // The link's window holds none of the sends before it (they are below it).
-          else if (!has && out.seen[tok] && !out.gone.includes(tok) && (!out.window || tok === 'ASK7')) out.gone.push(tok);
+          else if (!has && out.seen[tok] && !out.gone.includes(tok) && (!out.window || tok === 'ASK7')) { out.gone.push(tok); out.goneAt[tok] = [Date.now(), v.t.length]; }
+          if (has && out.gone.includes(tok) && !out.backAt[tok]) out.backAt[tok] = Date.now();
           if (v.ans.includes(tok) && !out.answered[tok]) out.answered[tok] = Date.now();
         }
         await sleep(250);
@@ -138,6 +139,10 @@ async function main() {
         await evalIn(`gotoMsg(${JSON.stringify(old)}); 0`);
         out.window = true;
         await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${old}"]')`, 20000);
+        // Sent while one of the window's polls is still out (review 1): its
+        // answer must not bring the window back.
+        await hub('/__test/slow', {});
+        await until('THR_FETCHING && THR_AFTER > 0', 20000);
       }
       await send(tok + ' ' + words);
       if (what === 'answer' && tok !== 'ASK3') {
@@ -195,6 +200,7 @@ class PoChatRotationSequence(unittest.TestCase):
         cls.written: dict[str, float] = {}
         cls.busy = threading.Event()
         cls.stop = threading.Event()
+        cls.slow = threading.Event()
 
         def resume(h, room, text="", to="", key="", quiet=False):
             # The PO's seat: the send goes into its current conversation, and
@@ -226,7 +232,18 @@ class PoChatRotationSequence(unittest.TestCase):
                 return h._send_json(200, {"ok": True})
             if h.path == "/__test/written":
                 return h._send_json(200, dict(cls.written))
+            if h.path == "/__test/slow":
+                cls.slow.set()
+                return h._send_json(200, {"ok": True})
             return orig_post(h)
+
+        orig_get = dashboard.Handler.do_GET
+
+        def do_get(h):
+            # A link window's poll answered slowly once asked (/__test/slow).
+            if cls.slow.is_set() and h.path.startswith("/api/room/channel") and "&to=" in h.path:
+                time.sleep(3)
+            return orig_get(h)
 
         cls.patches = [
             mock.patch.object(dashboard, "PROJECTS_ROOT", root),
@@ -245,6 +262,7 @@ class PoChatRotationSequence(unittest.TestCase):
             mock.patch.object(dashboard, "_send_left_behind", return_value=""),
             mock.patch.object(dashboard.Handler, "_resume_room", resume),
             mock.patch.object(dashboard.Handler, "do_POST", do_post),
+            mock.patch.object(dashboard.Handler, "do_GET", do_get),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
