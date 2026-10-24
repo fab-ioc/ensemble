@@ -64,10 +64,10 @@ class Matching(unittest.TestCase):
         code = r'''
 const ctx = CTX, calls = [];
 globalThis.fetch = async url => {
-  calls.push(url); const q = new URL(url, 'http://h').searchParams;
-  const id = q.get('ref'), pid = q.get('project');
-  return {ok: id === 'P23', status: id === 'P23' ? 200 : 404,
-    json: async () => ({id, roomId: pid, mid: 'm1', text: '<first>\nsecond', stage: 'planned', createdAt: 10, projectId: pid, project: pid})};
+  const q = new URL(url, 'http://h').searchParams, pid = q.get('project'), ids = q.get('ids').split(',');
+  calls.push(...ids.map(id => pid + ':' + id));
+  return {ok: true, status: 200, json: async () => ({points: Object.fromEntries(ids.map(id => [id, id === 'P23'
+    ? {id, roomId: pid, mid: 'm1', text: '<first>\nsecond', stage: 'planned', createdAt: 10, projectId: pid, project: pid} : null]))})};
 };
 const p = P.create({room: 'room', changed() {}}), settle = () => new Promise(r => setImmediate(r));
 (async () => {
@@ -86,14 +86,45 @@ const p = P.create({room: 'room', changed() {}}), settle = () => new Promise(r =
         self.assertNotIn('<first>', got['html'])
         self.assertEqual(got['ambiguous'], 'Answered Dock about P23')
         self.assertEqual(got['duplicateAlias'], 'Answered Dock about P23')
-        self.assertEqual(len(got['calls']), 4)
-        self.assertEqual(len(set(got['calls'])), 4)
+        # Each point of each project asked once, for the page's life.
+        self.assertEqual(len(got['calls']), len(set(got['calls'])), got['calls'])
+        self.assertEqual(len(got['calls']), 4, got['calls'])
+
+
+    def test_a_refresh_while_a_lookup_is_out_asks_again_after_it(self):
+        """#265 review: the points changed while the answer was on its way:
+        that answer shows, and the chip is asked again at the next draw,
+        not five minutes later."""
+        code = r'''
+const ctx = CTX, calls = [], held = [];
+let stage = 'open';
+globalThis.fetch = url => new Promise(res => held.push(() => {
+  calls.push(url);
+  res({ok: true, status: 200, json: async () => ({points: {P23: {id: 'P23', roomId: 'r', mid: 'm1', text: 't', stage, projectId: 'ed', project: 'ed'}}})});
+}));
+let draws = 0;
+const p = P.create({room: 'room', changed() { draws++; }}), settle = () => new Promise(r => setImmediate(r));
+(async () => {
+  p.replace('P23', ctx); await settle();
+  p.refresh(); stage = 'acked';        // the ledger changed while the old answer was out
+  held.shift()(); await settle();
+  const first = p.replace('P23', ctx); await settle();
+  const asked = held.length; if (asked) held.shift()(); await settle();
+  console.log(JSON.stringify({first, asked, draws, last: p.replace('P23', ctx)}));
+})();
+'''.replace('CTX', json.dumps(self.CTX))
+        got = self.run_js(code)
+        self.assertEqual(got['asked'], 1, 'asked again after the obsolete answer')
+        self.assertGreaterEqual(got['draws'], 1)
+        self.assertIn('acknowledged', got['last'])
 
 
 class Lookup(Hub):
     def setUp(self):
         super().setUp()
         self.addCleanup(points._CACHE.clear)
+        dashboard._POINT_INDEX.clear()
+        self.addCleanup(dashboard._POINT_INDEX.clear)
         self.a = self.room('PO', self.ed)
         self.b = self.room('Other PO', self.ot)
         self.seed(self.a, 'P291', 'Our ask', 'acked')
@@ -124,6 +155,43 @@ class Lookup(Hub):
         for n in range(1, 210):
             self.seed(self.a, 'P' + str(n), 'closed', 'acked')
         self.assertEqual(dashboard.point_ref('P291', self.ed)['text'], 'Our ask')
+
+    def test_the_points_of_a_page_in_one_request(self):
+        """#265: every chip of a draw asked at once; an unknown one is null."""
+        status, _, body = self.call('GET', '/api/point/refs?ids=P291,P99&project=' + self.ed)
+        got = json.loads(body)['points']
+        self.assertEqual((status, got['P291']['text'], got['P99']), (200, 'Our ask', None))
+        status, _, body = self.call('GET', '/api/point/refs?ids=P291&room=' + self.b)
+        self.assertEqual(json.loads(body)['points']['P291']['text'], 'Other ask')
+
+    def test_a_lookup_reads_the_index_not_the_transcripts(self):
+        """#265: a lookup is a dict read kept in step with the ledgers: a
+        point saved since is found at once, and no transcript is read."""
+        self.assertIsNone(dashboard.point_ref('P300', self.ed))
+        self.seed(self.a, 'P300', 'New ask', 'open')
+        self.assertEqual(dashboard.point_ref('P300', self.ed)['text'], 'New ask')
+        points.sync.reset_mock()
+        with mock.patch.object(dashboard, '_task_index', wraps=dashboard._task_index) as walk:
+            for _ in range(5):
+                dashboard.point_ref('P291', self.ed)
+        self.assertEqual(walk.call_count, 0, 'the rooms are not walked per lookup')
+        points.sync.assert_not_called()
+
+    def test_a_warm_lookup_is_the_kept_answer_and_a_move_is_seen_at_once(self):
+        """#265 review: a warm lookup reads no ledger and no card; a task
+        moved to another project answers there, not in its old one."""
+        task = self.room('Task', self.ed)
+        self.seed(task, 'P400', 'Task ask', 'open')
+        self.assertEqual(dashboard.point_ref('P400', self.ed)['roomId'], task)
+        with mock.patch.object(points, 'load', wraps=points.load) as load, \
+                mock.patch.object(dashboard.asks, 'point_card') as card:
+            got = dashboard.point_ref('P400', self.ed)
+        self.assertEqual((got['text'], load.call_count, card.call_count), ('Task ask', 0, 0))
+        got['text'] = 'changed by a caller'
+        self.assertEqual(dashboard.point_ref('P400', self.ed)['text'], 'Task ask')
+        self.assertTrue(dashboard.move_task(task, self.ot))
+        self.assertIsNone(dashboard.point_ref('P400', self.ed))
+        self.assertEqual(dashboard.point_ref('P400', self.ot)['projectId'], self.ot)
 
 
 if __name__ == '__main__':

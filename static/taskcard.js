@@ -214,19 +214,33 @@ const TaskCard = (() => {
       if (r && (r.state === 'pending' || Date.now() - r.at < TTL)) return r;
       if (r) r.at = Date.now();      // asked again once; the old answer shows meanwhile
       else cache.set(k, r = { state: 'pending' });
-      const was = r.state === 'pending' ? '' : JSON.stringify(r);
-      fetch('/api/task/ref?ref=' + encodeURIComponent(ref) + (o.room ? '&room=' + encodeURIComponent(o.room) : '')
-            + (project && !key ? '&project=' + encodeURIComponent(project) : ''))
-        .then(res => res.status === 404 ? { gone: true } : res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
-        .then(d => {
-          const now = d && !d.gone && d.roomId ? Object.assign({ state: 'ok' }, d) : { state: 'gone' };
-          const changed = JSON.stringify(Object.assign({}, now, { at: r.at })) !== was;
-          cache.set(k, Object.assign(now, { at: Date.now() }));
-          if (changed) o.changed();
-        })
-        // The hub did not answer: what it said before (or text) for now, asked again in a while.
-        .catch(() => setTimeout(() => { if (r.state === 'pending') cache.delete(k); o.changed(); }, 15000));
+      queue.push({ k, r, was: r.state === 'pending' ? '' : JSON.stringify(r), ref, project: project && !key ? project : '' });
+      if (!timer) timer = Promise.resolve().then(flush);   // after this draw: its numbers in one request
       return r;
+    }
+    // The numbers one draw needs, asked in one request (/api/task/refs, #265),
+    // not one per chip.
+    const queue = [];
+    let timer = null;
+    function flush() {
+      timer = null;
+      for (const batch of queue.splice(0).reduce((a, x, i) => (i % 100 ? a[a.length - 1].push(x) : a.push([x]), a), [])) {
+        fetch('/api/task/refs?refs=' + encodeURIComponent(JSON.stringify(batch.map(x => [x.ref, x.project])))
+              + (o.room ? '&room=' + encodeURIComponent(o.room) : ''))
+          .then(res => res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
+          .then(d => {
+            let changed = false;
+            batch.forEach(({ k, r, was }, i) => {
+              const t = d && d.tasks && d.tasks[i];
+              const now = t && t.roomId ? Object.assign({ state: 'ok' }, t) : { state: 'gone' };
+              if (JSON.stringify(Object.assign({}, now, { at: r.at })) !== was) changed = true;
+              cache.set(k, Object.assign(now, { at: Date.now() }));
+            });
+            if (changed) o.changed();
+          })
+          // The hub did not answer: what it said before (or text) for now, asked again in a while.
+          .catch(() => setTimeout(() => { for (const { k, r } of batch) if (r.state === 'pending') cache.delete(k); o.changed(); }, 15000));
+      }
     }
     // The hub's answer for one of refsIn's references, read where its text
     // says: a keyed number as written; a bare number named another project's

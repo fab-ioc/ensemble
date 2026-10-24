@@ -38,6 +38,7 @@ import chatroom
 import dashboard
 import points
 import sends
+import turnstore
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -112,6 +113,7 @@ class Receipts(unittest.TestCase):
         dashboard._RESUMES.clear()
         dashboard._SAY_KEYS.clear()
         chatroom.ROOMS_DIR = self.old_dir
+        turnstore.close()       # a lookup of a kept conversation opened its store (#265)
         self.temp.cleanup()
 
     def spawn(self, part):
@@ -653,6 +655,19 @@ out.oldPoll = [ctx.sendsFromPoll([], 5), ctx.sendsToShow(busy).map(s => s.key)];
 out.newPoll = [ctx.sendsFromPoll([sent], 6), ctx.sendsToShow(busy).map(s => s.key)];
 out.samePoll = ctx.sendsFromPoll([sent], 7);
 out.renders = renders;
+// #265 review: a send still out after a minute stays shown; once its
+// request ended without an answer, the hub's list or a minute decides.
+run('SENT_LOCAL.clear(); ROOM_SENDS = []; SENDS_GEN = 10;');
+ctx.noteSending('late', 'slow words', '');
+run('SENT_LOCAL.get("late").s.at -= 600;');
+ctx.sendsFromPoll([], 11);
+out.lateOut = run("[...SENT_LOCAL.keys()]");
+ctx.settleSending('late');
+ctx.sendsFromPoll([], 12);
+out.lateSettled = run("[...SENT_LOCAL.keys()]");
+run('SENT_LOCAL.get("late").settledAt -= 61;');
+ctx.sendsFromPoll([], 13);
+out.lateGone = run("[...SENT_LOCAL.keys()]");
 // Each state in words.
 out.html = ['queued', 'delivered', 'failed'].map(state => ctx.sendHtml(Object.assign({}, sent, { state, error: 'the task did not start' }), md));
 console.log(JSON.stringify(out));
@@ -698,6 +713,11 @@ console.log(JSON.stringify(out));
         self.assertEqual(self.r["newPoll"], [True, ["send:p11"]])
         self.assertFalse(self.r["samePoll"])
         self.assertEqual(self.r["renders"], 1)
+
+    def test_a_send_still_out_stays_until_its_request_ends(self):
+        self.assertEqual(self.r["lateOut"], ["late"], "dropped while its request was out")
+        self.assertEqual(self.r["lateSettled"], ["late"])
+        self.assertEqual(self.r["lateGone"], [])
 
     def test_each_state_in_words(self):
         queued, delivered, failed = self.r["html"]

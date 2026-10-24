@@ -519,6 +519,7 @@ def load(room_id: str, *, shared: bool = False) -> dict:
 
 
 SAVES: dict[str, int] = {}     # room id → ledger saves by this hub (two in one clock tick share an mtime)
+SAVED = 0                      # every ledger save by this hub: what was worked out of the ledgers is stale
 
 
 def _save(room_id: str, led: dict) -> None:
@@ -548,6 +549,8 @@ def _save(room_id: str, led: dict) -> None:
         except OSError:
             pass
     SAVES[room_id] = SAVES.get(room_id, 0) + 1
+    global SAVED
+    SAVED += 1
     try:
         _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(body))
     except OSError:
@@ -1118,6 +1121,11 @@ def _session_stat(sid: str, *, immediate: bool = False) -> list | None:
         if tp:
             st = Path(tp).stat()
             return [st.st_size, round(st.st_mtime, 3)]
+        # Deleted, its text kept by the hub (#265): asked before Codex, whose
+        # miss globs its whole rollout tree (seconds a minute in a replay).
+        kept = _d.kept_session(sid)
+        if kept:
+            return kept[1]
         cx = _d.agents.get_agent("codex")
         st = cx.session_stat(sid) if cx is not None else None
         return [st["size"], round(st["mtime"], 3)] if st else None
@@ -1318,8 +1326,8 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
         # ~0.2 s of each send to a PO with a hundred sessions (#256).
         table = _d.transcript_stats()
         for sid in _session_ids(room, led):
-            st = (None if sid in now_sids else table.get(sid)) \
-                or _session_stat(sid, immediate=force and sid in now_sids)
+            # One the tables do not have has no file: not looked for (#265).
+            st = _session_stat(sid, immediate=force) if sid in now_sids else table.get(sid)
             if st is None or _SCANNED.get((room_id, sid)) == st:
                 continue
             if floor is None or st[1] < floor:

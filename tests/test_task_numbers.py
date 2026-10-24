@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -646,6 +647,26 @@ class Addresses(Hub):
         self.assertEqual(json.loads(body)["roomId"], self.x, "read in the chat's own project")
         status, _, body = self.call("GET", f"/api/task/ref?ref=%235&room={self.a}")
         self.assertEqual(status, 404)
+
+    def test_a_pages_chips_in_one_request(self):
+        # #265: every number of a draw at once, in order; one naming no task is null.
+        refs = json.dumps([["#2", ""], ["O-1", ""], ["#5", ""], ["#1", self.ot]])
+        # The rooms are walked once for the request, not twice per chip.
+        with mock.patch.object(dashboard, "_task_index", wraps=dashboard._task_index) as walk:
+            status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote(refs))
+        self.assertEqual(walk.call_count, 1)
+        got = json.loads(body)["tasks"]
+        self.assertEqual(status, 200)
+        self.assertEqual([t and t["roomId"] for t in got], [self.b, self.x, None, self.x])
+        self.assertEqual([t and t["inProject"] for t in got], [True, False, None, False])
+        # Malformed, too deep or too long: refused, never parsed or split.
+        for bad in ("nonsense", "[" * 100000, json.dumps([["#1", ""]] * 3000)):
+            status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote(bad))
+            self.assertEqual(status, 400, bad[:20])
+        status, _, body = self.call("GET", f"/api/point/refs?ids={','.join(['P1'] * 8000)}&project={self.ed}")
+        self.assertEqual((status, json.loads(body)), (400, {"error": "too_many_ids"}))
+        status, _, body = self.call("GET", f"/api/task/refs?room={self.a}&refs=" + urllib.parse.quote("[[1, 2], 3]"))
+        self.assertEqual((status, [t for t in json.loads(body)["tasks"]]), (200, [None]))
 
     def test_a_chip_says_whether_the_task_is_the_rooms_projects(self):
         # #152: the chip shows #2 for the room's own project's task, ED-2 / O-1

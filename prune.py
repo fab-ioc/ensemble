@@ -16,7 +16,9 @@ The groups of a preview:
   Its room stays as a slim record (number, title, spec, dates, final report and
   one line saying it was pruned), so its number and links keep working.
 * ``po``: a PO's past conversations (rotated out, or from before the room
-  recorded them), older than N days. Its current one never.
+  recorded them), older than N days. Its current one never. Its text is kept
+  by the hub first (``Hub.keep_text``, #265): the PO's chat shows it, and its
+  points, links and threads lead into it; one whose text cannot be kept stays.
 * ``hub``: conversations the hub started that no task holds (progress checks,
   tasks deleted before #260), older than N days.
 * ``own``: the person's own conversations, older than N days: listed, never
@@ -88,6 +90,9 @@ class Hub:
     pty_ids: Callable[[], set] = lambda: set()  # every terminal the hub lists, live or kept
     progress: Callable[..., None] = lambda *a, **k: None
     now: Callable[[], float] = time.time
+    # (agent, sid, file) -> whether the conversation's text is kept by the hub
+    # (its turn store, #265): a PO's chat shows it, links and threads lead into it.
+    keep_text: Callable[[str, str, str], bool] = lambda agent, sid, path: True
 
 
 # ---------------------------------------------------------------------------
@@ -991,6 +996,9 @@ def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str,
             continue
         if p.get("room") and (p["room"] in room_ids or room_on_disk(hub, p["room"])):
             errs.append(f"{p['room']}: its task is back, kept")
+            continue
+        if kind == "conversation" and it.get("group") == "po" and path.endswith(".jsonl")                 and not hub.keep_text(p.get("agent") or "", p.get("sid") or "", path):
+            errs.append(f"{p.get('sid')}: its text could not be kept, kept")
             continue
         if kind == "worktree-records":
             n = len([w for w in worktrees(path) if w.get("prunable")])

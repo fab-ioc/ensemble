@@ -18,6 +18,7 @@ Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
+import collections
 import contextlib
 import copy
 import difflib
@@ -1200,13 +1201,25 @@ def _transcript_index(fresh: bool = False) -> dict[str, Path]:
 
 
 def transcript_stats() -> dict[str, list]:
-    """{session id: [size, mtime]} of every Claude transcript, from the file
-    table (a look up to 10 s old; the task list looks every refresh): a
+    """{session id: [size, mtime]} of every Claude transcript and every Codex
+    session (its rollouts' sizes summed, the newest time), from the file
+    tables (a look up to 10 s old; the task list looks every refresh): a
     past session's file is not stat'ed one by one (#228: a PO's 165 sessions
-    on every points sync). For sessions that ended: a live one is looked at."""
+    on every points sync), nor looked for when it has none (#265: a Codex
+    PO's 156 ended sessions, a glob each, 2 s of every sync). For sessions
+    that ended: a live one is looked at."""
     out: dict[str, list] = {}
     for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
         out.setdefault(filetable.as_path(p).stem, [size, round(mtime, 3)])
+    cx = agents.get_agent("codex")
+    root = cx.sessions_dir() if cx is not None and hasattr(cx, "sessions_dir") else None
+    if root is not None and root.exists():
+        from agents import codex as _cx
+        for p, (mtime, size, _ns) in _cx._rollout_table(root, 10.0).items():
+            m = _ROLLOUT_ID_RE.match(os.path.basename(p))
+            if m:
+                st = out.get(m.group(1))
+                out[m.group(1)] = [st[0] + size, max(st[1], round(mtime, 3))] if st else [size, round(mtime, 3)]
     return out
 
 
@@ -4600,8 +4613,9 @@ def _queued_prompt_text(prompt) -> str | None:
     return None
 
 
-def _claude_text_turns(tpath: Path) -> list[dict]:
-    """A Claude transcript's user and assistant text turns, unclassified."""
+def _claude_text_turns(tpath: Path, *, strict: bool = False) -> list[dict]:
+    """A Claude transcript's user and assistant text turns, unclassified.
+    ``strict``: a file that cannot be read raises, not reads as empty."""
     turns = []
     try:
         with tpath.open(encoding="utf-8", errors="replace") as f:
@@ -4663,7 +4677,8 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                     turn["hidden"] = "summary" if d.get("isCompactSummary") else "command"
                 turns.append(turn)
     except OSError:
-        pass
+        if strict:
+            raise
     for turn in turns:
         turn.pop("_img", None)
         turn.pop("_placed", None)
@@ -4757,7 +4772,8 @@ def claude_turns_classified(tpath: Path) -> list[dict]:
         sig = (st.st_size, st.st_mtime_ns)
     except OSError:
         room_id, identity = _session_input_context(tpath.stem)
-        return classify_turns(_claude_text_turns(tpath), room_id=room_id,
+        kept = _kept_turns(tpath)       # deleted since: its text as stored (#265)
+        return classify_turns(kept if kept is not None else _claude_text_turns(tpath), room_id=room_id,
                               identity=identity, session_id=tpath.stem)
     key = str(tpath)
     file_sig = sig
@@ -4852,12 +4868,62 @@ def _stored_text_turns(tpath: Path, sig: tuple[int, int]) -> list[dict]:
     return turns
 
 
+_KEPT: list = [0.0, {}]         # [listed at, turnstore.kept()]
+_KEPT_READ: dict = {}           # path -> its row reads as turns (until the next listing)
+_KEPT_TTL_S = 300.0
+
+
+def kept_session(sid: str) -> tuple[Path, list] | None:
+    """A Claude session whose transcript is gone but whose text the turn
+    store keeps (#265: Free disk space deleted a PO's past conversations, and
+    every link into them led nowhere): (its old path, [size, mtime] as
+    points._session_stat says it). Ask only once no file was found."""
+    if not sid or not _UUID_RE.fullmatch(sid):
+        return None
+    if time.monotonic() - _KEPT[0] > _KEPT_TTL_S:
+        _KEPT[1] = turnstore.kept(_turnstore_db())
+        _KEPT[0] = time.monotonic()
+        _KEPT_READ.clear()
+    hit = _KEPT[1].get(sid)
+    if hit and not turnstore.has(_turnstore_db(), hit[0]):
+        _KEPT[1].pop(sid, None)     # the store lost it since it was listed
+        hit = None
+    if hit and hit[0] not in _KEPT_READ:
+        # A row that does not read (damaged) is no kept session: a 404,
+        # not an empty chat.
+        _KEPT_READ[hit[0]] = _kept_turns(Path(hit[0])) is not None
+    if hit and not _KEPT_READ[hit[0]]:
+        hit = None
+    return (Path(hit[0]), [hit[1], round(hit[2] / 1e9, 3)]) if hit else None
+
+
+def _kept_turns(tpath: Path) -> list[dict] | None:
+    """The stored text turns of a transcript that is gone (kept_session)."""
+    return turnstore.get_kept(_turnstore_db(), str(tpath))
+
+
+def kept_turns_classified(tpath: Path) -> list[dict] | None:
+    """A kept session's chat turns, or None when its row no longer reads
+    (damaged since it was listed): no session, not an empty one."""
+    if tpath.exists():
+        return claude_turns_classified(tpath)
+    kept = _kept_turns(tpath)
+    if kept is None:
+        _KEPT_READ[str(tpath)] = False
+        return None
+    room_id, identity = _session_input_context(tpath.stem)
+    return classify_turns(kept, room_id=room_id, identity=identity, session_id=tpath.stem)
+
+
 def read_session_turns(sid: str) -> list[dict] | None:
     """A session's chat turns as /api/session/<sid>?full=1 serves them (Claude
     or Codex), or None when there is no such session."""
     tpath = find_transcript(sid)
     if tpath:
         return claude_turns_classified(tpath)
+    kept = kept_session(sid)        # asked before Codex, whose miss globs its rollouts
+    if kept:
+        return kept_turns_classified(kept[0])
     cx = agents.get_agent("codex")
     if cx is None or cx.session_stat(sid) is None:
         return None
@@ -5875,13 +5941,48 @@ def git_root(cwd: str) -> str:
     return root
 
 
+_GIT_STAT_BUSY: set = set()     # roots whose count is being read again
+_GIT_STAT_FIRST: dict = {}      # root -> lock: one first read at a time
+
+
 def git_changed_count(root: str) -> int:
     """Number of changed (dirty) files in ``root``; cached ~12s (git status is
-    slow on large repos, and dirtiness doesn't change second-to-second)."""
-    now = time.time()
+    slow on large repos, and dirtiness doesn't change second-to-second). An
+    older count is answered at once and read again in the background (#265:
+    /api/projects ran git once per project every 12 s, 1.4 s a poll); only a
+    first read waits."""
     hit = _GIT_STAT_CACHE.get(root)
-    if hit and now - hit[0] < 12:
+    if hit and time.time() - hit[0] < 12:
         return hit[1]
+    if hit:
+        with _GIT_STAT_LOCK:
+            if root in _GIT_STAT_BUSY:
+                return hit[1]
+            _GIT_STAT_BUSY.add(root)
+
+        def again() -> None:
+            try:
+                _git_changed_read(root)
+            finally:
+                with _GIT_STAT_LOCK:
+                    _GIT_STAT_BUSY.discard(root)
+        threading.Thread(target=again, name="git-changed", daemon=True).start()
+        return hit[1]
+    # A first read waits; others asking meanwhile wait for its count.
+    with _GIT_STAT_LOCK:
+        first = _GIT_STAT_FIRST.setdefault(root, threading.Lock())
+    with first:
+        hit = _GIT_STAT_CACHE.get(root)
+        if hit:
+            return hit[1]
+        return _git_changed_read(root)
+
+
+_GIT_STAT_LOCK = threading.Lock()
+
+
+def _git_changed_read(root: str) -> int:
+    now = time.time()
     n = 0
     try:
         out = _run(["git", "-C", root, "status", "--porcelain"],
@@ -5889,7 +5990,11 @@ def git_changed_count(root: str) -> int:
         n = sum(1 for ln in (out.stdout or "").splitlines() if ln.strip())
     except (OSError, subprocess.SubprocessError):
         n = 0
-    _GIT_STAT_CACHE[root] = (now, n)
+    with _GIT_STAT_LOCK:
+        hit = _GIT_STAT_CACHE.get(root)
+        if hit and hit[0] > now:
+            return hit[1]       # a read begun later answered first: it stands
+        _GIT_STAT_CACHE[root] = (now, n)
     return n
 
 
@@ -7765,19 +7870,21 @@ def task_arg(room: dict) -> str:
     return task_label(room) or room.get("id", "")
 
 
-def resolve_task_ref(ref, project_id: str = "", any_project: bool = False) -> tuple[str, str]:
+def resolve_task_ref(ref, project_id: str = "", any_project: bool = False,
+                     index: list[dict] | None = None, projects: list[dict] | None = None) -> tuple[str, str]:
     """(room id, "") for a task address — room-…, #18 or 18 in ``project_id``,
-    ED-18 anywhere — else ("", a sentence saying why)."""
-    projects = load_projects()
-    return task_numbers.find_task(_task_index(), ref, (project_id or "").strip(), project_keys(projects),
+    ED-18 anywhere — else ("", a sentence saying why). ``index`` /
+    ``projects``: _task_index() and load_projects() read once for a batch."""
+    projects = load_projects() if projects is None else projects
+    return task_numbers.find_task(_task_index() if index is None else index, ref, (project_id or "").strip(), project_keys(projects),
                                   {p["id"]: p.get("name", "") for p in projects}, any_project=any_project)
 
 
-def task_ref_info(rid: str, projects: list[dict] | None = None) -> dict | None:
+def task_ref_info(rid: str, projects: list[dict] | None = None, index: list[dict] | None = None) -> dict | None:
     """What a reference to a task shows: ``{roomId, no, label, ref, key,
     projectId, project, title, status, workflow, workflowName, live, agents,
     branch, report}`` (``ref`` is the full form, ED-18)."""
-    entry = next((e for e in _task_index() if e["id"] == rid), None)
+    entry = next((e for e in (_task_index() if index is None else index) if e["id"] == rid), None)
     if entry is None:
         return None
     projects = load_projects() if projects is None else projects
@@ -7834,7 +7941,70 @@ def ref_context(own: str = "", projects: list[dict] | None = None) -> dict:
     return {"projects": task_numbers.project_names(rows, titles), "own": own or "", "nouns": nouns}
 
 
-def point_ref(point_id: str, project_id: str) -> dict | None:
+def _task_chip(ref: str, pid: str, ctx_pid: str, index: list[dict] | None = None,
+               projects: list[dict] | None = None) -> tuple[dict | None, str]:
+    """What a task chip shows of ``ref`` (/api/task/ref): read in ``pid``,
+    else ``ctx_pid`` (the chat's project); (None, why) when it names none.
+    ``index`` / ``projects``: read once for all the chips of a request
+    (#265: twice per chip, a walk of every room file each, held a chat's
+    /api/task/refs for 400 ms)."""
+    rid, why = resolve_task_ref(ref, pid or ctx_pid, index=index, projects=projects)
+    info = task_ref_info(rid, projects, index) if rid else None
+    if info is None:
+        return None, why
+    info.pop("report", None)
+    shown = ctx_pid or pid
+    info["inProject"] = bool(shown) and info.get("projectId") == shown
+    return info, ""
+
+
+# /api/point/refs and /api/task/refs: a query longer than 200 of the
+# longest refs a page sends is refused, not split or parsed.
+_REFS_QUERY_MAX = 20_000
+# {project id: (built at, (points.SAVED, the links file) then, {point id: [task index entry]})}
+_POINT_INDEX: dict[str, tuple[float, tuple, dict]] = {}
+# {(project id, point id): (the index entry's built at, point_ref's answer)}
+_POINT_ANSWERS: dict[tuple[str, str], tuple[float, dict | None]] = {}
+_POINT_INDEX_LOCK = threading.Lock()
+_POINT_INDEX_TTL_S = 10.0       # a ledger another hub wrote, a card in a transcript
+_POINT_INDEX_MISS_S = 1.0       # a point not in it: looked for again after this
+
+
+def _point_index(project: dict, projects: list[dict], point_id: str = "") -> tuple[float, dict[str, list[dict]]]:
+    """Which rooms of ``project`` hold each point number (#265), and when
+    that was worked out: from the ledgers, kept until one is saved, a room
+    moves to another project (the links file changes), _POINT_INDEX_TTL_S
+    pass, or ``point_id`` is not in it a second later (a room new since). A
+    chat full of point chips asks for each; walking every room and ledger
+    per chip held the hub for seconds."""
+    pid = project["id"]
+    now = time.monotonic()
+    saved = (points.SAVED, _stat_sig(SESSION_PROJECTS_FILE))
+    with _POINT_INDEX_LOCK:
+        hit = _POINT_INDEX.get(pid)
+    if hit is not None and hit[1] == saved and now - hit[0] < _POINT_INDEX_TTL_S \
+            and (not point_id or point_id in hit[2] or now - hit[0] < _POINT_INDEX_MISS_S):
+        return hit[0], hit[2]
+    links = load_session_projects()
+    ledgers = points.with_ledgers()
+    idx: dict[str, list[dict]] = {}
+    for room in _task_index():
+        rid = room["id"]
+        if rid not in ledgers:
+            continue
+        if rid != project.get("poRoomId") and _task_project(room, links, projects) != pid:
+            continue
+        for p in points.load(rid, shared=True)["points"]:
+            rooms = idx.setdefault(p["id"], [])
+            rooms.append(room)      # twice in one room is ambiguous as well
+    with _POINT_INDEX_LOCK:
+        _POINT_INDEX[pid] = (now, saved, idx)
+        for key in [k for k in _POINT_ANSWERS if k[0] == pid]:
+            del _POINT_ANSWERS[key]
+    return now, idx
+
+
+def point_ref(point_id: str, project_id: str, projects: list[dict] | None = None) -> dict | None:
     """A unique point in a project, including closed points outside view's cap.
 
     Ledgers number per room. Never choose one of two same-numbered points.
@@ -7842,31 +8012,33 @@ def point_ref(point_id: str, project_id: str) -> dict | None:
     """
     if not re.fullmatch(r"P[1-9][0-9]{0,5}[a-z]?", point_id):
         return None
-    projects = load_projects()
+    projects = load_projects() if projects is None else projects
     project = next((p for p in projects if p["id"] == project_id), None)
     if not project:
         return None
-    links = load_session_projects()
-    found = []
-    ledgers = points.with_ledgers()
-    for room in _task_index():
-        rid = room["id"]
-        if rid not in ledgers:
-            continue
-        if rid != project.get("poRoomId") and _task_project(room, links, projects) != project_id:
-            continue
-        matches = [p for p in points.load(rid, shared=True)["points"] if p["id"] == point_id]
-        for point in matches:
-            found.append((room, point))
-        if len(found) > 1:
-            return None
-    if not found:
+    built, idx = _point_index(project, projects, point_id)
+    with _POINT_INDEX_LOCK:
+        hit = _POINT_ANSWERS.get((project_id, point_id))
+    if hit is not None and hit[0] == built:
+        return copy.deepcopy(hit[1])        # the whole answer, card and all, until the index changes
+    out = _point_answer(point_id, project, idx.get(point_id) or [])
+    with _POINT_INDEX_LOCK:
+        if (_POINT_INDEX.get(project_id) or (0.0,))[0] == built:
+            _POINT_ANSWERS[(project_id, point_id)] = (built, copy.deepcopy(out))
+    return out
+
+
+def _point_answer(point_id: str, project: dict, rooms: list[dict]) -> dict | None:
+    """point_ref's answer for the rooms the index says hold ``point_id``."""
+    if len(rooms) != 1:
         return None
-    room, point = found[0]
+    project_id = project["id"]
+    room = rooms[0]
     rid = room["id"]
-    # Read current replies only for the matching ledger, never all transcripts.
-    point = next((p for p in points.sync(rid, shared=True)["points"] if p["id"] == point_id), point)
-    if not point.get("mid"):
+    # The ledger as the room's own sync left it (its chat's poll, a send):
+    # a lookup reads no transcript (#265: 2 s each on a PO's ended sessions).
+    point = next((p for p in points.load(rid, shared=True)["points"] if p["id"] == point_id), None)
+    if not point or not point.get("mid"):
         return None
     out = {"id": point_id, "roomId": rid, "mid": point["mid"],
            "text": points.strip_point_lines(point.get("text") or "")[:400],
@@ -13205,8 +13377,36 @@ def _prune_hub() -> prune.Hub:
         project_home=lambda p: project_home(p, create=False),
         documents_dir=lambda p: project_documents_dir(p, persist=False),
         scratch_root=lambda cwd: str(_scratch_root_for(cwd) or ""),
-        progress=PRUNE_JOB.progress,
+        progress=PRUNE_JOB.progress, keep_text=keep_conversation_text,
         pty_ids=lambda: {x.get("id") for x in ptyrun.list_sessions() if x.get("id")})
+
+
+def keep_conversation_text(agent: str, sid: str, path: str) -> bool:
+    """Store a Claude conversation's text turns in the turn store before its
+    file is deleted to free disk space, and say whether they are there (#265:
+    the PO chats' history went with their files). A Codex conversation's text
+    has no store: it is not deleted."""
+    if agent != "claude":
+        return False
+    tpath = Path(path[4:] if path.startswith("\\\\?\\") else path)    # prune's long-path form
+    try:
+        st = tpath.stat()
+        turns = _claude_text_turns(tpath, strict=True)
+    except OSError:
+        return False        # unreadable: kept on disk, not stored as empty
+    db, sig, ver = _turnstore_db(), (st.st_size, st.st_mtime_ns), _turnstore_version()
+    if not turnstore.put(db, str(tpath), sig, ver, turns, force=True):
+        return False
+    _KEPT[0] = 0.0          # listed again on the next lookup
+    # This reading, not an older row of the file, and the file as it was
+    # read (not written to meanwhile): anything else keeps it.
+    try:
+        now = tpath.stat()
+    except OSError:
+        return False
+    if (now.st_size, now.st_mtime_ns) != sig:
+        return False
+    return turnstore.get(db, str(tpath), sig, ver) is not None
 
 
 def pruned_refusal(room: dict) -> dict:
@@ -15964,6 +16164,26 @@ def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
         time.sleep(0.005)
 
 
+# The hub's slow answers (#265): what the log says as [slow] lines, counted
+# for /api/health, so a regression shows in a number the same day.
+_SLOW: collections.deque = collections.deque(maxlen=5000)   # (answered, "GET /api/…", seconds)
+
+
+def slow_requests(window_s: float = 3600.0) -> dict:
+    """The answers that took SLOW_REQUEST_S or more in the last ``window_s``:
+    ``{n, since, by: {"GET /api/…": {n, maxS}}}``, the most first."""
+    cut = time.monotonic() - window_s
+    by: dict[str, dict] = {}
+    for at, what, took in list(_SLOW):
+        if at < cut:
+            continue
+        b = by.setdefault(what, {"n": 0, "maxS": 0.0})
+        b["n"] += 1
+        b["maxS"] = round(max(b["maxS"], took), 1)
+    return {"n": sum(b["n"] for b in by.values()), "windowS": int(window_s), "overS": SLOW_REQUEST_S,
+            "by": dict(sorted(by.items(), key=lambda kv: -kv[1]["n"]))}
+
+
 class Handler(BaseHTTPRequestHandler):
     # Kept-alive connections and revalidated answers (#231). Every answer
     # says where it ends (Content-Length), or closes the connection after it.
@@ -16022,6 +16242,7 @@ class Handler(BaseHTTPRequestHandler):
                 path = str(getattr(self, "path", "")).split("?", 1)[0]
                 if took >= SLOW_REQUEST_S and path not in ("/api/pty/stream", "/mcp"):
                     print(f"[slow] {getattr(self, 'command', '')} {path} took {took:.1f}s", flush=True)
+                    _SLOW.append((_ANSWERED[0], f"{getattr(self, 'command', '')} {path}", took))
             body = self.rfile
             if isinstance(body, _RequestBody):
                 self.rfile = body.raw
@@ -16624,7 +16845,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
             self._send_json(200, {**startup.health(), "version": app_version.VERSION,
-                                  "pid": os.getpid()})
+                                  "pid": os.getpid(), "slow": slow_requests()})
             return
         if p == "/startup":
             self._send_startup_page()
@@ -16797,10 +17018,27 @@ class Handler(BaseHTTPRequestHandler):
                 # No Claude transcript — this may be a Codex session, which keeps
                 # its own rollout files. Serve those in the same shape so the
                 # solo chat view renders a codex session's turns as bubbles too.
-                cx = agents.get_agent("codex")
+                # A Claude conversation deleted to free disk space (kept) is
+                # asked first, as read_session_turns does: one answer for an
+                # id on both paths, and no Codex rollout glob for it.
+                kept = kept_session(sid)
+                cx = agents.get_agent("codex") if kept is None else None
                 st = cx.session_stat(sid) if cx is not None else None
-                if st is None:
+                if st is None and kept is None:
                     self._send_json(404, {"error": "not_found"})
+                    return
+                if kept is not None:
+                    # Deleted to free disk space: its text as the hub kept it (#265).
+                    if want_stat:
+                        self._send_json(200, {"sessionId": sid, "size": kept[1][0], "mtime": kept[1][1], "kept": True})
+                        return
+                    turns = kept_turns_classified(kept[0])
+                    if turns is None:
+                        self._send_json(404, {"error": "not_found"})
+                        return
+                    body = full_turns(turns) if full else {"turns": []}
+                    self._send_json(200, {"sessionId": sid, "cwd": "", **body, "kept": True,
+                                          "label": load_labels().get(sid, "")})
                     return
                 if want_stat:
                     self._send_json(200, {"sessionId": sid, "size": st["size"],
@@ -17165,21 +17403,55 @@ class Handler(BaseHTTPRequestHandler):
             if ctx_room:
                 rm = chatroom.get_room(ctx_room, copy_room=False)
                 ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
-            rid, why = resolve_task_ref(q.get("ref", [""])[0], pid or ctx_pid)
-            info = task_ref_info(rid) if rid else None
+            info, why = _task_chip(q.get("ref", [""])[0], pid, ctx_pid)
             if info is None:
                 self._send_json(404, {"error": "no_such_task", "message": why or "no such task"})
                 return
-            info.pop("report", None)
-            shown = ctx_pid or pid
-            info["inProject"] = bool(shown) and info.get("projectId") == shown
             self._send_json(200, info)
+            return
+        if p == "/api/task/refs":
+            # Every task chip a page shows, in one request (#265): ?refs= a
+            # JSON list of [ref, project] (200 at most) and ?room= as for
+            # /api/task/ref; {tasks: [what it says, or null], ...in order}.
+            q = parse_qs(u.query)
+            raw = q.get("refs", ["[]"])[0] or "[]"
+            if len(raw) > _REFS_QUERY_MAX:
+                self._send_json(400, {"error": "too_many_refs"})
+                return
+            ctx_room = (q.get("room", [""])[0] or "").strip()
+            try:
+                refs = json.loads(raw)
+            except (ValueError, RecursionError):
+                self._send_json(400, {"error": "bad_refs"})
+                return
+            refs = [r for r in refs if isinstance(r, list) and len(r) == 2][:200] if isinstance(refs, list) else []
+            projects = load_projects()
+            ctx_pid = ""
+            if ctx_room:
+                rm = chatroom.get_room(ctx_room, copy_room=False, messages=False)
+                ctx_pid = _task_project(rm, load_session_projects(), projects) if rm else ""
+            index = _task_index()
+            self._send_json(200, {"tasks": [_task_chip(str(r[0] or ""), str(r[1] or "").strip(), ctx_pid, index, projects)[0]
+                                            for r in refs]})
             return
         if p == "/api/point/ref":
             q = parse_qs(u.query)
             pid = q.get("project", [""])[0] or room_project(q.get("room", [""])[0])
             info = point_ref(q.get("ref", [""])[0], pid)
             self._send_json(200 if info else 404, info or {"error": "no_unique_point"})
+            return
+        if p == "/api/point/refs":
+            # Every point a page shows, in one request (#265): {points: {Pn:
+            # what /api/point/ref says, or null}}; ?ids=P1,P2 (200 at most).
+            q = parse_qs(u.query)
+            raw = q.get("ids", [""])[0] or ""
+            if len(raw) > _REFS_QUERY_MAX:
+                self._send_json(400, {"error": "too_many_ids"})
+                return
+            pid = q.get("project", [""])[0] or room_project(q.get("room", [""])[0])
+            ids = [i for i in raw.split(",") if i][:200]
+            projects = load_projects()
+            self._send_json(200, {"points": {i: point_ref(i, pid, projects) for i in ids}})
             return
         if p == "/api/task/projects":
             # What the pages need to read a text's bare numbers in the right

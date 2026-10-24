@@ -96,10 +96,22 @@ const PROJECTS_CTX = { own: 'proj-ed', nouns: ['project', 'projects'], projects:
   { id: 'proj-ed', key: 'ED', name: 'Ensemble Dashboard', aliases: ['Ensemble Dashboard', 'Ensemble'] },
   { id: 'proj-dock', key: 'D', name: 'Dock', aliases: ['Dock'] } ] };
 const fetches = [];
+const batches = [];
 function fetch(url) {
+  const q = new URL(url, 'http://h').searchParams;
+  // The chips of one draw in one request (#265): each counted below as the
+  // one-number request it stands for.
+  if (url.startsWith('/api/task/refs?')) {
+    const room = q.get('room'), refs = JSON.parse(q.get('refs'));
+    batches.push(refs.length);
+    const tasks = refs.map(([ref, project]) => {
+      fetches.push('/api/task/ref?ref=' + encodeURIComponent(ref) + (room ? '&room=' + encodeURIComponent(room) : '') + (project ? '&project=' + encodeURIComponent(project) : ''));
+      return TASKS[ref + (project ? '@' + project : '')] || null;
+    });
+    return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ tasks }) });
+  }
   fetches.push(url);
   if (url.startsWith('/api/task/projects')) return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(PROJECTS_CTX) });
-  const q = new URL(url, 'http://h').searchParams;
   const t = TASKS[q.get('ref') + (q.get('project') ? '@' + q.get('project') : '')];
   return Promise.resolve(t ? { status: 200, ok: true, json: () => Promise.resolve(t) }
                            : { status: 404, ok: false, json: () => Promise.resolve({ error: 'no_such_task' }) });
@@ -146,7 +158,7 @@ const lines = %s;
   await settle();
   const ttl = { asked: fetches.length - askedBefore, redraws: redraws - redrawsBefore, later };
   Date.now = realNow;
-  console.log(JSON.stringify({ first, second, again, notTasks, ttl, fetches: fetches.slice(0, asked), redraws, dock, home, dockAsked, projects, named, namedAsked, preview,
+  console.log(JSON.stringify({ first, second, again, notTasks, ttl, fetches: fetches.slice(0, asked), batches, redraws, dock, home, dockAsked, projects, named, namedAsked, preview,
     stripped: lines.map(stripRefBlocks),
     report: [hubLabel, senderName].map(f => f({ from: 'user', kind: 'report', taskTitle: 'Docs', taskId: '#18', reporter: 'claude', reportKind: 'completed' })),
     oldReport: [hubLabel, senderName].map(f => f({ from: 'user', kind: 'report', taskTitle: 'Docs', taskId: 'room-1a2b3c4d', reporter: 'claude', reportKind: 'completed' })) }));
@@ -184,8 +196,9 @@ class SessionChips(unittest.TestCase):
         self.assertEqual(sorted(self.r["fetches"]), sorted([
             "/api/task/projects?room=room-ctx",
             "/api/task/ref?ref=%2318&room=room-ctx", "/api/task/ref?ref=ED-7&room=room-ctx",
-            "/api/task/ref?ref=%2399&room=room-ctx"]), "one request per task, in this chat's room, and the project list once")
-        self.assertGreaterEqual(self.r["redraws"], 3)
+            "/api/task/ref?ref=%2399&room=room-ctx"]), "each task asked once, in this chat's room, and the project list once")
+        self.assertEqual(self.r["batches"][0], 3, "a draw's numbers go in one request (#265)")
+        self.assertGreaterEqual(self.r["redraws"], 1)
         found = chips(self.r["second"])
         # #202: a code span that is exactly `#18` is a chip too, after the three in prose.
         self.assertEqual(len(found), 4, self.r["second"])

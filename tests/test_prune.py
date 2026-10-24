@@ -479,6 +479,26 @@ class PruneTests(unittest.TestCase):
         prune.run(hub, preview, [item["id"]])
         self.assertTrue((outside / "keep.txt").exists())
 
+    def test_a_pos_past_conversation_goes_only_once_its_text_is_kept(self):
+        """#265: the PO chats' history went with their files; the hub keeps
+        each one's text first, and one it cannot keep (Codex) stays."""
+        po = chatroom.create_room("PO", [{"identity": "claude", "agent": "claude"}])["id"]
+        self.project["poRoomId"] = po
+        cl = write(self.claude / "po" / "11111111-2222-3333-4444-000000000001.jsonl", "{}\n" * 20)
+        cx = write(self.codex / "2026" / "10" / "01" / "rollout-2026-10-01T10-00-00-11111111-2222-3333-4444-000000000002.jsonl", "{}\n" * 20)
+        age(cl), age(cx)
+        kept = []
+        hub = self.hub()
+        hub.classify = lambda agent, path, sid: ("po", po)
+        hub.keep_text = lambda agent, sid, path: kept.append((agent, sid, os.path.basename(path))) or agent == "claude"
+        preview = prune.scan(hub, 30)
+        self.assertIn(f"po:{po}", self.ids(preview, "po"))
+        res = prune.run(hub, preview, [f"po:{po}"])
+        self.assertFalse(cl.exists(), "its text kept: the file goes")
+        self.assertTrue(cx.exists(), "its text could not be kept: it stays")
+        self.assertIn("could not be kept", " ".join(res["done"][0]["errors"]))
+        self.assertEqual(sorted(a for a, _s, _n in kept), ["claude", "codex"])
+
     def test_a_conversation_used_since_the_preview_stays(self):
         mine = write(self.claude / "elsewhere" / "11111111-2222-3333-4444-666666666666.jsonl", "{}\n")
         age(mine)

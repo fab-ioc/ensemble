@@ -264,6 +264,16 @@ class Decisions(point_cards.Resolver):
         points._save(self.rid, led)
         self.assertIn('a', [c['mid'] for c in asks.decisions(self.summary(), now=now)[0]])
 
+    def test_repeats_are_worked_out_once_per_list(self):
+        # #265: ~100 open asks made ~4.9k comparisons on every poll.
+        qs = tuple(f'w{i}a w{i}b w{i}c?' for i in range(120)) + ('w3a w3b w3c?',)
+        asks._repeats.cache_clear()
+        with mock.patch.object(asks, '_same_ask', wraps=asks._same_ask) as same:
+            self.assertEqual(asks._repeats(qs), frozenset({120}))
+            first = same.call_count
+            self.assertEqual(asks._repeats(qs), frozenset({120}))
+            self.assertEqual(same.call_count, first, 'an unchanged list compares nothing again')
+
     def test_same_ask(self):
         self.assertTrue(asks._same_ask('Item 9: cancel the old comeback call hedge when a new dyna-zero put episode starts?',
                                        'Item 9: make the comeback call hedge give way when a new put episode starts?'))

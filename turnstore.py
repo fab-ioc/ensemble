@@ -5,8 +5,11 @@ A PO's chat spans hundreds of transcripts (374 MB for one, measured
 could show the chat: 2-4 s of parsing per open kind.  This keeps what
 ``dashboard._claude_text_turns`` made of each file, keyed by its path, size
 and modification time, and by the parser's own source so a change to the
-parser reads every file afresh.  Derived data: the database may be deleted at
-any time, and every failure reads the transcript instead.
+parser reads every file afresh.  Derived data while the transcript is there:
+every failure reads the transcript instead.  Once a transcript is deleted
+(Free disk space takes a PO's past conversations, #260), its row is the only
+copy of that chat's text, and the hub reads it from here (#265, :func:`kept`):
+a row is never deleted with its file.
 """
 from __future__ import annotations
 
@@ -46,7 +49,8 @@ def _conn(db: Path) -> sqlite3.Connection:
             # OSError: parsed this time); its WAL goes only with it.
             if not _corrupt(db):
                 raise
-            db.unlink()
+            # Kept aside, not deleted: it may hold the only text of a deleted transcript.
+            db.replace(db.with_name(f"{db.name}.damaged-{int(time.time())}"))
             for p in (db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")):
                 p.unlink(missing_ok=True)
             conn = _open(db)
@@ -97,6 +101,44 @@ def get(db: Path, path: str, sig: tuple[int, int], ver: str) -> list[dict] | Non
         if not row or (row[0], row[1]) != tuple(sig) or row[2] != ver:
             return None
         out = json.loads(zlib.decompress(row[3]))
+        return out if isinstance(out, list) else None
+    except (OSError, sqlite3.Error, zlib.error, ValueError):
+        return None
+
+
+def kept(db: Path) -> dict[str, tuple[str, int, int]]:
+    """Every stored file by its name without ``.jsonl`` (a session id):
+    ``{name: (path, size, mtime_ns)}``. A file deleted since (Free disk
+    space, #260) keeps its row: its text is read from here (#265)."""
+    out: dict[str, tuple[str, int, int]] = {}
+    try:
+        with _LOCK:
+            rows = _conn(db).execute("SELECT path, size, mtime FROM turns").fetchall()
+    except (OSError, sqlite3.Error):
+        return out
+    for path, size, mtime in rows:
+        name = path.replace("\\", "/").rsplit("/", 1)[-1]
+        if name.endswith(".jsonl"):
+            out[name[:-6]] = (path, size, mtime)
+    return out
+
+
+def has(db: Path, path: str) -> bool:
+    """Whether a row for ``path`` is stored."""
+    try:
+        with _LOCK:
+            return _conn(db).execute("SELECT 1 FROM turns WHERE path=?", (path,)).fetchone() is not None
+    except (OSError, sqlite3.Error):
+        return False
+
+
+def get_kept(db: Path, path: str) -> list[dict] | None:
+    """The turns stored for ``path`` whatever the file and the parser are
+    now: for a file that is gone, the best there is."""
+    try:
+        with _LOCK:
+            row = _conn(db).execute("SELECT data FROM turns WHERE path=?", (path,)).fetchone()
+        out = json.loads(zlib.decompress(row[0])) if row else None
         return out if isinstance(out, list) else None
     except (OSError, sqlite3.Error, zlib.error, ValueError):
         return None
