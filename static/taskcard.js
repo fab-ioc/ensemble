@@ -357,9 +357,8 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
 .task-card.tc-beside.tc-right::before { left:-5px; border-top-color:transparent; border-right-color:transparent; }
 .task-card.tc-beside.tc-left::before { right:-5px; border-bottom-color:transparent; border-left-color:transparent; }
 @media (pointer: coarse) {
-  /* A chip keeps its look in the line of text and takes a finger's height with an invisible margin. */
-  .msg .text.md a.task-chip, a.task-chip { overflow:visible; }
-  a.task-chip::after { content:''; position:absolute; left:0; right:0; top:-14px; bottom:-14px; }
+  /* A chip keeps its look in the line of text and has a full finger target. */
+  .msg .text.md a.task-chip, a.task-chip { overflow:visible; min-width:var(--touch-min, 44px); min-height:var(--touch-min, 44px); justify-content:center; touch-action:manipulation; }
   /* Not a deleted id: it is words that may wrap, and the margin would cover the chips beside it. */
   a.task-chip.tc-gone { position:static; }
   a.task-chip.tc-gone::after { content:none; }
@@ -368,6 +367,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
   .task-card .tc-title { order:9; flex:1 1 100%; white-space:normal; overflow:visible; min-height:var(--touch-min, 44px); display:flex; align-items:center; }
   .task-card .tc-links { order:10; flex:1 1 100%; flex-wrap:wrap; }
   .task-card .tc-link { min-height:var(--touch-min, 44px); display:inline-flex; align-items:center; }
+  .task-card a { touch-action:manipulation; }
 }`;
 
   const STATES = new WeakMap();   // document → its card's state
