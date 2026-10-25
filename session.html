@@ -4558,6 +4558,7 @@ let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
 // whether the list under their line is open (per page, not remembered).
 let POINTS_SIG = '', POINTS_OPEN = false, POINTS_LINE_SIG = '';
 let GROUP_OF_MID = new Map();   // a folded message's id → its group's key, to land on it
+let FOLD_REV_OF_MID = new Map(); // expected row revision for each folded message
 let CHAT_VIEW = null;           // { items, sup }: what was drawn, for the comment tray
 const ROOM_NOS = new Map();     // a task's room id → { no }: its number, once known
 let STICK = true;          // at the end of the chat: new messages keep it there
@@ -4676,12 +4677,16 @@ function renderBubbles(items, opt = {}) {
   const gaps = clean ? gapsOf(items, held) : [];
   const gapAt = new Map(), inGap = new Set();
   GAP_OF_MID = new Map();
+  FOLD_REV_OF_MID = new Map();
   GAP_N = gaps.length; GAP_MSGS = 0;
   for (const g of gaps) {
     gapAt.set(g.first, g);
     if (FOLD.groups.has(g.key)) { GAP_N--; continue; }   // opened: its messages are in view
     GAP_MSGS += g.idx.length;
-    g.idx.forEach(i => { inGap.add(i); if (items[i].id) GAP_OF_MID.set(items[i].id, g.key); });
+    g.idx.forEach(i => { inGap.add(i); if (items[i].id) {
+      GAP_OF_MID.set(items[i].id, g.key);
+      FOLD_REV_OF_MID.set(items[i].id, g.key + '|' + g.seen);
+    } });
   }
   // A task's messages fold under one row. Scrolled up, nothing drawn in view
   // folds into a group: only what was in one stays, and what arrives joins.
@@ -4703,7 +4708,10 @@ function renderBubbles(items, opt = {}) {
   for (const g of groups) {
     if (inGap.has(g.at)) continue;      // inside a closed gap: the gap's row says it all
     groupAt.set(g.at, g);
-    g.hidden.forEach(i => { hiddenIn.set(i, g); if (items[i].id) GROUP_OF_MID.set(items[i].id, g.key); });
+    g.hidden.forEach(i => { hiddenIn.set(i, g); if (items[i].id) {
+      GROUP_OF_MID.set(items[i].id, g.key);
+      FOLD_REV_OF_MID.set(items[i].id, groupSeen(g));
+    } });
   }
   FOLD.hid = new Set([...hiddenIn.keys()].map(i => foldKey(items[i], i)));
   const sup = supersededMap(items);
@@ -4772,7 +4780,7 @@ function renderBubbles(items, opt = {}) {
     if (THREAD_MODE && m.workLog) {
       if (!workLineShown) {
         workLineShown = true;
-        rows.push(`<button type="button" class="thr-work" data-key="thr-work:${workItems.length}:${WORK_LOG_OPEN ? 1 : 0}" aria-expanded="${WORK_LOG_OPEN}"><strong>Work log · ${workItems.length} task reports and PO notes</strong><span class="preview">${esc(foldLine(workLast.text || ''))}</span></button>`);
+        rows.push(`<button type="button" class="thr-work" data-key="thr-work:${workItems.length}:${WORK_LOG_OPEN ? 1 : 0}" data-last-mid="${esc(workLast.id || '')}" aria-expanded="${WORK_LOG_OPEN}"><strong>Work log · ${workItems.length} task reports and PO notes</strong><span class="preview">${esc(foldLine(workLast.text || ''))}</span></button>`);
       }
       if (!WORK_LOG_OPEN) return;
     }
@@ -6464,6 +6472,7 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0, THR_DOWN = null;
 let THR_GEN = 0;           // the pages' start: a response asked before thrRestart is not drawn (#266)
 let THR_LATEST_MID = '', THR_MISSING = null, THR_REPAIR_TIMER = 0, THR_REPAIRING = false, THR_FORCE_DRAW = false;
+let THR_REPAIR_FAIL = null;  // one failed log per missing mid; later retries back off
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
 // A PO chat seen before is asked for its channel beside the room's first read,
 // not after it (#247: a round trip of a phone's open). The page keeps which
@@ -6521,13 +6530,13 @@ function thrMidDrawn(mid) {
   if (!box || !mid) return false;
   if ([...box.querySelectorAll('[data-mid]')].some(el => el.dataset.mid === mid)) return true;
   if (THREAD_MODE && (THR_VIEW?.items || []).some(t => t.mid === mid && t.workLog)
-      && !!box.querySelector('.thr-work')) return true;
+      && !![...box.querySelectorAll('.thr-work[data-last-mid]')].find(el => el.dataset.lastMid === mid)) return true;
   // A team run or task group is intentionally one row in the person's view.
   const key = GAP_OF_MID.get(mid) || GROUP_OF_MID.get(mid);
-  // The group key stays the same when a new report joins it. Its data-seen
-  // advances to that report; the old row must not count as a drawn latest mid.
+  // A later room notice can join the same gap after the latest channel turn.
+  // Compare with the rendered fold's expected revision, not that turn's mid.
   return !!key && [...box.querySelectorAll('.msg-fold[data-group]')]
-    .some(el => el.dataset.group === key && el.dataset.seen === key + '|' + mid);
+    .some(el => el.dataset.group === key && el.dataset.seen === FOLD_REV_OF_MID.get(mid));
 }
 function thrWatch(mid) {
   if (mid) THR_LATEST_MID = mid;
@@ -6535,21 +6544,26 @@ function thrWatch(mid) {
   // A thread, topic, old link window, or Threads list intentionally shows a
   // subset. The channel's latest page is the view this guard checks.
   if (!latest || !THR_DRAWN || (!THREAD_MODE && TOPIC_FILTER) || GOTO || THR_AFTER || THR_LIST) {
-    THR_MISSING = null; return;
+    THR_MISSING = THR_REPAIR_FAIL = null; return;
   }
-  if (thrMidDrawn(latest)) { THR_MISSING = null; return; }
+  if (thrMidDrawn(latest)) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
   if (!THR_MISSING || THR_MISSING.mid !== latest) {
     THR_MISSING = { mid: latest, at: Date.now() };
+    if (THR_REPAIR_FAIL?.mid !== latest) THR_REPAIR_FAIL = null;
     if (THR_REPAIR_TIMER) { clearTimeout(THR_REPAIR_TIMER); THR_REPAIR_TIMER = 0; }
   }
+  if (THR_REPAIR_FAIL?.mid === latest && Date.now() < THR_REPAIR_FAIL.until) return;
   if (!THR_REPAIR_TIMER) THR_REPAIR_TIMER = setTimeout(() => { THR_REPAIR_TIMER = 0; thrRepair(); }, 3200);
 }
 async function thrRepair() {
   if (THR_REPAIRING || !THR_MISSING) return;
-  if ((!THREAD_MODE && TOPIC_FILTER) || GOTO || THR_AFTER || THR_LIST) { THR_MISSING = null; return; }
+  if ((!THREAD_MODE && TOPIC_FILTER) || GOTO || THR_AFTER || THR_LIST) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
   const missing = THR_MISSING.mid;
-  if (thrMidDrawn(missing)) { THR_MISSING = null; return; }
-  if (THR_FETCHING) { setTimeout(thrRepair, 100); return; }
+  if (thrMidDrawn(missing)) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
+  if (THR_FETCHING) {
+    if (!THR_REPAIR_TIMER) THR_REPAIR_TIMER = setTimeout(() => { THR_REPAIR_TIMER = 0; thrRepair(); }, 100);
+    return;
+  }
   THR_REPAIRING = true;
   const held = !!DRAW_HELD, from = THR_FROM;
   try {
@@ -6557,8 +6571,14 @@ async function thrRepair() {
     THR_FORCE_DRAW = true;
     await renderThreaded(true);
     const repaired = thrMidDrawn(missing) || (THR_LATEST_MID !== missing && thrMidDrawn(THR_LATEST_MID));
-    postOk('/api/page-log', { what: 'chat-repair', msg: `${ROOM} latest=${missing} drawn=${repaired} held=${held} from=${from}` }).catch(() => {});
-    if (repaired) THR_MISSING = null;
+    if (repaired) {
+      THR_MISSING = THR_REPAIR_FAIL = null;
+      postOk('/api/page-log', { what: 'chat-repair', msg: `${ROOM} latest=${missing} drawn=true held=${held} from=${from}` }).catch(() => {});
+    } else {
+      const attempts = (THR_REPAIR_FAIL?.mid === missing ? THR_REPAIR_FAIL.attempts : 0) + 1;
+      THR_REPAIR_FAIL = { mid: missing, attempts, until: Date.now() + Math.min(60000, 5000 * 2 ** (attempts - 1)) };
+      if (attempts === 1) postOk('/api/page-log', { what: 'chat-repair-failed', msg: `${ROOM} latest=${missing} held=${held} from=${from}` }).catch(() => {});
+    }
   } finally {
     THR_FORCE_DRAW = false;
     THR_REPAIRING = false;
@@ -6683,6 +6703,13 @@ async function renderThreaded(force) {
         setText($('#title'), THREAD ? 'This thread is not in the chat any more' : 'The linked message is not in a thread of this chat');
         renderBubbles([]);
       }
+      return;
+    }
+    // A newest-page poll can hit the channel's 5,000-entry from-window cap
+    // during a long idle. Its after>0 is involuntary: start from latest again.
+    if (d.after && THR_VIEW && THR_FROM && !THR_AFTER && !GOTO) {
+      thrRestart();
+      THR_AGAIN = true;
       return;
     }
     THR_SIG = d.sig || '';
