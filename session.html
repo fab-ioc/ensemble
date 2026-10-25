@@ -854,8 +854,11 @@
   #thr-back { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }
   @media (pointer:coarse) {
     .thr-open, .thr-more-btn, #thr-back, #thr-also-l, #ts-back, #ts-close { min-height:var(--touch-min); }
+    .thr-open { min-width:var(--touch-min); touch-action:manipulation; }
     #thr-also-l input { width:20px; height:20px; }
-    .msg .from .thr-reply { clip-path:none; min-height:var(--touch-min); }
+    .msg .from { display:flow-root; min-height:var(--touch-min); }
+    .msg .from .thr-reply { min-height:var(--touch-min); }
+    .msg:not(:hover) .from .thr-reply:not(:focus-visible) { clip-path:none; }
   }
   @media (pointer: fine) { #thr-back { display:none; } }
   /* No clipboard here (plain http, or the browser refused): the link, selected, to copy by hand. */
@@ -1396,11 +1399,10 @@
     #points-list .pt-fold-sum { min-height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     .cp-line .cp-btn, #cp-dlg .cp-acts button { min-height: var(--touch-min); }   /* a checkpoint's buttons (#197) */
-    /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
-       line of text and takes a finger's height with an invisible margin. */
+    /* Nothing needs hover: Copy link always shows. Chips have full finger targets. */
     .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path: none; }
-    .msg .text.md a.ref-chip, a.ref-chip { position: relative; overflow: visible; }
-    a.ref-chip::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    .msg .text.md a.ref-chip, a.ref-chip { position: relative; overflow: visible; min-height:var(--touch-min); align-items:center; touch-action:manipulation; }
+    a.card-jump, a.msg-link, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link { touch-action:manipulation; }
     a.ref-chip .ref-prev { max-width: 40vw; }
     /* A phone zooms into any field under 16px and stays zoomed. The ids and
        classes are here because those fields' own rules set font: inherit. */
@@ -5604,7 +5606,17 @@ function landPending() {
       // A room message (its id has no "<session>:"), not a transcript's
       // balloon, is in no thread: one filed as the CEO's that no transcript
       // holds (a script posted it, #265) is said so, never an empty thread.
-      if (!String(mid).includes(':')) { showGotoNote('The linked message is not shown in this chat.'); return; }
+      if (!String(mid).includes(':')) {
+        if (roomHasOlder() && !(ROOM_OBJ.messages || []).some(m => m.id === mid)) {
+          loadOlder(mid).then(ok => {
+            if (ok) { landPending(); return; }
+            if (GOTO === mid) { GOTO = ''; GOTO_PART = ''; showGotoNote('The linked message is not shown in this chat.'); }
+          });
+          return;
+        }
+        showGotoNote('The linked message is not shown in this chat.');
+        return;
+      }
       openThread('', mid, passage);
       return;
     }
@@ -9732,6 +9744,42 @@ function openTaskFrom(a) {
   if (host) host.postMessage({ type: 'open-task', roomId: a.dataset.task, agent: a.dataset.agent || '' }, location.origin);
   else location.href = a.href;
 }
+// Safari can show a valid link preview on a long press while never delivering
+// the short tap's compatibility click. Activate only navigation controls from
+// a short, stationary touch; the capture listener eats a late native click.
+// Buttons that send or answer are deliberately outside this list.
+const TAP_NAV = 'a.task-chip, a.task-title-ref, .task-card a, a.ref-chip, a.msg-link, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a.card-jump, a[data-point], button.thr-open, button.thr-reply, #threads-view, #thread-catchup button[data-thr], #ts-back, #ts-close, .phone-compose-tools > summary, [data-phone-action="threads-view"]';
+let TAP_PRESS = null, TAP_DONE = null;
+document.addEventListener('touchstart', e => {
+  TAP_PRESS = null;
+  if (e.touches.length !== 1) return;
+  const a = e.target.closest && e.target.closest(TAP_NAV), t = e.touches[0];
+  if (a) TAP_PRESS = { a, x: t.clientX, y: t.clientY, at: performance.now() };
+}, { capture: true, passive: true });
+document.addEventListener('touchmove', e => {
+  if (!TAP_PRESS || e.touches.length !== 1) return;
+  const t = e.touches[0];
+  if (Math.hypot(t.clientX - TAP_PRESS.x, t.clientY - TAP_PRESS.y) > 10) TAP_PRESS = null;
+}, { capture: true, passive: true });
+document.addEventListener('touchcancel', () => { TAP_PRESS = null; }, true);
+document.addEventListener('touchend', e => {
+  const p = TAP_PRESS;
+  TAP_PRESS = null;
+  if (!p || e.changedTouches.length !== 1 || e.touches.length || performance.now() - p.at > 450 || !p.a.isConnected) return;
+  const t = e.changedTouches[0], hit = document.elementFromPoint(t.clientX, t.clientY);
+  if (Math.hypot(t.clientX - p.x, t.clientY - p.y) > 10 || !hit || !(p.a === hit || p.a.contains(hit))) return;
+  e.preventDefault();
+  TAP_DONE = { a: p.a, at: performance.now() };
+  p.a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, button: 0, detail: 1 }));
+}, { capture: true, passive: false });
+document.addEventListener('click', e => {
+  if (!e.isTrusted || !TAP_DONE || performance.now() - TAP_DONE.at > 700) return;
+  const a = e.target.closest && e.target.closest(TAP_NAV);
+  if (a !== TAP_DONE.a) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  TAP_DONE = null;
+}, true);
 document.addEventListener('click', ev => {
   const a = ev.target.closest && ev.target.closest('a[data-task]');
   if (!a || a.classList.contains('task-chip') || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
@@ -9755,7 +9803,6 @@ function refClickHandler(ev) {
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.askMid || a.dataset.refMsg, part = a.dataset.askN !== undefined ? 'ask:' + a.dataset.askN : a.dataset.refPart || '';
-  if (room === ROOM && a.classList && a.classList.contains('card-jump') && THREADED && !THREAD_MODE) { openThread('', msg, part); return; }
   if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
