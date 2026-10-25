@@ -11723,6 +11723,8 @@ def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> d
                           .encode("utf-8")).hexdigest()[:12]
     sig = f"{out['sig']}:{digest}"
     extra = {"progress": progress_now} if progress_now else {}
+    if out.get("latestMid"):
+        extra["latestMid"] = out["latestMid"]
     if had == sig:
         return {"sig": sig, "same": True, **extra}
     with _THREAD_VIEWS_LOCK:
@@ -16168,6 +16170,7 @@ def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
 # The hub's slow answers (#265): what the log says as [slow] lines, counted
 # for /api/health, so a regression shows in a number the same day.
 _SLOW: collections.deque = collections.deque(maxlen=5000)   # (answered, "GET /api/…", seconds)
+_CHAT_REPAIRS: collections.deque = collections.deque(maxlen=5000)  # page repairs since hub start
 
 
 def slow_requests(window_s: float = 3600.0) -> dict:
@@ -16846,7 +16849,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
             self._send_json(200, {**startup.health(), "version": app_version.VERSION,
-                                  "pid": os.getpid(), "slow": slow_requests()})
+                                  "pid": os.getpid(), "slow": slow_requests(),
+                                  "chatRepairs": len(_CHAT_REPAIRS)})
             return
         if p == "/startup":
             self._send_startup_page()
@@ -20297,6 +20301,8 @@ class Handler(BaseHTTPRequestHandler):
             what = line(data.get("what") or "page", 40) if isinstance(data, dict) else "page"
             msg = line(data.get("msg") or "", 500) if isinstance(data, dict) else ""
             print(f"[page] {what}: {msg}", flush=True)
+            if what == "chat-repair":
+                _CHAT_REPAIRS.append(time.time())
             self._send_json(200, {"ok": True})
             return
         if p.startswith("/api/files/"):

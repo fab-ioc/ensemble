@@ -196,11 +196,21 @@ _post = D.Handler.do_POST
 
 def do_POST(self):
     path = str(self.path).split("?", 1)[0]
-    if path in ("/__replay/rotate", "/__replay/written"):
+    if path in ("/__replay/rotate", "/__replay/written", "/__replay/report"):
         if self.client_address[0] != "127.0.0.1":
             return self._send_json(403, {"error": "loopback only"})
         if path == "/__replay/written":
             return self._send_json(200, dict(_WRITTEN))
+        if path == "/__replay/report":
+            rid = next(filter(None, args.live.split(",")), "").strip()
+            sid = _ROTATED.get(rid)
+            if not sid:
+                return self._send_json(409, {"error": "rotate_first"})
+            n = sum(1 for x in _WRITTEN if x.startswith("overnight-")) + 1
+            _transcript_line(sid, "user", f"[report] Overnight report {n} from task #12.")
+            _transcript_line(sid, "assistant", f"Overnight report {n} received.")
+            _WRITTEN[f"overnight-{n}"] = time.time()
+            return self._send_json(200, {"ok": True, "n": n})
         return self._send_json(200, _rotate(next(filter(None, args.live.split(",")), "").strip()))
     return _post(self)
 

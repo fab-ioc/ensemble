@@ -14,8 +14,9 @@ What it does, in one command:
    (tools/perf_po_chat.js): its polls run, and every 20 s one step of a fixed
    script: open a point chip and follow each link of its card, scroll up and
    back, send a message, open a thread; the page is reloaded once halfway;
-   at a quarter the PO rotates to a fresh session and the CEO's sequence of
-   10-24 is sent, at three quarters again (#266);
+   the page sits idle with reports arriving, rotates again while still open,
+   checks the latest row, then sends the CEO's sequence (#267); at three
+   quarters the sequence runs again (#266);
 4. the numbers against the budgets below. Exit 1 when one is over, with the
    table of what was measured (and DIR/summary.json, DIR/summary.md).
 
@@ -76,7 +77,7 @@ EXTERNAL = ("/api/update-check",)
 # Long by nature: a terminal's stream, an agent's tool call, a long poll.
 NOT_TIMED = {"/api/pty/stream", "/mcp", "/api/events"}
 # The replay's own controls (perf_hub), not the page's.
-NOT_TIMED |= {"/__replay/rotate", "/__replay/written"}
+NOT_TIMED |= {"/__replay/rotate", "/__replay/written", "/__replay/report"}
 
 
 def pct(xs, q):
@@ -255,6 +256,10 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
             fails.append(f"the board did not show this chat again after a link into another room at {s['at']} s")
         if s.get("do") == "active" and not s.get("ok"):
             fails.append(f"this chat was not the one on screen after a step at {s['at']} s ({s.get('why') or ''})")
+        if s.get("do") == "overnight" and (not s.get("payload") or not s.get("drawn")):
+            fails.append("overnight report reached the channel but was not drawn")
+        if s.get("do") == "repair-probe" and (not s.get("removed") or not s.get("drawn") or s.get("count", 0) < 1):
+            fails.append("latest mid missing from the view was not repaired and counted")
     fails += coverage(steps, budgets)
     worst_lag = max((x["ms"] for x in lag), default=0)
     if worst_lag > budgets["lag_ms"]:
@@ -262,6 +267,8 @@ def analyse(out: Path, minutes: float, budgets=BUDGETS) -> dict:
     summary = {"minutes": minutes, "requests": len(hub), "pageRequests": len(page), "endpoints": rows,
                "sends": sends, "links": links, "sequences": [s for s in steps if s.get("do") == "sequence"], "threads": threads,
                "opens": [s for s in steps if s.get("do") == "open"],
+               "overnight": next((s for s in steps if s.get("do") == "overnight"), None),
+               "repairProbe": next((s for s in steps if s.get("do") == "repair-probe"), None),
                "lag": {"max": worst_lag, "p99": pct([x["ms"] for x in lag], .99), "over100": sum(1 for x in lag if x["ms"] > 100)},
                "budgets": budgets, "notAvailable": not_available(steps), "fails": fails}
     (out / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
@@ -298,6 +305,10 @@ def coverage(steps: list[dict], budgets=BUDGETS) -> list[str]:
         need.append("no PO rotation")
     if not any(s.get("do") == "sequence" for s in steps):
         need.append("no CEO sequence after a rotation")
+    if not any(s.get("do") == "overnight" for s in steps):
+        need.append("no long idle with reports and a PO rotation while the page stayed open")
+    if not any(s.get("do") == "repair-probe" for s in steps):
+        need.append("no latest-mid repair probe")
     return ["coverage: " + x for x in need]
 
 
@@ -327,6 +338,8 @@ def markdown(s: dict) -> str:
           "Sequences after a rotation (ms: shown / answer shown after written; gone = left the chat): "
           + "; ".join(", ".join(f"{x.get('shownMs')}/{x.get('answerMs', '-')}{' gone' if x.get('gone') else ''}"
                                 for x in q.get("sends") or []) for q in s.get("sequences", [])),
+          f"Overnight: {s.get('overnight')}",
+          f"Repair probe: {s.get('repairProbe')}",
           f"Opens (s to the chat drawn): " + ", ".join(str(x.get('s')) for x in s["opens"]),
           f"Interpreter held at once: max {s['lag']['max']} ms, p99 {s['lag']['p99']} ms, {s['lag']['over100']} s over 100 ms",
           "", "Over budget:" if s["fails"] else "Within every budget."]
