@@ -349,11 +349,15 @@ const changed = { ...same, 'session.html': 'aab' };
     ['held', q => q.document.fire('pointerdown'), q => q.document.fire('pointerup')],
     ['drag', q => q.document.fire('dragstart'), q => q.document.fire('dragend')],
   ]) {
-    p = fakePage(); p.onDisk = changed; hold(p); now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p);
+    p = fakePage(); p.onDisk = changed; hold(p); now += 30_000; p.ensUpd.lastInput = now - (name === 'selection' ? 1000 : 100_000); await tick(p);
     const heldR = p.location.reloads, line = !!p.ensUpd.line;
     free(p); p.ensUpd.lastInput = now - 100_000; p.ensUpd.maybe();
     out[name] = { heldR, line, freed: p.location.reloads };
   }
+  p = fakePage(); p.onDisk = changed;
+  p.selection = { isCollapsed: false, toString: () => 'words' };
+  now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p);
+  out.staleSelection = p.location.reloads;
 
   // The line's click reloads at once, text in hand or not.
   p = fakePage(); p.onDisk = changed; p.ensUpdBusy = () => true; now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p);
@@ -503,6 +507,7 @@ class Rules(unittest.TestCase):
     def test_a_selection_a_dialog_a_held_pointer_or_a_drag_holds_it(self):
         for k in ("selection", "dialog", "held", "drag"):
             self.assertEqual(self.got[k], {"heldR": 0, "line": True, "freed": 1}, k)
+        self.assertEqual(self.got["staleSelection"], 1, "an old selection cannot pin stale page code overnight")
 
     def test_the_line_click_reloads_at_once(self):
         self.assertEqual(self.got["click"], 1)

@@ -2901,7 +2901,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
   const busy = () => {
     if (holdingText() || held) return true;
     if (document.querySelector('dialog[open]')) return true;
-    try { const sel = getSelection(); if (sel && !sel.isCollapsed && sel.toString().trim()) return true; } catch (e) {}
+    try { const sel = getSelection(); if (idleFor() < IDLE_MS && sel && !sel.isCollapsed && sel.toString().trim()) return true; } catch (e) {}
     return frames().some(u => u.busy());
   };
   const idleFor = () => Math.min(Date.now() - S.lastInput, ...frames().map(u => u.idleFor()));

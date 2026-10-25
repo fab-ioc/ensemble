@@ -1121,7 +1121,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
     # A reply also in the chat names its thread ("replied to a thread: …").
     tids |= {t for m in shown if m in idx["also"] for t in idx["of"].get(m) or []}
     sig = _sig_text(idx) + (":topic:" + ",".join(sorted(topic_tids)) if topic_tids is not None else "")
-    out = {"sig": sig, "progress": progress.snapshot().get("thread:" + room_id),
+    out = {"sig": sig, "latestMid": ch[-1] if ch else "",
+           "progress": progress.snapshot().get("thread:" + room_id),
            "items": [_turn(idx, m) for m in shown],
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
            "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
@@ -1174,6 +1175,7 @@ def _quick_channel(room_id: str, room: dict, n: int) -> dict:
     items.reverse()
     start = len(shown) - len(items)
     return {"sig": "quick:" + str(len(shown)), "quick": True,
+            "latestMid": shown[-1][0] if shown else "",
             "progress": progress.snapshot().get("thread:" + room_id),
             "items": items, "threads": {}, "sendMids": [],
             "before": start, "n": len(shown) - start, "balloons": len(shown), "channel": len(shown),
@@ -1204,13 +1206,15 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
         meta = {"id": tid, "root": r["mid"], "title": _words(r["turn"].get("text") or "") or "Thread",
                 "points": [], "task": "", "replies": 0, "who": [], "lastAt": r["ts"], "lastWho": "",
                 "unread": 0, "state": "", "new": True}
-        return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+        return {"sig": _sig_text(idx), "latestMid": r["mid"],
+                "progress": progress.snapshot().get("thread:" + room_id),
                 "thread": meta, "items": [_turn(idx, r["mid"], tid)], "before": 0}
     if th is None:
         return {"error": "no_such_thread"}
     members = [m for m in th["members"] if m in idx["by_mid"]]
     start, end = _span(idx, members, n, upto, before, frm, after, to) if n else (0, len(members))
-    return {"sig": _sig_text(idx), "progress": progress.snapshot().get("thread:" + room_id),
+    return {"sig": _sig_text(idx), "latestMid": members[-1] if members else "",
+            "progress": progress.snapshot().get("thread:" + room_id),
             "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],
             "before": start, "after": len(members) - end}
 

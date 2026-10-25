@@ -236,6 +236,16 @@ class PoChatRotationSequence(unittest.TestCase):
             if h.path == "/__test/rotate":
                 cls._rotate()
                 return h._send_json(200, {"ok": True})
+            if h.path == "/__test/report":
+                cls.report_n = getattr(cls, "report_n", 0) + 1
+                n = cls.report_n
+                cls._append(cls.current, _turn(cls.current, "user", f"[report] Overnight report {n} from task #12.", time.time()))
+                cls._append(cls.current, _turn(cls.current, "assistant", f"Overnight report {n} received.", time.time() + .01))
+                return h._send_json(200, {"ok": True})
+            if h.path == "/__test/notice":
+                msg = chatroom.post_notice(cls.room, "Ensemble", "Follow-up hub notice after the report.",
+                                           {"noticeKind": "restart"})
+                return h._send_json(200, {"id": msg["id"]})
             if h.path == "/__test/written":
                 return h._send_json(200, dict(cls.written))
             if h.path == "/__test/slow":

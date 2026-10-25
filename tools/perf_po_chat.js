@@ -6,8 +6,9 @@
 // fixed script (the same `seed`, the same session): scrolls the chat up and
 // back, opens a point chip's card and follows its links, sends a message,
 // opens a thread, and reloads the page once at the middle. At a quarter the
-// PO rotates and the CEO's sequence of 10-24 is sent (#266), and again at
-// three quarters, on the page reloaded since. Every request the
+// PO rotates while the page sits idle with reports arriving, then the CEO's
+// sequence of 10-24 is sent (#266), and again at three quarters, on the page
+// reloaded since. Every request the
 // page makes is written to out/page.jsonl; every step and what it led to
 // (where a link landed, how long a send took) to out/steps.jsonl.
 const {spawn} = require('child_process');
@@ -397,7 +398,48 @@ async function main() {
 
   await open();
   const minutes = A.minutes || 30, end = T0 + minutes * 60000;
-  let n = 0, reloaded = false, rotated = false, again = false;
+  // An evening session writes a report, then the page sits untouched through
+  // an idle interval. A second rotation and report happen in that same page.
+  // Leave selected chat text in place, as a reader can do before walking away.
+  await rotate();
+  await replay('report');
+  await sleep(5000);
+  await inChat(`const n = document.querySelector('#msgs .msg .text.md');
+    if (!n) return false; const r = document.createRange(); r.selectNodeContents(n);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r); return true;`);
+  const idleMs = Math.min(10 * 60000, Math.max(60000, minutes * 20000));
+  await sleep(idleMs);
+  await rotate();
+  const overnightReport = await replay('report');
+  await sleep(7500);
+  const overnightView = await inChat(`const mid = THR_VIEW?.latestMid || THR_VIEW?.items?.at(-1)?.mid || '';
+    const box = document.getElementById('msgs');
+    return {mid, held: DRAW_HELD, drawn: typeof thrMidDrawn === 'function'
+      ? thrMidDrawn(mid) : !!box && [...box.querySelectorAll('[data-mid]')].some(e => e.dataset.mid === mid),
+      payload: THR_VIEW?.items?.some(t => JSON.stringify(t).includes('Overnight report ${overnightReport.n}')) || false};`);
+  step({do:'overnight', idleMs, rotation: true, report: overnightReport.n, ...overnightView});
+  const probe = await inChat(`const mid = THR_VIEW?.latestMid || THR_VIEW?.items?.at(-1)?.mid || '';
+    const box = document.getElementById('msgs'), key = GAP_OF_MID.get(mid) || GROUP_OF_MID.get(mid);
+    const row = [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid)
+      || [...box.querySelectorAll('.msg-fold[data-group]')].find(e => e.dataset.group === key);
+    if (row) row.remove(); return {mid, removed: !!row};`);
+  if (probe?.removed) {
+    // Drive the repair path explicitly for this probe. The normal room poll
+    // can redraw a deleted row before the timed guard fires on a busy replay.
+    await inChat(`thrWatch(${JSON.stringify(probe.mid)}); return thrRepair();`);
+    await sleep(6500);
+    probe.state = await inChat(`const mid = ${JSON.stringify(probe.mid)};
+      return { drawn: typeof thrMidDrawn === 'function' && thrMidDrawn(mid),
+        latest: typeof THR_LATEST_MID === 'undefined' ? '' : THR_LATEST_MID,
+        missing: typeof THR_MISSING === 'undefined' ? null : THR_MISSING,
+        timer: typeof THR_REPAIR_TIMER === 'undefined' ? 0 : THR_REPAIR_TIMER,
+        fetching: THR_FETCHING, after: THR_AFTER, list: THR_LIST, goto: GOTO };`);
+    probe.drawn = probe.state?.drawn || false;
+  }
+  probe.count = (await fetch(A.base + '/api/health').then(r => r.json())).chatRepairs || 0;
+  step({do:'repair-probe', ...probe});
+  await sequence();
+  let n = 0, reloaded = false, rotated = true, again = false;
   // The script: every 20 s one step, in a fixed rotation.
   const plan = ['point', 'scroll', 'point', 'send', 'point', 'thread'];
   while (Date.now() < end) {
