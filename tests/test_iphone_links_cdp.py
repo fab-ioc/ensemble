@@ -71,6 +71,9 @@ class IPhoneLinks(Hub):
                                                           {"label": "Later", "detail": "", "recommended": False}]}],
                              "askAudience": "user"} if m["id"] == card["id"] else m for m in full["messages"]]
         chatroom.update_room(full)
+        # Keep the linked card outside the room's initial 50-message window.
+        for n in range(55):
+            chatroom.post_message(room, "claude", f"Later room message {n}.", to="user")
         threads._ensure_since(room, t0 - 60)
         server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         server.daemon_threads = True
@@ -96,6 +99,17 @@ class IPhoneLinks(Hub):
         p = mock.patch.object(threads, "mark_seen", return_value=False)
         p.start(); self.addCleanup(p.stop)
         self.addCleanup(points._CACHE.clear)
+        def add_during_press():
+            for width in (440, 390, 1728):
+                signal = base / f"poll-signal-{width}"
+                deadline = time.monotonic() + 240
+                while not signal.exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                if not signal.exists():
+                    return
+                chatroom.post_message(room, "claude", f"Polling update during touch {width}.", to="user")
+                (base / f"poll-done-{width}").write_text("ready", encoding="utf-8")
+        threading.Thread(target=add_during_press, daemon=True).start()
         args = {**chrome_profile.node_args(), "tmp": str(base), "base": base_url, "room": room,
                 "task": task, "source": source_id, "card": card["id"], "status": status_id,
                 "pointStatus": point_status_id}
@@ -108,8 +122,9 @@ class IPhoneLinks(Hub):
             with self.subTest(size=row["size"]):
                 self.assertTrue(row["coarse"] == (row["size"][0] < 700), row)
                 for name in ("pointCard", "pointTarget", "referenceTarget", "thread", "threadList", "threadRow", "replyButton",
-                             "taskCard", "redrawCard", "taskOpen"):
+                             "taskCard", "redrawCard", "pollApplied", "taskOpen"):
                     self.assertTrue(row[name], f"{name}: {row}")
+                self.assertTrue(row["referenceWasOlder"], row)
                 if row["coarse"]:
                     for name in ("pointSize", "referenceSize", "replySize", "taskSize"):
                         self.assertGreaterEqual(min(row[name]), 44, f"{name}: {row}")

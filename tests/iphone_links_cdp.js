@@ -53,7 +53,14 @@ async function main() {
       async function tap(selector,redraw=false) {
         const p=await where(selector);await press(p);
         let held=false;
-        if(redraw){await ev('renderBubbles(LAST_ITEMS || []);0');held=await ev('DRAW_HELD');}
+        if(redraw){
+          fs.writeFileSync(path.join(A.tmp,'poll-signal-'+width),'go');
+          const deadline=Date.now()+10000;
+          while(!fs.existsSync(path.join(A.tmp,'poll-done-'+width))&&Date.now()<deadline)await sleep(50);
+          if(!fs.existsSync(path.join(A.tmp,'poll-done-'+width)))throw Error('Polling update was not posted');
+          await ev('refresh()');
+          held=await ev('!!PG.later');
+        }
         await sleep(60);await release(p);await sleep(180);return{p,held};
       }
       await send('Page.navigate',{url:A.base+'/session?room='+A.room});
@@ -63,16 +70,18 @@ async function main() {
       await sleep(500);
       if(coarse)await ev(`document.addEventListener('touchend',e=>e.preventDefault(),{capture:true,passive:false});0`);
       const o={size:[width,height],coarse:await ev("matchMedia('(pointer: coarse)').matches")};
+      o.referenceDebug=await ev(`({total:ROOM_OBJ.messages?.length, hasCard:ROOM_OBJ.messages?.some(m=>m.id===${JSON.stringify(A.card)}), window:ROOM_OBJ.window, hasOlder:roomHasOlder()})`);
+      o.referenceWasOlder=!o.referenceDebug.hasCard && o.referenceDebug.hasOlder;
+      const referenceTap=await tap(status+' .ref-chip');
+      o.referenceSize=[referenceTap.p.w,referenceTap.p.h];
+      await until(`LANDED && LANDED.mid === ${JSON.stringify(A.card)}`);
+      o.referenceTarget=await pointVisible(A.card,'ask:0');
       const pointTap=await tap(pointStatus+' .point-chip');
       o.pointSize=[pointTap.p.w,pointTap.p.h];
       o.pointCard=await visible('.task-card .tc-title');
       await tap('.task-card .tc-title');
       await until(`LANDED && LANDED.mid === ${JSON.stringify(A.source)}`);
       o.pointTarget=await pointVisible(A.source,'');
-      const referenceTap=await tap(status+' .ref-chip');
-      o.referenceSize=[referenceTap.p.w,referenceTap.p.h];
-      await until(`LANDED && LANDED.mid === ${JSON.stringify(A.card)}`);
-      o.referenceTarget=await pointVisible(A.card,'ask:0');
       if(coarse){await tap('.phone-compose-tools > summary');await tap('[data-phone-action="threads-view"]');}
       else await tap('#threads-view');
       await until(`document.querySelector('#threads-view').getAttribute('aria-pressed')==='true' && !!document.querySelector('#msgs .thr-card.thr-open')`);
@@ -101,6 +110,8 @@ async function main() {
       const redraw=await tap(status+' .task-chip:not(.point-chip)',true);
       o.drawHeld=redraw.held;
       o.redrawCard=await visible('.task-card .tc-title');
+      await until(`(ROOM_OBJ.messages || []).some(m=>m.text.includes('Polling update during touch ${width}.'))`);
+      o.pollApplied=true;
       await tap('.task-card .tc-title');
       await until(`typeof ROOM==='string' && ROOM===${JSON.stringify(A.task)} && !!document.querySelector('#msgs')`);
       o.taskOpen=await visible('#msgs');

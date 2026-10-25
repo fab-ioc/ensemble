@@ -1402,6 +1402,8 @@
     /* Nothing needs hover: Copy link always shows. Chips have full finger targets. */
     .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path: none; }
     .msg .text.md a.ref-chip, a.ref-chip { position: relative; overflow: visible; min-height:var(--touch-min); align-items:center; touch-action:manipulation; }
+    .msg .text.md a:is(.task-title-ref, .msg-link, .pm-link, .card-jump, [data-point]),
+    #cmt-tray a.sup-link { display:inline-flex; align-items:center; min-height:var(--touch-min); max-width:100%; vertical-align:middle; }
     a.card-jump, a.msg-link, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link { touch-action:manipulation; }
     a.ref-chip .ref-prev { max-width: 40vw; }
     /* A phone zooms into any field under 16px and stays zoomed. The ids and
@@ -1411,14 +1413,11 @@
     .msg .text.md pre.cb[data-lang]::before, .adot { font-size: var(--fs-100); }
     #to-latest { height: auto; padding: 0 var(--s-400); }
     #msgs > .catchup .cu-read { height: auto; }
-    #msgs > .catchup .cu-link { position: relative; }
-    #msgs > .catchup .cu-link::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    #msgs > .catchup .cu-link { display:inline-flex; align-items:center; min-height:var(--touch-min); }
     #ask-line { min-height: var(--touch-min, 44px); }
-    #ask-line .ask-link { position: relative; }
-    #ask-line .ask-link::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    #ask-line .ask-link { min-height:var(--touch-min); }
     #points-line .pt-sum, .pt-btn { min-height: var(--touch-min, 44px); }
-    a.pt-link { position: relative; }
-    a.pt-link::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    a.pt-link { display:inline-flex; align-items:center; min-height:var(--touch-min); }
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
   }
@@ -5602,7 +5601,6 @@ function landPending() {
     if (!el && typeof THREADED !== 'undefined' && THREADED && !THREAD_MODE && THR_DRAWN) {
       // Not drawn in the channel after all (#234): in its thread beside it.
       const passage = GOTO_PART;
-      GOTO = ''; GOTO_PART = '';
       // A room message (its id has no "<session>:"), not a transcript's
       // balloon, is in no thread: one filed as the CEO's that no transcript
       // holds (a script posted it, #265) is said so, never an empty thread.
@@ -5614,9 +5612,11 @@ function landPending() {
           });
           return;
         }
+        GOTO = ''; GOTO_PART = '';
         showGotoNote('The linked message is not shown in this chat.');
         return;
       }
+      GOTO = ''; GOTO_PART = '';
       openThread('', mid, passage);
       return;
     }
