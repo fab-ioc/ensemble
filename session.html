@@ -1370,8 +1370,7 @@
     /* The reactions take a row of their own under Comment and Copy, spread across it. */
     .sel-bar .sel-reacts { order: 3; flex-basis: 100%; justify-content: space-between; gap: 0; }
     .sel-bar .sel-react { padding: 0; min-width: var(--touch-min); }
-    .react-chip { position: relative; }
-    .react-chip::after { content: ''; position: absolute; inset: -12px -4px; }
+    a.react-chip { min-width:var(--touch-min); min-height:var(--touch-min); height:auto; justify-content:center; box-sizing:border-box; touch-action:manipulation; }
     /* While you type, the header and info bar step aside: a landscape phone
        with its keyboard up leaves about 200px, and Send ended 1px under the
        keyboard at 300px with them showing. */

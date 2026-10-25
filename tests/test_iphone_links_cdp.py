@@ -128,6 +128,12 @@ class IPhoneLinks(Hub):
                 if row["coarse"]:
                     for name in ("pointSize", "referenceSize", "replySize", "taskSize"):
                         self.assertGreaterEqual(min(row[name]), 44, f"{name}: {row}")
+                    self.assertEqual(len(row["reactionTargets"]), 2, row)
+                    for target in row["reactionTargets"]:
+                        self.assertGreaterEqual(min(target["w"], target["h"]), 44, row)
+                        self.assertTrue(target["hit"], row)
+                        self.assertGreaterEqual(target["gap"], 0, row)
+                        self.assertEqual(target["pseudo"], "none", row)
                     self.assertTrue(row["drawHeld"], row)
 
 

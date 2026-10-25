@@ -102,6 +102,15 @@ async function main() {
       await until(`!document.querySelector('#thr-side').hidden && !!document.querySelector('#ts-frame').contentDocument?.querySelector('#msgs .msg')`);
       o.replyButton=await visible('#thr-side');
       await tap(coarse?'#ts-back':'#ts-close');
+      o.reactionTargets=await ev(`(() => {
+        const m=document.querySelector(${JSON.stringify(status)}), rs=SelBar.REACTIONS.slice(0,2);
+        const by=new Map([['reaction-check',rs.map(r=>({r,mid:${JSON.stringify(A.source)},quote:'test'}))]]);
+        m.insertAdjacentHTML('beforeend',reactRowHtml({id:'reaction-check'},by));
+        const links=[...m.querySelectorAll('.react-row a.react-chip')];
+        links[0]?.scrollIntoView({block:'center'});
+        const rects=links.map(a=>a.getBoundingClientRect());
+        return links.map((a,i)=>{const r=rects[i],x=r.left+r.width/2,y=r.top+r.height/2,h=document.elementFromPoint(x,y);return{w:r.width,h:r.height,hit:h===a||a.contains(h),gap:i?Math.max(r.left-rects[i-1].right,r.top-rects[i-1].bottom):0,pseudo:getComputedStyle(a,'::after').content};});
+      })()`);
       const taskTap=await tap(status+' .task-chip:not(.point-chip)');
       o.taskSize=[taskTap.p.w,taskTap.p.h];
       o.taskCard=await visible('.task-card .tc-title');
