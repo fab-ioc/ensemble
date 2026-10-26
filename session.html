@@ -6482,6 +6482,7 @@ async function renderSolo(sid, agentId, force) {
 // new replies.
 let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
 let TS = null;             // the thread open beside the channel: {tid, mid}
+let TS_AUTO = false;       // opened by reply catch-up, not by the reader
 let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
 let THR_ASKED = '';         // the link's balloon the channel was last asked to reach (&upto=)
@@ -6600,7 +6601,8 @@ function thrWatchedReplies(d) {
     THR_INLINE_TURNS.set(r.mid, r);
     if (THR_INLINE_TURNS.size > 100) THR_INLINE_TURNS.delete(THR_INLINE_TURNS.keys().next().value);
   }
-  if (pending.length > 1 && TS_NARROW.matches && TS) sideClose();
+  if (!thrNewestView()) return;
+  if (pending.length > 1 && TS_NARROW.matches && TS && TS_AUTO) sideClose();
   if (THR_VIEW && [...THR_INLINE_TURNS.keys()].some(mid => !thrMidDrawn(mid))) {
     // Several answers can land in one poll. Their full turns are copied into
     // the channel, so one side pane cannot replace another before it loads.
@@ -6611,17 +6613,18 @@ function thrWatchedReplies(d) {
   for (const reply of pending) {
     if (!RECENT_SENDS.has(reply.send) || THR_AUTO_OPENED.has(reply.mid)) continue;
     if (THR_INLINE_TURNS.has(reply.mid)) {
-      if (!thrMidDrawn(reply.mid)) continue; // retry on the next poll
+      if (!thrMidDrawn(reply.mid) || (TS_NARROW.matches && TS)) continue; // wait until exposed
       THR_AUTO_OPENED.add(reply.mid);
       chatCatchup('thread-reply', reply.mid);
-    } else if (!TS || TS.tid !== reply.thread) {
+    } else if (!TS || (TS_AUTO && TS.tid !== reply.thread)) {
       THR_AUTO_OPENED.add(reply.mid);
-      sideOpen({ tid: reply.thread, msg: reply.mid });
+      sideOpen({ tid: reply.thread, msg: reply.mid, auto: true });
       chatCatchup('thread-reply', reply.mid);
     }
     if (THR_AUTO_OPENED.size > 100) THR_AUTO_OPENED.delete(THR_AUTO_OPENED.values().next().value);
   }
 }
+function thrNewestView() { return !TOPIC_FILTER && !GOTO && !THR_AFTER && !THR_LIST; }
 function thrAnyWatch(d) {
   thrWatchedReplies(d);
   if (THREAD_MODE || !THR_DRAWN || !d?.latestAnyMid) return;
@@ -6864,7 +6867,7 @@ function thrDraw(roomTs, d = THR_VIEW) {
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     if (!THREAD_MODE) {
       items = withHubRows(items, ROOM_OBJ, THR_HUB);
-      if (THR_INLINE_TURNS.size) {
+      if (THR_INLINE_TURNS.size && thrNewestView()) {
         const held = new Set(items.map(m => m.id));
         for (const r of THR_INLINE_TURNS.values()) if (r.turn && !held.has(r.mid)) {
           const turn = soloItems([r.turn], 's', SOLO_AGENT, 1)[0];
@@ -7061,6 +7064,7 @@ function sideOpen(o) {
   // The same thread open already, by its id or by the balloon it starts on.
   const same = !!TS && (o.tid ? TS.tid === o.tid : !TS.tid && !!o.mid && TS.mid === o.mid);
   TS = { tid: o.tid || '', mid: o.tid ? '' : o.mid };
+  TS_AUTO = !!o.auto;
   try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (e) {}
   const u = '/session?id=' + encodeURIComponent(ROOM) + '&embed=1&side=1'
     + (TS.tid ? '&thread=' + encodeURIComponent(TS.tid) : '&thread=&tmid=' + encodeURIComponent(TS.mid))
@@ -7100,10 +7104,12 @@ function sidePanel(o, title) {
 function sideClose() {
   const side = $('#thr-side'), f = $('#ts-frame');
   TS = null;
+  TS_AUTO = false;
   try { localStorage.removeItem(TS_KEY); } catch (e) {}
   if (side) side.hidden = true;
   if (f) f.setAttribute('src', 'about:blank');
   sideMark();
+  if (THR_INLINE_TURNS.size) setTimeout(() => thrWatchedReplies(THR_VIEW), 0);
 }
 function sideRestore() {
   let o = null;
@@ -9080,6 +9086,7 @@ window.addEventListener('message', (e) => {
   // has its id now.
   else if (d.ensemble === 'thread-closed' && e.source === window.parent && !THREAD_MODE) {
     TS = null;
+    TS_AUTO = false;
     try { localStorage.removeItem(TS_KEY); } catch (err) {}
     sideMark();
   }
@@ -9088,10 +9095,11 @@ window.addEventListener('message', (e) => {
     let o = null;
     try { o = JSON.parse(localStorage.getItem(TS_KEY) || 'null'); } catch (err) {}
     TS = null;
+    TS_AUTO = false;
     if (o && (o.tid || o.mid)) sideOpen({ tid: o.tid || '', mid: o.mid || '', restore: true }); else sideClose();
   }
   else if (d.ensemble === 'thread-is' && e.source === window.parent && !THREAD_MODE && d.thread) {
-    if (TS && TS.tid !== d.thread) { TS = { tid: String(d.thread), mid: '' }; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
+    if (TS && TS.tid !== d.thread) { TS = { tid: String(d.thread), mid: '' }; TS_AUTO = false; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
   }
 });
 // Inside the dashboard, say this chat has started: a balloon link opened while

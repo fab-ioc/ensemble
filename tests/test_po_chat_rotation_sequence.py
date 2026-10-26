@@ -208,6 +208,12 @@ async function main() {
       shown:[...document.querySelectorAll('#msgs .msg[data-mid]')]
         .filter(e=>/BATCH|answer BATCH/.test(e.textContent)).map(e=>e.textContent.slice(0,90)),
       open:TS?.tid || ''})`);
+    const batchSig = await evalIn(`THR_SIG`);
+    await hub('/__test/report', {});
+    out.batchAfterChange = await until(`THR_SIG !== ${JSON.stringify(batchSig)} &&
+      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`, 8000)
+      .then(() => true).catch(() => false);
     // Long enough for a confirmed send to have left the hub's list.
     await sleep(A.holdMs);
     sampling = false;
@@ -217,12 +223,21 @@ async function main() {
     const newestAfterOrdinary = await hub('/api/room/channel?id=' + A.room + '&n=40');
     out.ordinaryExcluded = newestAfterOrdinary.latestAnyMid !== ordinary.id;
     // New activity elsewhere must leave an intentionally selected view alone.
+    await evalIn(`sideOpen({tid:'P1'}); true`);
+    await until(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`, 4000);
+    const batchMids = await evalIn(`[...THR_INLINE_TURNS.keys()]`);
     await evalIn(`TOPIC_FILTER = {id:'nonexistent-topic', name:'A selected topic'};
       showTopicFilter(); thrRestart(); renderThreaded(true); true`);
-    await until(`TOPIC_FILTER?.id === 'nonexistent-topic' && THR_DRAWN`, 8000);
+    await until(`TOPIC_FILTER?.id === 'nonexistent-topic' && !THR_FETCHING && THR_DRAWN`, 8000);
+    await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.delete(m);
+      thrWatchedReplies(THR_VIEW); true`);
     await hub('/__test/report', {});
     await sleep(4500);
     out.topicPreserved = await evalIn(`TOPIC_FILTER?.id === 'nonexistent-topic'`);
+    out.topicContentIsolated = await evalIn(`!document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`);
+    out.topicSideKept = await evalIn(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`);
+    await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.add(m); true`);
     await evalIn(`TOPIC_FILTER = null; showTopicFilter(); thrRestart(); renderThreaded(true); true`);
     await until(`!THR_FETCHING && THR_DRAWN && THR_AFTER === 0 && document.querySelectorAll('#msgs .msg[data-mid]').length > 0`, 8000);
     const newest = await hub('/api/room/channel?id=' + A.room + '&n=40');
@@ -232,6 +247,8 @@ async function main() {
     await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]')`, 10000)
       .catch(async () => { out.windowDebug = await evalIn(`({after:THR_AFTER,goto:GOTO,mid:${JSON.stringify(oldMid)},fetching:THR_FETCHING,
         shown:document.querySelectorAll('#msgs .msg[data-mid]').length,topic:TOPIC_FILTER})`); });
+    await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.delete(m);
+      thrWatchedReplies(THR_VIEW); true`);
     await hub('/__test/report', {});
     out.windowPreserved = await evalIn(`(async () => { const draw = renderThreaded;
       renderThreaded = () => Promise.resolve(); clearTimeout(THR_ANY_TIMER); THR_ANY_TIMER = 0; THR_ANY_MISSING = null;
@@ -239,6 +256,9 @@ async function main() {
         await new Promise(r => setTimeout(r, 3700));
         return THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]'); }
       finally { renderThreaded = draw; } })()`);
+    out.windowContentIsolated = await evalIn(`!document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`);
+    out.windowSideKept = await evalIn(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`);
     // A task conversation uses the same session page in a pop-out and Dock.
     await c.send('Page.navigate', { url: A.base + '/session?room=' + A.task }, sessionId);
     await until(`document.querySelector('#msgs')?.textContent.includes('TASK SEED')`, 12000);
@@ -293,6 +313,35 @@ async function main() {
       out.dockedPoAnswer = await until(`document.querySelector('.pd-thread iframe')?.contentWindow
         ?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer 1.')`, 12000)
         .then(() => true).catch(() => false);
+      const dockSend = async words => evalIn(`(() => { const d = document.querySelector('iframe.po-session').contentWindow.document;
+        const i = d.querySelector('#input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input'));
+        d.querySelector('#send').click(); return true; })()`);
+      await hub('/__test/hold-channel', {});
+      await sleep(2500);
+      await dockSend('DOCKA First pending dock reply');
+      await until(`!document.querySelector('iframe.po-session').contentWindow.document.querySelector('#send').disabled`, 5000);
+      await dockSend('DOCKB Second pending dock reply');
+      await until(`!document.querySelector('iframe.po-session').contentWindow.document.querySelector('#send').disabled`, 5000);
+      const dockStart = Date.now();
+      while (Date.now() - dockStart < 10000) {
+        const written = await hub('/__test/written', {});
+        if (written['ANS-DOCKA'] && written['ANS-DOCKB']) break;
+        await sleep(100);
+      }
+      await sleep(1200);
+      await hub('/__test/report', {});
+      await hub('/__test/release-channel', {});
+      out.dockBatchBoth = await until(`document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
+        document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`, 8000)
+        .then(() => true).catch(() => false);
+      await hub('/__test/report', {});
+      await sleep(3000);
+      out.dockBatchAfterChange = await evalIn(`document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
+        document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`);
     }
     out.catchups = (await hub('/api/health')).chatCatchups || {};
     await c.send('Target.closeTarget', { targetId });
@@ -350,7 +399,7 @@ class PoChatRotationSequence(unittest.TestCase):
                 cls._append(sid, _turn(sid, "user", text, time.time()))
                 tok = next((t for t, _w, _x in SEQUENCE if (t + " ") in text), "")
                 if not tok:
-                    batch = re.search(r"\b(BATCH[AB])\b", text)
+                    batch = re.search(r"\b((?:BATCH|DOCK)[AB])\b", text)
                     tok = batch.group(1) if batch else ""
                 what = next((x for t, _w, x in SEQUENCE if t == tok), "answer")
                 time.sleep(1.2)
@@ -358,7 +407,7 @@ class PoChatRotationSequence(unittest.TestCase):
                     cls._append(sid, _turn(sid, "user", "[Request interrupted by user]", time.time()))
                     return
                 answer = f"Here it is, answer {tok[3:] if tok.startswith('ASK') else tok}."
-                if tok.startswith("BATCH"):
+                if tok.startswith(("BATCH", "DOCK")):
                     led = points.sync(cls.room, force=True)
                     pid = next((p["id"] for p in led["points"] if tok in p.get("text", "")), "")
                     if pid:
@@ -576,13 +625,16 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertTrue(self.got.get("answerMaskedByLaterEvent"), self.got)
         self.assertTrue(self.got.get("openAnswer"), self.got)
         self.assertTrue(self.got.get("mobileAnswer"), self.got)
-        self.assertTrue(self.got.get("batchBoth"), "both same-poll replies must be visible in the channel")
+        self.assertTrue(self.got.get("batchBoth"), f"both same-poll replies must be visible: {self.got.get('batchDebug')}")
         self.assertTrue(self.got.get("batchExposed"), "mobile thread layer hid the replies")
         self.assertEqual(self.got.get("batchThreadCount"), 2, "the replies must be in different threads")
+        self.assertTrue(self.got.get("batchAfterChange"), "inline replies vanished on the next changed poll")
 
     def test_unrelated_activity_preserves_selected_topic_and_link_window(self):
         self.assertTrue(self.got.get("topicPreserved"), self.got)
         self.assertTrue(self.got.get("windowPreserved"), self.got)
+        for key in ("topicContentIsolated", "topicSideKept", "windowContentIsolated", "windowSideKept"):
+            self.assertTrue(self.got.get(key), key)
         self.assertTrue(self.got.get("ordinaryExcluded"), self.got)
 
     def test_task_chat_recovers_after_visibility_timeout_and_stale_key(self):
@@ -594,6 +646,8 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertTrue(self.got.get("dockedTask"), self.got)
         self.assertTrue(self.got.get("dockReady"), self.got)
         self.assertTrue(self.got.get("dockedPoAnswer"), self.got)
+        self.assertTrue(self.got.get("dockBatchBoth"), "both Dock replies must appear in the channel")
+        self.assertTrue(self.got.get("dockBatchAfterChange"), "Dock replies vanished after a changed poll")
         self.assertTrue(self.got.get("taskRepairMid"), self.got)
         self.assertTrue(self.got.get("taskRepaired"), self.got)
         self.assertGreater(self.got.get("catchups", {}).get("thread-reply", 0), 0, self.got)
