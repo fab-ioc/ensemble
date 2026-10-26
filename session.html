@@ -1217,13 +1217,6 @@
   #cmdpanel .cp-type input { flex:1 1 auto; min-width:0; font:inherit; font-size:13px; padding:6px 9px; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--fg); }
   #cmdpanel .cp-hint { font-size:11px; color:var(--dim); margin-top:7px; }  #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
-  #compose[hidden] { display:none; }
-  #compose-target { display:flex; align-items:center; gap:var(--s-100); align-self:flex-start; padding:var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
-  #compose-target[hidden], #thread-reply[hidden] { display:none; }
-  #compose-target button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
-  #compose-target button:focus-visible, #thread-reply:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
-  #thread-reply { align-self:stretch; min-height:var(--touch-min); margin:var(--s-200); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface); color:var(--link); font:inherit; cursor:pointer; }
-  #thread-reply:hover { background:var(--hover); }
   /* The box is a small editor: the words, then numbered points, each a block
      with its own text, images (chips) and balloon links (chips). It never
      grows past half the view: it scrolls within itself. */
@@ -1643,7 +1636,6 @@
       <div id="slashpop" role="listbox" aria-label="Commands" hidden></div>
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
-        <div id="compose-target" hidden><span></span><button type="button" aria-label="Send to main chat" title="Send to main chat">&times;</button></div>
         <div class="ed-head">
           <div id="att-chips" class="att-chips" hidden></div>
           <textarea id="input" placeholder="Message the agents — @codex or @claude to direct it · #18 links a task · Ctrl+Enter sends"></textarea>
@@ -1669,7 +1661,6 @@
       </div>
       <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
     </div>
-    <button type="button" id="thread-reply" hidden>Reply in thread</button>
   </div>
   <!-- A thread beside the chat (#234), or over it on a phone: the thread page in a frame. -->
   <aside id="thr-side" hidden aria-label="Thread">
@@ -6492,41 +6483,6 @@ async function renderSolo(sid, agentId, force) {
 let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
 let TS = null;             // the thread open beside the channel: {tid, mid}
 let TS_AUTO = false;       // opened by reply catch-up, not by the reader
-let SHARED_THREAD = null;  // destination of the channel's one visible box
-const SHARED_CHOICE_KEY = 'cd-compose-target:' + ROOM;
-function sharedComposerChoice() {
-  try { return JSON.parse(sessionStorage.getItem(SHARED_CHOICE_KEY) || 'null'); } catch (e) { return null; }
-}
-function sharedTargetPaint() {
-  const chip = $('#compose-target');
-  if (!chip) return;
-  chip.hidden = THREAD_MODE || !SHARED_THREAD;
-  if (SHARED_THREAD) setText(chip.querySelector('span'), 'In thread: ' + SHARED_THREAD.title);
-  $('#thr-also-l').hidden = THREAD_MODE ? false : !SHARED_THREAD;
-}
-function sharedThreadSelect(target, focus = false) {
-  if (THREAD_MODE || !target?.thread) return;
-  SHARED_THREAD = { thread:String(target.thread), title:String(target.title || 'Thread'), info:target.info || null };
-  try { sessionStorage.setItem(SHARED_CHOICE_KEY, JSON.stringify({thread:SHARED_THREAD.thread, active:true})); } catch (e) {}
-  sharedTargetPaint();
-  if (focus) { sharedComposerResume(); $('#input').focus({ preventScroll:true }); }
-}
-function sharedThreadUpdate(target) {
-  if (SHARED_THREAD?.thread === target.thread) sharedThreadSelect(target, false);
-}
-function sharedThreadClear(closed = false) {
-  const thread = SHARED_THREAD?.thread || TS?.tid || (TS?.mid && 'm:' + TS.mid);
-  SHARED_THREAD = null;
-  $('#thr-also').checked = false;
-  try {
-    if (closed || !thread) sessionStorage.removeItem(SHARED_CHOICE_KEY);
-    else sessionStorage.setItem(SHARED_CHOICE_KEY, JSON.stringify({thread, active:false}));
-  } catch (e) {}
-  sharedTargetPaint();
-}
-$('#compose-target button').addEventListener('click', () => sharedThreadClear());
-// Reading the channel selects it; the box itself retains the explicit chip.
-$('#msgpane').addEventListener('pointerdown', () => { if (!THREAD_MODE) sharedThreadClear(); });
 let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
 let THR_ASKED = '';         // the link's balloon the channel was last asked to reach (&upto=)
@@ -6953,10 +6909,6 @@ function threadHead() {
   $('#thr-back').hidden = !embedHost();
   const t = THR_INFO;
   const title = t ? (t.title || 'Thread') : 'Thread';
-  if (SHARED_PAIRED) {
-    const main = sharedMainFrame();
-    main?.sharedThreadUpdate(sharedThreadTarget());
-  }
   setText($('#title'), title);
   setText($('#tno'), '');
   $('#tno').hidden = true;
@@ -7133,10 +7085,7 @@ function sideOpen(o) {
   if (same && shown) {
     // Open already: land on the balloon there instead of loading it again.
     if (o.msg && f.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {} }
-  } else {
-    try { f.contentWindow?.edStoreNow(); } catch (e) {}
-    f.setAttribute('src', u);
-  }
+  } else f.setAttribute('src', u);
   sideMark();
 }
 // The page framing this chat shows the thread as a Dock panel when it can
@@ -7154,17 +7103,12 @@ function sidePanel(o, title) {
 }
 function sideClose() {
   const side = $('#thr-side'), f = $('#ts-frame');
-  // Back destroys the thread iframe now. Its debounced draft write may still
-  // be pending, so hand the latest editor state to the channel first.
-  try { f?.contentWindow?.edStoreNow(); } catch (e) {}
   TS = null;
   TS_AUTO = false;
   try { localStorage.removeItem(TS_KEY); } catch (e) {}
   if (side) side.hidden = true;
   if (f) f.setAttribute('src', 'about:blank');
   sideMark();
-  sharedThreadClear(true);
-  sharedComposerResume();
   if (THR_INLINE_TURNS.size) setTimeout(() => thrWatchedReplies(THR_VIEW), 0);
 }
 function sideRestore() {
@@ -8387,11 +8331,10 @@ async function sendResuming(text, to, key, attachments, now) {
   // From a thread's box (#210): the hub tells the PO which thread. A thread
   // with no point of its own (a task's, or one started on a balloon) goes
   // with its first message's link, so the PO knows what it answers.
-  const target = THREAD_MODE ? (THREAD || ('m:' + THREAD_MID)) : SHARED_THREAD?.thread;
-  if (THREADED && target) {
-    body.thread = target;
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && THREADED) {
+    body.thread = THREAD || ('m:' + THREAD_MID);
     body.also = !!($('#thr-also') && $('#thr-also').checked);
-    const t = THREAD_MODE ? THR_INFO : SHARED_THREAD?.info;
+    const t = THR_INFO;
     if (t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
   }
   if (attachments && attachments.length) body.attachments = attachments;
@@ -8907,39 +8850,23 @@ function edFromDraft(d) {
 // ---- The editor on the page ----
 let ED = edNew();
 const ED_BOX = new Map();      // a point's id → its images (attBox)
-// Embedded views of one conversation use the same draft. A thread opened in
-// its own tab has its own box and keeps the older per-thread draft key.
 const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search)
-  + (THREAD_MODE && !qs.get('side') ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid')) : '');
+  + (typeof THREAD_MODE !== 'undefined' && THREAD_MODE ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid')) : '');
 let _edSave = 0;
-let COMPOSER_SHARED_ACTIVE = true;
-function edStoreNow() {
-  clearTimeout(_edSave);
-  if (!COMPOSER_SHARED_ACTIVE) return;
-  ED.head = $('#input').value;
-  ED.points.forEach(p => { const ta = edTextOf(p.id); if (ta) p.text = ta.value; });
-  ED.images = ATT.stored();
-  try {
-    const d = edDraft(ED);
-    if (edHas(d)) sessionStorage.setItem(ED_KEY(), JSON.stringify(d));
-    else sessionStorage.removeItem(ED_KEY());
-  } catch (e) {}
-}
 function edSave() {
   clearTimeout(_edSave);
-  if (COMPOSER_SHARED_ACTIVE) _edSave = setTimeout(edStoreNow, 200);
+  _edSave = setTimeout(() => {
+    ED.head = $('#input').value;
+    ED.images = ATT.stored();
+    try {
+      const d = edDraft(ED);
+      if (edHas(d)) sessionStorage.setItem(ED_KEY(), JSON.stringify(d));
+      else sessionStorage.removeItem(ED_KEY());
+    } catch (e) {}
+  }, 200);
 }
 function edLoad() {
-  try {
-    let saved = sessionStorage.getItem(ED_KEY());
-    // Drafts written before the composer was shared lived under the thread id.
-    // Bring one forward when the conversation has no shared draft yet.
-    if (!saved && THREAD_MODE && qs.get('side')) {
-      saved = sessionStorage.getItem('cd-draft:' + ROOM + ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid')));
-      if (saved) sessionStorage.setItem(ED_KEY(), saved);
-    }
-    return edFromDraft(JSON.parse(saved || 'null'));
-  } catch (e) { return edNew(); }
+  try { return edFromDraft(JSON.parse(sessionStorage.getItem(ED_KEY()) || 'null')); } catch (e) { return edNew(); }
 }
 const edLi = id => document.querySelector(`#ed-points > li[data-pt="${id}"]`);
 const edTextOf = id => { const li = edLi(id); return li ? li.querySelector('textarea.ed-text') : null; };
@@ -9114,88 +9041,6 @@ function edStart() {
   edRender(null);
 }
 edStart();
-window.addEventListener('pagehide', edStoreNow);
-function sharedComposerYield(persist = true) {
-  if (!COMPOSER_SHARED_ACTIVE) return;
-  if (persist) edStoreNow(); else clearTimeout(_edSave);
-  COMPOSER_SHARED_ACTIVE = false;
-}
-function sharedComposerResume() {
-  if (COMPOSER_SHARED_ACTIVE) return;
-  clearTimeout(_edSave);
-  // Discard only this frame's stale editor state. The draft is in storage and
-  // the incoming frame has already flushed its text, points and images there.
-  ATT.clear();
-  edBoxes().forEach(b => b.clear());
-  ED_BOX.clear();
-  ED = edNew();
-  COMPOSER_SHARED_ACTIVE = true;
-  edStart();
-}
-function sharedComposerAdoptIfEmpty() {
-  if (edHas({head:$('#input').value, images:ATT.stored(), points:ED.points})) return;
-  try { if (!sessionStorage.getItem(ED_KEY())) return; } catch (e) { return; }
-  sharedComposerYield(false);
-  sharedComposerResume();
-}
-// The side frame and the Dock frame both find their channel in the same
-// window. A hidden tab or a phone's overlaid channel cannot own the box.
-function sharedMainFrame() {
-  if (!THREAD_MODE || !qs.get('side')) return null;
-  try {
-    const host = window.parent;
-    if (host !== window && typeof host.sharedThreadSelect === 'function'
-        && host.document.getElementById('ts-frame') === window.frameElement) return host;
-    const f = host.PD?.els?.['po-chat']?.querySelector('iframe.po-session:not([hidden])');
-    return f?.dataset.room === ROOM ? f.contentWindow : null;
-  } catch (e) { return null; }
-}
-function sharedMainVisible(main) {
-  if (!main) return false;
-  try {
-    if (main === window.parent) {
-      const side = main.document.getElementById('thr-side');
-      return !side || side.hidden || !side.classList.contains('layer');
-    }
-    if (!main.frameElement) return false;
-    const f = main.frameElement, host = f.ownerDocument.defaultView;
-    if (f.hidden || !f.getBoundingClientRect().width || !f.getBoundingClientRect().height) return false;
-    const panel = host.PD?.els?.['po-chat'];
-    return !!panel && !host.document.getElementById('po-panel').hidden
-      && host.PD.dock.frontOf('po-chat') === 'po-chat'
-      && !host.PD.dock.popWindow('po-chat');
-  } catch (e) { return false; }
-}
-function sharedThreadTarget() {
-  return { thread:THREAD || ('m:' + THREAD_MID), title:THR_INFO?.title || 'Thread', info:THR_INFO };
-}
-let SHARED_PAIRED = null;
-function sharedComposerSync() {
-  if (!THREAD_MODE || !qs.get('side')) return;
-  const main = sharedMainFrame(), paired = sharedMainVisible(main);
-  if (paired === SHARED_PAIRED) return;
-  if (paired) {
-    sharedComposerYield(SHARED_PAIRED === false);
-    main.sharedComposerAdoptIfEmpty();
-    main.sharedComposerResume();
-    const target = sharedThreadTarget(), choice = main.sharedComposerChoice();
-    if (choice?.thread !== target.thread || choice.active !== false) main.sharedThreadSelect(target, false);
-  } else {
-    if (main) main.sharedComposerYield();
-    sharedComposerResume();
-  }
-  SHARED_PAIRED = paired;
-  $('#compose').hidden = paired;
-  $('#thread-reply').hidden = !paired;
-}
-if (THREAD_MODE && qs.get('side')) {
-  setInterval(sharedComposerSync, 300);
-  setTimeout(sharedComposerSync, 0);
-  document.addEventListener('pointerdown', e => {
-    if (SHARED_PAIRED && !e.target.closest('#thread-reply')) sharedMainFrame()?.sharedThreadSelect(sharedThreadTarget(), false);
-  }, true);
-  $('#thread-reply').addEventListener('click', () => sharedMainFrame()?.sharedThreadSelect(sharedThreadTarget(), true));
-}
 // ---- The message editor: end -----------------------------------------------
 $('#terms').onclick = () => {
   const hidden = document.body.classList.toggle('term-hidden');
@@ -9244,8 +9089,6 @@ window.addEventListener('message', (e) => {
     TS_AUTO = false;
     try { localStorage.removeItem(TS_KEY); } catch (err) {}
     sideMark();
-    sharedThreadClear(true);
-    sharedComposerResume();
   }
   else if (d.ensemble === 'thread-again' && e.source === window.parent && !THREAD_MODE) {
     // What is kept for this chat (its window may have opened or closed one).

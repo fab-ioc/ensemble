@@ -13811,7 +13811,6 @@ function pdThreadPanel(frameEl, o) {
     } else if (f) {
       // Another chat's thread goes from that chat (it is told, as by its ×).
       if (had.room !== o.room) pdThreadTell(had.room, 'thread-closed');
-      try { f.contentWindow?.edStoreNow(); } catch (e) {}
       f.setAttribute('src', src);
     }
     Object.assign(had, { room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid });
@@ -13878,7 +13877,6 @@ function pdRuntimeRemoved(id) {
   const e = PD.rt.get(id);
   if (!e) return;
   if (e.kind === 'thread') {
-    try { e.el.querySelector('iframe')?.contentWindow?.edStoreNow(); } catch (err) {}
     PD.rt.delete(id); e.el.innerHTML = '';
     if (!PD.thrQuiet) pdThreadTell(e.room, 'thread-closed');
   }
