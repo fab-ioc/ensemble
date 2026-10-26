@@ -7133,7 +7133,10 @@ function sideOpen(o) {
   if (same && shown) {
     // Open already: land on the balloon there instead of loading it again.
     if (o.msg && f.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {} }
-  } else f.setAttribute('src', u);
+  } else {
+    try { f.contentWindow?.edStoreNow(); } catch (e) {}
+    f.setAttribute('src', u);
+  }
   sideMark();
 }
 // The page framing this chat shows the thread as a Dock panel when it can
@@ -7151,6 +7154,9 @@ function sidePanel(o, title) {
 }
 function sideClose() {
   const side = $('#thr-side'), f = $('#ts-frame');
+  // Back destroys the thread iframe now. Its debounced draft write may still
+  // be pending, so hand the latest editor state to the channel first.
+  try { f?.contentWindow?.edStoreNow(); } catch (e) {}
   TS = null;
   TS_AUTO = false;
   try { localStorage.removeItem(TS_KEY); } catch (e) {}
@@ -9108,6 +9114,7 @@ function edStart() {
   edRender(null);
 }
 edStart();
+window.addEventListener('pagehide', edStoreNow);
 function sharedComposerYield(persist = true) {
   if (!COMPOSER_SHARED_ACTIVE) return;
   if (persist) edStoreNow(); else clearTimeout(_edSave);

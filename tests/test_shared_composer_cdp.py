@@ -93,6 +93,11 @@ async function main() {
         thread:!!t?.getElementById('compose')&&getComputedStyle(t.getElementById('compose')).display!=='none',draft:t?.getElementById('input')?.value||'',
         point:t?.querySelector('#ed-points textarea.ed-text')?.value||''}})()`);
     await snap('after-390x844');
+    out.phoneBack=await ev(`(()=>{const d=${PO}.contentDocument,t=d.getElementById('ts-frame').contentDocument;
+      const input=t.getElementById('input');input.value='Changed on phone';input.dispatchEvent(new Event('input',{bubbles:true}));
+      d.getElementById('ts-back').click();return {draft:d.getElementById('input').value,stored:JSON.parse(sessionStorage.getItem('cd-draft:${A.po}')).head}})()`);
+    await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click();0`);
+    await until(`!!${PO}.contentDocument.getElementById('ts-frame')?.contentDocument?.getElementById('input')`,'phone thread reopened');
     await ev(`(()=>{const f=${PO}.contentDocument.getElementById('ts-frame'),w=f.contentWindow;
       w.eval('ATT.keep([{room:${JSON.stringify(A.po)},name:"sample.png"}]);edSave()');return 0})()`);
     await sleep(350);
@@ -100,7 +105,12 @@ async function main() {
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click();0`);
     await until(`!!${THR}?.contentDocument?.getElementById('thread-reply') && !${THR}.contentDocument.getElementById('thread-reply').hidden`,'thread again');
     await ev(`document.getElementById('po-panel').hidden=true;0`); await sleep(550); out.threadAlone=await ev(count);
-    await ev(`document.getElementById('po-panel').hidden=false;0`); await sleep(550); out.returned=await ev(count);
+    await ev(`(()=>{const i=${THR}.contentDocument.getElementById('input');i.value='Changed in hidden Dock thread';i.dispatchEvent(new Event('input',{bubbles:true}));
+      PD.dock.removePanel('thread:po');document.getElementById('po-panel').hidden=false;return 0})()`);
+    await sleep(550); out.closedThread=await ev(count);
+    await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click();0`);
+    await until(`!!${THR}?.contentDocument?.getElementById('thread-reply')`,'thread reopened after close');
+    await sleep(550); out.returned=await ev(count);
     await send('Page.reload',{},s);
     await until(`!!${PO}?.contentDocument?.getElementById('input') && !!${THR}?.contentDocument?.getElementById('thread-reply')`,'reload');
     await sleep(650); out.reload=await ev(count);
@@ -203,8 +213,10 @@ class SharedComposer(unittest.TestCase):
         self.assertTrue(g['replyRoute']['focus'])
         self.assertEqual(g['draft'],'A draft kept through both views')
         self.assertTrue(g['threadAlone']['thread'])
-        self.assertEqual(g['returned']['mainDraft'],'A draft kept through both views')
-        self.assertEqual(g['reload']['mainDraft'],'A draft kept through both views')
+        self.assertEqual(g['phoneBack'],{'draft':'Changed on phone','stored':'Changed on phone'})
+        self.assertEqual(g['closedThread']['mainDraft'],'Changed in hidden Dock thread')
+        self.assertEqual(g['returned']['mainDraft'],'Changed in hidden Dock thread')
+        self.assertEqual(g['reload']['mainDraft'],'Changed in hidden Dock thread')
         self.assertEqual(g['reload']['image'],'sample.png')
         self.assertTrue(g['threadWindow'])
         self.assertFalse(g['mainChoiceReload']['chip'])
