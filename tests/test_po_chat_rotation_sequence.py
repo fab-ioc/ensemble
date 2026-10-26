@@ -126,6 +126,7 @@ async function main() {
       await evalIn(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input')); document.getElementById('send').click(); return 0; })()`);
     };
     for (const [tok, words, what] of A.sequence) {
+      if (tok === 'ASK1') { await hub('/__test/hold-channel', {}); await sleep(2500); }
       if (tok === 'ASK4') {
         // The same second the answer to the one before is written.
         const t0 = Date.now();
@@ -156,6 +157,14 @@ async function main() {
         const t0 = Date.now();
         let at = 0;
         while (Date.now() - t0 < 30000 && !(at = (await hub('/__test/written', {}))['ANS-' + tok])) await sleep(100);
+        if (tok === 'ASK1') {
+          // The answer and then an unrelated event land before one channel
+          // poll can return. A single room-wide latest id hides the answer.
+          await sleep(1200); // transcript fixture uses whole-second timestamps
+          await hub('/__test/report', {});
+          await hub('/__test/release-channel', {});
+          out.answerMaskedByLaterEvent = true;
+        }
         // Time from the answer written to the answer shown.
         const shownBy = Date.now() + 0;
         while (!out.answered[tok] && Date.now() - shownBy < A.replyWithinMs) await sleep(100);
@@ -174,6 +183,32 @@ async function main() {
     sampling = false;
     await sampler;
     out.final = await evalIn(text);
+    const ordinary = await hub('/__test/ordinary', {});
+    const newestAfterOrdinary = await hub('/api/room/channel?id=' + A.room + '&n=40');
+    out.ordinaryExcluded = newestAfterOrdinary.latestAnyMid !== ordinary.id;
+    // New activity elsewhere must leave an intentionally selected view alone.
+    await evalIn(`TOPIC_FILTER = {id:'nonexistent-topic', name:'A selected topic'};
+      showTopicFilter(); thrRestart(); renderThreaded(true); true`);
+    await until(`TOPIC_FILTER?.id === 'nonexistent-topic' && THR_DRAWN`, 8000);
+    await hub('/__test/report', {});
+    await sleep(4500);
+    out.topicPreserved = await evalIn(`TOPIC_FILTER?.id === 'nonexistent-topic'`);
+    await evalIn(`TOPIC_FILTER = null; showTopicFilter(); thrRestart(); renderThreaded(true); true`);
+    await until(`!THR_FETCHING && THR_DRAWN && THR_AFTER === 0 && document.querySelectorAll('#msgs .msg[data-mid]').length > 0`, 8000);
+    const newest = await hub('/api/room/channel?id=' + A.room + '&n=40');
+    const older = await hub('/api/room/channel?id=' + A.room + '&n=100&before=' + encodeURIComponent(newest.items[0].mid));
+    const oldMid = older.items[0].mid;
+    await evalIn(`gotoMsg(${JSON.stringify(oldMid)}); true`);
+    await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]')`, 10000)
+      .catch(async () => { out.windowDebug = await evalIn(`({after:THR_AFTER,goto:GOTO,mid:${JSON.stringify(oldMid)},fetching:THR_FETCHING,
+        shown:document.querySelectorAll('#msgs .msg[data-mid]').length,topic:TOPIC_FILTER})`); });
+    await hub('/__test/report', {});
+    out.windowPreserved = await evalIn(`(async () => { const draw = renderThreaded;
+      renderThreaded = () => Promise.resolve(); clearTimeout(THR_ANY_TIMER); THR_ANY_TIMER = 0; THR_ANY_MISSING = null;
+      try { thrAnyWatch({latestAnyMid:'other-thread:unseen',latestAnyThread:'other-thread',latestAnyRole:'assistant'});
+        await new Promise(r => setTimeout(r, 3700));
+        return THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]'); }
+      finally { renderThreaded = draw; } })()`);
     // A task conversation uses the same session page in a pop-out and Dock.
     await c.send('Page.navigate', { url: A.base + '/session?room=' + A.task }, sessionId);
     await until(`document.querySelector('#msgs')?.textContent.includes('TASK SEED')`, 12000);
@@ -269,6 +304,9 @@ class PoChatRotationSequence(unittest.TestCase):
         cls.stop = threading.Event()
         cls.slow = threading.Event()
         cls.slowing = []     # the &to= polls held now
+        cls.hold_channel = threading.Event()
+        cls.release_channel = threading.Event()
+        cls.release_channel.set()
 
         def resume(h, room, text="", to="", key="", quiet=False):
             # The PO's seat: the send goes into its current conversation, and
@@ -304,10 +342,19 @@ class PoChatRotationSequence(unittest.TestCase):
                 cls._append(cls.current, _turn(cls.current, "user", f"[report] Overnight report {n} from task #12.", time.time()))
                 cls._append(cls.current, _turn(cls.current, "assistant", f"Overnight report {n} received.", time.time() + .01))
                 return h._send_json(200, {"ok": True})
+            if h.path == "/__test/hold-channel":
+                cls.hold_channel.set(); cls.release_channel.clear()
+                return h._send_json(200, {"ok": True})
+            if h.path == "/__test/release-channel":
+                cls.hold_channel.clear(); cls.release_channel.set()
+                return h._send_json(200, {"ok": True})
             if h.path == "/__test/notice":
                 msg = chatroom.post_notice(cls.room, "Ensemble", "Follow-up hub notice after the report.",
                                            {"noticeKind": "restart"})
                 return h._send_json(200, {"id": msg["id"]})
+            if h.path == "/__test/ordinary":
+                posted = chatroom.post_message(cls.room, "claude", "Ordinary room record outside the channel.", to="user")
+                return h._send_json(200, {"id": posted["message"]["id"]})
             if h.path == "/__test/written":
                 return h._send_json(200, dict(cls.written))
             if h.path == "/__test/slow":
@@ -331,6 +378,8 @@ class PoChatRotationSequence(unittest.TestCase):
             return orig_send_file(h, path, *args, **kwargs)
 
         def do_get(h):
+            if cls.hold_channel.is_set() and h.path.startswith("/api/room/channel"):
+                cls.release_channel.wait(12)
             # A link window's poll answered slowly once asked (/__test/slow).
             if cls.slow.is_set() and h.path.startswith("/api/room/channel") and "&to=" in h.path:
                 cls.slowing.append(h.path)
@@ -485,8 +534,14 @@ class PoChatRotationSequence(unittest.TestCase):
                 self.assertIn(tok, self.got["final"]["ans"])
 
     def test_a_reply_to_a_new_send_opens_with_its_text(self):
+        self.assertTrue(self.got.get("answerMaskedByLaterEvent"), self.got)
         self.assertTrue(self.got.get("openAnswer"), self.got)
         self.assertTrue(self.got.get("mobileAnswer"), self.got)
+
+    def test_unrelated_activity_preserves_selected_topic_and_link_window(self):
+        self.assertTrue(self.got.get("topicPreserved"), self.got)
+        self.assertTrue(self.got.get("windowPreserved"), self.got)
+        self.assertTrue(self.got.get("ordinaryExcluded"), self.got)
 
     def test_task_chat_recovers_after_visibility_timeout_and_stale_key(self):
         for event in ("focusRead", "visibleRead", "pageshowRead"):

@@ -5715,6 +5715,7 @@ let SENDS_GEN = 0, SENDS_SIG = '[]';
 // failed): kept here till sendsToShow finds it drawn.
 const SENT_KEPT = new Map();    // key -> send
 const RECENT_SENDS = new Map(); // mid -> {thread, at}; a reply may live only in its thread
+const SENT_THIS_PAGE = new Set(); // only sends made in this open page may open a reply
 function rememberSend(s) {
   if (!s?.mid || s.state !== 'confirmed') return;
   const words = String(s.text || '');
@@ -5733,6 +5734,8 @@ function noteSent(s) {
 // Shown the moment Send is pressed, as "Sending" until the hub holds it
 // (noteSent) or says no (unnoteSending: the words stay in the box) (#265).
 function noteSending(key, text, to) {
+  SENT_THIS_PAGE.add(key);
+  if (SENT_THIS_PAGE.size > 100) SENT_THIS_PAGE.delete(SENT_THIS_PAGE.values().next().value);
   noteSent({ key, text, to: to || '', state: 'sending', at: Date.now() / 1000 });
 }
 function unnoteSending(key) {
@@ -5750,7 +5753,7 @@ function settleSending(key) {
 function sendsFromPoll(list, gen) {
   const was = ROOM_SENDS;
   ROOM_SENDS = Array.isArray(list) ? list : [];
-  for (const s of ROOM_SENDS) if (!RECENT_SENDS.has(s.mid)) rememberSend(s);
+  for (const s of ROOM_SENDS) if (SENT_THIS_PAGE.has(s.key) && !RECENT_SENDS.has(s.mid)) rememberSend(s);
   const listed = new Set(ROOM_SENDS.map(x => x.key));
   for (const s of was) if (s.state === 'confirmed' && s.mid && !s.read && !listed.has(s.key)) SENT_KEPT.set(s.key, s);
   for (const k of listed) SENT_KEPT.delete(k);
@@ -6493,7 +6496,8 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0, THR_DOWN = null;
 let THR_GEN = 0;           // the pages' start: a response asked before thrRestart is not drawn (#266)
 let THR_LATEST_MID = '', THR_MISSING = null, THR_REPAIR_TIMER = 0, THR_REPAIRING = false, THR_FORCE_DRAW = false;
-let THR_ANY = null, THR_ANY_MISSING = null, THR_ANY_TIMER = 0, THR_AUTO_OPENED = '';
+let THR_ANY = null, THR_ANY_MISSING = null, THR_ANY_TIMER = 0;
+const THR_AUTO_OPENED = new Set();
 let THR_REPAIR_FAIL = null;  // one failed log per missing mid; later retries back off
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
 // A PO chat seen before is asked for its channel beside the room's first read,
@@ -6543,7 +6547,8 @@ function thrUrl(sig) {
   const page = !THREAD_MODE && GOTO ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = GOTO)
     : THR_FROM ? '&from=' + encodeURIComponent(THR_FROM) + (THR_AFTER && thrLast() ? '&to=' + encodeURIComponent(thrLast()) : '')
     : '&n=' + THR_N + (THREAD_MODE ? '' : '&lite=1');
-  return thrBase() + page + (sig ? '&sig=' + encodeURIComponent(sig) : '');
+  const watch = !THREAD_MODE && RECENT_SENDS.size ? '&watch=' + encodeURIComponent([...RECENT_SENDS.keys()].join(',')) : '';
+  return thrBase() + page + watch + (sig ? '&sig=' + encodeURIComponent(sig) : '');
 }
 // The pages from the newest again (a topic chosen or cleared).
 function thrRestart() { THR_GEN++; THR_SIG = ''; THR_N = 40; THR_FROM = ''; THR_VIEW = null; THR_OLDER = []; THR_HUB = new Map(); THR_BEFORE = 0; THR_AFTER = 0; }
@@ -6586,27 +6591,34 @@ function thrAnyShown(d) {
   return !![...document.querySelectorAll('#msgs [data-last-mid]')]
     .find(el => el.dataset.lastMid === d.mid);
 }
+function thrWatchedReplies(d) {
+  for (const reply of d?.watchedReplies || []) {
+    if (!RECENT_SENDS.has(reply.send) || THR_AUTO_OPENED.has(reply.mid)) continue;
+    THR_AUTO_OPENED.add(reply.mid);
+    if (THR_AUTO_OPENED.size > 100) THR_AUTO_OPENED.delete(THR_AUTO_OPENED.values().next().value);
+    if (!TS || TS.tid !== reply.thread) {
+      sideOpen({ tid: reply.thread, msg: reply.mid });
+      chatCatchup('thread-reply', reply.mid);
+    }
+  }
+}
 function thrAnyWatch(d) {
+  thrWatchedReplies(d);
   if (THREAD_MODE || !THR_DRAWN || !d?.latestAnyMid) return;
   THR_ANY = { mid: d.latestAnyMid, thread: d.latestAnyThread || '', role: d.latestAnyRole || '' };
   const a = THR_ANY;
+  // A topic, link window, or Threads list is an intentional subset. Its
+  // newest item need not be in that view; do not discard the selection.
+  if (TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) { THR_ANY_MISSING = null; return; }
   if (a.mid === THR_LATEST_MID) return; // the channel guard covers it
-  const meta = THR_META[a.thread];
-  const mine = !!a.thread && [...RECENT_SENDS].some(([mid, s]) => (s.thread && s.thread === a.thread) || meta?.root === mid);
-  if (mine && a.role !== 'user' && THR_AUTO_OPENED !== a.mid) {
-    THR_AUTO_OPENED = a.mid;
-    if (!TS || TS.tid !== a.thread) {
-      sideOpen({ tid: a.thread, msg: a.mid });
-      chatCatchup('thread-reply', a.mid);
-    }
-  }
   if (thrAnyShown(a)) { THR_ANY_MISSING = null; return; }
   if (!THR_ANY_MISSING || THR_ANY_MISSING.mid !== a.mid)
     THR_ANY_MISSING = { mid: a.mid, attempts: 0, until: 0 };
   if (Date.now() < THR_ANY_MISSING.until) return;
   if (!THR_ANY_TIMER) THR_ANY_TIMER = setTimeout(() => {
     THR_ANY_TIMER = 0;
-    if (!THR_ANY_MISSING || !THR_ANY || THR_ANY_MISSING.mid !== THR_ANY.mid || thrAnyShown(THR_ANY)) return;
+    if (!THR_ANY_MISSING || !THR_ANY || THR_ANY_MISSING.mid !== THR_ANY.mid || thrAnyShown(THR_ANY)
+        || TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) return;
     if (THR_FETCHING) {
       THR_ANY_TIMER = setTimeout(() => { THR_ANY_TIMER = 0; thrAnyWatch({latestAnyMid: a.mid,
         latestAnyThread: a.thread, latestAnyRole: a.role}); }, 150);
@@ -6616,9 +6628,6 @@ function thrAnyWatch(d) {
     // Reread the whole newest page, including its thread metadata.
     const attempts = ++THR_ANY_MISSING.attempts;
     THR_ANY_MISSING.until = Date.now() + Math.min(60000, 5000 * 2 ** (attempts - 1));
-    if (TOPIC_FILTER) { TOPIC_FILTER = null; showTopicFilter(); }
-    if (THR_LIST) { THR_LIST = false; showThreadsBtn(); }
-    GOTO = ''; GOTO_PART = '';
     thrRestart();
     THR_FORCE_DRAW = true;
     chatCatchup('thread-summary', a.mid);

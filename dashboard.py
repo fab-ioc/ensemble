@@ -11699,6 +11699,15 @@ def channel_hub_rows(out: dict, room: dict) -> dict:
     return out
 
 
+def channel_latest_visible(out: dict) -> dict:
+    """Include a hub event in the latest-item guard only if this view draws it."""
+    hub = max(out.get("hubRows") or [], key=lambda m: _turn_epoch(m.get("ts")), default=None)
+    if hub and _turn_epoch(hub.get("ts")) > (out.get("latestAnyAt") or 0):
+        out.update(latestAnyMid=hub["id"], latestAnyThread="", latestAnyRole="hub")
+    out.pop("latestAnyAt", None)
+    return out
+
+
 # The channel and thread views last sent, by room and the sig sent with
 # them: a poll that holds one gets what changed since (#247: a PO's channel
 # was 250 KB on every change of any of it).
@@ -11729,6 +11738,8 @@ def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> d
         extra["latestAnyMid"] = out["latestAnyMid"]
         extra["latestAnyThread"] = out.get("latestAnyThread", "")
         extra["latestAnyRole"] = out.get("latestAnyRole", "")
+    if "watchedReplies" in out:
+        extra["watchedReplies"] = out["watchedReplies"]
     if had == sig:
         return {"sig": sig, "same": True, **extra}
     with _THREAD_VIEWS_LOCK:
@@ -17559,9 +17570,11 @@ class Handler(BaseHTTPRequestHandler):
                             return
                         chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
                         topic_tids = set(chosen["threads"]) if chosen else set()
+                    watch_mids = [m for m in arg("watch").split(",") if m][:24]
                     out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
-                                               before, arg("from"), topic_tids, arg("after"), arg("to"))
+                                               before, arg("from"), topic_tids, arg("after"), arg("to"), watch_mids)
                     channel_hub_rows(out, room)
+                    channel_latest_visible(out)
                     if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):
                         # The first read: the newest threads with replies; the
                         # rest on the next poll, as a delta of this one.
