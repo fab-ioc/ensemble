@@ -1145,7 +1145,9 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                 continue
             reply = next((m for m in reversed(tail) if idx["by_mid"][m].get("role") != "user"), "")
             if reply:
-                watched.append({"send": send_mid, "thread": tid, "mid": reply})
+                turn = _turn(idx, reply)
+                turn["inThr"] = tid
+                watched.append({"send": send_mid, "thread": tid, "mid": reply, "turn": turn})
     out["watchedReplies"] = watched
     # The channel excludes replies kept only in threads. Its latestMid cannot
     # tell a page that one of those replies arrived (#269).

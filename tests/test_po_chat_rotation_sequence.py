@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -178,6 +179,35 @@ async function main() {
       }
     }
     if (!out.answered.ASK3) { await sleep(A.replyWithinMs); if (!out.answered.ASK3) out.late.push('ASK3'); }
+    await hub('/__test/hold-channel', {});
+    await sleep(2500);
+    await send('BATCHA First pending reply');
+    await until(`!SEND_IN_FLIGHT`, 5000);
+    await send('BATCHB Second pending reply');
+    await until(`!SEND_IN_FLIGHT`, 5000);
+    const batchStart = Date.now();
+    while (Date.now() - batchStart < 10000) {
+      const written = await hub('/__test/written', {});
+      if (written['ANS-BATCHA'] && written['ANS-BATCHB']) break;
+      await sleep(100);
+    }
+    await sleep(1200);
+    await hub('/__test/report', {});
+    await hub('/__test/release-channel', {});
+    out.batchBoth = await until(`document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`, 8000)
+      .then(() => true).catch(() => false);
+    out.batchExposed = await evalIn(`!document.querySelector('#thr-side')?.classList.contains('layer') ||
+      document.querySelector('#thr-side').hidden`);
+    out.batchThreadCount = await evalIn(`(() => { const mids = [...document.querySelectorAll('#msgs .msg[data-mid]')]
+      .filter(e => /BATCH[AB] (First|Second) pending reply/.test(e.textContent)).map(e => e.dataset.mid);
+      return new Set((THR_VIEW?.watchedReplies || []).filter(r => mids.includes(r.send)).map(r => r.thread)).size; })()`);
+    out.batchDebug = await evalIn(`({watch:[...RECENT_SENDS.keys()].slice(-3),
+      replies:(THR_VIEW?.watchedReplies||[]).slice(-4).map(r=>[r.send,r.mid,r.thread,!!r.turn]),
+      inline:typeof THR_INLINE_TURNS !== 'undefined' ? [...THR_INLINE_TURNS.keys()] : [],
+      shown:[...document.querySelectorAll('#msgs .msg[data-mid]')]
+        .filter(e=>/BATCH|answer BATCH/.test(e.textContent)).map(e=>e.textContent.slice(0,90)),
+      open:TS?.tid || ''})`);
     // Long enough for a confirmed send to have left the hub's list.
     await sleep(A.holdMs);
     sampling = false;
@@ -319,12 +349,21 @@ class PoChatRotationSequence(unittest.TestCase):
                 time.sleep(0.4)
                 cls._append(sid, _turn(sid, "user", text, time.time()))
                 tok = next((t for t, _w, _x in SEQUENCE if (t + " ") in text), "")
+                if not tok:
+                    batch = re.search(r"\b(BATCH[AB])\b", text)
+                    tok = batch.group(1) if batch else ""
                 what = next((x for t, _w, x in SEQUENCE if t == tok), "answer")
                 time.sleep(1.2)
                 if what == "interrupt":
                     cls._append(sid, _turn(sid, "user", "[Request interrupted by user]", time.time()))
                     return
-                cls._append(sid, _turn(sid, "assistant", f"Here it is, answer {tok[3:]}.", time.time()))
+                answer = f"Here it is, answer {tok[3:] if tok.startswith('ASK') else tok}."
+                if tok.startswith("BATCH"):
+                    led = points.sync(cls.room, force=True)
+                    pid = next((p["id"] for p in led["points"] if tok in p.get("text", "")), "")
+                    if pid:
+                        answer = f"Re {pid}: {answer}"
+                cls._append(sid, _turn(sid, "assistant", answer, time.time()))
                 cls.written[f"ANS-{tok}"] = time.time()
             threading.Thread(target=run, daemon=True).start()
             return {"delivered": 1}
@@ -537,6 +576,9 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertTrue(self.got.get("answerMaskedByLaterEvent"), self.got)
         self.assertTrue(self.got.get("openAnswer"), self.got)
         self.assertTrue(self.got.get("mobileAnswer"), self.got)
+        self.assertTrue(self.got.get("batchBoth"), "both same-poll replies must be visible in the channel")
+        self.assertTrue(self.got.get("batchExposed"), "mobile thread layer hid the replies")
+        self.assertEqual(self.got.get("batchThreadCount"), 2, "the replies must be in different threads")
 
     def test_unrelated_activity_preserves_selected_topic_and_link_window(self):
         self.assertTrue(self.got.get("topicPreserved"), self.got)

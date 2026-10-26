@@ -11739,7 +11739,10 @@ def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> d
         extra["latestAnyThread"] = out.get("latestAnyThread", "")
         extra["latestAnyRole"] = out.get("latestAnyRole", "")
     if "watchedReplies" in out:
-        extra["watchedReplies"] = out["watchedReplies"]
+        # Full reply bodies belong to the changed view, not every 304-style
+        # poll that only needs to name the watched heads.
+        extra["watchedReplies"] = [{k: v for k, v in r.items() if k != "turn"}
+                                   for r in out["watchedReplies"]]
     if had == sig:
         return {"sig": sig, "same": True, **extra}
     with _THREAD_VIEWS_LOCK:
