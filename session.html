@@ -5714,9 +5714,18 @@ let SENDS_GEN = 0, SENDS_SIG = '[]';
 // turn (#266: the hub's index has it, this page's channel not yet, or a poll
 // failed): kept here till sendsToShow finds it drawn.
 const SENT_KEPT = new Map();    // key -> send
+const RECENT_SENDS = new Map(); // mid -> {thread, at}; a reply may live only in its thread
+function rememberSend(s) {
+  if (!s?.mid || s.state !== 'confirmed') return;
+  const words = String(s.text || '');
+  const point = words.match(/\[point (P\d{1,5}[a-z]?)\]/) || words.match(/^Re (P\d{1,5}[a-z]?):/);
+  RECENT_SENDS.set(s.mid, { thread: s.thread || (point && point[1]) || '', at: Date.now() });
+  while (RECENT_SENDS.size > 24) RECENT_SENDS.delete(RECENT_SENDS.keys().next().value);
+}
 function noteSent(s) {
   if (!s || !s.key) return;
   SENT_LOCAL.set(s.key, { s, gen: SENDS_GEN });
+  rememberSend(s);
   // Send is a deliberate action in this chat. A selection left from earlier
   // reading must not hold its optimistic balloon until the next poll/repair.
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { force: true });
@@ -5741,6 +5750,7 @@ function settleSending(key) {
 function sendsFromPoll(list, gen) {
   const was = ROOM_SENDS;
   ROOM_SENDS = Array.isArray(list) ? list : [];
+  for (const s of ROOM_SENDS) if (!RECENT_SENDS.has(s.mid)) rememberSend(s);
   const listed = new Set(ROOM_SENDS.map(x => x.key));
   for (const s of was) if (s.state === 'confirmed' && s.mid && !s.read && !listed.has(s.key)) SENT_KEPT.set(s.key, s);
   for (const k of listed) SENT_KEPT.delete(k);
@@ -6483,6 +6493,7 @@ let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N
 let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0, THR_DOWN = null;
 let THR_GEN = 0;           // the pages' start: a response asked before thrRestart is not drawn (#266)
 let THR_LATEST_MID = '', THR_MISSING = null, THR_REPAIR_TIMER = 0, THR_REPAIRING = false, THR_FORCE_DRAW = false;
+let THR_ANY = null, THR_ANY_MISSING = null, THR_ANY_TIMER = 0, THR_AUTO_OPENED = '';
 let THR_REPAIR_FAIL = null;  // one failed log per missing mid; later retries back off
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
 // A PO chat seen before is asked for its channel beside the room's first read,
@@ -6566,6 +6577,59 @@ function thrWatch(mid) {
   if (THR_REPAIR_FAIL?.mid === latest && Date.now() < THR_REPAIR_FAIL.until) return;
   if (!THR_REPAIR_TIMER) THR_REPAIR_TIMER = setTimeout(() => { THR_REPAIR_TIMER = 0; thrRepair(); }, 3200);
 }
+function chatCatchup(cause, mid) {
+  postOk('/api/page-log', { what: 'chat-catchup', cause,
+    msg: `${ROOM} latest=${mid || ''}` }).catch(() => {});
+}
+function thrAnyShown(d) {
+  if (thrMidDrawn(d.mid)) return true;
+  return !![...document.querySelectorAll('#msgs [data-last-mid]')]
+    .find(el => el.dataset.lastMid === d.mid);
+}
+function thrAnyWatch(d) {
+  if (THREAD_MODE || !THR_DRAWN || !d?.latestAnyMid) return;
+  THR_ANY = { mid: d.latestAnyMid, thread: d.latestAnyThread || '', role: d.latestAnyRole || '' };
+  const a = THR_ANY;
+  if (a.mid === THR_LATEST_MID) return; // the channel guard covers it
+  const meta = THR_META[a.thread];
+  const mine = !!a.thread && [...RECENT_SENDS].some(([mid, s]) => (s.thread && s.thread === a.thread) || meta?.root === mid);
+  if (mine && a.role !== 'user' && THR_AUTO_OPENED !== a.mid) {
+    THR_AUTO_OPENED = a.mid;
+    if (!TS || TS.tid !== a.thread) {
+      sideOpen({ tid: a.thread, msg: a.mid });
+      chatCatchup('thread-reply', a.mid);
+    }
+  }
+  if (thrAnyShown(a)) { THR_ANY_MISSING = null; return; }
+  if (!THR_ANY_MISSING || THR_ANY_MISSING.mid !== a.mid)
+    THR_ANY_MISSING = { mid: a.mid, attempts: 0, until: 0 };
+  if (Date.now() < THR_ANY_MISSING.until) return;
+  if (!THR_ANY_TIMER) THR_ANY_TIMER = setTimeout(() => {
+    THR_ANY_TIMER = 0;
+    if (!THR_ANY_MISSING || !THR_ANY || THR_ANY_MISSING.mid !== THR_ANY.mid || thrAnyShown(THR_ANY)) return;
+    if (THR_FETCHING) {
+      THR_ANY_TIMER = setTimeout(() => { THR_ANY_TIMER = 0; thrAnyWatch({latestAnyMid: a.mid,
+        latestAnyThread: a.thread, latestAnyRole: a.role}); }, 150);
+      return;
+    }
+    // A channel signature can advance while its newest reply's row was held.
+    // Reread the whole newest page, including its thread metadata.
+    const attempts = ++THR_ANY_MISSING.attempts;
+    THR_ANY_MISSING.until = Date.now() + Math.min(60000, 5000 * 2 ** (attempts - 1));
+    if (TOPIC_FILTER) { TOPIC_FILTER = null; showTopicFilter(); }
+    if (THR_LIST) { THR_LIST = false; showThreadsBtn(); }
+    GOTO = ''; GOTO_PART = '';
+    thrRestart();
+    THR_FORCE_DRAW = true;
+    chatCatchup('thread-summary', a.mid);
+    Promise.resolve(renderThreaded(true)).then(() => {
+      if (THR_ANY?.mid === a.mid && !thrAnyShown(a) && a.thread && (!TS || TS.tid !== a.thread)) {
+        sideOpen({ tid: a.thread, msg: a.mid });
+        chatCatchup('thread-reply', a.mid);
+      }
+    }).finally(() => { THR_FORCE_DRAW = false; });
+  }, 3200);
+}
 async function thrRepair() {
   if (THR_REPAIRING || !THR_MISSING) return;
   if ((!THREAD_MODE && TOPIC_FILTER) || GOTO || THR_AFTER || THR_LIST) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
@@ -6578,6 +6642,7 @@ async function thrRepair() {
   THR_REPAIRING = true;
   const held = !!DRAW_HELD, from = THR_FROM;
   try {
+    chatCatchup('missing-latest', missing);
     thrRestart();
     THR_FORCE_DRAW = true;
     await renderThreaded(true);
@@ -6697,6 +6762,7 @@ async function renderThreaded(force) {
       if (THREAD_MODE && THR_INFO) threadHead();     // the room's refresh put the chat's title back
       if (THREAD_MODE && THR_ITEMS) threadSeen(THR_ITEMS);
       thrWatch(d.latestMid || (THR_VIEW && THR_VIEW.latestMid));
+      thrAnyWatch(d);
       return;
     }
     if (d.pending) {
@@ -6749,8 +6815,10 @@ async function renderThreaded(force) {
     thrKeepHub(d.hubRows);
     thrDraw(roomTs, d);
     thrWatch(d.latestMid);
+    thrAnyWatch(d);
     showLatest();
   } catch (e) {
+    if (e?.name === 'AbortError') chatCatchup('poll-timeout', THR_LATEST_MID);
     globalThis.EnsembleProgress?.clear('thread-build');
     if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
   } finally {
@@ -6824,7 +6892,7 @@ function showThreadCatchup() {
   const newest = !THREAD_MODE && !THR_LIST && THR_UNREAD[0];
   el.hidden = !newest;
   if (!newest) return;
-  el.innerHTML = `<span>${THR_UNREAD.length} thread${THR_UNREAD.length === 1 ? '' : 's'} with new replies</span><button type="button" data-thr="${esc(newest.id)}" data-mid="${esc(newest.lastMid || newest.root)}">Open newest reply</button>`;
+  el.innerHTML = `<span>${THR_UNREAD.length} thread${THR_UNREAD.length === 1 ? '' : 's'} with new replies</span><button type="button" data-thr="${esc(newest.id)}" data-mid="${esc(newest.lastMid || newest.root)}" data-last-mid="${esc(newest.lastMid || newest.root)}">Open newest reply</button>`;
 }
 function showTopicFilter() {
   const el = $('#topic-note');
@@ -6908,7 +6976,7 @@ function threadLineHtml(tid, mine) {
   const st = THR_STATE[t.state] || '';
   const label = `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
-  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
+  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
     + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="thr-av thr-av-${esc(w === 'PO' ? 'po' : w === 'you' ? 'you' : 'task')}">${esc(w === 'you' ? (OPERATOR || 'you').slice(0, 1).toUpperCase() : w.slice(0, 1).toUpperCase())}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
@@ -7060,14 +7128,37 @@ function showThreadsBtn() {
 // from the hub. Its "Delivered" balloon stayed though the agent had read it.
 // The poll's own 30 s; a whole transcript or channel, 90 s.
 function pollFetch(url, init, ms = 30000) {
-  let signal;
-  if (typeof AbortSignal.timeout === 'function') signal = AbortSignal.timeout(ms);
-  else { const ctl = new AbortController(); setTimeout(() => ctl.abort(), ms); signal = ctl.signal; }
-  return fetch(url, Object.assign({}, init || {}, { signal }));
+  // Even a stalled channel poll must release THR_FETCHING. The older 90 s
+  // deadline looked like a frozen chat after a phone resumed on a lost socket.
+  const ctl = new AbortController();
+  const deadline = Math.min(ms, 8000);
+  setTimeout(() => ctl.abort(), deadline);
+  return fetch(url, Object.assign({}, init || {}, { signal: ctl.signal }));
 }
 let REFRESH_BUSY = false, REFRESH_AGAIN = false;
 let ROOM_ETAG = '';
 let ROOM_LAST = null;  // last received room; a deferred draw may still show the prior one
+let ROOM_LATEST_MID = '', ROOM_MISSING = null, ROOM_REPAIR_TIMER = 0;
+function roomWatch(mid) {
+  if (mid) ROOM_LATEST_MID = mid;
+  if (!ROOM_LATEST_MID || SOLO_MODE || THREADED || ROOM_WIN) return;
+  if (thrMidDrawn(ROOM_LATEST_MID)) { ROOM_MISSING = null; return; }
+  if (!ROOM_MISSING || ROOM_MISSING.mid !== ROOM_LATEST_MID)
+    ROOM_MISSING = { mid: ROOM_LATEST_MID, at: Date.now() };
+  if (!ROOM_REPAIR_TIMER) ROOM_REPAIR_TIMER = setTimeout(() => {
+    ROOM_REPAIR_TIMER = 0;
+    if (!ROOM_MISSING || ROOM_WIN || thrMidDrawn(ROOM_MISSING.mid)) return;
+    const missing = ROOM_MISSING.mid;
+    ROOM_MISSING = null;
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { force: true });
+    if (!thrMidDrawn(missing)) {
+      ROOM_LAST = null; ROOM_ETAG = '';
+      refresh();
+    }
+    chatCatchup('task-latest', missing);
+  }, 3200);
+}
+setInterval(() => { if (ROOM_LATEST_MID) roomWatch(ROOM_LATEST_MID); }, 2000);
 async function refresh() {
   if (REFRESH_BUSY) { REFRESH_AGAIN = true; return; }
   REFRESH_BUSY = true;
@@ -7113,6 +7204,7 @@ async function refreshRoom() {
     if (r.ok && ROOM_LAST?.revision) {
       const patch = await r.json();
       if (patch.refetch) {
+        chatCatchup('cursor-refetch', ROOM_LATEST_MID);
         ROOM_LAST = null;
         ROOM_ETAG = '';
         r = await pollFetch(url);
@@ -7158,7 +7250,11 @@ async function refreshRoom() {
         statusSig: room.statusSig || '', room: structuredClone(room)} : null;
     }
   }
-  catch(e) { if (!ROOM_OBJ) setText($('#hint'), 'Cannot load the conversation yet; retrying.'); return; }
+  catch(e) {
+    if (e?.name === 'AbortError') chatCatchup('poll-timeout', ROOM_LATEST_MID || THR_LATEST_MID);
+    if (!ROOM_OBJ) setText($('#hint'), 'Cannot load the conversation yet; retrying.');
+    return;
+  }
   if (!room || room.error) { setText($('#title'), '(session not found)'); if (!ROOM_OBJ) setText($('#hint'), 'Cannot send: session not found.'); return; }
   // A press on the page: what the poll brought is shown once it is over (#198).
   if (typeof pgDefer === 'function' && pgDefer(() => refreshShow(room, ticket, sendsGen))) return;
@@ -7252,6 +7348,7 @@ function refreshShow(room, ticket, sendsGen) {
   } else {
     SOLO_SID = ''; SOLO_PTY = '';
     renderMsgs(room);
+    roomWatch((room.messages || []).slice(-1)[0]?.id || '');
   }
   renderCmtTray();   // Submit follows the session starting or stopping; otherwise a no-op
   updateAgentStatus();
@@ -10023,6 +10120,7 @@ function chatSlow() {
   try { const f = window.frameElement; return !!(f && f.hasAttribute('data-chat-slow')) && !document.hasFocus(); } catch (e) { return false; }
 }
 function tick() {
+  CHAT_LAST_TICK = Date.now();
   TICK++;
   ensUpd.poll();
   if (chatOffScreen()) { if (TICK % 30) return; }
@@ -10030,10 +10128,21 @@ function tick() {
   refresh();
 }
 function tickNow() { TICK = 0; refresh(); }
-if (window.parent !== window) {
-  window.addEventListener('focus', tickNow);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) tickNow(); });
+let CHAT_LAST_TICK = Date.now(), CHAT_WAS_HIDDEN = false;
+function chatResumed() {
+  if (document.hidden) return;
+  if (CHAT_WAS_HIDDEN || Date.now() - CHAT_LAST_TICK > 5000)
+    chatCatchup('resume-read', THR_ANY?.mid || THR_LATEST_MID);
+  CHAT_WAS_HIDDEN = false;
+  CHAT_LAST_TICK = Date.now();
+  tickNow();
+  if (THREAD_MODE && THR_LATEST_MID) thrWatch(THR_LATEST_MID);
+  else if (THR_ANY) thrAnyWatch({latestAnyMid: THR_ANY.mid,
+    latestAnyThread: THR_ANY.thread, latestAnyRole: THR_ANY.role});
 }
+window.addEventListener('focus', chatResumed);
+window.addEventListener('pageshow', e => { if (e.persisted) chatResumed(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) CHAT_WAS_HIDDEN = true; else chatResumed(); });
 if (!ROOM) { $('#title').textContent = '(no session id)'; }
 else { FileLinks.watch(); refresh(); setInterval(tick, 2000); }
 </script>

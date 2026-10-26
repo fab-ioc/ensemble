@@ -11725,6 +11725,10 @@ def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> d
     extra = {"progress": progress_now} if progress_now else {}
     if out.get("latestMid"):
         extra["latestMid"] = out["latestMid"]
+    if out.get("latestAnyMid"):
+        extra["latestAnyMid"] = out["latestAnyMid"]
+        extra["latestAnyThread"] = out.get("latestAnyThread", "")
+        extra["latestAnyRole"] = out.get("latestAnyRole", "")
     if had == sig:
         return {"sig": sig, "same": True, **extra}
     with _THREAD_VIEWS_LOCK:
@@ -16172,6 +16176,9 @@ def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
 _SLOW: collections.deque = collections.deque(maxlen=5000)   # (answered, "GET /api/…", seconds)
 _CHAT_REPAIRS = [0]  # successful page repairs since hub start
 _CHAT_REPAIRS_LOCK = threading.Lock()
+_CHAT_CATCHUPS = collections.Counter()  # reads/actions the page needed to catch up, by cause
+_CHAT_CATCHUP_CAUSES = {"thread-reply", "thread-summary", "missing-latest",
+                         "task-latest", "resume-read", "poll-timeout", "cursor-refetch"}
 
 
 def slow_requests(window_s: float = 3600.0) -> dict:
@@ -16849,9 +16856,13 @@ class Handler(BaseHTTPRequestHandler):
         p = u.path
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
+            with _CHAT_REPAIRS_LOCK:
+                chat_repairs = _CHAT_REPAIRS[0]
+                chat_catchups = dict(_CHAT_CATCHUPS)
             self._send_json(200, {**startup.health(), "version": app_version.VERSION,
                                   "pid": os.getpid(), "slow": slow_requests(),
-                                  "chatRepairs": _CHAT_REPAIRS[0]})
+                                  "chatRepairs": chat_repairs,
+                                  "chatCatchups": chat_catchups})
             return
         if p == "/startup":
             self._send_startup_page()
@@ -20305,6 +20316,12 @@ class Handler(BaseHTTPRequestHandler):
             if what == "chat-repair":
                 with _CHAT_REPAIRS_LOCK:
                     _CHAT_REPAIRS[0] += 1
+            elif what == "chat-catchup":
+                cause = line(data.get("cause") or "unknown", 40)
+                if cause not in _CHAT_CATCHUP_CAUSES:
+                    cause = "other"
+                with _CHAT_REPAIRS_LOCK:
+                    _CHAT_CATCHUPS[cause] += 1
             self._send_json(200, {"ok": True})
             return
         if p.startswith("/api/files/"):

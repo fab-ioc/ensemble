@@ -60,7 +60,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch() {
   const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
-    '--disable-gpu', '--hide-scrollbars', '--window-size=1280,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    '--disable-gpu', '--hide-scrollbars', '--window-size=1728,1117', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
     let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
     ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
@@ -85,6 +85,7 @@ async function main() {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
     await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
     const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
@@ -131,6 +132,7 @@ async function main() {
         while (Date.now() - t0 < 15000 && !(await hub('/__test/written', {}))['ANS-ASK3']) await sleep(50);
       }
       if (tok === 'ASK7') {
+        await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId);
         // A link to an old message opened (a point's chip): the chat holds a
         // window around it, with later entries below it, and the person sends.
         const ch = await hub('/api/room/channel?id=' + A.room + '&n=40');
@@ -158,6 +160,10 @@ async function main() {
         const shownBy = Date.now() + 0;
         while (!out.answered[tok] && Date.now() - shownBy < A.replyWithinMs) await sleep(100);
         if (!out.answered[tok]) out.late.push(tok);
+        if (tok === 'ASK1') out.openAnswer = await until(`document.querySelector('#ts-frame')?.contentWindow?.document
+          ?.querySelector('#msgs')?.textContent.includes('Here it is, answer 1.')`, 9000).then(() => true).catch(() => false);
+        if (tok === 'ASK7') out.mobileAnswer = await until(`document.querySelector('#ts-frame')?.contentWindow?.document
+          ?.querySelector('#msgs')?.textContent.includes('Here it is, answer 7.')`, 9000).then(() => true).catch(() => false);
       } else {
         await sleep(2500);
       }
@@ -168,6 +174,62 @@ async function main() {
     sampling = false;
     await sampler;
     out.final = await evalIn(text);
+    // A task conversation uses the same session page in a pop-out and Dock.
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.task }, sessionId);
+    await until(`document.querySelector('#msgs')?.textContent.includes('TASK SEED')`, 12000);
+    const countRefresh = async event => {
+      const before = await evalIn('TICK');
+      await until(`TICK !== ${before}`, 3000); // just after the periodic tick
+      return evalIn(`(async () => { let n = 0; const old = refresh; refresh = () => { n++; return old(); };
+        try { ${event}; await new Promise(r => setTimeout(r, 350)); return n; }
+        finally { refresh = old; } })()`);
+    };
+    out.focusRead = await countRefresh(`window.dispatchEvent(new Event('focus'))`);
+    out.visibleRead = await countRefresh(`CHAT_WAS_HIDDEN = true; document.dispatchEvent(new Event('visibilitychange'))`);
+    out.pageshowRead = await countRefresh(`window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted:true}))`);
+    out.taskReply = await hub('/__test/task-reply', { words:'TASK REPLY 1' });
+    out.taskVisible = await until(`document.querySelector('#msgs')?.textContent.includes('TASK REPLY 1')`, 5000).then(() => true).catch(() => false);
+    // One request hangs until aborted. The next request must run within 10 s.
+    out.hungPoll = await evalIn(`(async () => { const old = fetch; let n = 0;
+      fetch = (url, opt) => { if (String(url).startsWith('/api/room?id=') && ++n === 1)
+        return new Promise((_, reject) => opt.signal.addEventListener('abort', () => reject(new DOMException('aborted','AbortError'))));
+        return old(url, opt); };
+      try { tickNow(); await new Promise(r => setTimeout(r, 10200)); return n; }
+      finally { fetch = old; } })()`);
+    // A stale cursor from another hub process must request a full room view.
+    out.keyChanged = await evalIn(`(async () => { ROOM_LAST.revision = 'old-hub-key';
+      const old = ROOM_LAST; await fetch('/__test/task-reply', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({words:'TASK REPLY 2'})});
+      tickNow(); const end = Date.now()+5000; while (Date.now()<end) {
+        if (document.querySelector('#msgs')?.textContent.includes('TASK REPLY 2')) return true;
+        await new Promise(r=>setTimeout(r,100)); } return false; })()`);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.task + '&embed=1' }, sessionId);
+    await until(`document.querySelector('#msgs')?.textContent.includes('TASK REPLY 2')`, 12000);
+    await hub('/__test/task-reply', { words:'TASK DOCK REPLY' });
+    out.dockedTask = await until(`document.querySelector('#msgs')?.textContent.includes('TASK DOCK REPLY')`, 5000).then(() => true).catch(() => false);
+    out.taskRepairMid = await evalIn(`(() => { const n = [...document.querySelectorAll('#msgs [data-mid]')]
+      .find(e => e.textContent.includes('TASK DOCK REPLY')); if (!n) return '';
+      window.__drawBeforeDamage = renderBubbles;
+      renderBubbles = (items, opt = {}) => { if (opt.force) return window.__drawBeforeDamage(items, opt); };
+      n.remove(); return n.dataset.mid; })()`);
+    out.taskRepaired = await until(`!!document.querySelector('#msgs [data-mid="${out.taskRepairMid}"]')`, 7500)
+      .then(() => true).catch(() => false);
+    await evalIn(`renderBubbles = window.__drawBeforeDamage; delete window.__drawBeforeDamage; true`);
+    await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
+    await until(`!!PROJECTS?.projects?.length`, 12000);
+    await evalIn(`SELECTED_PROJECT = PROJECTS.projects.find(p => p.poRoomId === ${JSON.stringify(A.room)})?.id || '';
+      PROJECT_TAB = 'tasks'; renderRows(); true`);
+    out.dockReady = await until(`!!document.querySelector('iframe.po-session')?.contentWindow
+      ?.document?.querySelector('#input')`, 16000).then(() => true).catch(() => false);
+    if (out.dockReady) {
+      await evalIn(`(() => { const d = document.querySelector('iframe.po-session').contentWindow.document;
+        const i = d.querySelector('#input'); i.value = 'ASK1 Dock verification'; i.dispatchEvent(new Event('input'));
+        d.querySelector('#send').click(); return true; })()`);
+      out.dockedPoAnswer = await until(`document.querySelector('.pd-thread iframe')?.contentWindow
+        ?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer 1.')`, 12000)
+        .then(() => true).catch(() => false);
+    }
+    out.catchups = (await hub('/api/health')).chatCatchups || {};
     await c.send('Target.closeTarget', { targetId });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -253,9 +315,20 @@ class PoChatRotationSequence(unittest.TestCase):
                 return h._send_json(200, {"ok": True})
             if h.path == "/__test/slowing":
                 return h._send_json(200, {"n": len(cls.slowing)})
+            if h.path == "/__test/task-reply":
+                words = json.loads(h.rfile.read(int(h.headers.get("Content-Length", "0"))) or b"{}").get("words", "")
+                chatroom.post_message(cls.task, "claude", words, to="user")
+                return h._send_json(200, {"ok": True})
             return orig_post(h)
 
         orig_get = dashboard.Handler.do_GET
+        orig_send_file = dashboard.Handler._send_file
+
+        def send_file(h, path, *args, **kwargs):
+            baseline = os.environ.get("ENS_BASELINE_SESSION")
+            if baseline and Path(path).name == "session.html":
+                path = Path(baseline)
+            return orig_send_file(h, path, *args, **kwargs)
 
         def do_get(h):
             # A link window's poll answered slowly once asked (/__test/slow).
@@ -285,6 +358,7 @@ class PoChatRotationSequence(unittest.TestCase):
             mock.patch.object(dashboard.Handler, "_resume_room", resume),
             mock.patch.object(dashboard.Handler, "do_POST", do_post),
             mock.patch.object(dashboard.Handler, "do_GET", do_get),
+            mock.patch.object(dashboard.Handler, "_send_file", send_file),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
@@ -295,6 +369,11 @@ class PoChatRotationSequence(unittest.TestCase):
         points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
         threads.forget()
         cls.room = cls._po_room()
+        cls.task = chatroom.create_room("Task", [
+            {"identity": "claude", "agent": "claude", "role": "engineer"},
+            {"identity": "codex", "agent": "codex", "role": "reviewer"},
+        ])["id"]
+        chatroom.post_message(cls.task, "claude", "TASK SEED", to="user")
         threads.build(cls.room, show_progress=False)
 
         def keep_busy():
@@ -309,7 +388,8 @@ class PoChatRotationSequence(unittest.TestCase):
         cls.addClassCleanup(cls.stop.set)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
-        cls.server.handle_error = lambda *a: None
+        if not os.environ.get("ENS_DEBUG_SERVER"):
+            cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         try:
             cls.got = cls._chrome()
@@ -368,7 +448,7 @@ class PoChatRotationSequence(unittest.TestCase):
     @classmethod
     def _chrome(cls):
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name,
-                "base": f"http://127.0.0.1:{cls.server.server_address[1]}", "room": cls.room,
+                "base": f"http://127.0.0.1:{cls.server.server_address[1]}", "room": cls.room, "task": cls.task,
                 "sequence": SEQUENCE, "replyWithinMs": REPLY_WITHIN_MS, "holdMs": 6000}
         script = Path(cls.tmp.name) / "rotation_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
@@ -403,6 +483,27 @@ class PoChatRotationSequence(unittest.TestCase):
         for tok, _w, what in SEQUENCE:
             if what == "answer":
                 self.assertIn(tok, self.got["final"]["ans"])
+
+    def test_a_reply_to_a_new_send_opens_with_its_text(self):
+        self.assertTrue(self.got.get("openAnswer"), self.got)
+        self.assertTrue(self.got.get("mobileAnswer"), self.got)
+
+    def test_task_chat_recovers_after_visibility_timeout_and_stale_key(self):
+        for event in ("focusRead", "visibleRead", "pageshowRead"):
+            self.assertGreater(self.got.get(event, 0), 0, event)
+        self.assertTrue(self.got.get("taskVisible"), self.got)
+        self.assertGreaterEqual(self.got.get("hungPoll", 0), 2, self.got)
+        self.assertTrue(self.got.get("keyChanged"), self.got)
+        self.assertTrue(self.got.get("dockedTask"), self.got)
+        self.assertTrue(self.got.get("dockReady"), self.got)
+        self.assertTrue(self.got.get("dockedPoAnswer"), self.got)
+        self.assertTrue(self.got.get("taskRepairMid"), self.got)
+        self.assertTrue(self.got.get("taskRepaired"), self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("thread-reply", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("poll-timeout", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("cursor-refetch", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("task-latest", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("resume-read", 0), 0, self.got)
 
 
 class HoldAndBudget(unittest.TestCase):

@@ -1127,6 +1127,20 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
            "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
            "channel": len(ch), "sendMids": idx.get("sendMids") or []}
+    # The channel excludes replies kept only in threads. Its latestMid cannot
+    # tell a page that one of those replies arrived (#269).
+    newest = max(idx["recs"], key=lambda r: r["ts"], default=None)
+    newest_room = max((m for m in room.get("messages") or [] if m.get("id")),
+                      key=lambda m: _num(m.get("ts")) or 0, default=None)
+    if newest_room and (not newest or (_num(newest_room.get("ts")) or 0) > newest["ts"]):
+        out["latestAnyMid"] = newest_room["id"]
+        out["latestAnyThread"] = ""
+        out["latestAnyRole"] = "hub"
+    elif newest:
+        out["latestAnyMid"] = newest["mid"]
+        out["latestAnyThread"] = next((t for t in reversed(idx["of"].get(newest["mid"]) or [])
+                                       if t != "team:activity"), "")
+        out["latestAnyRole"] = newest.get("role", "")
     if upto:
         out["uptoAt"] = upto_at     # "balloon", "room" (a room message), "" (not in this chat)
     if before or after:
