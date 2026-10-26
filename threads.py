@@ -1083,7 +1083,8 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
 
 def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                  before: str = "", frm: str = "",
-                 topic_tids: set[str] | None = None, after: str = "", to: str = "") -> dict:
+                 topic_tids: set[str] | None = None, after: str = "", to: str = "",
+                 watch_mids: list[str] | None = None) -> dict:
     """The channel: its last ``n`` entries (turns as /api/session gives
     them, each with its balloon id, ``thr`` on a parent, ``inThr`` on a reply
     also sent to the chat), the threads they show, and how many came before.
@@ -1127,6 +1128,36 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
            "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
            "channel": len(ch), "sendMids": idx.get("sendMids") or []}
+    # Check every send the open page is awaiting, independently of the newest
+    # room event. Another thread can advance after the answer and before a poll.
+    watched = []
+    for send_mid in dict.fromkeys((watch_mids or [])[:24]):
+        sent = idx["by_mid"].get(send_mid)
+        if not sent or sent.get("role") != "user":
+            continue
+        for tid in idx["of"].get(send_mid) or []:
+            if tid == "team:activity" or tid not in idx["threads"]:
+                continue
+            members = idx["threads"][tid]["members"]
+            try:
+                tail = members[members.index(send_mid) + 1:]
+            except ValueError:
+                continue
+            reply = next((m for m in reversed(tail) if idx["by_mid"][m].get("role") != "user"), "")
+            if reply:
+                turn = _turn(idx, reply)
+                turn["inThr"] = tid
+                watched.append({"send": send_mid, "thread": tid, "mid": reply, "turn": turn})
+    out["watchedReplies"] = watched
+    # The channel excludes replies kept only in threads. Its latestMid cannot
+    # tell a page that one of those replies arrived (#269).
+    newest = max(idx["recs"], key=lambda r: r["ts"], default=None)
+    if newest:
+        out["latestAnyMid"] = newest["mid"]
+        out["latestAnyThread"] = next((t for t in reversed(idx["of"].get(newest["mid"]) or [])
+                                       if t != "team:activity"), "")
+        out["latestAnyRole"] = newest.get("role", "")
+        out["latestAnyAt"] = newest["ts"]
     if upto:
         out["uptoAt"] = upto_at     # "balloon", "room" (a room message), "" (not in this chat)
     if before or after:

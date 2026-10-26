@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -60,7 +61,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch() {
   const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
-    '--disable-gpu', '--hide-scrollbars', '--window-size=1280,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    '--disable-gpu', '--hide-scrollbars', '--window-size=1728,1117', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
     let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
     ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
@@ -85,6 +86,7 @@ async function main() {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
     await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
     const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
@@ -125,12 +127,14 @@ async function main() {
       await evalIn(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input')); document.getElementById('send').click(); return 0; })()`);
     };
     for (const [tok, words, what] of A.sequence) {
+      if (tok === 'ASK1') { await hub('/__test/hold-channel', {}); await sleep(2500); }
       if (tok === 'ASK4') {
         // The same second the answer to the one before is written.
         const t0 = Date.now();
         while (Date.now() - t0 < 15000 && !(await hub('/__test/written', {}))['ANS-ASK3']) await sleep(50);
       }
       if (tok === 'ASK7') {
+        await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId);
         // A link to an old message opened (a point's chip): the chat holds a
         // window around it, with later entries below it, and the person sends.
         const ch = await hub('/api/room/channel?id=' + A.room + '&n=40');
@@ -154,20 +158,192 @@ async function main() {
         const t0 = Date.now();
         let at = 0;
         while (Date.now() - t0 < 30000 && !(at = (await hub('/__test/written', {}))['ANS-' + tok])) await sleep(100);
+        if (tok === 'ASK1') {
+          // The answer and then an unrelated event land before one channel
+          // poll can return. A single room-wide latest id hides the answer.
+          await sleep(1200); // transcript fixture uses whole-second timestamps
+          await hub('/__test/report', {});
+          await hub('/__test/release-channel', {});
+          out.answerMaskedByLaterEvent = true;
+        }
         // Time from the answer written to the answer shown.
         const shownBy = Date.now() + 0;
         while (!out.answered[tok] && Date.now() - shownBy < A.replyWithinMs) await sleep(100);
         if (!out.answered[tok]) out.late.push(tok);
+        if (tok === 'ASK1') out.openAnswer = await until(`document.querySelector('#ts-frame')?.contentWindow?.document
+          ?.querySelector('#msgs')?.textContent.includes('Here it is, answer 1.')`, 9000).then(() => true).catch(() => false);
+        if (tok === 'ASK7') out.mobileAnswer = await until(`document.querySelector('#ts-frame')?.contentWindow?.document
+          ?.querySelector('#msgs')?.textContent.includes('Here it is, answer 7.')`, 9000).then(() => true).catch(() => false);
       } else {
         await sleep(2500);
       }
     }
     if (!out.answered.ASK3) { await sleep(A.replyWithinMs); if (!out.answered.ASK3) out.late.push('ASK3'); }
+    await hub('/__test/hold-channel', {});
+    await sleep(2500);
+    await send('BATCHA First pending reply');
+    await until(`!SEND_IN_FLIGHT`, 5000);
+    await send('BATCHB Second pending reply');
+    await until(`!SEND_IN_FLIGHT`, 5000);
+    const batchStart = Date.now();
+    while (Date.now() - batchStart < 10000) {
+      const written = await hub('/__test/written', {});
+      if (written['ANS-BATCHA'] && written['ANS-BATCHB']) break;
+      await sleep(100);
+    }
+    await sleep(1200);
+    await hub('/__test/report', {});
+    await hub('/__test/release-channel', {});
+    out.batchBoth = await until(`document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`, 8000)
+      .then(() => true).catch(() => false);
+    out.batchExposed = await evalIn(`!document.querySelector('#thr-side')?.classList.contains('layer') ||
+      document.querySelector('#thr-side').hidden`);
+    out.batchThreadCount = await evalIn(`(() => { const mids = [...document.querySelectorAll('#msgs .msg[data-mid]')]
+      .filter(e => /BATCH[AB] (First|Second) pending reply/.test(e.textContent)).map(e => e.dataset.mid);
+      return new Set((THR_VIEW?.watchedReplies || []).filter(r => mids.includes(r.send)).map(r => r.thread)).size; })()`);
+    out.batchDebug = await evalIn(`({watch:[...RECENT_SENDS.keys()].slice(-3),
+      replies:(THR_VIEW?.watchedReplies||[]).slice(-4).map(r=>[r.send,r.mid,r.thread,!!r.turn]),
+      inline:typeof THR_INLINE_TURNS !== 'undefined' ? [...THR_INLINE_TURNS.keys()] : [],
+      shown:[...document.querySelectorAll('#msgs .msg[data-mid]')]
+        .filter(e=>/BATCH|answer BATCH/.test(e.textContent)).map(e=>e.textContent.slice(0,90)),
+      open:TS?.tid || ''})`);
+    const batchSig = await evalIn(`THR_SIG`);
+    await hub('/__test/report', {});
+    out.batchAfterChange = await until(`THR_SIG !== ${JSON.stringify(batchSig)} &&
+      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`, 8000)
+      .then(() => true).catch(() => false);
     // Long enough for a confirmed send to have left the hub's list.
     await sleep(A.holdMs);
     sampling = false;
     await sampler;
     out.final = await evalIn(text);
+    const ordinary = await hub('/__test/ordinary', {});
+    const newestAfterOrdinary = await hub('/api/room/channel?id=' + A.room + '&n=40');
+    out.ordinaryExcluded = newestAfterOrdinary.latestAnyMid !== ordinary.id;
+    // New activity elsewhere must leave an intentionally selected view alone.
+    await evalIn(`sideOpen({tid:'P1'}); true`);
+    await until(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`, 4000);
+    const batchMids = await evalIn(`[...THR_INLINE_TURNS.keys()]`);
+    await evalIn(`TOPIC_FILTER = {id:'nonexistent-topic', name:'A selected topic'};
+      showTopicFilter(); thrRestart(); renderThreaded(true); true`);
+    await until(`TOPIC_FILTER?.id === 'nonexistent-topic' && !THR_FETCHING && THR_DRAWN`, 8000);
+    await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.delete(m);
+      thrWatchedReplies(THR_VIEW); true`);
+    await hub('/__test/report', {});
+    await sleep(4500);
+    out.topicPreserved = await evalIn(`TOPIC_FILTER?.id === 'nonexistent-topic'`);
+    out.topicContentIsolated = await evalIn(`!document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`);
+    out.topicSideKept = await evalIn(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`);
+    await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.add(m); true`);
+    await evalIn(`TOPIC_FILTER = null; showTopicFilter(); thrRestart(); renderThreaded(true); true`);
+    await until(`!THR_FETCHING && THR_DRAWN && THR_AFTER === 0 && document.querySelectorAll('#msgs .msg[data-mid]').length > 0`, 8000);
+    const newest = await hub('/api/room/channel?id=' + A.room + '&n=40');
+    const older = await hub('/api/room/channel?id=' + A.room + '&n=100&before=' + encodeURIComponent(newest.items[0].mid));
+    const oldMid = older.items[0].mid;
+    await evalIn(`gotoMsg(${JSON.stringify(oldMid)}); true`);
+    await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]')`, 10000)
+      .catch(async () => { out.windowDebug = await evalIn(`({after:THR_AFTER,goto:GOTO,mid:${JSON.stringify(oldMid)},fetching:THR_FETCHING,
+        shown:document.querySelectorAll('#msgs .msg[data-mid]').length,topic:TOPIC_FILTER})`); });
+    await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.delete(m);
+      thrWatchedReplies(THR_VIEW); true`);
+    await hub('/__test/report', {});
+    out.windowPreserved = await evalIn(`(async () => { const draw = renderThreaded;
+      renderThreaded = () => Promise.resolve(); clearTimeout(THR_ANY_TIMER); THR_ANY_TIMER = 0; THR_ANY_MISSING = null;
+      try { thrAnyWatch({latestAnyMid:'other-thread:unseen',latestAnyThread:'other-thread',latestAnyRole:'assistant'});
+        await new Promise(r => setTimeout(r, 3700));
+        return THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]'); }
+      finally { renderThreaded = draw; } })()`);
+    out.windowContentIsolated = await evalIn(`!document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`);
+    out.windowSideKept = await evalIn(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`);
+    // A task conversation uses the same session page in a pop-out and Dock.
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.task }, sessionId);
+    await until(`document.querySelector('#msgs')?.textContent.includes('TASK SEED')`, 12000);
+    const countRefresh = async event => {
+      const before = await evalIn('TICK');
+      await until(`TICK !== ${before}`, 3000); // just after the periodic tick
+      return evalIn(`(async () => { let n = 0; const old = refresh; refresh = () => { n++; return old(); };
+        try { ${event}; await new Promise(r => setTimeout(r, 350)); return n; }
+        finally { refresh = old; } })()`);
+    };
+    out.focusRead = await countRefresh(`window.dispatchEvent(new Event('focus'))`);
+    out.visibleRead = await countRefresh(`CHAT_WAS_HIDDEN = true; document.dispatchEvent(new Event('visibilitychange'))`);
+    out.pageshowRead = await countRefresh(`window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted:true}))`);
+    out.taskReply = await hub('/__test/task-reply', { words:'TASK REPLY 1' });
+    out.taskVisible = await until(`document.querySelector('#msgs')?.textContent.includes('TASK REPLY 1')`, 5000).then(() => true).catch(() => false);
+    // One request hangs until aborted. The next request must run within 10 s.
+    out.hungPoll = await evalIn(`(async () => { const old = fetch; let n = 0;
+      fetch = (url, opt) => { if (String(url).startsWith('/api/room?id=') && ++n === 1)
+        return new Promise((_, reject) => opt.signal.addEventListener('abort', () => reject(new DOMException('aborted','AbortError'))));
+        return old(url, opt); };
+      try { tickNow(); await new Promise(r => setTimeout(r, 10200)); return n; }
+      finally { fetch = old; } })()`);
+    // A stale cursor from another hub process must request a full room view.
+    out.keyChanged = await evalIn(`(async () => { ROOM_LAST.revision = 'old-hub-key';
+      const old = ROOM_LAST; await fetch('/__test/task-reply', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({words:'TASK REPLY 2'})});
+      tickNow(); const end = Date.now()+5000; while (Date.now()<end) {
+        if (document.querySelector('#msgs')?.textContent.includes('TASK REPLY 2')) return true;
+        await new Promise(r=>setTimeout(r,100)); } return false; })()`);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.task + '&embed=1' }, sessionId);
+    await until(`document.querySelector('#msgs')?.textContent.includes('TASK REPLY 2')`, 12000);
+    await hub('/__test/task-reply', { words:'TASK DOCK REPLY' });
+    out.dockedTask = await until(`document.querySelector('#msgs')?.textContent.includes('TASK DOCK REPLY')`, 5000).then(() => true).catch(() => false);
+    out.taskRepairMid = await evalIn(`(() => { const n = [...document.querySelectorAll('#msgs [data-mid]')]
+      .find(e => e.textContent.includes('TASK DOCK REPLY')); if (!n) return '';
+      window.__drawBeforeDamage = renderBubbles;
+      renderBubbles = (items, opt = {}) => { if (opt.force) return window.__drawBeforeDamage(items, opt); };
+      n.remove(); return n.dataset.mid; })()`);
+    out.taskRepaired = await until(`!!document.querySelector('#msgs [data-mid="${out.taskRepairMid}"]')`, 7500)
+      .then(() => true).catch(() => false);
+    await evalIn(`renderBubbles = window.__drawBeforeDamage; delete window.__drawBeforeDamage; true`);
+    await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
+    await until(`!!PROJECTS?.projects?.length`, 12000);
+    await evalIn(`SELECTED_PROJECT = PROJECTS.projects.find(p => p.poRoomId === ${JSON.stringify(A.room)})?.id || '';
+      PROJECT_TAB = 'tasks'; renderRows(); true`);
+    out.dockReady = await until(`!!document.querySelector('iframe.po-session')?.contentWindow
+      ?.document?.querySelector('#input')`, 16000).then(() => true).catch(() => false);
+    if (out.dockReady) {
+      await evalIn(`(() => { const d = document.querySelector('iframe.po-session').contentWindow.document;
+        const i = d.querySelector('#input'); i.value = 'ASK1 Dock verification'; i.dispatchEvent(new Event('input'));
+        d.querySelector('#send').click(); return true; })()`);
+      out.dockedPoAnswer = await until(`document.querySelector('.pd-thread iframe')?.contentWindow
+        ?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer 1.')`, 12000)
+        .then(() => true).catch(() => false);
+      const dockSend = async words => evalIn(`(() => { const d = document.querySelector('iframe.po-session').contentWindow.document;
+        const i = d.querySelector('#input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input'));
+        d.querySelector('#send').click(); return true; })()`);
+      await hub('/__test/hold-channel', {});
+      await sleep(2500);
+      await dockSend('DOCKA First pending dock reply');
+      await until(`!document.querySelector('iframe.po-session').contentWindow.document.querySelector('#send').disabled`, 5000);
+      await dockSend('DOCKB Second pending dock reply');
+      await until(`!document.querySelector('iframe.po-session').contentWindow.document.querySelector('#send').disabled`, 5000);
+      const dockStart = Date.now();
+      while (Date.now() - dockStart < 10000) {
+        const written = await hub('/__test/written', {});
+        if (written['ANS-DOCKA'] && written['ANS-DOCKB']) break;
+        await sleep(100);
+      }
+      await sleep(1200);
+      await hub('/__test/report', {});
+      await hub('/__test/release-channel', {});
+      out.dockBatchBoth = await until(`document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
+        document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`, 8000)
+        .then(() => true).catch(() => false);
+      await hub('/__test/report', {});
+      await sleep(3000);
+      out.dockBatchAfterChange = await evalIn(`document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
+        document.querySelector('iframe.po-session')?.contentWindow?.document
+        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`);
+    }
+    out.catchups = (await hub('/api/health')).chatCatchups || {};
     await c.send('Target.closeTarget', { targetId });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -207,6 +383,9 @@ class PoChatRotationSequence(unittest.TestCase):
         cls.stop = threading.Event()
         cls.slow = threading.Event()
         cls.slowing = []     # the &to= polls held now
+        cls.hold_channel = threading.Event()
+        cls.release_channel = threading.Event()
+        cls.release_channel.set()
 
         def resume(h, room, text="", to="", key="", quiet=False):
             # The PO's seat: the send goes into its current conversation, and
@@ -219,12 +398,21 @@ class PoChatRotationSequence(unittest.TestCase):
                 time.sleep(0.4)
                 cls._append(sid, _turn(sid, "user", text, time.time()))
                 tok = next((t for t, _w, _x in SEQUENCE if (t + " ") in text), "")
+                if not tok:
+                    batch = re.search(r"\b((?:BATCH|DOCK)[AB])\b", text)
+                    tok = batch.group(1) if batch else ""
                 what = next((x for t, _w, x in SEQUENCE if t == tok), "answer")
                 time.sleep(1.2)
                 if what == "interrupt":
                     cls._append(sid, _turn(sid, "user", "[Request interrupted by user]", time.time()))
                     return
-                cls._append(sid, _turn(sid, "assistant", f"Here it is, answer {tok[3:]}.", time.time()))
+                answer = f"Here it is, answer {tok[3:] if tok.startswith('ASK') else tok}."
+                if tok.startswith(("BATCH", "DOCK")):
+                    led = points.sync(cls.room, force=True)
+                    pid = next((p["id"] for p in led["points"] if tok in p.get("text", "")), "")
+                    if pid:
+                        answer = f"Re {pid}: {answer}"
+                cls._append(sid, _turn(sid, "assistant", answer, time.time()))
                 cls.written[f"ANS-{tok}"] = time.time()
             threading.Thread(target=run, daemon=True).start()
             return {"delivered": 1}
@@ -242,10 +430,19 @@ class PoChatRotationSequence(unittest.TestCase):
                 cls._append(cls.current, _turn(cls.current, "user", f"[report] Overnight report {n} from task #12.", time.time()))
                 cls._append(cls.current, _turn(cls.current, "assistant", f"Overnight report {n} received.", time.time() + .01))
                 return h._send_json(200, {"ok": True})
+            if h.path == "/__test/hold-channel":
+                cls.hold_channel.set(); cls.release_channel.clear()
+                return h._send_json(200, {"ok": True})
+            if h.path == "/__test/release-channel":
+                cls.hold_channel.clear(); cls.release_channel.set()
+                return h._send_json(200, {"ok": True})
             if h.path == "/__test/notice":
                 msg = chatroom.post_notice(cls.room, "Ensemble", "Follow-up hub notice after the report.",
                                            {"noticeKind": "restart"})
                 return h._send_json(200, {"id": msg["id"]})
+            if h.path == "/__test/ordinary":
+                posted = chatroom.post_message(cls.room, "claude", "Ordinary room record outside the channel.", to="user")
+                return h._send_json(200, {"id": posted["message"]["id"]})
             if h.path == "/__test/written":
                 return h._send_json(200, dict(cls.written))
             if h.path == "/__test/slow":
@@ -253,11 +450,24 @@ class PoChatRotationSequence(unittest.TestCase):
                 return h._send_json(200, {"ok": True})
             if h.path == "/__test/slowing":
                 return h._send_json(200, {"n": len(cls.slowing)})
+            if h.path == "/__test/task-reply":
+                words = json.loads(h.rfile.read(int(h.headers.get("Content-Length", "0"))) or b"{}").get("words", "")
+                chatroom.post_message(cls.task, "claude", words, to="user")
+                return h._send_json(200, {"ok": True})
             return orig_post(h)
 
         orig_get = dashboard.Handler.do_GET
+        orig_send_file = dashboard.Handler._send_file
+
+        def send_file(h, path, *args, **kwargs):
+            baseline = os.environ.get("ENS_BASELINE_SESSION")
+            if baseline and Path(path).name == "session.html":
+                path = Path(baseline)
+            return orig_send_file(h, path, *args, **kwargs)
 
         def do_get(h):
+            if cls.hold_channel.is_set() and h.path.startswith("/api/room/channel"):
+                cls.release_channel.wait(12)
             # A link window's poll answered slowly once asked (/__test/slow).
             if cls.slow.is_set() and h.path.startswith("/api/room/channel") and "&to=" in h.path:
                 cls.slowing.append(h.path)
@@ -285,6 +495,7 @@ class PoChatRotationSequence(unittest.TestCase):
             mock.patch.object(dashboard.Handler, "_resume_room", resume),
             mock.patch.object(dashboard.Handler, "do_POST", do_post),
             mock.patch.object(dashboard.Handler, "do_GET", do_get),
+            mock.patch.object(dashboard.Handler, "_send_file", send_file),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
@@ -295,6 +506,11 @@ class PoChatRotationSequence(unittest.TestCase):
         points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
         threads.forget()
         cls.room = cls._po_room()
+        cls.task = chatroom.create_room("Task", [
+            {"identity": "claude", "agent": "claude", "role": "engineer"},
+            {"identity": "codex", "agent": "codex", "role": "reviewer"},
+        ])["id"]
+        chatroom.post_message(cls.task, "claude", "TASK SEED", to="user")
         threads.build(cls.room, show_progress=False)
 
         def keep_busy():
@@ -309,7 +525,8 @@ class PoChatRotationSequence(unittest.TestCase):
         cls.addClassCleanup(cls.stop.set)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
-        cls.server.handle_error = lambda *a: None
+        if not os.environ.get("ENS_DEBUG_SERVER"):
+            cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         try:
             cls.got = cls._chrome()
@@ -368,7 +585,7 @@ class PoChatRotationSequence(unittest.TestCase):
     @classmethod
     def _chrome(cls):
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name,
-                "base": f"http://127.0.0.1:{cls.server.server_address[1]}", "room": cls.room,
+                "base": f"http://127.0.0.1:{cls.server.server_address[1]}", "room": cls.room, "task": cls.task,
                 "sequence": SEQUENCE, "replyWithinMs": REPLY_WITHIN_MS, "holdMs": 6000}
         script = Path(cls.tmp.name) / "rotation_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
@@ -403,6 +620,41 @@ class PoChatRotationSequence(unittest.TestCase):
         for tok, _w, what in SEQUENCE:
             if what == "answer":
                 self.assertIn(tok, self.got["final"]["ans"])
+
+    def test_a_reply_to_a_new_send_opens_with_its_text(self):
+        self.assertTrue(self.got.get("answerMaskedByLaterEvent"), self.got)
+        self.assertTrue(self.got.get("openAnswer"), self.got)
+        self.assertTrue(self.got.get("mobileAnswer"), self.got)
+        self.assertTrue(self.got.get("batchBoth"), f"both same-poll replies must be visible: {self.got.get('batchDebug')}")
+        self.assertTrue(self.got.get("batchExposed"), "mobile thread layer hid the replies")
+        self.assertEqual(self.got.get("batchThreadCount"), 2, "the replies must be in different threads")
+        self.assertTrue(self.got.get("batchAfterChange"), "inline replies vanished on the next changed poll")
+
+    def test_unrelated_activity_preserves_selected_topic_and_link_window(self):
+        self.assertTrue(self.got.get("topicPreserved"), self.got)
+        self.assertTrue(self.got.get("windowPreserved"), self.got)
+        for key in ("topicContentIsolated", "topicSideKept", "windowContentIsolated", "windowSideKept"):
+            self.assertTrue(self.got.get(key), key)
+        self.assertTrue(self.got.get("ordinaryExcluded"), self.got)
+
+    def test_task_chat_recovers_after_visibility_timeout_and_stale_key(self):
+        for event in ("focusRead", "visibleRead", "pageshowRead"):
+            self.assertGreater(self.got.get(event, 0), 0, event)
+        self.assertTrue(self.got.get("taskVisible"), self.got)
+        self.assertGreaterEqual(self.got.get("hungPoll", 0), 2, self.got)
+        self.assertTrue(self.got.get("keyChanged"), self.got)
+        self.assertTrue(self.got.get("dockedTask"), self.got)
+        self.assertTrue(self.got.get("dockReady"), self.got)
+        self.assertTrue(self.got.get("dockedPoAnswer"), self.got)
+        self.assertTrue(self.got.get("dockBatchBoth"), "both Dock replies must appear in the channel")
+        self.assertTrue(self.got.get("dockBatchAfterChange"), "Dock replies vanished after a changed poll")
+        self.assertTrue(self.got.get("taskRepairMid"), self.got)
+        self.assertTrue(self.got.get("taskRepaired"), self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("thread-reply", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("poll-timeout", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("cursor-refetch", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("task-latest", 0), 0, self.got)
+        self.assertGreater(self.got.get("catchups", {}).get("resume-read", 0), 0, self.got)
 
 
 class HoldAndBudget(unittest.TestCase):

@@ -81,6 +81,7 @@ async function main() {
     out.held = await evalIn('DRAW_HELD');
     const beforeNoticeRepairs = (await hub('/api/health')).chatRepairs || 0;
     const notice = await hub('/__test/notice', {});
+    out.latestAnyNotice = (await hub('/api/room/channel?id=' + A.room)).latestAnyMid === notice.id;
     out.noticeFold = await until(`!![...document.querySelectorAll('#msgs .msg-fold[data-seen]')]
       .find(e => e.dataset.seen.endsWith('|${notice.id}'))`, 9000).then(() => true).catch(() => false);
     out.foldAfterNotice = await evalIn(`typeof thrMidDrawn === 'function' && thrMidDrawn(${JSON.stringify(mid)})`);
@@ -94,6 +95,7 @@ async function main() {
     await until('!THR_FETCHING', 5000);
     const repairMid = await evalIn('THR_VIEW.latestMid || THR_VIEW.items.at(-1)?.mid');
     out.repairMid = repairMid;
+    const beforeCatchups = (await hub('/api/health')).chatCatchups || {};
     // Keep ordinary redraws from restoring the deliberately removed row before
     // the timed guard gets a chance. Its forced reread is still allowed.
     await evalIn(`window.__ordinaryDraw = renderBubbles;
@@ -120,6 +122,9 @@ async function main() {
       out.repairCount = (await hub('/api/health')).chatRepairs || 0;
       if (!out.repairCount) await sleep(150);
     }
+    const afterCatchups = (await hub('/api/health')).chatCatchups || {};
+    out.repairCatchups = (afterCatchups['thread-summary'] || 0) - (beforeCatchups['thread-summary'] || 0)
+      + (afterCatchups['missing-latest'] || 0) - (beforeCatchups['missing-latest'] || 0);
     // The side thread stays open while another report lands in the channel.
     const sendMid = await until(`THR_VIEW?.items?.find(t => JSON.stringify(t).includes('ASK1 after rotation'))?.mid`, 9000)
       .catch(() => null);
@@ -201,6 +206,7 @@ class PoChatOvernight(unittest.TestCase):
         self.assertTrue(self.got["payload"], self.got)
         self.assertTrue(self.got["overnight"], self.got)
         self.assertTrue(self.got["noticeFold"], self.got)
+        self.assertTrue(self.got["latestAnyNotice"], self.got)
         self.assertTrue(self.got["foldAfterNotice"], self.got)
         self.assertEqual(self.got["falseRepairs"], 0, self.got)
         self.assertTrue(self.got["sent"], self.got)
@@ -209,7 +215,7 @@ class PoChatOvernight(unittest.TestCase):
     def test_missing_latest_repairs_and_is_counted(self):
         self.assertTrue(self.got["removed"], self.got)
         self.assertTrue(self.got["repaired"], self.got)
-        self.assertGreaterEqual(self.got["repairCount"], 1, self.got)
+        self.assertGreaterEqual(self.got["repairCount"] + self.got["repairCatchups"], 1, self.got)
 
     def test_side_frame_does_not_hide_new_channel_report(self):
         self.assertTrue(self.got["side"], self.got)

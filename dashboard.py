@@ -11699,6 +11699,15 @@ def channel_hub_rows(out: dict, room: dict) -> dict:
     return out
 
 
+def channel_latest_visible(out: dict) -> dict:
+    """Include a hub event in the latest-item guard only if this view draws it."""
+    hub = max(out.get("hubRows") or [], key=lambda m: _turn_epoch(m.get("ts")), default=None)
+    if hub and _turn_epoch(hub.get("ts")) > (out.get("latestAnyAt") or 0):
+        out.update(latestAnyMid=hub["id"], latestAnyThread="", latestAnyRole="hub")
+    out.pop("latestAnyAt", None)
+    return out
+
+
 # The channel and thread views last sent, by room and the sig sent with
 # them: a poll that holds one gets what changed since (#247: a PO's channel
 # was 250 KB on every change of any of it).
@@ -11725,6 +11734,15 @@ def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> d
     extra = {"progress": progress_now} if progress_now else {}
     if out.get("latestMid"):
         extra["latestMid"] = out["latestMid"]
+    if out.get("latestAnyMid"):
+        extra["latestAnyMid"] = out["latestAnyMid"]
+        extra["latestAnyThread"] = out.get("latestAnyThread", "")
+        extra["latestAnyRole"] = out.get("latestAnyRole", "")
+    if "watchedReplies" in out:
+        # Full reply bodies belong to the changed view, not every 304-style
+        # poll that only needs to name the watched heads.
+        extra["watchedReplies"] = [{k: v for k, v in r.items() if k != "turn"}
+                                   for r in out["watchedReplies"]]
     if had == sig:
         return {"sig": sig, "same": True, **extra}
     with _THREAD_VIEWS_LOCK:
@@ -16172,6 +16190,9 @@ def yield_to_pages(most_s: float = 1.0, quiet_s: float = 0.0) -> None:
 _SLOW: collections.deque = collections.deque(maxlen=5000)   # (answered, "GET /api/…", seconds)
 _CHAT_REPAIRS = [0]  # successful page repairs since hub start
 _CHAT_REPAIRS_LOCK = threading.Lock()
+_CHAT_CATCHUPS = collections.Counter()  # reads/actions the page needed to catch up, by cause
+_CHAT_CATCHUP_CAUSES = {"thread-reply", "thread-summary", "missing-latest",
+                         "task-latest", "resume-read", "poll-timeout", "cursor-refetch"}
 
 
 def slow_requests(window_s: float = 3600.0) -> dict:
@@ -16849,9 +16870,13 @@ class Handler(BaseHTTPRequestHandler):
         p = u.path
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
+            with _CHAT_REPAIRS_LOCK:
+                chat_repairs = _CHAT_REPAIRS[0]
+                chat_catchups = dict(_CHAT_CATCHUPS)
             self._send_json(200, {**startup.health(), "version": app_version.VERSION,
                                   "pid": os.getpid(), "slow": slow_requests(),
-                                  "chatRepairs": _CHAT_REPAIRS[0]})
+                                  "chatRepairs": chat_repairs,
+                                  "chatCatchups": chat_catchups})
             return
         if p == "/startup":
             self._send_startup_page()
@@ -17548,9 +17573,11 @@ class Handler(BaseHTTPRequestHandler):
                             return
                         chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
                         topic_tids = set(chosen["threads"]) if chosen else set()
+                    watch_mids = [m for m in arg("watch").split(",") if m][:24]
                     out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
-                                               before, arg("from"), topic_tids, arg("after"), arg("to"))
+                                               before, arg("from"), topic_tids, arg("after"), arg("to"), watch_mids)
                     channel_hub_rows(out, room)
+                    channel_latest_visible(out)
                     if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):
                         # The first read: the newest threads with replies; the
                         # rest on the next poll, as a delta of this one.
@@ -20305,6 +20332,12 @@ class Handler(BaseHTTPRequestHandler):
             if what == "chat-repair":
                 with _CHAT_REPAIRS_LOCK:
                     _CHAT_REPAIRS[0] += 1
+            elif what == "chat-catchup":
+                cause = line(data.get("cause") or "unknown", 40)
+                if cause not in _CHAT_CATCHUP_CAUSES:
+                    cause = "other"
+                with _CHAT_REPAIRS_LOCK:
+                    _CHAT_CATCHUPS[cause] += 1
             self._send_json(200, {"ok": True})
             return
         if p.startswith("/api/files/"):
