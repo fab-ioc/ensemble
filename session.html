@@ -1195,6 +1195,17 @@
   /* Slash commands (#253): the list a leading "/" opens over the box, and the
      agent's menu, read off its screen, with the keys to drive it. */
   #compose { position:relative; }
+  /* The box's height by hand (#274, P225): a bar on its top edge, as the
+     Changes splitter (#153), quiet until it is hovered, held or focused. */
+  #compose-size { position:absolute; left:var(--s-300); right:var(--s-300); top:0; height:var(--s-200); cursor:ns-resize; touch-action:none; z-index:2; }
+  #compose-size[hidden] { display:none; }
+  #compose-size::after { content:''; position:absolute; left:0; right:0; top:var(--s-050); height:3px; border-radius:var(--r-full); background:transparent; }
+  #compose-size:hover::after, #compose-size.held::after { background:var(--accent); }
+  #compose-size:focus-visible { outline:none; }
+  #compose-size:focus-visible::after { background:var(--focus-ring); }
+  #compose.sized #editor { height:var(--compose-h); max-height:none; flex:0 0 auto; overflow-y:auto; }
+  #compose.sized .ed-head { flex:1 0 auto; }
+  #compose.sized #input { flex:1 0 auto; max-height:none; }
   #slashpop { position:absolute; left:10px; right:10px; bottom:100%; margin-bottom:6px; z-index:40; max-height:min(320px, 45vh); overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.18); padding:4px; }
   #slashpop .sl-opt { display:flex; gap:10px; align-items:baseline; width:100%; text-align:left; background:transparent; border:none; border-radius:7px; padding:7px 10px; color:var(--fg); cursor:pointer; font:inherit; }
   #slashpop .sl-opt:hover { background:var(--hover); }
@@ -1656,6 +1667,7 @@
     <div id="livetail" hidden></div>
     <div id="stop-note" role="status" hidden></div>
     <div id="compose">
+      <div id="compose-size" role="separator" aria-orientation="horizontal" aria-label="Message box height" title="Drag to resize. Double-click for the automatic height." tabindex="0" hidden></div>
       <div id="slashpop" role="listbox" aria-label="Commands" hidden></div>
       <div id="compose-destination">To: <a href="#" id="compose-destination-link">Chat</a></div>
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
@@ -6524,6 +6536,9 @@ let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
 let TS = null;             // the thread open beside the channel: {tid, mid}
 let TS_AUTO = false;       // opened by reply catch-up, not by the reader
 let SHARED_THREAD = null;  // destination of the channel's one visible box
+// The workspace's editor is the channel's page; a thread it serves is its
+// SHARED_THREAD, set in place on a switch (#274), from &wc-thread= on load.
+if (WORKSPACE_COMPOSE && qs.get('wc-thread')) SHARED_THREAD = { thread:qs.get('wc-thread'), title:'Thread', info:null };
 const SHARED_CHOICE_KEY = 'cd-compose-target:' + ROOM;
 function sharedComposerChoice() {
   try { return JSON.parse(sessionStorage.getItem(SHARED_CHOICE_KEY) || 'null'); } catch (e) { return null; }
@@ -6535,6 +6550,8 @@ function sharedTargetPaint() {
   if (SHARED_THREAD) setText(chip.querySelector('span'), 'In thread: ' + SHARED_THREAD.title);
   $('#thr-also-l').hidden = THREAD_MODE ? false : !SHARED_THREAD;
   composerDestinationPaint();
+  // What the agent is doing shows where the box now sends (#274).
+  if (!THREAD_MODE && !WORKSPACE_COMPOSE) try { renderLiveTail(); } catch (e) {}
 }
 function composerDestinationPaint() {
   const link = $('#compose-destination-link');
@@ -7865,12 +7882,82 @@ function lineHtml(lines, empty) {
                       : `<div class="lt-line">${esc(empty)}</div>`;
 }
 
+// One strip per window (#274, P224). The PO chat and its thread side by side
+// show it once, in the panel the message box sends to; a thread alone (its
+// own window, over the chat on a phone, the chat hidden) shows it itself.
+// The thread page decides for both: frameShown(), sharedMainVisible() and
+// the box's destination, read at each render, so neither waits on the other.
+function frameShown(win) {
+  try {
+    for (let w = win; w !== w.top; w = w.parent) {
+      const f = w.frameElement, host = w.parent;
+      if (!f || f.hidden) return false;
+      const r = f.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < host.innerHeight && r.left < host.innerWidth)) return false;
+      const x = Math.min(Math.max(r.left + r.width / 2, 0), host.innerWidth - 1);
+      const y = Math.min(Math.max(r.top + r.height / 2, 0), host.innerHeight - 1);
+      if (host.document.elementFromPoint(x, y) !== f) return false;
+    }
+    return !win.top.document.hidden;
+  } catch (e) { return false; }
+}
+// This thread page is where the box sends: the workspace's box (#271) or the
+// channel's (its In thread chip, #270).
+function liveTailServed() {
+  const mine = sharedThreadTarget().thread;
+  if (document.body.classList.contains('workspace-guest')) {
+    try { const t = window.parent.wcTargetNow?.(); return t?.kind === 'thread' && t.room === ROOM; } catch (e) { return false; }
+  }
+  try { const t = sharedMainFrame()?.liveTailBoxThread?.(); return !!t && (t === mine || t === THREAD || t === 'm:' + THREAD_MID); } catch (e) { return false; }
+}
+function liveTailHere() {
+  if (!THREAD_MODE || !qs.get('side')) return true;
+  return !sharedMainVisible(sharedMainFrame()) || liveTailServed();
+}
+// Asked by the channel page `main`: this thread shows the strip for it.
+function liveTailTakes(main) {
+  return sharedMainFrame() === main && frameShown(window) && liveTailHere();
+}
+function liveTailBoxThread() { return SHARED_THREAD?.thread || ''; }
+// The channel's thread page: beside it in this page, or the Dock's thread
+// panel in the same window.
+function liveTailThreadFrame() {
+  if (THREAD_MODE) return null;
+  try {
+    const side = $('#thr-side');
+    if (side && !side.hidden) return $('#ts-frame').contentWindow;
+    const host = dashboardHost(), f = host?.PD?.rt?.get('thread:po')?.el?.querySelector('iframe.po-thread');
+    const w = f?.contentWindow;
+    return w && w.top === window.top && f.dataset.room === ROOM ? w : null;
+  } catch (e) { return null; }
+}
+function liveTailOwn() {
+  if (WORKSPACE_COMPOSE) return false;
+  if (THREAD_MODE) return liveTailHere();
+  try { return !liveTailThreadFrame()?.liveTailTakes?.(window); } catch (e) { return true; }
+}
+// The other page of the pair redraws in the same turn, so the strip moves
+// in one frame, never shown twice or not at all.
+let TAIL_OWN = null, TAIL_PAIRING = false;
+function liveTailPartner() {
+  try { return THREAD_MODE ? sharedMainFrame() : liveTailThreadFrame(); } catch (e) { return null; }
+}
 function renderLiveTail() {
   const box = document.getElementById('livetail');
   if (!box) return;
   const pc = document.getElementById('promptcard');
+  const own = liveTailOwn();
+  if (own !== TAIL_OWN) {
+    const first = TAIL_OWN === null;
+    TAIL_OWN = own;
+    if (!first && !TAIL_PAIRING) {
+      const p = liveTailPartner();
+      TAIL_PAIRING = true;
+      try { p?.renderLiveTail?.(); } catch (e) {} finally { TAIL_PAIRING = false; }
+    }
+  }
   // While the prompt card is up it already shows the screen — don't double it.
-  const show = ROOM_LIVE && TAIL_WORKING.length && (!pc || pc.hidden);
+  const show = own && ROOM_LIVE && TAIL_WORKING.length && (!pc || pc.hidden);
   if (!show) {
     if (!box.hidden) { box.hidden = true; box.innerHTML = ''; box.dataset.key = ''; }
     if (TAIL_POP_PTY) closeTailPop();
@@ -8532,6 +8619,86 @@ function fitToText(ta, row) {
   const cs = getComputedStyle(ta);
   const edge = cs.boxSizing === 'border-box' ? ta.offsetHeight - ta.clientHeight : -(parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
   ta.style.height = Math.min(Math.round(window.innerHeight * .4), Math.max(row, ta.scrollHeight + edge)) + 'px';
+}
+// ---- The box's height by hand (#274, P225) --------------------------------
+// On a computer the box's top edge drags it taller (or ↑ ↓ Home End on the
+// bar); the height is kept per browser for every box and destination, and a
+// double click gives the automatic height back. Set, the words scroll in it.
+// A phone keeps its box as it is.
+const COMPOSE_H_KEY = 'cd-compose-h';
+const COMPOSE_H_TOUCH = matchMedia('(pointer: coarse)');
+function composeHeightGet() {
+  try { const v = parseInt(localStorage.getItem(COMPOSE_H_KEY) || '', 10); return v > 0 ? v : 0; } catch (e) { return 0; }
+}
+// One row at least; the whole box at most about 70% of the window (the
+// workspace's, for its box; its To: line is outside this page).
+function composeHeightLimits() {
+  const box = $('#compose'), ed = $('#editor');
+  let hostH = innerHeight;
+  try { if (WORKSPACE_COMPOSE) hostH = window.parent.innerHeight; } catch (e) {}
+  const min = Math.ceil(parseFloat(getComputedStyle($('#input')).minHeight) || 40);
+  const rest = box.offsetHeight - ed.offsetHeight + (WORKSPACE_COMPOSE ? 28 : 0);
+  return { min, max: Math.max(min, Math.floor(hostH * .7) - rest) };
+}
+function composeHeightApply(h) {
+  const box = $('#compose'), bar = $('#compose-size');
+  bar.hidden = COMPOSE_H_TOUCH.matches;
+  if (bar.hidden || !h) {
+    box.classList.remove('sized');
+    box.style.removeProperty('--compose-h');
+    bar.removeAttribute('aria-valuenow');
+    bar.setAttribute('aria-valuetext', 'Automatic');
+    return 0;
+  }
+  const { min, max } = composeHeightLimits(), v = Math.min(max, Math.max(min, Math.round(h)));
+  box.style.setProperty('--compose-h', v + 'px');
+  box.classList.add('sized');
+  bar.setAttribute('aria-valuemin', String(min));
+  bar.setAttribute('aria-valuemax', String(max));
+  bar.setAttribute('aria-valuenow', String(v));
+  bar.removeAttribute('aria-valuetext');
+  return v;
+}
+function composeHeightSet(h) {
+  const v = composeHeightApply(h);
+  try { if (v) localStorage.setItem(COMPOSE_H_KEY, String(v)); else localStorage.removeItem(COMPOSE_H_KEY); } catch (e) {}
+}
+{
+  const bar = $('#compose-size');
+  // Pressed, the bar keeps the caret where it is (no focus moves).
+  bar.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add('held');
+    // Screen coordinates: the box's own frame grows under the pointer.
+    const y0 = e.screenY, h0 = $('#editor').getBoundingClientRect().height;
+    let h = 0;
+    const move = ev => { if (h || Math.abs(ev.screenY - y0) >= 2) h = composeHeightApply(h0 + y0 - ev.screenY) || h; };
+    const end = () => {
+      bar.classList.remove('held');
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', end);
+      bar.removeEventListener('pointercancel', end);
+      if (h) composeHeightSet(h);
+    };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+  });
+  bar.addEventListener('dblclick', () => composeHeightSet(0));
+  bar.addEventListener('keydown', e => {
+    const cur = $('#editor').getBoundingClientRect().height, { min, max } = composeHeightLimits();
+    const h = { ArrowUp: cur + 16, ArrowDown: cur - 16, Home: min, End: max }[e.key];
+    if (h === undefined) return;
+    e.preventDefault();
+    composeHeightSet(h);
+  });
+  const again = () => composeHeightApply(composeHeightGet());
+  window.addEventListener('storage', e => { if (e.key === COMPOSE_H_KEY) again(); });
+  window.addEventListener('resize', again);
+  COMPOSE_H_TOUCH.addEventListener?.('change', again);
+  again();
 }
 if (SEND_SIZE_FALLBACK && window.ResizeObserver) {
   let width = -1;
@@ -9210,6 +9377,33 @@ window.addEventListener('beforeunload', edStoreNow);
 document.addEventListener('visibilitychange', () => { if (document.hidden) edStoreNow(); });
 function workspaceThreadPromote(thread) {
   if (WORKSPACE_COMPOSE && THREAD_MODE && thread) THREAD = String(thread);
+  if (WORKSPACE_COMPOSE && !THREAD_MODE && thread && SHARED_THREAD?.thread.startsWith('m:')) SHARED_THREAD.thread = String(thread);
+}
+// The workspace's box moves between the PO chat and its thread in place
+// (#274): the same editor, its draft swapped. Reloading the page for it
+// emptied the box for a few frames and moved it (P225). null: the chat.
+let WC_PAINTED = false;
+// "Also send to chat" comes and goes with the thread: in the workspace box it
+// sits in the row with Send, so a switch never adds a line (P225).
+if (WORKSPACE_COMPOSE) $('#compose .ed-row > .grow').before($('#thr-also-l'));
+function workspaceComposeThread(target) {
+  if (!WORKSPACE_COMPOSE || THREAD_MODE) return;
+  let next = target?.thread ? String(target.thread) : '';
+  if (next.startsWith('m:')) {
+    try { next = edWorkspaceStorage().getItem('cd-thread-alias:' + ROOM + ':' + next.slice(2)) || next; } catch (e) {}
+  }
+  if ((SHARED_THREAD?.thread || '') === next) {
+    if (SHARED_THREAD && target.info) { SHARED_THREAD.info = target.info; SHARED_THREAD.title = String(target.title || 'Thread'); }
+    if (!WC_PAINTED) { WC_PAINTED = true; sharedTargetPaint(); }
+    return;
+  }
+  edStoreNow();
+  SHARED_THREAD = next ? { thread:next, title:String(target.title || 'Thread'), info:target.info || null } : null;
+  sharedComposerYield(false);
+  sharedComposerResume();
+  $('#thr-also').checked = false;
+  WC_PAINTED = true;
+  sharedTargetPaint();
 }
 function sharedComposerYield(persist = true) {
   if (!COMPOSER_SHARED_ACTIVE) return;
@@ -9249,7 +9443,7 @@ function workspaceComposerGuest(on) {
 }
 if (WORKSPACE_COMPOSE) {
   const reportSize = () => {
-    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height)}, location.origin); } catch (e) {}
+    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height), sized:$('#compose').classList.contains('sized')}, location.origin); } catch (e) {}
   };
   new ResizeObserver(reportSize).observe($('#compose'));
   setTimeout(reportSize, 0);
