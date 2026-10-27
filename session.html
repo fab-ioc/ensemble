@@ -1250,6 +1250,11 @@
      frame as tall as the box, so 32vh of it held the box under one row and a
      drag began with a jump (P226). The words' own 40vh cap is still the frame's. */
   body.workspace-compose #editor { max-height:calc(var(--host-h, 100vh) * .32); }
+  /* The / list's cap is the window's too, not this short frame's (P227). While
+     a menu is open the frame reaches up over the chats: clear above the box. */
+  body.workspace-compose #slashpop { max-height:min(320px, calc(var(--host-h, 100vh) * .45)); }
+  html.menu-room, html.menu-room body.workspace-compose { background:transparent; }
+  html.menu-room body.workspace-compose #compose { background:var(--surface); }
   #compose-target { display:flex; align-items:center; gap:var(--s-100); align-self:flex-start; padding:var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #compose-target[hidden], #thread-reply[hidden] { display:none; }
   #compose-target button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
@@ -9528,6 +9533,27 @@ if (WORKSPACE_COMPOSE) {
   };
   new ResizeObserver(reportSize).observe($('#compose'));
   setTimeout(reportSize, 0);
+  // This frame is as tall as the box, so a menu opening upward from it was
+  // cut at its top (P227). While one is open the host grows the frame up by
+  // the menu's height, over the chats (wcFrameRoom); the page above the box
+  // is clear. Asked for as the menu opens or closes, before it is painted.
+  const MENUS = '.phone-compose-tools[open] > .phone-tools-menu, #send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden])';
+  let asked = 0;
+  const menuRoom = () => {
+    const top = $('#compose').getBoundingClientRect().top;
+    let need = 0;
+    for (const m of document.querySelectorAll(MENUS)) need = Math.max(need, Math.ceil(top - m.getBoundingClientRect().top));
+    if (need === asked) return;
+    asked = need;
+    let room = 0;
+    try { room = window.parent.wcFrameRoom(need); } catch (e) {}
+    document.documentElement.classList.toggle('menu-room', room > 0);
+    document.body.style.paddingTop = room ? room + 'px' : '';
+  };
+  const watch = new MutationObserver(menuRoom);
+  watch.observe($('.phone-compose-tools'), {attributes:true, subtree:true, attributeFilter:['open', 'hidden']});
+  for (const id of ['#send-menu', '#stop-choices', '#slashpop']) watch.observe($(id), {attributes:true, childList:true, attributeFilter:['hidden']});
+  addEventListener('pagehide', () => { try { window.parent.wcFrameRoom(0); } catch (e) {} });
 }
 function sharedComposerAdoptIfEmpty() {
   if (edHas({head:$('#input').value, images:ATT.stored(), points:ED.points})) return;
