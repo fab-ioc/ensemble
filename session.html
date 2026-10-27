@@ -1218,6 +1218,21 @@
   #cmdpanel .cp-hint { font-size:11px; color:var(--dim); margin-top:7px; }  #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
   #compose[hidden] { display:none; }
+  #compose-destination { display:flex; align-items:center; gap:var(--s-100); font-size:var(--fs-200); color:var(--fg-subtle); min-width:0; }
+  #compose-destination a { color:var(--link); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-decoration:underline; }
+  #compose-destination a:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  body.workspace-compose #compose-destination, #compose-target { display:none !important; }
+  body.workspace-guest #compose { display:none !important; }
+  body.workspace-compose { height:auto; min-height:0; overflow:hidden; background:var(--surface); }
+  body.workspace-compose > header, body.workspace-compose > #info,
+  body.workspace-compose #msgpane, body.workspace-compose #promptcard,
+  body.workspace-compose #cmdpanel, body.workspace-compose #livetail,
+  body.workspace-compose #stop-note, body.workspace-compose #thr-side,
+  body.workspace-compose #agentcol, body.workspace-compose #thread-reply { display:none !important; }
+  body.workspace-compose main, body.workspace-compose #chatcol { display:block; height:auto; min-height:0; overflow:visible; }
+  body.workspace-compose #compose { display:flex !important; margin:0; border:0; border-radius:0; box-shadow:none; padding:var(--s-100) var(--s-300) var(--s-200); }
+  body.workspace-compose #compose-target { display:none !important; }
+  body.workspace-compose #editor { max-height:32vh; }
   #compose-target { display:flex; align-items:center; gap:var(--s-100); align-self:flex-start; padding:var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #compose-target[hidden], #thread-reply[hidden] { display:none; }
   #compose-target button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
@@ -1455,6 +1470,7 @@
     /* The words get the box's width (#232): nothing but + and Send beside them;
        "Also send to chat" is a quiet line under the box. */
     #compose #hint, #compose #thr-also-l { grid-column:1 / -1; }
+    #compose #compose-destination { grid-column:1 / -1; }
     #compose #thr-also-l { justify-self:start; padding:0 var(--s-100); font-size:var(--fs-100); }
     /* Send stays at the box's foot while the words grow above it. */
     #compose .ed-row { gap:0; align-self:end; }
@@ -1641,6 +1657,7 @@
     <div id="stop-note" role="status" hidden></div>
     <div id="compose">
       <div id="slashpop" role="listbox" aria-label="Commands" hidden></div>
+      <div id="compose-destination">To: <a href="#" id="compose-destination-link">Chat</a></div>
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
         <div id="compose-target" hidden><span></span><button type="button" aria-label="Send to main chat" title="Send to main chat">&times;</button></div>
@@ -1697,6 +1714,17 @@ fetch('/api/settings').then(r => r.json()).then(s => {
 // The hub's port, so a link to its loopback address can be made this page's.
 fetch('/api/config').then(r => r.json()).then(c => { if (c && c.port) HUB_PORT = String(c.port); }).catch(() => {});
 if (qs.get('embed')) document.body.classList.add('embed');
+const WORKSPACE_COMPOSE = qs.has('workspace-compose');
+if (WORKSPACE_COMPOSE) document.body.classList.add('workspace-compose');
+if (!WORKSPACE_COMPOSE) {
+  try {
+    const host = window.parent;
+    if (host !== window && host.location.origin === location.origin
+        && host.document.getElementById('workspace-compose')
+        && host.document.body.classList.contains('po-dock') && host.innerWidth >= 768)
+      document.body.classList.add('workspace-guest');
+  } catch (e) {}
+}
 if (qs.get('side') && THREAD_MODE) document.body.classList.add('side');
 // ?agent=<identity> — arrived from a notification about that specific agent, so
 // land on its terminal rather than on a page with the terminals switched off.
@@ -6503,10 +6531,36 @@ function sharedTargetPaint() {
   chip.hidden = THREAD_MODE || !SHARED_THREAD;
   if (SHARED_THREAD) setText(chip.querySelector('span'), 'In thread: ' + SHARED_THREAD.title);
   $('#thr-also-l').hidden = THREAD_MODE ? false : !SHARED_THREAD;
+  composerDestinationPaint();
 }
+function composerDestinationPaint() {
+  const link = $('#compose-destination-link');
+  if (!link) return;
+  if (THREAD_MODE || SHARED_THREAD) { link.textContent = (THREAD_MODE ? THR_INFO?.title : SHARED_THREAD?.title) || 'Thread'; return; }
+  const room = ROOM_OBJ;
+  if (room?.no) { link.textContent = '#' + room.no + ' ' + room.title; return; }
+  let project = '';
+  try {
+    const host = dashboardHost();
+    const page = host?.pdProjectName ? host : host?.opener?.pdProjectName ? host.opener : null;
+    project = page?.pdProjectName?.() || '';
+  } catch (e) {}
+  link.textContent = (project || room?.projectName || room?.title || 'Chat') + ' PO';
+}
+$('#compose-destination-link').addEventListener('click', e => {
+  e.preventDefault();
+  if (THREAD_MODE) $('#msgs').scrollIntoView({block:'nearest'});
+  else if (SHARED_THREAD) { const t = SHARED_THREAD; sideOpen({tid:t.thread.startsWith('m:') ? '' : t.thread,mid:t.thread.startsWith('m:') ? t.thread.slice(2) : ''}); }
+  else $('#msgs').scrollIntoView({block:'nearest'});
+});
 function sharedThreadSelect(target, focus = false) {
   if (THREAD_MODE || !target?.thread) return;
+  const switching = SHARED_THREAD?.thread !== String(target.thread);
+  if (switching) edStoreNow();
   SHARED_THREAD = { thread:String(target.thread), title:String(target.title || 'Thread'), info:target.info || null };
+  if (switching && !document.body.classList.contains('workspace-guest')) {
+    sharedComposerYield(false); sharedComposerResume();
+  }
   try { sessionStorage.setItem(SHARED_CHOICE_KEY, JSON.stringify({thread:SHARED_THREAD.thread, active:true})); } catch (e) {}
   sharedTargetPaint();
   if (focus) { sharedComposerResume(); $('#input').focus({ preventScroll:true }); }
@@ -6516,7 +6570,11 @@ function sharedThreadUpdate(target) {
 }
 function sharedThreadClear(closed = false) {
   const thread = SHARED_THREAD?.thread || TS?.tid || (TS?.mid && 'm:' + TS.mid);
+  if (SHARED_THREAD) edStoreNow();
   SHARED_THREAD = null;
+  if (thread && !document.body.classList.contains('workspace-guest')) {
+    sharedComposerYield(false); sharedComposerResume();
+  }
   $('#thr-also').checked = false;
   try {
     if (closed || !thread) sessionStorage.removeItem(SHARED_CHOICE_KEY);
@@ -6964,6 +7022,7 @@ function threadHead() {
   if (document.title !== tab) document.title = tab;
   const host = embedHost();
   if (host) host.postMessage({ type: 'thread-title', roomId: ROOM, thread: THREAD, title }, location.origin);
+  composerDestinationPaint();
 }
 // Opened: its replies up to the newest shown are read (the hub keeps it).
 function threadSeen(items) {
@@ -7394,6 +7453,7 @@ function refreshShow(room, ticket, sendsGen) {
   ROOM_AGENTS = mem.map(m => ({ identity: m.identity, agent: m.agent, model: m.model || '', role: m.role || '', ptyId: m.ptyId, sessionId: m.sessionId, onMention: !!m.onMention }));
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
+  composerDestinationPaint();
   SOLO_MODE = soloMode;
   showOpenQuestions();
   showInterrupt(room.interrupts || [], room);
@@ -8910,9 +8970,10 @@ const ED_BOX = new Map();      // a point's id → its images (attBox)
 // Embedded views of one conversation use the same draft. A thread opened in
 // its own tab has its own box and keeps the older per-thread draft key.
 const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search)
-  + (THREAD_MODE && !qs.get('side') ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid')) : '');
+  + (THREAD_MODE ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid'))
+    : SHARED_THREAD ? ':thread:' + SHARED_THREAD.thread : '');
 let _edSave = 0;
-let COMPOSER_SHARED_ACTIVE = true;
+let COMPOSER_SHARED_ACTIVE = !document.body.classList.contains('workspace-guest');
 function edStoreNow() {
   clearTimeout(_edSave);
   if (!COMPOSER_SHARED_ACTIVE) return;
@@ -8931,14 +8992,7 @@ function edSave() {
 }
 function edLoad() {
   try {
-    let saved = sessionStorage.getItem(ED_KEY());
-    // Drafts written before the composer was shared lived under the thread id.
-    // Bring one forward when the conversation has no shared draft yet.
-    if (!saved && THREAD_MODE && qs.get('side')) {
-      saved = sessionStorage.getItem('cd-draft:' + ROOM + ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid')));
-      if (saved) sessionStorage.setItem(ED_KEY(), saved);
-    }
-    return edFromDraft(JSON.parse(saved || 'null'));
+    return edFromDraft(JSON.parse(sessionStorage.getItem(ED_KEY()) || 'null'));
   } catch (e) { return edNew(); }
 }
 const edLi = id => document.querySelector(`#ed-points > li[data-pt="${id}"]`);
@@ -9121,6 +9175,7 @@ function sharedComposerYield(persist = true) {
   COMPOSER_SHARED_ACTIVE = false;
 }
 function sharedComposerResume() {
+  if (document.body.classList.contains('workspace-guest')) return;
   if (COMPOSER_SHARED_ACTIVE) return;
   clearTimeout(_edSave);
   // Discard only this frame's stale editor state. The draft is in storage and
@@ -9131,6 +9186,19 @@ function sharedComposerResume() {
   ED = edNew();
   COMPOSER_SHARED_ACTIVE = true;
   edStart();
+}
+function workspaceComposerGuest(on) {
+  if (WORKSPACE_COMPOSE) return;
+  if (on === document.body.classList.contains('workspace-guest')) return;
+  if (on) { sharedComposerYield(); document.body.classList.add('workspace-guest'); }
+  else { document.body.classList.remove('workspace-guest'); sharedComposerResume(); }
+}
+if (WORKSPACE_COMPOSE) {
+  const reportSize = () => {
+    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height)}, location.origin); } catch (e) {}
+  };
+  new ResizeObserver(reportSize).observe($('#compose'));
+  setTimeout(reportSize, 0);
 }
 function sharedComposerAdoptIfEmpty() {
   if (edHas({head:$('#input').value, images:ATT.stored(), points:ED.points})) return;
@@ -9192,13 +9260,18 @@ function sharedComposerSync() {
   $('#compose').hidden = paired;
   $('#thread-reply').hidden = !paired;
 }
-if (THREAD_MODE && qs.get('side')) {
+if (THREAD_MODE && qs.get('side') && !WORKSPACE_COMPOSE) {
   setInterval(sharedComposerSync, 300);
   setTimeout(sharedComposerSync, 0);
   document.addEventListener('pointerdown', e => {
     if (SHARED_PAIRED && !e.target.closest('#thread-reply')) sharedMainFrame()?.sharedThreadSelect(sharedThreadTarget(), false);
   }, true);
-  $('#thread-reply').addEventListener('click', () => sharedMainFrame()?.sharedThreadSelect(sharedThreadTarget(), true));
+  $('#thread-reply').addEventListener('click', () => {
+    if (document.body.classList.contains('workspace-guest')) {
+      window.parent.postMessage({type:'workspace-pick',roomId:ROOM,thread:THREAD,mid:THREAD_MID,
+        title:THR_INFO?.title || 'Thread',focus:true}, location.origin);
+    } else sharedMainFrame()?.sharedThreadSelect(sharedThreadTarget(), true);
+  });
 }
 // ---- The message editor: end -----------------------------------------------
 $('#terms').onclick = () => {
@@ -9274,6 +9347,14 @@ try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-read
 // counts as a modal (modalSelector), so focus moving into the frame closes
 // nothing; the release tells the page (chat-clicked), after the click.
 if (window.parent !== window) {
+  const picked = () => {
+    if (!document.body.classList.contains('workspace-guest')) return;
+    try { window.parent.postMessage({type:'workspace-pick', roomId:ROOM,
+      thread:THREAD_MODE ? THREAD : '', mid:THREAD_MODE ? THREAD_MID : '',
+      title:THREAD_MODE ? (THR_INFO?.title || 'Thread') : ''}, location.origin); } catch (e) {}
+  };
+  document.addEventListener('pointerdown', picked, true);
+  document.addEventListener('focusin', picked, true);
   // A Dock menu open at the press: focus leaving it closes it at the press,
   // so the page hears it was open (the first click closes a tool's menu only).
   let pressed = false, unmark = 0, menuAtPress = false;
