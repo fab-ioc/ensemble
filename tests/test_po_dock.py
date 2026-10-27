@@ -169,7 +169,7 @@ const PD = {chatKey:'room-po'};
 
 PURE_FNS = ["esc", "PD_IDS", "PD_TOOLS", "pdDefaultLayout", "PD_PT_WORD", "PD_PT_REASON", "PD_PT_FOLDS", "pdPtState", "pdPtNeeds",
             "pdLatest", "pdLastAnswer", "pdCurAnswer", "pdLastPlan", "pdTaskWords", "pdPtAge", "pdNeedsCounts", "pdPointsSummary", "pdSaid",
-            "pdPointsHtml", "pdTopicNeedsRows"]
+            "pdPointsHtml", "pdTopicNeedsRows", "PD_DONE_IC"]
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -258,29 +258,29 @@ class ThePanels(unittest.TestCase):
         self.assertIn('<span class="pdp-state planned">#104 · in progress</span>', p5)
         self.assertIn('data-mid="room-po:m9" data-part="re:P5" title="Go to where the PO planned the work">plan ↓</a>', p5)
         self.assertIn('data-pt-act="drop"', p5)
-        self.assertNotIn('data-pt-act="ack"', p5, "no thumbs up on work that is not live")
+        self.assertNotIn('data-pt-act="done"', p5, "no thumbs up on work that is not live")
         self.assertNotIn("answer ↓", p5)
         p6 = html[html.index('data-pt="P6"'):html.index('data-pt="P5"')]
         self.assertIn('<span class="pdp-state planned">#105 merged, awaiting go-live</span>', p6)
         self.assertIn('<p class="pdp-said">claude: started as #105</p>', p6)
-        self.assertNotIn('data-pt-act="ack"', p6, "merged is not delivered")
+        self.assertNotIn('data-pt-act="done"', p6, "merged is not delivered")
 
     def test_a_delivered_point_links_its_delivery_and_keeps_its_plan(self):
         html = self.o["list"]
         p4 = html[html.index('data-pt="P4"'):html.index('data-pt="P1"')]
         self.assertIn('data-mid="room-po:m7" data-part="re:P4" title="Go to where the PO planned the work">plan ↓</a>', p4)
         self.assertIn('<p class="pdp-said">claude: #75 is live</p>', p4, "the delivery, not the plan")
-        self.assertIn('data-pt="P4" data-pt-act="ack"', p4)
+        self.assertIn('data-pt="P4" data-pt-act="done"', p4)
 
     def test_each_point_links_both_ends_and_has_its_one_click(self):
         html = self.o["list"]
         self.assertIn('data-mid="room-po:m1" data-part="pt:P1" title="Go to your message in the PO chat">your message ↑</a>', html)
         self.assertIn('data-mid="room-po:m2" data-part="re:P1" title="Go to the answer in the PO chat">answer ↓</a>', html)
         self.assertIn('href="/session?room=room-po&amp;msg=room-po:m2&amp;part=re:P1"', html, "a real link: it opens in a tab too")
-        self.assertIn('data-pt="P1" data-pt-act="ack"', html)
+        self.assertIn('data-pt="P1" data-pt-act="done"', html)
         self.assertIn('data-pt="P2" data-pt-act="drop"', html)
         self.assertIn('<p class="pdp-said">claude: #75 is live</p>', html, "an answer given by doing shows what was done")
-        self.assertIn('aria-label="Acknowledge the answer to P1: nothing is sent to the agent"', html)
+        self.assertIn('aria-label="Done: you saw the answer to P1, nothing to start. Nothing is sent to the PO"', html)
         self.assertIn('<span class="pdp-age" data-at="992800">2h</span>', html)
 
     def test_no_points_and_not_yet_loaded_say_why(self):
@@ -533,7 +533,7 @@ async function main() {
     out.reset = await p.evalIn('({ points: PD.dock.isVisible("points"), front: PD_IDS.filter(id => PD.dock.frontOf(id) === id), auto: PD.dock.layout().auto.map(a => a.id), line: pdChatFrame().contentDocument.getElementById("points-line").hidden, menu: !!document.querySelector(".pd-menu") })');
     // Ack in Points: the point is acknowledged, in the panel and in the chat.
     // (P1 left the list once seen: its thumbs up, as the chat's, still acknowledges it at once.)
-    await p.evalIn('pdPointAct("P1", "ack").then(() => 0)');
+    await p.evalIn('pdPointAct("P1", "done").then(() => 0)');
     await p.until('pdChatFrame().contentWindow.eval("POINTS.items.find(p => p.id === \'P1\').state === \'acked\'")', 10000);
     out.acked = await p.evalIn('({ rows: [...PD.els.points.querySelectorAll(".pdp-row")].map(r => r.dataset.pt), chat: pdChatFrame().contentWindow.eval("POINTS.items.find(p => p.id === \'P1\').state") })');
 

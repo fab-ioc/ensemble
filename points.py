@@ -16,7 +16,11 @@ is its own point). It gets an id numbered per room, ``P12``, and a state:
 * ``delivered``: the answer is there for real (the change is live, the
   question answered), the person has not acknowledged it. A ledger written
   before the stages says ``answered`` for this, and is read so;
-* ``acked``: they acknowledged it (thumbs up, Ack, or a bare "thanks");
+* ``acked``: they acknowledged it (Done, Go ahead, an older thumbs up or
+  Ack, or a bare "thanks"). ``ackKind`` says which answer closed it (#272):
+  ``done`` (they did their part or saw it, nothing to start) or ``go`` (Go
+  ahead: approved, start it); a point closed before #272 has none and reads
+  "acknowledged";
 * ``followed``: a later point of theirs follows it up (``followedBy``): a
   comment on a passage of its answer, or a message linking or quoting that
   answer. The follow-up is the point's child (``replyTo`` on it), the chain
@@ -412,7 +416,7 @@ def _path(room_id: str) -> Path:
 
 def _empty(room_id: str) -> dict:
     return {"version": 1, "roomId": room_id, "next": 1, "points": [],
-            "approvals": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED,
+            "approvals": {}, "dones": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED,
             "asksKeys": ASKS_KEYS, "migrated": MIGRATED}
 
 
@@ -427,6 +431,8 @@ def _clean(led: dict, room_id: str) -> dict:
     out["derived"] = led.get("derived") if isinstance(led.get("derived"), int) else 0
     if isinstance(led.get("approvals"), dict):
         out["approvals"] = led["approvals"]
+    if isinstance(led.get("dones"), dict):
+        out["dones"] = led["dones"]
     if isinstance(led.get("asks"), dict):
         out["asks"] = led["asks"]
     out["asksKeys"] = led["asksKeys"] if isinstance(led.get("asksKeys"), int) else 1
@@ -1385,12 +1391,15 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
 # What the person does
 # ---------------------------------------------------------------------------
 
-ACTIONS = ("ack", "drop", "reopen")
+ACTIONS = ("ack", "done", "drop", "reopen")
+# How a balloon is answered as a whole (#272, GitHub issue 28): Go ahead
+# ("approved, start it") or Done ("I did my part / seen, nothing to start").
+ANSWER_KINDS = ("go", "done")
 
 
 def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict | None:
-    """Ack (delivered or open → acked: never a planned one, whose work is not
-    live yet), Drop (open, planned or delivered → dropped), or Reopen (acked
+    """Ack or Done (delivered or open → acked: never a planned one, whose
+    work is not live yet; Done records ``ackKind: done``), Drop (open, planned or delivered → dropped), or Reopen (acked
     or dropped → open). Types nothing into anyone. Returns the point, or None
     when there is no such point or the move does not apply."""
     now = time.time() if now is None else now
@@ -1402,49 +1411,98 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
         if p is None:
             return None
         st = p["state"]
-        if action == "ack" and st in ("open", "delivered", "followed"):
+        if action in ("ack", "done") and st in ("open", "delivered", "followed"):
             _set_state(p, "acked", now)
             p["ackedBy"] = "click"
+            if action == "done":
+                p["ackKind"] = "done"
         elif action == "drop" and st in LIVE:
             _set_state(p, "dropped", now)
         elif action == "reopen" and st == "acked" and p.get("ackedBy") in AUTO and last_answer(p):
             # Closed by itself (Needs you's Closed fold): its answer is new again.
             _set_state(p, "delivered", now)
             p["reopenedAt"] = now
-            for k in ("ackedBy", "seenKey", "seenAt", "seenHow", "autoKey", "autoAt", "autoFrom", "supersededBy"):
+            for k in ("ackedBy", "ackKind", "seenKey", "seenAt", "seenHow", "autoKey", "autoAt", "autoFrom", "supersededBy"):
                 p.pop(k, None)
         elif action == "reopen" and st in ("acked", "dropped", "followed"):
             _set_state(p, "open", now)
             p["reopenedAt"] = now
+            p.pop("ackKind", None)
         else:
             return None
         _save(room_id, led)
         return dict(p)
 
 
-def approve(room_id: str, mid: str, now: float | None = None) -> bool:
-    """A thumbs up on a decision: recorded once per balloon (False when it
-    already was), and every point that balloon delivers is acknowledged. On a
-    plan it is a "go ahead": the point stays in progress."""
+def approve(room_id: str, mid: str, now: float | None = None, kind: str = "go",
+            asks: dict | None = None) -> bool:
+    """Go ahead (an older thumbs up on a decision) or Done on a balloon
+    (#272): recorded once per balloon, either kind (False when it already
+    was), and every point that balloon delivers is acknowledged with that
+    kind. On a plan Go ahead leaves the point in progress. ``asks`` ({n:
+    answer}) settles the balloon's cards with it (Go ahead's option, or
+    Done); a card already answered keeps its answer."""
     now = time.time() if now is None else now
     mid = (mid or "").strip()
-    if not mid:
+    if not mid or kind not in ANSWER_KINDS:
         return False
     with _LOCK:
         led = load(room_id)
-        if mid in led["approvals"]:
+        if mid in led["approvals"] or mid in led["dones"]:
             return False
-        led["approvals"][mid] = now
+        (led["approvals"] if kind == "go" else led["dones"])[mid] = now
+        if asks:
+            got = led["asks"].setdefault(mid, {})
+            for n, ans in asks.items():
+                if str(n) not in got:
+                    got[str(n)] = {**ans, "by": "approve", "at": now}
         for p in led["points"]:
             if p["state"] in ("open", "delivered", "followed") and any(a.get("mid") == mid and a.get("kind") != "plan"
                                                           for a in p["answers"]):
                 u = {"mid": mid, "state": p["state"], "stateAt": p.get("stateAt"),
-                     "ackedBy": p.get("ackedBy")}
+                     "ackedBy": p.get("ackedBy"), "ackKind": p.get("ackKind")}
                 _set_state(p, "acked", now)
-                p["ackedBy"] = "approval"
+                p["ackedBy"] = "approval" if kind == "go" else "done"
+                p["ackKind"] = kind
                 p["unapprove"] = {**u, "stateAt2": p["stateAt"]}
         _save(room_id, led)
         return True
+
+
+ANSWER_HEAD = {"go": "Go ahead: approved, start it",
+               "done": "Done: the user did their part, nothing to start"}
+
+
+def go_option(ask: dict) -> str:
+    """The option a Go ahead on a card picks: its recommended one, else Yes
+    on a yes/no card; '' when it has neither (Go ahead says nothing there)."""
+    opts = ask.get("options") or []
+    rec = ask.get("recommended", -1)
+    if isinstance(rec, int) and 0 <= rec < len(opts):
+        return str(opts[rec].get("label") or "")
+    if ask.get("kind") == "yesno":
+        return next((str(o.get("label")) for o in opts if str(o.get("label") or "").lower() == "yes"), "")
+    return ""
+
+
+def answer_text(kind: str, pids: list[str], question: str = "", picks: list[tuple[str, str]] = ()) -> str:
+    """What the agent reads for Go ahead or Done (#272), in plain words:
+    ``[point P12] Go ahead: approved, start it — “A” on “A or B?”.`` or
+    ``[point P12] Done: the user did their part, nothing to start.`` The tag
+    shares the line, so it is never read as a new point's ``[point P12]``."""
+    tag = "".join(f"[point {i}] " for i in pids)
+    head = ANSWER_HEAD[kind]
+    if picks:
+        return f"{tag}{head} — " + "; ".join(f"“{label}” on “{q}”" for q, label in picks) + "."
+    return f"{tag}{head}" + (f" — on “{question}”." if question else ".")
+
+
+def balloon_points(room_id: str, mid: str) -> list[str]:
+    """The points a balloon answers or plans that are not closed yet: the
+    ones a Go ahead or Done on it names (``[point P12] Go ahead: …``)."""
+    led = load(room_id, shared=True)
+    return [p["id"] for p in led["points"]
+            if p["state"] in LIVE + ("followed",) and any(a.get("mid") == mid for a in p["answers"])]
 
 
 def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None = None) -> dict | None:
@@ -1557,6 +1615,13 @@ def unapprove(room_id: str, mid: str) -> None:
     with _LOCK:
         led = load(room_id)
         changed = led["approvals"].pop(mid, None) is not None
+        changed = led["dones"].pop(mid, None) is not None or changed
+        got = led["asks"].get(mid) or {}
+        for n in [n for n, a in got.items() if isinstance(a, dict) and a.get("by") == "approve"]:
+            got.pop(n)
+            changed = True
+        if mid in led["asks"] and not got:
+            led["asks"].pop(mid)
         for p in led["points"]:
             u = p.get("unapprove")
             if not isinstance(u, dict) or u.get("mid") != mid:
@@ -1565,10 +1630,11 @@ def unapprove(room_id: str, mid: str) -> None:
             changed = True
             if p["state"] == "acked" and p.get("stateAt") == u.get("stateAt2"):
                 p["state"], p["stateAt"] = u["state"], u.get("stateAt") or p["stateAt"]
-                if u.get("ackedBy"):
-                    p["ackedBy"] = u["ackedBy"]
-                else:
-                    p.pop("ackedBy", None)
+                for k in ("ackedBy", "ackKind"):
+                    if u.get(k):
+                        p[k] = u[k]
+                    else:
+                        p.pop(k, None)
         if changed:
             _save(room_id, led)
 
@@ -1994,7 +2060,7 @@ _LOOKUPS: dict[str, tuple] = {}   # room id -> (task index, (project, keys), {re
 
 def _item(p: dict, task=None) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
-                                 "parent", "comment", "followedBy", "replyTo") if p.get(k) not in (None, "", [])}
+                                 "parent", "comment", "followedBy", "replyTo", "ackKind") if p.get(k) not in (None, "", [])}
     if "followUps" in out:          # the ledger's own list (view reads the cached ledger)
         out["followUps"] = json.loads(json.dumps(out["followUps"]))
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
@@ -2053,6 +2119,7 @@ def view(room_id: str, room: dict | None = None, quick: bool = False) -> dict:
     return {"items": [_item(p, task) if _uses_task(p) else dict(items[i]) for i, p in enumerate(pts)],
             **parts["counts"],
             "approvals": sorted(led.get("approvals") or {}),
+            "dones": sorted(led.get("dones") or {}),
             "asks": json.loads(json.dumps(led.get("asks") or {})),
             "asksSettledAt": float(led.get("asksSettledAt") or 0),
             "needs": {} if quick else _needs_view(room_id, room, led)}
