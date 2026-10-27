@@ -13643,9 +13643,15 @@ function pdEnsure() {
   // The chat back in the page brings back the thread its window had open (#236).
   PD.dock.onPopIn(id => {
     const panel = id === 'po-chat' ? PD.els['po-chat'] : PD.rt.get(id)?.el;
-    panel?.querySelectorAll('iframe').forEach(f => { try { f.contentWindow?.edStoreNow(); } catch (e) {} });
     const remembered = WC.popped.get(id);
     WC.popped.delete(id);
+    // A still-loading workspace frame may retain this same thread key. Stop
+    // its pending write before the popped editor commits its newer text.
+    if (remembered && WC.pickSeq === remembered.pickSeq)
+      wcLeaveFrame(document.getElementById('workspace-compose-frame'));
+    panel?.querySelectorAll('iframe').forEach(f => {
+      try { f.contentWindow?.edStoreNow(); f.contentWindow?.sharedComposerYield(false); } catch (e) {}
+    });
     if (remembered) setTimeout(() => {
       if (WC.pickSeq === remembered.pickSeq && wcValid(remembered.target)) wcChoose(remembered.target);
     }, 0);
@@ -13730,13 +13736,16 @@ function wcMainTarget() {
   return r?.roomId ? {kind:'task', room:r.roomId} : wcPoRoom() ? {kind:'po', room:wcPoRoom()} : null;
 }
 function wcKey(t) { return t ? [t.kind, t.room, t.thread || '', t.mid || ''].join('|') : ''; }
+function wcLeaveFrame(f) {
+  try { f.contentWindow?.edStoreNow(); f.contentWindow?.sharedComposerYield(false); } catch (e) {}
+}
 function wcChoose(t, focus = false) {
   if (!t?.room) return;
   WC.pickSeq++;
   WC.restoring = false;
   const changed = wcKey(t) !== wcKey(WC.target);
   if (changed) {
-    try { document.getElementById('workspace-compose-frame').contentWindow?.edStoreNow(); } catch (e) {}
+    wcLeaveFrame(document.getElementById('workspace-compose-frame'));
     WC.target = t;
     WC.src = '';
     try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(t)); } catch (e) {}
@@ -13791,7 +13800,7 @@ function wcSync() {
     box.hidden = true;
     for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread'))
       try { chat.contentWindow?.workspaceComposerGuest(false); } catch (e) {}
-    if (WC.src) { try { f.contentWindow?.edStoreNow(); } catch (e) {} f.removeAttribute('src'); WC.src = ''; }
+    if (WC.src) { wcLeaveFrame(f); f.removeAttribute('src'); WC.src = ''; }
     return;
   }
   if (!wcValid(WC.target)) {
@@ -13803,13 +13812,18 @@ function wcSync() {
     const next = wcFallback();
     if (!next) { box.hidden = true; return; }
     if (wcKey(next) !== wcKey(WC.target)) {
-      try { f.contentWindow?.edStoreNow(); } catch (e) {}
+      wcLeaveFrame(f);
       WC.target = next; WC.src = '';
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(next)); } catch (e) {}
     }
   } else WC.restoring = false;
-  for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread'))
-    try { chat.contentWindow?.workspaceComposerGuest(true); } catch (e) {}
+  for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')) {
+    try {
+      if (!chat.contentDocument?.body.classList.contains('workspace-guest'))
+        chat.contentWindow?.edStoreNow();
+      chat.contentWindow?.workspaceComposerGuest(true);
+    } catch (e) {}
+  }
   box.hidden = false;
   document.getElementById('workspace-compose-link').textContent = wcTitle(WC.target);
   const t = WC.target;
@@ -14013,17 +14027,24 @@ function pdThreadTitle(roomId, title, thread) {
   if (thread && e.tid !== thread) {
     const old = e.tid || (e.mid ? 'm:' + e.mid : '');
     e.wcAlias = old;
-    if (WC.target?.kind === 'thread' && WC.target.room === roomId
-        && (WC.target.thread === old || (!WC.target.thread && 'm:' + WC.target.mid === old))) {
+    const selected = WC.target?.kind === 'thread' && WC.target.room === roomId
+      && (WC.target.thread === old || (!WC.target.thread && 'm:' + WC.target.mid === old));
+    if (selected) {
       try { document.getElementById('workspace-compose-frame').contentWindow?.edStoreNow(); } catch (err) {}
-      const from = 'cd-draft:' + roomId + ':thread:' + old;
-      const to = 'cd-draft:' + roomId + ':thread:' + thread;
-      try {
-        if (sessionStorage.getItem(from) && !sessionStorage.getItem(to)) sessionStorage.setItem(to, sessionStorage.getItem(from));
-        sessionStorage.removeItem(from);
-      } catch (err) {}
+    }
+    const from = 'cd-draft:' + roomId + ':thread:' + old;
+    const to = 'cd-draft:' + roomId + ':thread:' + thread;
+    try {
+      if (sessionStorage.getItem(from) && !sessionStorage.getItem(to)) sessionStorage.setItem(to, sessionStorage.getItem(from));
+      sessionStorage.removeItem(from);
+      if (old.startsWith('m:')) sessionStorage.setItem('cd-thread-alias:' + roomId + ':' + old.slice(2), thread);
+    } catch (err) {}
+    if (selected) {
       WC.target = {kind:'thread', room:roomId, thread};
-      WC.src = '';
+      // The live editor can keep its focus and caret: its thread and draft key
+      // change in place. After a later target switch, the new URL uses the ID.
+      try { document.getElementById('workspace-compose-frame').contentWindow?.workspaceThreadPromote(thread); } catch (err) {}
+      WC.src = '/session?id=' + encodeURIComponent(roomId) + '&embed=1&workspace-compose=1&thread=' + encodeURIComponent(thread);
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(WC.target)); } catch (err) {}
     }
     e.tid = thread; e.mid = '';

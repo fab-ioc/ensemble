@@ -64,6 +64,7 @@ async function main() {
     await until(`typeof ALL_ROWS!=='undefined' && ALL_ROWS.some(r=>r.roomId===${JSON.stringify(A.po)})`,'rows');
     await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
     await until(`!!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`,'PO chat');
+    await until(`document.getElementById('workspace-compose')?.hidden===false && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('compose')`,'workspace composer');
     out.mainAlone=await ev(count); out.workspaceAlone=await ev(workspace);
     await ev(`(()=>{const f=${PO},tid=f.contentDocument.querySelector('#msgs .thr-open[data-thr]').dataset.thr;
       f.contentWindow.sideOpen({tid,auto:true});return 0})()`);
@@ -212,6 +213,8 @@ async function main() {
     await size(1728,1117); await sleep(900);
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click();0`);
     await until(`!!${THR}?.contentDocument?.getElementById('thread-reply') && !${THR}.contentDocument.getElementById('thread-reply').hidden`,'thread again');
+    await ev(`${THR}.contentDocument.getElementById('msgs').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
+    await until(`WC.target?.kind==='thread'`,'thread selected before close');
     await ev(`document.getElementById('po-panel').hidden=true;0`); await sleep(550); out.threadAlone=await ev(count);
     await ev(`(()=>{const i=${THR}.contentDocument.getElementById('input');i.value='Changed in hidden Dock thread';i.dispatchEvent(new Event('input',{bubbles:true}));
       PD.dock.removePanel('thread:po');document.getElementById('po-panel').hidden=false;return 0})()`);
@@ -248,11 +251,25 @@ async function main() {
       pdThreadTitle(${JSON.stringify(A.po)},'A new topic without replies.',tid);
       return {mid,tid,target:WC.target};})()`);
     await until(`WC.target?.kind==='thread' && WC.target.thread===PD.rt.get('thread:po')?.tid`,'promoted thread target');
-    await until(`document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread='+${JSON.stringify(out.promotedFrom.tid)}) && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread editor');
+    await until(`document.getElementById('workspace-compose-frame')?.contentWindow?.eval('THREAD')===${JSON.stringify(out.promotedFrom.tid)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread editor');
     await sleep(300);
     out.newThreadFirst=await sendProbe('new thread first');
     out.newThreadSecond=await sendProbe('new thread second');
     out.promotedTarget=await ev(workspace);
+    await ev(`(()=>{const f=document.getElementById('workspace-compose-frame'),i=f.contentDocument.getElementById('input');i.value='Promoted main draft';i.dispatchEvent(new Event('input',{bubbles:true}));f.contentWindow.edStoreNow();PD.dock.setViewMode('thread:po','window');return 0})()`);
+    await until(`!!PD.dock.popWindow('thread:po')?.document.querySelector('iframe.po-thread')?.contentDocument?.getElementById('input')`,'promoted thread popped');
+    out.promotedPop=await ev(`(()=>{const f=PD.dock.popWindow('thread:po').document.querySelector('iframe.po-thread'),d=f.contentDocument,i=d.getElementById('input');
+      const before={draft:i.value,key:f.contentWindow.eval('ED_KEY()'),thread:f.contentWindow.eval('THREAD'),active:f.contentWindow.eval('COMPOSER_SHARED_ACTIVE'),display:getComputedStyle(d.getElementById('compose')).display};
+      i.value='Edited popped thread';i.dispatchEvent(new Event('input',{bubbles:true}));
+      return before;})()`);
+    await ev(`PD.dock.setViewMode('thread:po','pinned');0`);
+    await until(`WC.target?.kind==='thread' && WC.target.thread===${JSON.stringify(out.promotedFrom.tid)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input')?.value==='Edited popped thread'`,'promoted thread returned');
+    out.promotedBack=await ev(`({target:WC.target,draft:document.getElementById('workspace-compose-frame').contentDocument.getElementById('input').value})`);
+    await ev(`PD.dock.setViewMode('thread:po','window');0`);
+    await until(`!!PD.dock.popWindow('thread:po')?.document.querySelector('iframe.po-thread')?.contentDocument?.getElementById('input')`,'thread popped for close');
+    await ev(`(()=>{const win=PD.dock.popWindow('thread:po'),d=win.document.querySelector('iframe.po-thread').contentDocument,i=d.getElementById('input');i.value='Closed popped window draft';i.dispatchEvent(new Event('input',{bubbles:true}));win.close();return 0})()`);
+    await until(`!PD.dock.popWindow('thread:po')`,'thread window closed');
+    out.closedPopDraft=await ev(`JSON.parse(sessionStorage.getItem('cd-draft:'+${JSON.stringify(A.po)}+':thread:'+${JSON.stringify(out.promotedFrom.tid)}))?.head||''`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -394,6 +411,12 @@ class SharedComposer(unittest.TestCase):
         self.assertEqual(g['newThreadFirst']['thread'], g['promotedFrom']['tid'])
         self.assertEqual(g['newThreadSecond']['thread'], g['promotedFrom']['tid'])
         self.assertNotIn('http', g['promotedTarget']['target'])
+        self.assertEqual(g['promotedPop']['draft'], 'Promoted main draft')
+        self.assertEqual(g['promotedPop']['thread'], g['promotedFrom']['tid'])
+        self.assertTrue(g['promotedPop']['active'] and g['promotedPop']['display'] != 'none')
+        self.assertTrue(g['promotedPop']['key'].endswith(':thread:'+g['promotedFrom']['tid']))
+        self.assertEqual(g['promotedBack'], {'target':g['promotedFrom']['target'],'draft':'Edited popped thread'})
+        self.assertEqual(g['closedPopDraft'], 'Closed popped window draft')
         self.assertEqual(g['closedTarget']['target'], 'Motors PO')
         self.assertEqual(g['poReload'], 'PO draft')
         for key in ('threeDesktop','threeMedium'):

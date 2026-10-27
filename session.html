@@ -1705,6 +1705,9 @@ const ROOM = qs.get('id') || qs.get('room');
 const THREAD_MODE = qs.has('thread');
 let THREAD = (qs.get('thread') || '').trim();
 const THREAD_MID = (qs.get('tmid') || '').trim();
+if (THREAD_MODE && !THREAD && THREAD_MID) {
+  try { THREAD = edWorkspaceStorage().getItem('cd-thread-alias:' + ROOM + ':' + THREAD_MID) || ''; } catch (e) {}
+}
 if (THREAD_MODE) document.body.classList.add('thread');
 let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git name
 fetch('/api/settings').then(r => r.json()).then(s => {
@@ -8970,12 +8973,21 @@ const ED_BOX = new Map();      // a point's id → its images (attBox)
 // Embedded views of one conversation use the same draft. A thread opened in
 // its own tab has its own box and keeps the older per-thread draft key.
 const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search)
-  + (THREAD_MODE ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid'))
+  + (THREAD_MODE ? ':thread:' + (qs.get('thread') || edThreadAlias())
     : SHARED_THREAD ? ':thread:' + SHARED_THREAD.thread : '');
+function edThreadAlias() {
+  try { return edWorkspaceStorage().getItem('cd-thread-alias:' + ROOM + ':' + THREAD_MID) || 'm:' + THREAD_MID; }
+  catch (e) { return 'm:' + THREAD_MID; }
+}
 // A Dock pop-out is a second top-level browsing context, with a separate
 // sessionStorage. Its drafts belong to the workspace tab that opened it.
 function edWorkspaceStorage() {
-  try { return window.top.opener?.sessionStorage || sessionStorage; } catch (e) { return sessionStorage; }
+  try {
+    const top = window.top;
+    if (top !== window && top.document.getElementById('dk-pop-root')
+        && top.opener?.location.origin === location.origin) return top.opener.sessionStorage;
+  } catch (e) {}
+  return sessionStorage;
 }
 function edDraftWrite(key, value) {
   const workspace = edWorkspaceStorage();
@@ -8988,6 +9000,15 @@ let COMPOSER_SHARED_ACTIVE = !document.body.classList.contains('workspace-guest'
 function edStoreNow() {
   clearTimeout(_edSave);
   if (!COMPOSER_SHARED_ACTIVE) return;
+  // A panel moved back from a Dock window can briefly run its old editor
+  // before the workspace hides it. The workspace editor owns this draft now.
+  if (!WORKSPACE_COMPOSE) {
+    try {
+      const host = window.top;
+      if (host !== window && host.document.getElementById('workspace-compose')?.hidden === false
+          && host.document.getElementById('workspace-compose-frame')?.contentWindow !== window) return;
+    } catch (e) {}
+  }
   ED.head = $('#input').value;
   ED.points.forEach(p => { const ta = edTextOf(p.id); if (ta) p.text = ta.value; });
   ED.images = ATT.stored();
@@ -9179,6 +9200,11 @@ function edStart() {
 }
 edStart();
 window.addEventListener('pagehide', edStoreNow);
+window.addEventListener('beforeunload', edStoreNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) edStoreNow(); });
+function workspaceThreadPromote(thread) {
+  if (WORKSPACE_COMPOSE && THREAD_MODE && thread) THREAD = String(thread);
+}
 function sharedComposerYield(persist = true) {
   if (!COMPOSER_SHARED_ACTIVE) return;
   if (persist) edStoreNow(); else clearTimeout(_edSave);
@@ -9199,8 +9225,11 @@ function sharedComposerResume() {
 }
 function workspaceComposerGuest(on) {
   if (WORKSPACE_COMPOSE) return;
-  if (on === document.body.classList.contains('workspace-guest')) return;
-  if (on) { sharedComposerYield(); document.body.classList.add('workspace-guest'); }
+  if (on === document.body.classList.contains('workspace-guest')) {
+    if (!on) sharedComposerResume();
+    return;
+  }
+  if (on) { sharedComposerYield(false); document.body.classList.add('workspace-guest'); }
   else { document.body.classList.remove('workspace-guest'); sharedComposerResume(); }
 }
 if (WORKSPACE_COMPOSE) {
