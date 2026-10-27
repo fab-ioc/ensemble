@@ -881,7 +881,7 @@ alarm: **no colour of its own, never in the task list's Needs you group.**
   again); the person's next message in the chat closes it as *seen*. A later ask naming the same
   task closes it as *superseded*; once per ledger, an answer older than three days and than their
   latest message closed as *closed as old* (answers above the chat's read mark start seen). The
-  Done still closes one at once; a send taken back takes back what it closed.
+  thumbs up still closes one at once; a send taken back takes back what it closed.
 - **The line** (`#points-line`) sits under the ask line, in its look (`--surface`, `--border`,
   `--r-200`, `--fs-200`, `--fg-muted`): "Needs you: 1 decision · 2 to try · 3 new answers", or
   "Nothing waits on you" when only folds are left. Hidden when there is nothing at all. It is a
@@ -892,7 +892,7 @@ alarm: **no colour of its own, never in the task list's Needs you group.**
   "Reading the question cards…".
 - **A list row:** the id in `--font-mono`, its first words (`--fg`, one line, cut with `…`, the
   whole text its tooltip), its age ("12m", patched in place, never a redraw), its state in words,
-  "your message ↑" and "answer ↓" as links (`--link`), and its one click: **Done** for an answer,
+  "your message ↑" and "answer ↓" as links (`--link`), and its one click: **👍 Ack** for an answer,
   **Drop** for one still waiting.
   **The answer's own words show under the ask** (`.pt-said`, `--fg-muted`: the hub's `said`, the
   `Re Pn:` paragraph of the answer, else its first words, else an answer by doing's summary), so
@@ -915,25 +915,21 @@ alarm: **no colour of its own, never in the task list's Needs you group.**
 - **The bar under a balloon** (`.pt-bar`, a hairline `--border` above it): on the person's balloon
   each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
   answer, "acknowledged", "dropped") with Drop or Reopen; on the agent's, "answers P12 ↑" linked to
-  the person's balloon and Done while it is not acknowledged. The one word that draws the eye is
+  the person's balloon and 👍 Ack while it is not acknowledged. The one word that draws the eye is
   "answered", in `--fg` at weight 600: it waits for the person. On the person's balloon (`--hover`)
   the bar's words are `--fg-subtle` and its links `--fg` underlined: `--fg-muted` and `--link` there
   fall under 4.5:1 in Light.
 - **Controls are Subtle buttons** (transparent, `--fg-subtle`, 24px, `--hover`, the focus ring),
-  every one with its words in `aria-label`: a Done on a plain answer types nothing into the agent,
-  and says so in its tooltip.
-- **Done and Go ahead are two answers, never one gesture** (#272, GitHub issue 28): **Done** (a
-  check, `ANS_ICON.done`) = "I did my part / seen, nothing to start"; **Go ahead** (a play arrow,
-  `ANS_ICON.go`) = "approved, start it". Each is its icon (14px, `aria-hidden`, `currentColor`) and
-  its word, `.pt-btn.pt-ans`, a square `--touch-min` on a phone; never a thumbs up, never an icon
-  alone. **Go ahead** sits only on a balloon that proposes or recommends something (a decision or
-  a task's question with a recommendation, a card with a recommended option or a yes/no one, a
-  plan in progress: `balloonAnswers`); on a card it answers the recommended option (Yes on yes/no).
-  **Done** sits wherever a thumbs up did: on each answer (closing that point, typing nothing), and
-  once for the whole balloon where the balloon asks the person something (a decision, an open card,
-  an answer to try), where it is typed. A balloon's pair is sent once, either kind, and becomes a
-  chip ("approved: go ahead", "done"); a point says how it closed ("P12 · done", "P12 · go ahead"),
-  one closed before #272 "acknowledged".
+  every one with its words in `aria-label`: an Ack types nothing into the agent, and says so in its
+  tooltip. A balloon has no answer buttons of its own beyond 👍 Ack.
+- **Done and Go ahead are two reactions, never balloon buttons** (P228, GitHub issue 28; #272's
+  footer buttons are gone): the selection bar (`static/selbar.js`, #258) offers seven reactions in
+  one row, 👍 👎 ❓ 🤔 **✅ Done: I did it, nothing to start**, **🚀 Go ahead: do this**, ❤️, each
+  sent at once as a review comment on the selected words and shown as a chip on the balloon. On a
+  phone the row sits under Comment and Copy, `justify-content: space-between`, every reaction a
+  `--touch-min` target. A ✅ sent before the split (`✅ Done / go ahead`, `SelBar.CHIPS`) still
+  reads back as a ✅ chip but is never offered. Older answers keep their chip ("approved: go
+  ahead", "done").
 - **Never folded:** a balloon holding an open point or an unacknowledged answer is drawn in full
   whatever would fold it (age, its task's row, a Team activity gap), and the catch-up line names
   "N new answers to your asks" (only answers that still need the person) first.

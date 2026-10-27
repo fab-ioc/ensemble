@@ -119,7 +119,7 @@ class InChrome(unittest.TestCase):
             self.assertLessEqual(result["after"]["scrollX"], 1)
             self.assertTrue(result["card"]["disabled"])
         self.assertEqual(desktop["card"]["pressed"], ["Now"])
-        self.assertGreaterEqual(desktop["before"]["approve"], 1)
+        self.assertEqual(desktop["before"]["approve"], 0, "no Go with it button: the bar's 🚀 Go ahead reaction replaced it (P228)")
         self.assertEqual(mobile["card"]["pressed"], ["Yes"])
         self.assertEqual(len(self.sent), 2)
         self.assertEqual({p["state"] for p in self.ledger["points"]}, {"acked"})

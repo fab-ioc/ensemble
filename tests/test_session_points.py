@@ -10,10 +10,8 @@ in Node and these check that:
 * a balloon holding an open point, or an unacknowledged answer, never folds:
   not by age, not into its task's row, not by Just us;
 * the catch-up line counts unacknowledged answers first;
-* Done and Go ahead (#272): a decision with a recommendation has both, one
-  without has Done only, a plan Go ahead only, a plain answer its point's
-  own Done; each is sent exactly once per balloon with its kind, and an
-  acknowledged point says which it was; a Done on a point posts once;
+* a thumbs up on a decision with a recommendation sends the approval exactly
+  once, and is not offered without a recommendation; an Ack posts once;
 * the hub's "[point Pn]" lines are not shown.
 
 Skipped without Node.
@@ -46,7 +44,7 @@ ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, pointsSummary, pointsListHtml, pointsLineHtml, heldBy, foldPlan,
-    chatGroups, quietItem, catchUp, canApprove, answerBalloon, pointAct, askAnswer, asksOf, stripPointLines, hasPointLines, stripImagePlaceholders, hasImagePlaceholders, refPreview, lastAnswer,
+    chatGroups, quietItem, catchUp, pointAct, stripPointLines, hasPointLines, stripImagePlaceholders, hasImagePlaceholders, refPreview, lastAnswer,
     setPoints: v => { POINTS = v; }, points: () => POINTS, PT_FOLDS };`, ctx);
 const T = ctx.t;
 const out = {};
@@ -56,7 +54,6 @@ const pv = { open: 1, planned: 2, delivered: 2, approvals: [], items: [
   { id: 'P3', state: 'open', text: 'Why is the build red?\n\n[point P3]', createdAt: 1000, mid: 's:4', answers: [] },
   { id: 'P2', state: 'answered', text: 'Is #26 merged?', createdAt: 900, mid: 's:0', answers: [{ mid: 's:2', at: 950, how: 'implicit' }] },
   { id: 'P1', state: 'acked', text: 'Old one', createdAt: 800, mid: 's:9', answers: [{ mid: 's:10', at: 810 }] },
-
   { id: 'P4', state: 'answered', text: 'Start the docs task', createdAt: 1100, mid: 's:5', answers: [{ at: 1200, how: 'tool', summary: 'claude: started as #75' }] },
   { id: 'P5', state: 'planned', text: 'Fix the gap', createdAt: 1300, mid: 's:11', task: { ref: '#104', workflow: 'inprogress', workflowName: 'In progress' },
     answers: [{ mid: 's:12', at: 1310, how: 're', kind: 'plan', task: '#104' }] },
@@ -71,15 +68,6 @@ out.hisAnswered = T.pointBarHtml({ id: 's:0', from: 'user' }, P, href);
 out.hisAcked = T.pointBarHtml({ id: 's:9', from: 'user' }, P, href);
 out.agent = T.pointBarHtml({ id: 's:2', from: 'claude', text: 'Yes.' }, P, href);
 out.agentAcked = T.pointBarHtml({ id: 's:10', from: 'claude', text: 'Yes.' }, P, href);
-// How each was answered (#272), and an answer that asks them to try something.
-const PK = T.pointMaps({ approvals: [], items: [
-  { id: 'P8', state: 'acked', ackKind: 'done', text: 'Did it', createdAt: 820, mid: 's:20', answers: [{ mid: 's:21', at: 830 }] },
-  { id: 'P9', state: 'acked', ackKind: 'go', text: 'Shall I?', createdAt: 840, mid: 's:22', answers: [{ mid: 's:23', at: 850 }] },
-  { id: 'P10', state: 'delivered', needs: 'try', text: 'Is it fixed?', createdAt: 860, mid: 's:24', answers: [{ mid: 's:25', at: 870 }] }] });
-out.hisDone = T.pointBarHtml({ id: 's:20', from: 'user' }, PK, href);
-out.hisGo = T.pointBarHtml({ id: 's:22', from: 'user' }, PK, href);
-out.agentDone = T.pointBarHtml({ id: 's:21', from: 'claude', text: 'Yes.' }, PK, href);
-out.agentTry = T.pointBarHtml({ id: 's:25', from: 'claude', text: 'Fixed: reload and try it.' }, PK, href);
 out.nothing = T.pointBarHtml({ id: 's:7', from: 'claude', text: 'x' }, P, href);
 out.hisPlanned = T.pointBarHtml({ id: 's:11', from: 'user' }, P, href);
 out.hisMerged = T.pointBarHtml({ id: 's:16', from: 'user' }, P, href);
@@ -145,29 +133,16 @@ T.CHAT_NAMES.po = 'claude';
 out.cu = T.catchUp(cuItems, { i: 0, ts: 1, mine: true }, false, T.CHAT_NAMES, new Set(['c'])).parts.map(p => p.text);
 out.cuPlain = T.catchUp(cuItems, { i: 0, ts: 1, mine: true }, false).parts.map(p => p.text);
 
-// Done and Go ahead on a balloon: each sent once, whatever the clicks.
+// A decision's balloon: no Done or Go ahead of its own (those are the
+// selection bar's reactions, P228); one answered so before shows it.
 (async () => {
   T.setPoints(T.pointMaps({ items: [], approvals: [] }));
-  const yn = { id: 's:30', from: 'claude', text: 'Ask: Shall I merge it now?' };
-  const pick = { id: 's:31', from: 'claude', text: 'Ask: Which colour?\n- Red\n- Blue' };
-  out.ynBar = T.pointBarHtml(yn, T.points(), href);
-  out.pickBar = T.pointBarHtml(pick, T.points(), href);
   const dec = { id: 's:7', from: 'claude', text: 'Decision needed: ship on Friday?\n\n- yes\n- no\n\nI recommend yes: the tests are green.' };
-  const noRec = { id: 's:8', from: 'claude', text: 'Decision needed: A or B?' };
-  const q = { id: 'm1', from: 'claude', kind: 'report', reportKind: 'question', text: 'Which DB? My recommendation: Postgres.' };
-  out.can = [T.canApprove(dec), T.canApprove(noRec), T.canApprove(q), T.canApprove({ id: 'm2', from: 'user', text: 'Decision needed: x, I recommend' })];
   out.decBar = T.pointBarHtml(dec, T.points(), href);
-  out.noRecBar = T.pointBarHtml(noRec, T.points(), href);
+  out.approvedBar = T.pointBarHtml(dec, T.pointMaps({ items: [], approvals: ['s:7'] }), href);
+  out.doneBar = T.pointBarHtml(dec, T.pointMaps({ items: [], dones: ['s:7'] }), href);
   const post = (path, body) => { posts.push([path, body]); return new Promise(r => setTimeout(() => r({ ok: true }), 5)); };
-  await Promise.all([T.answerBalloon(dec.id, 'go', dec, post), T.answerBalloon(dec.id, 'go', dec, post)]);
-  await T.answerBalloon(dec.id, 'done', dec, post);
-  out.approvedBar = T.pointBarHtml(dec, T.points(), href);
-  await T.answerBalloon(yn.id, 'go', yn, post);
-  out.ynAnswer = T.askAnswer(yn, T.asksOf(yn)[0], T.points());
-  await T.answerBalloon(pick.id, 'done', pick, post);
-  out.pickAnswer = T.askAnswer(pick, T.asksOf(pick)[0], T.points());
-  out.doneBar = T.pointBarHtml(pick, T.points(), href);
-  await Promise.all([T.pointAct('P2', 'done', post), T.pointAct('P2', 'done', post)]);
+  await Promise.all([T.pointAct('P2', 'ack', post), T.pointAct('P2', 'ack', post)]);
   out.posts = posts;
   process.stdout.write(JSON.stringify(out));
 })();
@@ -202,23 +177,10 @@ class Points(unittest.TestCase):
         r = self.r
         self.assertIn("answers P2 ↑", r["agent"])
         self.assertIn('data-ref-msg="s:0"', r["agent"])
-        self.assertIn('data-pt="P2" data-pt-act="done"', r["agent"])
-        self.assertIn('class="ans-ic"', r["agent"], "Done carries its check")
-        self.assertIn("Nothing is sent to the agent", r["agent"], "a plain answer's Done says it types nothing")
-        self.assertNotIn("👍", r["agent"])
-        self.assertNotIn("pt-approve", r["agent"], "a plain answer has no Go ahead, and no balloon Done")
-        self.assertIn("acknowledged", r["agentAcked"], "a thumbs up from before #272 keeps its word")
-        self.assertNotIn('data-pt-act="done"', r["agentAcked"])
-
-    def test_an_acknowledged_point_says_done_or_go_ahead(self):
-        r = self.r
-        self.assertIn("P8 · done ↓", r["hisDone"])
-        self.assertIn("P9 · go ahead ↓", r["hisGo"])
-        self.assertIn(">done<", r["agentDone"])
-        # An answer that asked them to try something: the balloon's Done, which reports back.
-        self.assertIn('data-kind="done"', r["agentTry"])
-        self.assertNotIn('data-kind="go"', r["agentTry"])
-        self.assertNotIn('data-pt-act="done"', r["agentTry"], "one Done, not two")
+        self.assertIn('data-pt="P2" data-pt-act="ack"', r["agent"])
+        self.assertIn("👍 Ack", r["agent"])
+        self.assertIn("acknowledged", r["agentAcked"])
+        self.assertNotIn('data-pt-act="ack"', r["agentAcked"])
         self.assertEqual(r["nothing"], "")
 
     def test_the_line_counts_and_lists_both_ends(self):
@@ -238,7 +200,7 @@ class Points(unittest.TestCase):
         p2 = next(x for x in rows if 'data-pt="P2"' in x)
         self.assertIn("your message ↑", p2)
         self.assertIn("answer ↓", p2)
-        self.assertIn('data-pt="P2" data-pt-act="done"', p2)
+        self.assertIn('data-pt="P2" data-pt-act="ack"', p2)
         self.assertIn("claude: started as #75", r["list"], "an answer given by doing says what was done")
         self.assertIn('data-pt="P3" data-pt-act="drop"', r["list"])
         self.assertIn("Why is the build red?", r["list"])
@@ -255,16 +217,16 @@ class Points(unittest.TestCase):
         self.assertIn('<span class="pt-state planned">#104 · in progress</span>', p5)
         self.assertIn('data-ref-msg="s:12" data-ref-part="re:P5" title="Go to where the work was planned">plan ↓</a>', p5)
         self.assertIn('data-pt="P5" data-pt-act="drop"', p5)
-        self.assertNotIn('data-pt-act="done"', p5)
+        self.assertNotIn('data-pt-act="ack"', p5)
         p7 = next(x for x in rows if 'data-pt="P7"' in x)
         self.assertIn('<span class="pt-state planned">#106 merged, awaiting go-live</span>', p7)
-        self.assertNotIn('data-pt-act="done"', p7, "merged is not live")
+        self.assertNotIn('data-pt-act="ack"', p7, "merged is not live")
         self.assertIn("P5 · in progress, #104 · in progress ↓", r["hisPlanned"])
         self.assertIn('data-ref-msg="s:12"', r["hisPlanned"])
         self.assertIn("P7 · in progress, #106 merged, awaiting go-live ↓", r["hisMerged"])
         self.assertIn("plans P5 ↑", r["agentPlan"])
         self.assertIn("#104 · in progress", r["agentPlan"])
-        self.assertNotIn('data-pt-act="done"', r["agentPlan"], "a plan takes no thumbs up")
+        self.assertNotIn('data-pt-act="ack"', r["agentPlan"], "a plan takes no thumbs up")
 
     def test_a_delivered_point_links_its_delivery_and_keeps_its_plan(self):
         r = self.r
@@ -272,13 +234,13 @@ class Points(unittest.TestCase):
         p6 = next(x for x in rows if 'data-pt="P6"' in x)
         self.assertIn('data-ref-msg="s:14" data-ref-part="re:P6" title="Go to where the work was planned">plan ↓</a>', p6)
         self.assertIn('data-ref-msg="s:15" data-ref-part="re:P6" title="Go to the answer">answer ↓</a>', p6)
-        self.assertIn('data-pt="P6" data-pt-act="done"', p6)
+        self.assertIn('data-pt="P6" data-pt-act="ack"', p6)
         self.assertIn('data-ref-msg="s:15"', r["hisDelivered"], "the person's balloon leads to the delivery, not the plan")
         self.assertIn("P6 · answered ↓", r["hisDelivered"])
         self.assertIn("plans P6 ↑", r["oldPlan"])
-        self.assertNotIn('data-pt-act="done"', r["oldPlan"])
+        self.assertNotIn('data-pt-act="ack"', r["oldPlan"])
         self.assertIn("answers P6 ↑", r["delivery"])
-        self.assertIn('data-pt="P6" data-pt-act="done"', r["delivery"])
+        self.assertIn('data-pt="P6" data-pt-act="ack"', r["delivery"])
 
     def test_the_hubs_point_lines_are_not_shown(self):
         self.assertEqual(self.r["strip"], ["Why?", "## Review comments (2)\n\n**1.** a\n\n**2.** b", "plain  ", False])
@@ -317,32 +279,15 @@ class Points(unittest.TestCase):
         self.assertEqual(self.r["cu"][1], "1 decision waiting")
         self.assertNotIn("1 answer to your asks to acknowledge", self.r["cuPlain"])
 
-    def test_a_thumbs_up_on_a_decision_sends_the_approval_once(self):
+    def test_a_decision_has_no_answer_buttons_and_an_old_answer_shows(self):
         r = self.r
-        self.assertEqual(r["can"], [True, False, True, False])
-        self.assertIn('data-kind="go"', r["decBar"])
-        self.assertIn('data-kind="done"', r["decBar"])
-        self.assertIn('aria-label="Go ahead: tell the agent it is approved, start it', r["decBar"])
-        self.assertIn('aria-label="Done: tell the agent you did your part', r["decBar"])
-        self.assertNotIn('data-kind="go"', r["noRecBar"], "nothing recommended: no Go ahead")
-        self.assertIn('data-kind="done"', r["noRecBar"])
+        self.assertEqual(r["decBar"], "", "Done and Go ahead are the selection bar's reactions now (P228)")
         self.assertIn("approved: go ahead", r["approvedBar"])
-        self.assertNotIn("pt-approve", r["approvedBar"])
-        self.assertIn('data-kind="go"', r["ynBar"], "a yes/no card: Go ahead is Yes")
-        self.assertIn("answers “Yes”", r["ynBar"])
-        self.assertNotIn('data-kind="go"', r["pickBar"], "a pick with no recommendation: no Go ahead")
-        self.assertIn('data-kind="done"', r["pickBar"])
-        self.assertEqual(r["ynAnswer"], {"approved": "Yes"})
-        self.assertEqual(r["pickAnswer"], {"done": True})
-        self.assertIn(">done<", r["doneBar"].replace("</svg> ", "</svg>").replace("</svg>", ">"))
-        approvals = [p[1] for p in r["posts"] if p[0] == "/api/room/approve"]
-        self.assertEqual(approvals, [
-            {"roomId": "room-po", "mid": "s:7", "kind": "go", "to": "", "question": "ship on Friday?"},
-            {"roomId": "room-po", "mid": "s:30", "kind": "go", "to": "", "question": "Shall I merge it now?"},
-            {"roomId": "room-po", "mid": "s:31", "kind": "done", "to": "", "question": "Which colour?"}],
-            "once per balloon: a Done after its Go ahead is not sent")
+        self.assertIn(">done<", r["doneBar"])
+        self.assertNotIn("<button", r["approvedBar"] + r["doneBar"])
+        self.assertEqual([p for p in r["posts"] if p[0] == "/api/room/approve"], [])
         acks = [p for p in r["posts"] if p[0] == "/api/room/points"]
-        self.assertEqual(acks, [["/api/room/points", {"roomId": "room-po", "id": "P2", "action": "done"}]])
+        self.assertEqual(acks, [["/api/room/points", {"roomId": "room-po", "id": "P2", "action": "ack"}]])
 
 
 def fn_src(name: str, prefix: str = "function ") -> str:

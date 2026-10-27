@@ -3467,17 +3467,18 @@ def discard_pending(room_id: str, key: str = "") -> bool:
         if it.get("posted"):
             continue
         key = it.get("key") or ""
+        # An older balloon approval (approve:<mid>) names points it never
+        # made: there is nothing to take back.
+        if key.startswith("approve:"):
+            continue
         try:
-            if key.startswith("approve:"):
-                points.unapprove(room_id, key[len("approve:"):])
-            else:
-                points.discard(room_id, points.point_ids(it.get("text") or ""), key)
-                if key.startswith("ask:"):
-                    # A quick answer never delivered: its ask is open again.
-                    mid, _, n = key[len("ask:"):].rpartition(":")
-                    if mid and n.isdigit():
-                        points.unanswer_ask(room_id, mid, int(n))
-                        asks.forget()
+            points.discard(room_id, points.point_ids(it.get("text") or ""), key)
+            if key.startswith("ask:"):
+                # A quick answer never delivered: its ask is open again.
+                mid, _, n = key[len("ask:"):].rpartition(":")
+                if mid and n.isdigit():
+                    points.unanswer_ask(room_id, mid, int(n))
+                    asks.forget()
         except Exception as e:      # noqa: BLE001 — the discard itself stands
             print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
@@ -21381,69 +21382,6 @@ class Handler(BaseHTTPRequestHandler):
             if code == 200 or reply.get("kept"):
                 points.undo_ask(rid, mid, n)
             self._send_json(code, {**reply, "followUp": True, "points": _points_view(rid)})
-            return
-        if p == "/api/room/approve":
-            # Go ahead or Done on an agent's balloon (#272, GitHub issue 28):
-            # {roomId, mid, kind: go | done (default go, the thumbs up before
-            # it), to?, question?}. Typed to its agent once in plain words
-            # (points.answer_text: Go ahead with the card's recommended
-            # option, Done saying nothing is to start), the normal send, which
-            # also resumes a stopped task; its open cards are settled with it.
-            # The same balloon again, either kind, is a duplicate, from any device.
-            if self._files_cross_site():
-                return
-            rid = (data.get("roomId") or "").strip()
-            mid = str(data.get("mid") or "").strip()[:200]
-            room_full = chatroom.get_room(rid, public=False) if rid else None
-            if room_full is None:
-                self._send_json(404, {"error": "no_such_room"})
-                return
-            if not mid:
-                self._send_json(400, {"error": "missing_fields"})
-                return
-            to = (data.get("to") or "").strip()
-            if to and not chatroom.participant(room_full, to):
-                to = ""
-            question = " ".join(str(data.get("question") or "").split())[:200]
-            kind = str(data.get("kind") or "go").strip()
-            if kind not in points.ANSWER_KINDS:
-                self._send_json(400, {"error": "bad_kind", "expected": list(points.ANSWER_KINDS)})
-                return
-            try:
-                pids = points.balloon_points(rid, mid)
-                got = (points.load(rid, shared=True).get("asks") or {}).get(mid) or {}
-                cards = [a for a in asks.balloon_asks(rid, mid, room_full) if str(a.get("n")) not in got]
-            except Exception as e:  # noqa: BLE001 — the answer goes without them
-                print(f"[points] {rid}: cards of {mid} not read: {e!r}", flush=True)
-                pids, cards = [], []
-            picks, settle = [], {}
-            for a in cards:
-                q = " ".join(str(a.get("question") or "").split())[:200]
-                if kind == "done":
-                    settle[a["n"]] = {"done": True, "question": q}
-                elif points.go_option(a):
-                    picks.append((q, points.go_option(a)))
-                    settle[a["n"]] = {"option": picks[-1][1], "go": True, "question": q}
-            try:
-                fresh = points.approve(rid, mid, kind=kind, asks=settle)
-            except Exception as e:  # noqa: BLE001
-                print(f"[points] {rid}: approval not saved: {e!r}", flush=True)
-                self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})
-                return
-            if not fresh:
-                self._send_json(200, {"ok": True, "duplicate": True})
-                return
-            line = points.answer_text(kind, pids, question, picks)
-            try:
-                result = self._resume_room(room_full, text=line, to=to, key="approve:" + mid)
-            except Exception as exc:    # noqa: BLE001 — refused: it may be given again
-                try:
-                    points.unapprove(rid, mid)
-                except Exception as e:  # noqa: BLE001
-                    print(f"[points] {rid}: approval not taken back: {e!r}", flush=True)
-                self._send_json(400, {"error": str(exc) or exc.__class__.__name__})
-                return
-            self._send_json(200, {"ok": True, **result, "points": _points_view(rid)})
             return
         if p == "/api/room/roles":
             # Assign/clear team roles on an existing room's agents:

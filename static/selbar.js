@@ -1,4 +1,4 @@
-// ---- The selection bar: 💬 Comment · 👍 👎 ❓ 🤔 ✅ ❤️ · Copy ------------------
+// ---- The selection bar: 💬 Comment · 👍 👎 ❓ 🤔 ✅ 🚀 ❤️ · Copy ------------------
 // session.html (a chat's balloons), fileview.html (a file) and index.html (a
 // diff's lines) offer the same bar over a text selection, with this one code:
 //
@@ -39,14 +39,21 @@ window.SelBar = (function () {
   // The quick reactions, in the bar's order: what an agent is most often told
   // about a passage of its answer. `word` is what the agent reads after the
   // emoji and the tooltip says; a balloon's chip is drawn from the same list.
+  // Done and Go ahead are two (GitHub issue 28): a report that asks for
+  // nothing, and an approval to start what the passage proposes.
   const REACTIONS = [
     { e: '👍', word: 'Agree' },
     { e: '👎', word: 'Disagree' },
     { e: '❓', word: 'Question: explain this' },
     { e: '🤔', word: 'Not sure: think again' },
-    { e: '✅', word: 'Done / go ahead' },
+    { e: '✅', word: 'Done: I did it, nothing to start' },
+    { e: '🚀', word: 'Go ahead: do this' },
     { e: '❤️', word: 'Love it: keep this' },
   ];
+  // What a message sent before the split says: read back as a chip, never
+  // offered in the bar. CHIPS is the chips' order.
+  const OLD = [{ e: '✅', word: 'Done / go ahead' }];
+  const CHIPS = REACTIONS.slice(0, 5).concat(OLD, REACTIONS.slice(5));
   const reactNote = r => r.e + ' ' + r.word;
   // The reactions a chat's "## Review comments (N)" message carries: each
   // item that quotes a passage ("**1.** > the words") and says nothing but a
@@ -61,7 +68,7 @@ window.SelBar = (function () {
       const m = /^\*\*\d+\.\*\*[ \t]*>[ \t]?([^\r\n]*)\r?\n\r?\n([^\r\n]*)\s*$/.exec(item);
       if (!m) continue;
       const on = /^(.*?) on (\S+)$/.exec(m[2].trim()), note = on ? on[1] : m[2].trim();
-      const r = REACTIONS.find(x => reactNote(x) === note);
+      const r = CHIPS.find(x => reactNote(x) === note);
       const mid = on ? (/[?&]msg=([^&#\s]+)/.exec(on[2]) || [])[1] : '';
       if (!r || !m[1].trim() || (on && !mid)) continue;
       out.push({ r, quote: m[1].trim(), mid: mid ? decodeURIComponent(mid) : '' });
@@ -351,5 +358,5 @@ window.SelBar = (function () {
     return r;
   }
 
-  return { mount, REACTIONS, reactNote, reactLine, reactionsIn, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
+  return { mount, REACTIONS, CHIPS, reactNote, reactLine, reactionsIn, copyText, clampTo, rangeIn, textOffset, visibleRect, place, inFrame };
 })();

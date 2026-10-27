@@ -3943,9 +3943,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pdp-btn:hover { background: var(--hover); color: var(--fg); }
   .pdp-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .pdp-btn[disabled] { color: var(--fg-disabled); cursor: default; }
-  /* Done (#272): a check before the word, as in the chat's bar. */
-  .pdp-btn.pdp-done { display: inline-flex; align-items: center; gap: var(--s-100); }
-  .pdp-btn .ans-ic { flex: 0 0 auto; width: 14px; height: 14px; }
   .pdp-note { margin: 0; color: var(--fg-muted); font-size: var(--fs-200); }
   /* Needs you's folds (ED-209): the group head as a disclosure button, in its look. */
   .pdp-fold { display: inline-flex; align-items: center; gap: var(--s-100); padding: 0; border: 0; border-radius: var(--r-100); background: transparent;
@@ -13098,8 +13095,6 @@ function pdDefaultLayout(L, ctx) {
 // PO, what closed by itself (reopenable). Nothing waits for a tick: an answer
 // they saw closes by itself once they write again.
 const PD_PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'answered' };
-// Done's check (session.html ANS_ICON.done).
-const PD_DONE_IC = '<svg class="ans-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const PD_PT_REASON = { seen: 'seen', superseded: 'superseded', migrated: 'closed as old' };
 // What the answer says (the hub's `said`, else an answer by doing's summary).
 const pdSaid = (a, n = 200) => { const t = a ? String(a.said || a.summary || '') : ''; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
@@ -13150,8 +13145,8 @@ function pdPointsSummary(pv) {
 // `told` is what the chat said ({ room, points, words }), null before it has.
 // A point's row: its id, its first words, the answer's, its stage and age,
 // "your message ↑", "plan ↓" and "answer ↓" (a click scrolls the PO chat to
-// that balloon and marks it), and its clicks: Done (a check, #272) and
-// Comment for an answer, Drop for one still waiting, Reopen for one closed by itself. A
+// that balloon and marks it), and its clicks: 👍 Ack and Comment for an
+// answer, Drop for one still waiting, Reopen for one closed by itself. A
 // question's row: its first line, a link to its card, its task, since when.
 function pdPointsHtml(told, now) {
   if (!told || !told.points) return '<p class="pdp-empty">What needs you comes from the PO’s conversation once it has loaded.</p>';
@@ -13192,9 +13187,7 @@ function pdPointsHtml(told, now) {
       + link(p.mid, 'your message ↑', 'Go to your message in the PO chat', 'pt:' + p.id)
       + (plan ? link(plan.mid, 'plan ↓', 'Go to where the PO planned the work', 're:' + p.id) : '')
       + (a ? link(a.mid, 'answer ↓', 'Go to the answer in the PO chat', 're:' + p.id) : '')
-      + (st === 'delivered' ? btn(p.id, 'done', PD_DONE_IC + 'Done', pdPtNeeds(p) === 'try'
-                                ? `Done: tell the PO you did what the answer to ${p.id} asked; nothing new starts. Sent once`
-                                : `Done: you saw the answer to ${p.id}, nothing to start. Nothing is sent to the PO`).replace('class="pdp-btn"', 'class="pdp-btn pdp-done"')
+      + (st === 'delivered' ? btn(p.id, 'ack', '👍 Ack', `Acknowledge the answer to ${p.id}: nothing is sent to the agent`)
                               + btn(p.id, 'comment', 'Comment', `Comment on the answer to ${p.id}: a new ask linked to it goes in the chat’s box; sending it closes ${p.id}`)
                             : btn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
       + `</div></li>`;
@@ -14945,15 +14938,9 @@ async function pdPointAct(id, act, btn) {
   if (!room || PD_PT_BUSY.has(k)) return;
   PD_PT_BUSY.add(k);
   if (btn) btn.disabled = true;
-  // Done on an answer that asked them to try something reports back to the
-  // PO (its balloon's Done, typed once); any other Done only closes the point.
-  const p = act === 'done' && ((told.points && told.points.items) || []).find(x => x.id === id);
-  const tried = p && pdPtNeeds(Object.assign({}, p, { state: pdPtState(p.state) })) === 'try' && pdCurAnswer(p);
   try {
     // Given up after 20 s (sendJson, #251): the button never stays disabled.
-    const { ok, status, data: r } = tried && tried.mid
-      ? await sendJson('/api/room/approve', { roomId: room, mid: tried.mid, kind: 'done' })
-      : await sendJson('/api/room/points', { roomId: room, id, action: act });
+    const { ok, status, data: r } = await sendJson('/api/room/points', { roomId: room, id, action: act });
     if (!ok) throw new Error((r && r.error) || ('error ' + status));
     const f = pdChatFrame();
     if (r && r.points && f && f.contentWindow && f.contentWindow.pointsChanged) f.contentWindow.pointsChanged(r.points, f.contentWindow.ptTicket());
