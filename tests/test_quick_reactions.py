@@ -156,7 +156,7 @@ async function chat(c) {
   await p.ev('window.sendJson = window.__send; 0');
   // The same passage again: its chip goes on that balloon, not on the person's first reaction quoting it.
   await p.reset(); await p.pick(M, 'Charlie reply', 13);
-  await p.click(await p.centre('.sel-bar .sel-react[data-r="5"]'));
+  await p.click(await p.centre('.sel-bar .sel-react[data-r="6"]'));
   await p.until('[...document.querySelectorAll("#msgs .msg")].some(m => m.textContent.includes("Charlie reply from") && m.querySelectorAll("a.react-chip").length === 2)', 20000);
 
   // Two balloons: Copy only.
@@ -230,13 +230,14 @@ class TheMessage(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         got = json.loads(out.stdout.strip().splitlines()[-1])
         self.assertEqual(got["notes"], ["👍 Agree", "👎 Disagree", "❓ Question: explain this", "🤔 Not sure: think again",
-                                        "✅ Done / go ahead", "❤️ Love it: keep this"])
+                                        "✅ Done: I did it, nothing to start", "🚀 Go ahead: do this",
+                                        "❤️ Love it: keep this"])
         self.assertEqual(got["two"], [["Agree", "Alpha  words", ""], ["Question: explain this", "Bravo", ""]])
         self.assertEqual(got["line"], "👍 Agree on http://h/session?room=room-1&msg=m%3A9")
         self.assertEqual(got["linked"], [["Agree", "Alpha", "m:9"]], "the reacted message, from its link")
         self.assertEqual(got["badLink"], 0)
         self.assertEqual(got["typed"], 0, "a typed note that starts like one is no reaction")
-        self.assertEqual(got["mixed"], [["Done / go ahead", "Bravo"]])
+        self.assertEqual(got["mixed"], [["Done / go ahead", "Bravo"]], "a note sent before Done and Go ahead split still reads")
         self.assertEqual(got["plain"], 0, "not a review-comments message")
 
 
@@ -334,10 +335,10 @@ class InChrome(unittest.TestCase):
     def chat_sends(self):
         return [s for s in self.sent if s["text"].startswith("## Review comments (")]
 
-    def test_the_bar_offers_six_reactions(self):
+    def test_the_bar_offers_seven_reactions(self):
         g = self.got["chat"]["offered"]
         self.assertTrue(g["reacts"], g)
-        self.assertEqual([b["e"] for b in g["buttons"]], ["👍", "👎", "❓", "🤔", "✅", "❤️"])
+        self.assertEqual([b["e"] for b in g["buttons"]], ["👍", "👎", "❓", "🤔", "✅", "🚀", "❤️"])
         self.assertEqual(g["buttons"][0]["title"], "Agree: sent at once")
         self.inside(g)
         # On the bar's row, after Comment and before Copy.
@@ -369,7 +370,7 @@ class InChrome(unittest.TestCase):
 
     def test_a_reaction_during_a_send_goes_after_it_alone(self):
         notes = [s["text"].split("\n\n")[-1].split(" on http")[0] for s in self.chat_sends() if "> Filler message" in s["text"]]
-        self.assertEqual(notes, ["👎 Disagree", "✅ Done / go ahead"], "each alone, the second after the first")
+        self.assertEqual(notes, ["👎 Disagree", "✅ Done: I did it, nothing to start"], "each alone, the second after the first")
         self.assertEqual(self.got["chat"]["waitTray"], 0, "nothing left waiting in the tray")
 
     def test_two_balloons_have_no_reactions(self):

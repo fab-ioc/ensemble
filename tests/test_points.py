@@ -879,85 +879,6 @@ class Endpoints(_World):
         resume.assert_not_called()
         ring.assert_not_called()
 
-    def test_an_approval_is_typed_once(self):
-        rid = self.solo_room()
-        out, _ = self.send(rid, "Which way?", at=self.t0)
-        self.add("sid-1", turn("user", out, self.t0 + 1),
-                 turn("assistant", "Decision needed: A or B?\n\nI recommend A.", self.t0 + 2))
-        points.sync(rid, force=True)
-        sent = []
-        with mock.patch.object(dashboard.Handler, "_resume_room",
-                               lambda h, room, text="", to="", key="": sent.append((text, key)) or {"delivered": 1}):
-            body = {"roomId": rid, "mid": "sid-1:1", "question": "A or B?"}
-            self.assertEqual(http("/api/room/approve", body)[0], 200)
-            status, r = http("/api/room/approve", body)
-        self.assertEqual((status, r.get("duplicate")), (200, True))
-        self.assertEqual(sent, [("[point P1] Go ahead: approved, start it — on “A or B?”.", "approve:sid-1:1")])
-        self.assertEqual(self.state(rid), {"P1": "acked"}, "the decision it answered is acknowledged")
-        self.assertEqual((self.point(rid, "P1")["ackKind"], self.point(rid, "P1")["ackedBy"]), ("go", "approval"))
-        # Done on the same balloon afterwards: one answer per balloon.
-        with mock.patch.object(dashboard.Handler, "_resume_room",
-                               lambda h, room, text="", to="", key="": sent.append((text, key)) or {"delivered": 1}):
-            status, r = http("/api/room/approve", dict(body, kind="done"))
-        self.assertEqual((status, r.get("duplicate"), len(sent)), (200, True, 1))
-        # Refused: it may be given again.
-        with mock.patch.object(dashboard.Handler, "_resume_room", side_effect=dashboard.StartRoomError("no")):
-            self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:9"})[0], 400)
-        self.assertNotIn("sid-1:9", points.load(rid)["approvals"])
-
-    def test_done_and_go_ahead_send_their_own_words_and_the_ledger_keeps_the_kind(self):
-        # #272 (GitHub issue 28): two answers, two meanings, two words.
-        rid = self.solo_room()
-        out, _ = self.send(rid, "Can you check the login?", at=self.t0)
-        self.add("sid-1", turn("user", out, self.t0 + 1),
-                 turn("assistant", "Please sign in once on the new machine, then tell me.", self.t0 + 2))
-        out2, _ = self.send(rid, "What next?", at=self.t0 + 3)
-        self.add("sid-1", turn("user", out2, self.t0 + 4),
-                 turn("assistant", "Ask: Which colour should the badge be?\n- Red (recommended)\n- Blue", self.t0 + 5))
-        points.sync(rid, force=True)
-        sent = []
-        with mock.patch.object(dashboard.Handler, "_resume_room",
-                               lambda h, room, text="", to="", key="": sent.append((text, key)) or {"delivered": 1}):
-            self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:1", "kind": "done"})[0], 200)
-            self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:3", "kind": "go"})[0], 200)
-            self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:3", "kind": "nope"})[0], 400)
-        self.assertEqual(sent, [
-            ("[point P1] Done: the user did their part, nothing to start.", "approve:sid-1:1"),
-            ("[point P2] Go ahead: approved, start it — “Red” on “Which colour should the badge be?”.", "approve:sid-1:3")])
-        led = points.load(rid)
-        self.assertEqual((sorted(led["dones"]), sorted(led["approvals"])), (["sid-1:1"], ["sid-1:3"]))
-        self.assertEqual([(self.point(rid, i)["ackKind"], self.point(rid, i)["ackedBy"]) for i in ("P1", "P2")],
-                         [("done", "done"), ("go", "approval")])
-        # Go ahead answered the card with its recommended option, from every device.
-        self.assertEqual({k: v for k, v in led["asks"]["sid-1:3"]["0"].items() if k != "at"},
-                         {"option": "Red", "go": True, "question": "Which colour should the badge be?", "by": "approve"})
-        view = points.view(rid)
-        self.assertEqual((view["dones"], view["approvals"]), (["sid-1:1"], ["sid-1:3"]))
-        self.assertEqual({p["id"]: p.get("ackKind") for p in view["items"]}, {"P1": "done", "P2": "go"})
-        # Its delivery failed and was discarded: both kinds may be given again, the card open.
-        points.unapprove(rid, "sid-1:3")
-        points.unapprove(rid, "sid-1:1")
-        led = points.load(rid)
-        self.assertEqual((led["dones"], led["approvals"], led["asks"].get("sid-1:3")), ({}, {}, None))
-        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered"})
-        self.assertNotIn("ackKind", self.point(rid, "P1"))
-
-    def test_done_on_one_answer_types_nothing_and_records_its_kind(self):
-        rid = self.solo_room()
-        out, _ = self.send(rid, "Q?", at=self.t0)
-        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "A.", self.t0 + 2))
-        out2, _ = self.send(rid, "Q2?", at=self.t0 + 3)
-        self.add("sid-1", turn("user", out2, self.t0 + 4), turn("assistant", "B.", self.t0 + 5))
-        with mock.patch.object(dashboard.Handler, "_resume_room") as resume:
-            status, r = http("/api/room/points", {"roomId": rid, "id": "P1", "action": "done"})
-            self.assertEqual((status, r["point"]["state"]), (200, "acked"))
-            self.assertEqual(http("/api/room/points", {"roomId": rid, "id": "P2", "action": "ack"})[0], 200)
-        resume.assert_not_called()
-        self.assertEqual(self.point(rid, "P1")["ackKind"], "done")
-        self.assertNotIn("ackKind", self.point(rid, "P2"), "an Ack (the thumbs up before #272) keeps no kind: acknowledged")
-        points.act(rid, "P1", "reopen")
-        self.assertNotIn("ackKind", self.point(rid, "P1"))
-
     def test_a_refused_follow_up_leaves_the_point_as_it_was(self):
         rid = self.solo_room()
         out, _ = self.send(rid, "Why red?", at=self.t0)
@@ -1030,44 +951,34 @@ class Endpoints(_World):
         self.assertEqual(status, 200)
         self.assertEqual(self.state(rid), {"P1": "open"})
 
-    def test_a_held_approval_discarded_can_be_given_again(self):
+    def test_balloon_answers_are_reactions_now_and_old_ones_still_read(self):
+        # P228: Done and Go ahead are the selection bar's ✅ and 🚀, sent as
+        # passage comments; the hub takes no balloon answer of its own.
         rid = self.solo_room()
         out, _ = self.send(rid, "Which way?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1),
                  turn("assistant", "Decision needed: A or B?\n\nI recommend A.", self.t0 + 2))
-        points.sync(rid, force=True)
-        with mock.patch.object(dashboard.Handler, "_resume_room",
-                               lambda h, room, text="", to="", key="": {"queued": 1, "delivered": 0}):
-            self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:1"})[0], 200)
-        self.assertEqual(self.state(rid), {"P1": "acked"})
-        # Its delivery failed; the person discards what was held.
-        self.hold(rid, {"text": "Approved: go with your recommendation.", "key": "approve:sid-1:1"})
+        with mock.patch.object(dashboard.Handler, "_resume_room") as resume:
+            self.assertEqual(http("/api/room/points", {"roomId": rid, "id": "P1", "action": "done"})[0], 400)
+        resume.assert_not_called()
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        # Answers given before, from the ledger: the page still draws them.
+        led = points.load(rid)
+        led["approvals"]["sid-1:1"], led["dones"]["sid-1:5"] = self.t0, self.t0
+        points._path(rid).write_text(json.dumps(led), encoding="utf-8")
+        points._CACHE.clear()
+        view = points.view(rid)
+        self.assertEqual((view["approvals"], view["dones"]), (["sid-1:1"], ["sid-1:5"]))
+        # A send of one held at a restart and then discarded takes nothing back.
+        self.hold(rid, {"text": "[point P1] Go ahead: approved, start it.", "key": "approve:sid-1:1"})
         self.assertTrue(dashboard.discard_pending(rid))
         self.assertEqual(self.state(rid), {"P1": "delivered"})
-        sent = []
-        with mock.patch.object(dashboard.Handler, "_resume_room",
-                               lambda h, room, text="", to="", key="": sent.append(key) or {"delivered": 1}):
-            status, r = http("/api/room/approve", {"roomId": rid, "mid": "sid-1:1"})
-        self.assertEqual((status, r.get("duplicate"), sent), (200, None, ["approve:sid-1:1"]))
-
-    def test_a_refused_approval_leaves_its_point_unacknowledged(self):
-        rid = self.solo_room()
-        out, _ = self.send(rid, "Which way?", at=self.t0)
-        self.add("sid-1", turn("user", out, self.t0 + 1),
-                 turn("assistant", "Decision needed: A or B?\n\nI recommend A.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "delivered"})
-        with mock.patch.object(dashboard.Handler, "_resume_room", side_effect=dashboard.StartRoomError("no")):
-            self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:1"})[0], 400)
-        self.assertEqual(self.state(rid), {"P1": "delivered"})
-        self.assertNotIn("ackedBy", self.point(rid, "P1"))
 
     def test_a_ledger_that_cannot_be_written_is_answered_500(self):
         rid = self.solo_room()
         self.send(rid, "Q?")
         with mock.patch.object(points, "_save", side_effect=OSError("locked")):
             status, r = http("/api/room/points", {"roomId": rid, "id": "P1", "action": "drop"})
-            self.assertEqual((status, r["error"]), (500, "not_saved"))
-            status, r = http("/api/room/approve", {"roomId": rid, "mid": "sid-1:9"})
             self.assertEqual((status, r["error"]), (500, "not_saved"))
 
     def test_the_room_poll_carries_the_points(self):
@@ -1103,9 +1014,8 @@ class Stages(_World):
         p = self.point(rid, "P1")
         self.assertEqual((p["task"], [a.get("kind") for a in p["answers"]]), ("#104", ["plan"]))
         self.assertEqual(points.counts(rid), {"open": 0, "planned": 1, "delivered": 0, "decisions": 0, "totry": 0, "news": 0})
-        # Neither a click nor a thumbs up nor a "thanks" acks a plan.
+        # Neither a click nor a "thanks" acks a plan.
         self.assertIsNone(points.act(rid, "P1", "ack"))
-        self.assertTrue(points.approve(rid, "sid-1:1"))
         self.assertEqual(self.send(rid, "thanks", at=self.t0 + 3)[1], [])
         self.assertEqual(self.state(rid), {"P1": "planned"})
         # Later, in the same run, the work is live.
@@ -1130,14 +1040,6 @@ class Stages(_World):
         self.add("sid-1", turn("user", again, self.t0 + 6),
                  turn("assistant", "Re P1 (planned #7): folded into #7.", self.t0 + 7))
         self.assertEqual(self.state(rid), {"P1": "planned"})
-
-    def test_approving_a_delivery_acks_it(self):
-        rid = self.solo_room()
-        out, _ = self.send(rid, "Use Postgres?", at=self.t0)
-        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Yes: it is set up.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "delivered"})
-        self.assertTrue(points.approve(rid, "sid-1:1"))
-        self.assertEqual(self.point(rid, "P1")["state"], "acked")
 
     def test_a_ledger_from_before_the_stages_loads(self):
         rid = self.solo_room()
@@ -1400,15 +1302,6 @@ class FollowUps(_World):
         self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P2")["replyTo"]), ("P2", "P1"))
         self.add("sid-1", turn("user", out, self.t0 + 11), turn("assistant", "Re P1: it is live.", self.t0 + 12))
         self.assertEqual(self.state(rid)["P1"], "delivered")
-
-    def test_a_thumbs_up_on_the_answer_acknowledges_a_followed_point(self):
-        rid = self.solo_room()
-        self.answered(rid)
-        self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
-                  at=self.t0 + 10)
-        self.assertEqual(self.state(rid)["P1"], "followed")
-        self.assertTrue(points.approve(rid, "sid-1:1", now=self.t0 + 20))
-        self.assertEqual(self.state(rid)["P1"], "acked")
 
     def test_the_view_carries_the_words_a_comment_quoted(self):
         rid = self.solo_room()

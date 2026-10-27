@@ -220,7 +220,7 @@ class TheMarker(unittest.TestCase):
         self.assertIn("and tell me the size", a)
         self.assertEqual(a.count("<textarea"), 2)
         self.assertIn('aria-pressed="true"', a)
-        self.assertEqual(self.o["approvedOpen"], [2], "Go ahead answers the recommended ask and Yes on the yes/no one (#272)")
+        self.assertEqual(self.o["approvedOpen"], [1, 2], "a thumbs up answers the ask that had a recommendation")
 
     def test_words_and_age_leave_cards_open(self):
         self.assertEqual(self.o["settledOpen"], 3)

@@ -1918,9 +1918,7 @@ def _points(ctx, args, handler):
     # Closed lately (#209): what closed it, the "reason" — click, reply,
     # ask, approval (the product owner), or by itself: seen (they saw the
     # answer and wrote again), superseded (a later point on the same task),
-    # migrated (answered more than three days before Needs you came); and
-    # "kind", what the product owner's answer meant (#272): done (they did
-    # their part or saw it, nothing to start) or go (Go ahead, start it).
+    # migrated (answered more than three days before Needs you came).
     # With all: every one the ledger keeps, a page at a time.
     every = bool(args.get("all"))
     week = time.time() - 7 * 86400
@@ -1948,7 +1946,6 @@ def _points(ctx, args, handler):
             "closed": [{"id": p["id"], "state": p["state"],
                         "reason": p.get("ackedBy") or ("followed" if p["state"] == "followed" else p["state"]),
                         **({"supersededBy": p["supersededBy"]} if p.get("supersededBy") else {}),
-                        **({"kind": p["ackKind"]} if p.get("ackKind") else {}),
                         "at": time.strftime("%m-%d %H:%M", time.localtime(p.get("stateAt") or 0)),
                         **({"text": pts.strip_point_lines(p["text"])[:200]} if every else {})}
                        for p in shut],
