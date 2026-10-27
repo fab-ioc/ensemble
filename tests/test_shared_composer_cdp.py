@@ -111,14 +111,16 @@ async function main() {
     const route = async () => ev(`(async()=>{const w=document.getElementById('workspace-compose-frame').contentWindow,old=w.postOk;let body;
       w.postOk=async(_path,b)=>{body=b;return {}};try{await w.sendResuming('probe','', 'probe-key',[]);return {room:body.roomId,thread:body.thread||'',title:document.getElementById('workspace-compose-link').textContent};}
       finally{w.postOk=old}})()`);
-    const sendProbe = async () => ev(`(async()=>{const f=document.getElementById('workspace-compose-frame'),d=f.contentDocument,w=f.contentWindow,old=w.postOk;let body,count=0;
-      w.postOk=async(path,b)=>{if(path==='/api/room/resume'){body=b;count++;return {ok:true}}return old(path,b)};
-      try{const i=d.getElementById('input');i.value='Send probe';i.dispatchEvent(new Event('input',{bubbles:true}));d.getElementById('send').click();
+    const sendProbe = async name => ev(`(async()=>{const f=document.getElementById('workspace-compose-frame'),d=f.contentDocument,w=f.contentWindow,old=w.postOk;let body,count=0;
+      w.postOk=async(path,b)=>{if(path==='/api/room/resume'){body=b;count++}return old(path,b)};
+      try{const i=d.getElementById('input');i.value=${JSON.stringify('Send probe ')}+${JSON.stringify(name)};i.dispatchEvent(new Event('input',{bubbles:true}));d.getElementById('send').click();
         for(let n=0;n<80&&(!body||i.value||d.getElementById('send').textContent!=='Send');n++)await new Promise(r=>setTimeout(r,50));
         return {room:body?.roomId||'',thread:body?.thread||'',count};}
       finally{w.postOk=old}})()`);
     out.taskRoute=await route();
-    out.taskSend=await sendProbe();
+    out.taskSend=await sendProbe('task');
+    await ev(`${TASK}.contentWindow.refresh();0`);
+    await until(`${TASK}.contentDocument.getElementById('msgs')?.textContent.includes('Send probe task')`,'task message landed');
     await ev(`(()=>{const f=document.getElementById('workspace-compose-frame'),i=f.contentDocument.getElementById('input');i.value='Task draft';i.dispatchEvent(new Event('input',{bubbles:true}));f.contentWindow.eval('ATT.keep([{room:${JSON.stringify(A.task)},name:"sample.png"}])');f.contentWindow.edStoreNow();return 0})()`);
     out.taskGuest=await ev(`(()=>{const f=${TASK};return {class:f.contentDocument.body.className,display:getComputedStyle(f.contentDocument.getElementById('compose')).display,outer:f.getBoundingClientRect().toJSON()}})()`);
     await sleep(300);
@@ -127,14 +129,18 @@ async function main() {
     await until(`WC.target?.kind==='thread'`,'thread target');
     await until(`document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread=') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'thread editor');
     out.threadWorkspaceRoute=await route();
-    out.threadSend=await sendProbe();
+    out.threadSend=await sendProbe('thread');
+    await ev(`${THR}.contentWindow.refresh();0`);
+    await until(`${THR}.contentDocument.getElementById('msgs')?.textContent.includes('Send probe thread')`,'thread message landed');
     await ev(`(()=>{const f=document.getElementById('workspace-compose-frame'),w=f.contentWindow,d=f.contentDocument,i=d.getElementById('input');
       w.edAddLast();i.value='Thread draft';i.dispatchEvent(new Event('input',{bubbles:true}));const p=d.querySelector('#ed-points textarea');p.value='Numbered thread point';p.dispatchEvent(new Event('input',{bubbles:true}));w.edStoreNow();return 0})()`);
     await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='po'`,'PO target');
     await until(`!document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread=') && document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes(${JSON.stringify('id='+A.po)}) && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'PO editor');
     out.poWorkspaceRoute=await route();
-    out.poSend=await sendProbe();
+    out.poSend=await sendProbe('PO');
+    await ev(`${PO}.contentWindow.refresh();0`);
+    await until(`${PO}.contentDocument.getElementById('msgs')?.textContent.includes('Send probe PO')`,'PO message landed');
     await ev(`(()=>{const f=document.getElementById('workspace-compose-frame'),i=f.contentDocument.getElementById('input');i.value='PO draft';i.dispatchEvent(new Event('input',{bubbles:true}));f.contentWindow.edStoreNow();return 0})()`);
     await ev(`${TASK}.contentDocument.getElementById('msgs').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='task'`,'task picked');
@@ -163,10 +169,23 @@ async function main() {
     const {sessionId:tps}=await send('Target.attachToTarget',{targetId:taskPop.targetId,flatten:true});
     for(let i=0;i<100;i++){try{const r=await send('Runtime.evaluate',{expression:`!!document.querySelector('iframe.dp-session')?.contentDocument?.getElementById('compose')`,returnByValue:true},tps);
       if(r.result.value)break;}catch(e){}await sleep(100);}
-    out.taskWindow=(await send('Runtime.evaluate',{expression:`(()=>{const d=document.querySelector('iframe.dp-session')?.contentDocument;
-      return {box:!!d&&getComputedStyle(d.getElementById('compose')).display!=='none',target:d?.getElementById('compose-destination-link')?.textContent||''}})()`,returnByValue:true},tps)).result.value;
+    out.taskWindow=(await send('Runtime.evaluate',{expression:`(()=>{const f=document.querySelector('iframe.dp-session'),d=f?.contentDocument;
+      const before={draft:d?.getElementById('input')?.value||'',image:d?.querySelector('#att-chips .att-name')?.textContent||''};
+      f.contentWindow.edAddLast();const point=d.querySelector('#ed-points textarea');point.value='Point from popped task';point.dispatchEvent(new Event('input',{bubbles:true}));
+      const i=d?.getElementById('input');i.value='Changed in popped task';i.dispatchEvent(new Event('input',{bubbles:true}));
+      return {box:!!d&&getComputedStyle(d.getElementById('compose')).display!=='none',target:d?.getElementById('compose-destination-link')?.textContent||'',before};})()`,returnByValue:true},tps)).result.value;
     await ev(`PD.dock.setViewMode('chat:'+${JSON.stringify(A.task)},'pinned');0`);
     await until(`!PD.dock.popWindow('chat:'+${JSON.stringify(A.task)})`,'task back');
+    try { await until(`WC.target?.room===${JSON.stringify(A.task)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input')?.value==='Changed in popped task'`,'popped task draft restored'); }
+    catch(e) { throw Error(e.message+' '+JSON.stringify(await ev(`({target:WC.target,popped:[...WC.popped],seq:WC.pickSeq,stored:sessionStorage.getItem('cd-draft:'+${JSON.stringify(A.task)}),editor:document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input')?.value})`))); }
+    out.taskBack=await ev(`(()=>{const d=document.getElementById('workspace-compose-frame').contentDocument;return {target:document.getElementById('workspace-compose-link').textContent,draft:d.getElementById('input').value,point:d.querySelector('#ed-points textarea')?.value||'',image:d.querySelector('#att-chips .att-name')?.textContent||''}})()`);
+    await ev(`PD.dock.setViewMode('chat:'+${JSON.stringify(A.task)},'window');0`);
+    await until(`!!PD.dock.popWindow('chat:'+${JSON.stringify(A.task)})`,'task popped twice');
+    await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
+    await until(`WC.target?.kind==='po'`,'PO picked while task out');
+    await ev(`PD.dock.setViewMode('chat:'+${JSON.stringify(A.task)},'pinned');0`);
+    await until(`!PD.dock.popWindow('chat:'+${JSON.stringify(A.task)})`,'task back after PO pick');
+    await sleep(200);out.pickWhileOut=await ev(`WC.target?.kind`);
     await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='po' && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input')?.value==='PO draft'`,'PO draft reload');
     out.poReload=await ev(`document.getElementById('workspace-compose-frame').contentDocument.getElementById('input').value`);
@@ -221,6 +240,19 @@ async function main() {
     await send('Page.reload',{},s);
     await until(`!!${PO}?.contentDocument?.getElementById('input') && !!${THR}?.contentDocument?.getElementById('thread-reply')`,'main choice reload');
     await sleep(650); out.mainChoiceReload=await ev(count);
+    // Exercise the pre-ID balloon state and its title event in one turn, as
+    // a real first reply can resolve the ID before a polling test observes it.
+    out.promotedFrom=await ev(`(()=>{const button=[...${PO}.contentDocument.querySelectorAll('#msgs .thr-reply[data-mid]')].find(x=>x.dataset.mid==='shared-po:2');
+      button.click();const e=PD.rt.get('thread:po'),tid=e.tid,mid=button.dataset.mid;
+      e.tid='';e.mid=mid;wcChoose({kind:'thread',room:${JSON.stringify(A.po)},mid});
+      pdThreadTitle(${JSON.stringify(A.po)},'A new topic without replies.',tid);
+      return {mid,tid,target:WC.target};})()`);
+    await until(`WC.target?.kind==='thread' && WC.target.thread===PD.rt.get('thread:po')?.tid`,'promoted thread target');
+    await until(`document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread='+${JSON.stringify(out.promotedFrom.tid)}) && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread editor');
+    await sleep(300);
+    out.newThreadFirst=await sendProbe('new thread first');
+    out.newThreadSecond=await sendProbe('new thread second');
+    out.promotedTarget=await ev(workspace);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -265,7 +297,7 @@ class SharedComposer(unittest.TestCase):
         room = chatroom.get_room(po['id'], public=False); room['mode'] = 'solo'; chatroom.update_room(room)
         dashboard.assign_session_project(po['id'], cls.proj)
         dashboard.set_project_po(cls.proj, po['id']); cls.po = po['id']
-        task = chatroom.create_room('Task chat', [{'identity':'claude','agent':'claude','cwd':str(home)}])
+        task = chatroom.create_room('Task chat', [{'identity':'claude','agent':'claude','sessionId':'shared-task','cwd':str(home)}])
         dashboard.assign_session_project(task['id'], cls.proj)
         dashboard.assign_task_number(task['id'], cls.proj)
         chatroom.post_message(task['id'], 'user', 'A task message')
@@ -277,8 +309,23 @@ class SharedComposer(unittest.TestCase):
             msg = {'role':role,'content':text if role == 'user' else [{'type':'text','text':text}]}
             if role == 'assistant': msg['stop_reason'] = 'end_turn'
             return {'type':role,'timestamp':stamp,'sessionId':sid,'message':msg}
-        lines = [turn('user','A conversation with a thread.',1), turn('assistant','The thread reply.',2)]
+        lines = [turn('user','A conversation with a thread.',1), turn('assistant','The thread reply.',2),
+                 turn('user','A new topic without replies.',3)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        cls.transcript_lock = threading.Lock()
+        task_transcript = base / 'transcripts' / 'C--task'; task_transcript.mkdir()
+        (task_transcript / 'shared-task.jsonl').write_text('', encoding='utf-8')
+        def resume(h, room, text='', to='', key='', quiet=False, **kwargs):
+            dashboard._typed_sends(room['id'], [{'key':key,'text':text}])
+            sent_sid = sid if room['id'] == cls.po else 'shared-task'
+            path = transcript / f'{sid}.jsonl' if room['id'] == cls.po else task_transcript / 'shared-task.jsonl'
+            stamp = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime()) + '.000Z'
+            item = {'type':'user','timestamp':stamp,'sessionId':sent_sid,'message':{'role':'user','content':text}}
+            with cls.transcript_lock, path.open('a', encoding='utf-8') as out:
+                out.write(json.dumps(item) + '\n')
+            return {'delivered':1}
+        patch = mock.patch.object(dashboard.Handler, '_resume_room', resume)
+        patch.start(); cls.addClassCleanup(patch.stop)
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True; cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -339,7 +386,14 @@ class SharedComposer(unittest.TestCase):
         self.assertEqual(g['threadDraft'], {'head':'Thread draft','point':'Numbered thread point'})
         self.assertEqual(g['threadReload'], g['threadDraft'])
         self.assertEqual(g['taskReload'], {'head':'Task draft','image':'sample.png'})
-        self.assertEqual(g['taskWindow'], {'box':True,'target':'#1 Task chat'})
+        self.assertEqual(g['taskWindow'], {'box':True,'target':'#1 Task chat','before':{'draft':'Task draft','image':'sample.png'}})
+        self.assertEqual(g['taskBack'], {'target':'#1 Task chat','draft':'Changed in popped task','point':'Point from popped task','image':'sample.png'})
+        self.assertEqual(g['pickWhileOut'], 'po')
+        self.assertEqual(g['newThreadFirst']['room'], self.po)
+        self.assertEqual(g['promotedFrom']['target']['thread'], g['promotedFrom']['tid'])
+        self.assertEqual(g['newThreadFirst']['thread'], g['promotedFrom']['tid'])
+        self.assertEqual(g['newThreadSecond']['thread'], g['promotedFrom']['tid'])
+        self.assertNotIn('http', g['promotedTarget']['target'])
         self.assertEqual(g['closedTarget']['target'], 'Motors PO')
         self.assertEqual(g['poReload'], 'PO draft')
         for key in ('threeDesktop','threeMedium'):

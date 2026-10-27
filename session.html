@@ -8972,6 +8972,17 @@ const ED_BOX = new Map();      // a point's id → its images (attBox)
 const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search)
   + (THREAD_MODE ? ':thread:' + (qs.get('thread') || 'm:' + qs.get('tmid'))
     : SHARED_THREAD ? ':thread:' + SHARED_THREAD.thread : '');
+// A Dock pop-out is a second top-level browsing context, with a separate
+// sessionStorage. Its drafts belong to the workspace tab that opened it.
+function edWorkspaceStorage() {
+  try { return window.top.opener?.sessionStorage || sessionStorage; } catch (e) { return sessionStorage; }
+}
+function edDraftWrite(key, value) {
+  const workspace = edWorkspaceStorage();
+  for (const storage of new Set([sessionStorage, workspace])) {
+    try { if (value === null) storage.removeItem(key); else storage.setItem(key, value); } catch (e) {}
+  }
+}
 let _edSave = 0;
 let COMPOSER_SHARED_ACTIVE = !document.body.classList.contains('workspace-guest');
 function edStoreNow() {
@@ -8982,8 +8993,7 @@ function edStoreNow() {
   ED.images = ATT.stored();
   try {
     const d = edDraft(ED);
-    if (edHas(d)) sessionStorage.setItem(ED_KEY(), JSON.stringify(d));
-    else sessionStorage.removeItem(ED_KEY());
+    edDraftWrite(ED_KEY(), edHas(d) ? JSON.stringify(d) : null);
   } catch (e) {}
 }
 function edSave() {
@@ -8992,7 +9002,7 @@ function edSave() {
 }
 function edLoad() {
   try {
-    return edFromDraft(JSON.parse(sessionStorage.getItem(ED_KEY()) || 'null'));
+    return edFromDraft(JSON.parse(edWorkspaceStorage().getItem(ED_KEY()) || 'null'));
   } catch (e) { return edNew(); }
 }
 const edLi = id => document.querySelector(`#ed-points > li[data-pt="${id}"]`);
@@ -9154,7 +9164,7 @@ function edClear() {
   ED_BOX.clear();
   ED = edNew();
   edRender(null);
-  try { sessionStorage.removeItem(ED_KEY()); } catch (e) {}
+  edDraftWrite(ED_KEY(), null);
 }
 function edStart() {
   ED = edLoad();
@@ -9202,7 +9212,7 @@ if (WORKSPACE_COMPOSE) {
 }
 function sharedComposerAdoptIfEmpty() {
   if (edHas({head:$('#input').value, images:ATT.stored(), points:ED.points})) return;
-  try { if (!sessionStorage.getItem(ED_KEY())) return; } catch (e) { return; }
+  try { if (!edWorkspaceStorage().getItem(ED_KEY())) return; } catch (e) { return; }
   sharedComposerYield(false);
   sharedComposerResume();
 }

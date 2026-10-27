@@ -13635,13 +13635,22 @@ function pdEnsure() {
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); } catch (e) {}
-  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); });
   pdOnAdopt('pd', PD_ROOT);
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
   // The chat back in the page brings back the thread its window had open (#236).
-  PD.dock.onPopIn(id => { if (id === 'po-chat') { pdPopChat(false); setTimeout(() => { if (PD.thrRoom) pdThreadTell(PD.thrRoom, 'thread-again'); }, 300); } });
+  PD.dock.onPopIn(id => {
+    const panel = id === 'po-chat' ? PD.els['po-chat'] : PD.rt.get(id)?.el;
+    panel?.querySelectorAll('iframe').forEach(f => { try { f.contentWindow?.edStoreNow(); } catch (e) {} });
+    const remembered = WC.popped.get(id);
+    WC.popped.delete(id);
+    if (remembered) setTimeout(() => {
+      if (WC.pickSeq === remembered.pickSeq && wcValid(remembered.target)) wcChoose(remembered.target);
+    }, 0);
+    if (id === 'po-chat') { pdPopChat(false); setTimeout(() => { if (PD.thrRoom) pdThreadTell(PD.thrRoom, 'thread-again'); }, 300); }
+  });
   pdKeepMiddle();
   pdPlaceChat();
   pdToolRestore();
@@ -13714,7 +13723,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, src:'', restoring:false };
+const WC = { target:null, src:'', restoring:false, pickSeq:0, popped:new Map() };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -13723,6 +13732,7 @@ function wcMainTarget() {
 function wcKey(t) { return t ? [t.kind, t.room, t.thread || '', t.mid || ''].join('|') : ''; }
 function wcChoose(t, focus = false) {
   if (!t?.room) return;
+  WC.pickSeq++;
   WC.restoring = false;
   const changed = wcKey(t) !== wcKey(WC.target);
   if (changed) {
@@ -13742,7 +13752,8 @@ function wcValid(t) {
   if (!t?.room || !PD.dock) return false;
   if (t.kind === 'thread') {
     const e = PD.rt.get(PD_THREAD);
-    return !!e && e.room === t.room && (t.thread ? e.tid === t.thread : e.mid === t.mid)
+    return !!e && e.room === t.room && (t.thread ? e.tid === t.thread || e.wcAlias === t.thread
+      : e.mid === t.mid || e.wcAlias === 'm:' + t.mid)
       && !PD.dock.popWindow(PD_THREAD);
   }
   if (t.kind === 'po') return t.room === wcPoRoom() && !PD.dock.popWindow('po-chat');
@@ -13753,6 +13764,12 @@ function wcValid(t) {
     return r?.roomId === t.room && !PD.dock.popWindow('po-chat');
   }
   return false;
+}
+function wcPanelId(t) {
+  if (!t) return '';
+  if (t.kind === 'thread') return PD_THREAD;
+  if (t.kind === 'po') return 'po-chat';
+  return PD.rt.has(pdChatId(t.room)) ? pdChatId(t.room) : 'po-chat';
 }
 function wcFallback() {
   const chat = [...PD.rt.values()].find(e => e.kind === 'chat' && !PD.dock.popWindow(pdChatId(e.room)));
@@ -13768,6 +13785,7 @@ function wcTitle(t) {
 function wcSync() {
   const box = document.getElementById('workspace-compose');
   const f = document.getElementById('workspace-compose-frame');
+  if (PD.dock) for (const id of WC.popped.keys()) if (!PD.dock.popWindow(id)) WC.popped.delete(id);
   const on = !!(PD.dock && document.body.classList.contains('po-dock') && !PD.dock.narrow() && window.innerWidth >= 768);
   if (!on) {
     box.hidden = true;
@@ -13779,6 +13797,9 @@ function wcSync() {
   if (!wcValid(WC.target)) {
     if (WC.restoring && performance.now() < 6000) return; // restored panels arrive after the page
     WC.restoring = false;
+    const poppedId = wcPanelId(WC.target);
+    if (poppedId && PD.dock.popWindow(poppedId) && !WC.popped.has(poppedId))
+      WC.popped.set(poppedId, {target:WC.target, pickSeq:WC.pickSeq});
     const next = wcFallback();
     if (!next) { box.hidden = true; return; }
     if (wcKey(next) !== wcKey(WC.target)) {
@@ -13934,7 +13955,7 @@ function pdThreadPanel(frameEl, o) {
       try { f.contentWindow?.edStoreNow(); } catch (e) {}
       f.setAttribute('src', src);
     }
-    Object.assign(had, { room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid });
+    Object.assign(had, { room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, wcAlias:'' });
     pdThreadSetTitle(title);
     // A restore at the chat's load leaves the panel where it is, unseen if so.
     if (!o.restore) { try { d.reveal(PD_THREAD); } catch (e) {} }
@@ -13989,7 +14010,26 @@ function pdThreadFollow(roomId, frame) {
 function pdThreadTitle(roomId, title, thread) {
   const e = PD.rt.get(PD_THREAD);
   if (!e || e.room !== roomId) return;
-  if (thread && e.tid !== thread) { e.tid = thread; e.mid = ''; pdThreadTell(roomId, 'thread-is', { thread }); }
+  if (thread && e.tid !== thread) {
+    const old = e.tid || (e.mid ? 'm:' + e.mid : '');
+    e.wcAlias = old;
+    if (WC.target?.kind === 'thread' && WC.target.room === roomId
+        && (WC.target.thread === old || (!WC.target.thread && 'm:' + WC.target.mid === old))) {
+      try { document.getElementById('workspace-compose-frame').contentWindow?.edStoreNow(); } catch (err) {}
+      const from = 'cd-draft:' + roomId + ':thread:' + old;
+      const to = 'cd-draft:' + roomId + ':thread:' + thread;
+      try {
+        if (sessionStorage.getItem(from) && !sessionStorage.getItem(to)) sessionStorage.setItem(to, sessionStorage.getItem(from));
+        sessionStorage.removeItem(from);
+      } catch (err) {}
+      WC.target = {kind:'thread', room:roomId, thread};
+      WC.src = '';
+      try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(WC.target)); } catch (err) {}
+    }
+    e.tid = thread; e.mid = '';
+    pdThreadTell(roomId, 'thread-is', { thread });
+    wcSync();
+  }
   pdThreadSetTitle(title);
 }
 // A panel added at runtime was taken out of the dock (its ×, ⋯ › Close, a
