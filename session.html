@@ -1246,7 +1246,10 @@
   body.workspace-compose main, body.workspace-compose #chatcol { display:block; height:auto; min-height:0; overflow:visible; }
   body.workspace-compose #compose { display:flex !important; margin:0; border:0; border-radius:0; box-shadow:none; padding:var(--s-100) var(--s-300) var(--s-200); }
   body.workspace-compose #compose-target { display:none !important; }
-  body.workspace-compose #editor { max-height:32vh; }
+  /* 32% of the workspace's window (--host-h, set by script): this page is a
+     frame as tall as the box, so 32vh of it held the box under one row and a
+     drag began with a jump (P226). The words' own 40vh cap is still the frame's. */
+  body.workspace-compose #editor { max-height:calc(var(--host-h, 100vh) * .32); }
   #compose-target { display:flex; align-items:center; gap:var(--s-100); align-self:flex-start; padding:var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #compose-target[hidden], #thread-reply[hidden] { display:none; }
   #compose-target button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
@@ -8721,6 +8724,14 @@ function composeHeightSet(h) {
   const v = composeHeightApply(h);
   try { if (v) localStorage.setItem(COMPOSE_H_KEY, String(v)); else localStorage.removeItem(COMPOSE_H_KEY); } catch (e) {}
 }
+// The workspace's frame takes the box's new height at once: by message it
+// came a paint late, and the Dock with it (P226).
+function composeFrameFit() {
+  if (!WORKSPACE_COMPOSE) return;
+  try { window.parent.wcFrameFit(Math.ceil($('#compose').getBoundingClientRect().height), $('#compose').classList.contains('sized')); } catch (e) {}
+}
+// The height under a drag, until it is let go and kept (0: no drag).
+let COMPOSE_H_DRAG = 0;
 {
   const bar = $('#compose-size');
   // Pressed, the bar keeps the caret where it is (no focus moves).
@@ -8732,12 +8743,19 @@ function composeHeightSet(h) {
     // Screen coordinates: the box's own frame grows under the pointer.
     const y0 = e.screenY, h0 = $('#editor').getBoundingClientRect().height;
     let h = 0;
-    const move = ev => { if (h || Math.abs(ev.screenY - y0) >= 2) h = composeHeightApply(h0 + y0 - ev.screenY) || h; };
+    // Each move resizes the frame, whose resize event re-applies the height:
+    // the drag's own, not the one kept before it (P226).
+    const move = ev => {
+      if (!h && Math.abs(ev.screenY - y0) < 2) return;
+      h = COMPOSE_H_DRAG = composeHeightApply(h0 + y0 - ev.screenY) || h;
+      composeFrameFit();
+    };
     const end = () => {
       bar.classList.remove('held');
       bar.removeEventListener('pointermove', move);
       bar.removeEventListener('pointerup', end);
       bar.removeEventListener('pointercancel', end);
+      COMPOSE_H_DRAG = 0;
       if (h) composeHeightSet(h);
     };
     bar.addEventListener('pointermove', move);
@@ -8752,7 +8770,7 @@ function composeHeightSet(h) {
     e.preventDefault();
     composeHeightSet(h);
   });
-  const again = () => composeHeightApply(composeHeightGet());
+  const again = () => composeHeightApply(COMPOSE_H_DRAG || composeHeightGet());
   window.addEventListener('storage', e => { if (e.key === COMPOSE_H_KEY) again(); });
   window.addEventListener('resize', again);
   COMPOSE_H_TOUCH.addEventListener?.('change', again);
@@ -9500,7 +9518,12 @@ function workspaceComposerGuest(on) {
   }
 }
 if (WORKSPACE_COMPOSE) {
+  const hostSize = () => { try { document.documentElement.style.setProperty('--host-h', window.parent.innerHeight + 'px'); } catch (e) {} };
+  hostSize();
+  try { window.parent.addEventListener('resize', hostSize); addEventListener('pagehide', () => window.parent.removeEventListener('resize', hostSize)); } catch (e) {}
   const reportSize = () => {
+    // A drag sizes the frame itself; a message sent before its last move would be older.
+    if (COMPOSE_H_DRAG) return;
     try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height), sized:$('#compose').classList.contains('sized')}, location.origin); } catch (e) {}
   };
   new ResizeObserver(reportSize).observe($('#compose'));
