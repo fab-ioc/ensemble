@@ -13869,14 +13869,19 @@ document.getElementById('workspace-compose-link').addEventListener('click', e =>
     PD.dock.reveal(id);
   }
 });
+// The box's frame takes the box's height. A drag on its handle calls this
+// straight from the frame (P226), so frame, Dock and chats change in the same
+// paint as the box; other changes come by message.
+function wcFrameFit(height, sized) {
+  const f = document.getElementById('workspace-compose-frame');
+  // A height set by hand (#274) may take about 70% of the window, To: line included.
+  const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
+  f.style.height = Math.min(Math.max(80, +height || 110), cap) + 'px';
+}
 window.addEventListener('message', e => {
   if (e.origin !== location.origin) return;
   const f = document.getElementById('workspace-compose-frame');
-  if (e.data?.type === 'workspace-compose-size' && e.source === f.contentWindow) {
-    // A height set by hand (#274) may take about 70% of the window, To: line included.
-    const cap = e.data.sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
-    f.style.height = Math.min(Math.max(80, +e.data.height || 110), cap) + 'px';
-  }
+  if (e.data?.type === 'workspace-compose-size' && e.source === f.contentWindow) wcFrameFit(e.data.height, e.data.sized);
   if (e.data?.type !== 'workspace-pick' || e.source === f.contentWindow || !e.data.roomId) return;
   const chat = [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')].find(x => x.contentWindow === e.source);
   if (!chat || !chat.contentDocument?.body.classList.contains('workspace-guest')) return;
