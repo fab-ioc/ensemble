@@ -1199,10 +1199,15 @@
      agent's menu, read off its screen, with the keys to drive it. */
   #compose { position:relative; }
   /* The box's height by hand (#274, P225): a bar on its top edge, as the
-     Changes splitter (#153), quiet until it is hovered, held or focused. */
+     Changes splitter (#153). At rest a short faded grip says it is there
+     (P229: --border-strong, 1.9-2.6:1 on the box; --border in High contrast,
+     4.5:1, where the strong one is 13:1); hovered or held it is the accent
+     line across the box, focused the focus ring. */
   #compose-size { position:absolute; left:var(--s-300); right:var(--s-300); top:0; height:var(--s-200); cursor:ns-resize; touch-action:none; z-index:2; }
   #compose-size[hidden] { display:none; }
-  #compose-size::after { content:''; position:absolute; left:0; right:0; top:var(--s-050); height:3px; border-radius:var(--r-full); background:transparent; }
+  #compose-size::after { content:''; position:absolute; left:calc(50% - var(--s-400)); right:calc(50% - var(--s-400)); top:var(--s-050); height:3px; border-radius:var(--r-full); background:var(--border-strong); }
+  :root[data-theme="contrast"] #compose-size:not(:hover, .held, :focus-visible)::after { background:var(--border); }
+  #compose-size:hover::after, #compose-size.held::after, #compose-size:focus-visible::after { left:0; right:0; }
   #compose-size:hover::after, #compose-size.held::after { background:var(--accent); }
   #compose-size:focus-visible { outline:none; }
   #compose-size:focus-visible::after { background:var(--focus-ring); }
@@ -7787,7 +7792,14 @@ async function stopAgent(identity = '') {
     $('#stop-agent').disabled = false;
   }
 }
-$('#stop-agent').addEventListener('click', () => stopAgent());
+// Stop again, or a press beside it, closes the choice of agent, as Send's
+// menu does: open, it can reach over the chats in the workspace (P227).
+$('#stop-agent').addEventListener('click', () => {
+  if ($('#stop-choices').hidden) stopAgent(); else $('#stop-choices').hidden = true;
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#stop-wrap')) $('#stop-choices').hidden = true;
+}, true);
 $('#stop-choices').addEventListener('click', e => {
   const b = e.target.closest('[data-stop-identity]');
   if (b) stopAgent(b.dataset.stopIdentity);

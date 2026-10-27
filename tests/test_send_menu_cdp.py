@@ -137,7 +137,19 @@ async function main() {
       await painted(); await sleep(250); await painted();
       const after = await ev(STATE);
       const closed = await ev(`(() => { const el = ${BOX}.d.querySelector(${JSON.stringify(m.sel)}); const dt = el.closest('details'); return dt ? !dt.open : !el.getClientRects().length; })()`);
-      out[m.key] = {before, during, after, closed, ...got};
+      // Again, closed by a press beside it: above the box, left of the menu
+      // (in the workspace, the frame's room over the chats).
+      if (m.trigger) { const at = await centre(m.trigger); await (phone ? tap : mouse)(at.x, at.y); }
+      else await ev(`${BOX}.w.eval(${JSON.stringify(m.open)}); 0`);
+      await painted(); await sleep(150); await painted();
+      const beside = await ev(`(() => { const {f, d} = ${BOX}; const o = f ? f.getBoundingClientRect() : {left:0, top:0};
+        const r = d.querySelector(${JSON.stringify(m.sel)}).getBoundingClientRect();
+        return {x: Math.round(o.left + 4), y: Math.round(o.top + r.top + 4), open: !!r.height}; })()`);
+      await (phone ? tap : mouse)(beside.x, beside.y);
+      await painted(); await sleep(250); await painted();
+      const besideAfter = await ev(STATE);
+      const besideClosed = await ev(`(() => { const el = ${BOX}.d.querySelector(${JSON.stringify(m.sel)}); const dt = el.closest('details'); return dt ? !dt.open : !el.getClientRects().length; })()`);
+      out[m.key] = {before, during, after, closed, beside: {...beside, closed: besideClosed, after: besideAfter}, ...got};
     }
     return out;
   }
@@ -162,6 +174,24 @@ async function main() {
       await until(`!!document.getElementById('compose') && document.getElementById('msgs').children.length > 10 && typeof slDraw === 'function'`,'task chat');
       await sleep(600);
       out[key] = await menus(key, phone);
+      // The height bar (P229): a faded grip at rest, the accent across the box held, in every theme.
+      if (!phone) out.bar = await ev(`(() => {
+        const lum = c => { const m = c.match(/[\\d.]+/g).map(Number), f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+          return .2126 * f(m[0]) + .7152 * f(m[1]) + .0722 * f(m[2]); };
+        const ratio = (a, b) => { const x = lum(a), y = lum(b); return Math.round((Math.max(x, y) + .05) / (Math.min(x, y) + .05) * 100) / 100; };
+        const bar = document.getElementById('compose-size'), box = document.getElementById('compose'), out = {};
+        for (const t of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord', 'intellij-dark']) {
+          document.documentElement.dataset.theme = t;
+          const rest = getComputedStyle(bar, '::after'), bg = getComputedStyle(box).backgroundColor;
+          const r = {shown: !bar.hidden, bg, rest: rest.backgroundColor, restW: parseFloat(rest.width), ratio: ratio(rest.backgroundColor, bg)};
+          bar.classList.add('held');
+          const held = getComputedStyle(bar, '::after');
+          r.held = held.backgroundColor; r.heldW = parseFloat(held.width); r.boxW = bar.getBoundingClientRect().width;
+          r.accent = getComputedStyle(document.body).getPropertyValue('--accent').trim();
+          bar.classList.remove('held');
+          out[t] = r;
+        }
+        return out; })()`);
     }
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
@@ -258,6 +288,20 @@ class SendMenu(unittest.TestCase):
                     if menu == 'slash':      # the list keeps its height: several commands at once, not one row
                         self.assertGreaterEqual(len(m['items']), 5, m)
 
+    def test_height_bar_shows_at_rest(self):
+        for theme, b in self.got['bar'].items():
+            with self.subTest(theme=theme):
+                print(theme, b)
+                self.assertTrue(b['shown'], b)
+                self.assertEqual(b['restW'], 32, b)
+                # Seen but quiet: about 2:1 on the box; High contrast's quietest mark is 4.5:1.
+                if theme == 'contrast':
+                    self.assertTrue(3 <= b['ratio'] <= 5, b)
+                else:
+                    self.assertTrue(1.5 <= b['ratio'] <= 3, b)
+                self.assertNotEqual(b['held'], b['rest'], b)
+                self.assertEqual(b['heldW'], b['boxW'], b)
+
     def test_chats_stay_and_frame_comes_back(self):
         for key in ('workspace1728', 'workspace1440', 'task', 'phone'):
             for menu, m in self.got[key].items():
@@ -267,6 +311,15 @@ class SendMenu(unittest.TestCase):
                     self.assertEqual(m['after']['chats'], m['before']['chats'], m)
                     self.assertEqual(m['after']['frame'], m['before']['frame'], m)
                     self.assertEqual(m['after']['frameTop'], m['before']['frameTop'], m)
+                    # A press beside the menu closes it too and gives the room back.
+                    # (A phone's / list stays through a tap on the chat, as it did
+                    # before: nothing of it reaches over the chat there.)
+                    self.assertTrue(m['beside']['open'], m['beside'])
+                    if (key, menu) != ('phone', 'slash'):
+                        self.assertTrue(m['beside']['closed'], m['beside'])
+                    self.assertEqual(m['beside']['after']['frame'], m['before']['frame'], m['beside'])
+                    self.assertEqual(m['beside']['after']['frameTop'], m['before']['frameTop'], m['beside'])
+                    self.assertEqual(m['beside']['after']['chats'], m['before']['chats'], m['beside'])
 
 
 if __name__ == '__main__':

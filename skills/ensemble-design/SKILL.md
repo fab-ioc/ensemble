@@ -1200,6 +1200,12 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
   (at least 70% of it at 1728, #232). The input grows with its text from a one-row minimum
   to an 88px cap; Send stays at the box's foot as it grows. Its height and Send's hit target must stay fixed between pointerdown and click;
   focus or blur must never shrink the box under a pressed Send.
+  With a mouse its height can be set by hand (#274): a bar on its top edge shows at rest as a short
+  centred grip, 32px by 3px in `--border-strong` (`--border` in High contrast, where the strong one
+  is 13:1), so it reads as there but quiet (1.9-2.6:1 on `--surface`, 4.5:1 in High contrast; P229).
+  Hovered or held it is an `--accent` line across the box, focused the `--focus-ring`. A phone has no bar.
+  A menu opening upward from the workspace's box (its frame is as tall as the box) gets room above
+  it: the frame grows up over the chats, clear there, and keeps its place, so they do not move (P227).
   The menu contains Attach, Add an ask and Team activity. Send remains visible. A thread's
   "Also send to chat" is a quiet line under the input, never in its row. The hint says only what
   happens to a send (sending, an error, a blocked reason); an empty hint takes no room. Latest lives beside Send, never over a
