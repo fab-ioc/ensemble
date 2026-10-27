@@ -133,6 +133,11 @@ def analyse(run):
     worst_frame = 0
     worst_end = 0
     prev = run['start']['ed']
+    # Only the box and what is above it change size: each chat's height plus
+    # the box's (its frame's, in the workspace) stays what it was.
+    size = lambda f: [h + (f['frame'] if f['frame'] is not None else f['box']) for h in f['heights']]
+    base = size(run['start'])
+    worst_layout = 0
     for st in steps:
         for f in st['frames']:
             delta = f['ed'] - prev
@@ -141,13 +146,14 @@ def analyse(run):
             prev = f['ed']
             if f['frame'] is not None:
                 worst_frame = max(worst_frame, abs(f['frame'] - f['box']))
+            worst_layout = max([worst_layout] + [abs(x - y) for x, y in zip(size(f), base)])
             for e in f['ends']:
                 if e is not None:
                     worst_end = max(worst_end, e)
         last = st['frames'][-1]
         worst_track = max(worst_track, abs(last['bar'] - st['want']))
     peak = max(f['ed'] for st in steps for f in st['frames']) - run['start']['ed']
-    return {'reversals': reversals, 'track': worst_track, 'frameGap': worst_frame, 'chatEnd': worst_end,
+    return {'reversals': reversals, 'track': worst_track, 'frameGap': worst_frame, 'chatEnd': worst_end, 'layout': worst_layout,
             'peak': peak, 'final': run['done']['ed'], 'kept': int(run['kept'] or 0)}
 
 
@@ -238,6 +244,7 @@ class ComposeResize(unittest.TestCase):
                     self.assertLessEqual(a['frameGap'], 1, a)
                 self.assertLessEqual(a['chatEnd'], 2, a)
                 self.assertGreaterEqual(a['peak'], 290, a)
+                self.assertLessEqual(a['layout'], 1, a)
                 self.assertEqual(a['kept'], a['final'], a)
 
 

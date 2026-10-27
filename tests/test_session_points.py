@@ -357,7 +357,8 @@ const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const out = { inFlight: 0, most: 0, rooms: 0, drawn: [], wants: [], notes: [] };
 const ctx = { out, POINTS_SIG: '', LAST_ITEMS: null, pointMaps: v => v, showPointsLine: () => {}, pointsTell: () => {},
   pointsAges: () => {}, renderBubbles: () => {}, POINTS: null, resolves: [],
-  POINT_REFS: { refresh() {} } };     // static/pointrefs.js (#265), which the page loads
+  POINT_REFS: { refresh() {} },       // static/pointrefs.js (#265), which the page loads
+  setInterval: () => 0 };             // the page's own timers (the room watch); the test ticks by hand
 // The card's words (#238, tests/test_card_text.py): plain here.
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
