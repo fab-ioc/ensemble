@@ -16191,7 +16191,7 @@ _SLOW: collections.deque = collections.deque(maxlen=5000)   # (answered, "GET /a
 _CHAT_REPAIRS = [0]  # successful page repairs since hub start
 _CHAT_REPAIRS_LOCK = threading.Lock()
 _CHAT_CATCHUPS = collections.Counter()  # reads/actions the page needed to catch up, by cause
-_CHAT_CATCHUP_CAUSES = {"thread-reply", "thread-summary", "missing-latest",
+_CHAT_CATCHUP_CAUSES = {"thread-reply", "thread-summary", "thread-open", "unresolved", "missing-latest",
                          "task-latest", "resume-read", "poll-timeout", "cursor-refetch"}
 
 

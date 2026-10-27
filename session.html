@@ -6542,6 +6542,8 @@ let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0
 let THR_GEN = 0;           // the pages' start: a response asked before thrRestart is not drawn (#266)
 let THR_LATEST_MID = '', THR_MISSING = null, THR_REPAIR_TIMER = 0, THR_REPAIRING = false, THR_FORCE_DRAW = false;
 let THR_ANY = null, THR_ANY_MISSING = null, THR_ANY_TIMER = 0;
+// Newest items already reread for once: another reread would not show them (#273).
+const THR_ANY_TRIED = new Set();
 const THR_AUTO_OPENED = new Set();
 const THR_INLINE_TURNS = new Map(); // full answers shown together in the channel
 let THR_REPAIR_FAIL = null;  // one failed log per missing mid; later retries back off
@@ -6634,6 +6636,8 @@ function chatCatchup(cause, mid) {
 }
 function thrAnyShown(d) {
   if (thrMidDrawn(d.mid)) return true;
+  // Its thread open beside the chat shows it.
+  if (d.thread && TS?.tid === d.thread) return true;
   return !![...document.querySelectorAll('#msgs [data-last-mid]')]
     .find(el => el.dataset.lastMid === d.mid);
 }
@@ -6679,30 +6683,31 @@ function thrAnyWatch(d) {
   if (TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) { THR_ANY_MISSING = null; return; }
   if (a.mid === THR_LATEST_MID) return; // the channel guard covers it
   if (thrAnyShown(a)) { THR_ANY_MISSING = null; return; }
-  if (!THR_ANY_MISSING || THR_ANY_MISSING.mid !== a.mid)
-    THR_ANY_MISSING = { mid: a.mid, attempts: 0, until: 0 };
-  if (Date.now() < THR_ANY_MISSING.until) return;
+  if (THR_ANY_TRIED.has(a.mid)) return;
+  if (!THR_ANY_MISSING || THR_ANY_MISSING.mid !== a.mid) THR_ANY_MISSING = { mid: a.mid };
   if (!THR_ANY_TIMER) THR_ANY_TIMER = setTimeout(() => {
     THR_ANY_TIMER = 0;
-    if (!THR_ANY_MISSING || !THR_ANY || THR_ANY_MISSING.mid !== THR_ANY.mid || thrAnyShown(THR_ANY)
-        || TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) return;
+    if (!THR_ANY_MISSING || THR_ANY?.mid !== a.mid || THR_ANY_MISSING.mid !== a.mid || thrAnyShown(THR_ANY)
+        || THR_ANY_TRIED.has(a.mid) || TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) return;
     if (THR_FETCHING) {
       THR_ANY_TIMER = setTimeout(() => { THR_ANY_TIMER = 0; thrAnyWatch({latestAnyMid: a.mid,
         latestAnyThread: a.thread, latestAnyRole: a.role}); }, 150);
       return;
     }
     // A channel signature can advance while its newest reply's row was held.
-    // Reread the whole newest page, including its thread metadata.
-    const attempts = ++THR_ANY_MISSING.attempts;
-    THR_ANY_MISSING.until = Date.now() + Math.min(60000, 5000 * 2 ** (attempts - 1));
+    // Reread the whole newest page, including its thread metadata, once:
+    // an item that reread cannot show, another will not either (#273).
+    THR_ANY_TRIED.add(a.mid);
+    if (THR_ANY_TRIED.size > 100) THR_ANY_TRIED.delete(THR_ANY_TRIED.values().next().value);
     thrRestart();
     THR_FORCE_DRAW = true;
     chatCatchup('thread-summary', a.mid);
     Promise.resolve(renderThreaded(true)).then(() => {
-      if (THR_ANY?.mid === a.mid && !thrAnyShown(a) && a.thread && (!TS || TS.tid !== a.thread)) {
+      if (THR_ANY?.mid !== a.mid || thrAnyShown(a)) return;
+      if (a.thread) {
         sideOpen({ tid: a.thread, msg: a.mid });
-        chatCatchup('thread-reply', a.mid);
-      }
+        chatCatchup('thread-open', a.mid);
+      } else chatCatchup('unresolved', a.mid);
     }).finally(() => { THR_FORCE_DRAW = false; });
   }, 3200);
 }
@@ -7066,7 +7071,7 @@ function threadLineHtml(tid, mine) {
   const st = THR_STATE[t.state] || '';
   const label = `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
-  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
+  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
     + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="thr-av thr-av-${esc(w === 'PO' ? 'po' : w === 'you' ? 'you' : 'task')}">${esc(w === 'you' ? (OPERATOR || 'you').slice(0, 1).toUpperCase() : w.slice(0, 1).toUpperCase())}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
