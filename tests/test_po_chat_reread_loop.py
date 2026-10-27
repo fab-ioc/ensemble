@@ -72,8 +72,11 @@ async function main() {
       o.reportMid = report.mid;
       o.workLog = await until(`[...document.querySelectorAll('#msgs .thr-line .thr-count')]
         .some(e => /1 in Work log/.test(e.textContent))`, 12000).then(() => true).catch(() => false);
-      const view = await hub('/api/room/channel?id=' + A.room);
-      o.latestAny = view.latestAnyMid === report.mid;
+      o.latestAny = false;
+      for (let i = 0; i < 20 && !o.latestAny; i++) {
+        o.latestAny = (await hub('/api/room/channel?id=' + A.room + '&n=40')).latestAnyMid === report.mid;
+        if (!o.latestAny) await sleep(250);
+      }
       await sleep(A.watchMs);
       const after = await catchups();
       o.rereads = delta(before, after, 'thread-summary');
@@ -121,7 +124,7 @@ class PoChatRereadLoop(unittest.TestCase):
                 sid = cls.current
                 text = f"[report] completed from task 'Chart' ({body['task']}, claude): {body['words']}"
                 cls._append(sid, rotation._turn(sid, "user", text, time.time()))
-                return h._send_json(200, {"mid": f"{sid}:{len(cls.lines[sid])}"})
+                return h._send_json(200, {"mid": f"{sid}:{len(cls.lines[sid]) - 1}"})
             return real(h)
         # Under the fixture's own handler, which passes on what it does not know.
         patch = mock.patch.object(rotation.dashboard.Handler, "do_POST", do_post)
