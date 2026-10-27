@@ -61,7 +61,7 @@ const ctx = { ROOM: 'room-aaaa0001', console, URL,
   linkify: t => t, unlinkify: t => t, codeSpanHtml: b => '<code>' + b + '</code>', REF_A: '\uE004', REF_Z: '\uE005', REF_MARK_RE: /\uE004(\d+)\uE005/g,
   REF_URL_RE: /https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi, TASK_BLOCK_RE: /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/,
   refHref: (room, mid) => '/session?room=' + room + '&msg=' + mid,
-  ptBtn: (id, act, label) => `<button data-pt="${id}" data-pt-act="${act}">${label}</button>`, ackBtn: id => `<button data-pt="${id}" data-pt-act="ack">👍 Ack</button>`,
+  ptBtn: (id, act, label) => `<button data-pt="${id}" data-pt-act="${act}">${label}</button>`, doneBtn: id => `<button data-pt="${id}" data-pt-act="done">Done</button>`, answerBarHtml: () => '',
   ptLink: (mid, text) => `<a class="pt-link" data-mid="${mid}">${text}</a>`, canApprove: () => false,
   // The shared link block is not loaded: no "..." path resolves here.
   PATH_ABBR: null, withPathAbbrevs: (t, fn) => { ctx.PATH_ABBR = { code: new Map(), text: new Map(), n: 0 }; try { return fn(); } finally { ctx.PATH_ABBR = null; } },
@@ -187,7 +187,7 @@ class Editor(unittest.TestCase):
     def setUpClass(cls):
         code = "\n".join([ATTACH, MODEL, ITEMS, js_const("REF_BLOCK_RE"), js_function("stripRefBlocks"), js_function("mdToHtml"),
                           js_function("itemsHtml"), js_function("foldLine"), js_function("pointBarHtml"), js_function("ptOwn"),
-                          js_function("pointItemsHtml"), js_const("PT_WORD"), js_const("ptNeeds"), js_const("ptItem"), js_const("isPlan"),
+                          js_function("pointItemsHtml"), js_const("PT_WORD"), js_const("ACK_WORD"), js_const("ptStateWord"), js_const("ptNeeds"), js_const("ptItem"), js_const("isPlan"),
                           js_function("ptLatest"), js_const("lastAnswer"), js_const("curAnswer"), js_const("lastPlan"), js_const("ptAnswerOf"), js_const("ptSaid"),
                           js_const("commentBtn"), js_function("ptThreadHtml"),
                           js_function("ptTaskWords"), js_function("pointMaps"), js_const("headWords")])

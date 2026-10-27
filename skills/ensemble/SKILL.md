@@ -493,7 +493,7 @@ rotation, a restart or a flood of reports never loses one.
   note), or for a message read while you were busy, only `Re Pn:` does.
 - **A point has stages:** *open* (no reply) → *planned* (you said what will
   happen) → *delivered* (the change is live, or the question is answered for
-  real) → *acknowledged* (their thumbs up). They see them as *Waiting for the
+  real) → *acknowledged* (their Done or Go ahead). They see them as *Waiting for the
   PO*, *In progress* and *Ready for your check*.
 - **Starting work on a point is a plan, not an answer:** reply
   `Re P12 (planned #104):` (the task doing it; `Re P12 (planned):` without
@@ -502,8 +502,9 @@ rotation, a restart or a flood of reports never loses one.
   message: that delivers it, and the answer link goes to that message, the plan
   kept beside it. A reply to a follow-up on work still in progress is
   `Re P12 (planned #104):` again.
-- **Never ask for a thumbs up on planned work.** A thumbs up closes only a
-  delivered point; on a plan it is at most a "go ahead".
+- **Never ask for a Done on planned work.** A Done closes only a delivered
+  point; on a plan the product owner's answer is Go ahead, and the point stays
+  in progress.
 - **By doing, not saying:** `ensemble_points` with `action: "plan"`,
   `task: "#104"` and a one-line summary, or `action: "answer"` with a one-line
   summary ("#104 is live"). `ensemble_points` lists the open, planned and
@@ -522,11 +523,31 @@ rotation, a restart or a flood of reports never loses one.
   them. Keep them in your
   handover too, but the hub's list is the source of truth.
 
-The product owner acknowledges a delivered answer with a thumbs up that reaches
-nobody: you are not woken for it. A thumbs up on a reply that asks for their
-decision and gives your recommendation reaches you as one line, `Approved: go
-with your recommendation on "…".`: go ahead with it (on a plan, the point stays
-in progress until you deliver).
+### Done and Go ahead: the product owner's two answers
+
+The product owner answers your message, point or card with one of two icons,
+and they mean different things (GitHub issue 28):
+
+| They press | It reaches you as | What you do |
+|---|---|---|
+| **Done** (a check) | `[point P12] Done: the user did their part, nothing to start.` | Nothing new. They did what you asked of them, or saw it. Carry on with what that unblocks; **never start the proposal or recommendation on a Done.** |
+| **Go ahead** (a play arrow) | `[point P12] Go ahead: approved, start it — “Red” on “Which colour?”.` | Start it: the option named is their answer to that card (your recommended one, or Yes on a yes/no card). On a plan, start the planned work; the point stays in progress until you deliver it with `Re P12:`. |
+
+- The `[point P12]` tags name the points that message answered or planned
+  (none on a message of your own that answered no point); the line is not a
+  new point, so do not reply `Re P12:` to the Done itself.
+- **Go ahead** is offered only on a message that proposes or recommends
+  something: a decision or question with your recommendation, an `Ask:` with a
+  `(recommended)` option or a yes/no one, a `Re P12 (planned …):` plan. So mark
+  the recommendation when you have one, or they cannot approve it in one click.
+- **Done on a plain answer reaches nobody:** you are not woken for it (it
+  closes the point, as the thumbs up before it did). It reaches you only where
+  you asked something of them: a decision, an `Ask:` card, a question report,
+  or an answer asking them to try or check something.
+- A point closed by an older thumbs up (before these two) reads
+  *acknowledged*: it meant "seen", not "start". `ensemble_points` shows each
+  closed point's `kind` (`done` or `go`) where it has one.
+- An older line `Approved: go with your recommendation on "…".` is a Go ahead.
 
 ## Running a project as its PO
 
@@ -902,8 +923,9 @@ message, `Re “<question>”: <option>` with their comment under it, once.
   fine); the question is the rest of that line.
 - The options are the list right under it (under a numbered ask, indented
   deeper). Lead each with its name in bold or before ` — `; the rest is what it
-  means for them. Mark at most one `(recommended)`; a thumbs up on the message
-  then answers each ask with its recommendation.
+  means for them. Mark at most one `(recommended)`; Go ahead on the message
+  then answers each ask with its recommendation (Yes on a yes/no ask), and
+  Done answers each as done, nothing to start.
 - **Every ask gives its answers.** A choice lists its options; a yes/no
   question lists Yes and No (mark the one you recommend) or says
   `Ask (yes/no):`. Options written in the line ("A, or B?", "Options: (1) …,

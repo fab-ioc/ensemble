@@ -1006,6 +1006,9 @@
     color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; cursor:pointer; }
   .pt-btn:hover { background:var(--hover); color:var(--fg); }
   .pt-btn:disabled { color:var(--fg-disabled); cursor:default; }
+  /* Done and Go ahead (#272): an icon (a check, a play arrow) before the word. */
+  .pt-btn.pt-ans { display:inline-flex; align-items:center; gap:var(--s-100); }
+  .ans-ic { flex:0 0 auto; width:14px; height:14px; }
   .pt-btn:focus-visible, a.pt-link:focus-visible, #points-line .pt-sum:focus-visible { outline:none; border-radius:var(--r-100);
     box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* Under a balloon: the points it holds or answers, and their one click. */
@@ -1449,6 +1452,7 @@
     #ask-line { min-height: var(--touch-min, 44px); }
     #ask-line .ask-link { min-height:var(--touch-min); }
     #points-line .pt-sum, .pt-btn { min-height: var(--touch-min, 44px); }
+    .pt-btn.pt-ans { min-width: var(--touch-min, 44px); }
     a.pt-link { display:inline-flex; align-items:center; min-height:var(--touch-min); }
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
@@ -3441,16 +3445,25 @@ function safetyAsk(text) {
 }
 const hasAsks = m => asksOf(m).length > 0;
 // How an ask stands: { option, comment, at } once answered (the hub's, or this
-// page's click on its way), { approved: label } when a thumbs up on the
-// balloon chose its recommendation, else null.
+// page's click on its way), { approved: label } when Go ahead (a thumbs up
+// before #272) on the balloon chose its recommendation (Yes on a yes/no
+// card), { done: true } after Done on it, else null.
 const ASK_LOCAL = new Map();     // "mid:n" → the answer this page sent, until the hub has it
 function askAnswer(m, a, P) {
   const got = ((P && P.asks) || {})[m.id] || {};
   if (got[a.n] || got[String(a.n)]) return got[a.n] || got[String(a.n)];
   const local = ASK_LOCAL.get(m.id + ':' + a.n);
   if (local) return local;
-  if (P && P.approvals && P.approvals.has(m.id) && a.recommended >= 0) return { approved: a.options[a.recommended].label };
+  if (P && P.approvals && P.approvals.has(m.id) && goOption(a)) return { approved: goOption(a) };
+  if (P && P.dones && P.dones.has(m.id)) return { done: true };
   return null;
+}
+// The option a Go ahead picks on a card: its recommended one, else Yes on a
+// yes/no card (points.go_option); '' when it has neither.
+function goOption(a) {
+  if (!a || !a.options) return '';
+  if (a.recommended >= 0 && a.options[a.recommended]) return a.options[a.recommended].label;
+  return a.kind === 'yesno' ? ((a.options.find(o => o.label.toLowerCase() === 'yes') || {}).label || '') : '';
 }
 // A card stays open until answered or explicitly closed, independent of
 // later messages, reading state, or task workflow.
@@ -3477,12 +3490,15 @@ function askCardHtml(m, a, total, P) {
       + `${o.detail ? `<span class="qa-od">${cardTextHtml(o.detail, m.id, a.n)}</span>` : ''}</div>`;
   }).join('');
   if (got) {
-    const said = got.approved ? `Approved: ${got.approved}` : (got.option || '');
+    // Answered from the balloon's bar (#272): "Go ahead: A", or "Done".
+    const go = !!(got.approved || got.go);
+    const said = got.done ? '' : go ? (got.approved || got.option || '') : (got.option || '');
     const closed = !!got.closed;
     // Sent from this page a moment ago: Undo for a while (#198); read before
     // it, the agent was told to ignore it.
     const undo = !busy && !got.undone && (!!got.option || closed) && askUndoLeft(key) > 0;
-    const words = closed ? `Closed by you · ${chatStamp(got.at).split(' ').at(-1)}` : busy ? 'Sending…' : undo ? 'Sent' : 'You answered';
+    const words = closed ? `Closed by you · ${chatStamp(got.at).split(' ').at(-1)}` : busy ? 'Sending…' : undo ? 'Sent'
+      : got.done ? 'Done: nothing to start' : go ? 'Go ahead' : 'You answered';
     return `<div class="qa${busy ? ' busy' : ''} done" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts">${opts}</div>` : ''}`
       + `<div class="qa-done"><span class="qa-dw">${words}${said ? ':' : ''}</span>${said ? ` <strong>${cardTextHtml(said, m.id, a.n)}</strong>` : ''}`
       + (undo ? ` · <button type="button" class="qa-undo${closed ? ' qa-reopen' : ''}" data-ask="${esc(key)}" title="${closed ? 'Reopen this question' : 'Take this answer back'}">Undo</button>` : '')
@@ -4285,6 +4301,10 @@ const stripImagePlaceholders = t => {
 // A point followed up (a comment on its answer, a message linking or quoting
 // it: points.py) is handled: "followed up by P105", no thumbs up owed.
 const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts', followed: 'followed up' };
+// An acknowledged point says how (#272): "done" or "go ahead"; one closed
+// before them (a thumbs up, Ack) has no kind and stays "acknowledged".
+const ACK_WORD = { done: 'done', go: 'go ahead' };
+const ptStateWord = p => (p.state === 'acked' && ACK_WORD[p.ackKind]) || PT_WORD[p.state] || p.state;
 // A hub from before the stages says "answered" for delivered.
 const ptItem = p => p && p.state === 'answered' ? Object.assign({}, p, { state: 'delivered' }) : p;
 const isPlan = a => !!a && a.kind === 'plan';
@@ -4313,7 +4333,7 @@ function ptTaskWords(p) {
 // answer), unacked (those answers).
 function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
-    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
+    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), dones: new Set((pv && pv.dones) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
     planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0,
     needs: (pv && pv.needs) || null, threads: (pv && pv.threads) || [] };
   P.askMids = P.needs ? new Set((P.needs.decisions || []).map(c => c.mid)) : null;
@@ -4384,7 +4404,18 @@ const ptLink = (mid, text, href, tip, part) => mid
   ? `<a class="pt-link" href="${esc(href(mid) + (part ? '&part=' + encodeURIComponent(part).replace(/%3A/gi, ':') : ''))}" data-ref-msg="${esc(mid)}"${part ? ` data-ref-part="${esc(part)}"` : ''}${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}</a>` : '';
 const ptBtn = (id, act, text, label) =>
   `<button type="button" class="pt-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
-const ackBtn = id => ptBtn(id, 'ack', '👍 Ack', `Acknowledge the answer to ${id}: nothing is sent to the agent`);
+// Done and Go ahead (#272, GitHub issue 28): the person's two answers, never
+// one gesture for both. Done (a check): they did their part, or saw it, and
+// nothing is to start. Go ahead (a play arrow): approved, start it.
+const ANS_ICON = {
+  done: '<svg class="ans-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  go: '<svg class="ans-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5 3.2v9.6L12.6 8z" fill="currentColor"/></svg>' };
+const ANS_WORD = { done: 'Done', go: 'Go ahead' };
+// Done on one answer: it closes the point; typed to the agent only when the
+// answer asked them to try or do something (to try), whose Done reports back.
+const doneBtn = (id, p) => ptBtn(id, 'done', ANS_ICON.done + 'Done', ptNeeds(p) === 'try'
+  ? `Done: tell the agent you did what the answer to ${id} asked; nothing new starts. Sent once`
+  : `Done: you saw the answer to ${id}, nothing to start. Nothing is sent to the agent`).replace('class="pt-btn"', 'class="pt-btn pt-ans"');
 // Comment: a new ask in the box, linked to the answer, which closes this one when sent.
 const commentBtn = id => ptBtn(id, 'comment', 'Comment', `Comment on the answer to ${id}: a new ask linked to it goes in the box; sending it closes ${id}`);
 // The answer a point's links go to: its delivery, else its plan.
@@ -4435,7 +4466,7 @@ function ptAnswerRow(p, P, href, now, word) {
     + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
     + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
     + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
-    + ackBtn(p.id) + commentBtn(p.id) + '</li>';
+    + doneBtn(p.id, p) + commentBtn(p.id) + '</li>';
 }
 // What waits on the PO: an open point, or one in progress with its task.
 function ptWaitRow(p, P, href, now) {
@@ -4504,12 +4535,38 @@ function pointsLineHtml(P, open, href, now) {
     + `<ul id="points-list"${open ? '' : ' hidden'}>${open ? pointsListHtml(P, href, now) : ''}</ul>`;
 }
 // A balloon asking for the person's decision, or a task's own question, with a
-// recommendation in it: a thumbs up there means "yes, go with it".
+// recommendation in it: Go ahead there means "yes, go with it".
 const RECOMMEND_RE = /\brecommend(?:ation|ed|s|ing)?\b/i;
 function canApprove(m) {
   if (!m || m.from === 'user' || !m.id || isHubInput(m) || m.askAudience === 'po') return false;
   const q = m.kind === 'report' && !taskReport(m) && String(m.reportKind || '').toLowerCase() === 'question';
   return (isDecision(m) || q) && (RECOMMEND_RE.test(m.text || '') || asksOf(m).some(a => a.recommended >= 0));
+}
+// What the bar under an agent's balloon offers as a whole (#272): Go ahead on
+// one that proposes or recommends something (a decision or question with a
+// recommendation, a card with a recommended option or a yes/no one, a plan
+// still in progress); Done on one that asks the person something (a
+// decision, an open card, an answer to try). A plain answer has its points'
+// own Done instead, and a plan no Done: it starts nothing either way.
+const answerable = m => !!m && m.from !== 'user' && !!m.id && !isHubInput(m) && m.askAudience !== 'po';
+function balloonAnswers(m, P) {
+  if (!answerable(m) || !P) return { go: false, done: false };
+  const mine = P.byAnswer.get(m.id) || [];
+  const plans = mine.some(p => p.state === 'planned' && (p.answers || []).some(x => x.mid === m.id && isPlan(x)));
+  const cards = openAsks(m, P);
+  const q = m.kind === 'report' && !taskReport(m) && String(m.reportKind || '').toLowerCase() === 'question';
+  const tries = mine.some(p => p.state === 'delivered' && ptNeeds(p) === 'try' && (curAnswer(p) || {}).mid === m.id);
+  return { go: canApprove(m) || cards.some(a => goOption(a)) || plans,
+           done: isDecision(m) || q || cards.length > 0 || tries };
+}
+function answerBarHtml(m, P) {
+  if (P && P.approvals.has(m.id)) return `<span class="pt-chip">${ANS_ICON.go} approved: go ahead</span>`;
+  if (P && P.dones.has(m.id)) return `<span class="pt-chip">${ANS_ICON.done} done</span>`;
+  const can = balloonAnswers(m, P);
+  const opt = asksOf(m).map(a => goOption(a)).find(Boolean);
+  const b = (kind, tip) => `<button type="button" class="pt-btn pt-ans pt-approve" data-mid="${esc(m.id)}" data-kind="${kind}" title="${esc(tip)}" aria-label="${esc(tip)}">${ANS_ICON[kind]}${ANS_WORD[kind]}</button>`;
+  return (can.done ? b('done', 'Done: tell the agent you did your part, or saw it; nothing new starts. Sent once') : '')
+    + (can.go ? b('go', `Go ahead: tell the agent it is approved, start it${opt ? ` (answers “${cardWords(opt, m.id, 0)}”)` : ''}. Sent once`) : '');
 }
 function decisionQuestion(m) {
   const found = m && asksOf(m);
@@ -4519,8 +4576,8 @@ function decisionQuestion(m) {
   return foldLine(d ? d[1] : t).replace(/\*\*|__/g, '').trim().slice(0, 200);
 }
 // The bar under a balloon: on the person's own, each point it holds and where
-// it stands; on an agent's, the points it answers, the thumbs up that
-// acknowledges them, and on a decision the thumbs up that approves it.
+// it stands; on an agent's, the points it answers, the Done that closes
+// each, and Done and Go ahead on what it asks or proposes (answerBarHtml).
 function pointBarHtml(m, P, href, pick) {
   if (!m || !m.id || !P) return '';
   const bits = [];
@@ -4529,28 +4586,27 @@ function pointBarHtml(m, P, href, pick) {
     // question read again still leads to what answered it; a planned one
     // to its plan, with where its task is; a followed-up one to its follow-up.
     const a = ptAnswerOf(p);
-    const word = p.id + ' · ' + (p.state === 'planned' && ptTaskWords(p) ? 'in progress, ' + ptTaskWords(p) : (PT_WORD[p.state] || p.state));
+    const word = p.id + ' · ' + (p.state === 'planned' && ptTaskWords(p) ? 'in progress, ' + ptTaskWords(p) : ptStateWord(p));
     bits.push(`<span class="pt-chip ${esc(p.state)}" data-pt-id="${esc(p.id)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, isPlan(a) ? 'Go to the plan' : 'Go to the answer', 're:' + p.id) : esc(word)}</span>`);
     bits.push(ptThreadHtml(p, P, href));
     if (p.state === 'open' || p.state === 'planned') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
     if (p.state === 'acked' || p.state === 'dropped' || p.state === 'followed') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
   }
+  const whole = answerBarHtml(m, P);
   for (const p of P.byAnswer.get(m.id) || []) {
-    // A plan: "plans P12", never a thumbs up (the work is not live yet).
+    // A plan: "plans P12", never a Done (the work is not live yet).
     const here = (p.answers || []).filter(x => x.mid === m.id);
     const plans = here.length && here.every(isPlan);
     const verb = plans ? 'plans ' : 'answers ';
     bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
     const a = curAnswer(p);
     if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
-    else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id) + commentBtn(p.id));
-    else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
+    // The balloon's own Done (whole) answers every point in it at once.
+    else if (p.state === 'delivered' && a && a.mid === m.id) bits.push((whole ? '' : doneBtn(p.id, p)) + commentBtn(p.id));
+    else if (p.state === 'acked') bits.push(`<span class="pt-chip">${esc(ptStateWord(p))}</span>`);
     else if (p.state === 'followed') bits.push(ptThreadHtml({ followedBy: p.followedBy }, P, href) || '<span class="pt-chip">followed up</span>');
   }
-  if (canApprove(m)) {
-    bits.push(P.approvals.has(m.id) ? '<span class="pt-chip">approved</span>'
-      : `<button type="button" class="pt-btn pt-approve" data-mid="${esc(m.id)}" title="Yes, go with your recommendation: typed to the agent once" aria-label="Approve: go with the recommendation">👍 Go with it</button>`);
-  }
+  if (whole) bits.push(whole);
   return bits.length ? `<div class="pt-bar">${bits.join('')}</div>` : '';
 }
 // The points a message of numbered points made, in its items' order (one
@@ -4591,13 +4647,15 @@ async function pointAct(id, act, post) {
   } catch (e) { pointsNote('Not done: ' + ((e && e.message) || 'the hub did not answer') + '.'); return null; }
   finally { PT_BUSY.delete(k); }
 }
-async function approveDecision(m, post) {
-  const k = 'approve:' + (m && m.id);
-  if (!canApprove(m) || PT_BUSY.has(k) || POINTS.approvals.has(m.id)) return null;
+// Done or Go ahead on a balloon (#272): once per balloon, either kind. m: the
+// balloon when drawn here; a list row's to-try answer gives only its id.
+async function answerBalloon(mid, kind, m, post) {
+  const k = 'approve:' + mid;
+  if (!mid || PT_BUSY.has(k) || POINTS.approvals.has(mid) || POINTS.dones.has(mid)) return null;
   PT_BUSY.add(k);
   try {
-    const r = await post('/api/room/approve', { roomId: ROOM, mid: m.id, to: SOLO_MODE ? '' : m.from, question: decisionQuestion(m) });
-    POINTS.approvals.add(m.id);
+    const r = await post('/api/room/approve', { roomId: ROOM, mid, kind, to: SOLO_MODE || !m ? '' : m.from, question: m ? decisionQuestion(m) : '' });
+    (kind === 'done' ? POINTS.dones : POINTS.approvals).add(mid);
     if (r && r.points) pointsChanged(r.points, ptTicket());
     return r;
   } catch (e) { pointsNote('Not sent: ' + ((e && e.message) || 'the hub did not answer') + '. Try again.'); return null; }
@@ -10208,10 +10266,19 @@ function pointClick(e) {
   if (!b || b.disabled) return false;
   if (b.classList.contains('pt-approve')) {
     const m = (LAST_ITEMS || []).find(x => x && x.id === b.dataset.mid);
-    if (m) { b.disabled = true; approveDecision(m, postOk).then(() => { b.disabled = false; }); }
+    if (m) { b.disabled = true; answerBalloon(m.id, b.dataset.kind === 'done' ? 'done' : 'go', m, postOk).then(() => { b.disabled = false; }); }
     return true;
   }
   if (b.dataset.ptAct === 'comment') { pointComment(b.dataset.pt); return true; }
+  // Done on an answer that asked them to try something reports back: the
+  // balloon's Done, typed once; any other Done only closes the point.
+  const tp = b.dataset.ptAct === 'done' && POINTS.byId.get(b.dataset.pt);
+  const ta = tp && ptNeeds(tp) === 'try' && curAnswer(tp);
+  if (ta && ta.mid) {
+    b.disabled = true;
+    answerBalloon(ta.mid, 'done', (LAST_ITEMS || []).find(x => x && x.id === ta.mid), postOk).then(() => { if (b.isConnected) b.disabled = false; });
+    return true;
+  }
   b.disabled = true;
   pointAct(b.dataset.pt, b.dataset.ptAct, postOk).then(() => { if (b.isConnected) b.disabled = false; });
   return true;
