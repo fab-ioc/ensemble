@@ -6687,7 +6687,7 @@ function thrAnyWatch(d) {
   if (!THR_ANY_MISSING || THR_ANY_MISSING.mid !== a.mid) THR_ANY_MISSING = { mid: a.mid };
   if (!THR_ANY_TIMER) THR_ANY_TIMER = setTimeout(() => {
     THR_ANY_TIMER = 0;
-    if (!THR_ANY_MISSING || !THR_ANY || THR_ANY_MISSING.mid !== THR_ANY.mid || thrAnyShown(THR_ANY)
+    if (!THR_ANY_MISSING || THR_ANY?.mid !== a.mid || THR_ANY_MISSING.mid !== a.mid || thrAnyShown(THR_ANY)
         || THR_ANY_TRIED.has(a.mid) || TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) return;
     if (THR_FETCHING) {
       THR_ANY_TIMER = setTimeout(() => { THR_ANY_TIMER = 0; thrAnyWatch({latestAnyMid: a.mid,

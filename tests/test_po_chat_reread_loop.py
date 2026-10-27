@@ -95,6 +95,23 @@ async function main() {
       const p1 = await catchups();
       o.probeRereads = delta(p0, p1, 'thread-summary');
       o.probeUnresolved = delta(p0, p1, 'unresolved');
+      // One in a thread the newest page does not draw it in: one reread, its
+      // thread opened beside the chat, and nothing more once that is closed.
+      const tid = await evalIn(`(() => { if (TS) sideClose(); return THR_VIEW.items
+        .find(t => (t.text || '').includes(${JSON.stringify(words)})).thr[0]; })()`);
+      await until('!THR_FETCHING && !TS', 5000);
+      const t0 = await catchups();
+      await evalIn(`(() => { const real = thrAnyWatch; window.__real = real;
+        thrAnyWatch = d => real({...d, latestAnyMid:'probe:thread-${width}', latestAnyThread:${JSON.stringify(tid)}, latestAnyRole:'assistant'});
+        thrAnyWatch(THR_VIEW); return true; })()`);
+      o.threadProbeOpened = await until(`TS?.tid === ${JSON.stringify(tid)}`, 10000).then(() => true).catch(() => false);
+      await evalIn('sideClose(); true');
+      await sleep(A.watchMs);
+      await evalIn('thrAnyWatch = window.__real; true');
+      const t1 = await catchups();
+      o.threadProbeRereads = delta(t0, t1, 'thread-summary');
+      o.threadProbeOpens = delta(t0, t1, 'thread-open');
+      o.threadProbeReopened = await evalIn('!!TS');
       await c.send('Target.closeTarget', { targetId });
     }
   } finally {
@@ -161,6 +178,14 @@ class PoChatRereadLoop(unittest.TestCase):
             with self.subTest(size=size):
                 self.assertEqual(o["probeRereads"], 1, o)
                 self.assertEqual(o["probeUnresolved"], 1, o)
+
+    def test_a_thread_item_opens_its_thread_once(self):
+        for size, o in self.got.items():
+            with self.subTest(size=size):
+                self.assertTrue(o["threadProbeOpened"], o)
+                self.assertEqual(o["threadProbeRereads"], 1, o)
+                self.assertEqual(o["threadProbeOpens"], 1, o)
+                self.assertFalse(o["threadProbeReopened"], o)
 
 
 if __name__ == "__main__":
