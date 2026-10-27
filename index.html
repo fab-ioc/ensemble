@@ -3738,6 +3738,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose .wc-to a { color:var(--link); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-decoration:underline; }
   #workspace-compose .wc-to a:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
   #workspace-compose iframe { display:block; width:100%; height:110px; border:0; background:var(--surface); }
+  #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
     body.po-dock #workspace-compose:not([hidden]) { display:block; }
   }
@@ -13876,7 +13877,27 @@ function wcFrameFit(height, sized) {
   const f = document.getElementById('workspace-compose-frame');
   // A height set by hand (#274) may take about 70% of the window, To: line included.
   const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
-  f.style.height = Math.min(Math.max(80, +height || 110), cap) + 'px';
+  WC.boxH = Math.min(Math.max(80, +height || 110), cap);
+  wcFrameApply(f);
+}
+// A menu opening upward from the box (+, Send's, Stop's, the / list) needs
+// room above it (P227). The frame grows up by it over the chats, clear there,
+// and keeps its place in the page: nothing above moves, and closing the menu
+// gives back the exact height. At most what is above the frame. The frame
+// calls this as the menu opens, so both show in the same paint.
+function wcFrameRoom(px) {
+  const f = document.getElementById('workspace-compose-frame');
+  if (WC.boxH === undefined) WC.boxH = f.offsetHeight;
+  const above = Math.floor(f.getBoundingClientRect().top + (WC.room || 0));
+  WC.room = Math.max(0, Math.min(Math.ceil(+px || 0), above));
+  wcFrameApply(f);
+  return WC.room;
+}
+function wcFrameApply(f) {
+  const room = WC.room || 0;
+  f.style.height = WC.boxH + room + 'px';
+  f.style.marginTop = room ? -room + 'px' : '';
+  f.classList.toggle('menu-room', room > 0);
 }
 window.addEventListener('message', e => {
   if (e.origin !== location.origin) return;
