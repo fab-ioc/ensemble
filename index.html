@@ -13736,13 +13736,30 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, src:'', restoring:false, pickSeq:0, popped:new Map() };
+const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map() };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
   return r?.roomId ? {kind:'task', room:r.roomId} : wcPoRoom() ? {kind:'po', room:wcPoRoom()} : null;
 }
 function wcKey(t) { return t ? [t.kind, t.room, t.thread || '', t.mid || ''].join('|') : ''; }
+// The editor's page is the room's (#274): the PO chat and its thread share it,
+// so a switch between them sets the thread in place and nothing reloads.
+function wcBase(t) { return t ? '/session?id=' + encodeURIComponent(t.room) + '&embed=1&workspace-compose=1' : ''; }
+function wcThreadOf(t) { return t?.kind === 'thread' ? t.thread || 'm:' + t.mid : ''; }
+// Where the box sends, for the chat pages: the thread's page shows what the
+// agent is doing when the box is aimed at it (#274).
+function wcTargetNow() { return WC.target; }
+function wcThreadTarget(t) {
+  const thread = wcThreadOf(t);
+  if (!thread) return null;
+  let info = null;
+  try {
+    const own = PD.rt.get(PD_THREAD)?.el.querySelector('iframe.po-thread')?.contentWindow?.sharedThreadTarget?.();
+    if (own && (own.thread === thread || own.thread === t.thread)) info = own.info || null;
+  } catch (e) {}
+  return {thread, title:wcTitle(t), info};
+}
 function wcLeaveFrame(f) {
   try { f.contentWindow?.edStoreNow(); f.contentWindow?.workspaceComposerYield(false); } catch (e) {}
 }
@@ -13752,16 +13769,15 @@ function wcChoose(t, focus = false) {
   WC.restoring = false;
   const changed = wcKey(t) !== wcKey(WC.target);
   if (changed) {
-    wcLeaveFrame(document.getElementById('workspace-compose-frame'));
+    if (wcBase(t) !== WC.base) { wcLeaveFrame(document.getElementById('workspace-compose-frame')); WC.base = ''; }
     WC.target = t;
-    WC.src = '';
     try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(t)); } catch (e) {}
   }
   wcSync();
   if (focus) {
     const f = document.getElementById('workspace-compose-frame');
     const put = () => { try { f.contentDocument?.getElementById('input')?.focus({preventScroll:true}); } catch (e) {} };
-    if (!changed && f.contentDocument?.readyState === 'complete') put(); else f.addEventListener('load', put, {once:true});
+    if (WC.base && f.contentDocument?.readyState === 'complete' && f.contentDocument.URL.includes(WC.base)) put(); else f.addEventListener('load', put, {once:true});
   }
 }
 function wcValid(t) {
@@ -13805,7 +13821,7 @@ function wcSync() {
   const on = !!(PD.dock && document.body.classList.contains('po-dock') && !PD.dock.narrow() && window.innerWidth >= 768);
   if (!on) {
     box.hidden = true;
-    if (WC.src) { wcLeaveFrame(f); f.removeAttribute('src'); WC.src = ''; }
+    if (WC.base) { wcLeaveFrame(f); f.removeAttribute('src'); WC.base = ''; }
     for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread'))
       try { chat.contentWindow?.workspaceComposerGuest(false); } catch (e) {}
     return;
@@ -13819,8 +13835,8 @@ function wcSync() {
     const next = wcFallback();
     if (!next) { box.hidden = true; return; }
     if (wcKey(next) !== wcKey(WC.target)) {
-      wcLeaveFrame(f);
-      WC.target = next; WC.src = '';
+      if (wcBase(next) !== WC.base) { wcLeaveFrame(f); WC.base = ''; }
+      WC.target = next;
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(next)); } catch (e) {}
     }
   } else WC.restoring = false;
@@ -13834,9 +13850,19 @@ function wcSync() {
   box.hidden = false;
   document.getElementById('workspace-compose-link').textContent = wcTitle(WC.target);
   const t = WC.target;
-  const src = '/session?id=' + encodeURIComponent(t.room) + '&embed=1&workspace-compose=1'
-    + (t.kind === 'thread' ? t.thread ? '&thread=' + encodeURIComponent(t.thread) : '&thread=&tmid=' + encodeURIComponent(t.mid) : '');
-  if (WC.src !== src) { WC.src = src; f.src = src; }
+  const base = wcBase(t);
+  if (WC.base !== base) {
+    WC.base = base;
+    f.src = base + (wcThreadOf(t) ? '&wc-thread=' + encodeURIComponent(wcThreadOf(t)) : '');
+  } else if (f.contentDocument?.URL.includes(base)) {
+    try { f.contentWindow.workspaceComposeThread?.(wcThreadTarget(t)); } catch (e) {}
+  }
+  // The activity strip follows the box in the same frame as the To: line.
+  if (WC.tailKey !== wcKey(t)) {
+    WC.tailKey = wcKey(t);
+    for (const chat of document.querySelectorAll('iframe.po-session, iframe.po-thread'))
+      try { chat.contentWindow?.renderLiveTail?.(); } catch (e) {}
+  }
 }
 try { WC.target = JSON.parse(sessionStorage.getItem('cd-workspace-compose-target') || 'null'); WC.restoring = !!WC.target; } catch (e) {}
 document.getElementById('workspace-compose-link').addEventListener('click', e => {
@@ -13854,7 +13880,9 @@ window.addEventListener('message', e => {
   if (e.origin !== location.origin) return;
   const f = document.getElementById('workspace-compose-frame');
   if (e.data?.type === 'workspace-compose-size' && e.source === f.contentWindow) {
-    f.style.height = Math.min(Math.max(80, +e.data.height || 110), Math.floor(innerHeight * .4)) + 'px';
+    // A height set by hand (#274) may take about 70% of the window, To: line included.
+    const cap = e.data.sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
+    f.style.height = Math.min(Math.max(80, +e.data.height || 110), cap) + 'px';
   }
   if (e.data?.type !== 'workspace-pick' || e.source === f.contentWindow || !e.data.roomId) return;
   const chat = [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')].find(x => x.contentWindow === e.source);
@@ -14049,9 +14077,8 @@ function pdThreadTitle(roomId, title, thread) {
     if (selected) {
       WC.target = {kind:'thread', room:roomId, thread};
       // The live editor can keep its focus and caret: its thread and draft key
-      // change in place. After a later target switch, the new URL uses the ID.
+      // change in place.
       try { document.getElementById('workspace-compose-frame').contentWindow?.workspaceThreadPromote(thread); } catch (err) {}
-      WC.src = '/session?id=' + encodeURIComponent(roomId) + '&embed=1&workspace-compose=1&thread=' + encodeURIComponent(thread);
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(WC.target)); } catch (err) {}
     }
     e.tid = thread; e.mid = '';

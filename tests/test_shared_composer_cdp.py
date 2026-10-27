@@ -133,7 +133,7 @@ async function main() {
     out.threeDesktop=await ev(workspace); await snap('after-three-1728x1117');
     await ev(`${THR}.contentDocument.getElementById('msgs').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='thread'`,'thread target');
-    await until(`document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread=') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'thread editor');
+    await until(`document.getElementById('workspace-compose-frame')?.contentWindow?.liveTailBoxThread?.() && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'thread editor');
     out.threadWorkspaceRoute=await route();
     out.threadSend=await sendProbe('thread');
     await ev(`${THR}.contentWindow.refresh();0`);
@@ -142,7 +142,7 @@ async function main() {
       w.edAddLast();i.value='Thread draft';i.dispatchEvent(new Event('input',{bubbles:true}));const p=d.querySelector('#ed-points textarea');p.value='Numbered thread point';p.dispatchEvent(new Event('input',{bubbles:true}));w.edStoreNow();return 0})()`);
     await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='po'`,'PO target');
-    await until(`!document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread=') && document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes(${JSON.stringify('id='+A.po)}) && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'PO editor');
+    await until(`!document.getElementById('workspace-compose-frame')?.contentWindow?.liveTailBoxThread?.() && document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes(${JSON.stringify('id='+A.po)}) && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'PO editor');
     out.poWorkspaceRoute=await route();
     out.poSend=await sendProbe('PO');
     await ev(`${PO}.contentWindow.refresh();0`);
@@ -155,7 +155,7 @@ async function main() {
     await size(1440,900); await sleep(650); out.threeMedium=await ev(workspace); await snap('after-three-1440x900');
     await ev(`${THR}.contentDocument.getElementById('thread-reply').click();0`);
     await until(`WC.target?.kind==='thread'`,'Reply target');
-    await until(`document.getElementById('workspace-compose-frame')?.contentDocument?.URL.includes('thread=')`,'thread editor again');
+    await until(`document.getElementById('workspace-compose-frame')?.contentWindow?.liveTailBoxThread?.()`,'thread editor again');
     await until(`document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input')?.value==='Thread draft'`,'thread draft switch');
     out.replyWorkspaceRoute=await route();
     out.threadDraft=await ev(`(()=>{const d=document.getElementById('workspace-compose-frame').contentDocument;return {head:d.getElementById('input').value,point:d.querySelector('#ed-points textarea')?.value||''}})()`);
@@ -259,7 +259,7 @@ async function main() {
       pdThreadTitle(${JSON.stringify(A.po)},'A new topic without replies.',tid);
       return {mid,tid,target:WC.target};})()`);
     await until(`WC.target?.kind==='thread' && WC.target.thread===PD.rt.get('thread:po')?.tid`,'promoted thread target');
-    await until(`document.getElementById('workspace-compose-frame')?.contentWindow?.eval('THREAD')===${JSON.stringify(out.promotedFrom.tid)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread editor');
+    await until(`document.getElementById('workspace-compose-frame')?.contentWindow?.liveTailBoxThread?.()===${JSON.stringify(out.promotedFrom.tid)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread editor');
     await sleep(300);
     out.newThreadFirst=await sendProbe('new thread first');
     out.newThreadSecond=await sendProbe('new thread second');
