@@ -9002,6 +9002,7 @@ function edDraftWrite(key, value) {
 }
 let _edSave = 0;
 let COMPOSER_SHARED_ACTIVE = !document.body.classList.contains('workspace-guest');
+let WORKSPACE_YIELDED = document.body.classList.contains('workspace-guest');
 function edStoreNow() {
   clearTimeout(_edSave);
   if (!COMPOSER_SHARED_ACTIVE) return;
@@ -9215,6 +9216,11 @@ function sharedComposerYield(persist = true) {
   if (persist) edStoreNow(); else clearTimeout(_edSave);
   COMPOSER_SHARED_ACTIVE = false;
 }
+function workspaceComposerYield(persist = true) {
+  if (!COMPOSER_SHARED_ACTIVE) return;
+  sharedComposerYield(persist);
+  WORKSPACE_YIELDED = true;
+}
 function sharedComposerResume() {
   if (document.body.classList.contains('workspace-guest')) return;
   if (COMPOSER_SHARED_ACTIVE) return;
@@ -9230,12 +9236,16 @@ function sharedComposerResume() {
 }
 function workspaceComposerGuest(on) {
   if (WORKSPACE_COMPOSE) return;
-  if (on === document.body.classList.contains('workspace-guest')) {
-    if (!on) sharedComposerResume();
-    return;
+  if (on) {
+    workspaceComposerYield(false);
+    document.body.classList.add('workspace-guest');
+  } else {
+    document.body.classList.remove('workspace-guest');
+    if (WORKSPACE_YIELDED) {
+      WORKSPACE_YIELDED = false;
+      sharedComposerResume();
+    }
   }
-  if (on) { sharedComposerYield(false); document.body.classList.add('workspace-guest'); }
-  else { document.body.classList.remove('workspace-guest'); sharedComposerResume(); }
 }
 if (WORKSPACE_COMPOSE) {
   const reportSize = () => {
@@ -9285,9 +9295,14 @@ let SHARED_PAIRED = null;
 function sharedComposerSync() {
   if (!THREAD_MODE || !qs.get('side')) return;
   const main = sharedMainFrame(), paired = sharedMainVisible(main);
-  if (paired === SHARED_PAIRED) return;
+  if (paired === SHARED_PAIRED) {
+    if (!paired && !WORKSPACE_YIELDED) sharedComposerResume();
+    return;
+  }
   if (paired) {
     sharedComposerYield(SHARED_PAIRED === false);
+    // The channel owns this box now. A later workspace resize must not wake it.
+    WORKSPACE_YIELDED = false;
     main.sharedComposerAdoptIfEmpty();
     main.sharedComposerResume();
     const target = sharedThreadTarget(), choice = main.sharedComposerChoice();

@@ -73,6 +73,11 @@ async function main() {
       w.postOk=async(_path,b)=>{body=b;return {}};
       try{await w.sendResuming('probe','', 'auto-probe-key',[]);return {thread:body.thread||'',chip:!f.contentDocument.getElementById('compose-target').hidden};}
       finally{w.postOk=old}})()`);
+    await until(`${THR}?.contentWindow?.eval('SHARED_PAIRED === true')`,'paired thread');
+    out.pairedGuestRelease=await ev(`(()=>{const w=${THR}.contentWindow;
+      const before={paired:w.eval('SHARED_PAIRED'),active:w.eval('COMPOSER_SHARED_ACTIVE'),workspace:w.eval('WORKSPACE_YIELDED')};
+      w.workspaceComposerGuest(false);
+      return {before,after:w.eval('COMPOSER_SHARED_ACTIVE')};})()`);
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
     await until(`!!${THR}?.contentDocument?.querySelector('#thread-reply') && !${THR}.contentDocument.getElementById('thread-reply').hidden`,'thread panel');
     await sleep(500); out.desktop=await ev(count); out.workspaceDesktop=await ev(workspace); await snap('after-1728x1117');
@@ -168,8 +173,11 @@ async function main() {
       taskPop=targets.find(x=>x.type==='page'&&x.targetId!==targetId&&x.url.startsWith(A.base));if(!taskPop)await sleep(100);}
     if(!taskPop)throw Error('no task window');
     const {sessionId:tps}=await send('Target.attachToTarget',{targetId:taskPop.targetId,flatten:true});
-    for(let i=0;i<100;i++){try{const r=await send('Runtime.evaluate',{expression:`!!document.querySelector('iframe.dp-session')?.contentDocument?.getElementById('compose')`,returnByValue:true},tps);
-      if(r.result.value)break;}catch(e){}await sleep(100);}
+    let taskWindowReady=false;
+    for(let i=0;i<100;i++){try{const r=await send('Runtime.evaluate',{expression:`(()=>{const d=document.querySelector('iframe.dp-session')?.contentDocument;
+      return !!d?.getElementById('compose') && d.getElementById('compose-destination-link')?.textContent==='#1 Task chat';})()`,returnByValue:true},tps);
+      if(r.result.value){taskWindowReady=true;break;}}catch(e){}await sleep(100);}
+    if(!taskWindowReady)throw Error('task window destination did not load');
     out.taskWindow=(await send('Runtime.evaluate',{expression:`(()=>{const f=document.querySelector('iframe.dp-session'),d=f?.contentDocument;
       const before={draft:d?.getElementById('input')?.value||'',image:d?.querySelector('#att-chips .att-name')?.textContent||''};
       f.contentWindow.edAddLast();const point=d.querySelector('#ed-points textarea');point.value='Point from popped task';point.dispatchEvent(new Event('input',{bubbles:true}));
@@ -373,6 +381,7 @@ class SharedComposer(unittest.TestCase):
                 self.assertNotIn('http', box['target'])
                 self.assertNotIn('room-', box['target'])
         self.assertEqual(g['workspaceAlone']['target'], 'Motors PO')
+        self.assertEqual(g['pairedGuestRelease'], {'before':{'paired':True,'active':False,'workspace':False},'after':False})
         self.assertEqual(g['workspaceMedium']['target'], 'A conversation with a thread.')
         self.assertFalse(g['desktop']['main'])
         self.assertFalse(g['desktop']['thread'])

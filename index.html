@@ -13650,7 +13650,7 @@ function pdEnsure() {
     if (remembered && WC.pickSeq === remembered.pickSeq)
       wcLeaveFrame(document.getElementById('workspace-compose-frame'));
     panel?.querySelectorAll('iframe').forEach(f => {
-      try { f.contentWindow?.edStoreNow(); f.contentWindow?.sharedComposerYield(false); } catch (e) {}
+      try { f.contentWindow?.edStoreNow(); f.contentWindow?.workspaceComposerYield(false); } catch (e) {}
     });
     if (remembered) setTimeout(() => {
       if (WC.pickSeq === remembered.pickSeq && wcValid(remembered.target)) wcChoose(remembered.target);
@@ -13737,7 +13737,7 @@ function wcMainTarget() {
 }
 function wcKey(t) { return t ? [t.kind, t.room, t.thread || '', t.mid || ''].join('|') : ''; }
 function wcLeaveFrame(f) {
-  try { f.contentWindow?.edStoreNow(); f.contentWindow?.sharedComposerYield(false); } catch (e) {}
+  try { f.contentWindow?.edStoreNow(); f.contentWindow?.workspaceComposerYield(false); } catch (e) {}
 }
 function wcChoose(t, focus = false) {
   if (!t?.room) return;
@@ -13798,9 +13798,9 @@ function wcSync() {
   const on = !!(PD.dock && document.body.classList.contains('po-dock') && !PD.dock.narrow() && window.innerWidth >= 768);
   if (!on) {
     box.hidden = true;
+    if (WC.src) { wcLeaveFrame(f); f.removeAttribute('src'); WC.src = ''; }
     for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread'))
       try { chat.contentWindow?.workspaceComposerGuest(false); } catch (e) {}
-    if (WC.src) { wcLeaveFrame(f); f.removeAttribute('src'); WC.src = ''; }
     return;
   }
   if (!wcValid(WC.target)) {
