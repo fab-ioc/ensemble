@@ -951,15 +951,15 @@ def _channel(idx: dict) -> list[str]:
     sent to the chat too is there at its own time, and the hub's and the
     tasks' traffic nobody's thread claimed (Team activity) is there as in
     the whole chat, for the page to fold."""
-    parent, of, also = idx["parent"], idx["of"], idx["also"]
-    out = []
-    for r in idx["recs"]:
-        mid = r["mid"]
-        if mid in parent and any(t != "team:activity" for t in parent[mid]) or mid in also:
-            out.append(mid)
-        elif all(t == "team:activity" for t in of.get(mid) or []):
-            out.append(mid)
-    return out
+    return [r["mid"] for r in idx["recs"] if _in_channel(idx, r["mid"])]
+
+
+def _in_channel(idx: dict, mid: str) -> bool:
+    """Whether the channel (_channel) holds the balloon ``mid``."""
+    parent, also = idx["parent"], idx["also"]
+    if mid in parent and any(t != "team:activity" for t in parent[mid]) or mid in also:
+        return True
+    return all(t == "team:activity" for t in idx["of"].get(mid) or [])
 
 
 def ready(room_id: str, room: dict) -> dict | None:
@@ -1150,8 +1150,13 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                 watched.append({"send": send_mid, "thread": tid, "mid": reply, "turn": turn})
     out["watchedReplies"] = watched
     # The channel excludes replies kept only in threads. Its latestMid cannot
-    # tell a page that one of those replies arrived (#269).
-    newest = max(idx["recs"], key=lambda r: r["ts"], default=None)
+    # tell a page that one of those replies arrived (#269). A work-log entry
+    # kept in its thread (a task report, a PO note to the team) is a count
+    # on the thread's line, never a row of the chat: not one it can miss
+    # (#273: the page reread the chat for one every minute).
+    work = idx.get("work") or ()
+    newest = max((r for r in idx["recs"] if r["mid"] not in work or _in_channel(idx, r["mid"])),
+                 key=lambda r: r["ts"], default=None)
     if newest:
         out["latestAnyMid"] = newest["mid"]
         out["latestAnyThread"] = next((t for t in reversed(idx["of"].get(newest["mid"]) or [])
