@@ -1199,10 +1199,15 @@
      agent's menu, read off its screen, with the keys to drive it. */
   #compose { position:relative; }
   /* The box's height by hand (#274, P225): a bar on its top edge, as the
-     Changes splitter (#153), quiet until it is hovered, held or focused. */
+     Changes splitter (#153). At rest a short faded grip says it is there
+     (P229: --border-strong, 1.9-2.6:1 on the box; --border in High contrast,
+     4.5:1, where the strong one is 13:1); hovered or held it is the accent
+     line across the box, focused the focus ring. */
   #compose-size { position:absolute; left:var(--s-300); right:var(--s-300); top:0; height:var(--s-200); cursor:ns-resize; touch-action:none; z-index:2; }
   #compose-size[hidden] { display:none; }
-  #compose-size::after { content:''; position:absolute; left:0; right:0; top:var(--s-050); height:3px; border-radius:var(--r-full); background:transparent; }
+  #compose-size::after { content:''; position:absolute; left:calc(50% - var(--s-400)); right:calc(50% - var(--s-400)); top:var(--s-050); height:3px; border-radius:var(--r-full); background:var(--border-strong); }
+  :root[data-theme="contrast"] #compose-size:not(:hover, .held, :focus-visible)::after { background:var(--border); }
+  #compose-size:hover::after, #compose-size.held::after, #compose-size:focus-visible::after { left:0; right:0; }
   #compose-size:hover::after, #compose-size.held::after { background:var(--accent); }
   #compose-size:focus-visible { outline:none; }
   #compose-size:focus-visible::after { background:var(--focus-ring); }
@@ -1250,6 +1255,11 @@
      frame as tall as the box, so 32vh of it held the box under one row and a
      drag began with a jump (P226). The words' own 40vh cap is still the frame's. */
   body.workspace-compose #editor { max-height:calc(var(--host-h, 100vh) * .32); }
+  /* The / list's cap is the window's too, not this short frame's (P227). While
+     a menu is open the frame reaches up over the chats: clear above the box. */
+  body.workspace-compose #slashpop { max-height:min(320px, calc(var(--host-h, 100vh) * .45)); }
+  html.menu-room, html.menu-room body.workspace-compose { background:transparent; }
+  html.menu-room body.workspace-compose #compose { background:var(--surface); }
   #compose-target { display:flex; align-items:center; gap:var(--s-100); align-self:flex-start; padding:var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #compose-target[hidden], #thread-reply[hidden] { display:none; }
   #compose-target button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
@@ -7782,7 +7792,14 @@ async function stopAgent(identity = '') {
     $('#stop-agent').disabled = false;
   }
 }
-$('#stop-agent').addEventListener('click', () => stopAgent());
+// Stop again, or a press beside it, closes the choice of agent, as Send's
+// menu does: open, it can reach over the chats in the workspace (P227).
+$('#stop-agent').addEventListener('click', () => {
+  if ($('#stop-choices').hidden) stopAgent(); else $('#stop-choices').hidden = true;
+});
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#stop-wrap')) $('#stop-choices').hidden = true;
+}, true);
 $('#stop-choices').addEventListener('click', e => {
   const b = e.target.closest('[data-stop-identity]');
   if (b) stopAgent(b.dataset.stopIdentity);
@@ -9528,6 +9545,27 @@ if (WORKSPACE_COMPOSE) {
   };
   new ResizeObserver(reportSize).observe($('#compose'));
   setTimeout(reportSize, 0);
+  // This frame is as tall as the box, so a menu opening upward from it was
+  // cut at its top (P227). While one is open the host grows the frame up by
+  // the menu's height, over the chats (wcFrameRoom); the page above the box
+  // is clear. Asked for as the menu opens or closes, before it is painted.
+  const MENUS = '.phone-compose-tools[open] > .phone-tools-menu, #send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden])';
+  let asked = 0;
+  const menuRoom = () => {
+    const top = $('#compose').getBoundingClientRect().top;
+    let need = 0;
+    for (const m of document.querySelectorAll(MENUS)) need = Math.max(need, Math.ceil(top - m.getBoundingClientRect().top));
+    if (need === asked) return;
+    asked = need;
+    let room = 0;
+    try { room = window.parent.wcFrameRoom(need); } catch (e) {}
+    document.documentElement.classList.toggle('menu-room', room > 0);
+    document.body.style.paddingTop = room ? room + 'px' : '';
+  };
+  const watch = new MutationObserver(menuRoom);
+  watch.observe($('.phone-compose-tools'), {attributes:true, subtree:true, attributeFilter:['open', 'hidden']});
+  for (const id of ['#send-menu', '#stop-choices', '#slashpop']) watch.observe($(id), {attributes:true, childList:true, attributeFilter:['hidden']});
+  addEventListener('pagehide', () => { try { window.parent.wcFrameRoom(0); } catch (e) {} });
 }
 function sharedComposerAdoptIfEmpty() {
   if (edHas({head:$('#input').value, images:ATT.stored(), points:ED.points})) return;
