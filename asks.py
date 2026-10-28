@@ -749,9 +749,19 @@ def person_wrote_at(led: dict, summary: dict | None = None) -> float:
     that card and not the questions beside it, nor a send that was refused,
     nor a command: so not the ledger's points or ``lastPersonAt``."""
     try:
-        return max(float(led.get("asksSettledAt") or 0), float((summary or {}).get("personAt") or 0))
+        return max(float(led.get("asksSettledAt") or 0), float(_past_marks(summary).get("personAt") or 0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _past_marks(summary: dict | None) -> dict:
+    """``personAt`` and ``askClosedAt``: an attention summary carries them; a
+    full room (the chat's own Needs you view) has its messages to read them
+    from."""
+    summary = summary or {}
+    if "personAt" in summary or not summary.get("messages"):
+        return summary
+    return _d.attention._moved_past(summary, summary["messages"])
 
 
 def moved_past(summary: dict, led: dict) -> float:
@@ -759,7 +769,7 @@ def moved_past(summary: dict, led: dict) -> float:
     (#279): they wrote in the chat since (a message, a point, a comment), or
     an agent reported its work completed or its asks over. An ask from before
     leaves Needs you; its card stays open in the chat. 0 when neither."""
-    return max(person_wrote_at(led, summary), float(summary.get("askClosedAt") or 0))
+    return max(person_wrote_at(led, summary), float(_past_marks(summary).get("askClosedAt") or 0))
 
 
 def open_in(summary: dict, now: float | None = None) -> list[dict]:

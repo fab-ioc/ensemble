@@ -147,6 +147,22 @@ class Decisions(_Page):
         self.assertEqual(len(u["points"]["needs"]["decisions"]), 3, "Undo: back on top")
         self.assertEqual(sid(), [0, 1, 2])
 
+    def test_the_chats_own_view_reads_the_persons_words(self):
+        # The chat's Needs you works from the room itself, not an attention
+        # summary: the person's message after the cards, which never went
+        # through settle_asks, still moves them to Older (review 1).
+        rid = self.asked()
+        p = mock.patch.object(asks, "cards_ready", lambda room: True)   # read now, not in the background
+        p.start()
+        self.addCleanup(p.stop)
+        view = lambda: points._needs_view(rid, None, points.load(rid))   # noqa: E731
+        self.assertEqual(len(view()["decisions"]), 3)
+        chatroom.post_message(rid, "user", "Let's leave those, look at the brakes instead.")
+        self.assertFalse(points.load(rid).get("asksSettledAt"))
+        v = view()
+        self.assertEqual((v["decisions"], v["olderCount"]), ([], 3), v)
+        self.assertEqual({c["why"] for c in v["older"]}, {"past"})
+
 
 if __name__ == "__main__":
     unittest.main()
