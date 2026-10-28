@@ -10243,6 +10243,9 @@ function pointComment(id) {
     try {
       if (window.parent.wcCommentLink(window, link, { roomId: ROOM, thread: THREAD_MODE ? THREAD : '', mid: THREAD_MODE ? THREAD_MID : '' })) return true;
     } catch (e) {}
+    // The workspace's box does not serve this chat, not expected while it is
+    // docked: the link goes in this chat's own box, hidden here. Say so.
+    console.warn('pointComment: the workspace box did not take the link', ROOM);
   }
   edCommentLink(link);
   return true;
