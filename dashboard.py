@@ -5464,6 +5464,21 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
     return "\n\n".join(parts)
 
 
+def task_files_briefing(room: dict) -> str:
+    """Tell a launched task agent where durable task artifacts belong."""
+    folder = (room.get("taskDir") or "").strip()
+    if not folder:
+        return ""
+    return (
+        f"Task files: this task's durable artifact folder is `{folder}`. Write "
+        "Markdown, HTML, images, styles, and any other files the user should "
+        "keep there (or below it), not in a temporary scratchpad or an external "
+        "artifact service. Your cwd may be an agent subfolder; the task Files "
+        "panel includes the whole task folder. Writes there are part of the task "
+        "and do not need separate approval."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Reviews on mention. A reviewer is not kept running in its room: every wake of
 # a long-lived session re-sends its whole conversation (measured 2026-09-10: a
@@ -9933,9 +9948,12 @@ def setup_session_workspace(project: dict, mode: str, title: str,
     cwd (agents work on the same files, not per-identity subdirs)."""
     mode = (mode or "empty").strip()
     if not project:
-        # No project: legacy scratch under ~/cs (Unassigned).
+        # No-project tasks still have a task folder. The folder is the
+        # session's root under ~/cs; agents may run in per-identity children,
+        # but the Files panel and artifact links need one stable root that
+        # contains all of the task's documents.
         ok, base, msg = create_cs_session(title)
-        return ok, base, {"mode": "empty"}, msg
+        return ok, base, {"mode": "empty", "taskDir": base}, msg
     ppath = project.get("path", "")
     if not ppath or not os.path.isdir(ppath):
         return False, "", {}, "project folder missing"
@@ -18378,6 +18396,9 @@ class Handler(BaseHTTPRequestHandler):
         if rtk_brief:
             briefing += "\n\n" + rtk_brief
         briefing = po_hub_prompt(room_full, briefing)
+        files_note = task_files_briefing(room_full)
+        if files_note:
+            briefing += "\n\n" + files_note
         ag = agents.get_agent(agent_key)
         label = room_full["title"][:60]
         model, effort = hub_launch_model(agent_key, part.get("model"))
@@ -18514,6 +18535,9 @@ class Handler(BaseHTTPRequestHandler):
             briefing += "\n\n" + rtk_brief
         ag = agents.get_agent(agent_key)
         briefing = po_hub_prompt(room_full, briefing)
+        files_note = task_files_briefing(room_full)
+        if files_note:
+            briefing += "\n\n" + files_note
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"

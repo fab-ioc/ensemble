@@ -175,17 +175,35 @@ class TheHubSide(unittest.TestCase):
                                   ("status", dashboard.git_status(str(path)))):
             self.assertEqual((code, res.get("error")), (403, "path_not_allowed"), f"{what} of {path}")
 
-    def test_a_task_made_without_a_project_has_a_folder_but_no_task_folder(self):
+    def test_a_task_made_without_a_project_has_a_task_folder_under_cs(self):
         room = loose_task("Write the report")
         cwd = Path(room["cwd"])
         self.assertEqual(cwd.parent, self.base / "cs", "it runs in a folder of its own under ~/cs")
-        self.assertEqual(room.get("taskDir"), "", "and has no task folder")
+        self.assertEqual(room.get("taskDir"), str(cwd), "the task folder is the no-project workspace root")
         self.assertEqual(room.get("projectId"), "")
         row = next(r for r in listed() if r.get("roomId") == room["id"])
-        self.assertEqual((row["cwd"], row["taskDir"]), (str(cwd), ""))
+        self.assertEqual((row["cwd"], row["taskDir"]), (str(cwd), str(cwd)))
         self.assertNotIn("folderWide", row)
         group = next(g for g in dashboard.build_projects()["projects"] if any(s.get("roomId") == room["id"] for s in g["sessions"]))
         self.assertEqual((group["id"], group["registered"]), ("__unassigned__", False), "the page finds it in Unassigned")
+
+    def test_task_briefing_names_the_folder_for_artifacts(self):
+        room = loose_task("Write the report")
+        note = dashboard.task_files_briefing(room)
+        self.assertIn(f"`{room['taskDir']}`", note)
+        self.assertIn("Markdown, HTML, images, styles", note)
+        self.assertIn("do not need separate approval", note)
+
+    def test_agent_subfolder_artifact_is_resolved_from_task_chat(self):
+        room = loose_task("Write the report")
+        agent = Path(room["taskDir"]) / "claude"
+        agent.mkdir()
+        put(agent / "report.md", "# Report\n")
+        listed()
+        self.assertEqual(
+            dashboard.resolve_file_ref("report.md", room_id=room["id"], cwd=str(agent)),
+            agent / "report.md",
+        )
 
     def test_its_files_are_read_where_it_runs(self):
         cwd = Path(loose_task("Write the report")["cwd"])
