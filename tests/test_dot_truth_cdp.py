@@ -283,6 +283,9 @@ class TheDotsInChrome(unittest.TestCase):
                 "".join(json.dumps(t) + "\n" for t in turns), encoding="utf-8")
             full = chatroom.get_room(rid, public=False)
             full["messages"][-1:] = [{**m, "ts": float(m["ts"]) - 2 * 86400} for m in full["messages"][-1:]]
+            # The person's "Please look at it" came before the ask, as in the
+            # transcript: written after it, it would have moved past it (#279).
+            full["messages"][:-1] = [{**m, "ts": ago - 3600} for m in full["messages"][:-1]]
             for k in ("lastReport", "lastRealReport"):
                 if isinstance(full.get(k), dict) and full[k].get("ts"):
                     full[k]["ts"] = float(full[k]["ts"]) - 2 * 86400

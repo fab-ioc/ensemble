@@ -443,6 +443,12 @@ def _clean(led: dict, room_id: str) -> dict:
         out["lastPersonAt"] = float(led.get("lastPersonAt") or 0)
     except (TypeError, ValueError):
         pass
+    try:
+        cleared = float(led.get("decisionsClearedAt") or 0)
+    except (TypeError, ValueError):
+        cleared = 0.0
+    if cleared:
+        out["decisionsClearedAt"] = cleared     # Clear all on Needs you's Decisions (#279)
     pts = [p for p in led["points"] if isinstance(p, dict) and isinstance(p.get("id"), str)
            and isinstance(p.get("n"), int)]
     for p in pts:
@@ -1587,6 +1593,41 @@ def _auto_close(p: dict, reason: str, now: float, key: str = "", by: str = "") -
         p["autoKey"] = key
     if by:
         p["supersededBy"] = by
+
+
+def clear_decisions(room_id: str, now: float | None = None) -> float:
+    """Clear all on Needs you's Decisions (#279): every question card put
+    before now goes to the Older fold (``decisionsClearedAt``), answered or
+    not: nothing is answered and no agent is told. A card put later waits as
+    any other. Returns the mark before, for Undo."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        before = float(led.get("decisionsClearedAt") or 0)
+        led["decisionsClearedAt"] = max(before, now)
+        _save(room_id, led)
+    _LAST_DECISIONS.pop(room_id, None)
+    return before
+
+
+def unclear_decisions(room_id: str, before) -> bool:
+    """Undo of :func:`clear_decisions`: the mark goes back to ``before``, and
+    only back. False when nothing changed."""
+    try:
+        before = max(0.0, float(before or 0))
+    except (TypeError, ValueError):
+        return False
+    with _LOCK:
+        led = load(room_id)
+        if before >= float(led.get("decisionsClearedAt") or 0):
+            return False
+        if before:
+            led["decisionsClearedAt"] = before
+        else:
+            led.pop("decisionsClearedAt", None)
+        _save(room_id, led)
+    _LAST_DECISIONS.pop(room_id, None)
+    return True
 
 
 def mark_seen(room_id: str, mids=(), ids=(), how: str = "screen", now: float | None = None) -> list[str]:

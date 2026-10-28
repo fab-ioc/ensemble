@@ -7941,6 +7941,57 @@ def task_ref_info(rid: str, projects: list[dict] | None = None, index: list[dict
             "branch": entry.get("branch", ""), "report": entry.get("report")}
 
 
+# Clear all (#279): at most this many rooms in one write.
+DONE_MANY_MAX = 200
+_ROOM_ID = re.compile(r"room-[A-Za-z0-9_-]{1,64}")
+
+
+def attention_done_many(room_ids) -> tuple[int, dict]:
+    """Done with this for every room in ``room_ids`` (Clear all, #279):
+    ``(status, body)``. Each room's marks before (``prev``) go back in the
+    answer for Undo; a room that is gone is listed in ``missing``. Refused
+    whole when the list is not a list, is empty or too long, or names
+    something that is not a room id."""
+    if not isinstance(room_ids, list) or not room_ids:
+        return 400, {"error": "bad_rooms", "message": "roomIds must be a list of room ids"}
+    if len(room_ids) > DONE_MANY_MAX:
+        return 400, {"error": "too_many", "message": f"at most {DONE_MANY_MAX} rooms at once"}
+    rids = []
+    for rid in room_ids:
+        rid = rid.strip() if isinstance(rid, str) else ""
+        if not _ROOM_ID.fullmatch(rid):
+            return 400, {"error": "bad_room", "message": "not a room id"}
+        if rid not in rids:
+            rids.append(rid)
+    prev, done, missing = {}, [], []
+    for rid in rids:
+        before = chatroom.dealt_marks(rid)
+        if before is None or chatroom.record_dealt(rid) is None:
+            missing.append(rid)
+            continue
+        prev[rid] = before
+        done.append(rid)
+    if done:
+        asks.forget()
+        attention.snapshot(0)
+    return 200, {"ok": True, "done": done, "missing": missing, "prev": prev}
+
+
+def attention_undo(restore) -> tuple[int, dict]:
+    """Clear all's Undo (#279): ``restore`` is ``{roomId: {dealtAt,
+    seenAt}}`` as :func:`attention_done_many` answered. Marks only go back
+    (``chatroom.restore_dealt``)."""
+    if not isinstance(restore, dict) or not restore or len(restore) > DONE_MANY_MAX:
+        return 400, {"error": "bad_restore", "message": "restore must map room ids to their marks"}
+    if any(not isinstance(k, str) or not _ROOM_ID.fullmatch(k) or not isinstance(v, dict)
+           for k, v in restore.items()):
+        return 400, {"error": "bad_room", "message": "not a room id"}
+    back = [rid for rid, marks in restore.items() if chatroom.restore_dealt(rid, marks)]
+    asks.forget()
+    attention.snapshot(0)
+    return 200, {"ok": True, "restored": back}
+
+
 def http_task_id(value, project_id: str = "") -> tuple[str, dict | None]:
     """A task named in a request: a room id as it is, or a number (#18 or 18
     in ``project_id``, ED-18 anywhere, or a number only one project has)
@@ -20946,9 +20997,15 @@ class Handler(BaseHTTPRequestHandler):
             # {roomId}: the person is done with what this task or PO has put
             # to them (Done with this, on the list's Details): it leaves Needs
             # you on every device. A page-only write, like the read point.
+            # {roomIds: [...]}: Clear all (#279), every row at once; the
+            # answer carries each room's marks before (``prev``) for Undo.
             why = self._page_refusal()
             if why:
                 self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if "roomIds" in data:
+                code, out = attention_done_many(data.get("roomIds"))
+                self._send_json(code, out)
                 return
             rid = str(data.get("roomId") or "").strip()
             if not re.fullmatch(r"room-[A-Za-z0-9_-]{1,64}", rid):
@@ -20961,6 +21018,16 @@ class Handler(BaseHTTPRequestHandler):
             asks.forget()
             attention.snapshot(0)
             self._send_json(200, {"ok": True, "dealtAt": dealt})
+            return
+        if p == "/api/attention/undo":
+            # {restore: {roomId: {dealtAt, seenAt}}}: Clear all's Undo (#279)
+            # puts the marks its answer gave back. Page only, like Done.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            code, out = attention_undo(data.get("restore"))
+            self._send_json(code, out)
             return
         if p == "/api/checkpoints/restore":
             # {room, n} or {room, undo}: put a task's code back to a turn's
@@ -21161,6 +21228,32 @@ class Handler(BaseHTTPRequestHandler):
             _settle_asks(rid, text, key)
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
+            return
+        if p == "/api/room/points/decisions":
+            # Clear all on Needs you's Decisions (#279): {roomId, action:
+            # "clear"} sends every open card to the Older fold (answering
+            # none), {roomId, action: "undo", before} puts the mark back.
+            # Page only, like Done with this.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            rid = str(data.get("roomId") or "").strip()
+            if not _ROOM_ID.fullmatch(rid):
+                self._send_json(400, {"error": "bad_room"})
+                return
+            if chatroom.get_room(rid) is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            act = data.get("action")
+            if act == "clear":
+                before = points.clear_decisions(rid)
+                self._send_json(200, {"ok": True, "before": before, "points": _points_view(rid)})
+            elif act == "undo":
+                back = points.unclear_decisions(rid, data.get("before"))
+                self._send_json(200, {"ok": True, "restored": back, "points": _points_view(rid)})
+            else:
+                self._send_json(400, {"error": "bad_action", "message": "action is clear or undo"})
             return
         if p == "/api/room/points/seen":
             # Needs you (#209): the person saw these answers, on screen or

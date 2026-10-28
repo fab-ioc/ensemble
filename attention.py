@@ -953,7 +953,49 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "seenAt": seen_at(room),
         "dealtAt": dealt_at(room),
         "openToHuman": _open_to_human(room, msgs, po, is_po),
+        **_moved_past(room, msgs),
     }
+
+
+def _moved_past(room: dict, msgs: list) -> dict:
+    """When the conversation last moved past what was put to the person
+    (#279): ``personAt``, the person's last own message in the chat (a slash
+    command is not one), and ``askClosedAt``, an agent's last report that
+    closes its asks (``completed``, or an ``update`` that ``clears``). An ask
+    from before either leaves Needs you (``asks.open_in``); its card stays
+    open in the chat."""
+    agents = {p.get("identity") for p in room.get("participants", []) if p.get("kind") == "agent"}
+    person = closed = 0.0
+    cr = _d.chatroom
+    for m in reversed(msgs):
+        if person and closed:
+            break
+        if cr.is_command_record(m):
+            continue
+        frm = m.get("from", "")
+        try:
+            ts = float(m.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if frm == "user" and not person and _own_words(m.get("text")):
+            person = ts
+        elif frm in agents and not closed and m.get("kind") == "report" and (
+                m.get("reportKind") == "completed" or (m.get("reportKind") == "update" and m.get("clears"))):
+            closed = ts
+    return {"personAt": person, "askClosedAt": closed}
+
+
+def _own_words(text) -> bool:
+    """A chat message of the person's own words, as ``points.settle_asks``
+    reads them: not a command, not hub input, not a card's quick answer
+    ("Re “<ask>”: …", which answers that card only)."""
+    body = str(text or "").strip()
+    if not body or body.startswith(("/", "Re “", _d.PO_MESSAGE_PREFIX)):
+        return False
+    try:
+        return _d.hub_input_kind(body)["kind"] == "human"
+    except Exception:  # noqa: BLE001 — unread, it counts as words
+        return True
 
 
 def _po_still(summary: dict, projects: list[dict], links: dict) -> bool:
@@ -1708,7 +1750,9 @@ def _items() -> list[dict]:
                       f"“{marked[0]['question'][:160]}”" + (" and more" if k > 1 else ""))
             found.append(("waiting_for_you", reason,
                           {"since": marked[0]["ts"], "quote": marked[0]["question"],
-                           "askKind": "asks", "openAsks": k, "dismiss": True}, {}))
+                           "askKind": "asks", "openAsks": k, "dismiss": True,
+                           # Its card, for the row to open the chat at (#279).
+                           "askId": marked[0]["mid"], "askPart": f"ask:{marked[0]['n']}"}, {}))
         lost = not_taken.get(room["id"])
         if lost and not any(f[0] == "waiting_for_you" for f in found):
             # The person's message its agent did not take in, even typed a
@@ -1769,7 +1813,7 @@ def _items() -> list[dict]:
         seen_now.add((rid, state))
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
-        for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
+        for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId", "askPart",
                   "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds",
                   "openAsks", "permission", "permissionKey"):
             if k in extra and extra[k] not in (None, ""):

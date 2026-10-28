@@ -2551,6 +2551,34 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sw-row.unread .sw-title { font-weight: 600; }
   .sw-title .tno { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); }
   .sw-age { font-size: var(--fs-100); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  /* Done with this on a Needs you row (#279): over its age while the row is
+     hovered or holds the focus; beside the row on a touch screen. */
+  .sw-item { position: relative; }
+  .sw-row-done {
+    position: absolute; top: 4px; right: var(--s-100); width: 24px; height: 24px;
+    display: none; align-items: center; justify-content: center; padding: 0;
+    border: 0; border-radius: var(--r-100); background: var(--surface); color: var(--fg-subtle);
+    font: inherit; font-size: var(--fs-200); cursor: pointer;
+  }
+  .sw-item:hover .sw-row-done, .sw-item:focus-within .sw-row-done { display: inline-flex; }
+  .sw-row-done:hover { background: linear-gradient(var(--hover), var(--hover)), var(--surface); color: var(--fg); }
+  .sw-row-done:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .sw-row-done:disabled { cursor: default; opacity: .5; }
+  @media (hover: none) {
+    .sw-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+    .sw-row-done { position: static; display: inline-flex; width: var(--touch-min); height: var(--touch-min); background: transparent; }
+  }
+  /* Clear all, in Needs you's head: quiet until asked, then its confirm in
+     place, on a line of its own where the column is too narrow for both. */
+  .sw-ghead:has(.sw-clear-all) { flex-wrap: wrap; row-gap: var(--s-050); }
+  .sw-ghead:has(.sw-clear-all) .sw-gname { flex-shrink: 0; }
+  .sw-clear-all { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-100);
+    font-weight: 500; color: var(--fg-subtle); white-space: nowrap; }
+  .sw-ca { padding: 2px var(--s-200); border: 0; border-radius: var(--r-100); background: transparent;
+    color: var(--fg-subtle); font: inherit; font-weight: 600; cursor: pointer; }
+  .sw-ca:hover { background: var(--hover); color: var(--fg); }
+  .sw-ca:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .sw-ca:disabled { cursor: default; opacity: .5; }
   .sw-l2 {
     grid-column: 2 / 4; display: flex; align-items: center; gap: var(--s-200); min-width: 0;
     font-size: var(--fs-200); line-height: 16px; color: var(--fg-muted); white-space: nowrap; overflow: hidden;
@@ -3471,6 +3499,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .sw-row .sw-st { margin-top: var(--s-200); }
     summary.sw-ghead, .sw-more, .sw-diag-btn { min-height: var(--touch-min); display: flex; align-items: center; }
     .sw-tk { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; }
+    .sw-ca { min-height: var(--touch-min); min-width: var(--touch-min); }
     #sw-list { padding-bottom: var(--s-200); }
     #sw-cards { display: flex; flex: none; border-top: 1px solid var(--border); border-radius: 0; padding: 0 var(--s-400); }
     /* The task's own ×, and its own tabs, are the bar's ← and the dock's tabs. */
@@ -3945,6 +3974,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pdp-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .pdp-btn[disabled] { color: var(--fg-disabled); cursor: default; }
   .pdp-note { margin: 0; color: var(--fg-muted); font-size: var(--fs-200); }
+  /* Decisions' Clear all (#279), at the end of its head; its confirm in place. */
+  .pdp-group[data-stage="decisions"] > .pdp-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-050) var(--s-100); }
+  .pdp-clear { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-100); font-weight: 500; white-space: nowrap; }
+  .pdp-ca { height: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200); background: transparent;
+    color: var(--fg-subtle); font: inherit; font-weight: 600; cursor: pointer; }
+  .pdp-ca:hover { background: var(--hover); color: var(--fg); }
+  .pdp-ca:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .pdp-ca[disabled] { color: var(--fg-disabled); cursor: default; }
+  @media (hover: none) { .pdp-ca { height: var(--touch-min); min-width: var(--touch-min); } }
   /* Needs you's folds (ED-209): the group head as a disclosure button, in its look. */
   .pdp-fold { display: inline-flex; align-items: center; gap: var(--s-100); padding: 0; border: 0; border-radius: var(--r-100); background: transparent;
     color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
@@ -7127,12 +7165,87 @@ function swRowHtml(e, group, selected) {
   const why = needs && it.reason ? `<span class="sw-why">${esc(it.reason)}</span>` : '';
   const data = e.po ? `data-po="${esc(e.pid)}"` : e.proj ? `data-proj="${esc(e.pid)}"` : `data-sid="${esc(r.sessionId || e.key)}"`;
   const needsIn = !!(e.sig && e.sig.needs.length);
-  return `<button type="button" class="sw-row${needs ? ' needs' : ''}${needsIn ? ' needs-in' : ''}${selected ? ' on' : ''}${unread ? ' unread' : ''}" ${data} data-room="${esc(e.key)}" title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>`
+  // What it asked (#279): the row opens its chat at that card or report.
+  const at = needs && it.askId ? ` data-msg="${esc(it.askId)}"${it.askPart ? ` data-part="${esc(it.askPart)}"` : ''}` : '';
+  const btn = `<button type="button" class="sw-row${needs ? ' needs' : ''}${needsIn ? ' needs-in' : ''}${selected ? ' on' : ''}${unread ? ' unread' : ''}" ${data} data-room="${esc(e.key)}"${at} title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>`
     + `<span class="sw-st ${st.cls}"${st.tip ? ` role="img" aria-label="${esc(st.tip)}" title="${esc(st.tip)}"` : ''}></span>`
     + `<span class="sw-title">${no ? `<span class="tno">${esc(no)}</span> ` : ''}${esc(title)}</span>${age}`
-    + `<span class="sw-l2">${bits.join('')}</span>${why}</button>`
+    + `<span class="sw-l2">${bits.join('')}</span>${why}</button>`;
+  // Done with this on the row itself (#279): over its age on hover or focus, beside it on a touch screen.
+  const done = needs && it.canDismiss
+    ? `<button type="button" class="sw-row-done" data-room="${esc(e.key)}" aria-label="${esc('Done with this: ' + [no, title].filter(Boolean).join(' '))}"`
+      + ` title="Done with this: it leaves Needs you on every device; a new ask comes back"><span aria-hidden="true">✓</span></button>` : '';
+  return (done ? `<div class="sw-item">${btn}${done}</div>` : btn)
     + (needs && (it.lastLines || it.reason || it.canDismiss) ? swDiagHtml(e.key, it) : '')
-    + swSigHtml(e);   // after Details: swDiagFit finds the row just before its button
+    + swSigHtml(e);   // after Details: swDiagFit finds the row (or its .sw-item) just before its button
+}
+// Clear all (#279): the rows Needs you shows that Done with this settles
+// (an ask, a report, a room waiting on you; never a wall, a prompt or a
+// death), by room.
+function swClearable(needs) {
+  return [...new Set((needs || []).filter(e => e.it && e.it.canDismiss).map(e => e.key))];
+}
+// Its control, in Needs you's head: Clear all; then, in place, "Clear 5
+// rows? · Clear · Cancel"; then "Cleared 5 · Undo" for a few seconds.
+let SW_CLEAR = null;            // null | {phase: 'confirm'} | {phase: 'undo', n, prev} | {phase: 'busy'}
+const SW_CLEAR_UNDO_MS = 8000;
+let SW_CLEAR_KEYS = [];         // the rooms Clear all settles, as last drawn
+let SW_CLEAR_TIMER = 0;
+async function swClearPost(url, body) {
+  const r = await (window.pageWrite ? pageWrite(url, body)
+    : fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+  return j;
+}
+function swClearEnd() { clearTimeout(SW_CLEAR_TIMER); SW_CLEAR = null; swRender(); }
+async function swClearAll() {
+  const keys = SW_CLEAR_KEYS.slice();
+  if (!keys.length) { swClearEnd(); return; }
+  SW_CLEAR = { phase: 'busy' };
+  swRender();
+  try {
+    const j = await swClearPost('/api/attention/done', { roomIds: keys });
+    const gone = new Set(j.done || []);
+    for (const rid of gone) { SW_DIAG.delete(rid); ATTENTION_BY_ROOM.delete(rid); }
+    ATTENTION = { ...ATTENTION, items: (ATTENTION.items || []).filter(x => !gone.has(x.roomId)) };
+    SW_CLEAR = { phase: 'undo', n: gone.size, prev: j.prev || {} };
+    renderAttention();
+    clearTimeout(SW_CLEAR_TIMER);
+    SW_CLEAR_TIMER = setTimeout(swClearEnd, SW_CLEAR_UNDO_MS);
+  } catch (e) {
+    toast('Not cleared: ' + e.message, 5000, 'err');
+    swClearEnd();
+  }
+}
+async function swClearUndo() {
+  const c = SW_CLEAR;
+  if (!c || c.phase !== 'undo') return;
+  clearTimeout(SW_CLEAR_TIMER);
+  SW_CLEAR = { phase: 'busy' };
+  try {
+    await swClearPost('/api/attention/undo', { restore: c.prev });
+  } catch (e) {
+    toast('Not undone: ' + e.message, 5000, 'err');
+  }
+  SW_CLEAR = null;
+  _attnSig = '';   // the rows come back: redraw the list
+  updateRoomsBadge();
+}
+function swClearHtml(keys) {
+  const c = SW_CLEAR, n = (keys || []).length;
+  if (c && c.phase === 'undo') {
+    return `<span class="sw-clear-all" role="status">Cleared ${c.n}<button type="button" class="sw-ca" data-clear="undo">Undo</button></span>`;
+  }
+  if (!n) return '';
+  if (c && (c.phase === 'confirm' || c.phase === 'busy')) {
+    const off = c.phase === 'busy' ? ' disabled' : '';
+    return `<span class="sw-clear-all" role="group" aria-label="Clear all">Clear ${n} row${n === 1 ? '' : 's'}?`
+      + `<button type="button" class="sw-ca" data-clear="go"${off}>Clear</button><button type="button" class="sw-ca" data-clear="cancel"${off}>Cancel</button></span>`;
+  }
+  return `<span class="sw-clear-all"><button type="button" class="sw-ca" data-clear="ask"`
+    + ` title="Done with this for every row here you can settle; a new ask brings a row back">Clear all</button></span>`;
 }
 // Under a PO's row in the recent list (#189): what its tasks, not listed
 // there, say. "1 needs you #12", "2 ready for your check #3 #5" (the first
@@ -7250,8 +7363,12 @@ function swByProject(g) {
 // tasks in no project, which it holds.
 // An empty group is its heading alone, in one quiet line: the list keeps its
 // shape (no group comes and goes as tasks move) and says the count is 0.
-function swListHtml(g, sel, doneOpen, un, by) {
-  const s = sel || {}, u = un || {};
+// clear: Needs you's Clear all (swClearHtml) and how many rows it counts,
+// {html, n}: in Needs you's head, or, where the view has none (the recent
+// list, by project), a head of its own on top while there is one (#279).
+function swListHtml(g, sel, doneOpen, un, by, clear) {
+  const s = sel || {}, u = un || {}, ca = clear || { html: '', n: 0 };
+  const caHead = () => ca.html ? `<h3 class="sw-ghead sw-needs-head">${head('Needs you', ca.n)}${ca.html}</h3>` : '';
   const proj = by === 'project';
   const on = (e, k) => e.po ? (!!s.po && (k === 'projects' || proj) && e.pid === s.po)
                             : (!!s.sid && !!e.row && e.row.sessionId === s.sid);
@@ -7278,12 +7395,12 @@ function swListHtml(g, sel, doneOpen, un, by) {
     // selected whatever its row says.
     const list = g.recent;
     const onR = e => e.po ? (!!s.po && e.pid === s.po) : (!e.proj && !!s.sid && !!e.row && e.row.sessionId === s.sid);
-    return `<section class="sw-group${list.length ? '' : ' empty'}" data-group="recent" aria-label="Recent activity">
+    return caHead() + `<section class="sw-group${list.length ? '' : ' empty'}" data-group="recent" aria-label="Recent activity">
       <h3 class="sw-ghead">${head('Recent activity', list.length)}</h3>${list.map(e => swRowHtml(e, e.grp, onR(e))).join('')}</section>`
       + unassigned();
   }
   if (proj) {
-    return swByProject(g).filter(p => p.pid || !g.unassigned).map(p => `<section class="sw-group" data-group="project" data-proj="${esc(p.pid)}" aria-label="${esc(p.name)}">
+    return caHead() + swByProject(g).filter(p => p.pid || !g.unassigned).map(p => `<section class="sw-group" data-group="project" data-proj="${esc(p.pid)}" aria-label="${esc(p.name)}">
       <h3 class="sw-ghead">${head(p.name, p.list.filter(([e]) => !e.po).length)}</h3>${p.list.map(([e, k]) => swRowHtml(e, k, on(e, k))).join('')}</section>`).join('')
       + unassigned() + done();
   }
@@ -7293,7 +7410,7 @@ function swListHtml(g, sel, doneOpen, un, by) {
     if (k === 'other' && !g.other) return '';   // only while a filter looks at every task
     const list = g[k] || [];
     return `<section class="sw-group${list.length ? '' : ' empty'}" data-group="${k}" aria-label="${esc(nounText(name))}">
-      <h3 class="sw-ghead">${head(nounText(name), list.length)}</h3>${list.map(e => swRowHtml(e, k, on(e, k))).join('')}</section>`;
+      <h3 class="sw-ghead">${head(nounText(name), list.length)}${k === 'needs' ? ca.html : ''}</h3>${list.map(e => swRowHtml(e, k, on(e, k))).join('')}</section>`;
   }).join('');
 }
 // The filter's choices: every registered project, by name.
@@ -13208,7 +13325,7 @@ function pdPointsHtml(told, now) {
     + btn(c.id, 'reopen', 'Reopen', `Reopen ${c.id}: it is back under New answers`) + `</div></li>`;
   const newest = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
   const by = k => items.filter(p => pdPtNeeds(p) === k).sort(newest);
-  const group = (key, head, rows) => rows.length ? `<li class="pdp-group" data-stage="${key}"><h3 class="pdp-head">${esc(head)} <span class="pdp-n">${rows.length}</span></h3>`
+  const group = (key, head, rows, extra) => rows.length ? `<li class="pdp-group" data-stage="${key}"><h3 class="pdp-head">${esc(head)} <span class="pdp-n">${rows.length}</span>${extra || ''}</h3>`
     + `<ul class="pdp-list">${rows.join('')}</ul></li>` : '';
   const fold = (key, head, n, rows) => {
     if (!rows.length) return '';
@@ -13226,7 +13343,17 @@ function pdPointsHtml(told, now) {
     + `<span class="pdp-age" data-at="${esc(String(t.lastAt || 0))}">${esc(pdPtAge(t.lastAt, now))}</span></div></li>`;
   const topicRows = typeof pdTopicNeedsRows === 'function' ? pdTopicNeedsRows(pv, now, thrRow) : null;
   const threadRows = (pv.threads || []).map(thrRow);
-  const top = group('decisions', 'Decisions', decisions) + group('try', 'To try', by('try').map(p => row(p, 'to try')))
+  // Clear all (#279): every open card to Older questions, none answered; Undo for a few seconds after.
+  const dc = typeof PD_DEC_CLEAR !== 'undefined' && PD_DEC_CLEAR && PD_DEC_CLEAR.room === told.room ? PD_DEC_CLEAR : null, nDec = (needs.decisions || []).length;
+  if (dc && dc.phase === 'undo' && !decisions.length) decisions.push(`<li class="pdp-row"><p class="pdp-note">Cleared ${dc.n}: ${dc.n === 1 ? 'it is' : 'they are'} under Older questions.</p></li>`);
+  const decClear = dc && dc.phase === 'undo'
+    ? `<span class="pdp-clear" role="status"><button type="button" class="pdp-ca" data-dec-clear="undo">Undo</button></span>`
+    : dc && (dc.phase === 'confirm' || dc.phase === 'busy') && nDec
+      ? `<span class="pdp-clear" role="group" aria-label="Clear all">Move ${nDec} to Older?`
+        + `<button type="button" class="pdp-ca" data-dec-clear="go"${dc.phase === 'busy' ? ' disabled' : ''}>Clear</button>`
+        + `<button type="button" class="pdp-ca" data-dec-clear="cancel"${dc.phase === 'busy' ? ' disabled' : ''}>Cancel</button></span>`
+      : nDec ? `<span class="pdp-clear"><button type="button" class="pdp-ca" data-dec-clear="ask" title="Move every question here to Older questions; none is answered and no agent is told">Clear all</button></span>` : '';
+  const top = group('decisions', 'Decisions', decisions, decClear) + group('try', 'To try', by('try').map(p => row(p, 'to try')))
     + group('new', 'New answers', by('new').map(p => row(p, 'new answer')))
     + group('threads', Array.isArray(topicRows) ? 'Topics' : 'Threads', Array.isArray(topicRows) ? topicRows : threadRows);
   const waits = items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
@@ -14915,7 +15042,8 @@ function pdPaintPoints(force) {
   PD.ptSig = sig;
   const focus = el.contains(el.ownerDocument.activeElement) ? el.ownerDocument.activeElement : null;
   const key = focus && focus.dataset.ptAct ? `[data-pt="${focus.dataset.pt}"][data-pt-act="${focus.dataset.ptAct}"]`
-    : focus && focus.dataset.fold ? `.pdp-fold[data-fold="${focus.dataset.fold}"]` : '';
+    : focus && focus.dataset.fold ? `.pdp-fold[data-fold="${focus.dataset.fold}"]`
+    : focus && focus.dataset.decClear ? '[data-dec-clear]:not([disabled])' : '';
   el.innerHTML = html;
   if (key) { const f = el.querySelector(key); if (f) f.focus(); }
 }
@@ -14968,7 +15096,41 @@ async function pdPointAct(id, act, btn) {
   } catch (e) { toast('Not done: ' + ((e && e.message) || 'the hub did not answer'), 5000, 'err'); }
   finally { PD_PT_BUSY.delete(k); if (btn && btn.isConnected) btn.disabled = false; }
 }
+// Clear all on the Decisions (#279): {room, phase: confirm | busy | undo, before, n}.
+var PD_DEC_CLEAR = null;
+let PD_DEC_TIMER = 0;
+function pdDecEnd() { clearTimeout(PD_DEC_TIMER); PD_DEC_CLEAR = null; pdPaintPoints(true); }
+async function pdDecClear(what) {
+  const told = pdTold(), room = told && told.room;
+  if (!room) return;
+  const cur = PD_DEC_CLEAR && PD_DEC_CLEAR.room === room ? PD_DEC_CLEAR : null;
+  if (what === 'ask') { PD_DEC_CLEAR = { room, phase: 'confirm' }; pdPaintPoints(true); PD.els.points.querySelector('[data-dec-clear="go"]')?.focus(); return; }
+  if (what === 'cancel') { pdDecEnd(); return; }
+  if (what !== 'go' && !(what === 'undo' && cur && cur.phase === 'undo')) return;
+  const n = ((told.points && told.points.needs && told.points.needs.decisions) || []).length;
+  const body = what === 'go' ? { roomId: room, action: 'clear' } : { roomId: room, action: 'undo', before: cur.before };
+  clearTimeout(PD_DEC_TIMER);
+  PD_DEC_CLEAR = { room, phase: 'busy' };
+  pdPaintPoints(true);
+  try {
+    const r = await (window.pageWrite ? pageWrite('/api/room/points/decisions', body)
+      : fetch('/api/room/points/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+    let j = {};
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+    PD_DEC_CLEAR = what === 'go' ? { room, phase: 'undo', before: j.before || 0, n } : null;
+    if (PD_DEC_CLEAR) PD_DEC_TIMER = setTimeout(pdDecEnd, SW_CLEAR_UNDO_MS);
+    const f = pdChatFrame();
+    if (j.points && f && f.contentWindow && f.contentWindow.pointsChanged) f.contentWindow.pointsChanged(j.points, f.contentWindow.ptTicket());
+    pdPaintPoints(true);
+  } catch (e) {
+    toast((what === 'go' ? 'Not cleared: ' : 'Not undone: ') + e.message, 5000, 'err');
+    pdDecEnd();
+  }
+}
 PD.els.points.addEventListener('click', e => {
+  const dec = e.target.closest && e.target.closest('[data-dec-clear]');
+  if (dec) { if (!dec.disabled) pdDecClear(dec.dataset.decClear); return; }
   const th = e.target.closest && e.target.closest('.pdp-thr[data-thr]');
   if (th) { const told = PD.told || window.EMBED_POINTS; if (told && told.room) pdThreadOpen(told.room, th.dataset.thr, ''); return; }
   const a = e.target.closest && e.target.closest('a.pdp-link[data-mid]');
@@ -18698,9 +18860,15 @@ function swRender() {
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
   if (!phone) rememberConv(sel);
+  // Clear all (#279): every row Needs you shows that Done with this settles;
+  // the recent list's are its groups', a project's tasks on their PO's row.
+  const needs = recent ? swGroups(ALL_ROWS, attentionItems(), projects, gOpts).needs : (fg.needs || []);
+  SW_CLEAR_KEYS = swClearable(needs);
+  if (SW_CLEAR && SW_CLEAR.phase === 'confirm' && !SW_CLEAR_KEYS.length) SW_CLEAR = null;
+  const clear = { html: swClearHtml(SW_CLEAR_KEYS), n: needs.length };
   const wrote = writeSlot(box, filtering
-    ? swListHtml(g, sel, SW_DONE_OPEN || !!(g.done || []).length, { open: !!(g.unassigned || []).length, all: true }, by)
-    : swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by));
+    ? swListHtml(g, sel, SW_DONE_OPEN || !!(g.done || []).length, { open: !!(g.unassigned || []).length, all: true }, by, clear)
+    : swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by, clear));
   if (wrote) swExpandHide();
   swDiagFit(box);   // before the focus goes back: a Details it lands on must show
   if (wrote && key) {
@@ -18778,8 +18946,17 @@ $('#sw-list').addEventListener('click', (ev) => {
   // A task a PO's row names (#189): it opens as its own row would.
   const tk = ev.target.closest('.sw-tk[data-room]');
   if (tk) { swOpenTk(tk, ev); return; }
-  const done = ev.target.closest('.sw-done');
+  const done = ev.target.closest('.sw-done, .sw-row-done');
   if (done) { swDone(done); return; }
+  const ca = ev.target.closest('[data-clear]');
+  if (ca) {
+    const what = ca.dataset.clear;
+    if (what === 'ask') { SW_CLEAR = { phase: 'confirm' }; swRender(); $('#sw-list [data-clear="go"]')?.focus(); }
+    else if (what === 'cancel') swClearEnd();
+    else if (what === 'go') swClearAll();
+    else if (what === 'undo') swClearUndo();
+    return;
+  }
   const more = ev.target.closest('.sw-diag-btn');
   if (more) {
     // Details: open or folded, kept across redraws; the focus stays on it.
@@ -18790,12 +18967,16 @@ $('#sw-list').addEventListener('click', (ev) => {
   }
   const row = ev.target.closest('.sw-row');
   if (!row) return;
+  // A Needs you row opens its chat at what it asked (#279).
+  const rid = row.dataset.room;
+  if (row.dataset.msg && rid) GOTO_MSG.set(rid, { msg: row.dataset.msg, part: row.dataset.part || '' });
   if (row.dataset.po) {
     const pj = projectById(row.dataset.po);
     if (pj) openPoConv(pj);
   } else if (row.dataset.proj) { if (projectById(row.dataset.proj)) openProjectPage(row.dataset.proj); }
   else if ((ev.ctrlKey || ev.metaKey) && pdRowPanel(row.dataset.sid)) { /* its chat as a panel of its own (#150) */ }
   else openDetail(row.dataset.sid);
+  if (row.dataset.msg && rid) sendGotoMsg(rid);
   // Slid out from its strip, the list goes back once a row is opened.
   if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
 });

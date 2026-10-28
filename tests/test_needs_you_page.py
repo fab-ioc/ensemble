@@ -68,7 +68,7 @@ class Cdp {
 }
 // The list as the person reads it: group heads, fold buttons and rows, in order.
 const LIST = `[...document.querySelectorAll('#points-list > li')].map(li => li.classList.contains('pt-fold') ? 'fold:' + li.textContent.trim().slice(1)
-  : li.classList.contains('pt-group') ? 'head:' + li.textContent.trim()
+  : li.classList.contains('pt-group') ? 'head:' + li.firstChild.textContent.trim()
   : li.classList.contains('pt-ask') ? 'ask:' + li.querySelector('.pt-words').textContent.trim()
   : li.dataset.pt ? li.dataset.pt + ':' + ((li.querySelector('.pt-state') || {}).textContent || '') : 'note:' + li.textContent.trim())`;
 // Each answer's balloon: on screen in the chat or not.

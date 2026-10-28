@@ -1627,6 +1627,44 @@ def record_dealt(room_id: str) -> float | None:
         return now
 
 
+def dealt_marks(room_id: str) -> dict | None:
+    """The room's ``{dealtAt, seenAt}`` as they are, for Clear all's Undo
+    (#279), or None when the room is gone."""
+    with _LOCK:
+        room = _load(room_id)
+        if room is None:
+            return None
+        return {"dealtAt": float(room.get("dealtAt") or 0), "seenAt": float(room.get("seenAt") or 0)}
+
+
+def restore_dealt(room_id: str, marks: dict) -> bool:
+    """Undo of Clear all (#279): the room's ``dealtAt`` and ``seenAt`` go back
+    to ``marks`` (what :func:`dealt_marks` gave before). Only back, never
+    forward: a mark later than the room's own is ignored. False when the room
+    is gone or nothing changed."""
+    def num(v):
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            return None
+    dealt, seen = num((marks or {}).get("dealtAt")), num((marks or {}).get("seenAt"))
+    with _LOCK:
+        room = _load(room_id)
+        if room is None:
+            return False
+        changed = False
+        for key, val in (("dealtAt", dealt), ("seenAt", seen)):
+            if val is not None and val < float(room.get(key) or 0):
+                if val:
+                    room[key] = val
+                else:
+                    room.pop(key, None)
+                changed = True
+        if changed:
+            _write(room)
+        return changed
+
+
 def last_real_report(room: dict) -> dict:
     """The task's last report that is not an ``update``, or {}. A task that
     reported before ``lastRealReport`` was kept falls back to ``lastReport``
