@@ -253,16 +253,49 @@ class Decisions(point_cards.Resolver):
         self.say('b', now - 3600, 'Ask: Still waiting on you: P131. Should tasks get your tools?\n- Yes\n- No')
         self.say('c', now - 600, 'Ask: Still waiting on you: P131. Should every task get your tools?\n- Yes\n- No')
         led = points.load(self.rid)
-        led['lastPersonAt'] = now - 100
+        led['asksSettledAt'] = now - 1000     # the person wrote after b, before c
         points._save(self.rid, led)
         waiting, older = asks.decisions(self.summary(), now=now)
         self.assertEqual([c['mid'] for c in waiting], ['c'])
-        self.assertEqual([(c['mid'], c['why']) for c in older], [('b', 'repeat'), ('a', 'old')])
+        self.assertEqual([(c['mid'], c['why']) for c in older], [('b', 'repeat'), ('a', 'past')])
         # Not written past: an old question still waits.
-        led['lastPersonAt'] = 0
-        led['points'] = []
+        led['asksSettledAt'] = 0
         points._save(self.rid, led)
         self.assertIn('a', [c['mid'] for c in asks.decisions(self.summary(), now=now)[0]])
+
+    def test_written_past_leaves_at_once_and_untouched_stays(self):
+        # #279: the Planning PO's cards the person wrote past, minutes old
+        # (no longer after 3 days); Biking's card put after their last write.
+        now = time.time()
+        self.say('old', now - 300, 'Ask: Which one?\n- A\n- B')
+        self.say('new', now - 60, 'Ask: How heavy is the child?\n- Light\n- Heavy')
+        led = points.load(self.rid)
+        led['asksSettledAt'] = now - 120
+        points._save(self.rid, led)
+        waiting, older = asks.decisions(self.summary(), now=now)
+        self.assertEqual([c['mid'] for c in waiting], ['new'])
+        self.assertEqual([(c['mid'], c['why']) for c in older], [('old', 'past')])
+        # The person's own chat message counts the same (personAt).
+        led['asksSettledAt'] = 0
+        points._save(self.rid, led)
+        waiting, _ = asks.decisions({**self.summary(), 'personAt': now - 30}, now=now)
+        self.assertEqual(waiting, [])
+
+    def test_clear_all_and_undo(self):
+        now = time.time()
+        self.say('a', now - 300, 'Ask: Which one?\n- A\n- B')
+        self.say('b', now - 200, 'Ask: What colour?\n- Red\n- Blue')
+        before = points.clear_decisions(self.rid, now=now - 100)
+        self.assertEqual(before, 0)
+        waiting, older = asks.decisions(self.summary(), now=now)
+        self.assertEqual((waiting, [(c['mid'], c['why']) for c in older]), ([], [('b', 'cleared'), ('a', 'cleared')]))
+        self.assertEqual(asks.open_cards(self.summary())[0]['mid'], 'b', 'nothing is answered')
+        self.say('c', now - 50, 'Ask: Ship it?\n- Yes\n- No')
+        self.assertEqual([c['mid'] for c in asks.decisions(self.summary(), now=now)[0]], ['c'], 'a later card waits')
+        self.assertFalse(points.unclear_decisions(self.rid, now), 'Undo only moves the mark back')
+        self.assertTrue(points.unclear_decisions(self.rid, before))
+        self.assertNotIn('decisionsClearedAt', points.load(self.rid))
+        self.assertEqual([c['mid'] for c in asks.decisions(self.summary(), now=now)[0]], ['c', 'b', 'a'])
 
     def test_repeats_are_worked_out_once_per_list(self):
         # #265: ~100 open asks made ~4.9k comparisons on every poll.

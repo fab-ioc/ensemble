@@ -998,6 +998,10 @@
   #points-list .pt-fold-sum:hover { color:var(--fg); }
   #points-list .pt-fold-sum:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #points-list .pt-note { color:var(--fg-muted); }
+  /* Decisions' Clear all (#279), at the end of its head; its confirm in place. */
+  #points-list .pt-group:has(.pt-clear) { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-050) var(--s-100); }
+  .pt-clear { margin-left:auto; display:inline-flex; align-items:center; gap:var(--s-100); font-weight:500; white-space:nowrap; }
+  .pt-clear .pt-btn { font-weight:600; }
   a.pt-link { color:var(--link); white-space:nowrap; }
   /* A PO message's id written in a balloon, as its name (pmLinkHtml). */
   .msg .text.md a.pm-link { color:var(--link); }
@@ -4431,6 +4435,8 @@ function ptThreadHtml(p, P, href) {
 // is one more entry.
 const PT_GROUPS = [['decisions', () => 'Decisions'], ['try', () => 'To try'], ['new', () => 'New answers'], ['threads', () => 'Threads']];
 const PT_FOLDS = new Set();
+let PT_DEC_CLEAR = null;   // Clear all on the Decisions (#279): {phase: confirm | busy | undo, before, n}
+let PT_DEC_TIMER = 0;
 const PT_REASON = { seen: 'seen', superseded: 'superseded', migrated: 'closed as old' };
 // A question card's row: its first line, linked to the card (landing on the ask), its task, since when.
 function ptAskRow(c, href, now) {
@@ -4504,7 +4510,17 @@ function pointsListHtml(P, href, now) {
     threads: (P.threads || []).map(t => ptThreadRow(t, now)),
   };
   if (n.pending && !groups.decisions.length) groups.decisions.push('<li class="pt-row pt-note">Reading the question cards…</li>');
-  let html = PT_GROUPS.map(([k, head]) => groups[k].length ? `<li class="pt-group">${esc(head())}</li>` + groups[k].join('') : '').join('');
+  // Clear all (#279): every open card to Older questions, none answered; Undo for a few seconds after.
+  const dc = PT_DEC_CLEAR, nDec = (n.decisions || []).length;
+  if (dc && dc.phase === 'undo' && !groups.decisions.length) groups.decisions.push(`<li class="pt-row pt-note">Cleared ${dc.n}: ${dc.n === 1 ? 'it is' : 'they are'} under Older questions.</li>`);
+  const decClear = dc && dc.phase === 'undo'
+    ? `<span class="pt-clear" role="status"><button type="button" class="pt-btn" data-dec-clear="undo">Undo</button></span>`
+    : dc && (dc.phase === 'confirm' || dc.phase === 'busy') && nDec
+      ? `<span class="pt-clear" role="group" aria-label="Clear all">Move ${nDec} to Older?`
+        + `<button type="button" class="pt-btn" data-dec-clear="go"${dc.phase === 'busy' ? ' disabled' : ''}>Clear</button>`
+        + `<button type="button" class="pt-btn" data-dec-clear="cancel"${dc.phase === 'busy' ? ' disabled' : ''}>Cancel</button></span>`
+      : nDec ? `<span class="pt-clear"><button type="button" class="pt-btn" data-dec-clear="ask" title="Move every question here to Older questions; none is answered and no agent is told">Clear all</button></span>` : '';
+  let html = PT_GROUPS.map(([k, head]) => groups[k].length ? `<li class="pt-group">${esc(head())}${k === 'decisions' ? decClear : ''}</li>` + groups[k].join('') : '').join('');
   if (!html) html = '<li class="pt-row pt-note">Nothing waits on you</li>';
   const waits = P.items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
   html += ptFoldHtml('older', `Older questions (${n.olderCount || (n.older || []).length})`, (n.older || []).map(c => ptAskRow(c, href, now)));
@@ -4592,6 +4608,35 @@ async function pointAct(id, act, post) {
     return r;
   } catch (e) { pointsNote('Not done: ' + ((e && e.message) || 'the hub did not answer') + '.'); return null; }
   finally { PT_BUSY.delete(k); }
+}
+// Clear all on the Decisions (#279): ask, then confirm in place; Clear sends
+// every open card to Older questions (nothing answered, no agent told);
+// Undo puts the mark back.
+function decClearEnd() { clearTimeout(PT_DEC_TIMER); PT_DEC_CLEAR = null; showPointsLine(); }
+async function decClear(what) {
+  if (what === 'ask') { PT_DEC_CLEAR = { phase: 'confirm' }; showPointsLine(); const go = document.querySelector('#points-list [data-dec-clear="go"]'); if (go) go.focus(); return; }
+  if (what === 'cancel') { decClearEnd(); return; }
+  const cur = PT_DEC_CLEAR;
+  if (what !== 'go' && !(what === 'undo' && cur && cur.phase === 'undo')) return;
+  const n = ((POINTS.needs && POINTS.needs.decisions) || []).length;
+  const body = what === 'go' ? { roomId: ROOM, action: 'clear' } : { roomId: ROOM, action: 'undo', before: cur.before };
+  clearTimeout(PT_DEC_TIMER);
+  PT_DEC_CLEAR = { phase: 'busy' };
+  showPointsLine();
+  try {
+    const r = await (window.pageWrite ? window.pageWrite('/api/room/points/decisions', body)
+      : fetch('/api/room/points/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+    let j = {};
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(j.message || j.error || ('error ' + r.status));
+    PT_DEC_CLEAR = what === 'go' ? { phase: 'undo', before: j.before || 0, n } : null;
+    if (PT_DEC_CLEAR) PT_DEC_TIMER = setTimeout(decClearEnd, 8000);
+    if (j.points) pointsChanged(j.points, ptTicket());
+    showPointsLine();
+  } catch (e) {
+    pointsNote((what === 'go' ? 'Not cleared: ' : 'Not undone: ') + ((e && e.message) || 'the hub did not answer') + '.');
+    decClearEnd();
+  }
 }
 // ---- The person's points: end
 // ---- Folding a long conversation: end
@@ -4968,7 +5013,8 @@ function showPointsLine() {
   if (sig === POINTS_LINE_SIG) { if (el.hidden !== (!html || away)) el.hidden = !html || away; pointsAges(); return; }
   POINTS_LINE_SIG = sig;
   const hadFocus = el.contains(document.activeElement) ? document.activeElement : null;
-  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.fold ? `.pt-fold-sum[data-fold="${hadFocus.dataset.fold}"]` : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
+  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.fold ? `.pt-fold-sum[data-fold="${hadFocus.dataset.fold}"]` : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]`
+    : hadFocus.dataset.decClear ? '[data-dec-clear]:not([disabled])' : '') : '';
   el.hidden = !html || away;
   el.innerHTML = html;
   if (focusKey) { const f = el.querySelector(focusKey) || el.querySelector('.pt-sum'); if (f) f.focus(); }
@@ -10252,6 +10298,8 @@ function pointClick(e) {
 $('#points-line').addEventListener('click', e => {
   const to = e.target.closest && e.target.closest('.thr-open');
   if (to) { openThread(to.dataset.thr, ''); return; }
+  const dec = e.target.closest && e.target.closest('[data-dec-clear]');
+  if (dec) { if (!dec.disabled) decClear(dec.dataset.decClear); return; }
   if (pointClick(e)) return;
   if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); return; }
   const fold = e.target.closest && e.target.closest('.pt-fold-sum');
