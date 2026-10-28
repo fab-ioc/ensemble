@@ -5466,7 +5466,19 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
 
 def task_files_briefing(room: dict) -> str:
     """Tell a launched task agent where durable task artifacts belong."""
+    # Project tasks have their own established checkout/Documents conventions;
+    # this note is specifically for Unassigned tasks. Older no-project rooms
+    # predate taskDir, so their room cwd is the task root created under ~/cs.
+    if (room.get("projectId") or "").strip():
+        return ""
     folder = (room.get("taskDir") or "").strip()
+    if not folder and not room.get("adopted"):
+        cwd = (room.get("cwd") or "").strip()
+        try:
+            if cwd and _within(cwd, str(CS_ROOT)) and _NUMBERED_RE.match(os.path.basename(os.path.normpath(cwd))):
+                folder = cwd
+        except (OSError, ValueError):
+            folder = ""
     if not folder:
         return ""
     return (
