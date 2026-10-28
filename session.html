@@ -10279,13 +10279,25 @@ function showTrayItem(cid) {
 // answer's balloon (its chip shows under the box), the cursor in it. Sent, the
 // hub reads the link and closes the point as followed up (points.py). Nothing
 // is posted here. False when the point has no answer balloon to link.
+// In the workspace this chat's own box is hidden (#271): the link goes in the
+// workspace's box, aimed at this chat (index.html wcCommentLink).
 function pointComment(id) {
   const p = POINTS.byId.get(id), a = ptAnswerOf(p);
   if (!a || !a.mid) return false;
+  const link = msgLink(a.mid) + '\n';
+  if (document.body.classList.contains('workspace-guest')) {
+    try {
+      if (window.parent.wcCommentLink(window, link, { roomId: ROOM, thread: THREAD_MODE ? THREAD : '', mid: THREAD_MODE ? THREAD_MID : '' })) return true;
+    } catch (e) {}
+  }
+  edCommentLink(link);
+  return true;
+}
+// The link as the box's new last point, the cursor in it.
+function edCommentLink(link) {
   const ta = $('#input');
   if (edHeadToPoint(ED, ta.value)) { ta.value = ''; edGrow(ta); SEND_KEY = ''; }
-  edAddAt(ED.points.length, msgLink(a.mid) + '\n');
-  return true;
+  edAddAt(ED.points.length, link);
 }
 function pointClick(e) {
   const b = e.target.closest && e.target.closest('.pt-btn');
