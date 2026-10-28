@@ -1105,7 +1105,6 @@ class ThePage(unittest.TestCase):
         self.assertEqual(self.got["html"]["files"]["trail"][-1], ["file", "page.html"])
         self.assertEqual(self.got["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
         self.assertEqual(self.got["agentHtml"]["viewer"]["images"], 1)
-        self.assertEqual(self.got["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
         self.assertIn("agent-output.html", self.got["agentHtml"]["viewer"]["url"])
 
     def test_go_to_file_finds_and_opens(self):
@@ -1212,7 +1211,6 @@ class ThePage(unittest.TestCase):
             self.assertEqual(o["html"]["viewer"]["page"]["ran"], "before")
             self.assertEqual(o["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
             self.assertEqual(o["agentHtml"]["viewer"]["images"], 1)
-            self.assertEqual(o["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
             self.assertTrue(o["back"]["treeShown"] and not o["back"]["viewShown"], "Files, in the path bar, goes back to the tree")
 
     def test_a_phone_finds_files_and_text(self):

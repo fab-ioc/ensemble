@@ -243,7 +243,7 @@ class PruneTests(unittest.TestCase):
         hub.scratch_root = lambda folder: str(self.tmp / "cs") if prune.within(folder, self.tmp / "cs") else ""
         item = next(it for g in prune.scan(hub, 30)["groups"] for it in g["items"] if it["id"] == f"done:{room['id']}")
         folder = next(p for p in item["parts"] if p["kind"] == "folder")
-        self.assertTrue(item["ticked"], "a no-project task folder is intentionally prunable with the task")
+        self.assertFalse(item["ticked"], "a no-project task folder requires explicit selection")
         self.assertEqual(folder["path"], str(scratch))
         result = prune.run(hub, {"groups": [{"id": "done", "items": [item]}], "kept": [], "bytes": item["bytes"]}, [item["id"]])
         self.assertEqual(result["skipped"], [])
