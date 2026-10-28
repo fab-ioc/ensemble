@@ -13630,7 +13630,9 @@ function pdEnsure() {
     themeEvent: 'cd-theme',
     // A conversation's frame while a press is on it (session.html): focus moving
     // into it closes nothing; its release does, once the click is over (#198).
-    modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, iframe[data-pressed]',
+    // The selection bar (static/selbar.js) counts as the panel too: a press on
+    // its Comment over a flyout's diff leaves the flyout open (P233).
+    modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, .sel-bar, iframe[data-pressed]',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
   // A panel this page no longer has (Documents, #103) keeps no place in a
@@ -13906,10 +13908,29 @@ window.addEventListener('message', e => {
   if (e.data?.type !== 'workspace-pick' || e.source === f.contentWindow || !e.data.roomId) return;
   const chat = [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')].find(x => x.contentWindow === e.source);
   if (!chat || !chat.contentDocument?.body.classList.contains('workspace-guest')) return;
-  const room = String(e.data.roomId);
-  if (chat.classList.contains('po-thread')) wcChoose({kind:'thread',room,thread:String(e.data.thread || ''),mid:String(e.data.mid || '')}, !!e.data.focus);
-  else wcChoose({kind:chat.classList.contains('po-session') ? 'po' : 'task',room}, !!e.data.focus);
+  wcChoose(wcChatTarget(chat, String(e.data.roomId), e.data), !!e.data.focus);
 });
+// The box's target for a chat frame of the workspace.
+function wcChatTarget(chat, room, d) {
+  if (chat.classList.contains('po-thread')) return {kind:'thread',room,thread:String(d.thread || ''),mid:String(d.mid || '')};
+  return {kind:chat.classList.contains('po-session') ? 'po' : 'task',room};
+}
+// Comment on a point's answer in a chat whose own box is hidden (#271): the
+// box is aimed at that chat and takes the link as a new point, the cursor in
+// it (session.html edCommentLink), once its page is the chat's. False when
+// the chat is not one the box serves; the chat then keeps the link itself.
+function wcCommentLink(win, link, d) {
+  const chat = [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')].find(x => x.contentWindow === win);
+  if (!chat || !chat.contentDocument?.body.classList.contains('workspace-guest')) return false;
+  const t = wcChatTarget(chat, String(d?.roomId || ''), d || {});
+  if (!t.room || !wcValid(t)) return false;
+  wcChoose(t);
+  const f = document.getElementById('workspace-compose-frame');
+  if (!WC.base || wcKey(WC.target) !== wcKey(t)) return false;
+  const put = () => { try { f.contentWindow.edCommentLink(link); } catch (e) {} };
+  if (f.contentDocument?.readyState === 'complete' && f.contentDocument.URL.includes(WC.base)) put(); else f.addEventListener('load', put, {once:true});
+  return true;
+}
 setInterval(wcSync, 400);
 function pdChatsRemember() {
   const rooms = [...PD.rt.values()].filter(e => e.kind === 'chat').map(e => e.room);
@@ -18911,7 +18932,7 @@ function ldMake() {
       popLostNotice: 'quiet',
       popBackButton: false,
       themeEvent: 'cd-theme',
-      modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, iframe[data-pressed]',
+      modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm, .sel-bar, iframe[data-pressed]',
     });
   } finally { window.DOC_LISTENERS_PAUSED = false; }
   document.body.classList.add('ld-on');
