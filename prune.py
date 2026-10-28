@@ -684,8 +684,13 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
             and os.path.isdir(_long(os.path.join(folder, "repo"))) \
             and not os.path.lexists(_long(os.path.join(folder, "repo", ".git"))):
         extra = {"note": COPY_NOTE, "ticked": False}
-    return _item("done", f"done:{rid}", label, parts, room=rid, no=no,
+    item = _item("done", f"done:{rid}", label, parts, room=rid, no=no,
                  project=(project or {}).get("name") or "", at=_done_at(r), **extra)
+    # A no-project task's folder is the user's document store. Keep it visible
+    # in the Done preview, but require an explicit selection before deletion.
+    if not project:
+        item["ticked"] = False
+    return item
 
 
 def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list,

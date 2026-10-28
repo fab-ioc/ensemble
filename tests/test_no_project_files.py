@@ -55,6 +55,7 @@ sys.path.insert(0, str(ROOT))
 
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import attachments  # noqa: E402
 from tests import chrome_profile, test_tool_strip  # noqa: E402
 from tests import test_app_install as app_install  # noqa: E402
 from tests.test_middle import CHROME, NODE  # noqa: E402
@@ -175,17 +176,58 @@ class TheHubSide(unittest.TestCase):
                                   ("status", dashboard.git_status(str(path)))):
             self.assertEqual((code, res.get("error")), (403, "path_not_allowed"), f"{what} of {path}")
 
-    def test_a_task_made_without_a_project_has_a_folder_but_no_task_folder(self):
+    def test_a_task_made_without_a_project_has_a_task_folder_under_cs(self):
         room = loose_task("Write the report")
         cwd = Path(room["cwd"])
         self.assertEqual(cwd.parent, self.base / "cs", "it runs in a folder of its own under ~/cs")
-        self.assertEqual(room.get("taskDir"), "", "and has no task folder")
+        self.assertEqual(room.get("taskDir"), str(cwd), "the task folder is the no-project workspace root")
         self.assertEqual(room.get("projectId"), "")
         row = next(r for r in listed() if r.get("roomId") == room["id"])
-        self.assertEqual((row["cwd"], row["taskDir"]), (str(cwd), ""))
+        self.assertEqual((row["cwd"], row["taskDir"]), (str(cwd), str(cwd)))
         self.assertNotIn("folderWide", row)
         group = next(g for g in dashboard.build_projects()["projects"] if any(s.get("roomId") == room["id"] for s in g["sessions"]))
         self.assertEqual((group["id"], group["registered"]), ("__unassigned__", False), "the page finds it in Unassigned")
+
+    def test_task_briefing_names_the_folder_for_artifacts(self):
+        room = loose_task("Write the report")
+        note = dashboard.task_files_briefing(room)
+        self.assertIn(f"`{room['taskDir']}`", note)
+        self.assertIn("Markdown, HTML, images, styles", note)
+        self.assertIn("do not need separate approval", note)
+
+    def test_legacy_no_project_room_gets_the_same_artifact_briefing(self):
+        room = loose_task("Write the report")
+        room.pop("taskDir", None)
+        self.assertIn(str(room["cwd"]), dashboard.task_files_briefing(room))
+
+    def test_project_task_keeps_its_existing_artifact_conventions(self):
+        ok, project, err = dashboard.register_project("Project")
+        self.assertTrue(ok, err)
+        ok, room, err = dashboard.create_task("Write the report", "spec", project["id"], [{"agent": "claude"}])
+        self.assertTrue(ok, err)
+        self.assertEqual(dashboard.task_files_briefing(room), "")
+
+    def test_both_launch_paths_add_the_artifact_note(self):
+        src = Path(dashboard.__file__).read_text(encoding="utf-8")
+        for start, end in (("def _launch_room_agent(", "def _mcp_wiring("),
+                           ("def _launch_room_agent_pty(", "def _resume_room_agent_pty(")):
+            block = src[src.index(start):src.index(end)]
+            self.assertIn("task_files_briefing(room_full)", block)
+
+    def test_agent_subfolder_artifact_is_resolved_from_task_chat(self):
+        room = loose_task("Write the report")
+        agent = Path(room["taskDir"]) / "claude"
+        agent.mkdir()
+        put(agent / "report.md", "# Report\n")
+        listed()
+        self.assertEqual(
+            dashboard.resolve_file_ref("report.md", room_id=room["id"]),
+            agent / "report.md",
+        )
+
+    def test_no_project_attachments_stay_in_the_task_folder(self):
+        room = loose_task("Write the report")
+        self.assertEqual(attachments.folder(room, self.base / "state"), Path(room["taskDir"]) / "attachments")
 
     def test_its_files_are_read_where_it_runs(self):
         cwd = Path(loose_task("Write the report")["cwd"])
@@ -564,6 +606,7 @@ const VIEWER = `(() => {
     page: page ? { sandbox: page.getAttribute('sandbox'), srcdoc: (page.getAttribute('srcdoc') || '').length > 0,
       h1: (() => { try { return page.contentDocument.querySelector('h1').textContent; } catch (e) { return 'unreadable'; } })(),
       ran: (() => { try { return page.contentDocument.title; } catch (e) { return 'unreadable'; } })() } : null,
+    images: page ? (() => { try { return page.contentDocument.images.length; } catch (e) { return -1; } })() : 0,
     err: (main.querySelector('.err') || {}).textContent || '', scrollW: d.documentElement.scrollWidth, vw: f.contentWindow.innerWidth };
 })()`;
 async function main() {
@@ -707,6 +750,7 @@ async function main() {
       out.py = await view(p, 'tool.py');
       await p.shot('loose-1440-py');
       out.html = await view(p, 'page.html');
+      out.agentHtml = await view(p, 'agent-output.html');
       await p.shot('loose-1440-html');
       // A folder opens in place.
       await p.evalIn(`${PANE}.querySelector('.wsp-tree .wse.dir:not(.wsroot)[data-path$="notes"]').click(); 0`);
@@ -875,6 +919,7 @@ async function main() {
       await p.shot(`loose-${w}-py`);
       await p.evalIn(`${fpanel('tool.py')}.querySelector('.wsp-files').click(); 0`); await sleep(300);
       o.html = await view(p, 'page.html');
+      o.agentHtml = await view(p, 'agent-output.html');
       await p.shot(`loose-${w}-html`);
       if (w === 390) {
         // Go to file and Text search, from the tree's pane.
@@ -958,6 +1003,9 @@ class ThePage(unittest.TestCase):
         put(cwd / "notes" / "deep.txt", "deep notes\n")
         (cwd / "claude").mkdir()            # where its one agent runs
         put(cwd / "claude" / "report.md", "# What the agent wrote\n")
+        put(cwd / "claude" / "agent-output.html", "<!doctype html><html><body><h1>Agent page</h1><img src=agent-image.png></body></html>\n")
+        (cwd / "claude" / "agent-image.png").write_bytes(
+            bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cf00000003000100b5fe9dba0000000049454e44ae426082"))
         cls.git = bool(GIT)
         if GIT:
             git(cwd, "init", "-q")
@@ -1055,6 +1103,9 @@ class ThePage(unittest.TestCase):
         self.assertEqual(v["page"], {"sandbox": "allow-same-origin", "srcdoc": True, "h1": "Brake chart", "ran": "before"},
                          "rendered, and its script did not run")
         self.assertEqual(self.got["html"]["files"]["trail"][-1], ["file", "page.html"])
+        self.assertEqual(self.got["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
+        self.assertEqual(self.got["agentHtml"]["viewer"]["images"], 1)
+        self.assertIn("agent-output.html", self.got["agentHtml"]["viewer"]["url"])
 
     def test_go_to_file_finds_and_opens(self):
         g = self.got["goto"]
@@ -1064,7 +1115,8 @@ class ThePage(unittest.TestCase):
     def test_text_search_finds_the_lines(self):
         g = self.got["text"]
         self.assertEqual(g["placeholder"], "Search in files in this task")
-        self.assertEqual(g["state"], "3 matches in 2 files." if self.git else "2 matches in 2 files.")
+        self.assertEqual(g["state"], ("3 matches in 2 files. Skipped 1 binary file." if self.git
+                                       else "2 matches in 2 files. Skipped 1 binary file."))
         self.assertTrue(any("brakes **squeal**" in r for r in g["results"]), g["results"])
         self.no_scroll(g, "Text search at 1440")
 
@@ -1157,6 +1209,8 @@ class ThePage(unittest.TestCase):
             self.assertIn("tk-kw", o["py"]["viewer"]["tokens"])
             self.assertEqual(o["html"]["viewer"]["page"]["h1"], "Brake chart")
             self.assertEqual(o["html"]["viewer"]["page"]["ran"], "before")
+            self.assertEqual(o["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
+            self.assertEqual(o["agentHtml"]["viewer"]["images"], 1)
             self.assertTrue(o["back"]["treeShown"] and not o["back"]["viewShown"], "Files, in the path bar, goes back to the tree")
 
     def test_a_phone_finds_files_and_text(self):

@@ -231,6 +231,24 @@ class PruneTests(unittest.TestCase):
         write(ok / "task.json")
         self.assertEqual(prune.task_folder_ok(hub, str(ok), self.project, projects), "")
 
+    def test_no_project_task_artifact_folder_is_prunable(self):
+        scratch = self.tmp / "cs" / "01_report"
+        write(scratch / "report.md", "keep with task")
+        room = chatroom.create_room("No project report", [{"identity": "claude", "agent": "claude"}])
+        room = chatroom.get_room(room["id"], public=False)
+        room.update(id=room["id"], projectId="", workflow="done", workflowAt=OLD,
+                    cwd=str(scratch), taskDir=str(scratch), workspace={"mode": "empty", "taskDir": str(scratch)})
+        chatroom.update_room(room)
+        hub = self.hub()
+        hub.scratch_root = lambda folder: str(self.tmp / "cs") if prune.within(folder, self.tmp / "cs") else ""
+        item = next(it for g in prune.scan(hub, 30)["groups"] for it in g["items"] if it["id"] == f"done:{room['id']}")
+        folder = next(p for p in item["parts"] if p["kind"] == "folder")
+        self.assertFalse(item["ticked"], "a no-project task folder requires explicit selection")
+        self.assertEqual(folder["path"], str(scratch))
+        result = prune.run(hub, {"groups": [{"id": "done", "items": [item]}], "kept": [], "bytes": item["bytes"]}, [item["id"]])
+        self.assertEqual(result["skipped"], [])
+        self.assertFalse(scratch.exists())
+
     def test_orphan_folder_and_housekeeping(self):
         orphan = self.home / "gone_task"
         write(orphan / "task.json", "{}")
