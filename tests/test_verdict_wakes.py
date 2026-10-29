@@ -89,14 +89,23 @@ class VerdictWakes(unittest.TestCase):
         self.assertEqual(self.handler.reports, [(self.po_rid, "review 3 (changes requested)", ["po"])])
         self.assertEqual(self.po_reports()[-1]["rang"], ["po"])
 
-    def test_approved_and_comment_always_ring(self):
-        for n, verdict in ((1, "approve"), (2, "comment"), (1, "comment")):
-            with self.subTest(n=n, verdict=verdict):
+    def test_comment_always_rings(self):
+        for n in (1, 2):
+            with self.subTest(n=n):
                 self.handler.reports.clear()
-                res = self.done(verdict, n)
+                res = self.done("comment", n)
                 self.assertTrue(res["po"]["woken"])
                 self.assertEqual(self.handler.reports[-1][0], self.po_rid)
                 self.assertEqual(self.po_reports()[-1]["rang"], ["po"])
+
+    def test_approved_is_posted_and_held_for_the_po_next_wake(self):
+        # #288: an approval asks nothing of the PO (quiet_reports.py).
+        with mock.patch.object(dashboard.quiet_reports, "hold") as hold:
+            res = self.done("approve", 1)
+        self.assertFalse(res["po"]["woken"])
+        self.assertEqual(self.handler.reports, [])
+        self.assertEqual(self.po_reports()[-1]["rang"], [])
+        self.assertEqual(hold.call_args.args[0], self.po_rid)
 
     def test_the_log_and_the_task_chat_are_the_same_either_way(self):
         res = self.done("changes_requested", 1)

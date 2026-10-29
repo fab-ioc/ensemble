@@ -109,26 +109,73 @@ class LaterReview(_Repo):
         self.assertIn("The diff since is", brief)
         self.assertNotIn("````diff", brief)
 
-    def test_a_rebased_branch_falls_back_to_the_whole_diff(self):
+    def test_a_reviewed_commit_git_does_not_have_falls_back_to_the_whole_diff(self):
         ctx = dashboard.review_git_context(self.root, since=self.prev(head="0123abc"))
         self.assertNotIn("since", ctx)
         self.assertIn("Diff command:", self.brief(2, ctx))
 
-    def test_another_branch_is_ignored(self):
-        ctx = dashboard.review_git_context(self.root, since=self.prev(branch="sess/other"))
-        self.assertNotIn("since", ctx)
+    def test_a_branch_of_another_name_with_the_reviewed_commit_reads_the_change_since(self):
+        # #288: 80 later rounds read everything because the owner went on in
+        # a branch of another name cut from the reviewed commit.
+        git(self.root, "checkout", "-qb", "sess/y")
+        self.write("y.txt", "on y\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "y change")
+        ctx = dashboard.review_git_context(self.root, since=self.prev(branch="sess/x"))
+        self.assertEqual((ctx["since"], ctx["sinceMode"]), (self.first, "diff"))
+        self.assertIn("+on y", ctx["sinceDiff"])
+        self.assertNotIn("+first", ctx["sinceDiff"])
 
-    def test_main_merged_in_since_falls_back_to_the_whole_diff(self):
-        # The branch took main in after review 1: the change since would carry
-        # main's own commits, so the reviewer gets the whole diff instead.
+    def test_a_branch_without_the_reviewed_commit_reads_its_own_commits(self):
+        git(self.root, "checkout", "-q", "main")
+        git(self.root, "checkout", "-qb", "sess/other")
+        self.write("o.txt", "other\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "other")
+        ctx = dashboard.review_git_context(self.root, since=self.prev())
+        self.assertEqual(ctx.get("sinceMode"), "commits")
+        self.assertIn("+other", ctx["sinceDiff"])
+        self.assertNotIn("+base", ctx["sinceDiff"])
+
+    def test_main_merged_in_since_reads_the_owner_commits_only(self):
+        # The branch took main in after review 1: a plain diff since would
+        # carry main's own commits, so the reviewer reads the owner's commits.
         git(self.root, "checkout", "-q", "main")
         self.write("m.txt", "on main\n")
         git(self.root, "add", "."); git(self.root, "commit", "-qm", "main moves")
         git(self.root, "checkout", "-q", "sess/x")
         git(self.root, "merge", "-q", "--no-edit", "main")
+        self.write("d.txt", "after merge\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "after merge")
+        self.write("b.txt", "dirty\n")
         ctx = dashboard.review_git_context(self.root, since=self.prev())
-        self.assertNotIn("since", ctx)
+        self.assertEqual((ctx["since"], ctx["sinceMode"]), (self.first, "commits"))
+        self.assertIn("+second", ctx["sinceDiff"])
+        self.assertIn("+after merge", ctx["sinceDiff"])
+        self.assertNotIn("+on main", ctx["sinceDiff"])
+        self.assertNotIn("main moves", ctx["sinceCommits"])
+        self.assertNotIn("Merge", ctx["sinceCommits"])
+        self.assertIn("b.txt", ctx["sinceStat"].rsplit("second change", 1)[1])
+        self.assertIn("+dirty", ctx["sinceDiff"])
         self.assertNotIn("+on main", ctx["diff"])
+        brief = self.brief(2, ctx)
+        self.assertIn("--cherry-pick --right-only", brief)
+        self.assertIn("+after merge", brief)
+        self.assertNotIn("+on main", brief)
+
+    def test_a_rebased_branch_leaves_out_the_rebased_copies(self):
+        head = git(self.root, "rev-parse", "--short", "HEAD")
+        git(self.root, "checkout", "-q", "main")
+        self.write("m.txt", "on main\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "main moves")
+        git(self.root, "checkout", "-q", "sess/x")
+        git(self.root, "rebase", "-q", "main")
+        self.write("f.txt", "after rebase\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "after rebase")
+        ctx = dashboard.review_git_context(self.root, since=self.prev(head=head, n=2))
+        self.assertEqual(ctx["sinceMode"], "commits")
+        self.assertEqual(len(ctx["sinceCommits"].splitlines()), 1, ctx["sinceCommits"])
+        self.assertIn("after rebase", ctx["sinceCommits"])
+        self.assertNotIn("+second", ctx["sinceDiff"])
+        self.assertNotIn("+on main", ctx["sinceDiff"])
 
     def test_the_same_head_again_is_only_what_is_uncommitted(self):
         head = git(self.root, "rev-parse", "--short", "HEAD")
@@ -160,6 +207,24 @@ class LastReviewLine(unittest.TestCase):
             brief = dashboard.review_brief(room, room["participants"][0],
                                            {"id": "m", "from": "user", "text": "look"}, 3, {}, self.LOG)
         self.assertIn("Last: Review 2: approved — both fixed\n\n# Review log", brief)
+
+
+class SinceFromTheLog(unittest.TestCase):
+    LOG = ("# Review log\n\n## Review 1 — changes requested — d\n\n"
+           "- Reviewer: codex (codex)\n- Reviewed: branch `sess/x` at `abc1234`\n\nf\n\n"
+           "## Review 2 — changes requested — d\n\n- Reviewer: claude-2 (claude)\n"
+           "- Reviewed: branch `sess/y` at `def5678`\n\nf\n\n"
+           "## Review 3 — comments — d\n\n- Reviewer: codex (codex)\n\nno head\n")
+
+    def test_the_latest_review_naming_a_commit(self):
+        self.assertEqual(dashboard.last_reviewed_at(self.LOG),
+                         {"n": 2, "branch": "sess/y", "head": "def5678"})
+        self.assertEqual(dashboard.last_reviewed_at(""), {})
+
+    def test_the_log_wins_over_the_seat_record(self):
+        part = {"review": {"n": 1, "head": "abc1234", "endedAt": 1.0}}
+        self.assertEqual(dashboard.review_since(part, self.LOG)["head"], "def5678")
+        self.assertEqual(dashboard.review_since(part, "")["head"], "abc1234")
 
 
 if __name__ == "__main__":
