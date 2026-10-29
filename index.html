@@ -3039,6 +3039,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-editor-cmd,
   #settings-panel #pref-stall-seconds,
   #settings-panel #pref-drain-minutes,
+  #settings-panel #pref-review-rounds,
   #settings-panel #pref-pace-margin,
   #settings-panel #pref-balance-margin,
   #settings-panel #pref-claude-weight,
@@ -3053,6 +3054,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #settings-panel #pref-stall-seconds,
   #settings-panel #pref-drain-minutes,
+  #settings-panel #pref-review-rounds,
   #settings-panel #pref-pace-margin,
   #settings-panel #pref-balance-margin,
   #settings-panel #pref-claude-weight,
@@ -3062,6 +3064,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-nickname:focus,
   #settings-panel #pref-editor-cmd:focus,
   #settings-panel #pref-stall-seconds:focus,
+  #settings-panel #pref-review-rounds:focus,
   #settings-panel #pref-pace-margin:focus,
   #settings-panel #pref-balance-margin:focus,
   #settings-panel #pref-claude-weight:focus,
@@ -4402,6 +4405,14 @@ window.DOC_LISTENERS_PAUSED = false;
       </select>
     </div>
     <p class="cfg-hint" data-noun="The default for task owners, reviewers and owner handovers, including tasks in no {project}. Each {project} can override it from its menu. A change applies only when an agent is launched or resumed after the change; POs and sessions you open from history keep your own tools.">The default for task owners, reviewers and owner handovers, including tasks in no project. Each project can override it from its menu. A change applies only when an agent is launched or resumed after the change; POs and sessions you open from history keep your own tools.</p>
+    <h5 class="sp-sub">Reviews</h5>
+    <!-- #288: past this many review rounds the hub starts no reviewer for a task. -->
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-review-rounds">Review rounds per task</label>
+      <span><input type="number" id="pref-review-rounds" min="0" max="200" step="1"
+             placeholder="5" autocomplete="off"> <span class="pref-label">rounds</span></span>
+    </div>
+    <p class="cfg-hint">After this many reviews of one task no reviewer starts: the owner stops and sends the findings still open to the PO, who puts them to you to decide. A PO can give one task more, saying why. 0 = no limit.</p>
     <h5 class="sp-sub">Weekly pacing</h5>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -8101,6 +8112,10 @@ function renderPrefs() {
       b.classList.toggle('active', b.dataset.val === value);
       b.setAttribute('aria-pressed', String(b.dataset.val === value));
     });
+  }
+  const reviewRounds = document.getElementById('pref-review-rounds');
+  if (reviewRounds && document.activeElement !== reviewRounds) {
+    reviewRounds.value = PREFS.reviewRoundsPerTask ?? 5;
   }
   const paceMargin = document.getElementById('pref-pace-margin');
   if (paceMargin && document.activeElement !== paceMargin) {
@@ -22326,6 +22341,20 @@ window.ensUpdPlace = () => ({
     await setPref('paceWeek', b.dataset.val === 'on');
     refreshUsage();
   });
+  const reviewRoundsInput = document.getElementById('pref-review-rounds');
+  if (reviewRoundsInput) {
+    const commitRounds = async () => {
+      const v = Number(reviewRoundsInput.value);
+      if (reviewRoundsInput.value !== '' && Number.isInteger(v) && v >= 0
+          && v !== (PREFS?.reviewRoundsPerTask ?? null)) {
+        await setPref('reviewRoundsPerTask', v);
+      }
+    };
+    reviewRoundsInput.addEventListener('blur', commitRounds);
+    reviewRoundsInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); reviewRoundsInput.blur(); }
+    });
+  }
   const paceMarginInput = document.getElementById('pref-pace-margin');
   if (paceMarginInput) {
     const commitPace = async () => {

@@ -104,7 +104,10 @@ end the turn without reporting. One task sending six updates in forty minutes
 made its PO's chat unreadable (2026-09-16). At most one `update` between two
 real events, and none within an hour of the last unless something changed.
 
-The report is posted in the PO's room and **wakes the PO**. It is also recorded
+The report is posted in the PO's room and **wakes the PO**, except an `update`:
+that is posted at once but told to the PO with the next line the hub types it, or within 30
+minutes, so use `completed`, `blocked` or `question` when the PO has to act.
+It is also recorded
 on your task, so the board shows it, with your report quoted. If the project
 has no PO, the report goes to the user instead.
 
@@ -407,6 +410,20 @@ board shows it as *on mention*, and as *reviewing now* while a review runs.
   `ensemble_report` as well.
 - A message to the reviewer while a review is running reaches that same
   session. It is not a second review.
+- **A later review reads what changed.** Its brief leads with the change since
+  the commit the last review read, and the log with its findings. If main was
+  merged in or the branch rebased since, it gets the owner's own commits since
+  instead; the whole diff is a command it runs only when a finding needs it.
+- **The review-round limit.** A task gets at most Settings › Agent models ›
+  *Review rounds per task* reviews (5 by default; a round is one reviewer run,
+  one verdict in `REVIEW-LOG.md`), unless its PO set another `reviewLimit` for
+  it. Past it the hub starts no reviewer for an agent's request, and **the
+  owner does not decide who is right** (the CEO's ruling): stop changing code
+  and report `question` with `forCeo: true`, one entry per finding still open
+  from the last review, each with the reviewer's position, your position and
+  the file:line, written so the CEO can judge it without reading the diff.
+  The answer comes back as a ruling: fix what it marks, nothing else, ask for
+  no further review, then report `completed`.
 
 ## Checking what needs a human
 
@@ -650,6 +667,29 @@ only when they asked for one or something changed for them since the last one,
 and then only that change. It
 does not summarise and wait. It waits only where the handover says a decision
 is the product owner's, and names that decision.
+
+**Quiet reports.** A task's `update` and an `approved` review verdict do not
+wake you: they are in your chat at their time, and the hub adds their gist to
+the next line it types you (`… | Quiet reports since your last wake: …`; not
+the person's own messages), or after 30 minutes with no such line types them
+as one `[quiet reports]` line. Nothing in them needs an answer unless one does. `completed`,
+`question`, `blocked`, changes requested from review 3 on, and the question at
+the review limit wake you at once.
+
+**The review limit is the CEO's ruling, not the owner's.** When a task has had
+its review rounds (Settings › Agent models › *Review rounds per task*, 5 by
+default), the hub starts no more reviews, puts a quiet `review limit` note in
+your chat, and tells the owner to stop and report the open findings as a
+`question` for the CEO. That question wakes you, marked "at the review limit".
+Add your recommendation to each finding and put them to the CEO as **one** ask
+card (`ensemble_ask`), one question per finding with the options *Reviewer is
+right: fix it* and *Owner is right: keep as is* (the free comment is there
+anyway). Send the answers back to the owner as the ruling: it fixes what is
+marked, nothing else, with no further review unless the CEO asks for one, then
+reports `completed`. To give one task more rounds instead (the CEO asked for
+another review, or the work grew), `ensemble_update_task reviewLimit=<n>
+reviewLimitReason="…"`; the reason is shown in the task's chat, 0 means no
+limit, and the owner is told it may ask for a review again.
 
 **Write to another project's PO with `ensemble_message_po`.** When a project
 you depend on has a bug that holds you up (the opTen PO and the Dock library),

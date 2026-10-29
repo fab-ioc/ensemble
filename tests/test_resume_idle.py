@@ -175,6 +175,7 @@ class TheResumeNote(_Stops):
         h = self.handler()
         h._ring_recipients(rid, {"recipients": ["codex"], "message": {"id": "m7", "from": "user"}})
         self.assertEqual(self.reviews, [(rid, "codex", "m7")])
+        self.assertEqual(self.review_restores, [False])              # a new request: checked against the limit
 
     def test_every_note_typed_with_a_message_is_two_turns(self):
         for note in dashboard.RESUME_NOTES:
