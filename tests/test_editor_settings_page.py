@@ -114,7 +114,7 @@ class EditorInSettings(unittest.TestCase):
         self.assertTrue(g["tab"] and g["shown"], g)
         self.assertIn("Editor", g["tabText"])
         self.assertEqual(g["label"], "Open in editor opens")
-        self.assertEqual(g["options"], [["", "Automatic (from each repo\u2019s language)"],
+        self.assertEqual(g["options"], [["", "Automatic (by language: IntelliJ IDEA, VS Code)"],
                                         ["idea", "IntelliJ IDEA"], ["code", "VS Code"],
                                         ["custom", "Other command\u2026"]])
         self.assertEqual((g["value"], g["hub"]["editor"]), ("", ""))
@@ -139,7 +139,8 @@ class EditorInSettings(unittest.TestCase):
         self.assertEqual(g["hub"], {"editor": "custom", "editorCommand": "subl"})
         self.assertTrue(g["cmdShown"])
         self.assertIn("subl was not found on the hub's computer", g["note"])
-        self.assertEqual(g["ide"], "Open in subl")
+        # subl is not found, so the folder opens: the button does not name it.
+        self.assertEqual(g["ide"], "Open in editor")
 
     def test_back_to_automatic(self):
         g = self.got["automatic"]

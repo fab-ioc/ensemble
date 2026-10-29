@@ -119,10 +119,11 @@ def jetbrains_homes(eid: str, caches: Path) -> list[Path]:
             continue
         for d in dirs:
             try:
-                home = Path((d / ".home").read_text(encoding="utf-8").strip())
+                text = (d / ".home").read_text(encoding="utf-8").strip()
             except (OSError, ValueError):
                 continue
-            if str(home) and home.is_dir():
+            home = Path(text) if text else None
+            if home and home.is_absolute() and home.is_dir():
                 ver = tuple(int(x) for x in re.findall(r"\d+", d.name[len(prefix):]))
                 found.append((ver, home))
     return [h for _v, h in sorted(found, key=lambda x: x[0], reverse=True)]
@@ -441,9 +442,13 @@ class Backend:
 
     def editor_button_label(self, setting: dict | None = None) -> str:
         """The editor every repo opens in, named on the button; "" when it
-        depends on the repo's language (or none is found)."""
+        depends on the repo's language, or when it is not found (the folder
+        opens then, and the button must not say the editor does)."""
         langs = set(self.load_editor_map()) | {"default"}
-        labels = {self.choose_editor(lang, setting)["label"] for lang in langs}
+        labels = set()
+        for lang in langs:
+            c = self.choose_editor(lang, setting)
+            labels.add(c["label"] if c["path"] else "")
         return labels.pop() if len(labels) == 1 else ""
 
     def launch_target(self, app: str) -> tuple[str, str | None]:

@@ -65,6 +65,19 @@ class WindowsFindsEditors(_Tmp):
             str(self.t / "gone"), encoding="utf-8")
         self.assertEqual(self.b.find_editor("idea"), str(exe))
 
+    def test_an_empty_or_relative_home_file_is_skipped(self):
+        # "" was Path("."): the hub's own folder was looked in.
+        cwd = self.t / "cwd"
+        _touch(cwd / "bin" / "idea64.exe")
+        _touch(self.local / "JetBrains" / "IntelliJIdea2026.1" / ".home").write_text("", encoding="utf-8")
+        _touch(self.local / "JetBrains" / "IntelliJIdea2026.2" / ".home").write_text(".", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(cwd)
+        try:
+            self.assertIsNone(self.b.find_editor("idea"))
+        finally:
+            os.chdir(old)
+
     def test_the_installers_and_the_toolbox_folders(self):
         cases = {
             "programs": self.local / "Programs" / "IntelliJ IDEA Ultimate" / "bin" / "idea64.exe",
@@ -97,7 +110,10 @@ class WindowsFindsEditors(_Tmp):
         # The setting names one: it opens, found or not, and says so.
         pc = b.choose_editor("java", {"editor": "pycharm"})
         self.assertEqual((pc["id"], pc["label"], pc["path"], pc["how"]), ("pycharm", "PyCharm", "", "chosen"))
-        self.assertEqual(b.editor_button_label({"editor": "pycharm"}), "PyCharm")
+        # ...but the button does not say it opens: the folder does.
+        self.assertEqual(b.editor_button_label({"editor": "pycharm"}), "")
+        self.assertEqual(b.editor_button_label({"editor": "custom", "editorCommand": "nowhere"}), "")
+        self.assertEqual(b.editor_button_label({"editor": "idea"}), "IntelliJ IDEA")
         # Other command…
         tool = _touch(self.t / "bin" / "subl.exe")
         c = b.choose_editor("java", {"editor": "custom", "editorCommand": str(tool)})

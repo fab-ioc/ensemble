@@ -205,6 +205,23 @@ class ReposForSession(unittest.TestCase):
         self.assertEqual(self.get("sess-none"), {"repos": [], "lookedIn": []})
         self.assertEqual(self.get("room-0000ffff"), {"repos": [], "lookedIn": []})
 
+    def test_an_editor_icon_is_a_plain_file_name_only(self):
+        # #286 review 1: a Windows join with "C:x" or "..\x" left the icons'
+        # folder, so anything but a plain "<name>.png" is not found.
+        icons = self.base / "icons"
+        icons.mkdir(exist_ok=True)
+        (icons / "idea.png").write_bytes(b"\x89PNG icon")
+        (self.base / "secret.png").write_bytes(b"secret")
+        static = self.url.replace("/api/repos/", "/static/editors/")
+        with mock.patch.object(dashboard, "ICON_CACHE_DIR", icons):
+            with urllib.request.urlopen(static + "idea.png", timeout=10) as r:
+                self.assertEqual(r.read(), b"\x89PNG icon")
+            for name in ("C:%5Cx", "..%5Csecret.png", "..%2Fsecret.png", "C:secret.png", "IDEA.png", "idea.exe"):
+                with self.subTest(name=name), self.assertRaises(urllib.error.HTTPError) as e:
+                    urllib.request.urlopen(static + name, timeout=10)
+                # "..": refused before the icons (400); the rest are not found.
+                self.assertIn(e.exception.code, (400, 404), name)
+
 
 NODE = shutil.which("node")
 

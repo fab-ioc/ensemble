@@ -17097,9 +17097,15 @@ class Handler(BaseHTTPRequestHandler):
             if m:
                 sub = "dock/" + sub[m.end():]
             f = STATIC_DIR / "static" / sub
-            if sub.startswith("editors/") and "/" not in sub[len("editors/"):]:
-                # An editor's icon, cut from its app on first use (macOS).
-                f = ICON_CACHE_DIR / sub[len("editors/"):]
+            if sub.startswith("editors/"):
+                # An editor's icon, cut from its app on first use (macOS):
+                # a plain file name only (a Windows join with "C:x" or "\\x"
+                # would leave the folder).
+                name = sub[len("editors/"):]
+                if not re.fullmatch(r"[a-z0-9-]+\.png", name):
+                    self.send_error(404)
+                    return
+                f = ICON_CACHE_DIR / name
             ext = f.suffix.lower()
             mime = {".png": "image/png", ".ico": "image/x-icon",
                     ".svg": "image/svg+xml", ".jpg": "image/jpeg",

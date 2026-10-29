@@ -4502,7 +4502,7 @@ window.DOC_LISTENERS_PAUSED = false;
       <input type="text" id="pref-editor-cmd" autocomplete="off" spellcheck="false" maxlength="300">
     </div>
     <p class="cfg-hint" id="pref-editor-note" role="status"></p>
-    <p class="cfg-hint" data-noun="One choice for every {project}. The editor opens on the hub's computer, so the editors offered by name are the ones found installed there.">One choice for every project. The editor opens on the hub's computer, so the editors offered by name are the ones found installed there.</p>
+    <p class="cfg-hint" data-noun="One choice for every {project}. The editor opens on the hub's computer, so the editors offered by name are the ones found installed there. Other command… runs that command there, with the code folder after it.">One choice for every project. The editor opens on the hub's computer, so the editors offered by name are the ones found installed there. Other command… runs that command there, with the code folder after it.</p>
   </div>
   <div class="settings-section" id="settings-backup">
     <h4 data-noun="Backup of your {projects}">Backup of your projects</h4>
@@ -7814,7 +7814,11 @@ function renderEditors() {
   }
   const want = _editorCustomAsked ? 'custom' : x.editor || '';
   if (document.activeElement !== sel) {
-    const opts = [['', 'Automatic (from each repo’s language)']].concat(x.installed.map(e => [e.id, e.label]));
+    const autoNow = (x.automatic || []).map(g => g.label).filter(Boolean);
+    const autoText = !autoNow.length ? `Automatic (now the folder, in ${x.fileManagerName || FM()})`
+      : autoNow.length === 1 ? `Automatic (now ${autoNow[0]})`
+      : `Automatic (by language: ${autoNow.join(', ')})`;
+    const opts = [['', autoText]].concat(x.installed.map(e => [e.id, e.label]));
     // A choice saved before stays listed, marked, until another is made.
     if (want && want !== 'custom' && !x.installed.some(e => e.id === want)) opts.push([want, `${x.chosenLabel} (not found)`]);
     opts.push(['custom', 'Other command…']);
@@ -21504,12 +21508,19 @@ async function openInEditor(path, editor, name) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({path, app: editor || 'default'}),
     });
-    if (r.result === 'ok' && !editor) toast(`No editor was found on this computer, so ${folder} opened in ${FM()}. Choose one in Settings › Editor.`, 7000, 'err');
+    // The folder opened instead: said plainly, not as an error.
+    if (r.result === 'ok' && !editor) toast(`No editor was found on this computer, so ${folder} opened in ${FM()}. Choose one in Settings › Editor.`, 7000);
     else if (r.result === 'ok') toast(`opened in ${label}: ${folder}`, 2200, 'ok');
     // The hub's own sentence says what it tried and where to choose.
-    else if (/Settings › Editor\.$/.test(r.result)) toast(r.result, 8000, 'err');
+    else if (/Settings › Editor\.$/.test(r.result)) toast(r.result, 8000);
     else toast(`${label || 'The editor'} did not open (${r.result}). Choose the editor in Settings › Editor.`, 8000, 'err');
   } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+}
+
+// What a repo opens in, in the picker: an editor not found is said so.
+function ijOpensIn(r) {
+  if (!r.editorName) return FM();
+  return r.editorFound === false ? `${r.editorName} (not found)` : r.editorName;
 }
 
 function closeIjMenu() {
@@ -21524,10 +21535,10 @@ function showIjMenu(anchor, repos) {
   const menu = doc.createElement('div');
   menu.className = 'ij-menu';
   menu.innerHTML = repos.map(r => `
-    <button class="ij-menu-item" data-path="${esc(r.path)}" data-editor="${esc(r.editor || '')}" data-name="${esc(r.editorName || '')}" title="${esc(r.path)} → ${esc(r.editorName || FM())}">
+    <button class="ij-menu-item" data-path="${esc(r.path)}" data-editor="${esc(r.editor || '')}" data-name="${esc(r.editorName || '')}" title="${esc(r.path)} → ${esc(ijOpensIn(r))}">
       ${r.iconUrl ? `<img class="ij-icon" src="${esc(r.iconUrl)}" alt="">` : `<span class="ij-icon-fallback">▢</span>`}
       <span class="ij-name">${esc(r.name)}</span>
-      <span class="ij-editor">${esc(r.editorName || FM())}</span>
+      <span class="ij-editor">${esc(ijOpensIn(r))}</span>
     </button>`
   ).join('');
   doc.body.appendChild(menu);
