@@ -1057,6 +1057,19 @@ def patch_room(room_id: str, **fields) -> dict | None:
         return room
 
 
+def patch_room_if(room_id: str, test, **fields) -> dict | None:
+    """:func:`patch_room` when ``test(room)`` holds for the room as stored,
+    tested under the same lock as the write. None when it does not (or the
+    room is gone)."""
+    with _LOCK:
+        room = _load(room_id)
+        if room is None or not test(room):
+            return None
+        room.update(fields)
+        _write(room)
+        return room
+
+
 def record_interrupt(room_id: str, identity: str, pty_id: str = "") -> dict | None:
     """Record a person's terminal interrupt without sending the agent a message.
 

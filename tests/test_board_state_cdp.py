@@ -120,8 +120,27 @@ async function main() {
       if (!had) FILTERS.delete('archived');
       const busy = ALL_ROWS.find(r => r.roomId === ${R}.busy);
       out.busyBlocked = taskState(Object.assign({}, busy, { roomId: null, attention: { state: 'blocked', reason: 'no key' } })).word;
+      // Its own saved key: Running only does not change Live or History.
+      out.saved = JSON.parse(localStorage.getItem('cd-filters')).sort();
+      // A Working -> Waiting turn during a drag keeps the board as it is;
+      // after the drag the card leaves.
+      const card = () => document.querySelector('.card[data-room="' + ${R}.busy + '"]');
+      const board = document.querySelector('.board');
+      Object.assign(busy, { status: '', waitingOnPo: { kind: 'question', line: 'Which?' } });
+      _dragRoom = ${R}.idle; renderRows();
+      out.held = { card: !!card(), sameBoard: document.querySelector('.board') === board };
+      _dragRoom = null; renderRows();
+      out.released = !!card();
+      Object.assign(busy, { status: 'busy', waitingOnPo: null }); renderRows();
       chip().click(); await new Promise(r => setTimeout(r, 300));
       out.off = ids(); out.after = chip().getAttribute('aria-pressed');
+      return out; })()`);
+    // A filter saved before #289 as ['live'] (No history) is not Running only.
+    got.oldNoHistory = await evalIn(`(() => {
+      localStorage.setItem('cd-filters', JSON.stringify(['live']));
+      const f = loadFilters(), was = FILTERS; FILTERS = f;
+      const out = { running: runningOnly(), filters: [...f].sort(), chips: filterChips().map(c => c.label) };
+      FILTERS = was; localStorage.setItem('cd-filters', JSON.stringify([...was]));
       return out; })()`);
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
     await sleep(400);
@@ -283,7 +302,14 @@ class TheBoardSaysWhatRuns(unittest.TestCase):
         self.assertEqual((r["on"], r["pressed"]), (["busy", "idle"], "true"), r)
         self.assertFalse(r["archived"], r)
         self.assertEqual(r["busyBlocked"], "Waiting on you", r)
+        self.assertEqual(r["saved"], ["history", "live", "running"], r)
+        self.assertEqual(r["held"], {"card": True, "sameBoard": True}, r)
+        self.assertFalse(r["released"], r)
         self.assertEqual((r["off"], r["after"]), (sorted(self.WANT), "false"), r)
+
+    def test_an_old_no_history_stays_no_history(self):
+        o = self.got["oldNoHistory"]
+        self.assertEqual(o, {"running": False, "filters": ["live"], "chips": ["No history"]}, o)
 
 
 if __name__ == "__main__":

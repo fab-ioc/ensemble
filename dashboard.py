@@ -16026,23 +16026,34 @@ def update_task(rid: str, title=None, spec=None,
 # made after that report. It leaves workflowAt alone: that is when a person
 # last moved the card, and a merge only moves a card nobody moved since
 # (digest._settle_merges); `workflowAuto` says the hub did this one.
-def settle_finished(room: dict | None) -> bool:
-    """Move ``room`` from In progress to In review when its last report is a
-    completed one nobody moved the card after. True when it moved."""
-    if not room or workflow_of(room) != "inprogress":
-        return False
-    rid = room.get("id") or ""
-    if any((p.get("poRoomId") or "") == rid for p in load_projects()):
+def _finished_unmoved(room: dict) -> bool:
+    """In progress, its last report a completed one, and nobody moved the card
+    after that report."""
+    if workflow_of(room) != "inprogress":
         return False
     rep = chatroom.last_real_report(room)
     if rep.get("kind") != "completed":
         return False
-    if float(room.get("workflowAt") or 0) > float(rep.get("ts") or 0):
-        return False                    # moved by someone after it reported
-    auto = {"at": time.time(), "from": "inprogress", "why": "completed"}
-    if chatroom.patch_room(rid, workflow="inreview", workflowAuto=auto) is None:
+    return float(room.get("workflowAt") or 0) <= float(rep.get("ts") or 0)
+
+
+def settle_finished(room: dict | None, po_ids: set[str] | None = None) -> bool:
+    """Move ``room`` from In progress to In review when its last report is a
+    completed one nobody moved the card after. True when it moved. The test
+    is made again on the stored room under the room lock, so a merge's Done
+    or a person's move made meanwhile is never undone."""
+    if not room or not _finished_unmoved(room):
         return False
-    _patch_task_json(room.get("taskDir", ""), workflow="inreview")
+    rid = room.get("id") or ""
+    if po_ids is None:
+        po_ids = {p.get("poRoomId") for p in load_projects() if p.get("poRoomId")}
+    if rid in po_ids:
+        return False
+    auto = {"at": time.time(), "from": "inprogress", "why": "completed"}
+    cur = chatroom.patch_room_if(rid, _finished_unmoved, workflow="inreview", workflowAuto=auto)
+    if cur is None:
+        return False
+    _patch_task_json(cur.get("taskDir", ""), workflow="inreview")
     return True
 
 
@@ -16051,16 +16062,25 @@ def settle_finished_at_start() -> dict[str, int]:
     completed and that has no live agent goes to In review (the board from
     before #289). A question or a blocked stays, shown as Waiting. Returns
     {project name: tasks moved}."""
-    names = {p.get("id"): p.get("name") or p.get("id") for p in load_projects()}
+    projects = load_projects()
+    names = {p.get("id"): p.get("name") or p.get("id") for p in projects}
+    po_ids = {p.get("poRoomId") for p in projects if p.get("poRoomId")}
     links = load_session_projects()
+    archived = load_archived()
+    live_ptys = {(x.get("meta") or {}).get("room") for x in ptyrun.list_sessions()
+                 if x.get("alive")}
     moved: dict[str, int] = {}
     for room in chatroom.list_rooms(copy_rooms=False):
         rid = room.get("id") or ""
-        if workflow_of(room) != "inprogress" or _room_is_live(room) or _room_has_live_pty(rid):
-            continue
-        if settle_finished(room):
-            name = names.get(_room_project_id(rid, room, links)) or "no project"
-            moved[name] = moved.get(name, 0) + 1
+        try:
+            if (room.get("pruned") or room.get("archived") or rid in archived
+                    or rid in live_ptys or _room_is_live(room) or _room_has_linked_agent(room)):
+                continue
+            if settle_finished(room, po_ids):
+                name = names.get(_room_project_id(rid, room, links)) or "no project"
+                moved[name] = moved.get(name, 0) + 1
+        except Exception as e:          # one bad room does not stop the rest
+            print(f"finished task {rid} not moved to In review: {e!r}", flush=True)
     return moved
 
 

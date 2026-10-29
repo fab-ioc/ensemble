@@ -37,11 +37,13 @@ class _Board(unittest.TestCase):
         self.projects = [{"id": "p-trade", "name": "Trading", "poRoomId": ""}]
         self.links: dict[str, str] = {}
         self.alive: set[str] = set()
+        self.archived: set[str] = set()
         sess = lambda pid: (types.SimpleNamespace(alive=lambda: True)    # noqa: E731
                             if pid in self.alive else None)
         for patch in (
                 mock.patch.object(dashboard, "load_projects", side_effect=lambda: self.projects),
                 mock.patch.object(dashboard, "load_session_projects", side_effect=lambda: self.links),
+                mock.patch.object(dashboard, "load_archived", side_effect=lambda: self.archived),
                 mock.patch.object(dashboard.ptyrun, "get", side_effect=sess),
                 mock.patch.object(dashboard.ptyrun, "list_sessions", return_value=[])):
             patch.start()
@@ -126,7 +128,64 @@ class ACompletedReportMovesIt(_Board):
         self.assertEqual(self.column(rid), "inreview")
 
 
+class AMoveMadeMeanwhileIsKept(_Board):
+    # The room read before the move is stale: a merge's Done or a person's
+    # drag landed in between. The test is made again on the stored room.
+    def test_a_done_from_the_merge_check_is_not_undone(self):
+        rid = self.task("Merged")
+        self.report(rid, "completed")
+        stale = chatroom.get_room(rid, public=False)
+        chatroom.patch_room(rid, workflow="done")
+        self.assertFalse(dashboard.settle_finished(stale))
+        self.assertEqual(self.column(rid), "done")
+
+    def test_a_persons_move_back_is_not_undone(self):
+        rid = self.task("Moved back")
+        self.report(rid, "completed")
+        stale = chatroom.get_room(rid, public=False)
+        time.sleep(0.002)
+        ok, _, why = dashboard.update_task(rid, workflow="inprogress")
+        self.assertTrue(ok, why)
+        self.assertFalse(dashboard.settle_finished(stale))
+        self.assertEqual(self.column(rid), "inprogress")
+        self.assertNotIn("workflowAuto", chatroom.get_room(rid, public=False))
+
+
 class TheCatchUpAtStart(_Board):
+    def test_one_bad_room_does_not_stop_the_rest(self):
+        bad, good = self.task("Bad"), self.task("Good")
+        for rid in (bad, good):
+            self.report(rid, "completed")
+        real = dashboard.settle_finished
+
+        def flaky(room, po_ids=None):
+            if room.get("id") == bad:
+                raise OSError("disk")
+            return real(room, po_ids)
+        with mock.patch.object(dashboard, "settle_finished", side_effect=flaky), \
+                mock.patch("builtins.print"):
+            self.assertEqual(dashboard.settle_finished_at_start(), {"Trading": 1})
+        self.assertEqual((self.column(bad), self.column(good)), ("inprogress", "inreview"))
+
+    def test_pruned_and_archived_tasks_are_left(self):
+        pruned, archived, kept = self.task("Pruned"), self.task("Archived"), self.task("Kept")
+        for rid in (pruned, archived, kept):
+            self.report(rid, "completed")
+        chatroom.patch_room(pruned, pruned={"at": time.time()})
+        self.archived.add(archived)
+        self.assertEqual(dashboard.settle_finished_at_start(), {"Trading": 1})
+        self.assertEqual([self.column(r) for r in (pruned, archived, kept)],
+                         ["inprogress", "inprogress", "inreview"])
+
+    def test_the_live_and_po_sets_are_read_once(self):
+        rids = [self.task(f"Done {i}") for i in range(4)]
+        for rid in rids:
+            self.report(rid, "completed")
+        with mock.patch.object(dashboard.ptyrun, "list_sessions", return_value=[]) as ls:
+            self.assertEqual(dashboard.settle_finished_at_start(), {"Trading": 4})
+        self.assertEqual(ls.call_count, 1)
+        self.assertEqual(dashboard.load_projects.call_count, 1)
+
     def test_stopped_completed_tasks_move_and_are_counted_per_project(self):
         done1, done2 = self.task("Done one"), self.task("Done two")
         other = self.task("Elsewhere", project="")

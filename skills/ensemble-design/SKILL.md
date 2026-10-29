@@ -416,7 +416,9 @@ agent gone). The word is `--fg-subtle` on `--surface`, 4.5:1 or better in every 
 real, `--fs-200` `--fg-muted` (`.col-run`): "1 working · 2 waiting", always for In progress and In
 review. **Running only** (`.colchip.runonly`, pressed in `--selected-bg`) keeps the Working and Idle
 tasks only (a live task that waits is not running). A block shows over Working: blocked reads
-**Waiting on you** even while its agent is in a turn.
+**Waiting on you** even while its agent is in a turn. Running only is its own saved filter key
+(`running`), apart from Live and History; while the board is in hand (a drag, the pointer on it) a
+card it shows stays, so a Working/Waiting turn does not remount the board.
 
 Cost is plain `--fs-100` `--fg-muted` text (`.ccost`), never a lozenge or a pill: dollars where a price
 is known, else the tokens used (`1.4M tokens`, which is what a Codex task has), the split in its
