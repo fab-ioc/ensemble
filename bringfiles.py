@@ -26,6 +26,7 @@ import threading
 import time
 
 import backup
+import fslinks
 import history
 
 # The bound. A documents project is a folder of documents: the hub keeps every
@@ -118,16 +119,7 @@ def refusal(src: str, home: str = "", projects_root: str = "") -> str:
 
 def _is_link(entry) -> bool:
     """A symlink or a Windows junction: never followed, never copied."""
-    try:
-        if entry.is_symlink():
-            return True
-        junction = getattr(entry, "is_junction", None)
-        if junction is not None:
-            return bool(junction())
-        tag = getattr(entry.stat(follow_symlinks=False), "st_reparse_tag", 0)
-        return bool(tag) and tag == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", -1)
-    except OSError:
-        return True
+    return fslinks.entry_is_link(entry)
 
 
 def too_long(path: str) -> bool:

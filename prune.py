@@ -38,18 +38,19 @@ Decoupled from dashboard.py like checkpoints.py: the hub hands it a
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+import fslinks
 
 DAY = 86400
 DEFAULT_DAYS = 30
@@ -66,6 +67,10 @@ _KEEP_NAMES = {"documents", "roadmap.md", "po-handover.md", "po-handover-archive
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ROTATED_LOG = re.compile(r"\.log\.\d+$")
 _SID_TAIL = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
+# How long a preview measures one item (#282): one slower than this is kept,
+# named "too slow to measure", and the scan goes on with the rest.
+ITEM_BUDGET_S = 30.0
+TOO_SLOW = f"too slow to measure (over {int(ITEM_BUDGET_S)} s)"
 
 
 @dataclass
@@ -120,27 +125,42 @@ def _short(p: str) -> str:
     return p
 
 
-def size_of(path, *, stop: Callable[[], bool] | None = None) -> int:
-    """Bytes under ``path`` (a file or a folder), links not followed, paths
-    past 260 characters too. 0 when it is not there."""
+class TooSlow(Exception):
+    """A measure ran past its item's time budget."""
+
+
+def size_of(path, *, stop: Callable[[], bool] | None = None, until: float = 0.0) -> int:
+    """Bytes under ``path`` (a file or a folder), paths past 260 characters
+    too. A link (symlink, junction, mount point) is never followed and counts
+    as 0 (:mod:`fslinks`). 0 when it is not there. ``stop``: cut short (the
+    bytes so far). ``until``: a ``time.monotonic()`` past which it raises
+    :class:`TooSlow`."""
     top = _long(path)
     try:
         st = os.lstat(top)
     except OSError:
         return 0
+    if fslinks.is_link(top):
+        return 0
     if not stat.S_ISDIR(st.st_mode):
         return st.st_size
     total = 0
     stack = [top]
+    n = 0
     while stack:
         if stop and stop():
             break
+        if until and time.monotonic() > until:
+            raise TooSlow(path)
         d = stack.pop()
         try:
             with os.scandir(d) as it:
                 for e in it:
+                    n += 1
+                    if n % 2000 == 0 and ((stop and stop()) or (until and time.monotonic() > until)):
+                        break
                     try:
-                        if e.is_symlink():
+                        if fslinks.entry_is_link(e):
                             continue
                         if e.is_dir(follow_symlinks=False):
                             stack.append(e.path)
@@ -155,39 +175,16 @@ def size_of(path, *, stop: Callable[[], bool] | None = None) -> int:
 
 def remove(path) -> None:
     """Delete a file or a folder: read-only files (git's objects) and paths
-    past Windows' 260 characters too. Raises OSError when something stays."""
+    past Windows' 260 characters too. A link in it goes as a link: what it
+    points to stays (:func:`fslinks.remove_tree`). Raises OSError when
+    something stays."""
     p = _long(path)
-
-    def writable(func, q, _exc):
-        try:
-            os.chmod(q, stat.S_IWRITE | stat.S_IREAD | (stat.S_IEXEC if os.path.isdir(q) else 0))
-        except OSError:
-            pass
-        func(q)
     try:
-        st = os.lstat(p)
+        fslinks.remove_tree(p)
     except FileNotFoundError:
-        return
-    if stat.S_ISDIR(st.st_mode) and not stat.S_ISLNK(st.st_mode) and not _is_junction(p):
-        if sys.version_info >= (3, 12):
-            shutil.rmtree(p, onexc=writable)
-        else:
-            shutil.rmtree(p, onerror=writable)
-    else:
-        try:
-            os.remove(p) if not stat.S_ISDIR(st.st_mode) else os.rmdir(p)
-        except PermissionError:
-            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
-            os.remove(p) if not stat.S_ISDIR(st.st_mode) else os.rmdir(p)
+        pass
     if os.path.lexists(p):
         raise OSError(f"still there: {_short(p)}")
-
-
-def _is_junction(p: str) -> bool:
-    try:
-        return bool(getattr(os.path, "isjunction", lambda _p: False)(p))
-    except OSError:
-        return False
 
 
 def _norm(p: str) -> str:
@@ -221,8 +218,16 @@ def main_branch(root: str) -> str:
     return ""
 
 
-def branch_state(root: str, branch: str) -> str:
-    """``merged`` (main holds every commit of it), ``unmerged``, or ``gone``."""
+def branch_state(root: str, branch: str, cache: dict | None = None) -> str:
+    """``merged`` (main holds every commit of it), ``unmerged``, or ``gone``.
+    ``cache``: repo -> every branch's state, read once per scan (two git calls
+    for all its branches instead of three for each)."""
+    if cache is not None and branch:
+        states = cache.get(_norm(root))
+        if states is None:
+            states = cache[_norm(root)] = _branch_states(root)
+        if states is not None:
+            return states.get(branch, "gone")
     if not branch or not _git_out(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
         return "gone"
     main = main_branch(root)
@@ -233,6 +238,26 @@ def branch_state(root: str, branch: str) -> str:
     except (OSError, subprocess.SubprocessError):
         return "unmerged"
     return "merged" if r.returncode == 0 else "unmerged"
+
+
+def _branch_states(root: str) -> dict | None:
+    """branch -> ``merged`` | ``unmerged`` for every local branch, or None when
+    git cannot say (each branch is then asked by itself)."""
+    fmt = "--format=%(refname)"
+    try:
+        every = _git(root, "for-each-ref", fmt, "refs/heads")
+        if every.returncode:
+            return None
+        main = main_branch(root)
+        merged = _git(root, "for-each-ref", fmt, f"--merged=refs/heads/{main}", "refs/heads") if main else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if merged is not None and merged.returncode:
+        return None
+    def names(out: str) -> list[str]:
+        return [x[len("refs/heads/"):] for x in out.split() if x.startswith("refs/heads/")]
+    held = set(names(merged.stdout)) if merged is not None else set()
+    return {b: "merged" if b in held and b != main else "unmerged" for b in names(every.stdout)}
 
 
 def worktrees(root: str) -> list[dict]:
@@ -392,7 +417,7 @@ def _transcript_index(hub: Hub) -> dict[str, list[tuple[str, str]]]:
                         idx.setdefault(sid, []).append(("claude", e.path))
         except OSError:
             continue
-    for root, _dirs, files in os.walk(hub.codex_dir):
+    for root, _dirs, files in fslinks.walk(hub.codex_dir):
         for f in files:
             if f.startswith("rollout-") and f.endswith(".jsonl"):
                 m = _SID_TAIL.search(f[:-6])
@@ -468,6 +493,7 @@ def _part(kind: str, path: str = "", size: int = 0, **extra) -> dict:
 
 def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], bool] | None = None) -> dict:
     """What can go, grouped, with sizes. Reads only."""
+    hub = _memo_homes(hub)
     t0 = hub.now()
     days = max(0, int(days))
     cutoff = t0 - days * DAY
@@ -518,6 +544,7 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
 
     cp_counts: dict[str, dict] = {}
     wt_cache: dict[str, list] = {}          # repo -> git worktree list, once per scan
+    br_cache: dict[str, dict] = {}          # repo -> its branches' states, once per scan
 
     def cp_count(project: dict | None, rid: str) -> int:
         path = (project or {}).get("path") or ""
@@ -544,9 +571,14 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
                        f"Done {int((t0 - at) // DAY)} days ago" if at > cutoff else "")
             if why_not:
                 continue
-            items.append(_done_item(hub, r, _project_of(r, by_pid), projects, tidx, live_sids,
-                                    uploads_only_of(rid), cp_count(_project_of(r, by_pid), rid), kept,
-                                    stop, wt_cache))
+            try:
+                items.append(_done_item(hub, r, _project_of(r, by_pid), projects, tidx, live_sids,
+                                        uploads_only_of(rid), cp_count(_project_of(r, by_pid), rid), kept,
+                                        stop, wt_cache, time.monotonic() + ITEM_BUDGET_S, br_cache))
+            except TooSlow:
+                kept.append({"room": rid, "no": r.get("no"), "what": "folder",
+                             "path": r.get("taskDir") or (r.get("workspace") or {}).get("taskDir") or "",
+                             "why": TOO_SLOW})
 
     # Conversations no current seat holds
     want_conv = {"po", "hub", "own"} & set(groups)
@@ -597,8 +629,8 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
                                f"{'' if len(parts) == 1 else 's'}", parts, room=rid))
 
     if "orphans" in groups:
-        items += _orphans(hub, projects, rooms, cutoff, kept, unread_folders)
-    if "housekeeping" in groups:
+        items += _orphans(hub, projects, rooms, cutoff, kept, unread_folders, stop)
+    if "housekeeping" in groups and not (stop and stop()):
         items += _housekeeping(hub, room_ids | unread_ids, live, cutoff)
 
     out_groups = []
@@ -609,6 +641,23 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
                                "ticked": TICKED[g]})
     return {"at": t0, "days": days, "took": round(hub.now() - t0, 1), "groups": out_groups,
             "bytes": sum(g["bytes"] for g in out_groups), "kept": kept}
+
+
+def _memo_homes(hub: Hub) -> Hub:
+    """The hub with each project's home and Documents read once per scan:
+    every item asks them of every project."""
+    def memo(fn):
+        seen: dict = {}
+
+        def get(p):
+            key = (p or {}).get("id") if isinstance(p, dict) else None
+            if key is None:
+                return fn(p)
+            if key not in seen:
+                seen[key] = fn(p)
+            return seen[key]
+        return get
+    return dataclasses.replace(hub, project_home=memo(hub.project_home), documents_dir=memo(hub.documents_dir))
 
 
 def _conv_label(agent: str, path: str, who: str, at: float) -> str:
@@ -622,7 +671,8 @@ def _conv_label(agent: str, path: str, who: str, at: float) -> str:
 
 def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: dict,
                live_sids: set, uploads: bool, checkpoints: int, kept: list, stop=None,
-               wt_cache: dict | None = None) -> dict:
+               wt_cache: dict | None = None, until: float = 0.0, br_cache: dict | None = None) -> dict:
+    """One Done task as an item. Raises :class:`TooSlow` past ``until``."""
     rid = r["id"]
     parts: list[dict] = []
     ws = r.get("workspace") or {}
@@ -632,10 +682,10 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
     if ws.get("mode") == "worktree" and repo and cwd and folder and within(cwd, folder) \
             and _norm(cwd) != _norm(repo) and os.path.isdir(_long(cwd)) \
             and _allowed_path(hub, cwd, projects) and is_worktree_of(repo, cwd, wt_cache):
-        parts.append(_part("worktree", cwd, size_of(cwd, stop=stop), repo=repo))
+        parts.append(_part("worktree", cwd, size_of(cwd, stop=stop, until=until), repo=repo))
     branch = ws.get("branch") or ""
     if branch and repo:
-        state = branch_state(repo, branch)
+        state = branch_state(repo, branch, br_cache)
         if state == "merged":
             parts.append(_part("branch", branch, 0, repo=repo))
         elif state == "unmerged":
@@ -649,7 +699,7 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
     if not why and not wt and unlisted_checkout(r, folder):
         why = "it holds a git checkout that git does not list: its work was never checked"
     if not why:
-        size = size_of(folder, stop=stop) - (wt["bytes"] if wt else 0)
+        size = size_of(folder, stop=stop, until=until) - (wt["bytes"] if wt else 0)
         parts.append(_part("folder", folder, max(0, size)))
     elif why not in ("no folder", "not there"):
         kept.append({"room": rid, "no": r.get("no"), "what": "folder", "path": folder, "why": why})
@@ -657,7 +707,7 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
         if sid in live_sids:
             continue
         for a, p in tidx.get(sid, []):
-            parts.append(_part("conversation", p, size_of(p), sid=sid, agent=a))
+            parts.append(_part("conversation", p, size_of(p, stop=stop, until=until), sid=sid, agent=a))
     st = hub.state_dir
     for kind, p in (("chat", st / "rooms" / "messages" / f"{rid}.jsonl"),
                     ("chat", st / "rooms" / "before-message-log" / f"{rid}.json"),
@@ -694,7 +744,7 @@ def _done_item(hub: Hub, r: dict, project: dict | None, projects: list, tidx: di
 
 
 def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list,
-             unread_folders: set = frozenset()) -> list[dict]:
+             unread_folders: set = frozenset(), stop: Callable[[], bool] | None = None) -> list[dict]:
     items = []
     named = set(unread_folders)
     for r in rooms:
@@ -712,10 +762,12 @@ def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list,
         home = hub.project_home(pj) or ""
         if home and os.path.isdir(home):
             try:
-                children = [e for e in os.scandir(home) if e.is_dir(follow_symlinks=False)]
+                children = [e for e in os.scandir(home) if fslinks.is_dir(e)]
             except OSError:
                 children = []
             for e in children:
+                if stop and stop():
+                    return items
                 if not os.path.isfile(os.path.join(e.path, "task.json")):
                     continue
                 if any(n == _norm(e.path) or within(n, e.path) for n in named):
@@ -733,7 +785,12 @@ def _orphans(hub: Hub, projects: list, rooms: list, cutoff: float, kept: list,
                 if keep:
                     kept.append({"what": "folder", "path": e.path, "why": keep})
                     continue
-                parts = [_part("folder", e.path, size_of(e.path), repo=repo)]
+                try:
+                    parts = [_part("folder", e.path, size_of(e.path, stop=stop,
+                                                             until=time.monotonic() + ITEM_BUDGET_S), repo=repo)]
+                except TooSlow:
+                    kept.append({"what": "folder", "path": e.path, "why": TOO_SLOW})
+                    continue
                 repo_dir = os.path.join(e.path, "repo")
                 has_git = os.path.lexists(_long(os.path.join(repo_dir, ".git")))
                 if os.path.isdir(repo_dir) and not has_git and not pj.get("isGit"):
@@ -1034,13 +1091,21 @@ def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str,
 # ---------------------------------------------------------------------------
 
 class Job:
-    """One scan or deletion at a time, in the background; the page polls."""
+    """One scan or deletion at a time, in the background; the page polls.
+
+    Each job has its own stop flag, handed to its ``fn(stop)``: a new job never
+    clears an old one's. A scan asked while a scan runs replaces it: the old
+    one is stopped and waited for (``REPLACE_WAIT_S``) before the new one
+    starts, so two never run side by side (#282)."""
+
+    REPLACE_WAIT_S = 3.0
 
     def __init__(self):
         self.lock = threading.Lock()
         self.state = {"running": "", "preview": None, "result": None, "error": "", "phase": "",
-                      "done": 0, "total": 0}
-        self._cancel = False
+                      "done": 0, "total": 0, "stopped": False}
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -1053,29 +1118,42 @@ class Job:
     def progress(self, phase: str, done: int = 0, total: int = 0):
         self._set(phase=phase, done=done, total=total)
 
-    def start(self, kind: str, fn) -> bool:
+    def start(self, kind: str, fn: Callable[[Callable[[], bool]], None], *, replace: bool = False) -> bool:
+        """Run ``fn(stop)`` in the background. False when another job runs
+        (or, with ``replace``, a job of the same kind did not stop in time)."""
+        with self.lock:
+            old = self._thread if self.state["running"] else None
+            if old and not (replace and self.state["running"] == kind):
+                return False
+            old_stop = self._stop
+        if old:
+            old_stop.set()
+            old.join(self.REPLACE_WAIT_S)
+            if old.is_alive():
+                return False
         with self.lock:
             if self.state["running"]:
-                return False
-            self.state.update(running=kind, error="", phase="", done=0, total=0)
-            self._cancel = False
+                return False                        # another request got in first
+            stop = self._stop = threading.Event()
+            self.state.update(running=kind, error="", phase="", done=0, total=0, stopped=False)
 
-        def go():
-            try:
-                fn()
-            except Exception as e:                  # noqa: BLE001
-                self._set(error=f"{type(e).__name__}: {e}")
-                print(f"[prune] {kind} failed: {e!r}", flush=True)
-            finally:
-                self._set(running="", phase="", done=0, total=0)
-        threading.Thread(target=go, name=f"prune-{kind}", daemon=True).start()
+            def go():
+                try:
+                    fn(stop.is_set)
+                except Exception as e:              # noqa: BLE001
+                    self._set(error=f"{type(e).__name__}: {e}")
+                    print(f"[prune] {kind} failed: {e!r}", flush=True)
+                finally:
+                    self._set(running="", phase="", done=0, total=0, stopped=stop.is_set())
+            t = self._thread = threading.Thread(target=go, name=f"prune-{kind}", daemon=True)
+            t.start()
         return True
 
     def cancel(self):
-        self._cancel = True
+        self._stop.set()
 
     def cancelled(self) -> bool:
-        return self._cancel
+        return self._stop.is_set()
 
 
 def auto_prune(hub: Hub, days: int) -> dict:

@@ -19,6 +19,8 @@ import threading
 import time
 from pathlib import Path
 
+import fslinks
+
 # Windows: never a console window for the git the hub runs (a console-less
 # host, pythonw.exe, would otherwise open one per call and steal the focus).
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -80,7 +82,7 @@ def scan(root: Path, max_depth: int = 8, max_file_mb: int | None = None) -> tupl
     oversize: list[str] = []
     root_s = str(root)
     cap = (MAX_FILE_MB if max_file_mb is None else max_file_mb) * 1024 * 1024
-    for cur, dirs, files in os.walk(root_s):
+    for cur, dirs, files in fslinks.walk(root_s):     # a linked folder is not walked (#282)
         rel = os.path.relpath(cur, root_s)
         depth = 0 if rel == "." else rel.count(os.sep) + 1
         if depth and (".git" in dirs or ".git" in files):

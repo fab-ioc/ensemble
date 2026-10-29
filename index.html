@@ -8042,7 +8042,7 @@ async function pruneTick(again) {
   }
   pruneStatus(s.running ? pruneProgressText(s)
     : pv ? `A preview is ready: ${pruneBytes(pv.bytes)} can go.`
-    : s.result ? `The last deletion freed ${pruneBytes(s.result.freed)}.` : '');
+    : s.result ? `The last deletion freed ${pruneBytes(s.result.freed)}.` : s.stopped ? 'Stopped.' : '');
   renderPrunePrefs();
   prunePaint();
   if (s.running) PRUNE.timer = setTimeout(() => pruneTick(true), 1000);
@@ -8120,14 +8120,14 @@ function pruneDialogHtml(s) {
     body = pruneResultHtml(s.result);
     acts = `<button type="button" class="rm-btn" id="pr-again">Preview again</button><button type="button" class="rm-btn" id="pr-close">Close</button>`;
   } else {
-    body = `<p class="cfg-hint">No preview yet.</p>`;
+    body = `<p class="cfg-hint">${s.stopped ? 'Stopped: no preview was made.' : 'No preview yet.'}</p>`;
     acts = `<button type="button" class="rm-btn" id="pr-again">Preview</button><button type="button" class="rm-btn" id="pr-close">Close</button>`;
   }
   if (s.error) body = `<p class="pr-err" role="alert">It stopped: ${esc(s.error)}</p>` + body;
   return `<div class="pr-dlg"><h3>Free disk space</h3>${body}<div class="pr-acts">${acts}</div></div>`;
 }
 function pruneKey(s) {
-  return s.running ? 'run:' + s.running : s.preview ? 'pv:' + s.preview.at : s.result ? 'res' : 'none' + (s.error || '');
+  return s.running ? 'run:' + s.running : s.preview ? 'pv:' + s.preview.at : s.result ? 'res' : 'none' + (s.stopped ? ':stopped' : '') + (s.error || '');
 }
 function prunePaint() {
   const dlg = PRUNE.dlg;
