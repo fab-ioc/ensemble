@@ -25,8 +25,6 @@ import threading
 import time
 from pathlib import Path
 
-import fslinks
-
 HOT_S = 6 * 3600.0
 QUIET_S = 24 * 3600.0
 FULL_S = 60.0
@@ -109,7 +107,11 @@ class FileTable:
                     for e in it:
                         try:
                             if level < self._depth:
-                                if fslinks.is_dir(e):
+                                # A linked folder is followed (#285): a
+                                # transcript folder moved to another disk
+                                # still counts. The walk stops at ``depth``,
+                                # so a link back up cannot loop.
+                                if e.is_dir():
                                     subs.append(e.name)
                             elif self._match(e.name) and e.is_file():
                                 names.append(e.name)

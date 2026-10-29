@@ -113,7 +113,7 @@ class LinkTests(unittest.TestCase):
             self.assertFalse(fslinks.is_dir(next(e for e in it if e.name == "j")))
         self.assertTrue(fslinks.is_link(top / "j"))
         self.assertFalse(fslinks.is_link(top / "own.txt"))
-        nested, _big = backup.scan(top)
+        nested, _big, links = backup.scan(top)
         self.assertEqual(nested, [], "backup's nested-repo check does not go through the link")
 
     def test_orphan_folder_with_a_link_is_measured_without_it(self):

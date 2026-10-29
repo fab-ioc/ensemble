@@ -50,6 +50,17 @@ def is_link(path) -> bool:
         return False
 
 
+def target(path) -> str:
+    """Where a link points, as a plain path; "" when it cannot be read."""
+    try:
+        t = os.readlink(path)
+    except (OSError, ValueError):
+        return ""
+    if t.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + t[8:]
+    return t[4:] if t.startswith(("\\\\?\\", "\\??\\")) else t
+
+
 def is_dir(e: os.DirEntry) -> bool:
     """A real folder to walk into: a folder and not a link to one."""
     try:
@@ -144,9 +155,13 @@ def unlink_links(top) -> int:
     """Remove every link under ``top`` as a link, leaving everything else.
     For a tool that would walk into a junction itself before deleting (git's
     ``worktree remove`` does, on Windows). Returns how many went; raises when
-    one cannot be removed, so the caller does not go on."""
+    one cannot be removed, or a folder cannot be read (a link in it would
+    stay), so the caller does not go on."""
+    def unreadable(err: OSError) -> None:
+        if not isinstance(err, FileNotFoundError):
+            raise err
     n = 0
-    for d, _dirs, _files in walk(top):
+    for d, _dirs, _files in walk(top, onerror=unreadable):
         try:
             with os.scandir(d) as it:
                 links = [e for e in it if entry_is_link(e)]
