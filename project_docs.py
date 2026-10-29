@@ -21,6 +21,8 @@ import tempfile
 from pathlib import Path
 from urllib.parse import unquote
 
+import fslinks
+
 DEFAULT_NAME = "Documents"
 # For a documents project the folder is the CEO's own: a name already there is
 # his, never taken over.
@@ -95,7 +97,7 @@ def _walk(base: Path, max_depth: int):
             if e.name.startswith("."):
                 continue
             try:
-                if e.is_dir(follow_symlinks=False):
+                if fslinks.is_dir(e):
                     if depth < max_depth:
                         stack.append((Path(e.path), depth + 1))
                 elif e.is_file(follow_symlinks=False):
@@ -180,7 +182,7 @@ def _subfolder_skip(p: Path) -> str:
     if _is_task_folder(p):
         return "a task's folder"
     total = 0
-    for root, dirs, files in os.walk(p):
+    for root, dirs, files in fslinks.walk(p):
         if any(m in files or m in dirs for m in _PROFILE_MARKS):
             return "a browser profile"
         dirs[:] = [d for d in dirs if not d.startswith(".")]
@@ -310,7 +312,7 @@ _LINK_RE = re.compile(r"""\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\
 
 def _files_under(d: Path) -> list[Path]:
     out = []
-    for root, dirs, fs in os.walk(d):
+    for root, dirs, fs in fslinks.walk(d):
         dirs[:] = sorted(x for x in dirs if not x.startswith("."))
         out.extend(Path(root) / f for f in sorted(fs) if not f.startswith("."))
     return out

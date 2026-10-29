@@ -28,6 +28,8 @@ import subprocess
 import sys
 import time
 
+import fslinks
+
 SKIP_DIRS = {".git", "node_modules"}
 FILES_MAX = 50_000            # files listed; past this the list says it is cut
 MATCH_MAX = 1000              # matches returned; past this "more results not shown"
@@ -208,10 +210,7 @@ def _listed(source, base: str, ignores_rel: str | None) -> tuple[str, list[os.Di
 
 
 def _is_link(e: os.DirEntry) -> bool:
-    try:
-        return e.is_symlink() or bool(getattr(e, "is_junction", lambda: False)())
-    except OSError:
-        return True
+    return fslinks.entry_is_link(e)
 
 
 def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MAX) -> tuple[list[str], bool]:

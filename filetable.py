@@ -25,6 +25,8 @@ import threading
 import time
 from pathlib import Path
 
+import fslinks
+
 HOT_S = 6 * 3600.0
 QUIET_S = 24 * 3600.0
 FULL_S = 60.0
@@ -107,7 +109,7 @@ class FileTable:
                     for e in it:
                         try:
                             if level < self._depth:
-                                if e.is_dir():
+                                if fslinks.is_dir(e):
                                     subs.append(e.name)
                             elif self._match(e.name) and e.is_file():
                                 names.append(e.name)

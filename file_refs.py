@@ -40,6 +40,8 @@ import time
 from pathlib import Path
 from urllib.parse import unquote
 
+import fslinks
+
 SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
                "build", ".idea", ".tox", "site-packages", ".git"}
 MAX_DEPTH = 12          # Java sources sit 9 folders down (src/main/java/com/...)
@@ -162,7 +164,7 @@ def _walk(top: str, cap: int) -> tuple[dict[str, list[tuple[int, str]]], int, bo
     if not os.path.isdir(top):
         return idx, 0, True
     base_depth = top.rstrip("\\/").count(os.sep)
-    for dirpath, dirnames, filenames in os.walk(top, topdown=True):
+    for dirpath, dirnames, filenames in fslinks.walk(top):
         depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
         dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in SEARCH_SKIP] \
             if depth < MAX_DEPTH else []

@@ -455,6 +455,14 @@ being asked.
 - **Prefer stop over delete.** Delete only drafts you created and no longer
   need, or when the product owner explicitly asks. Deleting removes the task
   record, chat and agent transcripts; the task folder and code are kept.
+- **A test home is a copy, outside your task folder.** To run a hub or an
+  agent on its own state (`USERPROFILE`, `HOME`, `CODEX_HOME` pointed
+  elsewhere), make that home under `%TEMP%` (or `/tmp`) and copy into it what
+  the test needs. Never put a junction or symlink to the real home's folders
+  (`~/.ensemble`, `~/.claude/projects`, `~/.codex/sessions`, the projects
+  folder) inside a task folder: whatever later walks or cleans that folder
+  reaches the real ones. If a link cannot be avoided, remove the link itself
+  (`rmdir <link>`, never a recursive delete) before you report.
 
 ## The project roadmap
 

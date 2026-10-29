@@ -90,6 +90,7 @@ import filetable
 import backup
 # A session's files copied into the documents project it becomes the PO of.
 import bringfiles
+import fslinks
 import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
@@ -7487,21 +7488,9 @@ def _files_snapshot(proj: dict, home: str, reason: str, before: bool = False, me
 
 
 def _files_remove(full: str) -> None:
-    """Delete a file or a whole folder, read-only files too."""
-    def writable(func, p, _exc):
-        os.chmod(p, os.stat(p).st_mode | 0o200)
-        func(p)
-    if os.path.isdir(full) and not os.path.islink(full):
-        if sys.version_info >= (3, 12):
-            shutil.rmtree(full, onexc=writable)
-        else:
-            shutil.rmtree(full, onerror=writable)
-    else:
-        try:
-            os.remove(full)
-        except PermissionError:
-            os.chmod(full, os.stat(full).st_mode | 0o200)
-            os.remove(full)
+    """Delete a file or a whole folder, read-only files too. A link in it goes
+    as a link, never what it points to (#282)."""
+    fslinks.remove_tree(full)
 
 
 def _files_exists_refusal(rel: str, full: str) -> FileOpRefused:
@@ -8921,6 +8910,8 @@ def list_dir(path: str) -> tuple[int, dict]:
         for child in d.iterdir():
             if child.name == ".git":         # never descend into the git db
                 continue
+            if fslinks.is_link(child) and child.is_dir():
+                continue                     # a link to another folder is not shown (#282)
             try:
                 st = child.stat()
                 is_dir = child.is_dir()
@@ -9196,7 +9187,7 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
             return
         for c in kids:
             try:
-                if not c.is_dir():
+                if not c.is_dir() or fslinks.is_link(c):
                     continue
             except OSError:
                 continue
@@ -13533,11 +13524,13 @@ def prune_state() -> dict:
 def prune_scan_start(days: int, groups=None) -> bool:
     groups = tuple(g for g in (groups or prune.GROUPS) if g in prune.GROUPS) or prune.GROUPS
 
-    def go():
+    def go(stop):
         PRUNE_JOB._set(preview=None, result=None)
-        preview = prune.scan(_prune_hub(), days, groups=groups, stop=PRUNE_JOB.cancelled)
-        PRUNE_JOB._set(preview=preview)
-    return PRUNE_JOB.start("scan", go)
+        preview = prune.scan(_prune_hub(), days, groups=groups, stop=stop)
+        # A stopped scan measured only part: no preview, nothing to delete from.
+        PRUNE_JOB._set(preview=None if stop() else preview)
+    # A new preview while one runs stops that one first: never two at once (#282).
+    return PRUNE_JOB.start("scan", go, replace=True)
 
 
 def prune_run_start(ids: list) -> tuple[bool, str]:
@@ -13549,8 +13542,8 @@ def prune_run_start(ids: list) -> tuple[bool, str]:
     if not ids:
         return False, "Nothing ticked."
 
-    def go():
-        res = prune.run(_prune_hub(), preview, ids, stop=PRUNE_JOB.cancelled)
+    def go(stop):
+        res = prune.run(_prune_hub(), preview, ids, stop=stop)
         PRUNE_JOB._set(result=res, preview=None)
         print(f"[prune] freed {res['freed']} bytes: {len(res['done'])} items, {len(res['skipped'])} skipped",
               flush=True)
@@ -13573,7 +13566,7 @@ def _prune_auto_tick(now: float | None = None) -> bool:
     if days <= 0 or now - float(last.get("at") or 0) < 86400:
         return False
 
-    def go():
+    def go(_stop):
         res = prune.auto_prune(_prune_hub(), days)
         try:
             PRUNE_AUTO_FILE.write_text(json.dumps({"at": now, "days": days, "freed": res["freed"],
