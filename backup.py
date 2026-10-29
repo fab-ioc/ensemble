@@ -72,34 +72,42 @@ def _exclude_pattern(rel: str) -> str:
     return "/" + out
 
 
-def scan(root: Path, max_depth: int = 8, max_file_mb: int | None = None) -> tuple[list[str], list[str]]:
-    """Walk ``root`` and return ``(nested, oversize)``: git repositories below
-    it (a folder with its own .git) and files above ``max_file_mb``, both as
-    slash-separated paths relative to root. ``git add -A`` fails on a repo that
-    has no commit yet and records a useless pointer for one that has, so the
-    backup keeps them out; a task's code lives in its own remote anyway."""
+def scan(root: Path, max_depth: int = 8, max_file_mb: int | None = None) -> tuple[list[str], list[str], list[str]]:
+    """Walk ``root`` and return ``(nested, oversize, links)``: git repositories
+    below it (a folder with its own .git), files above ``max_file_mb`` and
+    links (symlinks, junctions, mount points), all as slash-separated paths
+    relative to root. ``git add -A`` fails on a repo that has no commit yet and
+    records a useless pointer for one that has, so the backup keeps them out; a
+    task's code lives in its own remote anyway. git for Windows walks into a
+    junction and adds what it points to (a test home linked to the real one,
+    its repositories, its large files), so a link is kept out too and never
+    walked (#285): what it points to is backed up where it lives, if at all."""
     nested: list[str] = []
     oversize: list[str] = []
+    links: list[str] = []
     root_s = str(root)
     cap = (MAX_FILE_MB if max_file_mb is None else max_file_mb) * 1024 * 1024
-    for cur, dirs, files in fslinks.walk(root_s):     # a linked folder is not walked (#282)
+    for cur, dirs, files in os.walk(root_s):
         rel = os.path.relpath(cur, root_s)
+        at = "" if rel == "." else rel.replace(os.sep, "/") + "/"
         depth = 0 if rel == "." else rel.count(os.sep) + 1
         if depth and (".git" in dirs or ".git" in files):
-            nested.append(rel.replace(os.sep, "/"))
+            nested.append(at[:-1])
             dirs[:] = []
             continue
-        if depth >= max_depth:
-            dirs[:] = []
-            continue
-        dirs[:] = [d for d in dirs if d not in _NO_WALK]
+        # os.walk goes into a junction: each name is asked first.
+        here = {n for n in dirs + files if fslinks.is_link(os.path.join(cur, n))}
+        links += sorted(at + n for n in here)
+        dirs[:] = [] if depth >= max_depth else [d for d in dirs if d not in _NO_WALK and d not in here]
         for f in files:
+            if f in here:
+                continue
             try:
                 if os.path.getsize(os.path.join(cur, f)) > cap:
-                    oversize.append((f if rel == "." else rel.replace(os.sep, "/") + "/" + f))
+                    oversize.append(at + f)
             except OSError:
                 pass
-    return nested, oversize
+    return nested, oversize, links
 
 
 def nested_repos(root: Path, max_depth: int = 8) -> list[str]:
@@ -191,12 +199,18 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
                 result["exported"] = int(export_hook() or 0)
             except Exception as e:                    # the hook must never sink the backup
                 result["msg"] = f"chat export error: {str(e)[:120]}; "
-        nested, oversize = scan(root)
-        if nested or oversize:
+        nested, oversize, links = scan(root)
+        if nested or oversize or links:
+            # A link's line has no trailing slash: git keeps a symlink as a
+            # file, and a folder-only pattern would not match it.
             err = _add_excludes(root, [_exclude_pattern(n) + "/" for n in nested]
-                                + [_exclude_pattern(f) for f in oversize])
+                                + [_exclude_pattern(f) for f in oversize + links])
             if err:
                 result["msg"] += err + "; "
+        # What an earlier backup took in through a link (a folder replaced by
+        # one) leaves the index too; the files themselves stay where they are.
+        for i in range(0, len(links), 100):
+            _git(root, "rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", *links[i:i + 100])
         result["skipped"] = len(nested) + len(oversize)
         add = _git(root, "add", "-A")
         if add.returncode != 0:
@@ -223,7 +237,8 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
             + ("; pushed" if result["pushed"] else ("; no remote configured" if not remote else "")) \
             + f"; {result['exported']} chat(s) exported" \
             + (f"; {result['skipped']} nested repo(s) or file(s) over {MAX_FILE_MB} MB left out"
-               if result.get("skipped") else "")
+               if result.get("skipped") else "") \
+            + (f"; {len(links)} link(s) left out" if links else "")
         return result
     except (OSError, subprocess.SubprocessError) as e:
         result["msg"] += f"error: {str(e)[:200]}"

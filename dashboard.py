@@ -8911,7 +8911,15 @@ def list_dir(path: str) -> tuple[int, dict]:
             if child.name == ".git":         # never descend into the git db
                 continue
             if fslinks.is_link(child) and child.is_dir():
-                continue                     # a link to another folder is not shown (#282)
+                # A link to another folder is a row of its own, never opened:
+                # its files are somewhere else (#282, #285).
+                try:
+                    mt = int(child.lstat().st_mtime)
+                except OSError:
+                    continue
+                entries.append({"name": child.name, "type": "dir", "link": True,
+                                "target": fslinks.target(child), "size": 0, "mtime": mt})
+                continue
             try:
                 st = child.stat()
                 is_dir = child.is_dir()
@@ -9177,9 +9185,10 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
             return 200, {"roots": [], "partOf": name}
         return 200, {"roots": [{"path": enclosing, "name": name}]}
     found: list[dict] = []
+    linked: list[dict] = []
 
     def walk(d: Path, lvl: int) -> None:
-        if len(found) >= 50:
+        if len(found) + len(linked) >= 50:
             return
         try:
             kids = sorted(d.iterdir(), key=lambda c: c.name.lower())
@@ -9187,20 +9196,25 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
             return
         for c in kids:
             try:
-                if not c.is_dir() or fslinks.is_link(c):
+                if not c.is_dir():
                     continue
+                link = fslinks.is_link(c)
             except OSError:
                 continue
             if c.name.startswith(".") or c.name.lower() in _GIT_ROOTS_SKIP:
                 continue
             if (c / ".git").exists():        # dir, or a file for worktrees
-                found.append({"path": str(c), "name": str(c.relative_to(base)).replace("\\", "/")})
+                # A link that is itself a checkout is listed, after the
+                # task's own ones (a review reads the first) (#285).
+                (linked if link else found).append(
+                    {"path": str(c), "name": str(c.relative_to(base)).replace("\\", "/"),
+                     **({"link": True} if link else {})})
                 continue
-            if lvl < depth:
+            if lvl < depth and not link:     # never walked through (#282)
                 walk(c, lvl + 1)
 
     walk(base, 1)
-    return 200, {"roots": found}
+    return 200, {"roots": found + linked}
 
 
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")

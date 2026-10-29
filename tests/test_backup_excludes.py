@@ -98,7 +98,7 @@ class BackupExcludes(unittest.TestCase):
         with open(big, "wb") as fh:
             fh.truncate(2 * 1024 * 1024)
         (big.parent / "small.txt").write_text("s", encoding="utf-8")
-        nested, oversize = backup.scan(self.root, max_file_mb=1)
+        nested, oversize, _links = backup.scan(self.root, max_file_mb=1)
         self.assertEqual(oversize, ["Proj/task [1] #x/capture.cq4"])
         self.assertEqual(backup._exclude_pattern(oversize[0]), "/Proj/task \\[1\\] \\#x/capture.cq4")
         old = backup.MAX_FILE_MB

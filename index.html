@@ -1693,6 +1693,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wse .sz { margin-left: auto; padding-left: 8px; color: var(--fg-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
   .wse.none { color: var(--fg-muted); cursor: default; white-space: normal; }   /* a sentence: it wraps in a narrow tree */
   .wse.none:hover { background: transparent; }
+  .wse.link { cursor: default; }
+  .wse.link:hover { background: transparent; }
   .wsp-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   /* Open files, as tabs above the viewer. A row that does not fit scrolls
      sideways within itself, never the page. */
@@ -9602,6 +9604,12 @@ function wsRowsHtml(v, dir) {
   // size — still changes the tree's signature and gets repainted.
   const rows = ents.map(e => {
     const p = wsJoin(dir, e.name), t = held || (docs && e.type === 'dir' && !!e.task);
+    // A link to another folder: shown with where it points, never opened —
+    // its files are somewhere else, and one that points back up never ends.
+    if (e.link) {
+      const to = e.target ? 'Links to ' + e.target : 'A link to another folder';
+      return `<div class="wse link" data-mt="${e.mtime || 0}" title="${esc(to + '. Not opened here: its files are somewhere else.')}"><span class="tw" aria-hidden="true">↪</span><span class="nm">${esc(e.name)}</span><span class="sz">link</span></div>`;
+    }
     if (e.type === 'dir') {
       const open = v.open.has(p);
       return `<div class="wse dir${v.mark && wsSame(v.mark, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${attrs(t)}><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span>${more(e.name, t)}</div>`
@@ -10523,7 +10531,7 @@ function wsVisibleDirs(v) {
   const stillThere = (parent, p) => {
     const c = v.dirs.get(parent);
     if (!c || !c.entries) return true;                    // not read yet — give it the benefit
-    return c.entries.some(e => e.type === 'dir' && wsSame(wsJoin(parent, e.name), p));
+    return c.entries.some(e => e.type === 'dir' && !e.link && wsSame(wsJoin(parent, e.name), p));
   };
   const visible = p => {
     if (isRoot(p)) return v.open.has(p);
@@ -16663,7 +16671,7 @@ async function docsWalk(read, start, o) {
         for (const e of es) {
           const r = upJoin(rel, e.name);
           if (e.type !== 'dir') { if (docsKept(e)) out.files.push(r); else if ((e.size || 0) > UP_MAX) out.unkept++; continue; }
-          if (skip(r, e)) continue;
+          if (e.link || skip(r, e)) continue;   // a linked folder is not this one's
           if (out.dirs.length >= max) { out.complete = false; out.unread.push(r); continue; }
           out.dirs.push(r); next.push(r);
         }
@@ -17110,7 +17118,7 @@ async function docsMoveList(menu, c) {
     const at = wsSame(p, root.path) ? '' : histRel(root.path, p);
     if (at === '' && !wsSame(p, root.path)) return;
     (d.entries || []).forEach(e => {
-      if (e.type !== 'dir') return;
+      if (e.type !== 'dir' || e.link) return;
       if (e.task && at === '') hide.add(e.name); else known.push(upJoin(at, e.name));
     });
   });

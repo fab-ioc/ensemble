@@ -661,6 +661,8 @@
   .dir-row:last-child { border-bottom:0; }
   .dir-row:hover { background:var(--hover); }
   .dir-row.is-dir { font-weight:600; }
+  .dir-row.is-link { color:var(--fg-muted); }
+  .dir-row.is-link:hover { background:transparent; }
   .dir-row .sz { margin-left:auto; color:var(--fg-muted); font-weight:400; }
   /* A file link whose path names nothing on the hub yet (static/filelinks.js):
      a quiet chip, still a link; the file view says what is (not) there. */
@@ -2424,7 +2426,10 @@ async function showDir(path, main) {
   const sep = d.path.includes('\\') ? '\\' : '/';
   const join = n => d.path.replace(/[\\\/]+$/, '') + sep + n;
   const rows = (d.parent ? [`<a class="dir-row is-dir" href="${fileHref(d.parent)}">..${sep}</a>`] : [])
-    .concat((d.entries || []).map(e => e.type === 'dir'
+    .concat((d.entries || []).map(e => e.link
+      // A link to another folder: named, never opened (its files are elsewhere).
+      ? `<div class="dir-row is-link" title="${esc(e.target ? 'Links to ' + e.target : 'A link to another folder')}">${esc(e.name)}${sep}<span class="sz">link</span></div>`
+      : e.type === 'dir'
       ? `<a class="dir-row is-dir" href="${fileHref(join(e.name))}">${esc(e.name)}${sep}</a>`
       : `<a class="dir-row" href="${fileHref(join(e.name))}">${esc(e.name)}<span class="sz">${esc(fmtSize(e.size))}</span></a>`));
   document.getElementById('raw').style.display = 'none';   // a folder has no raw bytes

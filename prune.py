@@ -157,8 +157,11 @@ def size_of(path, *, stop: Callable[[], bool] | None = None, until: float = 0.0)
             with os.scandir(d) as it:
                 for e in it:
                     n += 1
-                    if n % 2000 == 0 and ((stop and stop()) or (until and time.monotonic() > until)):
-                        break
+                    if n % 2000 == 0:
+                        if until and time.monotonic() > until:
+                            raise TooSlow(path)      # never a part reported as the whole
+                        if stop and stop():
+                            break
                     try:
                         if fslinks.entry_is_link(e):
                             continue
@@ -944,7 +947,8 @@ def _prune_task(hub: Hub, r: dict, by_pid: dict, projects: list, it: dict, live_
                 # leaves the folder to remove() below, which never follows it.
                 fslinks.unlink_links(_long(cwd))
                 ok = _git(repo, "worktree", "remove", "--force", cwd, timeout=300).returncode == 0
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"[prune] worktree left to remove(): {cwd} ({e!r})", flush=True)
                 ok = False
         # Not listed: no worktree any more, only files in the task folder,
         # which go with the folder below (under its own checks).
@@ -1077,8 +1081,9 @@ def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str,
                 try:
                     fslinks.unlink_links(_long(path))     # git would empty a link's target
                     _git(repo, "worktree", "remove", "--force", path, timeout=300)
-                except (OSError, subprocess.SubprocessError):
-                    pass                            # the folder part after it goes by remove()
+                except (OSError, subprocess.SubprocessError) as e:
+                    # the folder part after it goes by remove()
+                    print(f"[prune] worktree left to remove(): {path} ({e!r})", flush=True)
             continue
         if not _allowed_path(hub, path, projects):
             errs.append(f"{path}: not Ensemble's to delete")
