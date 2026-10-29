@@ -763,6 +763,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border-radius: var(--r-full); padding: 0 6px;
     font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums;
   }
+  .colchip.runonly { padding: 0 10px; }
+  .colchip.runonly.on { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--selected-fg); }
   .colchip.off { border-style: dashed; background: transparent; color: var(--fg-muted); }
   .colchip.off .nm { text-decoration: line-through; }
   .colchip.off .n { background: transparent; color: var(--fg-muted); }
@@ -2255,6 +2257,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border-radius: var(--r-full); padding: 0 6px;
     font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums;
   }
+  /* What the column's tasks are doing now (#289): "1 working · 2 waiting". */
+  .col-run {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--fs-200); color: var(--fg-muted); font-variant-numeric: tabular-nums;
+  }
   .col-body {
     flex: 1; background: var(--surface-sunken); border-radius: var(--r-300);
     padding: var(--s-200); display: flex; flex-direction: column; gap: var(--s-200);
@@ -2309,6 +2316,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .run .dot.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--run-idle); }
   .run .dot.warning { background: var(--c-warning-bold); }
   .run .dot.danger { background: var(--c-danger-bold); }
+  .run .dot.neutral { background: var(--c-neutral-bold); }
+  /* The state word (#289) stays on one line; the card's status line wraps around it. */
+  .tstate { white-space: nowrap; flex: 0 0 auto; }
   @keyframes cardpulse {
     0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); }
     70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--run-working) 0%, transparent); }
@@ -5264,7 +5274,9 @@ let WS_SCOPE = '';       // Changes tab: '' = the project folder, else one task'
 // filter you forget you set, and coming back to a list that silently hides
 // rows is worse than coming back to the one you left. Defaults are unchanged,
 // so a first run looks exactly as it did.
-const FILTER_KEYS = ['live', 'history', 'archived'];
+// 'running' is Running only (#289), a key of its own: an old saved ['live']
+// (No history) stays No history.
+const FILTER_KEYS = ['live', 'history', 'archived', 'running'];
 function loadFilters() {
   try {
     const raw = localStorage.getItem('cd-filters');
@@ -5272,7 +5284,7 @@ function loadFilters() {
     const arr = JSON.parse(raw).filter(k => FILTER_KEYS.includes(k));
     // An empty set shows nothing at all; treat a stored empty as "unset"
     // rather than handing back a blank screen with no obvious cause.
-    return new Set(arr.length ? arr : ['live', 'history']);
+    return new Set(arr.some(k => k !== 'running') ? arr : ['live', 'history', ...arr]);
   } catch (e) { return new Set(['live', 'history']); }
 }
 function saveFilters() {
@@ -6537,8 +6549,7 @@ function renderHeadlessRow(r, parsed, now) {
   const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
   const statusDot = r.isLive
     ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.runState === 'command' && r.status !== 'busy' ? commandTip(r) : r.status || 'live')}"></span>` : '';
-  const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
-    : (r.draft ? '<span class="badge-draft" title="Created but not started yet">draft</span>' : '');
+  const liveBadge = r.draft ? '<span class="badge-draft" title="Created but not started yet">draft</span>' : taskStateChip(r);
   const actions = r.orphan
     ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
       + `<button class="orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑</button>`
@@ -6616,6 +6627,47 @@ function stateChip(r, compact = false, attn = r.attention) {
     : st === 'waiting_for_you' || r.roomStatus === 'waiting_human' || r.roomStatus === 'paused')
     return chip('warning', 'waiting for you', 'waiting for you', 'your turn');
   return chip('idle', 'idle: running, not working', 'idle');
+}
+
+// What a task is really doing (#289), one word beside its dot on every card
+// and list row, from the facts the left list's dot reads (#190, #193): Working
+// (an agent in a turn now), Waiting (it asked you or its PO, or is blocked: on
+// whom), Idle (an agent open, not working; a command of its own running is
+// that ring with its own words, ED-212), Stopped (no agent). The column says
+// what was decided; this says what is true now.
+function taskState(r) {
+  if (r.draft) return { k: 'draft', dot: 'off', word: 'not started', tip: 'not started yet' };
+  const a = (r.roomId && ATTENTION_BY_ROOM.get(r.roomId)) || r.attention || null;
+  const st = a && !swReported(a) ? a.state : '';
+  const why = a && a.reason ? ': ' + a.reason : '';
+  // A block is what you must act on: it shows even while the agent works.
+  if (st === 'blocked') return { k: 'waiting', dot: swTone(st), word: 'Waiting on you', tip: 'blocked' + why };
+  if (r.isLive && r.status === 'busy') return { k: 'working', dot: 'working', word: 'Working', tip: 'working: an agent is in a turn now' };
+  if (st === 'waiting_for_you' || st === 'blocked')
+    return { k: 'waiting', dot: swTone(st), word: 'Waiting on you', tip: (st === 'blocked' ? 'blocked' : 'waiting for you') + why };
+  const w = r.waitingOnPo;
+  if (w) return { k: 'waiting', dot: 'neutral', word: 'Waiting on the PO',
+                  tip: `${w.kind === 'blocked' ? 'blocked, its PO to answer' : 'asked its PO'}${w.line ? ': ' + w.line : ''}` };
+  if (st === 'agent_gone') return { k: 'stopped', dot: 'danger', word: 'Stopped', tip: 'agent gone' + why };
+  if (r.isLive && r.runState === 'command') return { k: 'idle', dot: 'idle', word: commandWords(r), tip: commandTip(r) };
+  if (r.isLive) return { k: 'idle', dot: 'idle', word: 'Idle', tip: 'idle: an agent is open, not working' };
+  return { k: 'stopped', dot: 'off', word: 'Stopped', tip: 'stopped: no agent is running; a reply resumes it' };
+}
+function taskStateChip(r) {
+  const s = taskState(r);
+  return `<span class="run tstate ts-${s.k}${s.k === 'stopped' || s.k === 'draft' ? ' off' : ''}" title="${esc(s.tip)}">`
+    + `<span class="dot ${s.dot}" role="img" aria-label="${esc(s.tip)}"></span>${esc(s.word)}</span>`;
+}
+// A column's header after its count (#289): how many of its tasks work now,
+// and how many wait, so "In progress 6" no longer reads as six running.
+function colRunText(k, items) {
+  if (k === 'backlog' || !items.length) return '';
+  const n = { working: 0, waiting: 0 };
+  for (const r of items) { const s = taskState(r).k; if (s in n) n[s]++; }
+  const bits = [];
+  if (n.working || k === 'inprogress' || k === 'inreview') bits.push(`${n.working} working`);
+  if (n.waiting) bits.push(`${n.waiting} waiting`);
+  return bits.join(' · ');
 }
 
 // ---- Task numbers: begin ----------------------------------------------------
@@ -6819,7 +6871,7 @@ function cardHtml(r, now) {
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
     <div class="ctitle">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${taskStateChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }
@@ -6842,6 +6894,7 @@ function boardHtml(rows, now, frozen, hidden) {
       aged = items.length - fresh.length;
       items = fresh;
     }
+    const run = colRunText(c.k, items);
     const cards = items.map(r => cardHtml(r, now)).join('')
       || `<div class="col-empty">Nothing here</div>`;
     // The header counts everything in the column; "+ N older" explains the
@@ -6849,7 +6902,7 @@ function boardHtml(rows, now, frozen, hidden) {
     // chips, which explain the gap between shown and total.
     const older = aged ? `<button class="col-older" data-older="1">+ ${aged} older</button>` : '';
     return `<section class="col ${c.tone}" data-col="${c.k}">
-      <div class="col-head"><span class="col-name">${esc(c.name)}</span><span class="col-count">${total}</span></div>
+      <div class="col-head"><span class="col-name">${esc(c.name)}</span><span class="col-count">${total}</span><span class="col-run">${esc(run)}</span></div>
       <div class="col-body" data-col="${c.k}">${cards}${older}</div>
     </section>`;
   }).join('') + `</div>`;
@@ -7466,6 +7519,14 @@ function patchCards(rows, now) {
     else if (newLoz && curLoz && curLoz.outerHTML !== newLoz.outerHTML) curLoz.replaceWith(newLoz);
     el.classList.toggle('working', !!(r.isLive && r.status === 'busy'));
   }
+  // The headers' working and waiting counts change with the cards, not with
+  // their placement, so they are patched here too.
+  for (const col of view.querySelectorAll('.col[data-col]')) {
+    const ids = new Set([...col.querySelectorAll('.card[data-sid]')].map(c => c.dataset.sid));
+    const el = col.querySelector('.col-run');
+    const t = colRunText(col.dataset.col, rows.filter(r => ids.has(r.sessionId)));
+    if (el && el.textContent !== t) el.textContent = t;
+  }
 }
 
 // Drag: the only gesture that changes a column. Optimistic like the priority
@@ -7717,7 +7778,12 @@ function passesFilter(r) {
   if (HIDE_EXTERNAL && r.external) return false;
   // Then the chips
   if (FILTERS.size === 0) return false;
-  if (r.archived) return FILTERS.has('archived');
+  if (r.archived) return FILTERS.has('archived') && !runningOnly();
+  // Running only is Working + Idle: a live task that waits is not running.
+  // While the board is in hand (a drag, the pointer on it) a card it shows
+  // stays, so a Working <-> Waiting turn does not remount it under you.
+  if (runningOnly()) return r.isLive && (['working', 'idle'].includes(taskState(r).k)
+    || (RUN_HOLD && RUN_SHOWN.has(r.roomId || r.sessionId)));
   if (FILTERS.has('live') && r.isLive) return true;
   if (FILTERS.has('history') && !r.isLive) return true;
   return false;
@@ -17751,7 +17817,11 @@ function renderRows() {
   // The top bar's search no longer narrows the board (#161): it has a
   // drop-down of its own, from wherever you are.
   const parsed = parseSearchQuery('');
+  const host = docked ? PD.els.board : $('#view');
+  RUN_HOLD = VIEW_MODE === 'board' && (!!_dragRoom || !!(host && host.matches(':hover')));
   const filtered = ALL_ROWS.filter(passesFilter);
+  RUN_HOLD = false;
+  RUN_SHOWN = runningOnly() ? new Set(filtered.map(r => r.roomId || r.sessionId)) : new Set();
   // Archived rows are out of the working set unless you ask for them, so they
   // are out of the denominator too. Counting them in produced "38 of 54" with
   // nothing on screen to explain the 16 — which is precisely the false alarm
@@ -20817,6 +20887,7 @@ function filterChips() {
   // row stays empty until a choice actually costs you rows.
   const chips = [];
   for (const k of FILTER_DEFAULTS) {
+    // Live without History is said by its own chip, Running only.
     if (!FILTERS.has(k)) chips.push({ k, label: 'No ' + FILTER_LABELS[k].toLowerCase() });
   }
   if (FILTERS.has('archived')) chips.push({ k: 'archived', label: 'Archived shown' });
@@ -20824,6 +20895,23 @@ function filterChips() {
   return chips;
 }
 
+// Running only (#289): the tasks with an agent open, working or idle, as one
+// chip that is pressed while it applies. Live and History are left as set.
+const runningOnly = () => FILTERS.has('running');
+// The cards Running only showed last, kept while the board is in hand.
+let RUN_SHOWN = new Set(), RUN_HOLD = false;
+function runningOnlyChipHtml() {
+  const on = runningOnly();
+  return `<button class="colchip runonly${on ? ' on' : ''}" data-runonly="1" aria-pressed="${on}" title="${on ? 'Show every task again' : 'Show only the tasks with an agent open: working or idle'}"><span class="nm">Running only</span></button>`;
+}
+function toggleRunningOnly() {
+  if (runningOnly()) FILTERS.delete('running');
+  else FILTERS.add('running');
+  RUN_SHOWN = new Set();
+  saveFilters();
+  BOARD_SIG = '';
+  renderRows();
+}
 function filterRowHtml(cols) {
   const chips = filterChips();
   const shown = chips.slice(0, 2).map(c =>
@@ -20833,7 +20921,7 @@ function filterRowHtml(cols) {
     ? `<button class="fchip more" data-openfilters="1">${chips.length} filters</button>` : '';
   return `<div class="filterbar">
     <button class="fbtn" id="filters-btn" aria-haspopup="true" aria-expanded="false">Filters<span class="caret">▾</span></button>
-    ${shown}${more}${colChipsHtml(cols)}
+    ${runningOnlyChipHtml()}${shown}${more}${colChipsHtml(cols)}
     <span class="viewcount" id="viewcount"></span>
   </div>`;
 }
@@ -20984,6 +21072,7 @@ document.addEventListener('click', (ev) => {
   const chip = ev.target.closest('.fchip[data-drop]');
   if (chip) { ev.stopPropagation(); toggleFilter(chip.dataset.drop); return; }
   if (ev.target.closest('.fchip.more')) { ev.stopPropagation(); openFiltersMenu(); return; }
+  if (ev.target.closest('.colchip[data-runonly]')) { ev.stopPropagation(); toggleRunningOnly(); return; }
   const colChip = ev.target.closest('.colchip[data-colk]');
   if (colChip) { ev.stopPropagation(); toggleCol(colChip.dataset.colk); return; }
   if (ev.target.closest('.colall')) { ev.stopPropagation(); setHiddenCols(new Set()); return; }

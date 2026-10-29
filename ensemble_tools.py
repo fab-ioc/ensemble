@@ -429,10 +429,10 @@ _ALL_TOOLS = [
         "description": (
             "Amend a task's title, spec, priority, board column and/or assigned "
             "agents. Task owners and reviewers may only move their OWN task to "
-            "\"inreview\"; project POs and planners can administer tasks. Move "
-            "your OWN task to \"inreview\" when you hand the work "
-            "back — that is a thing you know and the board cannot infer, because "
-            "an agent that has finished and one that is stuck both just go quiet. "
+            "\"inreview\"; project POs and planners can administer tasks. A "
+            "completed ensemble_report moves the task from In progress to "
+            "\"inreview\" by itself; move it there yourself only when you hand "
+            "work back without one. "
             "Only a ProductOwner moves a task to \"done\"; it means accepted after "
             "testing, not handed over. "
             "Title, spec and priority work on drafts and on stopped or running "
@@ -459,8 +459,8 @@ _ALL_TOOLS = [
                 "workflow": {"type": "string",
                              "enum": list(WORKFLOW_NAMES),
                              "description": "Board column (omit to keep). backlog | todo | "
-                                            "inprogress | inreview | done. Move your own task to "
-                                            "\"inreview\" when you hand work back. \"done\" is "
+                                            "inprogress | inreview | done. A completed report "
+                                            "moves your task to \"inreview\" by itself. \"done\" is "
                                             "the ProductOwner's alone."},
                 "agents": {"type": "array", "items": _AGENT_SPEC,
                            "description": "The task's complete new agent line-up, replacing the old "
@@ -1171,6 +1171,13 @@ def _report(ctx, args, handler, *, structured_asks=None):
     clears = kind == "update" and args.get("clears") is True
     _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading,
                               clears=clears, structured_asks=structured_asks)
+    if kind == "completed":
+        # Finished is not in progress: the hub moves it to In review (#289).
+        # A failed move must not keep the report from its PO.
+        try:
+            _d.settle_finished(_d.chatroom.get_room(room["id"], public=False, messages=False))
+        except Exception as e:
+            print(f"finished task not moved to In review: {e!r}", flush=True)
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}

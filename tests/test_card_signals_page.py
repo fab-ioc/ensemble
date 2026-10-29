@@ -60,7 +60,7 @@ log.noDot = unreadDotHtml(row('room-b', 1500));
 
 // A board card and a task row, the rest of them stubbed.
 const ATTENTION_BY_ROOM = new Map(), ATTN_LABEL = {}, SELECTED_PROJECT = '', DETAIL_MODE = true;
-const prioIcon = () => '<i class="prio-ico"></i>', prioOf = () => 3, runChip = () => '<span class="run">Idle</span>';
+const prioIcon = () => '<i class="prio-ico"></i>', prioOf = () => 3, taskStateChip = () => '<span class="run">Idle</span>';
 const cardAgents = () => '', fmtAgo = () => '1m', taskNoHtml = () => '<span class="tno">#7</span>';
 const prioCell = () => '<td></td>', agentBadges = () => '';
 log.card = cardHtml({ roomId: 'room-a', sessionId: 's1', label: 'Task', updatedAt: 0, cost: 2.5, costTokens: null,
