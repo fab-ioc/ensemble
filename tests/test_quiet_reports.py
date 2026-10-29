@@ -93,6 +93,12 @@ class Rider(_Rooms):
         self.assertIn("half done", typed[0])
         self.assertEqual(quiet_reports.pending(self.po_rid), [])
 
+    def test_an_empty_queue_loads_no_room(self):
+        with mock.patch.object(chatroom, "get_room") as get_room:
+            self.assertEqual(quiet_reports.rider(self.po_rid, "po"), ("", []))
+            self.assertEqual(self.type_now("[report] #14 completed"), ["[report] #14 completed"])
+        get_room.assert_not_called()
+
     def test_a_line_refused_its_turn_takes_nothing(self):
         quiet_reports.hold(self.po_rid, "m1", "update from #12 (claude): half done")
         with mock.patch.object(dashboard.rotation, "reserve_hub_line", return_value=None), \
@@ -137,6 +143,14 @@ class Tick(_Rooms):
             self.assertEqual(quiet_reports.tick(1.0 + quiet_reports.IDLE_S), [])
         typed.assert_not_called()
         self.assertEqual(len(quiet_reports.pending(self.po_rid)), 1)
+
+    def test_a_line_that_raises_puts_them_back(self):
+        quiet_reports.hold(self.po_rid, "m1", "u", now=1.0)
+        with mock.patch.object(po_messages, "_target", return_value=self.sess), \
+                mock.patch.object(dashboard, "_type_input", side_effect=OSError("pty gone")):
+            with self.assertRaises(OSError):
+                quiet_reports.tick(1.0 + quiet_reports.IDLE_S)
+        self.assertEqual([i["id"] for i in quiet_reports.pending(self.po_rid)], ["m1"])
 
     def test_a_line_not_taken_puts_them_back(self):
         quiet_reports.hold(self.po_rid, "m1", "u", now=1.0)

@@ -134,7 +134,11 @@ def rider(po_room_id: str, identity: str) -> tuple[str, list[dict]]:
     waits or ``identity`` is not that room's PO. The items leave the queue
     here, under the lock, so two lines typed at once never both carry them;
     :func:`put_back` returns them when the line is not taken."""
-    room = _d.chatroom.get_room(po_room_id) if po_room_id else None
+    # Every hub line to any agent comes here: the queue first, the room
+    # only when something waits for it.
+    if not po_room_id or not pending(po_room_id):
+        return "", []
+    room = _d.chatroom.get_room(po_room_id)
     if room is None or _d.chatroom.po_identity(room) != identity:
         return "", []
     with _LOCK:
@@ -216,11 +220,15 @@ def tick(now: float | None = None) -> list[str]:
             _save()
         if not ids:
             continue
-        if _d._type_input(sess, line):
-            out.append(rid)
-            _log(f"typed {len(ids)} to the PO of {rid}")
-        else:
-            put_back(rid, [i for i in items if i["id"] in set(ids)])
+        typed = False
+        try:
+            typed = _d._type_input(sess, line)
+        finally:
+            if typed:
+                out.append(rid)
+                _log(f"typed {len(ids)} to the PO of {rid}")
+            else:
+                put_back(rid, [i for i in items if i["id"] in set(ids)])
     return out
 
 
