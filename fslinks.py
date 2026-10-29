@@ -86,15 +86,23 @@ def walk(top, onerror: Callable[[OSError], None] | None = None) -> Iterator[tupl
         stack.extend(os.path.join(d, n) for n in reversed(dirs))
 
 
-def _unlink(p: str, folder: bool) -> None:
+def _unlink(p: str, folder: bool, link: bool = False) -> None:
     """Remove one file or one link (a link to a folder goes with rmdir:
-    the link, never what it points to). One already gone is fine."""
+    the link, never what it points to). One already gone is fine. A read-only
+    one is made writable first; for a link only the link itself (chmod
+    follows a link by default, which would change its target)."""
     try:
         os.rmdir(p) if folder else os.unlink(p)
     except FileNotFoundError:
         pass
     except PermissionError:
-        os.chmod(p, stat.S_IWRITE | stat.S_IREAD | (stat.S_IEXEC if folder else 0))
+        mode = stat.S_IWRITE | stat.S_IREAD | (stat.S_IEXEC if folder else 0)
+        if not link:
+            os.chmod(p, mode)
+        elif os.chmod in os.supports_follow_symlinks:
+            os.chmod(p, mode, follow_symlinks=False)
+        else:
+            raise
         os.rmdir(p) if folder else os.unlink(p)
 
 
@@ -108,7 +116,7 @@ def remove_tree(path) -> None:
     except FileNotFoundError:
         return
     if _link_stat(st) or not stat.S_ISDIR(st.st_mode):
-        _unlink(p, _folder_stat(st))
+        _unlink(p, _folder_stat(st), _link_stat(st))
         return
     # Depth first, each folder emptied before it goes; a link is a leaf.
     stack: list[tuple[str, bool]] = [(p, False)]
@@ -125,11 +133,29 @@ def remove_tree(path) -> None:
             continue
         for e in entries:
             if entry_is_link(e):
-                _unlink(e.path, _entry_folder(e))
+                _unlink(e.path, _entry_folder(e), True)
             elif is_dir(e):
                 stack.append((e.path, False))
             else:
                 _unlink(e.path, False)
+
+
+def unlink_links(top) -> int:
+    """Remove every link under ``top`` as a link, leaving everything else.
+    For a tool that would walk into a junction itself before deleting (git's
+    ``worktree remove`` does, on Windows). Returns how many went; raises when
+    one cannot be removed, so the caller does not go on."""
+    n = 0
+    for d, _dirs, _files in walk(top):
+        try:
+            with os.scandir(d) as it:
+                links = [e for e in it if entry_is_link(e)]
+        except FileNotFoundError:
+            continue
+        for e in links:
+            _unlink(e.path, _entry_folder(e), True)
+            n += 1
+    return n
 
 
 def _folder_stat(st: os.stat_result) -> bool:

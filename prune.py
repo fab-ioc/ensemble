@@ -939,6 +939,10 @@ def _prune_task(hub: Hub, r: dict, by_pid: dict, projects: list, it: dict, live_
         ok = False
         if listed:
             try:
+                # git for Windows walks into a junction and empties its
+                # target: the links go first, as links. One that stays
+                # leaves the folder to remove() below, which never follows it.
+                fslinks.unlink_links(_long(cwd))
                 ok = _git(repo, "worktree", "remove", "--force", cwd, timeout=300).returncode == 0
             except (OSError, subprocess.SubprocessError):
                 ok = False
@@ -1071,9 +1075,10 @@ def _prune_parts(hub: Hub, it: dict, current: set, projects: list, how: str,
             repo = p.get("repo") or ""
             if repo and os.path.isdir(_long(path)):
                 try:
+                    fslinks.unlink_links(_long(path))     # git would empty a link's target
                     _git(repo, "worktree", "remove", "--force", path, timeout=300)
                 except (OSError, subprocess.SubprocessError):
-                    pass
+                    pass                            # the folder part after it goes by remove()
             continue
         if not _allowed_path(hub, path, projects):
             errs.append(f"{path}: not Ensemble's to delete")

@@ -127,6 +127,37 @@ class LinkTests(unittest.TestCase):
         item = next(it for g in preview["groups"] for it in g["items"] if it["label"] == "left-behind")
         self.assertLess(item["bytes"], 1000)
 
+    def test_a_link_inside_the_worktree_is_gone_before_git_removes_it(self):
+        # git worktree remove --force walks into a junction on Windows and
+        # empties its target; the links go first.
+        rid, folder, cwd, *_ = self.task("a")
+        out = self.outside()
+        junction(cwd / "shadow" / "cs", out)
+        hub = self.hub()
+        preview = prune.scan(hub, 30)
+        res = prune.run(hub, preview, [f"done:{rid}"])
+        self.assertEqual(res["skipped"], [])
+        self.assertEqual(res["done"][0]["errors"], [])
+        self.assertFalse(os.path.lexists(prune._long(cwd)))
+        self.assertFalse(os.path.lexists(prune._long(folder)))
+        self.assertEqual((out / "marker.txt").read_text(encoding="utf-8"), "must survive")
+        self.assertEqual((out / "deep" / "big.bin").stat().st_size, 100_000)
+
+    def test_unlink_links_takes_only_the_links(self):
+        out = self.outside()
+        top = self.tmp / "mixed"
+        write(top / "own.txt")
+        write(top / "a" / "kept.txt")
+        junction(top / "a" / "j", out)
+        junction(top / "loop", top)
+        self.assertEqual(fslinks.unlink_links(top), 2)
+        self.assertFalse(os.path.lexists(top / "a" / "j"))
+        self.assertFalse(os.path.lexists(top / "loop"))
+        self.assertTrue((top / "own.txt").is_file())
+        self.assertTrue((top / "a" / "kept.txt").is_file())
+        self.assertTrue((out / "marker.txt").is_file())
+        self.assertTrue((out / "deep" / "big.bin").is_file())
+
 
 class SlowScanTests(unittest.TestCase):
     setUp = test_prune.PruneTests.setUp
