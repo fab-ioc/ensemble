@@ -34,7 +34,7 @@ log.chips = [
 ].map(r => costChipHtml(r));
 // A board card, the rest of it stubbed.
 const ATTENTION_BY_ROOM = new Map(), ATTN_LABEL = {}, SELECTED_PROJECT = '';
-const prioIcon = () => '<i class="prio-ico"></i>', prioOf = () => 3, runChip = () => '<span class="run">Idle</span>';
+const prioIcon = () => '<i class="prio-ico"></i>', prioOf = () => 3, taskStateChip = () => '<span class="run">Idle</span>';
 const cardAgents = () => '', fmtAgo = () => '1m', taskNoHtml = () => '';
 log.card = cardHtml({ roomId: 'room-1', sessionId: 's1', label: 'Codex task', projectName: 'P', updatedAt: 0,
                       cost: 0, costTokens: T({ input: 120000, output: 30000, cacheRead: 1200000 }) }, 60);
@@ -105,7 +105,7 @@ class CostChip(unittest.TestCase):
 
     def test_the_row_and_the_card_use_it(self):
         self.assertIn("const costChip = costChipHtml(r);", INDEX)
-        self.assertIn("${runChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}", fn(INDEX, "function cardHtml("))
+        self.assertIn("${taskStateChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}", fn(INDEX, "function cardHtml("))
         self.assertIn(".ccost { font-size: var(--fs-100); color: var(--fg-muted);", INDEX, "plain muted text, not a pill")
 
 

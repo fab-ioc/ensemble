@@ -146,8 +146,8 @@ came back, the PO told you), say so with an `update` that carries
   decision. Do not repeat the spec. Concise English is the working language.
 - **In a team, the owner reports.** That is the engineer, or the only agent.
   A reviewer tells the engineer, not the PO.
-- Use `ensemble_update_task` to move your own task to `inreview` as well when
-  you hand the work back.
+- A `completed` report moves your task from In progress to In review by
+  itself; you need not move it. Any other kind leaves the column alone.
 
 ### Where reports and design notes go: the project's Documents folder
 
@@ -596,6 +596,17 @@ does not repeat it.
 The PO is one long-lived session per project (`poRoomId` in the project's
 `project.json`). The product owner talks mainly to it, tasks report to it, and
 it reports to the product owner. What keeps that cheap and reliable:
+
+**In review is set by the hub; Done is yours.** A task's `completed` report
+moves it from In progress to In review by itself (`workflowAuto` on the task
+says the hub did it), and so does the hub's start for a stopped task whose last
+report is completed. A question, a blocked or an update leaves it in In
+progress, where its card says Waiting. Accept the work by merging it (the
+merged-work check then moves it to Done) or, with nothing to merge, by setting
+`workflow: "done"` with `ensemble_update_task`. To send it back for more, move
+it to `inprogress`: the hub leaves it there until its next completed report.
+For what runs, read each card's state (Working, Idle, Waiting on you or on the
+PO, Stopped) and the column header's "N working", never the column.
 
 **Keep a living handover.** `PO-HANDOVER.md` in the project home holds what a
 successor with no memory would need: how the product owner likes to work,
