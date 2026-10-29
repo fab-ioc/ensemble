@@ -107,15 +107,21 @@ class FolderLinkTests(unittest.TestCase):
         junction(root / "Proj" / "task" / "shadow", behind)
         nested, oversize, links = backup.scan(root, max_file_mb=1)
         self.assertEqual((nested, oversize, links), ([], [], ["Proj/task/shadow"]))
-        # What a backup without the exclude would take in: the link's files,
-        # or nothing at all (git add fails on the nested repo).
-        bare = self.tmp / "bare"
-        write(bare / "keep.txt", "k")
-        junction(bare / "j", behind)
-        _git(bare, "init", "-q")
-        add = _git(bare, "add", "-A")
-        self.assertTrue(add.returncode != 0 or "j/small.txt" in _git(bare, "ls-files").stdout,
-                        "git for Windows walks into a junction")
+        # What a backup without the exclude would do: take in the link's
+        # files, or, with a nested repo behind it, nothing at all.
+        plain = self.tmp / "plain"
+        write(plain / "small.txt", "behind a link")
+        for target, ok in ((plain, True), (behind, False)):
+            bare = self.tmp / ("bare-ok" if ok else "bare-nested")
+            write(bare / "keep.txt", "k")
+            junction(bare / "j", target)
+            _git(bare, "init", "-q")
+            add = _git(bare, "add", "-A")
+            if ok:
+                self.assertEqual(add.returncode, 0, add.stderr)
+                self.assertIn("j/small.txt", _git(bare, "ls-files").stdout, "git for Windows walks into a junction")
+            else:
+                self.assertNotEqual(add.returncode, 0, "a nested repo behind a junction sinks the add")
         old = backup.MAX_FILE_MB
         backup.MAX_FILE_MB = 1
         try:
@@ -142,6 +148,22 @@ class FolderLinkTests(unittest.TestCase):
         self.assertTrue(r["ok"], r["msg"])
         self.assertNotIn("Proj/data", _git(root, "ls-files").stdout)
         self.assertEqual((self.out / "data" / "old.txt").read_text(encoding="utf-8"), "moved away")
+
+    def test_a_link_that_cannot_leave_the_index_stops_the_backup(self):
+        root = self.tmp / "projects"
+        write(root / "Proj" / "notes.md", "n")
+        junction(root / "Proj" / "shadow", self.out)
+        real = backup._git
+
+        def git(r, *args, **kw):
+            if "rm" in args:
+                return subprocess.CompletedProcess(args, 128, "", "index.lock exists")
+            return real(r, *args, **kw)
+        with mock.patch.object(backup, "_git", git):
+            r = backup.run_backup(root)
+        self.assertFalse(r["ok"])
+        self.assertIn("links not taken out of the index: index.lock exists", r["msg"])
+        self.assertNotIn("Proj/shadow/marker.txt", _git(root, "ls-files").stdout)
 
     # -- transcripts ---------------------------------------------------------
     def test_transcripts_in_a_linked_project_folder_are_found_and_a_loop_ends(self):

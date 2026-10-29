@@ -211,8 +211,12 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
         # one) leaves the index too; the files themselves stay where they are.
         for i in range(0, len(links), 100):
             # Literal: a name with * or ? must not match other paths.
-            _git(root, "--literal-pathspecs", "rm", "-r", "--cached", "-q", "--ignore-unmatch", "--",
-                 *links[i:i + 100])
+            rm = _git(root, "--literal-pathspecs", "rm", "-r", "--cached", "-q", "--ignore-unmatch", "--",
+                      *links[i:i + 100])
+            if rm.returncode != 0:
+                # add -A would stage what is behind the link: no backup this time.
+                result["msg"] += "links not taken out of the index: " + (rm.stderr or "").strip()[:200]
+                return result
         result["skipped"] = len(nested) + len(oversize)
         add = _git(root, "add", "-A")
         if add.returncode != 0:

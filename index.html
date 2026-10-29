@@ -9448,7 +9448,7 @@ function wsRevealTidy(open, tmp, dirs, roots) {
     for (const name of wsNamesUnder(root.path, d)) {
       const c = dirs.get(cur);
       if (!c || c.error) { state = 'unknown'; break; }
-      if (!c.entries.some(x => x.name === name)) { state = 'gone'; break; }
+      if (!c.entries.some(x => x.name === name && !x.link)) { state = 'gone'; break; }   // a link is never opened
       cur = wsJoin(cur, name);
     }
     if (state === 'unknown') return;
