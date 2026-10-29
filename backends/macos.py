@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .base import (
     Backend, CS_ROOT, HOME, ICON_CACHE_DIR, NUMBERED_RE, PRESETS_DIR, app_slug,
+    editor_id, jetbrains_homes,
 )
 from .shared import SESS_DIR, claude_cmd, load_geometries, save_geometry
 from . import themes
@@ -24,6 +25,15 @@ import os
 import shlex
 
 IJ_APP = os.environ.get("ENSEMBLE_IJ_APP", "IntelliJ IDEA")  # legacy fallback
+
+# The editors' app bundle names (a prefix: "IntelliJ IDEA CE.app" is IntelliJ
+# IDEA's); the first is also the name Launch Services is asked for.
+_APP_NAMES = {
+    "idea": ("IntelliJ IDEA",), "pycharm": ("PyCharm",), "webstorm": ("WebStorm",),
+    "goland": ("GoLand",), "rustrover": ("RustRover",), "rubymine": ("RubyMine",),
+    "phpstorm": ("PhpStorm",), "clion": ("CLion",), "rider": ("Rider",),
+    "code": ("Visual Studio Code",), "cursor": ("Cursor",), "xcode": ("Xcode",),
+}
 
 
 _FOCUS_SCRIPT = """
@@ -288,19 +298,20 @@ class MacBackend(Backend):
     os_name = "darwin"
     terminal_name = "iTerm"
     file_manager_name = "Finder"
+    # Language → editor id (backends.base.EDITORS) for Automatic.
     default_editor_map = {
-        "java":       "IntelliJ IDEA",
-        "kotlin":     "IntelliJ IDEA",
-        "scala":      "IntelliJ IDEA",
-        "python":     "PyCharm",
-        "javascript": "WebStorm",
-        "typescript": "WebStorm",
-        "rust":       "RustRover",
-        "go":         "GoLand",
-        "ruby":       "RubyMine",
-        "php":        "PhpStorm",
-        "swift":      "Xcode",
-        "default":    "Visual Studio Code",
+        "java":       "idea",
+        "kotlin":     "idea",
+        "scala":      "idea",
+        "python":     "pycharm",
+        "javascript": "webstorm",
+        "typescript": "webstorm",
+        "rust":       "rustrover",
+        "go":         "goland",
+        "ruby":       "rubymine",
+        "php":        "phpstorm",
+        "swift":      "xcode",
+        "default":    "code",
     }
     features = {"focus": True, "themes": True, "geometry": True, "liveTitle": True,
                 "consolidate": True, "split": True, "send": True}
@@ -772,36 +783,104 @@ class MacBackend(Backend):
 
     # ---------- desktop integration ----------
 
-    def open_path(self, path: str, app: str = "default") -> str:
+    def open_path(self, path: str, app: str = "default", command: bool = False) -> str:
         p = Path(path)
         if not p.exists():
             return f"path does not exist: {path}"
-        if app == "finder":
-            args = ["open", str(p)]
-        elif app == "ij":
+        if app in ("", "default", "finder"):
+            return self._run_open(["open", str(p)])
+        if app == "ij":
             # Back-compat: legacy clients sending app="ij" — use IJ_APP default.
-            args = ["open", "-na", IJ_APP, "--args", str(p)]
-        elif app and app != "default":
-            args = ["open", "-na", app, "--args", str(p)]
+            app = IJ_APP
+        label, target, extra = self.launch_target(app, command)
+        if target and not target.endswith(".app"):
+            # A command (a CLI launcher on PATH): it takes the folder itself.
+            try:
+                subprocess.Popen([target, *extra, str(p)], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+                return "ok"
+            except (OSError, subprocess.SubprocessError) as e:
+                return f"error: {e}"
+        # An app: its bundle when found, else by name, which Launch Services
+        # may still know (an app outside every folder looked in).
+        if command:
+            name = target or (self._command_argv(app) or [app])[0]
         else:
-            args = ["open", str(p)]
+            name = target or _APP_NAMES.get(editor_id(app), (app,))[0]
+        res = self._run_open(["open", "-na", name, "--args", *extra, str(p)])
+        if res == "ok" or target:
+            return res
+        self._run_open(["open", str(p)])
+        return (f"{label} was not found on this Mac, so the folder opened in Finder "
+                f"instead. Choose the editor in Settings › Editor.")
+
+    def _run_open(self, args: list[str]) -> str:
         try:
             r = subprocess.run(args, capture_output=True, text=True, timeout=5)
             if r.returncode == 0:
                 return "ok"
             return r.stderr.strip() or f"exit {r.returncode}"
-        except subprocess.SubprocessError as e:
+        except (OSError, subprocess.SubprocessError) as e:
             return f"error: {e}"
 
+    # ---------- finding an editor ----------
+
+    def _app_dirs(self) -> list[Path]:
+        """Where apps are installed: the system's and the person's
+        Applications folders, and JetBrains Toolbox's folder in each."""
+        home = Path.home()
+        return [Path("/Applications"), home / "Applications",
+                home / "Applications" / "JetBrains Toolbox",
+                Path("/Applications") / "JetBrains Toolbox"]
+
+    def _caches_dir(self) -> Path:
+        return Path.home() / "Library" / "Caches" / "JetBrains"
+
+    def _locate_editor(self, eid: str) -> str | None:
+        """The editor's .app: where a JetBrains version's .home file says it
+        is, else the newest bundle by name in an Applications folder
+        (Toolbox installs included)."""
+        for home in jetbrains_homes(eid, self._caches_dir()):
+            app = next((q for q in (home, *home.parents) if q.suffix == ".app"), None)
+            if app and app.is_dir():
+                return str(app)
+        found = []
+        for d in self._app_dirs():
+            for name in _APP_NAMES.get(eid, ()):
+                try:
+                    found += [a for a in d.glob(name + "*.app") if a.is_dir()]
+                except OSError:
+                    pass
+        if found:
+            return str(max(found, key=lambda a: a.stat().st_mtime))
+        return None
+
+    def _locate_program(self, cmd: str) -> str | None:
+        """A program the person named: a .app path, an app's name in an
+        Applications folder, or a command on PATH."""
+        cmd = (cmd or "").strip().strip('"\'')
+        if not cmd:
+            return None
+        if cmd.endswith(".app") and Path(cmd).is_dir():
+            return cmd
+        name = cmd[:-4] if cmd.endswith(".app") else cmd
+        if "/" not in name:
+            for d in self._app_dirs():
+                if (d / f"{name}.app").is_dir():
+                    return str(d / f"{name}.app")
+        if Path(cmd).is_file():
+            return cmd
+        return shutil.which(cmd)
+
     def editor_icon_path(self, app_name: str) -> Path | None:
-        """Cached PNG of the app's icon, extracted from /Applications/<app>.app
-        via `sips` on first use. None if not installed or extraction fails."""
+        """Cached PNG of the app's icon, extracted from its .app (a path, or a
+        name in /Applications) via `sips` on first use. None if not installed or extraction fails."""
         if not app_name:
             return None
-        cache = ICON_CACHE_DIR / f"{app_slug(app_name)}.png"
+        app_path = Path(app_name) if app_name.endswith(".app") else Path(f"/Applications/{app_name}.app")
+        cache = ICON_CACHE_DIR / f"{app_slug(app_path.stem)}.png"
         if cache.exists():
             return cache
-        app_path = Path(f"/Applications/{app_name}.app")
         if not app_path.exists():
             return None
         info = app_path / "Contents" / "Info.plist"

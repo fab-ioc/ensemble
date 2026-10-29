@@ -24,7 +24,7 @@ import uuid
 from ctypes import wintypes
 from pathlib import Path
 
-from .base import Backend, DASHBOARD_DIR
+from .base import Backend, DASHBOARD_DIR, jetbrains_homes
 from .shared import AGENT_SESS_DIR, claude_cmd_args
 from . import themes
 
@@ -324,7 +324,7 @@ class WindowsBackend(Backend):
     os_name = "win32"
     terminal_name = "Windows Terminal"
     file_manager_name = "Explorer"
-    # Values double as the launch command (resolved via PATH) and button label.
+    # Language → editor id (backends.base.EDITORS) for Automatic.
     default_editor_map = {
         "java":       "idea",
         "kotlin":     "idea",
@@ -790,7 +790,7 @@ class WindowsBackend(Backend):
 
     # ---------- desktop integration ----------
 
-    def open_path(self, path: str, app: str = "default") -> str:
+    def open_path(self, path: str, app: str = "default", command: bool = False) -> str:
         p = Path(path)
         if not p.exists():
             return f"path does not exist: {path}"
@@ -807,24 +807,162 @@ class WindowsBackend(Backend):
                 return "ok"
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
-        if app == "ij":
-            app = "idea"
-        exe = shutil.which(app)
-        if not exe:
-            # Unknown editor command — fall back to opening the folder in Explorer.
+        label, exe, extra = self.launch_target(app, command)
+        batch = bool(exe) and exe.lower().endswith((".cmd", ".bat"))
+        # A .cmd/.bat runs through cmd.exe, which reads & | < > ^ and %NAME%
+        # in its arguments as its own (a folder "a&b" would run "b"): such a
+        # folder is not handed to one.
+        unsafe = batch and any(_CMD_SPECIAL.search(a) for a in [*extra, str(p)])
+        if not exe or unsafe:
+            # Not found on this computer: open the folder in Explorer instead.
             try:
                 explorer = os.path.join(
                     os.environ.get("WINDIR", r"C:\Windows"), "explorer.exe")
                 subprocess.Popen([explorer if os.path.exists(explorer) else "explorer",
                                   str(p)], close_fds=True)
-                return f"editor not found: {app} (opened folder instead)"
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
+            if unsafe:
+                return (f"{label} starts through a script that would misread the folder's "
+                        f"name (it holds & or % or the like), so the folder opened in "
+                        f"Explorer instead. Choose another editor in Settings › Editor.")
+            return (f"{label} was not found on this computer, so the folder opened in "
+                    f"Explorer instead. Choose the editor in Settings › Editor.")
+        # A .cmd/.bat (a Toolbox script, VS Code's code.cmd) runs in a console
+        # of its own: hidden, so the hub's windowless process flashes nothing.
+        flags = _CREATE_NO_WINDOW if batch else 0
         try:
-            subprocess.Popen([exe, str(p)], close_fds=True)
+            subprocess.Popen([exe, *extra, str(p)], close_fds=True, creationflags=flags)
             return "ok"
         except (OSError, subprocess.SubprocessError) as e:
             return f"error: {e}"
+
+    # ---------- finding an editor ----------
+
+    posix_command_line = False
+
+    def _scan_editors(self) -> dict[str, str | None]:
+        # The Toolbox's installs are listed once for every JetBrains IDE.
+        self._toolbox_builds = _toolbox_builds()
+        try:
+            return super()._scan_editors()
+        finally:
+            self.__dict__.pop("_toolbox_builds", None)
+
+    def _locate_editor(self, eid: str) -> str | None:
+        r"""Where an editor is installed. JetBrains IDEs are often not on PATH:
+        the installer puts them under %LOCALAPPDATA%\Programs or Program
+        Files\JetBrains, the Toolbox under its apps folder with launch scripts
+        in Toolbox\scripts; each version also records where it is in a .home
+        file. The newest version found that way wins, then the newest install."""
+        local = os.environ.get("LOCALAPPDATA", "")
+        found: list[Path] = []
+        jb = _JETBRAINS_WIN.get(eid)
+        if jb:
+            folder, exe = jb
+            for root in _program_roots():
+                found += _glob_dirs(root / "JetBrains", folder, Path("bin") / exe)
+            if local:
+                found += _glob_dirs(Path(local) / "Programs", folder, Path("bin") / exe)
+            builds = self.__dict__.get("_toolbox_builds")
+            for build in (_toolbox_builds() if builds is None else builds):
+                if (build / "bin" / exe).is_file():
+                    found.append(build / "bin" / exe)
+            if local:
+                for home in jetbrains_homes(eid, Path(local) / "JetBrains"):
+                    if (home / "bin" / exe).is_file():
+                        return str(home / "bin" / exe)
+            if found:
+                return str(max(found, key=_mtime))
+            hit = shutil.which(exe)
+            if hit:
+                return hit
+            if local:
+                script = Path(local) / "JetBrains" / "Toolbox" / "scripts" / f"{eid}.cmd"
+                if script.is_file():
+                    # The IDE the script starts, when it names it: run that,
+                    # not cmd.exe (which misreads a folder with & or %).
+                    return _script_target(script, exe) or str(script)
+            return shutil.which(eid)
+        for rel in _OTHER_EDITORS_WIN.get(eid, ()):
+            for root in ([Path(local) / "Programs"] if local else []) + _program_roots():
+                if (root / rel).is_file():
+                    return str(root / rel)
+        return shutil.which(eid) if eid != "xcode" else None
+
+
+# IntelliJ-family installs: id → (install folder glob, launcher in its bin).
+_JETBRAINS_WIN = {
+    "idea":      ("IntelliJ IDEA*", "idea64.exe"),
+    "pycharm":   ("PyCharm*", "pycharm64.exe"),
+    "webstorm":  ("WebStorm*", "webstorm64.exe"),
+    "goland":    ("GoLand*", "goland64.exe"),
+    "rustrover": ("RustRover*", "rustrover64.exe"),
+    "rubymine":  ("RubyMine*", "rubymine64.exe"),
+    "phpstorm":  ("PhpStorm*", "phpstorm64.exe"),
+    "clion":     ("CLion*", "clion64.exe"),
+    "rider":     ("JetBrains Rider*", "rider64.exe"),
+}
+# Other editors: the program under %LOCALAPPDATA%\Programs or Program Files.
+_OTHER_EDITORS_WIN = {
+    "code":   (Path("Microsoft VS Code") / "Code.exe",),
+    "cursor": (Path("cursor") / "Cursor.exe", Path("Cursor") / "Cursor.exe"),
+}
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _program_roots() -> list[Path]:
+    roots = []
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        v = os.environ.get(var)
+        if v and Path(v) not in roots:
+            roots.append(Path(v))
+    return roots
+
+
+# What cmd.exe reads as its own in a .cmd/.bat's arguments.
+_CMD_SPECIAL = re.compile(r'[&|<>^%!"\r\n]')
+
+
+def _toolbox_builds() -> list[Path]:
+    """Each IDE build JetBrains Toolbox installed (apps/<IDE>/ch-*/<build>)."""
+    local = os.environ.get("LOCALAPPDATA", "")
+    if not local:
+        return []
+    out = []
+    for ch in _glob_dirs(Path(local) / "JetBrains" / "Toolbox" / "apps", "*", Path()):
+        try:
+            out += [b for b in ch.glob("ch-*/*") if b.is_dir()]
+        except OSError:
+            pass
+    return out
+
+
+def _script_target(script: Path, exe: str) -> str | None:
+    """The ``exe`` a Toolbox launch script starts, when it names one that exists."""
+    try:
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for m in re.finditer(r'"?([A-Za-z]:\\[^"\r\n]*?\\' + re.escape(exe) + r')"?', text, re.I):
+        if os.path.isfile(m.group(1)):
+            return m.group(1)
+    return None
+
+
+def _glob_dirs(root: Path, pattern: str, rel: Path) -> list[Path]:
+    """``root/<pattern>/rel`` for each folder matching, where it exists."""
+    try:
+        return [d / rel for d in root.glob(pattern) if d.is_dir() and (d / rel).exists()]
+    except OSError:
+        return []
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 # ---------- module helpers ----------

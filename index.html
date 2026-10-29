@@ -3026,6 +3026,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel .pref-seg { width: 100%; }
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
   #settings-panel #pref-nickname,
+  #settings-panel #pref-editor-cmd,
   #settings-panel #pref-stall-seconds,
   #settings-panel #pref-drain-minutes,
   #settings-panel #pref-pace-margin,
@@ -3049,6 +3050,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
+  #settings-panel #pref-editor-cmd:focus,
   #settings-panel #pref-stall-seconds:focus,
   #settings-panel #pref-pace-margin:focus,
   #settings-panel #pref-balance-margin:focus,
@@ -4488,6 +4490,20 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
     <p class="cfg-hint">The word every screen uses for a board of tasks with its PO, on every device of this hub. Only what you read changes: agents and file names stay as they are. The page reloads to show it.</p>
   </div>
+  <!-- #286: what Open in editor opens, for every project (/api/editors). -->
+  <div class="settings-section" id="settings-editor">
+    <h4>Editor</h4>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-editor">Open in editor opens</label>
+      <select id="pref-editor" class="pref-select" disabled></select>
+    </div>
+    <div class="pref-row" id="pref-editor-cmd-row" style="margin-top: 14px;" hidden>
+      <label class="pref-label" for="pref-editor-cmd">Command</label>
+      <input type="text" id="pref-editor-cmd" autocomplete="off" spellcheck="false" maxlength="300">
+    </div>
+    <p class="cfg-hint" id="pref-editor-note" role="status"></p>
+    <p class="cfg-hint" data-noun="One choice for every {project}. The editor opens on the hub's computer, so the editors offered by name are the ones found installed there. Other command… runs that command there, with the code folder after it.">One choice for every project. The editor opens on the hub's computer, so the editors offered by name are the ones found installed there. Other command… runs that command there, with the code folder after it.</p>
+  </div>
   <div class="settings-section" id="settings-backup">
     <h4 data-noun="Backup of your {projects}">Backup of your projects</h4>
     <p class="cfg-hint" id="backup-root-hint" data-noun="Your {projects} and their tasks live in one folder that the app keeps as a git repository. Give it a remote and it commits &amp; pushes on a schedule — so a new machine gets every {project} and the knowledge built inside it.">Your projects and their tasks live in one folder that the app keeps as a git repository. Give it a remote and it commits &amp; pushes on a schedule — so a new machine gets every project and the knowledge built inside it.</p>
@@ -5231,7 +5247,7 @@ function actionState(r, isLive) {
   };
 }
 function actionEnv() {
-  return { hub: onHubMachine(), features: PLATFORM.features || {},
+  return { hub: onHubMachine(), features: PLATFORM.features || {}, editorName: PLATFORM.editorName || '',
            terminalName: T(), fileManagerName: FM(), panels: typeof pdPanelsOn === 'function' && pdPanelsOn() };
 }
 // One primary action and the More menu: in a list row, and in the task panel.
@@ -7734,6 +7750,103 @@ async function loadPrefs() {
     renderPrefs();
   } catch {}
   loadAgentModels();
+  loadEditors();
+}
+// Settings › Editor (#286): what Open in editor opens, for every project.
+// The hub says which editors it found installed (/api/editors); the choice
+// is saved as settings.editor ("" Automatic, an editor's id, or "custom"
+// with settings.editorCommand), and the IDE action names what will open.
+let EDITORS_INFO = null;
+let _editorsAsked = 0;
+// Other command… chosen, its command not typed yet: the list keeps showing it.
+let _editorCustomAsked = false;
+async function loadEditors() {
+  const asked = ++_editorsAsked;
+  let got = null;
+  try { got = await api('/api/editors'); } catch (e) {}
+  if (asked !== _editorsAsked) return;
+  if (got) EDITORS_INFO = got;
+  renderEditors();
+  // The IDE action's label follows: "Open in IntelliJ IDEA".
+  if (got && (PLATFORM.editorName || '') !== (got.buttonLabel || '')) {
+    PLATFORM.editorName = got.buttonLabel || '';
+    try { renderRows(); } catch (e) {}
+  }
+}
+const EDITOR_LANGS = { javascript: 'JavaScript', typescript: 'TypeScript', php: 'PHP', other: 'everything else' };
+function editorLangsText(langs) {
+  const words = langs.map(l => EDITOR_LANGS[l] || l.charAt(0).toUpperCase() + l.slice(1));
+  return words.length < 2 ? words.join('') : words.slice(0, -1).join(', ') + ' and ' + words[words.length - 1];
+}
+// In words, under the list: what opens now, and why.
+function editorNoteText(x, want) {
+  const FMN = x.fileManagerName || FM();
+  if (want === 'custom') {
+    if (!x.editorCommand) return 'Type the command that opens a folder in your editor, then press Enter.';
+    return x.editor !== 'custom' ? '' : x.chosenFound
+      ? nounText(`Every {project} opens with ${x.chosenLabel}.`)
+      : `${x.editorCommand} was not found on the hub's computer, so Open in editor opens the folder in ${FMN} instead.`;
+  }
+  if (want) {
+    if (want !== x.editor) return '';
+    return x.chosenFound ? nounText(`Every {project} opens in ${x.chosenLabel}.`)
+      : `${x.chosenLabel} is not found on the hub's computer any more, so Open in editor opens the folder in ${FMN} instead. Choose another editor.`;
+  }
+  if (!x.installed.length) {
+    return `No editor was found on the hub's computer, so Open in editor opens the folder in ${FMN}. Choose Other command… to name yours.`;
+  }
+  const groups = (x.automatic || []).filter(g => g.label);
+  if (groups.length === 1) return nounText(`Automatic opens every {project} in ${groups[0].label}.`);
+  return 'Automatic opens ' + groups.map(g => `${g.label} for ${editorLangsText(g.languages)}`).join('; ')
+    + '. A language whose own editor is not installed gets the first one found.';
+}
+function renderEditors() {
+  const sel = document.getElementById('pref-editor');
+  const note = document.getElementById('pref-editor-note');
+  const row = document.getElementById('pref-editor-cmd-row');
+  const cmd = document.getElementById('pref-editor-cmd');
+  if (!sel) return;
+  const x = EDITORS_INFO;
+  if (!x) {
+    if (document.activeElement !== sel) { sel.innerHTML = '<option value="">Automatic</option>'; sel.disabled = true; }
+    note.textContent = 'The hub did not say which editors it found. If it was updated just now, it needs a restart to offer this setting.';
+    return;
+  }
+  const want = _editorCustomAsked ? 'custom' : x.editor || '';
+  if (document.activeElement !== sel) {
+    const autoNow = (x.automatic || []).map(g => g.label).filter(Boolean);
+    const autoText = !autoNow.length ? `Automatic (now the folder, in ${x.fileManagerName || FM()})`
+      : autoNow.length === 1 ? `Automatic (now ${autoNow[0]})`
+      : `Automatic (by language: ${autoNow.join(', ')})`;
+    const opts = [['', autoText]].concat(x.installed.map(e => [e.id, e.label]));
+    // A choice saved before stays listed, marked, until another is made.
+    if (want && want !== 'custom' && !x.installed.some(e => e.id === want)) opts.push([want, `${x.chosenLabel} (not found)`]);
+    opts.push(['custom', 'Other command…']);
+    sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+    sel.value = want;
+    sel.disabled = false;
+  }
+  row.hidden = sel.value !== 'custom';
+  if (cmd && document.activeElement !== cmd) cmd.value = x.editorCommand || '';
+  if (cmd) cmd.placeholder = PLATFORM.os === 'win32' ? 'C:\\path\\to\\editor.exe, or a command on PATH'
+    : PLATFORM.os === 'darwin' ? 'an app’s name, or a command on PATH' : 'a command on PATH';
+  note.textContent = editorNoteText(x, sel.value);
+}
+// Saved one at a time, in the order made (arrow keys on the list make one a step).
+let _editorSaves = Promise.resolve();
+function saveEditor(change) {
+  _editorCustomAsked = false;
+  _editorSaves = _editorSaves.then(async () => {
+    try {
+      PREFS = await api('/api/settings', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(change),
+      });
+      if (Object.keys(change).some(k => PREFS[k] !== change[k])) throw new Error('the hub needs a restart to know this setting');
+      toast('preference saved', 1500, 'ok');
+    } catch (e) { toast('Not saved: ' + e.message, 6000, 'err'); }
+    await loadEditors();
+  }).catch(() => {});
+  return _editorSaves;
 }
 // Agent models (Settings): the model an agent the hub starts runs on when its
 // seat names none, per agent kind, and Codex's reasoning effort. The hub says
@@ -20193,6 +20306,7 @@ const SP_ICONS = {
   feedback: '<path d="M4 5h16v11H9l-5 4z"/>',
   models: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
   prefs: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+  editor: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>',
   backup: '<path d="M7 18a5 5 0 0 1-.5-9.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"/><path d="M12 16v-5M9.5 13.5 12 11l2.5 2.5"/>',
   prune: '<rect x="3" y="13" width="18" height="7" rx="2"/><path d="m5 13 2-8h10l2 8M17 16.5h.01"/>',
   runtime: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
@@ -21052,7 +21166,7 @@ async function ideAction(btn) {
     const repos = Array.isArray(r) ? r : (r.repos || []);
     btn.classList.remove('busy');
     if (!repos.length) { toast(nothingToOpenText(r.lookedIn || []), 6000, 'err'); return; }
-    if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
+    if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor, repos[0].editorName); return; }
     showIjMenu(btn._at || btn, repos);   // a stand-in (pdRunAction) names the ⋯ to open under
   } catch (e) {
     btn.classList.remove('busy');
@@ -21383,17 +21497,30 @@ function showInputModal({title, defaults = {}, okLabel = 'OK', titleHelp, prompt
   });
 }
 
-async function openInEditor(path, editor) {
+// editor: what the hub chose (an id or a command; "" when no editor was
+// found, so the folder opens), name: how it is called.
+async function openInEditor(path, editor, name) {
+  const label = name || editor;
+  const folder = path.split(/[\\/]/).pop();
   try {
     const r = await api('/api/open-path', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({path, app: editor || 'default'}),
     });
-    const where = editor ? ` in ${editor}` : '';
-    if (r.result === 'ok') toast(`opened${where}: ${path.split('/').pop()}`, 2200, 'ok');
-    else toast('open: ' + r.result, 4000, 'err');
+    // The folder opened instead: said plainly, not as an error.
+    if (r.result === 'ok' && !editor) toast(`No editor was found on this computer, so ${folder} opened in ${FM()}. Choose one in Settings › Editor.`, 7000);
+    else if (r.result === 'ok') toast(`opened in ${label}: ${folder}`, 2200, 'ok');
+    // The hub's own sentence says what it tried and where to choose.
+    else if (/Settings › Editor\.$/.test(r.result)) toast(r.result, 8000);
+    else toast(`${label || 'The editor'} did not open (${r.result}). Choose the editor in Settings › Editor.`, 8000, 'err');
   } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+}
+
+// What a repo opens in, in the picker: an editor not found is said so.
+function ijOpensIn(r) {
+  if (!r.editorName) return FM();
+  return r.editorFound === false ? `${r.editorName} (not found)` : r.editorName;
 }
 
 function closeIjMenu() {
@@ -21408,10 +21535,10 @@ function showIjMenu(anchor, repos) {
   const menu = doc.createElement('div');
   menu.className = 'ij-menu';
   menu.innerHTML = repos.map(r => `
-    <button class="ij-menu-item" data-path="${esc(r.path)}" data-editor="${esc(r.editor || '')}" title="${esc(r.path)} → ${esc(r.editor || 'default')}">
+    <button class="ij-menu-item" data-path="${esc(r.path)}" data-editor="${esc(r.editor || '')}" data-name="${esc(r.editorName || '')}" title="${esc(r.path)} → ${esc(ijOpensIn(r))}">
       ${r.iconUrl ? `<img class="ij-icon" src="${esc(r.iconUrl)}" alt="">` : `<span class="ij-icon-fallback">▢</span>`}
       <span class="ij-name">${esc(r.name)}</span>
-      <span class="ij-editor">${esc(r.editor || '')}</span>
+      <span class="ij-editor">${esc(ijOpensIn(r))}</span>
     </button>`
   ).join('');
   doc.body.appendChild(menu);
@@ -21422,7 +21549,7 @@ function showIjMenu(anchor, repos) {
     const item = ev.target.closest('.ij-menu-item');
     if (!item) return;
     closeIjMenu();
-    await openInEditor(item.dataset.path, item.dataset.editor);
+    await openInEditor(item.dataset.path, item.dataset.editor, item.dataset.name);
   });
 }
 
@@ -22186,6 +22313,31 @@ window.ensUpdPlace = () => ({
   document.getElementById('settings-models')?.addEventListener('focusout', () => {
     setTimeout(renderAgentModels, 0);
   });
+  // Editor (#286): a choice is saved as it is made; Other command… waits for
+  // its command (Enter, or leaving the box).
+  document.getElementById('pref-editor')?.addEventListener('change', (ev) => {
+    const sel = ev.target;
+    if (sel.value !== 'custom') { saveEditor({ editor: sel.value }); return; }
+    const cmd = document.getElementById('pref-editor-cmd');
+    if (cmd.value.trim()) { saveEditor({ editor: 'custom', editorCommand: cmd.value.trim() }); return; }
+    _editorCustomAsked = true;
+    renderEditors();
+    cmd.focus();
+  });
+  document.getElementById('settings-editor')?.addEventListener('focusout', () => setTimeout(renderEditors, 0));
+  const editorCmd = document.getElementById('pref-editor-cmd');
+  if (editorCmd) {
+    const commitCmd = () => {
+      const v = editorCmd.value.trim();
+      if (v && (v !== (EDITORS_INFO?.editorCommand || '') || EDITORS_INFO?.editor !== 'custom')) {
+        saveEditor({ editor: 'custom', editorCommand: v });
+      }
+    };
+    editorCmd.addEventListener('blur', commitCmd);
+    editorCmd.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); editorCmd.blur(); }
+    });
+  }
   // Operator nickname: what the agents call you (save on blur/Enter)
   const nickInput = document.getElementById('pref-nickname');
   if (nickInput) {

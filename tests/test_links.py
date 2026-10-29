@@ -976,7 +976,7 @@ class HubMachineActions(unittest.TestCase):
 
         # On the hub machine nothing changes.
         self.assertIn(' focus-btn" data-act="focus"', hub["live"])
-        self.assertIn("preferred editor", hub["live"])
+        self.assertIn("in the editor for its language (Settings › Editor)", hub["live"])
         self.assertIn("Open in a real Windows Terminal terminal window", hub["history"])
         self.assertRegex(hub["menu"], r'dp-terms-btn" data-act="terminals"[^>]*><span class="am-lbl">Show terminals<')
         self.assertNotIn("dp-terms-hide", hub["menu"])

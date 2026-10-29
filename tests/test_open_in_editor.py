@@ -88,7 +88,9 @@ class ReposForSession(unittest.TestCase):
             mock.patch.object(dashboard, "cwd_for_session", lambda sid: cwds.get(sid, "")),
             mock.patch.object(dashboard, "_read_session_files", lambda *a, **k: []),
             mock.patch.object(dashboard, "resolve_editor_for_repo",
-                              lambda p: ("java", "IntelliJ IDEA" if (p / ".idea").exists() else "Visual Studio Code", None)),
+                              lambda p: ("java", {"id": "idea", "label": "IntelliJ IDEA", "path": "idea64.exe"}
+                                         if (p / ".idea").exists() else
+                                         {"id": "code", "label": "VS Code", "path": ""}, None)),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
         ]
         for p in patches:
@@ -135,7 +137,8 @@ class ReposForSession(unittest.TestCase):
         # before, that repo (the projects folder) was offered.
         r = self.get("room-0000a001")
         self.assertEqual([x["path"] for x in r["repos"]], [str(self.p["code"])])
-        self.assertEqual(r["repos"][0]["editor"], "IntelliJ IDEA")
+        self.assertEqual((r["repos"][0]["editor"], r["repos"][0]["editorName"], r["repos"][0]["editorFound"]),
+                         ("idea", "IntelliJ IDEA", True))
 
     def test_po_in_a_scratch_folder_opens_the_code_folder(self):
         # The reported case: a ~/cs folder with no repo gave "no initiative found".
@@ -201,6 +204,23 @@ class ReposForSession(unittest.TestCase):
     def test_no_folder_known(self):
         self.assertEqual(self.get("sess-none"), {"repos": [], "lookedIn": []})
         self.assertEqual(self.get("room-0000ffff"), {"repos": [], "lookedIn": []})
+
+    def test_an_editor_icon_is_a_plain_file_name_only(self):
+        # #286 review 1: a Windows join with "C:x" or "..\x" left the icons'
+        # folder, so anything but a plain "<name>.png" is not found.
+        icons = self.base / "icons"
+        icons.mkdir(exist_ok=True)
+        (icons / "idea.png").write_bytes(b"\x89PNG icon")
+        (self.base / "secret.png").write_bytes(b"secret")
+        static = self.url.replace("/api/repos/", "/static/editors/")
+        with mock.patch.object(dashboard, "ICON_CACHE_DIR", icons):
+            with urllib.request.urlopen(static + "idea.png", timeout=10) as r:
+                self.assertEqual(r.read(), b"\x89PNG icon")
+            for name in ("C:%5Cx", "..%5Csecret.png", "..%2Fsecret.png", "C:secret.png", "IDEA.png", "idea.exe"):
+                with self.subTest(name=name), self.assertRaises(urllib.error.HTTPError) as e:
+                    urllib.request.urlopen(static + name, timeout=10)
+                # "..": refused before the icons (400); the rest are not found.
+                self.assertIn(e.exception.code, (400, 404), name)
 
 
 NODE = shutil.which("node")
