@@ -289,7 +289,7 @@ def describe(value) -> dict:
     # Judged by the reading where there is one: a reserve no reading reports
     # is not where the seat's turns are counted.
     reading = next((s for s in usage.snapshot().get("sources") or []
-                    if s.get("source") == "codex" and s.get("state") == "ok"), None)
+                    if s.get("source") == "codex"), None)
     pool = usage.codex_pool_for_model(reading, runs_on)
     return {
         "claude": {

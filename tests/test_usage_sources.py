@@ -74,7 +74,7 @@ class ClaudeReadingTests(unittest.TestCase):
         self.assertEqual(dashboard._kind_usage(_snapshot(src), "claude"),
                          {"state": "known", "percent": 40.0, "window": "five_hour",
                           "label": "5-hour", "trusted": True, "atLeast": False,
-                      "ageSeconds": 120})
+                          "ageSeconds": 120})
 
     def test_stale_local_reading_stays_known_as_a_floor(self):
         path = _statusline_file(self.tmp, age=2 * 3600, five=85)
