@@ -70,6 +70,12 @@ class _Handler:
         return (result or {}).get("recipients") or []
 
 
+class _StartHandler(_Handler):
+    """Handler._start_review up to its restart hold, on a fake handler."""
+    _start_review = dashboard.Handler._start_review
+    _review_limit_check = dashboard.Handler._review_limit_check
+
+
 class _Task(unittest.TestCase):
     """A PO room and a task (claude owner, codex reviewer) whose log has
     ``self.rounds`` rounds; the setting is 3 rounds."""
@@ -161,6 +167,38 @@ class StartRefused(_Task):
         self.assertEqual(len(quiet_reports.pending(self.po_rid)), 1)
         self.check()
         self.assertEqual(len(self.po_messages()), 1, "told once per limit")
+
+    def start(self, **kw):
+        h = _StartHandler()
+        h.rang = self.handler.rang
+        with mock.patch.object(dashboard.restart_drain, "try_hold", return_value=True) as hold:
+            res = h._start_review(self.rid, "codex", {"id": "m1", "from": "claude", "text": "review"},
+                                  **kw)
+        return res, hold
+
+    def test_start_review_refuses_at_the_limit_before_anything_else(self):
+        res, hold = self.start()
+        self.assertTrue(res["limited"])
+        hold.assert_not_called()
+        # A drain note alone does not skip the check (review 1, finding 1).
+        res, hold = self.start(note="carry on from step 2")
+        self.assertTrue(res["limited"])
+
+    def test_a_restored_or_held_review_is_not_checked_again(self):
+        # restart restore and restart_drain's release pass restore=True: the
+        # review passed the check when it was asked for.
+        res, hold = self.start(restore=True)
+        self.assertTrue(res["held"])
+        hold.assert_called_once()
+        self.assertEqual(self.handler.rang, [])
+
+    def test_the_drain_lets_a_held_review_go_as_a_restore(self):
+        chatroom.post_message(self.rid, "claude", "please review", to="codex")
+        msg = self.room()["messages"][-1]
+        h = mock.Mock()
+        dashboard.restart_drain._deliver(h, {"kind": "review", "roomId": self.rid,
+                                             "identity": "codex", "messageId": msg["id"]})
+        self.assertEqual(h._start_review.call_args.kwargs, {"restore": True})
 
     def test_below_the_limit_or_the_person_asking_it_starts(self):
         self.assertIsNone(self.check("user"))

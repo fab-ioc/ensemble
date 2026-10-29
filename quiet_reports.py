@@ -8,9 +8,12 @@ could act on later. They are posted in the PO's chat at their time as before
 attention detector waits for no answer) and their one-line gist waits here,
 in ``DASHBOARD_DIR/quiet_reports.json``, by PO room:
 
-* **With the PO's next wake, whatever it is** — a completed report, a digest,
-  the person's message: ``_type_input_now`` adds them to that line
-  (:func:`rider`), and they leave the queue once the line is in.
+* **With the PO's next hub line** — a completed report, a digest, a
+  verdict that rings: ``_type_input_now`` takes them from the queue and adds
+  them to that line (:func:`rider`), and puts them back when the line is not
+  taken (:func:`put_back`). The person's own words to the PO, and a wake of
+  a PO running in a visible terminal (``BACKEND.send_text``), do not carry
+  them: they wait for the next hub line or the batch.
 * **Or after** :data:`IDLE_S` **(30 minutes)** with no wake, when the PO is
   running and idle: one batched ``[quiet reports]`` line (:func:`tick`,
   riding the progress check's once-a-minute loop like ``po_messages``). A
@@ -125,20 +128,42 @@ def _text(items: list[dict]) -> tuple[str, list[str]]:
     return body, [it["id"] for it in items] if rest else told
 
 
-def rider(po_room_id: str, identity: str) -> tuple[str, list[str]]:
+def rider(po_room_id: str, identity: str) -> tuple[str, list[dict]]:
     """What a line typed to the PO of ``po_room_id`` carries along: ``(" |
-    Quiet reports since your last wake: …", ids)``, ("", []) when nothing
-    waits or ``identity`` is not that room's PO."""
-    with _LOCK:
-        items = list(_load().get(po_room_id) or [])
-    if not items:
-        return "", []
-    room = _d.chatroom.get_room(po_room_id)
+    Quiet reports since your last wake: ...", items)``, ("", []) when nothing
+    waits or ``identity`` is not that room's PO. The items leave the queue
+    here, under the lock, so two lines typed at once never both carry them;
+    :func:`put_back` returns them when the line is not taken."""
+    room = _d.chatroom.get_room(po_room_id) if po_room_id else None
     if room is None or _d.chatroom.po_identity(room) != identity:
         return "", []
-    body, ids = _text(items)
+    with _LOCK:
+        st = _load()
+        items = list(st.get(po_room_id) or [])
+        if not items:
+            return "", []
+        body, ids = _text(items)
+        taken = [i for i in items if i["id"] in set(ids)]
+        left = [i for i in items if i["id"] not in set(ids)]
+        if left:
+            st[po_room_id] = left
+        else:
+            st.pop(po_room_id, None)
+        _save()
     return (f" | Quiet reports since your last wake (in your chat; nothing to answer): "
-            f"{body}."), ids
+            f"{body}."), taken
+
+
+def put_back(po_room_id: str, items: list[dict]) -> None:
+    """The line that carried ``items`` was not taken: they wait again."""
+    if not items:
+        return
+    with _LOCK:
+        st = _load()
+        have = {i.get("id") for i in st.get(po_room_id) or []}
+        st[po_room_id] = sorted([i for i in items if i.get("id") not in have] + st.get(po_room_id, []),
+                                key=lambda i: i.get("at") or 0)
+        _save()
 
 
 def told(po_room_id: str, ids: list[str]) -> None:
@@ -179,17 +204,23 @@ def tick(now: float | None = None) -> list[str]:
             sess = _d.po_messages._target(rid, require_idle=True)
         if sess is None:
             continue
-        line, ids = batch_line(items)
-        # The rider must not add them a second time to their own line.
-        told(rid, ids)
+        # Taken from the queue under the lock: a line typed meanwhile may
+        # have carried some, and the rider must not add these to this line.
+        with _LOCK:
+            st = _load()
+            items = list(st.get(rid) or [])
+            line, ids = batch_line(items) if items else ("", [])
+            st[rid] = [i for i in items if i["id"] not in set(ids)]
+            if not st[rid]:
+                st.pop(rid, None)
+            _save()
+        if not ids:
+            continue
         if _d._type_input(sess, line):
             out.append(rid)
             _log(f"typed {len(ids)} to the PO of {rid}")
         else:
-            with _LOCK:
-                st = _load()
-                st[rid] = sorted(items + st.get(rid, []), key=lambda i: i.get("at") or 0)
-                _save()
+            put_back(rid, [i for i in items if i["id"] in set(ids)])
     return out
 
 

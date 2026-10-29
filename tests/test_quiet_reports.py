@@ -47,24 +47,29 @@ class Queue(_Rooms):
         self.assertEqual(quiet_reports.rider(self.po_rid, "po"), ("", []))
         quiet_reports.hold(self.po_rid, "m1", quiet_reports.gist("update from #12 (claude)", "half done"))
         quiet_reports.hold(self.po_rid, "m2", "review 2 approved of #13 (codex): fine")
-        extra, ids = quiet_reports.rider(self.po_rid, "po")
-        self.assertEqual(ids, ["m1", "m2"])
-        self.assertIn("update from #12 (claude): half done; review 2 approved", extra)
         self.assertEqual(quiet_reports.rider(self.po_rid, "claude"), ("", []), "only the room's PO")
-        quiet_reports.told(self.po_rid, ["m1"])
+        self.assertEqual(len(quiet_reports.pending(self.po_rid)), 2)
+        extra, items = quiet_reports.rider(self.po_rid, "po")
+        self.assertEqual([i["id"] for i in items], ["m1", "m2"])
+        self.assertIn("update from #12 (claude): half done; review 2 approved", extra)
+        # Taken: a second line typed at the same time carries nothing.
+        self.assertEqual(quiet_reports.rider(self.po_rid, "po"), ("", []))
+        quiet_reports.put_back(self.po_rid, items[1:])
         self.assertEqual([i["id"] for i in quiet_reports.pending(self.po_rid)], ["m2"])
         # It is kept on disk across a hub restart.
         quiet_reports.reset()
         self.assertEqual([i["id"] for i in quiet_reports.pending(self.po_rid)], ["m2"])
+        quiet_reports.told(self.po_rid, ["m2"])
+        self.assertEqual(quiet_reports.pending(self.po_rid), [])
 
     def test_a_long_gist_and_a_long_queue_are_cut(self):
         self.assertTrue(quiet_reports.gist("u", "x" * 500).endswith("…"))
         for i in range(30):
             quiet_reports.hold(self.po_rid, f"m{i}", "y" * 150)
-        extra, ids = quiet_reports.rider(self.po_rid, "po")
+        extra, items = quiet_reports.rider(self.po_rid, "po")
         self.assertLess(len(extra), quiet_reports._LINE_MAX + 120)
         self.assertIn("more", extra)
-        self.assertEqual(len(ids), 30, "the ones only counted are told too")
+        self.assertEqual(len(items), 30, "the ones only counted are told too")
 
 
 class Rider(_Rooms):
@@ -87,6 +92,15 @@ class Rider(_Rooms):
         self.assertTrue(typed[0].startswith("[report] #14 completed | Quiet reports since"))
         self.assertIn("half done", typed[0])
         self.assertEqual(quiet_reports.pending(self.po_rid), [])
+
+    def test_a_line_refused_its_turn_takes_nothing(self):
+        quiet_reports.hold(self.po_rid, "m1", "update from #12 (claude): half done")
+        with mock.patch.object(dashboard.rotation, "reserve_hub_line", return_value=None), \
+                mock.patch.object(dashboard, "checkpoint_wait_restore"), \
+                mock.patch.object(quiet_reports, "rider", wraps=quiet_reports.rider) as rider:
+            self.assertFalse(dashboard._type_input_now(self.sess, "[report] #14 completed"))
+        rider.assert_not_called()
+        self.assertEqual(len(quiet_reports.pending(self.po_rid)), 1)
 
     def test_a_line_not_taken_keeps_them(self):
         quiet_reports.hold(self.po_rid, "m1", "update from #12 (claude): half done")

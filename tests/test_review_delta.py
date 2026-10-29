@@ -152,7 +152,7 @@ class LaterReview(_Repo):
         self.assertIn("+after merge", ctx["sinceDiff"])
         self.assertNotIn("+on main", ctx["sinceDiff"])
         self.assertNotIn("main moves", ctx["sinceCommits"])
-        self.assertNotIn("Merge", ctx["sinceCommits"])
+        self.assertIn("Merge", ctx["sinceCommits"], "the merge is listed; a clean one adds no diff")
         self.assertIn("b.txt", ctx["sinceStat"].rsplit("second change", 1)[1])
         self.assertIn("+dirty", ctx["sinceDiff"])
         self.assertNotIn("+on main", ctx["diff"])
@@ -160,6 +160,32 @@ class LaterReview(_Repo):
         self.assertIn("--cherry-pick --right-only", brief)
         self.assertIn("+after merge", brief)
         self.assertNotIn("+on main", brief)
+
+    def test_a_conflict_resolved_in_the_merge_is_in_the_change_since(self):
+        # Review 1, finding 2: a hand-resolved conflict lives only in the
+        # merge commit; the combined diff shows it, and nothing else of main.
+        git(self.root, "checkout", "-q", "main")
+        self.write("b.txt", "main's b\n")
+        self.write("m.txt", "on main\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "main moves")
+        git(self.root, "checkout", "-q", "sess/x")
+        subprocess.run(["git", "-C", self.root, "merge", "-q", "--no-edit", "main"],
+                       capture_output=True, env=GIT_ENV)
+        self.write("b.txt", "resolved by hand\n")
+        git(self.root, "add", "."); git(self.root, "commit", "-qm", "merge main")
+        ctx = dashboard.review_git_context(self.root, since=self.prev())
+        self.assertEqual(ctx["sinceMode"], "commits")
+        self.assertIn("merge main", ctx["sinceCommits"])
+        self.assertIn("+resolved by hand", ctx["sinceDiff"])
+        self.assertNotIn("+on main", ctx["sinceDiff"])
+
+    def test_untracked_files_are_named_in_the_brief(self):
+        self.write("new.txt", "untracked\n")
+        ctx = dashboard.review_git_context(self.root, since=self.prev())
+        self.assertIn("The untracked files (`??`) are in no diff: read them.", self.brief(2, ctx))
+        Path(self.root, "new.txt").unlink()
+        ctx = dashboard.review_git_context(self.root, since=self.prev())
+        self.assertNotIn("untracked files", self.brief(2, ctx))
 
     def test_a_rebased_branch_leaves_out_the_rebased_copies(self):
         head = git(self.root, "rev-parse", "--short", "HEAD")

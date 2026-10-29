@@ -177,7 +177,8 @@ class _Hub(unittest.TestCase):
             def _launch_room_agent_pty(self, *a, **k):
                 raise AssertionError("a room coming back is not launched fresh")
 
-            def _start_review(self, room_id, ident, msg, note=""):
+            def _start_review(self, room_id, ident, msg, note="", restore=False):
+                test.assertTrue(restore, "a restored review is not checked against the limit again")
                 test.reviews.append((room_id, ident, msg.get("id")))
                 test.review_notes.append(note)
                 return {"n": 2}

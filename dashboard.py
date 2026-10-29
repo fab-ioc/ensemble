@@ -3669,30 +3669,31 @@ def _type_input_now(sess, text: str, provenance: dict | None = None, *,
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
-    # A PO's quiet reports ride whatever wakes it next (quiet_reports.py):
-    # a hub line, not a person's own words, a slash command or a probe.
-    quiet_room, quiet_ids = "", []
-    if record and parts is None and provenance is None and not text.startswith("/"):
-        meta = getattr(sess, "meta", None) or {}
-        quiet_room = str(meta.get("room") or "")
-        try:
-            extra, quiet_ids = quiet_reports.rider(quiet_room, str(meta.get("identity") or ""))
-        except Exception as exc:    # noqa: BLE001 — the line goes anyway
-            print(f"[quiet-reports] not added: {exc!r}", flush=True)
-            extra = ""
-        text += extra
     why: list[str] = []
     lease = rotation.reserve_hub_line(sess, why)
     if lease is None:
         hub_typing.record(sess, False, why[0] if why else "refused")
         return False
+    # A PO's quiet reports ride the next hub line typed to it
+    # (quiet_reports.py), taken from the queue once the line is sure to be
+    # tried: not a person's own words, a slash command or a probe.
+    quiet_room, quiet_items = "", []
+    if record and parts is None and provenance is None and not text.startswith("/"):
+        meta = getattr(sess, "meta", None) or {}
+        quiet_room = str(meta.get("room") or "")
+        try:
+            extra, quiet_items = quiet_reports.rider(quiet_room, str(meta.get("identity") or ""))
+        except Exception as exc:    # noqa: BLE001 — the line goes anyway
+            print(f"[quiet-reports] not added: {exc!r}", flush=True)
+            extra = ""
+        text += extra
     ok = False
     try:
         ok = _type_input_reserved(sess, text, provenance, record=record, parts=parts, now=now)
-        if ok and quiet_ids:
-            quiet_reports.told(quiet_room, quiet_ids)
         return ok
     finally:
+        if quiet_items and not ok:
+            quiet_reports.put_back(quiet_room, quiet_items)
         rotation.release_hub_line(sess, lease)
         hub_typing.record(sess, ok, "" if ok else _not_typed_cause(sess))
 
@@ -5753,9 +5754,10 @@ def review_git_context(root: str, since: dict | None = None) -> dict:
     from the reviewed commit (the branch name no longer has to match: the
     reviewed commit in HEAD's history is what counts), 82 because main was
     merged in or the branch rebased since. Those now get the owner's own
-    commits since (``sinceMode`` "commits": ``git log -p --no-merges
+    commits since (``sinceMode`` "commits": ``git log -p --cc
     --cherry-pick --right-only <old>...HEAD ^<base>``, which leaves out
-    main's commits, merges and the rebased copies of reviewed ones), with
+    main's commits and the rebased copies of reviewed ones, and shows a
+    merge only by what it changed by hand, a resolved conflict), with
     the whole diff as a command for a reviewer that needs it. Only a
     reviewed commit git does not have falls back to the whole diff."""
     if not root:
@@ -5786,17 +5788,19 @@ def review_git_context(root: str, since: dict | None = None) -> dict:
         return ctx
     # Main merged in, or the branch rebased, since the last review: the
     # owner's own commits since, without main's and without the rebased
-    # copies of what was reviewed; what is uncommitted on top.
-    own = ["--no-merges", "--cherry-pick", "--right-only", f"{old}...HEAD"]
+    # copies of what was reviewed; what is uncommitted on top. A merge shows
+    # only its combined diff (--cc): what it changed by hand, such as a
+    # resolved conflict, never what it brought in from either side.
+    own = ["--cherry-pick", "--right-only", f"{old}...HEAD"]
     if info.get("base"):
         own.append("^" + info["base"])
     ctx.update({
         "since": old, "sinceReview": since_n, "sinceMode": "commits",
         "sinceCommits": _git_out(root, "log", "--oneline", *own)[:2000],
-        "sinceStat": (_git_out(root, "log", "--format=%h %s", "--stat", *own)[:2500]
+        "sinceStat": (_git_out(root, "log", "--format=%h %s", "--stat", "--no-merges", *own)[:2500]
                       + ("\n" + _git_out(root, "diff", "--stat", "HEAD")[:500]
                          if ctx["status"] else "")).strip(),
-        "sinceDiff": (_git_out(root, "log", "-p", "--format=commit %h %s", *own, timeout=20)
+        "sinceDiff": (_git_out(root, "log", "-p", "--cc", "--format=commit %h %s", *own, timeout=20)
                       + ("\n" + _git_out(root, "diff", "HEAD", timeout=20)
                          if ctx["status"] else "")).strip(),
     })
@@ -5889,13 +5893,14 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
             sdiff = git.get("sinceDiff", "")
             if git.get("sinceMode") == "commits":
                 base = f" ^{git['base']}" if git.get("base") else ""
-                since_cmd = (f"git -C \"{git['root']}\" log -p --no-merges --cherry-pick "
+                since_cmd = (f"git -C \"{git['root']}\" log -p --cc --cherry-pick "
                              f"--right-only {since}...HEAD{base}")
                 lines.append(f"**Since review {prev or 'the last one'}**, which read this work at "
                              f"`{since}`, the branch took in its base or was rebased, so a plain "
                              f"diff since would carry other people's work. `{since_cmd}` is the "
-                             "owner's own commits since (main's commits, merges and rebased copies "
-                             "of reviewed commits left out); `git diff HEAD` is what is uncommitted. "
+                             "owner's own commits since (main's commits and rebased copies of reviewed "
+                             "commits left out; a merge shows only what it changed by hand, "
+                             "such as a resolved conflict); `git diff HEAD` is what is uncommitted. "
                              "The earlier reviews read the rest. Read the whole diff "
                              f"(`{whole}`) only if a finding needs it, say why in your findings.")
             else:
@@ -5906,7 +5911,9 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
                              f"read the whole diff (`{whole}`) only where the change since touches it.")
             lines.append("Commits since:\n```\n" + (git.get("sinceCommits") or "(none)") + "\n```")
             if git.get("status"):
-                lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
+                lines.append("Uncommitted:\n```\n" + git["status"] + "\n```"
+                             + ("\nThe untracked files (`??`) are in no diff: read them."
+                                if re.search(r"^\?\? ", git["status"], re.M) else ""))
             lines.append("Diff stat since:\n```\n" + (git.get("sinceStat") or "(no changes)") + "\n```")
             if sdiff and len(sdiff) <= _BRIEF_DIFF_MAX:
                 lines.append("Diff since:\n````diff\n" + sdiff + "\n````")
@@ -5919,7 +5926,9 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
             if git.get("commits"):
                 lines.append("Commits:\n```\n" + git["commits"] + "\n```")
             if git.get("status"):
-                lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
+                lines.append("Uncommitted:\n```\n" + git["status"] + "\n```"
+                             + ("\nThe untracked files (`??`) are in no diff: read them."
+                                if re.search(r"^\?\? ", git["status"], re.M) else ""))
             lines.append("Diff stat:\n```\n" + (git.get("stat") or "(no changes)") + "\n```")
             if diff and len(diff) <= _BRIEF_DIFF_MAX:
                 lines.append("Diff:\n````diff\n" + diff + "\n````")
@@ -18486,7 +18495,8 @@ class Handler(BaseHTTPRequestHandler):
         rung = self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")), ways=ways)
         return [ident for ident in rest if ident not in rung]
 
-    def _start_review(self, room_id: str, ident: str, msg: dict, note: str = "") -> dict | None:
+    def _start_review(self, room_id: str, ident: str, msg: dict, note: str = "",
+                      restore: bool = False) -> dict | None:
         """Start a fresh reviewer session for one request: its first prompt is
         the review brief (the question, the branch and its diff, the spec and
         REVIEW-LOG.md), it runs in the checkout under review, and it ends when
@@ -18502,9 +18512,11 @@ class Handler(BaseHTTPRequestHandler):
         brief (a review a restart cut short: where it said it would carry on).
 
         A task that has used its review rounds (review_limit) gets no
-        reviewer: ``{"limited": True, ...}``, and its owner and PO are told
-        (_review_limit_reached). The person's own request still starts one."""
-        if not note:
+        reviewer: ``{"limited": True, ...}`` (not a start), and its owner and
+        PO are told (_review_limit_check). The person's own request still
+        starts one, and so does ``restore``: a review a restart cut short or
+        held, which passed the check when it was asked for."""
+        if not restore:
             limited = self._review_limit_check(room_id, ident, msg)
             if limited:
                 return limited
@@ -19551,7 +19563,10 @@ class Handler(BaseHTTPRequestHandler):
                             try:
                                 started = msg and self._start_review(
                                     rid, a.get("identity"), msg,
-                                    note=drain_notes.get(rid, {}).get(a.get("identity"), ""))
+                                    note=drain_notes.get(rid, {}).get(a.get("identity"), ""),
+                                    restore=True)
+                                if started and started.get("limited"):
+                                    started = None
                             except Exception as exc:    # noqa: BLE001
                                 lost.append(f"the review by {a.get('identity')} that was running "
                                             f"could not be started again ({exc!r})")

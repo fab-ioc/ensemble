@@ -1044,7 +1044,7 @@ def _deliver(h, it: dict) -> str:
                         if m.get("id") == it.get("messageId")), None)
             if msg is None:
                 return "its review request is gone"
-            h._start_review(rid, it.get("identity", ""), msg)
+            h._start_review(rid, it.get("identity", ""), msg, restore=True)
         elif kind == "wake":
             # An agent that is not running is not woken: as without a drain.
             h._ring(rid, [it.get("identity", "")], it.get("text", ""))

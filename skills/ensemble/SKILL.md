@@ -105,7 +105,7 @@ made its PO's chat unreadable (2026-09-16). At most one `update` between two
 real events, and none within an hour of the last unless something changed.
 
 The report is posted in the PO's room and **wakes the PO**, except an `update`:
-that is posted at once but told to the PO with its next wake, or within 30
+that is posted at once but told to the PO with the next line the hub types it, or within 30
 minutes, so use `completed`, `blocked` or `question` when the PO has to act.
 It is also recorded
 on your task, so the board shows it, with your report quoted. If the project
@@ -659,9 +659,9 @@ is the product owner's, and names that decision.
 
 **Quiet reports.** A task's `update` and an `approved` review verdict do not
 wake you: they are in your chat at their time, and the hub adds their gist to
-the next line it types you, whatever it is (`… | Quiet reports since your last
-wake: …`), or after 30 minutes with no wake types them as one `[quiet
-reports]` line. Nothing in them needs an answer unless one does. `completed`,
+the next line it types you (`… | Quiet reports since your last wake: …`; not
+the person's own messages), or after 30 minutes with no such line types them
+as one `[quiet reports]` line. Nothing in them needs an answer unless one does. `completed`,
 `question`, `blocked`, changes requested from review 3 on, and the question at
 the review limit wake you at once.
 
