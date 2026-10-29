@@ -55,7 +55,7 @@ from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlpars
 from backends import get_backend
 from backends.base import (
     HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, PROJECTS_ROOT, APP_NAME,
-    NUMBERED_RE as _NUMBERED_RE,
+    NUMBERED_RE as _NUMBERED_RE, EDITORS, EDITOR_CUSTOM, ICON_CACHE_DIR,
 )
 from backends.shared import (
     SESS_DIR, AGENT_SESS_DIR, RENAME_WORKSPACE, GEOMETRIES_FILE, PERMISSION_MODE,
@@ -1876,6 +1876,11 @@ _SETTINGS_DEFAULTS = {
     "feedbackRepo": feedback.DEFAULT_REPO,
     "feedbackRelayUrl": feedback.DEFAULT_RELAY,
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
+    # Settings › Editor: what Open in editor opens, for every project. ""
+    # = Automatic (from the repo's language, among the editors installed), an
+    # id of backends.base.EDITORS, or "custom" with editorCommand.
+    "editor": "",
+    "editorCommand": "",
     # The model a hub-launched agent runs on when its seat names none, per
     # agent kind, and Codex's reasoning effort (agent_models.py). "" = the
     # agent's own default: no flag is passed.
@@ -2044,6 +2049,7 @@ _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark", "system"},
     "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
+    "editor": {""} | {eid for eid, _label in EDITORS} | {EDITOR_CUSTOM},
 }
 
 
@@ -2635,6 +2641,10 @@ def _save_settings_locked(settings: dict) -> dict:
                  **{kind: model.strip() for kind, model in v.items()}}
         if k == "operatorNickname":
             if not isinstance(v, str) or len(v) > 60:
+                continue
+            v = v.strip()
+        if k == "editorCommand":
+            if not isinstance(v, str) or len(v) > 300 or any(ch in v for ch in "\n\r\0"):
                 continue
             v = v.strip()
         if k == "backupRemote":
@@ -11119,30 +11129,36 @@ def scan_jira_created_in_transcript(jsonl_path) -> list[str]:
     _JIRA_CREATED_CACHE[jsonl_path] = (mtime, result)
     return result
 
-EDITOR_MAP_FILE = DASHBOARD_DIR / "editors.json"
-ICON_CACHE_DIR = DASHBOARD_DIR / "static" / "editors"
-
-# Defaults — user can override per-language by writing {"java": "Cursor", ...}
-# to ~/.ensemble/editors.json. Keys are language tokens emitted by
-# detect_repo_language(); the "default" key handles any unknown language.
-DEFAULT_EDITOR_MAP = {
-    "java":       "IntelliJ IDEA",
-    "kotlin":     "IntelliJ IDEA",
-    "scala":      "IntelliJ IDEA",
-    "python":     "PyCharm",
-    "javascript": "WebStorm",
-    "typescript": "WebStorm",
-    "rust":       "RustRover",
-    "go":         "GoLand",
-    "ruby":       "RubyMine",
-    "php":        "PhpStorm",
-    "swift":      "Xcode",
-    "default":    "Visual Studio Code",
-}
+def editor_setting() -> dict:
+    """Settings › Editor, as the backend's choose_editor reads it."""
+    st = load_settings()
+    return {"editor": st.get("editor") or "", "editorCommand": st.get("editorCommand") or ""}
 
 
-def resolve_editor_for_repo(repo_path: Path) -> tuple[str, str, str | None]:
-    return BACKEND.resolve_editor_for_repo(repo_path)
+def resolve_editor_for_repo(repo_path: Path) -> tuple[str, dict, str | None]:
+    return BACKEND.resolve_editor_for_repo(repo_path, editor_setting())
+
+
+def editors_info() -> dict:
+    """What Settings › Editor shows: the choice, the editors found on the
+    hub's computer, and what Open in editor opens now. ``automatic`` is what
+    Automatic opens, per editor the languages it opens ("other": the rest)."""
+    setting = editor_setting()
+    by_editor: dict[str, list] = {}
+    for lang in sorted(set(BACKEND.load_editor_map()) | {"default"}, key=lambda x: (x == "default", x)):
+        label = BACKEND.choose_editor(lang, {})["label"]
+        by_editor.setdefault(label, []).append("other" if lang == "default" else lang)
+    chosen = BACKEND.choose_editor("default", setting) if setting["editor"] else None
+    return {
+        **setting,
+        "installed": [{"id": e["id"], "label": e["label"]} for e in BACKEND.installed_editors()],
+        "buttonLabel": BACKEND.editor_button_label(setting),
+        "automatic": [{"label": k, "languages": v} for k, v in by_editor.items()],
+        "chosenLabel": chosen["label"] if chosen else "",
+        "chosenFound": bool(chosen and chosen["path"]),
+        "fileManagerName": BACKEND.file_manager_name,
+    }
+
 
 # PERMISSION_MODE (the mode every Claude agent is launched in) comes from
 # backends.shared, the one place claude_cmd_args reads it.
@@ -11292,12 +11308,15 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
 
     enriched = []
     for path_str, name in sorted(repos.items()):
-        lang, editor, icon_url = resolve_editor_for_repo(Path(path_str))
+        lang, choice, icon_url = resolve_editor_for_repo(Path(path_str))
         enriched.append({
             "path": path_str,
             "name": name,
             "language": lang,
-            "editor": editor,
+            # What /api/open-path is sent ("" opens the folder: no editor found).
+            "editor": choice["id"],
+            "editorName": choice["label"],
+            "editorFound": bool(choice["path"]),
             "iconUrl": icon_url,
         })
     return {"repos": enriched, "lookedIn": looked}
@@ -11513,7 +11532,7 @@ BODY_DRAIN_S = 10
 # hub's own paths, what the agents' hooks said, and code: a file's contents,
 # diffs, search hits and the agents' transcripts. Chats, lists and documents
 # are kept: revalidating them is what saves a switch its bytes.
-NO_STORE_GETS = {"/api/settings", "/api/config", "/api/health", "/api/agent/hooks",
+NO_STORE_GETS = {"/api/settings", "/api/platform", "/api/editors", "/api/config", "/api/health", "/api/agent/hooks",
                  "/api/ws/file", "/api/file", "/api/file/download", "/api/ws/search",
                  "/api/git/diff", "/api/checkpoints/diff", "/api/checkpoints/preview"}
 NO_STORE_GET_PREFIXES = ("/api/history/", "/api/file-at/", "/api/session/")
@@ -17078,6 +17097,9 @@ class Handler(BaseHTTPRequestHandler):
             if m:
                 sub = "dock/" + sub[m.end():]
             f = STATIC_DIR / "static" / sub
+            if sub.startswith("editors/") and "/" not in sub[len("editors/"):]:
+                # An editor's icon, cut from its app on first use (macOS).
+                f = ICON_CACHE_DIR / sub[len("editors/"):]
             ext = f.suffix.lower()
             mime = {".png": "image/png", ".ico": "image/x-icon",
                     ".svg": "image/svg+xml", ".jpg": "image/jpeg",
@@ -17314,7 +17336,16 @@ class Handler(BaseHTTPRequestHandler):
             ))
             return
         if p == "/api/platform":
-            self._send_json(200, BACKEND.info())
+            # editorName: the editor Open in editor opens for every repo, ""
+            # when it depends on the repo (named on the button when known).
+            try:
+                editor_name = BACKEND.editor_button_label(editor_setting())
+            except Exception:                             # noqa: BLE001
+                editor_name = ""
+            self._send_json(200, {**BACKEND.info(), "editorName": editor_name})
+            return
+        if p == "/api/editors":
+            self._send_json(200, editors_info())
             return
         if p == "/api/hub-typing":
             self._send_json(200, hub_typing.view())

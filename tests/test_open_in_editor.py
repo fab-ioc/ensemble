@@ -88,7 +88,9 @@ class ReposForSession(unittest.TestCase):
             mock.patch.object(dashboard, "cwd_for_session", lambda sid: cwds.get(sid, "")),
             mock.patch.object(dashboard, "_read_session_files", lambda *a, **k: []),
             mock.patch.object(dashboard, "resolve_editor_for_repo",
-                              lambda p: ("java", "IntelliJ IDEA" if (p / ".idea").exists() else "Visual Studio Code", None)),
+                              lambda p: ("java", {"id": "idea", "label": "IntelliJ IDEA", "path": "idea64.exe"}
+                                         if (p / ".idea").exists() else
+                                         {"id": "code", "label": "VS Code", "path": ""}, None)),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
         ]
         for p in patches:
@@ -135,7 +137,8 @@ class ReposForSession(unittest.TestCase):
         # before, that repo (the projects folder) was offered.
         r = self.get("room-0000a001")
         self.assertEqual([x["path"] for x in r["repos"]], [str(self.p["code"])])
-        self.assertEqual(r["repos"][0]["editor"], "IntelliJ IDEA")
+        self.assertEqual((r["repos"][0]["editor"], r["repos"][0]["editorName"], r["repos"][0]["editorFound"]),
+                         ("idea", "IntelliJ IDEA", True))
 
     def test_po_in_a_scratch_folder_opens_the_code_folder(self):
         # The reported case: a ~/cs folder with no repo gave "no initiative found".

@@ -24,7 +24,7 @@ import uuid
 from ctypes import wintypes
 from pathlib import Path
 
-from .base import Backend, DASHBOARD_DIR
+from .base import Backend, DASHBOARD_DIR, jetbrains_homes
 from .shared import AGENT_SESS_DIR, claude_cmd_args
 from . import themes
 
@@ -324,7 +324,7 @@ class WindowsBackend(Backend):
     os_name = "win32"
     terminal_name = "Windows Terminal"
     file_manager_name = "Explorer"
-    # Values double as the launch command (resolved via PATH) and button label.
+    # Language → editor id (backends.base.EDITORS) for Automatic.
     default_editor_map = {
         "java":       "idea",
         "kotlin":     "idea",
@@ -807,24 +807,111 @@ class WindowsBackend(Backend):
                 return "ok"
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
-        if app == "ij":
-            app = "idea"
-        exe = shutil.which(app)
+        label, exe = self.launch_target(app)
         if not exe:
-            # Unknown editor command — fall back to opening the folder in Explorer.
+            # Not found on this computer: open the folder in Explorer instead.
             try:
                 explorer = os.path.join(
                     os.environ.get("WINDIR", r"C:\Windows"), "explorer.exe")
                 subprocess.Popen([explorer if os.path.exists(explorer) else "explorer",
                                   str(p)], close_fds=True)
-                return f"editor not found: {app} (opened folder instead)"
+                return (f"{label} was not found on this computer, so the folder opened in "
+                        f"Explorer instead. Choose the editor in Settings › Editor.")
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
+        # A .cmd/.bat (a Toolbox script, VS Code's code.cmd) runs in a console
+        # of its own: hidden, so the hub's windowless process flashes nothing.
+        flags = _CREATE_NO_WINDOW if exe.lower().endswith((".cmd", ".bat")) else 0
         try:
-            subprocess.Popen([exe, str(p)], close_fds=True)
+            subprocess.Popen([exe, str(p)], close_fds=True, creationflags=flags)
             return "ok"
         except (OSError, subprocess.SubprocessError) as e:
             return f"error: {e}"
+
+    # ---------- finding an editor ----------
+
+    def _locate_editor(self, eid: str) -> str | None:
+        r"""Where an editor is installed. JetBrains IDEs are often not on PATH:
+        the installer puts them under %LOCALAPPDATA%\Programs or Program
+        Files\JetBrains, the Toolbox under its apps folder with launch scripts
+        in Toolbox\scripts; each version also records where it is in a .home
+        file. The newest version found that way wins, then the newest install."""
+        local = os.environ.get("LOCALAPPDATA", "")
+        found: list[Path] = []
+        jb = _JETBRAINS_WIN.get(eid)
+        if jb:
+            folder, exe = jb
+            for root in _program_roots():
+                found += _glob_dirs(root / "JetBrains", folder, Path("bin") / exe)
+            if local:
+                found += _glob_dirs(Path(local) / "Programs", folder, Path("bin") / exe)
+                for ch in _glob_dirs(Path(local) / "JetBrains" / "Toolbox" / "apps", "*", Path()):
+                    for build in ch.glob("ch-*/*"):
+                        if (build / "bin" / exe).is_file():
+                            found.append(build / "bin" / exe)
+            if local:
+                for home in jetbrains_homes(eid, Path(local) / "JetBrains"):
+                    if (home / "bin" / exe).is_file():
+                        return str(home / "bin" / exe)
+            if found:
+                return str(max(found, key=_mtime))
+            hit = shutil.which(exe)
+            if hit:
+                return hit
+            if local:
+                script = Path(local) / "JetBrains" / "Toolbox" / "scripts" / f"{eid}.cmd"
+                if script.is_file():
+                    return str(script)
+            return shutil.which(eid)
+        for rel in _OTHER_EDITORS_WIN.get(eid, ()):
+            for root in ([Path(local) / "Programs"] if local else []) + _program_roots():
+                if (root / rel).is_file():
+                    return str(root / rel)
+        return shutil.which(eid) if eid != "xcode" else None
+
+
+# IntelliJ-family installs: id → (install folder glob, launcher in its bin).
+_JETBRAINS_WIN = {
+    "idea":      ("IntelliJ IDEA*", "idea64.exe"),
+    "pycharm":   ("PyCharm*", "pycharm64.exe"),
+    "webstorm":  ("WebStorm*", "webstorm64.exe"),
+    "goland":    ("GoLand*", "goland64.exe"),
+    "rustrover": ("RustRover*", "rustrover64.exe"),
+    "rubymine":  ("RubyMine*", "rubymine64.exe"),
+    "phpstorm":  ("PhpStorm*", "phpstorm64.exe"),
+    "clion":     ("CLion*", "clion64.exe"),
+    "rider":     ("JetBrains Rider*", "rider64.exe"),
+}
+# Other editors: the program under %LOCALAPPDATA%\Programs or Program Files.
+_OTHER_EDITORS_WIN = {
+    "code":   (Path("Microsoft VS Code") / "Code.exe",),
+    "cursor": (Path("cursor") / "Cursor.exe", Path("Cursor") / "Cursor.exe"),
+}
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _program_roots() -> list[Path]:
+    roots = []
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        v = os.environ.get(var)
+        if v and Path(v) not in roots:
+            roots.append(Path(v))
+    return roots
+
+
+def _glob_dirs(root: Path, pattern: str, rel: Path) -> list[Path]:
+    """``root/<pattern>/rel`` for each folder matching, where it exists."""
+    try:
+        return [d / rel for d in root.glob(pattern) if d.is_dir() and (d / rel).exists()]
+    except OSError:
+        return []
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 # ---------- module helpers ----------

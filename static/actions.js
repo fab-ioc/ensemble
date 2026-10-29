@@ -46,7 +46,9 @@ function makePoItem(s) {
 //   label, live, draft, status, archived, members, makePo, currentTheme,
 //   chatSchemeOn, resuming.
 // env: hub (this browser is on the hub machine), features {focus, themes,
-//   send, geometry}, terminalName, fileManagerName, panels (the page has the
+//   send, geometry}, terminalName, fileManagerName, editorName (the editor
+//   Open in editor opens for every repo, "" when it depends on the repo),
+//   panels (the page has the
 //   dock's panels: a room's chat can open as one, #150).
 function sessionActions(s, env) {
   s = s || {}; env = env || {};
@@ -66,8 +68,11 @@ function sessionActions(s, env) {
     ? { id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', cls: 'finder-btn', data: { path: cwd },
         title: hub ? `Open its working folder in ${FM}` : 'Browse its working folder in the file viewer' }
     : off({ id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', title: '' }, NO_FOLDER);
-  const ideItem = { id: 'ide', label: hub ? 'Open in editor' : 'Show in Workspace', cls: 'ij-btn', data: { sid },
-    title: hub ? 'Open its code folder in its preferred editor (found from its language)' : 'Show its files in the Workspace tab' };
+  const ed = env.editorName || '';
+  const ideItem = { id: 'ide', label: hub ? (ed ? `Open in ${ed}` : 'Open in editor') : 'Show in Workspace', cls: 'ij-btn', data: { sid },
+    title: !hub ? 'Show its files in the Workspace tab'
+      : ed ? `Open its code folder in ${ed} (Settings › Editor)`
+      : 'Open its code folder in the editor for its language (Settings › Editor)' };
   const colours = (key) => {
     const cur = s.currentTheme || '';
     const item = { id: 'colours', label: cur ? `Terminal colours: ${cur}` : 'Terminal colours…', cls: 'theme-dd-trigger',
