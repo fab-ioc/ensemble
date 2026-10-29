@@ -84,6 +84,16 @@ class ACompletedReportMovesIt(_Board):
         self.assertEqual(room["workflowAuto"]["why"], "completed")
         self.assertNotIn("workflowAt", room)         # a person's move only: a merge still moves it
 
+    def test_a_failed_move_still_reports(self):
+        rid = self.task("Fills")
+        with mock.patch.object(dashboard, "settle_finished", side_effect=OSError("disk")), \
+                mock.patch("builtins.print"):
+            out = self.call_report(rid, "completed")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(self.column(rid), "inprogress")
+        self.assertEqual(chatroom.last_real_report(chatroom.get_room(rid, public=False))["kind"],
+                         "completed")
+
     def test_other_reports_leave_it(self):
         for kind in ("question", "blocked", "update"):
             rid = self.task(f"Task {kind}")

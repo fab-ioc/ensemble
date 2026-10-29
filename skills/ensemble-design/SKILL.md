@@ -414,7 +414,9 @@ keeps its own words, ED-212) · **Stopped** (`--run-off`, `--fg-muted` words; `-
 agent gone). The word is `--fg-subtle` on `--surface`, 4.5:1 or better in every theme
 (`tests/test_board_state_cdp.py` measures it). A column's header follows its count with what is
 real, `--fs-200` `--fg-muted` (`.col-run`): "1 working · 2 waiting", always for In progress and In
-review. **Running only** (`.colchip.runonly`, pressed in `--selected-bg`) is Live without History.
+review. **Running only** (`.colchip.runonly`, pressed in `--selected-bg`) keeps the Working and Idle
+tasks only (a live task that waits is not running). A block shows over Working: blocked reads
+**Waiting on you** even while its agent is in a turn.
 
 Cost is plain `--fs-100` `--fg-muted` text (`.ccost`), never a lozenge or a pill: dollars where a price
 is known, else the tokens used (`1.4M tokens`, which is what a Codex task has), the split in its

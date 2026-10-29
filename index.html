@@ -6638,6 +6638,8 @@ function taskState(r) {
   const a = (r.roomId && ATTENTION_BY_ROOM.get(r.roomId)) || r.attention || null;
   const st = a && !swReported(a) ? a.state : '';
   const why = a && a.reason ? ': ' + a.reason : '';
+  // A block is what you must act on: it shows even while the agent works.
+  if (st === 'blocked') return { k: 'waiting', dot: swTone(st), word: 'Waiting on you', tip: 'blocked' + why };
   if (r.isLive && r.status === 'busy') return { k: 'working', dot: 'working', word: 'Working', tip: 'working: an agent is in a turn now' };
   if (st === 'waiting_for_you' || st === 'blocked')
     return { k: 'waiting', dot: swTone(st), word: 'Waiting on you', tip: (st === 'blocked' ? 'blocked' : 'waiting for you') + why };
@@ -7775,6 +7777,8 @@ function passesFilter(r) {
   // Then the chips
   if (FILTERS.size === 0) return false;
   if (r.archived) return FILTERS.has('archived') && !runningOnly();
+  // Running only is Working + Idle: a live task that waits is not running.
+  if (runningOnly()) return r.isLive && ['working', 'idle'].includes(taskState(r).k);
   if (FILTERS.has('live') && r.isLive) return true;
   if (FILTERS.has('history') && !r.isLive) return true;
   return false;

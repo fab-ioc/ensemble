@@ -8,7 +8,8 @@ a temp dir, fake terminals), at 1728x1117 and on a phone (390x844):
 * the word sits on the card, whole, with its dot, and reads at 4.5:1 or
   better on the card in every theme;
 * the In progress header counts what is real: "5 · 1 working · 2 waiting";
-* Running only leaves the tasks with an agent open, and gives the rest back.
+* Running only leaves the Working and Idle tasks, and gives the rest back.
+* A block shows on a card even while its agent works.
 
 Skipped without Node or Chrome.
 """
@@ -106,13 +107,19 @@ async function main() {
       }
       document.documentElement.removeAttribute('data-theme');
       return out; })()`);
-    // Running only: the tasks with an agent open stay.
+    // Running only: the Working and Idle tasks stay.
     got.runOnly = await evalIn(`(async () => {
       const ids = () => Object.entries(${R}).filter(([k, rid]) => document.querySelector('.card[data-room="' + rid + '"]')).map(([k]) => k).sort();
       const chip = () => document.querySelector('.colchip[data-runonly]');
       const out = { chip: !!chip(), before: ids() };
       chip().click(); await new Promise(r => setTimeout(r, 300));
       out.on = ids(); out.pressed = chip().getAttribute('aria-pressed');
+      // An archived task stays out while it is on, even with Archived chosen.
+      const idle = ALL_ROWS.find(r => r.roomId === ${R}.idle), had = FILTERS.has('archived');
+      FILTERS.add('archived'); out.archived = passesFilter(Object.assign({}, idle, { archived: true }));
+      if (!had) FILTERS.delete('archived');
+      const busy = ALL_ROWS.find(r => r.roomId === ${R}.busy);
+      out.busyBlocked = taskState(Object.assign({}, busy, { roomId: null, attention: { state: 'blocked', reason: 'no key' } })).word;
       chip().click(); await new Promise(r => setTimeout(r, 300));
       out.off = ids(); out.after = chip().getAttribute('aria-pressed');
       return out; })()`);
@@ -268,11 +275,14 @@ class TheBoardSaysWhatRuns(unittest.TestCase):
         for theme, ratio in c.items():
             self.assertGreaterEqual(ratio, 4.5, f"{theme}: {c}")
 
-    def test_running_only_keeps_the_tasks_with_an_agent_open(self):
+    def test_running_only_keeps_the_working_and_idle_tasks(self):
         r = self.got["runOnly"]
         self.assertTrue(r["chip"], r)
         self.assertEqual(r["before"], sorted(self.WANT))
-        self.assertEqual((r["on"], r["pressed"]), (["asks", "busy", "idle"], "true"), r)
+        # Working + Idle: the live task that asks you is not running.
+        self.assertEqual((r["on"], r["pressed"]), (["busy", "idle"], "true"), r)
+        self.assertFalse(r["archived"], r)
+        self.assertEqual(r["busyBlocked"], "Waiting on you", r)
         self.assertEqual((r["off"], r["after"]), (sorted(self.WANT), "false"), r)
 
 

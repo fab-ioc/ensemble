@@ -1173,7 +1173,11 @@ def _report(ctx, args, handler, *, structured_asks=None):
                               clears=clears, structured_asks=structured_asks)
     if kind == "completed":
         # Finished is not in progress: the hub moves it to In review (#289).
-        _d.settle_finished(_d.chatroom.get_room(room["id"], public=False, messages=False))
+        # A failed move must not keep the report from its PO.
+        try:
+            _d.settle_finished(_d.chatroom.get_room(room["id"], public=False, messages=False))
+        except Exception as e:
+            print(f"finished task not moved to In review: {e!r}", flush=True)
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
