@@ -286,7 +286,11 @@ def describe(value) -> dict:
     model, effort = launch_choice("codex", "", chosen, models)
     runs_on = model or own["model"]
     known = next((m for m in models or [] if m["id"] == runs_on), None)
-    pool = usage.codex_pool_for_model(None, runs_on)
+    # Judged by the reading where there is one: a reserve no reading reports
+    # is not where the seat's turns are counted.
+    reading = next((s for s in usage.snapshot().get("sources") or []
+                    if s.get("source") == "codex"), None)
+    pool = usage.codex_pool_for_model(reading, runs_on)
     return {
         "claude": {
             "chosen": chosen["claude"],
@@ -307,6 +311,7 @@ def describe(value) -> dict:
                 "effort": effort or own["effort"] or (known or {}).get("defaultEffort", ""),
                 "efforts": list((known or {}).get("efforts", [])),
                 "pool": pool["label"],
+                **({"reserve": pool["reserve"]} if pool.get("reserve") else {}),
                 "newest": any(m.get("tier") == "newest" and m["id"] == runs_on
                               for m in mark_newest(models or [])),
             },

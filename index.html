@@ -2836,6 +2836,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .usage-chip-kind b { font-weight: 600; }
   .usage-chip-sep { font-style: normal; color: var(--fg-muted); font-weight: 400; margin: 0 1px; }
   .usage-chip-wname { font-style: normal; font-size: var(--fs-100); color: var(--fg-muted); font-weight: 500; margin-right: 3px; }
+  .usage-chip-age { font-style: normal; font-size: var(--fs-100); color: var(--fg-muted); font-weight: 400; margin-left: 3px; }
   /* A reading we do not trust (frozen Codex file) or cannot get (Claude token)
      is never rendered as if it were a current number. The glyph carries it —
      "≥" for a frozen reading, which is a floor rather than an estimate, and
@@ -7818,7 +7819,8 @@ function renderAgentModels() {
       : x.gone
         ? `${x.chosen.model} is no longer offered by Codex, so its own default`
           + `${x.own.model ? ' (' + x.own.model + ')' : ''} runs. Choose another model.`
-        : `Codex agents run on ${eff.model || 'Codex’s own default'} and draw on the ${pool}.`
+        : `Codex agents run on ${eff.model || 'Codex’s own default'} and draw on the ${pool}`
+          + (eff.reserve ? ` (reserve: ${eff.reserve}).` : '.')
           + (eff.newest ? ' It is one of the newest models, which spend the Codex allowance fastest.' : '')
           + (x.models.some(m => m.tier === 'newest') ? ' Older models spend the allowance more slowly.' : '')
           + (x.poSwitchModel ? ` A PO switched to Codex still starts on ${x.poSwitchModel}, the hub’s older fallback, until a model is chosen here.` : '');
@@ -19250,6 +19252,11 @@ function usageChipValue(win) {
   return (win.trusted ? '' : '≥') + Math.round(win.percent) + '%';
 }
 
+// A reading older than this (an hour) says its age wherever it is shown (#283).
+function usageOld(seconds) {
+  return seconds != null && seconds > (USAGE.ageShownS ?? 3600);
+}
+
 // One window's line in the chip's tooltip, where the reset times live: the face
 // stays readable, and hovering gives the whole picture without a click.
 function usageChipTip(win, srcName) {
@@ -19264,8 +19271,8 @@ function usageChipTip(win, srcName) {
   }
   if (win.percent == null) return `${name}: no reading`;
   const reset = win.resetsAt ? `, ${usageResetText(win.resetsAt)}` : '';
-  const frozen = win.trusted ? ''
-    : ` (at least — frozen ${fmtAgo(win.ageSeconds)} ago)`;
+  const frozen = !win.trusted ? ` (at least — frozen ${fmtAgo(win.ageSeconds)} ago)`
+    : usageOld(win.ageSeconds) ? ` (read ${fmtAgo(win.ageSeconds)} ago)` : '';
   return `${name}: ${Math.round(win.percent)}%${frozen}${reset}`;
 }
 
@@ -19317,16 +19324,19 @@ function usageChipPart(src) {
     (named ? `<i class="usage-chip-wname">${esc(w.label)}</i>` : '')
     + `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
+  // The face's own reading says its age once it is over an hour old.
+  const oldest = Math.max(...wins.filter(w => !w.rolledOver).map(w => w.ageSeconds || 0));
+  const aged = usageOld(oldest) ? `<i class="usage-chip-age">${esc(fmtAgo(oldest))}</i>` : '';
   const pace = usagePaceOf(src), useIt = usageUseItOf(src);
   // Settings › Agent models › Prefer names this kind (P205).
   const preferred = !!src.source && (USAGE.pace || {}).prefer === src.source;
   const tip = name + (preferred ? ', preferred by Settings' : '')
-    + (used ? ` (sessions use the ${usageCodexPoolName(used)})` : '')
+    + (used ? ` (sessions use the ${usageCodexPoolName(used)}${used.reserve ? `; reserve: ${used.reserve}` : ''})` : '')
     + ' — ' + all.map(w => usageChipTip(w, name)).join(' · ')
     + (useIt ? ` · week ${usageUseItText(useIt)}`
       : pace ? ` · ${usagePaceText(name, pace)}${pace.ahead ? ', ahead of pace' : ''}` : '');
   return `<span class="usage-chip-kind" title="${esc(tip)}"
-    >${preferred ? `<span class="usage-chip-pref">${esc(short)}</span>` : esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b></span>`;
+    >${preferred ? `<span class="usage-chip-pref">${esc(short)}</span>` : esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b>${aged}</span>`;
 }
 
 // A Codex pool in words: "main pool", "reserve pool", "GPT-5.3-Codex-Spark pool".
@@ -19451,8 +19461,10 @@ function usageSourceHtml(src) {
     const how = used.model ? ` (model ${esc(used.model)}${from})` : '';
     const unread = pools.some(p => p.inUse) ? ''
       : ' There is no reading for that pool yet.';
+    // A gpt-reserve seat whose turns report the main pool's limit (#283).
+    const reserve = used.reserve ? ` Reserve: ${esc(used.reserve)}.` : '';
     inUse = `<div class="usage-why">${esc(name)} sessions currently use the
-      ${esc(usageCodexPoolName(used))}${how}.${unread}</div>`;
+      ${esc(usageCodexPoolName(used))}${how}.${unread}${reserve}</div>`;
     const idleHot = (USAGE.notices || []).filter(n => n.source === src.source);
     if (idleHot.length) {
       const n = idleHot[0];
@@ -19510,7 +19522,8 @@ function usageUseItText(k) {
 
 // "Codex 7-day 52% · pace 43%" and, past the mark, "ahead of pace".
 function usagePaceText(name, pace) {
-  return `${name} 7-day ${pace.atLeast ? '≥' : ''}${Math.round(pace.percent)}% · pace ${Math.round(pace.pace)}%`;
+  return `${name} 7-day ${pace.atLeast ? '≥' : ''}${Math.round(pace.percent)}% · pace ${Math.round(pace.pace)}%`
+    + (usageOld(pace.ageSeconds) ? ` · read ${fmtAgo(pace.ageSeconds)} ago` : '');
 }
 function usagePaceLine(name, pace, useIt) {
   if (useIt) {

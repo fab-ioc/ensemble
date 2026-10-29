@@ -95,6 +95,10 @@ STALE_FALLBACK_S = 1800    # when the window's length is unknown
 
 # Below this we don't bother qualifying the reading with its age.
 AGE_QUALIFY_S = 60
+# Past this the plan chip, the pacing and the allocation's reasons say how old
+# the reading they show is, trusted or not: a weekly reading stays trusted for
+# most of a day, and a day-old number read as now misled (#283).
+AGE_SHOWN_S = 3600
 
 # Rollouts to scan for a populated record. Newest-first, stopping at the first
 # file that has one — so this is a bound on the pathological case, not a cost.
@@ -121,11 +125,14 @@ BUCKET_TOGETHER_S = 300
 # Codex's pools. The main one is the account's weekly (and, on some plans,
 # five-hour) allowance; every model draws on it except the ones below.
 CODEX_MAIN_POOL = "codex"
-# The reserve: a weekly allowance of its own that only the model slug
-# `gpt-reserve` draws on. The app server names it (`limitName` "gpt-reserve");
-# a session record does not — a turn on `gpt-reserve` writes `limit_id`
-# "codex" like any other, with the reserve's numbers — so the session reader
-# tells the two apart by the session's model.
+# The reserve: an allowance said to be of its own that only the model slug
+# `gpt-reserve` draws on. The app server once named it (`limitName`
+# "gpt-reserve", 2026-09-17). A pool is only ever named by the limit id Codex
+# reports, never by the model a turn ran on: a turn on `gpt-reserve` writes
+# `limit_id` "codex", and on 2026-10-28 every such record carried the main
+# pool's reset and its rising percentage (#281), so it is the main pool's
+# reading. Until Codex reports the reserve's own id, a `gpt-reserve` seat is
+# judged by the main pool and the reserve is "not reported".
 CODEX_RESERVE_POOL = "base_model_inference"
 CODEX_RESERVE_MODEL = "gpt-reserve"
 # Spark: a model with a five-hour and a weekly allowance of its own.
@@ -496,33 +503,18 @@ def _newest_rate_limits(files) -> dict[str, tuple[dict, float]]:
     fractional seconds today, but ``...:40Z`` sorts above ``...:40.401Z``
     lexicographically, so a format change would silently pick the older record.
 
-    One bucket is not named by its record. A turn on the model ``gpt-reserve``
-    draws on the reserve pool, yet writes ``limit_id`` "codex" like any other,
-    with the reserve's numbers (0% and its own reset time on 2026-09-17, beside
-    the main pool's 97%). Read as written, the main figure flipped between the
-    two with whichever session wrote last. So an account record belongs to the
-    reserve when the turn it follows ran on that model — the ``turn_context``
-    record before it names the model — and is returned under
-    :data:`CODEX_RESERVE_POOL`, named as the app server names it. Not told
-    apart by reset time: the main pool's own wobbles by a second from record
-    to record.
+    Every bucket is named by its record's own ``limit_id``, never by the model
+    the turn ran on. A turn on ``gpt-reserve`` writes ``limit_id`` "codex",
+    and on 2026-10-28 those records carried the main pool's reset time and its
+    rising percentage beside the other models' (#281): relabelling them as the
+    reserve showed the main pool's number, aged, as a spent reserve.
     """
     best: dict[str, tuple[dict, float]] = {}
     extra = 0
     for path in files:
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
-                model = ""
                 for line in fh:
-                    if '"turn_context"' in line:
-                        try:
-                            rec = json.loads(line)
-                        except ValueError:
-                            continue
-                        if rec.get("type") == "turn_context":
-                            named = (rec.get("payload") or {}).get("model")
-                            model = named.strip().lower() if isinstance(named, str) else ""
-                        continue
                     if '"token_count"' not in line:
                         continue
                     try:
@@ -539,10 +531,6 @@ def _newest_rate_limits(files) -> dict[str, tuple[dict, float]]:
                     if at is None:
                         continue
                     bucket = limits.get("limit_id") or CODEX_MAIN_POOL
-                    if bucket == CODEX_MAIN_POOL and model == CODEX_RESERVE_MODEL:
-                        bucket = CODEX_RESERVE_POOL
-                        limits = dict(limits, limit_id=CODEX_RESERVE_POOL,
-                                      limit_name=CODEX_RESERVE_MODEL)
                     if bucket not in best or at > best[bucket][1]:
                         best[bucket] = (limits, at)
         except OSError:
@@ -668,9 +656,9 @@ def _session_pools(files) -> list[dict]:
     # apart, and one that trails by more than BUCKET_TOGETHER_S has stopped.
     # Never the account's two pools, though. A model's bucket can write on its
     # own — on this machine Spark ran up to 43 s ahead of the account's — and a
-    # longer run must not drop the one number the chip exists for; and the main
-    # pool and the reserve are never written together at all, since a turn
-    # draws on one or the other. Nothing is lost by exempting them: across a
+    # longer run must not drop the one number the chip exists for; and the
+    # reserve, should a record ever name it, would not be written beside the
+    # main pool, since a turn draws on one or the other. Nothing is lost by exempting them: across a
     # plan change the bucket stays "codex", so the change is handled by taking
     # its whole record, and each pool's own staleness and rollover guards
     # still apply.
@@ -1049,7 +1037,14 @@ def codex_pool_for_model(source: dict | None, model: str = "") -> dict:
     Settings, else the config's). ``gpt-reserve`` draws on the reserve, Spark's
     slug on Spark's pool, anything else — no model at all, and a slug that
     matches some pool not known here, included — on the main pool.
+
+    The reserve only while a reading reports its own limit id. Its turns'
+    records say "codex" (see :data:`CODEX_RESERVE_POOL`), so a reading
+    without it judges a ``gpt-reserve`` seat by the main pool, with
+    ``reserve`` "not reported". ``source`` None asks what the model is said to
+    draw on, with no reading to check (the model picker).
     """
+    reading = source is not None
     source = source or {}
     slug = (model or source.get("configModel") or "").strip()
     low = slug.lower()
@@ -1060,6 +1055,8 @@ def codex_pool_for_model(source: dict | None, model: str = "") -> dict:
     for pool in source.get("pools") or []:
         if pool.get("id") == pool_id:
             return {"id": pool_id, "label": pool.get("label"), "model": slug}
+    if reading and pool_id == CODEX_RESERVE_POOL:
+        return dict(main, reserve="not reported")
     # The pool has not been read (session records only, and no turn on it
     # yet). Still that pool: unknown, never the main pool's number.
     return {"id": pool_id, "label": _pool_label(pool_id, slug), "model": slug}
@@ -1303,6 +1300,7 @@ def _snapshot_locked() -> dict:
         "checkedAt": _STATE["checkedAt"],
         "refreshIntervalS": REFRESH_INTERVAL_S,
         "staleFraction": STALE_FRACTION,
+        "ageShownS": AGE_SHOWN_S,
         "warnPercent": WARN_PERCENT,
         "alarmPercent": ALARM_PERCENT,
         "plans": copy.deepcopy(_STATE["plans"]),
