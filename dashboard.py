@@ -103,6 +103,7 @@ import issues
 import stall
 # Messages between two projects' POs (ensemble_message_po).
 import po_messages
+import quiet_reports
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
@@ -193,6 +194,7 @@ model_limit.bind(sys.modules[__name__])
 provider_retry.bind(sys.modules[__name__])
 permission_mode.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
+quiet_reports.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
@@ -1935,6 +1937,10 @@ _SETTINGS_DEFAULTS = {
     # Pace each agent kind's 7-day allowance and compare weighted spare
     # capacity per hour until each kind's own reset (ED-203).
     "paceWeek": True,
+    # Settings › Agent models › Review rounds per task (#288): past this many
+    # review rounds the hub starts no reviewer for a task (REVIEW_ROUNDS_DEFAULT;
+    # a task's own reviewLimit, set by its PO, wins). 0 = no limit.
+    "reviewRoundsPerTask": 5,
     # Which agent kind every seat the hub chooses goes to (P205/P206):
     # "claude" or "codex" while that kind is usable (below 100%, not blocked by
     # its limit or a login, installed), pacing ignored; "balanced" is the
@@ -2685,6 +2691,10 @@ def _save_settings_locked(settings: dict) -> dict:
             v = v.strip()
         if k in ("poRotateTokens", "taskRotateTokens"):
             v = rotation.clamp_tokens(v)
+            if v is None:
+                continue
+        if k == "reviewRoundsPerTask":
+            v = clamp_review_rounds(v)
             if v is None:
                 continue
         if k in ("pointsRemindMin", "pointsDeliverRemindMin"):
@@ -3659,6 +3669,18 @@ def _type_input_now(sess, text: str, provenance: dict | None = None, *,
     checkpoint_wait_restore(str((getattr(sess, "meta", None) or {}).get("room") or ""))
     if text.startswith("[digest] "):
         text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
+    # A PO's quiet reports ride whatever wakes it next (quiet_reports.py):
+    # a hub line, not a person's own words, a slash command or a probe.
+    quiet_room, quiet_ids = "", []
+    if record and parts is None and provenance is None and not text.startswith("/"):
+        meta = getattr(sess, "meta", None) or {}
+        quiet_room = str(meta.get("room") or "")
+        try:
+            extra, quiet_ids = quiet_reports.rider(quiet_room, str(meta.get("identity") or ""))
+        except Exception as exc:    # noqa: BLE001 — the line goes anyway
+            print(f"[quiet-reports] not added: {exc!r}", flush=True)
+            extra = ""
+        text += extra
     why: list[str] = []
     lease = rotation.reserve_hub_line(sess, why)
     if lease is None:
@@ -3667,6 +3689,8 @@ def _type_input_now(sess, text: str, provenance: dict | None = None, *,
     ok = False
     try:
         ok = _type_input_reserved(sess, text, provenance, record=record, parts=parts, now=now)
+        if ok and quiet_ids:
+            quiet_reports.told(quiet_room, quiet_ids)
         return ok
     finally:
         rotation.release_hub_line(sess, lease)
@@ -5221,6 +5245,8 @@ HUB_INPUT_KINDS = (
     ("[typed again] ", "again"),        # sends.py: a message the agent had not taken in
     ("[from the PO]", "po"),             # PO/tool ruling typed into a task
     ("[checkpoint] ", "checkpoint"),    # _checkpoint_told_line: the code was put back (ED-197)
+    ("[review limit] ", "reviewlimit"),  # review_limit_line: no more reviews for the task (#288)
+    ("[quiet reports] ", "quiet"),      # quiet_reports.batch_line: reports that did not wake the PO
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
 # A message from another project's PO (po_messages.wake_line): the project's
@@ -5259,6 +5285,7 @@ _FIRST_WORDS_KIND = {
     "pomsg": "Message from another PO", "stalled": "Stall check", "again": "Message typed again",
     "po": "Message from the PO",
     "issue": "GitHub issue", "issuecomment": "GitHub issue comment",
+    "reviewlimit": "Review limit reached", "quiet": "Quiet reports",
 }
 
 
@@ -5569,6 +5596,114 @@ def review_count(log_text: str) -> int:
     return len(re.findall(r"^## Review \d+", log_text or "", re.M))
 
 
+# The review-round limit (#288): past it the hub starts no reviewer for the
+# task. #287 measured 15-29 Oct: 41 tasks took more than 8 rounds and those
+# rounds cost 2.6B tokens, 13% of everything. A round is one reviewer run,
+# one verdict heading in the log: the heading's number is not the round (an
+# old long-lived reviewer numbered its own; on 09-14 "Review 3" was round 2).
+REVIEW_ROUNDS_DEFAULT = 5
+REVIEW_ROUNDS_MAX = 200
+_ROUND_HEAD = re.compile(r"^## Review\b[^\n]*?— (?:approved|changes requested|comments)\b", re.M)
+REVIEW_LIMIT_PREFIX = "[review limit] "
+
+
+def review_rounds(log_text: str) -> int:
+    """How many review rounds a task's log records: its verdict headings."""
+    return len(_ROUND_HEAD.findall(log_text or ""))
+
+
+def clamp_review_rounds(v) -> int | None:
+    """A review-round limit as saved (0 = no limit), None when not a number."""
+    if isinstance(v, bool):
+        return None
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(REVIEW_ROUNDS_MAX, v))
+
+
+def review_limit(room: dict) -> int:
+    """The task's review-round limit: its own (``reviewLimit``, which its
+    PO sets) or Settings › Agent models › Review rounds per task. 0 = none."""
+    own = clamp_review_rounds((room or {}).get("reviewLimit"))
+    if own is not None:
+        return own
+    v = clamp_review_rounds(load_settings().get("reviewRoundsPerTask"))
+    return REVIEW_ROUNDS_DEFAULT if v is None else v
+
+
+def review_limit_owner_text(rounds: int, limit: int) -> str:
+    """What the owner does once its task has used its review rounds (CEO
+    ruling on P241, 10-29: past the limit the CEO decides who is right)."""
+    return (f"Review limit reached ({rounds} of {limit} rounds): no reviewer starts any more, "
+            "and you do not decide who is right. Stop changing code. Report with "
+            "ensemble_report kind=question forCeo=true: one entry per finding still open from "
+            "the last review, each with the reviewer's position, your position and the "
+            "file:line, written so the CEO can judge it without reading the diff. Then wait "
+            "for the ruling: fix what it marks, nothing else, ask for no further review, and "
+            "report completed.")
+
+
+def review_limit_line(room: dict, rounds: int, limit: int) -> str:
+    """What the owner is typed when it asks for a review past the limit."""
+    return (f"{REVIEW_LIMIT_PREFIX}{task_label(room) or 'This task'}: "
+            + review_limit_owner_text(rounds, limit) + " Only your PO can raise the limit.")
+
+
+def review_limit_po_text(room: dict, rounds: int, limit: int) -> str:
+    """The PO's note on a task that reached its limit (quiet: the owner's
+    question that follows is what wakes the PO)."""
+    return (f"{task_label(room) or 'The task'} reached its review limit ({rounds} of {limit} "
+            "rounds): no more reviews start, and its owner reports the open findings as a "
+            "question for the CEO's ruling. To allow more reviews instead, "
+            "ensemble_update_task reviewLimit=<n> with reviewLimitReason.")
+
+
+# Added to the owner's question at the limit, as its PO gets it.
+REVIEW_LIMIT_RULING_NOTE = (
+    "This task is at its review limit, so the CEO rules on what is left: add your "
+    "recommendation to each finding and put them to the CEO as ONE ask card (ensemble_ask) "
+    "with one question per finding and the options \"Reviewer is right: fix it\" and "
+    "\"Owner is right: keep as is\". Send the answers back to the owner as the ruling: it "
+    "fixes what is marked, nothing else, with no further review unless the CEO asks for "
+    "one, then reports completed.")
+
+
+def at_review_limit(room: dict) -> tuple[int, int]:
+    """``(rounds, limit)`` when the task has used its review rounds, else
+    ``(rounds, 0)``."""
+    rounds, limit = review_rounds(read_review_log(room)), review_limit(room)
+    return (rounds, limit) if limit and rounds >= limit else (rounds, 0)
+
+
+def tell_po_review_limit(room: dict, rounds: int, limit: int) -> bool:
+    """Put a note in the task's PO's chat that the task reached its review
+    limit, once per limit (``reviewLimitTold``; a raised limit reached again
+    is told again). It does not wake the PO: it rides its next wake
+    (quiet_reports.py) — the owner's question is what wakes it. True when
+    it was posted."""
+    if (room or {}).get("reviewLimitTold") == limit:
+        return False
+    po_rid = room_po_id(room)
+    po_room = chatroom.get_room(po_rid) if po_rid else None
+    chatroom.patch_room(room["id"], reviewLimitTold=limit)
+    if po_room is None:
+        return False
+    text = review_limit_po_text(room, rounds, limit)
+    res = chatroom.post_report(po_rid, f"{rotation.SENDER}@{room['id']}", chatroom.po_identity(po_room),
+                               f"**review limit** of {task_named(room)}: {text}",
+                               {"reportKind": "reviewLimit", "taskId": room["id"],
+                                "taskNo": room.get("no") or None, "taskTitle": room.get("title", ""),
+                                "reporter": rotation.SENDER}, wake=False)
+    if res:
+        quiet_reports.hold(po_rid, res["message"]["id"],
+                           quiet_reports.gist(f"review limit of {task_label(room) or room.get('title', '')}",
+                                              f"{rounds} of {limit} rounds used; its owner's question follows"),
+                           room["id"])
+    return bool(res)
+
+
 def append_review_log(room: dict, entry: str) -> Path:
     p = review_log_path(room)
     with _REVIEW_LOG_LOCK:
@@ -5611,8 +5746,18 @@ def review_git_context(root: str, since: dict | None = None) -> dict:
     change since then — ``since``, ``sinceReview``, ``sinceCommits``,
     ``sinceStat``, ``sinceDiff`` — and the brief leads with that instead of
     the whole diff (#147: 115 of 247 later review rounds re-read the whole
-    branch against main, 205M tokens a week). A rebased branch, a different
-    branch, or main merged in since fall back to the whole diff."""
+    branch against main, 205M tokens a week).
+
+    #288 found 204 of 963 later rounds (21%, to 2026-10-29) still read the
+    whole diff: 80 because the owner went on in a branch of another name cut
+    from the reviewed commit (the branch name no longer has to match: the
+    reviewed commit in HEAD's history is what counts), 82 because main was
+    merged in or the branch rebased since. Those now get the owner's own
+    commits since (``sinceMode`` "commits": ``git log -p --no-merges
+    --cherry-pick --right-only <old>...HEAD ^<base>``, which leaves out
+    main's commits, merges and the rebased copies of reviewed ones), with
+    the whole diff as a command for a reviewer that needs it. Only a
+    reviewed commit git does not have falls back to the whole diff."""
     if not root:
         return {}
     info = git_branch_base(root)
@@ -5627,16 +5772,58 @@ def review_git_context(root: str, since: dict | None = None) -> dict:
         "diff": _git_out(root, "diff", against, timeout=20),
     }
     old = str((since or {}).get("head") or "").strip()
-    if old and (since or {}).get("branch") == info.get("branch") \
-            and _git_ok(root, "merge-base", "--is-ancestor", old, "HEAD") \
+    if not old or not _git_ok(root, "cat-file", "-e", old + "^{commit}"):
+        return ctx
+    since_n = (since or {}).get("n") or 0
+    if _git_ok(root, "merge-base", "--is-ancestor", old, "HEAD") \
             and (not mb or _git_ok(root, "merge-base", "--is-ancestor", mb, old)):
         ctx.update({
-            "since": old, "sinceReview": (since or {}).get("n") or 0,
+            "since": old, "sinceReview": since_n, "sinceMode": "diff",
             "sinceCommits": _git_out(root, "log", "--oneline", f"{old}..HEAD")[:2000],
             "sinceStat": _git_out(root, "diff", "--stat", old)[:3000],
             "sinceDiff": _git_out(root, "diff", old, timeout=20),
         })
+        return ctx
+    # Main merged in, or the branch rebased, since the last review: the
+    # owner's own commits since, without main's and without the rebased
+    # copies of what was reviewed; what is uncommitted on top.
+    own = ["--no-merges", "--cherry-pick", "--right-only", f"{old}...HEAD"]
+    if info.get("base"):
+        own.append("^" + info["base"])
+    ctx.update({
+        "since": old, "sinceReview": since_n, "sinceMode": "commits",
+        "sinceCommits": _git_out(root, "log", "--oneline", *own)[:2000],
+        "sinceStat": (_git_out(root, "log", "--format=%h %s", "--stat", *own)[:2500]
+                      + ("\n" + _git_out(root, "diff", "--stat", "HEAD")[:500]
+                         if ctx["status"] else "")).strip(),
+        "sinceDiff": (_git_out(root, "log", "-p", "--format=commit %h %s", *own, timeout=20)
+                      + ("\n" + _git_out(root, "diff", "HEAD", timeout=20)
+                         if ctx["status"] else "")).strip(),
+    })
     return ctx
+
+
+_REVIEWED_AT = re.compile(r"^- Reviewed: branch `([^`]*)` at `([0-9a-fA-F]{4,40})`", re.M)
+
+
+def last_reviewed_at(log_text: str) -> dict:
+    """The commit the latest review in the log read (``{n, branch, head}``),
+    {} when no entry says. The log is the task's, whichever seat reviewed:
+    a reviewer seat's own record misses the reviews of a seat before it."""
+    heads = list(re.finditer(r"^## Review (\d+)\b[^\n]*$", log_text or "", re.M))
+    for i in range(len(heads) - 1, -1, -1):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(log_text)
+        m = _REVIEWED_AT.search(log_text, heads[i].end(), end)
+        if m:
+            return {"n": int(heads[i].group(1)), "branch": m.group(1), "head": m.group(2)}
+    return {}
+
+
+def review_since(part: dict, log_text: str) -> dict:
+    """What a new review is the next one after: the latest review the log
+    names a commit of (every review_done writes one), else the seat's own
+    record (previous_review)."""
+    return last_reviewed_at(log_text) or previous_review(part)
 
 
 def last_review_line(log_text: str) -> str:
@@ -5699,12 +5886,24 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
             # A later review: lead with what changed since the last one read
             # the branch; the whole change only as a stat and a command.
             since, prev = git["since"], git.get("sinceReview") or 0
-            since_cmd = f"git -C \"{git['root']}\" diff {since}"
             sdiff = git.get("sinceDiff", "")
-            lines.append(f"**Since review {prev or 'the last one'}**, which read this branch at "
-                         f"`{since}`: `{since_cmd}` is what changed since (committed and "
-                         "uncommitted together). The earlier reviews read the whole change; "
-                         f"read the whole diff (`{whole}`) only where the change since touches it.")
+            if git.get("sinceMode") == "commits":
+                base = f" ^{git['base']}" if git.get("base") else ""
+                since_cmd = (f"git -C \"{git['root']}\" log -p --no-merges --cherry-pick "
+                             f"--right-only {since}...HEAD{base}")
+                lines.append(f"**Since review {prev or 'the last one'}**, which read this work at "
+                             f"`{since}`, the branch took in its base or was rebased, so a plain "
+                             f"diff since would carry other people's work. `{since_cmd}` is the "
+                             "owner's own commits since (main's commits, merges and rebased copies "
+                             "of reviewed commits left out); `git diff HEAD` is what is uncommitted. "
+                             "The earlier reviews read the rest. Read the whole diff "
+                             f"(`{whole}`) only if a finding needs it, say why in your findings.")
+            else:
+                since_cmd = f"git -C \"{git['root']}\" diff {since}"
+                lines.append(f"**Since review {prev or 'the last one'}**, which read this branch at "
+                             f"`{since}`: `{since_cmd}` is what changed since (committed and "
+                             "uncommitted together). The earlier reviews read the whole change; "
+                             f"read the whole diff (`{whole}`) only where the change since touches it.")
             lines.append("Commits since:\n```\n" + (git.get("sinceCommits") or "(none)") + "\n```")
             if git.get("status"):
                 lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
@@ -18300,7 +18499,15 @@ class Handler(BaseHTTPRequestHandler):
         recorded nowhere, and ending the terminal it started when recording it
         fails. While a restart drains the review is held for after it
         (restart_drain.py): ``{"held": True}``. ``note``: a line added to the
-        brief (a review a restart cut short: where it said it would carry on)."""
+        brief (a review a restart cut short: where it said it would carry on).
+
+        A task that has used its review rounds (review_limit) gets no
+        reviewer: ``{"limited": True, ...}``, and its owner and PO are told
+        (_review_limit_reached). The person's own request still starts one."""
+        if not note:
+            limited = self._review_limit_check(room_id, ident, msg)
+            if limited:
+                return limited
         if restart_drain.try_hold({"kind": "review", "roomId": room_id, "identity": ident,
                                    "messageId": msg.get("id", "")}):
             print(f"[drain] {room_id}: the review by {ident} held for after the restart", flush=True)
@@ -18319,7 +18526,7 @@ class Handler(BaseHTTPRequestHandler):
             log_text = read_review_log(room_full)
             n = review_count(log_text) + 1
             root = review_repo(room_full)
-            git = review_git_context(root, since=previous_review(part))
+            git = review_git_context(root, since=review_since(part, log_text))
             brief = review_brief(room_full, part, msg, n, git, log_text)
             if note:
                 brief += "\n\n" + note
@@ -18351,6 +18558,30 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[review] started review {n} by {ident} in {room_id} "
                   f"(pty {info['ptyId']}, asked by {review['askedBy']})", flush=True)
             return review
+
+    def _review_limit_check(self, room_id: str, ident: str, msg: dict) -> dict | None:
+        """``{"limited": True, rounds, limit}`` when the task has used its
+        review rounds and this request is an agent's: the reviewer is not
+        started, whoever asked is typed review_limit_line, and the PO is
+        told once (tell_po_review_limit). None when a review may start."""
+        room_full = chatroom.get_room(room_id, public=False)
+        if room_full is None or msg.get("from") == chatroom.HUMAN_IDENTITY:
+            return None
+        rounds, limit = review_rounds(read_review_log(room_full)), review_limit(room_full)
+        if not limit or rounds < limit:
+            return None
+        asker = msg.get("from", "")
+        own = [o for o in chatroom.owners(room_full) if o != ident]
+        who = asker if asker and asker != ident and chatroom.participant(room_full, asker) else ""
+        told = [who] if who else own[:1]
+        line = review_limit_line(room_full, rounds, limit)
+        chatroom.post_notice(room_id, rotation.SENDER, line[len(REVIEW_LIMIT_PREFIX):],
+                             {"noticeKind": "reviewLimit", "identity": ident})
+        rung = self._ring(room_id, told, line) if told else []
+        po_told = tell_po_review_limit(room_full, rounds, limit)
+        print(f"[review] {room_id}: no review by {ident}: {rounds} rounds of {limit} "
+              f"(told {', '.join(rung) or 'nobody'}{', and the PO' if po_told else ''})", flush=True)
+        return {"limited": True, "n": 0, "rounds": rounds, "limit": limit, "told": rung}
 
     def _ring(self, room_id: str, idents: list, wake: str, ways: dict | None = None) -> list[str]:
         """Type ``wake`` into each named agent's terminal and submit it — the

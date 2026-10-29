@@ -471,6 +471,14 @@ _ALL_TOOLS = [
                                               "names, ignoring the hub's weekly pacing (use only "
                                               "when the product owner asks). A seat still leaves "
                                               "a kind whose allowance is spent. false = paced again."},
+                "reviewLimit": {"type": "integer", "minimum": 0,
+                                "description": "This task's review-round limit, replacing Settings' "
+                                               "Review rounds per task (default 5) for it alone: "
+                                               "past it no reviewer starts. 0 = no limit. Needs "
+                                               "reviewLimitReason."},
+                "reviewLimitReason": {"type": "string",
+                                      "description": "Why this task gets another review-round "
+                                                     "limit (one line; shown in its chat)."},
             },
             "required": ["taskId"],
         },
@@ -1161,8 +1169,11 @@ def _report(ctx, args, handler, *, structured_asks=None):
         po = None                   # no PO to route to: the report goes to the user
     routed = ({"roomId": po["roomId"], "identity": po["identity"], "title": po["title"]}
               if po else None)
+    # A question past the task's review limit is the open findings for the
+    # CEO's ruling (#288): the CEO's, and the PO is told what to do with it.
+    limit_q = kind == "question" and bool(po) and bool(_d.at_review_limit(room)[1])
     # Only the CEO can decide it: still the PO's to carry (task → PO → CEO).
-    for_ceo = kind in ("blocked", "question") and args.get("forCeo") is True
+    for_ceo = kind in ("blocked", "question") and (args.get("forCeo") is True or limit_q)
     what = f"{kind} for {_d.operator_name()}'s decision" if for_ceo and po else kind
     heading = (f"**Report — {what}**, sent to the PO (*{po['title']}*)" if po
                else f"**Report — {kind}**")
@@ -1179,17 +1190,34 @@ def _report(ctx, args, handler, *, structured_asks=None):
             f"({me}):\n\n{text}"
             + (f"\n\n_Only {_d.operator_name()} can decide this: if you agree, put it to "
                f"them with a decision balloon in your chat, and answer the task when "
-               f"they have._" if for_ceo else ""))
+               f"they have._" if for_ceo and not limit_q else "")
+            + (f"\n\n_{_d.REVIEW_LIMIT_RULING_NOTE}_" if limit_q else ""))
+    # An update asks nothing of the PO (#288): in its chat now, told with
+    # its next wake or after 30 minutes (quiet_reports.py), never a wake.
+    quiet = kind == "update"
     res = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
                                   {"reportKind": kind, "taskId": room["id"], "taskNo": room.get("no") or None,
-                                   "taskTitle": title, "reporter": me})
-    rung = handler._ring_report(po["roomId"], res, room["id"], title, me, kind, text) if res else []
+                                   "taskTitle": title, "reporter": me,
+                                   **({"reviewLimit": True} if limit_q else {})}, wake=not quiet)
+    if quiet and res:
+        _d.quiet_reports.hold(po["roomId"], res["message"]["id"],
+                              _d.quiet_reports.gist(f"update from {_d.task_label(room) or title} ({me})", text),
+                              room["id"])
+    rung = handler._ring_report(po["roomId"], res, room["id"], title, me,
+                                "question at the review limit" if limit_q else kind,
+                                ("the CEO rules on these findings: add your recommendation, one ask "
+                                 "card, then the ruling to the owner (how: in the report) — "
+                                 if limit_q else "") + text
+                                ) if res and not quiet else []
     return {"ok": True, "kind": kind,
             "deliveredTo": {"roomId": po["roomId"], "identity": po["identity"],
                             "title": po["title"]},
             **({"messageId": res["message"]["id"]} if res and structured_asks is not None else {}),
             "poWoken": bool(rung),
-            "note": ("delivered, and the PO was woken" if rung else
+            "note": ("delivered to the PO's chat without waking it: an update is told with "
+                     "the PO's next wake, or within 30 minutes. Use completed, blocked or "
+                     "question when the PO has to act" if quiet else
+                     "delivered, and the PO was woken" if rung else
                      "delivered to the PO's room, but the PO is not running, so it "
                      "was not woken — it will see the report when it next reads")}
 
@@ -1285,6 +1313,11 @@ def _review_done(ctx, args, handler):
              + (f"- Summary: {summary}\n" if summary else "")
              + f"\n{findings}\n")
     path = _d.append_review_log(room, entry)
+    # The task's review-round limit (#288): changes asked for in its last
+    # round tell the owner to finish, and wake the PO with it (once).
+    rounds, limit = _d.review_rounds(_d.read_review_log(room)), _d.review_limit(room)
+    at_limit = verdict == "changes_requested" and bool(limit) and rounds >= limit
+    limit_note = (f"\n\n**{_d.review_limit_owner_text(rounds, limit)}**" if at_limit else "")
 
     # To whoever asked, in the task's own chat.
     po = _project_po(_projects().get(ctx["projectId"]))
@@ -1294,34 +1327,52 @@ def _review_done(ctx, args, handler):
     to = asker if asker in idents and asker != me else ""
     head = f"**Review {n}: {label}**" + (f" — {summary}" if summary else "")
     tail = f"\n\n_Added to `{_d.REVIEW_LOG_NAME}`" + ("; sent to the PO._" if po else "._")
-    res = _d.chatroom.post_message(room["id"], me, f"{head}\n\n{findings}{tail}", to=to)
+    res = _d.chatroom.post_message(room["id"], me, f"{head}\n\n{findings}{limit_note}{tail}", to=to)
     if res:
         handler._ring_recipients(room["id"], res)
 
     # To the PO, as a report into its room. It wakes the PO — except an early
     # "changes requested", which the engineer is already acting on
-    # (dashboard.VERDICT_WAKES_FROM): posted, read at the PO's next wake.
-    rings = verdict != "changes_requested" or int(n) >= _d.VERDICT_WAKES_FROM
+    # (dashboard.VERDICT_WAKES_FROM): posted, read at the PO's next wake; and
+    # an approval (#288), which asks nothing of it: told with its next wake
+    # or within 30 minutes (quiet_reports.py); and the last round's changes
+    # requested at the limit, since the owner's question for the CEO's ruling
+    # follows and wakes the PO with what it has to do.
+    quiet = verdict == "approve" or at_limit
+    rings = not quiet and (verdict != "changes_requested" or int(n) >= _d.VERDICT_WAKES_FROM)
     po_woken = False
     if po:
+        limit_po = _d.review_limit_po_text(room, rounds, limit) if at_limit else ""
         body = (f"**review {n} — {label}** of {_d.task_named(room, title)} (by {me}"
                 + (f", asked by {asker}" if asker else "") + f"):\n\n"
-                + (f"{summary}\n\n" if summary else "") + findings)
+                + (f"{summary}\n\n" if summary else "") + findings
+                + (f"\n\n**{limit_po}**" if limit_po else ""))
         pres = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
                                        {"reportKind": "review", "verdict": verdict,
                                         "taskId": room["id"], "taskNo": room.get("no") or None,
                                         "taskTitle": title, "reporter": me}, wake=rings)
+        if quiet and pres:
+            _d.quiet_reports.hold(po["roomId"], pres["message"]["id"],
+                                  _d.quiet_reports.gist(f"review {n} {label} of "
+                                                        f"{_d.task_label(room) or title} ({me})"
+                                                        + (" — review limit reached" if at_limit else ""),
+                                                        summary), room["id"])
         po_woken = bool(handler._ring_report(po["roomId"], pres, room["id"], title, me,
                                              f"review {n} ({label})",
                                              summary or findings)) if pres and rings else False
+    if at_limit:
+        _d.chatroom.patch_room(room["id"], reviewLimitTold=limit)
 
     _d.finish_review(room["id"], me, verdict)
     return {"ok": True, "review": n, "verdict": verdict, "log": str(path),
             "sentTo": to or "everyone",
             "po": ({"roomId": po["roomId"], "identity": po["identity"], "woken": po_woken,
-                    **({} if rings else {"why": f"a changes-requested verdict before review "
-                                                f"{_d.VERDICT_WAKES_FROM} is posted without a wake"})}
+                    **({} if rings else {"why": "at the review limit: the owner's question wakes the PO"
+                                         if at_limit else "an approval is told with the PO's next wake"
+                                         if quiet else f"a changes-requested verdict before review "
+                                         f"{_d.VERDICT_WAKES_FROM} is posted without a wake"})}
                    if po else "none — this project has no PO"),
+            **({"reviewLimit": {"rounds": rounds, "limit": limit}} if at_limit else {}),
             "note": "recorded. Your session ends in a few seconds; there is nothing more to do."}
 
 
@@ -1585,7 +1636,7 @@ def _update_task(ctx, args, handler):
     if not is_admin_caller(ctx["room"], ctx["identity"]):
         changes_other_than_workflow = any(args.get(k) is not None
                                           for k in ("title", "spec", "priority", "agents", "after", "onReady",
-                                                    "keepAgents"))
+                                                    "keepAgents", "reviewLimit"))
         if (room["id"] != ctx["room"]["id"] or changes_other_than_workflow
                 or _d.normalize_workflow(args.get("workflow")) != "inreview"):
             raise ToolError(
@@ -1599,9 +1650,18 @@ def _update_task(ctx, args, handler):
     keep = args.get("keepAgents")
     if keep is not None and not isinstance(keep, bool):
         raise ToolError("keepAgents must be true or false")
+    review_limit = args.get("reviewLimit")
+    if review_limit is not None:
+        review_limit = _d.clamp_review_rounds(review_limit)
+        if review_limit is None:
+            raise ToolError("reviewLimit must be a whole number (0 = no limit)")
+        if not " ".join(str(args.get("reviewLimitReason") or "").split()):
+            raise ToolError("say why with reviewLimitReason — it is shown in the task's chat")
     if (title is None and spec is None and priority is None and keep is None
-            and workflow is None and agent_list is None and "after" not in args and "onReady" not in args):
-        raise ToolError("give a new title, spec, priority, workflow, agents and/or keepAgents")
+            and workflow is None and agent_list is None and review_limit is None
+            and "after" not in args and "onReady" not in args):
+        raise ToolError("give a new title, spec, priority, workflow, agents, keepAgents "
+                        "and/or reviewLimit")
     gate_fields = {}
     if "after" in args or "onReady" in args:
         try:
@@ -1655,11 +1715,39 @@ def _update_task(ctx, args, handler):
     if gate_fields:
         room2 = _d.chatroom.patch_room(room["id"], **gate_fields) or room2
         _d._patch_task_json(room2.get("taskDir", ""), **gate_fields)
+    if review_limit is not None:
+        notes.append(_set_review_limit(ctx, handler, room2, review_limit,
+                                       " ".join(str(args["reviewLimitReason"]).split())[:300]))
+        room2 = _d.chatroom.get_room(room["id"]) or room2
     return {"ok": True, "taskId": room2["id"], "title": _title(room2),
             **_d.board.view(room2),
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room2)],
             "status": _status(room2), "agents": _agents_view(room2),
             "mode": room2.get("mode", ""), "note": "; ".join(notes)}
+
+
+def _set_review_limit(ctx, handler, room: dict, limit: int, why: str) -> str:
+    """A PO gives one task its own review-round limit (#288): recorded with
+    who and why, said in the task's chat, and — when reviews may start again
+    — typed to its owner. Returns the note for the caller."""
+    rid = room["id"]
+    rounds = _d.review_rounds(_d.read_review_log(room))
+    _d.chatroom.patch_room(rid, reviewLimit=limit, reviewLimitSet={
+        "by": ctx["identity"], "from": ctx["room"]["id"], "why": why, "at": time.time()})
+    said = (f"no review-round limit" if not limit else
+            f"a review-round limit of {limit}") + f" ({rounds} used so far)"
+    who = _amender_name(ctx, room)
+    _d.chatroom.post_notice(rid, _d.rotation.SENDER, f"{who} gave this task {said}: {why}",
+                            {"noticeKind": "reviewLimit"})
+    note = f"the task now has {said}"
+    if (not limit or rounds < limit) and _d._room_is_live(room):
+        owners = [o for o in _d.chatroom.owners(room)
+                  if not _d.chatroom.is_on_mention(room, _d.chatroom.participant(room, o) or {})]
+        rung = handler._ring(rid, owners, f"[from the PO] {who} gave this task {said}: {why}. "
+                                          "You may ask for a review again.") if owners else []
+        if rung:
+            note += "; its owner was told it may ask for a review again"
+    return note
 
 
 def _amender_name(ctx, room: dict) -> str:

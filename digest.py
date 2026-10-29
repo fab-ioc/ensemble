@@ -98,6 +98,7 @@ import issues
 import board
 import points
 import po_messages
+import quiet_reports
 import stall
 import durable
 
@@ -852,6 +853,12 @@ def start_scheduler() -> None:
                 po_messages.maybe_tick()
             except Exception as e:
                 _log(f"PO messages check error: {str(e)[:200]}")
+            # Updates and approved verdicts that did not wake their PO,
+            # after 30 minutes with no wake to ride (quiet_reports.py).
+            try:
+                quiet_reports.maybe_tick()
+            except Exception as e:
+                _log(f"quiet reports check error: {str(e)[:200]}")
             # The person's points still open: one reminder each (points.py).
             try:
                 points.maybe_tick()
