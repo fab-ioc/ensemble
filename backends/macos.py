@@ -783,7 +783,7 @@ class MacBackend(Backend):
 
     # ---------- desktop integration ----------
 
-    def open_path(self, path: str, app: str = "default") -> str:
+    def open_path(self, path: str, app: str = "default", command: bool = False) -> str:
         p = Path(path)
         if not p.exists():
             return f"path does not exist: {path}"
@@ -792,19 +792,22 @@ class MacBackend(Backend):
         if app == "ij":
             # Back-compat: legacy clients sending app="ij" — use IJ_APP default.
             app = IJ_APP
-        label, target = self.launch_target(app)
+        label, target, extra = self.launch_target(app, command)
         if target and not target.endswith(".app"):
             # A command (a CLI launcher on PATH): it takes the folder itself.
             try:
-                subprocess.Popen([target, str(p)], stdout=subprocess.DEVNULL,
+                subprocess.Popen([target, *extra, str(p)], stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, start_new_session=True)
                 return "ok"
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
         # An app: its bundle when found, else by name, which Launch Services
         # may still know (an app outside every folder looked in).
-        name = target or _APP_NAMES.get(editor_id(app), (app,))[0]
-        res = self._run_open(["open", "-na", name, "--args", str(p)])
+        if command:
+            name = target or (self._command_argv(app) or [app])[0]
+        else:
+            name = target or _APP_NAMES.get(editor_id(app), (app,))[0]
+        res = self._run_open(["open", "-na", name, "--args", *extra, str(p)])
         if res == "ok" or target:
             return res
         self._run_open(["open", str(p)])
@@ -852,10 +855,10 @@ class MacBackend(Backend):
             return str(max(found, key=lambda a: a.stat().st_mtime))
         return None
 
-    def _locate_command(self, cmd: str) -> str | None:
-        """A command the person named: a .app path, an app's name in an
+    def _locate_program(self, cmd: str) -> str | None:
+        """A program the person named: a .app path, an app's name in an
         Applications folder, or a command on PATH."""
-        cmd = (cmd or "").strip()
+        cmd = (cmd or "").strip().strip('"\'')
         if not cmd:
             return None
         if cmd.endswith(".app") and Path(cmd).is_dir():

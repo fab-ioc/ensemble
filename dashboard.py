@@ -11323,7 +11323,11 @@ def find_repos_for_session(session_id: str, max_repos: int = 10) -> dict:
 
 
 def open_path(path: str, app: str = "default") -> str:
-    return BACKEND.open_path(path, app)
+    # Settings › Editor's Other command… runs as typed, never as the catalogue
+    # editor its name looks like.
+    s = editor_setting()
+    command = s["editor"] == EDITOR_CUSTOM and bool(app) and app == s["editorCommand"]
+    return BACKEND.open_path(path, app, command=command)
 
 
 def maybe_resync_iterm_label(pid: int, label: str) -> None:
@@ -22166,6 +22170,9 @@ def main():
     # Starting before the first socket is bound: a probe between the bind and
     # the steps must never see "ready" (ED-227).
     startup.begin(steps=7)
+    # The installed editors, looked for once now: Settings › Editor and every
+    # page's platform read are served from that look (#286).
+    BACKEND.warm_editors()
     servers = []
     remote_bound = False
     if wildcard:

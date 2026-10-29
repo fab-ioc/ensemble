@@ -48,18 +48,21 @@ class LinuxBackend(Backend):
         script = Path.home() / ".local" / "share" / "JetBrains" / "Toolbox" / "scripts" / eid
         return str(script) if script.is_file() else None
 
-    def open_path(self, path: str, app: str = "default") -> str:
+    def open_path(self, path: str, app: str = "default", command: bool = False) -> str:
         p = Path(path)
         if not p.exists():
             return f"path does not exist: {path}"
         if app and app not in ("default", "finder"):
-            label, exe = self.launch_target(app)
+            label, exe, extra = self.launch_target(app, command)
             if not exe:
-                subprocess.Popen(["xdg-open", str(p)], stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL)
+                try:
+                    subprocess.Popen(["xdg-open", str(p)], stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+                except (OSError, subprocess.SubprocessError) as e:
+                    return f"error: {e}"
                 return (f"{label} was not found on this computer, so the folder opened "
                         f"instead. Choose the editor in Settings › Editor.")
-            args = [exe, str(p)]
+            args = [exe, *extra, str(p)]
         else:
             args = ["xdg-open", str(p)]
         try:

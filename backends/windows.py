@@ -790,7 +790,7 @@ class WindowsBackend(Backend):
 
     # ---------- desktop integration ----------
 
-    def open_path(self, path: str, app: str = "default") -> str:
+    def open_path(self, path: str, app: str = "default", command: bool = False) -> str:
         p = Path(path)
         if not p.exists():
             return f"path does not exist: {path}"
@@ -807,28 +807,47 @@ class WindowsBackend(Backend):
                 return "ok"
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
-        label, exe = self.launch_target(app)
-        if not exe:
+        label, exe, extra = self.launch_target(app, command)
+        batch = bool(exe) and exe.lower().endswith((".cmd", ".bat"))
+        # A .cmd/.bat runs through cmd.exe, which reads & | < > ^ and %NAME%
+        # in its arguments as its own (a folder "a&b" would run "b"): such a
+        # folder is not handed to one.
+        unsafe = batch and any(_CMD_SPECIAL.search(a) for a in [*extra, str(p)])
+        if not exe or unsafe:
             # Not found on this computer: open the folder in Explorer instead.
             try:
                 explorer = os.path.join(
                     os.environ.get("WINDIR", r"C:\Windows"), "explorer.exe")
                 subprocess.Popen([explorer if os.path.exists(explorer) else "explorer",
                                   str(p)], close_fds=True)
-                return (f"{label} was not found on this computer, so the folder opened in "
-                        f"Explorer instead. Choose the editor in Settings › Editor.")
             except (OSError, subprocess.SubprocessError) as e:
                 return f"error: {e}"
+            if unsafe:
+                return (f"{label} starts through a script that would misread the folder's "
+                        f"name (it holds & or % or the like), so the folder opened in "
+                        f"Explorer instead. Choose another editor in Settings › Editor.")
+            return (f"{label} was not found on this computer, so the folder opened in "
+                    f"Explorer instead. Choose the editor in Settings › Editor.")
         # A .cmd/.bat (a Toolbox script, VS Code's code.cmd) runs in a console
         # of its own: hidden, so the hub's windowless process flashes nothing.
-        flags = _CREATE_NO_WINDOW if exe.lower().endswith((".cmd", ".bat")) else 0
+        flags = _CREATE_NO_WINDOW if batch else 0
         try:
-            subprocess.Popen([exe, str(p)], close_fds=True, creationflags=flags)
+            subprocess.Popen([exe, *extra, str(p)], close_fds=True, creationflags=flags)
             return "ok"
         except (OSError, subprocess.SubprocessError) as e:
             return f"error: {e}"
 
     # ---------- finding an editor ----------
+
+    posix_command_line = False
+
+    def _scan_editors(self) -> dict[str, str | None]:
+        # The Toolbox's installs are listed once for every JetBrains IDE.
+        self._toolbox_builds = _toolbox_builds()
+        try:
+            return super()._scan_editors()
+        finally:
+            self.__dict__.pop("_toolbox_builds", None)
 
     def _locate_editor(self, eid: str) -> str | None:
         r"""Where an editor is installed. JetBrains IDEs are often not on PATH:
@@ -845,10 +864,10 @@ class WindowsBackend(Backend):
                 found += _glob_dirs(root / "JetBrains", folder, Path("bin") / exe)
             if local:
                 found += _glob_dirs(Path(local) / "Programs", folder, Path("bin") / exe)
-                for ch in _glob_dirs(Path(local) / "JetBrains" / "Toolbox" / "apps", "*", Path()):
-                    for build in ch.glob("ch-*/*"):
-                        if (build / "bin" / exe).is_file():
-                            found.append(build / "bin" / exe)
+            builds = self.__dict__.get("_toolbox_builds")
+            for build in (_toolbox_builds() if builds is None else builds):
+                if (build / "bin" / exe).is_file():
+                    found.append(build / "bin" / exe)
             if local:
                 for home in jetbrains_homes(eid, Path(local) / "JetBrains"):
                     if (home / "bin" / exe).is_file():
@@ -861,7 +880,9 @@ class WindowsBackend(Backend):
             if local:
                 script = Path(local) / "JetBrains" / "Toolbox" / "scripts" / f"{eid}.cmd"
                 if script.is_file():
-                    return str(script)
+                    # The IDE the script starts, when it names it: run that,
+                    # not cmd.exe (which misreads a folder with & or %).
+                    return _script_target(script, exe) or str(script)
             return shutil.which(eid)
         for rel in _OTHER_EDITORS_WIN.get(eid, ()):
             for root in ([Path(local) / "Programs"] if local else []) + _program_roots():
@@ -897,6 +918,36 @@ def _program_roots() -> list[Path]:
         if v and Path(v) not in roots:
             roots.append(Path(v))
     return roots
+
+
+# What cmd.exe reads as its own in a .cmd/.bat's arguments.
+_CMD_SPECIAL = re.compile(r'[&|<>^%!"\r\n]')
+
+
+def _toolbox_builds() -> list[Path]:
+    """Each IDE build JetBrains Toolbox installed (apps/<IDE>/ch-*/<build>)."""
+    local = os.environ.get("LOCALAPPDATA", "")
+    if not local:
+        return []
+    out = []
+    for ch in _glob_dirs(Path(local) / "JetBrains" / "Toolbox" / "apps", "*", Path()):
+        try:
+            out += [b for b in ch.glob("ch-*/*") if b.is_dir()]
+        except OSError:
+            pass
+    return out
+
+
+def _script_target(script: Path, exe: str) -> str | None:
+    """The ``exe`` a Toolbox launch script starts, when it names one that exists."""
+    try:
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for m in re.finditer(r'"?([A-Za-z]:\\[^"\r\n]*?\\' + re.escape(exe) + r')"?', text, re.I):
+        if os.path.isfile(m.group(1)):
+            return m.group(1)
+    return None
 
 
 def _glob_dirs(root: Path, pattern: str, rel: Path) -> list[Path]:

@@ -14,8 +14,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
+import threading
 import time
 from pathlib import Path
 
@@ -158,6 +160,71 @@ def command_label(cmd: str) -> str:
     """How a command is named to the person: its program's name."""
     name = re.split(r"[\\/]", (cmd or "").strip().strip('"'))[-1]
     return re.sub(r"\.(exe|cmd|bat|app)$", "", name, flags=re.I) or cmd
+
+
+def split_command(cmd: str, posix: bool = True) -> list[str]:
+    """A command line as its program and arguments: shell words on macOS and
+    Linux, Windows' own rules (CommandLineToArgvW's) on Windows, where a
+    backslash is a path's, not an escape."""
+    cmd = (cmd or "").strip()
+    if not cmd:
+        return []
+    if posix:
+        try:
+            return shlex.split(cmd)
+        except ValueError:            # an unclosed quote: the line as typed
+            return [cmd.strip('"\'')]
+    return _split_windows(cmd)
+
+
+def _split_windows(s: str) -> list[str]:
+    # The program: up to the closing quote, else the first blank (no escapes).
+    if s.startswith('"'):
+        end = s.find('"', 1)
+        if end < 0:
+            return [s[1:]]
+        args, rest = [s[1:end]], s[end + 1:]
+    else:
+        m = re.match(r"[^ \t]+", s)
+        args, rest = [m.group()], s[m.end():]
+    cur: list[str] = []
+    quoted = started = False
+    i = 0
+    while i < len(rest):
+        c = rest[i]
+        if c == "\\":
+            j = i
+            while j < len(rest) and rest[j] == "\\":
+                j += 1
+            n = j - i
+            if j < len(rest) and rest[j] == '"':
+                # 2n backslashes and a quote: n backslashes, then the quote
+                # toggles; 2n+1: n backslashes and a literal quote.
+                cur.append("\\" * (n // 2))
+                if n % 2:
+                    cur.append('"')
+                    j += 1
+            else:
+                cur.append("\\" * n)
+            i, started = j, True
+            continue
+        if c == '"':
+            if quoted and rest[i + 1:i + 2] == '"':
+                cur.append('"')
+                i += 2
+                continue
+            quoted, started = not quoted, True
+        elif c in " \t" and not quoted:
+            if started:
+                args.append("".join(cur))
+                cur, started = [], False
+        else:
+            cur.append(c)
+            started = True
+        i += 1
+    if started:
+        args.append("".join(cur))
+    return args
 
 
 def app_slug(name: str) -> str:
@@ -347,7 +414,9 @@ class Backend:
 
     # ---------- desktop integration ----------
 
-    def open_path(self, path: str, app: str = "default") -> str:
+    def open_path(self, path: str, app: str = "default", command: bool = False) -> str:
+        """Open ``path`` in ``app``: an editor id or name, or (``command``)
+        Settings › Editor's Other command…, run as typed."""
         return "unsupported"
 
     def load_editor_map(self) -> dict[str, str]:
@@ -371,34 +440,105 @@ class Backend:
         or None. Default: its command on PATH."""
         return shutil.which(eid)
 
-    def _locate_command(self, cmd: str) -> str | None:
-        """What launches a command the person named, or None when not found."""
-        cmd = (cmd or "").strip().strip('"')
-        if not cmd:
+    # How a command line splits: shell words, or Windows' rules (windows.py).
+    posix_command_line = True
+
+    def _locate_program(self, prog: str) -> str | None:
+        """What launches a program the person named (a path or a name on
+        PATH), or None when not found."""
+        prog = (prog or "").strip().strip('"')
+        if not prog:
             return None
-        if os.path.isfile(cmd):
-            return cmd
-        return shutil.which(cmd)
+        if os.path.isfile(prog):
+            return prog
+        return shutil.which(prog)
+
+    def _command_argv(self, cmd: str) -> list[str]:
+        """Other command…'s program and its arguments ("code -n", a quoted
+        path and flags). A whole line that names a program is one, unsplit: an
+        unquoted path with blanks, or an app's name ("Sublime Text")."""
+        bare = (cmd or "").strip().strip('"\'')
+        if not bare:
+            return []
+        if self._locate_program(bare):
+            return [bare]
+        return split_command(cmd, posix=self.posix_command_line) or [bare]
+
+    def _locate_command(self, cmd: str) -> str | None:
+        """What launches a command the person typed, or None when not found."""
+        argv = self._command_argv(cmd)
+        return self._locate_program(argv[0]) if argv else None
+
+    def _command_label(self, cmd: str) -> str:
+        argv = self._command_argv(cmd)
+        return command_label(argv[0] if argv else cmd)
+
+    # --- the installed editors: one look for them all, held _EDITOR_FIND_TTL
+    # and refreshed in the background, so no page read waits on the folders ---
+
+    def _scan_editors(self) -> dict[str, str | None]:
+        """One look for every catalogue editor (platforms may share work
+        between them)."""
+        found: dict[str, str | None] = {}
+        for eid, _label in EDITORS:
+            try:
+                found[eid] = self._locate_editor(eid)
+            except OSError:
+                found[eid] = None
+        return found
+
+    def _editor_state(self) -> dict:
+        st = self.__dict__.get("_editor_found")
+        if st is None:
+            st = self.__dict__.setdefault("_editor_found", {
+                "at": 0.0, "found": None, "first": threading.Lock(),
+                "guard": threading.Lock(), "busy": False})
+        return st
+
+    def editors_found(self) -> dict[str, str | None]:
+        """Where each catalogue editor is (None: not found). The last look is
+        served; one older than _EDITOR_FIND_TTL is looked at again in the
+        background. Only the very first look is waited for."""
+        st = self._editor_state()
+        found = st["found"]
+        if found is None:
+            with st["first"]:
+                if st["found"] is None:
+                    st["found"], st["at"] = self._scan_editors(), time.monotonic()
+            return st["found"]
+        if time.monotonic() - st["at"] >= _EDITOR_FIND_TTL:
+            self._rescan_editors(st)
+        return found
+
+    def _rescan_editors(self, st: dict) -> None:
+        with st["guard"]:
+            if st["busy"]:
+                return
+            st["busy"] = True
+
+        def run():
+            try:
+                st["found"], st["at"] = self._scan_editors(), time.monotonic()
+            except Exception:
+                st["at"] = time.monotonic()      # try again a TTL later
+            finally:
+                st["busy"] = False
+        threading.Thread(target=run, name="editor-scan", daemon=True).start()
+
+    def warm_editors(self) -> None:
+        """Look for the editors now, in the background (at the hub's start)."""
+        threading.Thread(target=self.editors_found, name="editor-scan", daemon=True).start()
 
     def find_editor(self, eid: str) -> str | None:
-        """``_locate_editor``, held for a short while (it globs folders)."""
-        now = time.monotonic()
-        cache = self.__dict__.setdefault("_editor_found", {})
-        hit = cache.get(eid)
-        if hit and now - hit[0] < _EDITOR_FIND_TTL:
-            return hit[1]
-        try:
-            where = self._locate_editor(eid)
-        except OSError:
-            where = None
-        cache[eid] = (now, where)
-        return where
+        """Where the catalogue editor ``eid`` is, from the held look."""
+        return self.editors_found().get(eid)
 
     def installed_editors(self) -> list[dict]:
         """The catalogue's editors found on this computer, in its order."""
         out = []
+        found = self.editors_found()
         for eid, label in EDITORS:
-            where = self.find_editor(eid)
+            where = found.get(eid)
             if where:
                 out.append({"id": eid, "label": label, "path": where})
         return out
@@ -418,7 +558,7 @@ class Backend:
         if want == EDITOR_CUSTOM:
             cmd = str(setting.get("editorCommand") or "").strip()
             if cmd:
-                return {"id": cmd, "label": command_label(cmd),
+                return {"id": cmd, "label": self._command_label(cmd),
                         "path": self._locate_command(cmd) or "", "how": "chosen"}
             want = ""
         if want in EDITOR_LABELS:
@@ -433,7 +573,7 @@ class Backend:
         if pref and not eid:
             where = self._locate_command(pref)
             if where:
-                return {"id": pref, "label": command_label(pref), "path": where, "how": "language"}
+                return {"id": pref, "label": self._command_label(pref), "path": where, "how": "language"}
         found = self.installed_editors()
         if found:
             return {"id": found[0]["id"], "label": found[0]["label"], "path": found[0]["path"],
@@ -451,13 +591,17 @@ class Backend:
             labels.add(c["label"] if c["path"] else "")
         return labels.pop() if len(labels) == 1 else ""
 
-    def launch_target(self, app: str) -> tuple[str, str | None]:
-        """(label, what launches it or None) for what /api/open-path was sent:
-        a catalogue id, an older editor name, or a command."""
-        eid = editor_id(app)
+    def launch_target(self, app: str, command: bool = False) -> tuple[str, str | None, list[str]]:
+        """(label, what launches it or None, the arguments before the folder)
+        for what /api/open-path was sent: a catalogue id, an older editor name,
+        or a command. Other command… (``command``) runs as typed, never as the
+        catalogue editor its name looks like ("IntelliJ IDEA 2023.app" is that
+        app, not the newest IntelliJ)."""
+        eid = "" if command else editor_id(app)
         if eid:
-            return EDITOR_LABELS[eid], self.find_editor(eid)
-        return command_label(app), self._locate_command(app)
+            return EDITOR_LABELS[eid], self.find_editor(eid), []
+        argv = self._command_argv(app) or [app]
+        return command_label(argv[0]), self._locate_program(argv[0]), argv[1:]
 
     def editor_icon_path(self, app_name: str) -> Path | None:
         return None
