@@ -14748,6 +14748,8 @@ def _kind_usage(snapshot: dict, kind: str, codex_model: str = "") -> dict:
     pool = usage.codex_pool_for_model(source, codex_model) if kind == "codex" else None
     named = ({"pool": pool["id"], "poolLabel": pool["label"] or "", "model": pool["model"]}
              if pool else {})
+    if pool and pool.get("reserve"):
+        named["reserve"] = pool["reserve"]
     if not source or source.get("state") != "ok":
         return {"state": "unknown", **named,
                 "error": (source or {}).get("error", "source unavailable")}
@@ -14774,6 +14776,7 @@ def _kind_usage(snapshot: dict, kind: str, codex_model: str = "") -> dict:
         "label": "5-hour" if worst.get("kind") == "five_hour" else "7-day",
         "trusted": bool(worst.get("trusted")),
         "atLeast": not bool(worst.get("trusted")),
+        "ageSeconds": worst.get("ageSeconds"),
     }
 
 
@@ -14925,6 +14928,8 @@ def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
         return {"state": "unknown"}
     pool = usage.codex_pool_for_model(source, codex_model) if kind == "codex" else None
     named = {"pool": pool["id"], "poolLabel": pool["label"] or ""} if pool else {}
+    if pool and pool.get("reserve"):
+        named["reserve"] = pool["reserve"]
     window = next((w for w in source.get("windows") or []
                    if w.get("kind") == "seven_day"
                    and not (pool and (w.get("pool") or usage.CODEX_MAIN_POOL) != pool["id"])
@@ -14951,6 +14956,7 @@ def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
     percent = float(window["percent"])
     return {"state": "known", **named, "percent": window["percent"],
             "label": "7-day", "atLeast": not bool(window.get("trusted")),
+            "ageSeconds": window.get("ageSeconds"),
             "pace": mark["pace"], "elapsed": mark["elapsed"],
             "resetsAt": window.get("resetsAt"), "nearReset": mark["nearReset"], "at": now,
             "hoursToReset": hours_to_reset,
@@ -15035,10 +15041,24 @@ def _keep_agents_why(kind: str, reading: dict, warn) -> str:
 def _usage_reason_phrase(kind: str, reading: dict) -> str:
     percent = reading.get("percent")
     value = f"{float(percent):g}" if percent is not None else "?"
-    floor = "at least " if reading.get("atLeast") else ""
+    # A floor, not a measurement: "at 96% or more" (never "at at least").
+    floor = " or more" if reading.get("atLeast") else ""
     pool = f"{reading['poolLabel']} pool " if reading.get("poolLabel") else ""
+    age = reading.get("ageSeconds")
+    old = (f", read {_age_words(age)} ago"
+           if isinstance(age, (int, float)) and age > usage.AGE_SHOWN_S else "")
+    reserve = (f", reserve: {reading['reserve']}" if reading.get("reserve") else "")
     return (f"{_agent_kind_name(kind)} {pool}{reading.get('label', 'usage')} window "
-            f"at {floor}{value}%")
+            f"at {value}%{floor}{old}{reserve}")
+
+
+def _age_words(seconds: float) -> str:
+    """A reading's age for a reason: "17 h", "2 d 3 h", "45 min"."""
+    seconds = int(seconds)
+    if seconds < 3600:
+        return f"{max(1, seconds // 60)} min"
+    hours = seconds // 3600
+    return f"{hours} h" if hours < 48 else f"{hours // 24} d {hours % 24} h"
 
 
 def _reset_clock(resets_at, now: float | None = None) -> str:

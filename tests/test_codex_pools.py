@@ -1,8 +1,9 @@
 """Codex's pools — main, reserve, a model's own — read and judged apart.
 
-The app server's answer first, the session records when it cannot be had; the
-reserve never under the main pool's label; and Codex judged, for allocation
-and for alarms, by the pool its agents actually run on."""
+The app server's answer first, the session records when it cannot be had; a
+pool named by the limit id Codex reports, never by the model a turn ran on
+(#283); and Codex judged, for allocation and for alarms, by the pool its agents
+actually run on."""
 from __future__ import annotations
 
 import copy
@@ -38,6 +39,11 @@ def _iso(epoch: float) -> str:
 
 def _turn(model: str) -> dict:
     return {"type": "turn_context", "payload": {"model": model, "cwd": "."}}
+
+
+# A record of the reserve's own limit id. Codex has never been seen to write
+# one in a session record (#281): a turn on gpt-reserve writes "codex".
+RESERVE = {"limit_id": "base_model_inference", "limit_name": "gpt-reserve"}
 
 
 def _count(at: float, percent, resets_at, *, limit_id="codex", limit_name=None,
@@ -127,7 +133,7 @@ class AppServerAnswer(_Case):
     def test_a_pool_the_answer_leaves_out_keeps_its_session_record(self):
         spark = {"used_percent": 4, "window_minutes": 10080, "resets_at": RESERVE_RESET}
         files = [
-            self.rollout(_turn("gpt-reserve"), _count(NOW - 120, 20, RESERVE_RESET)),
+            self.rollout(_turn("gpt-reserve"), _count(NOW - 120, 20, RESERVE_RESET, **RESERVE)),
             self.rollout(_turn("gpt-5.3-codex-spark"), _count(
                 NOW - 60, 31, NOW + 9000, limit_id="codex_bengalfox",
                 limit_name="GPT-5.3-Codex-Spark", minutes=300, plan=None, secondary=spark)),
@@ -158,7 +164,8 @@ class AppServerAnswer(_Case):
         self.assertIsNone(wins[("base_model_inference", "seven_day")]["percent"])
 
     def test_a_record_that_cannot_be_read_costs_its_pool_not_the_answer(self):
-        files = [self.rollout(_turn("gpt-reserve"), _count(NOW - 120, 20, "2026-09-24"))]
+        files = [self.rollout(_turn("gpt-reserve"),
+                              _count(NOW - 120, 20, "2026-09-24", **RESERVE))]
         src = usage.read_codex(NOW, files=files,
                                app_server=self.answered({"rateLimits": ANSWER["rateLimits"]}))
         self.assertEqual((src["state"], src["via"]), ("ok", "app-server"))
@@ -233,7 +240,8 @@ class FallBack(_Case):
         self.assertEqual(src["state"], "unavailable")
         self.assertIn("not installed", src["error"])
         self.assertIn("no Codex session", src["error"])
-        self.assertEqual(src["poolInUse"]["id"], "base_model_inference")
+        self.assertEqual((src["poolInUse"]["id"], src["poolInUse"]["reserve"]),
+                         ("codex", "not reported"))
 
     def test_injected_files_alone_never_start_codex(self):
         with mock.patch.object(usage, "read_codex_app_server") as real:
@@ -386,9 +394,47 @@ class AppServerProcess(_Case):
 
 
 class SessionRecords(_Case):
-    def test_a_turn_on_the_reserve_never_lands_under_the_main_label(self):
+    def test_a_turn_on_the_reserve_that_reports_codex_is_the_main_pool(self):
         main = self.rollout(_turn("gpt-5.6-luna"), _count(NOW - 100, 97, MAIN_RESET))
-        reserve = self.rollout(_turn("gpt-reserve"), _count(NOW - 50, 0, RESERVE_RESET))
+        reserve = self.rollout(_turn("gpt-reserve"), _count(NOW - 50, 98, MAIN_RESET))
+        for files in ([reserve, main], [main, reserve]):
+            src = usage.read_codex(NOW, files=files)
+            self.assertEqual([(w["pool"], w["model"], w["percent"]) for w in src["windows"]],
+                             [("codex", None, 98.0)])
+            self.assertEqual([p["id"] for p in src["pools"]], ["codex"])
+            # A gpt-reserve seat is judged by the pool its turns report.
+            self.assertEqual(src["poolInUse"], {"id": "codex", "label": None,
+                                                "model": "gpt-reserve",
+                                                "reserve": "not reported", "from": "config"})
+            self.assertEqual([w["inUse"] for w in src["windows"]], [True])
+
+    def test_the_rollouts_of_2026_10_28_give_the_main_pool(self):
+        # Trimmed from this machine's rollouts: gpt-reserve and gpt-5.6-sol
+        # turns side by side, one limit id, one reset, one rising percentage.
+        files = [FIXTURES / "codex_rollout_2026-10-28_gpt-reserve.jsonl",
+                 FIXTURES / "codex_rollout_2026-10-28_gpt-5.6-sol.jsonl"]
+        now = datetime(2026, 10, 28, 16, 0, tzinfo=timezone.utc).timestamp()
+        src = usage.read_codex(now, files=files)
+        win, = src["windows"]
+        self.assertEqual((win["pool"], win["model"], win["percent"], win["resetsAt"]),
+                         ("codex", None, 96.0, "2026-11-04T08:01:26+00:00"))
+        self.assertEqual(win["ageSeconds"], 1107)          # 15:41:32, the newest reserve turn
+        self.assertEqual((src["poolInUse"]["id"], src["poolInUse"]["reserve"]),
+                         ("codex", "not reported"))
+        figure = dashboard._kind_usage({"sources": [src]}, "codex")
+        self.assertEqual((figure["pool"], figure["poolLabel"], figure["percent"],
+                          figure["reserve"]), ("codex", "", 96.0, "not reported"))
+        self.assertEqual(dashboard._usage_reason_phrase("codex", figure),
+                         "Codex 7-day window at 96%, reserve: not reported")
+        # The in-use pool alarms; there is no idle pool to tell of.
+        self.assertEqual([(a["pool"], a["level"]) for a in usage.alerts([src])],
+                         [("codex", "alarm")])
+        self.assertEqual(usage.notices([src]), [])
+
+    def test_a_reserve_limit_id_gives_a_pool_of_its_own(self):
+        main = self.rollout(_turn("gpt-5.6-luna"), _count(NOW - 100, 97, MAIN_RESET))
+        reserve = self.rollout(_turn("gpt-reserve"),
+                               _count(NOW - 50, 0, RESERVE_RESET, **RESERVE))
         for files in ([reserve, main], [main, reserve]):
             src = usage.read_codex(NOW, files=files)
             wins = self.by_pool(src)
@@ -398,31 +444,33 @@ class SessionRecords(_Case):
             self.assertEqual((wins[("base_model_inference", "seven_day")]["model"],
                               wins[("base_model_inference", "seven_day")]["percent"]),
                              ("reserve", 0.0))
+            self.assertEqual(src["poolInUse"]["id"], "base_model_inference")
+            self.assertNotIn("reserve", src["poolInUse"])
         # Whichever wrote last, the figures stay where they are.
         main_later = self.rollout(_turn("gpt-5.6-luna"), _count(NOW - 10, 98, MAIN_RESET))
         wins = self.by_pool(usage.read_codex(NOW, files=[main_later, reserve, main]))
         self.assertEqual(wins[("codex", "seven_day")]["percent"], 98.0)
         self.assertEqual(wins[("base_model_inference", "seven_day")]["percent"], 0.0)
 
+    def test_the_model_a_turn_ran_on_never_names_its_pool(self):
+        one = self.rollout(_turn("gpt-reserve"), _count(NOW - 300, 30, MAIN_RESET),
+                           _turn("gpt-6-astra"), _count(NOW - 200, 40, MAIN_RESET),
+                           _turn("GPT-Reserve"), _count(NOW - 100, 41, MAIN_RESET))
+        src = usage.read_codex(NOW, files=[one])
+        self.assertEqual([(w["pool"], w["percent"]) for w in src["windows"]], [("codex", 41.0)])
+
     def test_the_main_pool_is_found_behind_a_run_of_reserve_sessions(self):
-        files = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60 * n, 10 + n, RESERVE_RESET))
+        files = [self.rollout(_turn("gpt-reserve"),
+                              _count(NOW - 60 * n, 10 + n, RESERVE_RESET, **RESERVE))
                  for n in range(1, 6)]
         files.append(self.rollout(_turn("gpt-6-astra"), _count(NOW - 900, 37, MAIN_RESET)))
         wins = self.by_pool(usage.read_codex(NOW, files=files))
         self.assertEqual(wins[("codex", "seven_day")]["percent"], 37.0)
         self.assertEqual(wins[("base_model_inference", "seven_day")]["percent"], 11.0)
 
-    def test_a_session_that_changes_model_is_read_turn_by_turn(self):
-        one = self.rollout(_turn("gpt-reserve"), _count(NOW - 300, 3, RESERVE_RESET),
-                           _turn("gpt-6-astra"), _count(NOW - 200, 40, MAIN_RESET),
-                           _turn("GPT-Reserve"), _count(NOW - 100, 4, RESERVE_RESET))
-        wins = self.by_pool(usage.read_codex(NOW, files=[one]))
-        self.assertEqual(wins[("codex", "seven_day")]["percent"], 40.0)
-        self.assertEqual(wins[("base_model_inference", "seven_day")]["percent"], 4.0)
-
     def test_the_reserve_is_not_dropped_for_trailing_the_main_pool_but_a_model_is(self):
         files = [
-            self.rollout(_turn("gpt-reserve"), _count(NOW - 7200, 1, RESERVE_RESET)),
+            self.rollout(_turn("gpt-reserve"), _count(NOW - 7200, 1, RESERVE_RESET, **RESERVE)),
             self.rollout(_turn("gpt-5.6-sol"),
                          _count(NOW - 7000, 50, MAIN_RESET),
                          _count(NOW - 7000, 9, NOW + 3600, limit_id="codex_bengalfox",
@@ -437,7 +485,8 @@ class SessionRecords(_Case):
     def test_each_pool_keeps_its_own_guards(self):
         files = [
             self.rollout(_turn("gpt-5.6-sol"), _count(NOW - 60, 97, MAIN_RESET)),
-            self.rollout(_turn("gpt-reserve"), _count(NOW - 9 * 86400, 80, NOW - 2 * 86400)),
+            self.rollout(_turn("gpt-reserve"),
+                         _count(NOW - 9 * 86400, 80, NOW - 2 * 86400, **RESERVE)),
         ]
         wins = self.by_pool(usage.read_codex(NOW, files=files))
         reserve = wins[("base_model_inference", "seven_day")]
@@ -445,16 +494,17 @@ class SessionRecords(_Case):
         self.assertEqual((reserve["percent"], reserve["stalePercent"]), (None, 80.0))
         self.assertEqual(wins[("codex", "seven_day")]["percent"], 97.0)
 
-        stale = [self.rollout(_turn("gpt-reserve"), _count(NOW - 2 * 86400, 30, NOW + 4 * 86400))]
+        stale = [self.rollout(_turn("gpt-reserve"),
+                              _count(NOW - 2 * 86400, 30, NOW + 4 * 86400, **RESERVE))]
         reserve = self.by_pool(usage.read_codex(NOW, files=stale))[("base_model_inference", "seven_day")]
         self.assertEqual((reserve["percent"], reserve["trusted"]), (30.0, False))
 
-        unknown = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60, 30, None))]
+        unknown = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60, 30, None, **RESERVE))]
         reserve = self.by_pool(usage.read_codex(NOW, files=unknown))[("base_model_inference", "seven_day")]
         self.assertTrue(reserve["resetUnknown"])
         self.assertIsNone(reserve["percent"])
 
-        duration = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60, 30, 604800))]
+        duration = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60, 30, 604800, **RESERVE))]
         src = usage.read_codex(NOW, files=duration)
         self.assertEqual(src["state"], "unavailable")
         self.assertIn("plausible", src["error"])
@@ -555,8 +605,32 @@ const lone = { source: 'codex', state: 'ok', ageSeconds: 900, trusted: false, vi
   poolInUse: { id: 'codex', label: null, model: '' },
   pools: [{ id: 'codex', label: null, ageSeconds: 900, inUse: true }],
   windows: [win('codex', 'five_hour', 900, false)] };
+const reserve = { ...lone, poolInUse: { id: 'codex', label: null, model: 'gpt-reserve',
+                                         reserve: 'not reported', from: 'config' } };
 console.log(JSON.stringify({ pools: usageSourceHtml(pools), one: usageSourceHtml(one),
-                             lone: usageSourceHtml(lone) }));
+                             lone: usageSourceHtml(lone), reserve: usageSourceHtml(reserve) }));
+"""
+
+CHIP_JS = r"""
+const esc = (s) => String(s);
+const fmtAgo = (s) => Math.round(s / 3600) + 'h';
+const USAGE_SRC_NAME = { codex: 'Codex' };
+const USAGE_SRC_SHORT = { codex: 'X' };
+const USAGE_WIN_NAME = { five_hour: '5-hour', seven_day: 'Weekly' };
+const usageResetText = () => 'resets Wed';
+const usagePaceOf = () => null;
+const usageUseItOf = () => null;
+let USAGE = { ageShownS: 3600, pace: {} };
+%s
+const src = (age, trusted) => ({ source: 'codex', state: 'ok',
+  poolInUse: { id: 'codex', label: null, model: 'gpt-reserve', reserve: 'not reported' },
+  pools: [{ id: 'codex', label: null, ageSeconds: age, inUse: true }],
+  windows: [{ pool: 'codex', kind: 'seven_day', label: '7d', percent: 95, trusted,
+              ageSeconds: age, inUse: true, rolledOver: false }] });
+console.log(JSON.stringify({ fresh: usageChipPart(src(1800, true)),
+                             old: usageChipPart(src(7200, true)),
+                             stale: usageChipPart(src(61939, false)),
+                             pace: usagePaceText('Codex', { percent: 95, pace: 60, ageSeconds: 7200 }) }));
 """
 
 
@@ -601,6 +675,50 @@ class Tray(unittest.TestCase):
         self.assertNotIn('class="usage-pool"', html)
         self.assertEqual(html.count("as of 900s ago"), 1)
         self.assertIn("none has for 900s.", html)
+
+
+    def test_a_reserve_no_reading_reports_says_so(self):
+        html = self.html["reserve"]
+        self.assertIn("Codex sessions currently use the main pool (model gpt-reserve, "
+                      "Codex’s own default). Reserve: not reported.", html)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class ChipFace(unittest.TestCase):
+    """index.html's usageChipPart, run in Node: a reading over an hour old
+    says its age on the face, in the tooltip and in the pace text (#283)."""
+
+    @classmethod
+    def setUpClass(cls):
+        index = (Path(usage.__file__).parent / "index.html").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+        parts = []
+        for name in ("usageOld", "usageChipValue", "usageChipTip", "usageChipPart",
+                     "usageCodexPoolName", "usagePaceText"):
+            i = index.index(f"function {name}(")
+            parts.append(index[i:index.index("\n}\n", i) + 3])
+        script = Path(tempfile.mkdtemp()) / "chip.cjs"
+        script.write_text(CHIP_JS % "".join(parts), encoding="utf-8")
+        proc = subprocess.run([shutil.which("node"), str(script)], capture_output=True,
+                              text=True, encoding="utf-8", timeout=60)
+        if proc.returncode:
+            raise AssertionError(proc.stderr)
+        cls.out = {k: " ".join(v.split()) for k, v in json.loads(proc.stdout).items()}
+
+    def test_a_reading_under_an_hour_old_carries_no_age(self):
+        self.assertNotIn("usage-chip-age", self.out["fresh"])
+        self.assertNotIn(" ago", self.out["fresh"])
+
+    def test_a_reading_over_an_hour_old_says_its_age(self):
+        self.assertIn('<i class="usage-chip-age">2h</i>', self.out["old"])
+        self.assertIn("Weekly: 95% (read 2h ago)", self.out["old"])
+        self.assertIn('<i class="usage-chip-age">17h</i>', self.out["stale"])
+        self.assertIn("Weekly: 95% (at least — frozen 17h ago)", self.out["stale"])
+        self.assertIn('class="untrusted">≥95%', self.out["stale"])
+        self.assertEqual(self.out["pace"], "Codex 7-day 95% · pace 60% · read 2h ago")
+
+    def test_the_tooltip_says_the_reserve_is_not_reported(self):
+        self.assertIn("(sessions use the main pool; reserve: not reported)", self.out["old"])
 
 
 class ConfigModel(unittest.TestCase):
@@ -673,13 +791,41 @@ class Allocation(_Case):
         spark = dashboard._kind_usage(snap, "codex", "gpt-5.3-codex-spark")
         self.assertEqual((spark["pool"], spark["percent"]), ("codex_bengalfox", 0.0))
 
-    def test_a_reserve_nobody_has_read_is_unknown_never_the_main_figure(self):
-        files = [self.rollout(_turn("gpt-5.6-sol"), _count(NOW - 60, 97, MAIN_RESET))]
+    def test_a_reserve_no_reading_reports_is_judged_by_the_main_pool(self):
+        files = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60, 97, MAIN_RESET))]
         snap = self.snapshot()
         snap["sources"][1] = usage.read_codex(NOW, files=files)
         figure = dashboard._kind_usage(snap, "codex")
-        self.assertEqual((figure["state"], figure["pool"]), ("unknown", "base_model_inference"))
-        self.assertEqual(self.choose(snap)["decision"], "unknown")
+        self.assertEqual((figure["state"], figure["pool"], figure["percent"], figure["reserve"]),
+                         ("known", "codex", 97.0, "not reported"))
+        decision = self.choose(snap)
+        self.assertEqual((decision["chosenKind"], decision["decision"]),
+                         ("claude", "switch_warning"))
+        pace = dashboard._kind_pace(snap, "codex", now=NOW)
+        self.assertEqual((pace["pool"], pace["percent"], pace["reserve"]),
+                         ("codex", 97.0, "not reported"))
+        self.assertIn("Codex 7-day window at 97%, reserve: not reported",
+                      dashboard._pace_reason_phrase("codex", pace))
+
+    def test_a_reading_over_an_hour_old_says_its_age(self):
+        snap = self.snapshot()
+        for age, said in ((1800, ""), (2 * 3600, ", read 2 h ago"),
+                          (17 * 3600, ", read 17 h ago"), (3 * 86400 + 3600, ", read 3 d 1 h ago")):
+            with self.subTest(age=age):
+                files = [self.rollout(_turn("gpt-5.6-sol"),
+                                      _count(NOW - age, 50, NOW + 3 * 86400))]
+                snap["sources"][1] = usage.read_codex(NOW, files=files)
+                figure = dashboard._kind_usage(snap, "codex", "gpt-5.6-sol")
+                self.assertEqual(figure["ageSeconds"], age)
+                # Past a tenth of the week the reading is also a floor.
+                floor = " or more" if age > 0.1 * 10080 * 60 else ""
+                self.assertEqual(figure["atLeast"], bool(floor))
+                self.assertEqual(dashboard._usage_reason_phrase("codex", figure),
+                                 f"Codex 7-day window at 50%{floor}{said}")
+                pace = dashboard._kind_pace(snap, "codex", "gpt-5.6-sol", now=NOW)
+                self.assertEqual(pace["ageSeconds"], age)
+                self.assertTrue(dashboard._pace_reason_phrase("codex", pace).startswith(
+                    f"Codex 7-day window at 50%{floor}{said}, "))
 
     def test_first_launch_judges_the_owner_s_codex_model(self):
         self.config_model = "gpt-6-astra"

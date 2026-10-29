@@ -277,7 +277,7 @@ class AllocationTests(unittest.TestCase):
 
         saved = chatroom.get_room(room["id"], public=False)
         self.assertTrue(saved["allocation"]["changed"])
-        self.assertIn("at least 86%", saved["allocation"]["reason"])
+        self.assertIn("window at 86% or more", saved["allocation"]["reason"])
 
     def test_uninstalled_preference_is_never_chosen(self):
         preference = [{"agent": "claude", "model": "opus", "role": "engineer",
