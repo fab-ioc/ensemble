@@ -48,6 +48,12 @@ class Rounds(unittest.TestCase):
         self.assertEqual(dashboard.clamp_review_rounds(10_000), dashboard.REVIEW_ROUNDS_MAX)
         self.assertIsNone(dashboard.clamp_review_rounds(True))
         self.assertIsNone(dashboard.clamp_review_rounds("five"))
+        # PO ruling 3: Infinity arrives from JSON (json.loads("Infinity")).
+        self.assertIsNone(dashboard.clamp_review_rounds(float("inf")))
+        self.assertIsNone(dashboard.clamp_review_rounds(float("-inf")))
+        self.assertIsNone(dashboard.clamp_review_rounds(float("nan")))
+        with mock.patch.object(dashboard, "load_settings", return_value={"reviewRoundsPerTask": 4}):
+            self.assertEqual(dashboard.review_limit({"reviewLimit": float("inf")}), 4)
         self.assertEqual(dashboard._SETTINGS_DEFAULTS["reviewRoundsPerTask"], 5)
 
 
@@ -150,7 +156,32 @@ class _Task(unittest.TestCase):
 
 
 class StartRefused(_Task):
+    def test_after_an_approval_the_refusal_asks_for_no_ruling(self):
+        line = self.check()["limited"] and self.handler.rang[-1][2]
+        self.assertIn("no reviewer starts any more", line)
+        self.assertNotIn("forCeo", line)
+
+    def test_two_requests_at_once_post_one_po_note(self):
+        # PO ruling 4: reviewLimitTold is checked and set under one lock.
+        import threading
+        stale = self.room()
+        go = threading.Barrier(4)
+        told = []
+
+        def tell():
+            go.wait()
+            told.append(dashboard.tell_po_review_limit(stale, 3, 3))
+        threads = [threading.Thread(target=tell) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(told), [False, False, False, True])
+        self.assertEqual(len(self.po_messages()), 1)
+        self.assertFalse(dashboard.tell_po_review_limit(stale, 3, 3), "a stale room is re-read")
+
     def test_an_agent_asking_past_the_limit_starts_no_reviewer(self):
+        chatroom.patch_room(self.rid, reviewLimitHit={"rounds": 3, "limit": 3, "at": 1.0})
         res = self.check()
         self.assertEqual((res["limited"], res["rounds"], res["limit"]), (True, 3, 3))
         self.assertEqual(len(self.handler.rang), 1)
@@ -240,12 +271,64 @@ class VerdictAtTheLimit(_Task):
         self.assertIn("approval", res["po"]["why"])
         self.assertNotIn("Review limit", self.room()["messages"][-1]["text"])
 
+    def test_a_review_past_the_limit_is_not_a_limit_hit(self):
+        # PO ruling 2: the person or the PO started a review past the limit;
+        # its changes-requested verdict goes as any other (from review 3 on
+        # it wakes the PO), and asks for no ruling.
+        self.set_rounds(3)
+        res = self.done("changes_requested")      # round 4, limit 3
+        self.assertNotIn("reviewLimit", res)
+        self.assertTrue(res["po"]["woken"])
+        self.assertNotIn("Review limit reached", self.room()["messages"][-1]["text"])
+        self.assertFalse(self.room().get("reviewLimitHit"))
+        self.assertNotIn("reached its review limit", self.po_messages()[-1]["text"])
+
+    def test_a_later_verdict_ends_the_hit(self):
+        self.done("changes_requested")
+        self.assertTrue(self.room().get("reviewLimitHit"))
+        self.done("approve")                      # a review the person asked for
+        self.assertIsNone(self.room().get("reviewLimitHit"))
+
 
 class QuestionAtTheLimit(_Task):
+    rounds = 2
+
+    def setUp(self):
+        super().setUp()
+        VerdictAtTheLimit.done(self, "changes_requested")     # round 3 of 3: the hit
+        self.handler.reports.clear()
+
     def report(self, kind: str, **extra) -> dict:
-        with mock.patch.object(ensemble_tools, "_d", dashboard):
-            return ensemble_tools._report(self.ctx("claude"), {"kind": kind, "text": "F1 a.py:3", **extra},
-                                          self.handler)
+        return ensemble_tools._report(self.ctx("claude"), {"kind": kind, "text": "F1 a.py:3", **extra},
+                                      self.handler)
+
+    def assert_ordinary(self):
+        po = self.po_messages()[-1]
+        self.assertFalse(po.get("reviewLimit"))
+        self.assertNotIn("Reviewer is right", po["text"])
+        self.assertEqual(self.handler.reports[-1][1], "question")
+
+    def test_after_the_ruling_a_question_is_an_ordinary_one(self):
+        # PO ruling 1: once a ruling is back (a person's message in the chat,
+        # or a line the PO or the person typed to the owner), it routes normally.
+        self.report("question")
+        chatroom.post_message(self.rid, chatroom.HUMAN_IDENTITY, "F1: owner is right", to="claude")
+        self.report("question")
+        self.assert_ordinary()
+
+    def test_a_typed_ruling_counts_too(self):
+        import time as _time
+        _time.sleep(0.01)
+        chatroom.record_answer(self.rid, "claude", _time.time())
+        self.report("question")
+        self.assert_ordinary()
+
+    def test_after_an_approval_at_the_limit_a_question_is_an_ordinary_one(self):
+        chatroom.patch_room(self.rid, reviewLimitHit=None)
+        self.set_rounds(2)
+        VerdictAtTheLimit.done(self, "approve")       # round 3 of 3, approved
+        self.report("question")
+        self.assert_ordinary()
 
     def test_it_is_for_the_ceo_and_carries_the_ruling_note(self):
         res = self.report("question")
@@ -259,12 +342,10 @@ class QuestionAtTheLimit(_Task):
         self.assertIn("the CEO rules on these findings", self.handler.reports[-1][2])
 
     def test_below_the_limit_a_question_is_an_ordinary_one(self):
+        chatroom.patch_room(self.rid, reviewLimitHit=None)
         self.set_rounds(1)
         self.report("question")
-        po = self.po_messages()[-1]
-        self.assertFalse(po.get("reviewLimit"))
-        self.assertNotIn("Reviewer is right", po["text"])
-        self.assertEqual(self.handler.reports[-1][1], "question")
+        self.assert_ordinary()
 
 
 class TaskLimitByThePO(_Task):

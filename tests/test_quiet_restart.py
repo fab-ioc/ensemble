@@ -111,6 +111,7 @@ class _Hub(unittest.TestCase):
         self.states: dict[str, tuple] = {}
         self.starts = 0
         self.reviews: list[tuple] = []
+        self.review_restores: list[bool] = []
         self.review_notes: list[str] = []
         for p in (mock.patch.object(dashboard, "DASHBOARD_DIR", self.dir),
                   mock.patch.object(dashboard.ptyrun, "get", lambda pid: self.ptys.get(pid)),
@@ -178,8 +179,8 @@ class _Hub(unittest.TestCase):
                 raise AssertionError("a room coming back is not launched fresh")
 
             def _start_review(self, room_id, ident, msg, note="", restore=False):
-                test.assertTrue(restore, "a restored review is not checked against the limit again")
                 test.reviews.append((room_id, ident, msg.get("id")))
+                test.review_restores.append(restore)
                 test.review_notes.append(note)
                 return {"n": 2}
 
@@ -372,6 +373,7 @@ class Restore(_Hub):
         chatroom.patch_participant(rid, "codex", {"review": {"n": 2, "messageId": "m7"}})
         self.restart()
         self.assertEqual(self.reviews, [(rid, "codex", "m7")])
+        self.assertEqual(self.review_restores, [True])               # not checked against the limit again
         self.assertEqual(self.typed(rid).get("claude"), [])          # its owner waits on, untouched
         self.assertIn("the review by codex that was running was started again", self.log())
 

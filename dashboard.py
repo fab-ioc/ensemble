@@ -5619,7 +5619,7 @@ def clamp_review_rounds(v) -> int | None:
         return None
     try:
         v = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):     # Infinity arrives from JSON
         return None
     return max(0, min(REVIEW_ROUNDS_MAX, v))
 
@@ -5647,9 +5647,13 @@ def review_limit_owner_text(rounds: int, limit: int) -> str:
 
 
 def review_limit_line(room: dict, rounds: int, limit: int) -> str:
-    """What the owner is typed when it asks for a review past the limit."""
+    """What the owner is typed when it asks for a review past the limit:
+    the ruling steps while findings wait for one, else only that no
+    reviewer starts (after an approval, or once the ruling is back)."""
+    what = (review_limit_owner_text(rounds, limit) if review_limit_question(room) else
+            f"Review limit reached ({rounds} of {limit} rounds): no reviewer starts any more.")
     return (f"{REVIEW_LIMIT_PREFIX}{task_label(room) or 'This task'}: "
-            + review_limit_owner_text(rounds, limit) + " Only your PO can raise the limit.")
+            + what + " Only your PO can raise the limit.")
 
 
 def review_limit_po_text(room: dict, rounds: int, limit: int) -> str:
@@ -5671,11 +5675,48 @@ REVIEW_LIMIT_RULING_NOTE = (
     "one, then reports completed.")
 
 
-def at_review_limit(room: dict) -> tuple[int, int]:
-    """``(rounds, limit)`` when the task has used its review rounds, else
-    ``(rounds, 0)``."""
-    rounds, limit = review_rounds(read_review_log(room)), review_limit(room)
-    return (rounds, limit) if limit and rounds >= limit else (rounds, 0)
+def is_review_limit_hit(verdict: str, rounds: int, limit: int) -> bool:
+    """Whether a verdict just logged as round ``rounds`` is the task's limit
+    being reached: changes asked for in the round that used the last one. A
+    round past the limit (a review the person asked for, or one the PO
+    started) is not: its verdict goes as any other."""
+    return verdict == "changes_requested" and bool(limit) and rounds == limit
+
+
+def review_limit_question(room: dict) -> dict:
+    """The limit hit whose open findings the owner's question is for
+    (``reviewLimitHit``, set by the verdict that reached the limit), {} when
+    a question now is an ordinary one: no hit, a later verdict since, or a
+    ruling already back — a line the person or the PO typed to the owner
+    (``answeredAt``) or a person's message in the task's chat since."""
+    hit = (room or {}).get("reviewLimitHit") or {}
+    at = hit.get("at") or 0
+    if not at:
+        return {}
+    for part in room.get("participants") or []:
+        if (part.get("answeredAt") or 0) > at:
+            return {}
+    for m in reversed(room.get("messages") or []):
+        if (m.get("ts") or 0) <= at:
+            break
+        if m.get("from") == chatroom.HUMAN_IDENTITY and m.get("kind") in (None, "", "message"):
+            return {}
+    return hit
+
+
+_REVIEW_LIMIT_LOCK = threading.Lock()
+
+
+def claim_review_limit_note(room_id: str, limit: int) -> bool:
+    """Whether this caller is the one to tell the PO the task reached
+    ``limit``: ``reviewLimitTold`` checked and set under one lock, so two
+    review requests (or a request and a verdict) at once post one note."""
+    with _REVIEW_LIMIT_LOCK:
+        fresh = chatroom.get_room(room_id, public=False) or {}
+        if fresh.get("reviewLimitTold") == limit:
+            return False
+        chatroom.patch_room(room_id, reviewLimitTold=limit)
+        return True
 
 
 def tell_po_review_limit(room: dict, rounds: int, limit: int) -> bool:
@@ -5684,11 +5725,10 @@ def tell_po_review_limit(room: dict, rounds: int, limit: int) -> bool:
     is told again). It does not wake the PO: it rides its next wake
     (quiet_reports.py) — the owner's question is what wakes it. True when
     it was posted."""
-    if (room or {}).get("reviewLimitTold") == limit:
+    if not claim_review_limit_note(room["id"], limit):
         return False
     po_rid = room_po_id(room)
     po_room = chatroom.get_room(po_rid) if po_rid else None
-    chatroom.patch_room(room["id"], reviewLimitTold=limit)
     if po_room is None:
         return False
     text = review_limit_po_text(room, rounds, limit)

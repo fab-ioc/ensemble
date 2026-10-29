@@ -1169,9 +1169,13 @@ def _report(ctx, args, handler, *, structured_asks=None):
         po = None                   # no PO to route to: the report goes to the user
     routed = ({"roomId": po["roomId"], "identity": po["identity"], "title": po["title"]}
               if po else None)
-    # A question past the task's review limit is the open findings for the
+    # The question at the task's review limit is the open findings for the
     # CEO's ruling (#288): the CEO's, and the PO is told what to do with it.
-    limit_q = kind == "question" and bool(po) and bool(_d.at_review_limit(room)[1])
+    # Only the question after the verdict that reached the limit, before a
+    # ruling is back: an ordinary question after an approval or a ruling
+    # routes as any other.
+    limit_q = kind == "question" and bool(po) and bool(
+        _d.review_limit_question(_d.chatroom.get_room(room["id"], public=False) or room))
     # Only the CEO can decide it: still the PO's to carry (task → PO → CEO).
     for_ceo = kind in ("blocked", "question") and (args.get("forCeo") is True or limit_q)
     what = f"{kind} for {_d.operator_name()}'s decision" if for_ceo and po else kind
@@ -1314,9 +1318,10 @@ def _review_done(ctx, args, handler):
              + f"\n{findings}\n")
     path = _d.append_review_log(room, entry)
     # The task's review-round limit (#288): changes asked for in its last
-    # round tell the owner to finish, and wake the PO with it (once).
+    # round tell the owner to ask the CEO for a ruling. A round past the
+    # limit (the person's or the PO's review) is not a hit.
     rounds, limit = _d.review_rounds(_d.read_review_log(room)), _d.review_limit(room)
-    at_limit = verdict == "changes_requested" and bool(limit) and rounds >= limit
+    at_limit = _d.is_review_limit_hit(verdict, rounds, limit)
     limit_note = (f"\n\n**{_d.review_limit_owner_text(rounds, limit)}**" if at_limit else "")
 
     # To whoever asked, in the task's own chat.
@@ -1361,7 +1366,12 @@ def _review_done(ctx, args, handler):
                                              f"review {n} ({label})",
                                              summary or findings)) if pres and rings else False
     if at_limit:
-        _d.chatroom.patch_room(room["id"], reviewLimitTold=limit)
+        _d.claim_review_limit_note(room["id"], limit)
+    # The owner's next question is for the CEO's ruling only after this hit
+    # (_d.review_limit_question); any other verdict ends an earlier one.
+    if at_limit or room.get("reviewLimitHit"):
+        _d.chatroom.patch_room(room["id"], reviewLimitHit=(
+            {"rounds": rounds, "limit": limit, "at": time.time()} if at_limit else None))
 
     _d.finish_review(room["id"], me, verdict)
     return {"ok": True, "review": n, "verdict": verdict, "log": str(path),
