@@ -483,6 +483,16 @@ class ASpecAmendmentReachesARunningOwner(_Stops):
             self.join()
         self.assertEqual(len(self.typed(rid)["claude"]), 1)
 
+    def test_an_amendment_reopens_done_only_when_a_terminal_took_it(self):
+        rid = self.room(spec="Sell the X5.")
+        chatroom.patch_participant(rid, "claude", dashboard.spec_seen(self.part(rid), "Sell the X5."))
+        self.running(rid, "claude", "working")
+        chatroom.patch_room(rid, workflow="done")
+        self.amend(rid, "Sell the X4.", _Ring(takes=False))
+        self.assertEqual(dashboard.workflow_of(chatroom.get_room(rid, public=False)), "done")
+        self.amend(rid, "Sell the X3.", _Ring())
+        self.assertEqual(dashboard.workflow_of(chatroom.get_room(rid, public=False)), "inprogress")
+
     def test_a_seeded_resume_has_seen_the_spec_it_was_given(self):
         rid = self.room(spec="Sell the X5.")
         full = chatroom.get_room(rid, public=False)

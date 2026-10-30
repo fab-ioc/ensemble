@@ -99,7 +99,8 @@ ENSEMBLE_PREFIX = "mcp__ensemble__"
 # The Ensemble tools whose input is text written for someone else (a message,
 # a report, a verdict, a spec).  The others' inputs are a task id at most.
 WRITING_TOOLS = frozenset({"chat_send", "ensemble_report", "review_done", "ensemble_create_task",
-                           "ensemble_update_task", "ensemble_update_roadmap", "ensemble_points"})
+                           "ensemble_update_task", "ensemble_update_roadmap", "ensemble_points",
+                           "ensemble_mark_wait"})
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 READ_TOOLS = {"Read", "Grep", "Glob"}
 REVIEW_BRIEF_MARK = "fresh session started for this ONE review"

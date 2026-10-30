@@ -130,6 +130,10 @@ CEO (the product owner) directly:
   types you one `[stalled] Carry on …` line. Carry on from `TASK-HANDOVER.md`,
   or report what stops you. If you are still idle ten minutes later, the PO is
   told you stalled.
+- **Waiting on something the hub cannot see? Mark it** with
+  `ensemble_mark_wait`: kind `background` for your own hour-long fetch or gate,
+  `card`, `time` or `task` for the rest. Your card reads the wait and moves to
+  Waiting, the hub does not call you idle, and the PO hears once when it ends.
 
 Without a PO (a project that has none, or no project), a `blocked` or
 `question` stays on the product owner's Needs you list, and as a line above
@@ -150,7 +154,9 @@ came back, the PO told you), say so with an `update` that carries
 - **In a team, the owner reports.** That is the engineer, or the only agent.
   A reviewer tells the engineer, not the PO.
 - A `completed` report moves your task from In progress to In review by
-  itself; you need not move it. Any other kind leaves the column alone.
+  itself; you need not move it. Any other kind leaves the column alone, but
+  a task that is not moving leaves In progress for Waiting by itself (see
+  *Waiting column* under the PO's section).
 
 ### Where reports and design notes go: the project's Documents folder
 
@@ -619,13 +625,41 @@ it reports to the product owner. What keeps that cheap and reliable:
 **In review is set by the hub; Done is yours.** A task's `completed` report
 moves it from In progress to In review by itself (`workflowAuto` on the task
 says the hub did it), and so does the hub's start for a stopped task whose last
-report is completed. A question, a blocked or an update leaves it in In
-progress, where its card says Waiting. Accept the work by merging it (the
-merged-work check then moves it to Done) or, with nothing to merge, by setting
-`workflow: "done"` with `ensemble_update_task`. To send it back for more, move
-it to `inprogress`: the hub leaves it there until its next completed report.
-For what runs, read each card's state (Working, Idle, Waiting on you or on the
-PO, Stopped) and the column header's "N working", never the column.
+report is completed. A question, a blocked or an update leaves the column
+alone. Accept the work by merging it (the merged-work check then moves it to
+Done) or, with nothing to merge, by setting `workflow: "done"` with
+`ensemble_update_task`. To send it back for more, move it to `inprogress`: the
+hub leaves it there until its next completed report. A running task never
+reads as Done: real work sent to a Done task, or its start, brings it back to
+In progress. Work sent to a task in In review leaves it there.
+For what runs, read each card's state (Working, Idle since 09:42, Waiting ...,
+Stopped) and the column header's "N working", never the column.
+
+**Waiting column.** In progress holds only moving work. The hub moves an In
+progress card to Waiting when a wait is marked, when it has been idle for the
+limit (Settings, Idle tasks, 20 minutes by default), or when it is stopped, and
+back when the work resumes. If a person moved the card, the hub leaves it alone
+for the rest of that idle stretch.
+
+**An `[idle]` line is typed to you** when a running task has done nothing for
+the limit: 20 minutes, then 30 minutes later, 2 hours later, then every 6 hours.
+All of a project's tasks share one line, at most one an hour, and a running
+agent in Done counts. A task with a merged branch alerts once, and a finished
+report you left alone alerts after 4 hours. For each task do one of three: send
+it work, stop it, or mark the wait with `ensemble_mark_wait` (kind `card`,
+`time`, `task` or `background`; `clear` removes it). A marked wait ends by
+itself and types you one line then, within the hour, except a background wait
+the owner ended by going back to work. A background wait with no time ends
+after 6 hours. A turn that never closed counts as idle once the screen has been
+silent for an hour, or the idle setting if that is longer; a silent tool call
+that long alerts too, so look before you stop it. `ensemble_list_attention` lists idle tasks under `idle`.
+Only a running task can be marked, and `card` takes only a card still open on
+the task or its PO's chat. A task counts as merged only while its card is in
+Done, has not moved since the merge, and no real work or commit is newer than
+it. Work that reached an agent brings a Done task back to In progress, and so
+does the hub's look when the agent is Working, unless the task is merged or a
+person put the card in Done from the page. A PO's move to Done does not hold a
+Working card there: stop the agent first.
 
 **Keep a living handover.** `PO-HANDOVER.md` in the project home holds what a
 successor with no memory would need: how the product owner likes to work,

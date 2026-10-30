@@ -10,6 +10,8 @@ a temp dir, fake terminals), at 1728x1117 and on a phone (390x844):
 * the In progress header counts what is real: "5 · 1 working · 2 waiting";
 * Running only leaves the Working and Idle tasks, and gives the rest back.
 * A block shows on a card even while its agent works.
+* #292: a marked wait reads "Waiting until 14:00", a task the hub found idle
+  "Idle since 09:42", both in the Waiting column.
 
 Skipped without Node or Chrome.
 """
@@ -79,6 +81,7 @@ async function main() {
           label: dot.getAttribute('aria-label'), whole: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5 && r.width > 0
             && chip.scrollWidth <= chip.clientWidth + 1, dotW: dot.getBoundingClientRect().width };
       }
+      out.waitingCol = [...document.querySelectorAll('.col[data-col="waiting"] .card')].map(c => c.dataset.room).sort();
       const head = document.querySelector('.col[data-col="inprogress"] .col-head');
       out.head = head ? [...head.children].map(e => e.textContent.trim()).filter(Boolean).join(' | ') : null;
       out.width = innerWidth; out.scroll = document.documentElement.scrollWidth;
@@ -162,6 +165,9 @@ def _live(rid, pty, screen="● ok\n❯ \n"):
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
 class TheBoardSaysWhatRuns(unittest.TestCase):
+    UNTIL = time.time() + 3600
+    SINCE = time.time() - 3600
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="ens-st-", ignore_cleanup_errors=True)
@@ -228,10 +234,19 @@ class TheBoardSaysWhatRuns(unittest.TestCase):
             "asks": task("Asks you", "pty-asks"),
             "po": task("Asks its PO"),
             "off": task("Stopped hours ago"),
+            "marked": task("Waits for a time", "pty-marked"),
+            "idler": task("Found idle", "pty-idler"),
         }
+        chatroom.patch_room(rooms["marked"], workflow="waiting",
+                            waitMark={"kind": "time", "until": cls.UNTIL, "what": "", "at": 1})
+        chatroom.patch_room(rooms["idler"], workflow="waiting")
+        (state / "idle.json").write_text(json.dumps({"tasks": {rooms["idler"]: {
+            "since": cls.SINCE, "alerts": 1, "current": True}}}), encoding="utf-8")
         live["pty-busy"] = _live(rooms["busy"], "pty-busy", "● Checking\n\n✻ Working… (12s · esc to interrupt)\n")
         live["pty-idle"] = _live(rooms["idle"], "pty-idle")
         live["pty-asks"] = _live(rooms["asks"], "pty-asks")
+        live["pty-marked"] = _live(rooms["marked"], "pty-marked")
+        live["pty-idler"] = _live(rooms["idler"], "pty-idler")
         agent_hooks.reset()
         cls.addClassCleanup(agent_hooks.reset)
         agent_hooks.record({"room": rooms["busy"], "identity": "claude", "ptyId": "pty-busy",
@@ -262,7 +277,9 @@ class TheBoardSaysWhatRuns(unittest.TestCase):
         cls.tmp.cleanup()
 
     WANT = {"busy": ("Working", "working"), "idle": ("Idle", "idle"), "asks": ("Waiting on you", "warning"),
-            "po": ("Waiting on the PO", "neutral"), "off": ("Stopped", "off")}
+            "po": ("Waiting on the PO", "neutral"), "off": ("Stopped", "off"),
+            "marked": ("Waiting until " + time.strftime("%H:%M", time.localtime(UNTIL)), "neutral"),
+            "idler": ("Idle since " + time.strftime("%H:%M", time.localtime(SINCE)), "idle")}
 
     def check_cards(self, view):
         got = self.got[view]
@@ -288,6 +305,9 @@ class TheBoardSaysWhatRuns(unittest.TestCase):
     def test_the_header_counts_what_is_real(self):
         self.assertEqual(self.got["desk"]["head"], "In progress | 5 | 1 working · 2 waiting", self.got["desk"])
 
+    def test_the_waiting_column_holds_the_cards_not_moving(self):
+        self.assertEqual(len(self.got["desk"]["waitingCol"]), 2, self.got["desk"])
+
     def test_the_words_read_in_every_theme(self):
         c = self.got["contrast"]
         self.assertGreaterEqual(len(c), 7, c)
@@ -299,7 +319,7 @@ class TheBoardSaysWhatRuns(unittest.TestCase):
         self.assertTrue(r["chip"], r)
         self.assertEqual(r["before"], sorted(self.WANT))
         # Working + Idle: the live task that asks you is not running.
-        self.assertEqual((r["on"], r["pressed"]), (["busy", "idle"], "true"), r)
+        self.assertEqual((r["on"], r["pressed"]), (["busy", "idle", "idler"], "true"), r)
         self.assertFalse(r["archived"], r)
         self.assertEqual(r["busyBlocked"], "Waiting on you", r)
         self.assertEqual(r["saved"], ["history", "live", "running"], r)

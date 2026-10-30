@@ -146,6 +146,8 @@ def why_not(room: dict, owner: str) -> str:
         return "paused"
     if _d.workflow_of(room) in _QUIET:
         return "in review or done"
+    if room.get("waitMark"):
+        return "a marked wait"          # idle.py wakes the PO when it ends
     if not _d.room_po_id(room):
         return "no PO"                  # the CEO's bell (attention.py) has it
     if _d.attention.open_ask(room) is not None:

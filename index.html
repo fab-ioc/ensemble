@@ -3047,7 +3047,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-claude-weight,
   #settings-panel #pref-codex-weight,
   #settings-panel #pref-po-rotate,
-  #settings-panel #pref-task-rotate {
+  #settings-panel #pref-task-rotate,
+  #settings-panel #pref-idle-alert {
     width: 100%; padding: 5px 10px;
     border: 1px solid var(--border); border-radius: 6px;
     background: var(--bg); color: var(--fg); font: inherit;
@@ -3060,7 +3061,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-pace-margin,
   #settings-panel #pref-balance-margin,
   #settings-panel #pref-claude-weight,
-  #settings-panel #pref-codex-weight { width: 6em; }
+  #settings-panel #pref-codex-weight,
+  #settings-panel #pref-idle-alert { width: 6em; }
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
@@ -3072,7 +3074,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-claude-weight:focus,
   #settings-panel #pref-codex-weight:focus,
   #settings-panel #pref-po-rotate:focus,
-  #settings-panel #pref-task-rotate:focus {
+  #settings-panel #pref-task-rotate:focus,
+  #settings-panel #pref-idle-alert:focus {
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
   }
@@ -4429,6 +4432,14 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="150000" autocomplete="off"> <span class="pref-label">tokens</span></span>
     </div>
     <p class="cfg-hint">The same for <span data-noun="{a project}'s PO">a project's PO</span>: it brings <code>PO-HANDOVER.md</code> up to date and a fresh session picks up from it and <code>ROADMAP.md</code>. The old conversation is kept. A PO is never ended in mid-turn. 0 = off.</p>
+    <h5 class="sp-sub">Idle tasks</h5>
+    <!-- #292: how long a running agent may do nothing before the PO hears. -->
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-idle-alert">Tell the PO a task is idle after</label>
+      <span><input type="number" id="pref-idle-alert" min="0" max="1440" step="5"
+             placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span></span>
+    </div>
+    <p class="cfg-hint">A running agent that does nothing this long moves to Waiting and its PO gets one line, at most one an hour per project. Repeats back off to every 6 hours. A wait the PO or the owner marked does not count. The smallest value is 5. 0 = off.</p>
     <h5 class="sp-sub">Weekly pacing</h5>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -5326,6 +5337,7 @@ const WORKFLOW_COLS = [
   { k: 'backlog',    name: 'Backlog',     tone: 'neutral'   },
   { k: 'todo',       name: 'To do',       tone: 'neutral'   },
   { k: 'inprogress', name: 'In progress', tone: 'progress'  },
+  { k: 'waiting',    name: 'Waiting',     tone: 'neutral'   },
   { k: 'inreview',   name: 'In review',   tone: 'discovery' },
   { k: 'done',       name: 'Done',        tone: 'success'   },
 ];
@@ -6672,9 +6684,26 @@ function taskState(r) {
   if (w) return { k: 'waiting', dot: 'neutral', word: 'Waiting on the PO',
                   tip: `${w.kind === 'blocked' ? 'blocked, its PO to answer' : 'asked its PO'}${w.line ? ': ' + w.line : ''}` };
   if (st === 'agent_gone') return { k: 'stopped', dot: 'danger', word: 'Stopped', tip: 'agent gone' + why };
+  if (r.isLive && r.waitMark) {
+    const word = 'Waiting ' + waitWords(r.waitMark);
+    return { k: 'waiting', dot: 'neutral', word, tip: word + (r.waitMark.what ? ': ' + r.waitMark.what : '') };
+  }
   if (r.isLive && r.runState === 'command') return { k: 'idle', dot: 'idle', word: commandWords(r), tip: commandTip(r) };
+  if (r.isLive && r.idleSince) return { k: 'idle', dot: 'idle', word: 'Idle since ' + clockOf(r.idleSince), tip: 'idle: an agent is open and has done nothing since then' };
   if (r.isLive) return { k: 'idle', dot: 'idle', word: 'Idle', tip: 'idle: an agent is open, not working' };
   return { k: 'stopped', dot: 'off', word: 'Stopped', tip: 'stopped: no agent is running; a reply resumes it' };
+}
+// A time of day from epoch seconds, and a marked wait as a card reads it, after
+// "Waiting " (idle.py wait_words).
+function clockOf(ts) {
+  const d = new Date(Number(ts) * 1000);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function waitWords(m) {
+  if (m.kind === 'card') return 'on CEO card';
+  if (m.kind === 'time') return 'until ' + clockOf(m.until);
+  if (m.kind === 'task') return 'on ' + (m.what || 'another task');
+  return 'on background work';
 }
 function taskStateChip(r) {
   const s = taskState(r);
@@ -6985,7 +7014,7 @@ function swTone(state) {
 // hasConversation is set only for one-agent tasks, so a team task counts as
 // having run once its room holds a message.
 function swPaused(r) {
-  return !r.isLive && !r.draft && ['inprogress', 'todo'].includes(workflowOf(r))
+  return !r.isLive && !r.draft && ['inprogress', 'waiting', 'todo'].includes(workflowOf(r))
     && (!!r.hasConversation || (r.turns || 0) > 0);
 }
 // The groups, from the rows, the attention items and the registered projects.
@@ -7024,7 +7053,10 @@ function swGroups(rows, items, projects, opts) {
     if (!r.headless || r.draft || r.archived || listed.has(r.roomId) || poRooms.has(r.roomId)) continue;
     const a = itemOf.get(r.roomId) || r.attention || null;
     const wf = workflowOf(r);
-    if (wf === 'done') {
+    // A task in a turn is running, whatever its column says (#292).
+    if (r.isLive && r.status === 'busy') {
+      g.running.push(entry(r.roomId, r, null, { at: lastNews(r) }));
+    } else if (wf === 'done') {
       if (o.dayStart && Number(r.updatedAt) >= o.dayStart) g.done.push(entry(r.roomId, r, null, { at: Number(r.updatedAt) }));
     } else if (wf === 'inreview' || swReportedAt(r, a) || swPaused(r)) {
       const rep = swReportedAt(r, a);
@@ -8095,6 +8127,10 @@ function renderPrefs() {
   const rotInput = document.getElementById('pref-po-rotate');
   if (rotInput && document.activeElement !== rotInput) {
     rotInput.value = PREFS.poRotateTokens ?? 150000;
+  }
+  const idleAlertInput = document.getElementById('pref-idle-alert');
+  if (idleAlertInput && document.activeElement !== idleAlertInput) {
+    idleAlertInput.value = PREFS.idleAlertMin ?? 20;
   }
   const taskRotInput = document.getElementById('pref-task-rotate');
   if (taskRotInput && document.activeElement !== taskRotInput) {
@@ -22562,6 +22598,20 @@ window.ensUpdPlace = () => ({
     taskRotInput.addEventListener('blur', commitTaskRot);
     taskRotInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); taskRotInput.blur(); }
+    });
+  }
+  // Minutes a running agent may do nothing before its PO hears (#292).
+  const idleAlertInput = document.getElementById('pref-idle-alert');
+  if (idleAlertInput) {
+    const commitIdleAlert = () => {
+      const v = parseInt(idleAlertInput.value, 10);
+      if (!Number.isNaN(v) && v !== (PREFS?.idleAlertMin ?? null)) {
+        setPref('idleAlertMin', v);
+      }
+    };
+    idleAlertInput.addEventListener('blur', commitIdleAlert);
+    idleAlertInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); idleAlertInput.blur(); }
     });
   }
   // One-shot rearrange actions
