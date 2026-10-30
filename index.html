@@ -2879,7 +2879,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-subtle); font-size: var(--fs-100); font-weight: 600;
   }
   .usage-allowance-control output { color: var(--fg); font-variant-numeric: tabular-nums; }
-  #usage-pace-slider { display: block; width: 100%; min-height: 32px; margin: 4px 0 0; accent-color: var(--accent); cursor: pointer; }
+  #usage-pace-slider { display: block; width: 100%; min-height: 44px; margin: 4px 0 0; accent-color: var(--accent); cursor: pointer; }
   #usage-pace-slider:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .usage-src { padding: 6px 6px 10px; }
   .usage-src + .usage-src { border-top: 1px solid var(--border); padding-top: 10px; }
@@ -4347,7 +4347,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <label for="usage-pace-slider">Allowance above pace <output id="usage-pace-value">10 points</output></label>
     <input id="usage-pace-slider" type="range" min="0" max="40" step="1" value="10"
            aria-describedby="usage-pace-help">
-    <div id="usage-pace-help" class="usage-why">Drag to preview the pace line. It saves when released.</div>
+    <div id="usage-pace-help" class="usage-why">Drag to preview; it saves when released. The brake threshold is 100% plus this margin. The 80% warning cap still wins at week end.</div>
   </div>
   <div id="usage-list"></div>
   <div class="usage-foot" id="usage-foot"></div>
@@ -19791,7 +19791,7 @@ function usagePaceOf(src) {
   const k = (p.kinds || {})[src.source];
   if (!k || k.state !== 'known') return null;
   const margin = USAGE_PREVIEW_MARGIN;
-  if (margin == null || k.nearReset || k.elapsed == null) return k;
+  if (margin == null || k.elapsed == null) return k;
   const pace = Math.min(USAGE.warnPercent ?? 80, k.elapsed * 100 + margin);
   return { ...k, pace, ahead: Number(k.percent) > pace };
 }

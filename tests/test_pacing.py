@@ -140,8 +140,8 @@ class History(Base):
 
 
 class SeatChoice(Base):
-    def decide(self, preferred, claude=50, codex=50):
-        pace = {"enabled": True, "prefer": "", "margin": 10, "hysteresis": 25,
+    def decide(self, preferred, claude=50, codex=50, margin=10):
+        pace = {"enabled": True, "prefer": "", "margin": margin, "hysteresis": 25,
                 "weights": {"claude": 20, "codex": 5}, "labels": {}, "sources": {}}
         return dashboard.choose_agent_kind_for_seat(
             preferred, snapshot(claude, codex), installed=lambda k: True, pace=pace, now=NOW)
@@ -154,9 +154,10 @@ class SeatChoice(Base):
         self.assertIn("heading for", dashboard._projection_reason(d))
 
     def test_raised_margin_reaches_projection_seat_choice_limit(self):
-        reading = {"burn": {"state": "known", "projected": 115}}
-        self.assertTrue(pacing.past_limit(reading, 10))
-        self.assertFalse(pacing.past_limit(reading, 20))
+        self.history("claude", 0.65, start=30)
+        self.history("codex:codex", 0.0, start=50)
+        self.assertEqual(self.decide("claude", margin=10)["decision"], "switch_projection")
+        self.assertNotEqual(self.decide("claude", margin=20)["decision"], "switch_projection")
 
     def test_balance_cannot_move_a_seat_onto_the_kind_running_out(self):
         self.history("claude", 0.0, start=50)

@@ -15498,6 +15498,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                               pace.get("margin", PACE_MARGIN_DEFAULT), now)
              for kind in ("claude", "codex")}
     hysteresis = float(pace.get("hysteresis", BALANCE_HYSTERESIS_DEFAULT))
+    projection_limit = pacing.projection_limit(pace.get("margin", PACE_MARGIN_DEFAULT))
     weights = pace.get("weights") or {"claude": 1, "codex": 1}
     capacity = {}
     for kind in ("claude", "codex"):
@@ -15606,7 +15607,6 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         # the other kind's is known and inside it, or the balance rule below
         # could move the seat onto the kind that is running out.
         if pace.get("enabled") and pacing.known(mine) and pacing.known(theirs):
-            projection_limit = pacing.projection_limit(pace.get("margin", PACE_MARGIN_DEFAULT))
             margin = pace.get("margin", PACE_MARGIN_DEFAULT)
             mine_over = pacing.past_limit(mine, margin)
             theirs_over = pacing.past_limit(theirs, margin)

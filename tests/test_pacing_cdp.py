@@ -63,13 +63,15 @@ async function main() {
       return { hold: hold.textContent, whole: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5 && r.bottom <= cr.bottom + 0.5,
         tray: tray.textContent.replace(/\\s+/g, ' '), trayFits: tr.left >= -0.5 && tr.right <= innerWidth + 0.5,
         over: !!tray.querySelector('.usage-pace .ahead'),
-        slider: !!slider && slider.min === '0' && slider.max === '40' && slider.getBoundingClientRect().width > 0,
+        slider: !!slider && slider.min === '0' && slider.max === '40' && slider.getBoundingClientRect().width > 0 && slider.getBoundingClientRect().height >= 44,
         scroll: document.documentElement.scrollWidth, width: innerWidth }; })()`;
     const wait = async () => { const t = Date.now(); while (Date.now() - t < 30000) { try { if (await evalIn(show)) return true; } catch (e) {} await sleep(250); } return false; };
     const got = {};
     await send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
     await send('Page.navigate', { url: A.base + '/' }, sessionId);
     got.shown = await wait();
+    got.keyboard = await evalIn(`(() => { const s = document.getElementById('usage-pace-slider'); s.focus(); const before = s.value; s.value = String(Number(before) + 1); s.dispatchEvent(new Event('input', {bubbles: true})); s.dispatchEvent(new Event('change', {bubbles: true})); return s.value !== before; })()`);
+    await sleep(100);
     got.desk = await evalIn(read);
     await evalIn(`document.getElementById('usage-tray').hidden = true`);
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
@@ -167,6 +169,8 @@ class TheHoldIsVisible(unittest.TestCase):
         cls.tmp.cleanup()
 
     def check(self, view):
+        if "keyboard" in self.got:
+            self.assertTrue(self.got["keyboard"])
         self.assertIn("Until the projection falls under 105%", view["hold"])
         self.assertIn("heading for 150%", view["hold"])
         self.assertTrue(view["whole"], view)
