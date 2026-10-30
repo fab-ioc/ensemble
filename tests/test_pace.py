@@ -328,7 +328,7 @@ class TheSettingsRoundTrip(unittest.TestCase):
 
     def test_a_margin_is_clamped_and_nonsense_is_ignored(self):
         self.call("PUT", "/api/settings", {"paceMarginPoints": 250})
-        self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 100)
+        self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 40)
         self.call("PUT", "/api/settings", {"paceMarginPoints": 12.5})
         self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 12.5)
         for bad in ("lots", None, True, [3]):

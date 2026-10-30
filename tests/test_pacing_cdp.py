@@ -59,9 +59,11 @@ async function main() {
       const hold = document.querySelector('.card[data-room="${A.room}"] .chold');
       const card = hold.closest('.card'), cr = card.getBoundingClientRect(), r = hold.getBoundingClientRect();
       const tray = document.getElementById('usage-tray'), tr = tray.getBoundingClientRect();
+      const slider = document.getElementById('usage-pace-slider');
       return { hold: hold.textContent, whole: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5 && r.bottom <= cr.bottom + 0.5,
         tray: tray.textContent.replace(/\\s+/g, ' '), trayFits: tr.left >= -0.5 && tr.right <= innerWidth + 0.5,
         over: !!tray.querySelector('.usage-pace .ahead'),
+        slider: !!slider && slider.min === '0' && slider.max === '40' && slider.getBoundingClientRect().width > 0,
         scroll: document.documentElement.scrollWidth, width: innerWidth }; })()`;
     const wait = async () => { const t = Date.now(); while (Date.now() - t < 30000) { try { if (await evalIn(show)) return true; } catch (e) {} await sleep(250); } return false; };
     const got = {};
@@ -172,6 +174,7 @@ class TheHoldIsVisible(unittest.TestCase):
         self.assertIn("points an hour", view["tray"])
         self.assertIn("at its reset", view["tray"])
         self.assertTrue(view["over"], view)
+        self.assertTrue(view["slider"], view)
         self.assertTrue(view["trayFits"], view)
         self.assertLessEqual(view["scroll"], view["width"], view)
 

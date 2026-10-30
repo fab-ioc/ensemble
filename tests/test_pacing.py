@@ -153,6 +153,11 @@ class SeatChoice(Base):
         self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "switch_projection"))
         self.assertIn("heading for", dashboard._projection_reason(d))
 
+    def test_raised_margin_reaches_projection_seat_choice_limit(self):
+        reading = {"burn": {"state": "known", "projected": 115}}
+        self.assertTrue(pacing.past_limit(reading, 10))
+        self.assertFalse(pacing.past_limit(reading, 20))
+
     def test_balance_cannot_move_a_seat_onto_the_kind_running_out(self):
         self.history("claude", 0.0, start=50)
         self.history("codex:codex", 1.0, start=20)
@@ -245,6 +250,13 @@ class Brake(Base):
     def both_over(self):
         self.history("claude", 1.0, start=20)
         self.history("codex:codex", 1.0, start=20)
+
+    def test_raised_margin_raises_brake_limit(self):
+        (self.dir / "settings.json").write_text(
+            json.dumps({"paceBrake": "hold", "paceMarginPoints": 20}), encoding="utf-8")
+        pacing._step("hold", {"lowest": 115, "kinds": {}}, NOW)
+        self.assertFalse(pacing._state()["brake"]["on"])
+        self.assertEqual(pacing.view()["limit"], 120)
 
     def calm(self):
         pacing._state()["series"].clear()
