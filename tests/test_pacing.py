@@ -159,6 +159,21 @@ class SeatChoice(Base):
         self.assertEqual(self.decide("claude", margin=10)["decision"], "switch_projection")
         self.assertNotEqual(self.decide("claude", margin=20)["decision"], "switch_projection")
 
+    def test_saved_margin_reaches_seat_choice_without_restart(self):
+        (self.dir / "settings.json").write_text(
+            json.dumps({"paceMarginPoints": 20}), encoding="utf-8")
+        self.history("claude", 0.65, start=30)
+        self.history("codex:codex", 0.0, start=50)
+        d = dashboard.choose_agent_kind_for_seat(
+            "claude", snapshot(), installed=lambda k: True, now=NOW)
+        self.assertEqual(d["pace"]["marginPoints"], 20)
+        self.assertNotEqual(d["decision"], "switch_projection")
+
+    def test_nan_margin_falls_back_to_default(self):
+        (self.dir / "settings.json").write_text(
+            '{"paceMarginPoints": NaN}', encoding="utf-8")
+        self.assertEqual(dashboard.pace_settings(snapshot())["margin"], 10)
+
     def test_balance_cannot_move_a_seat_onto_the_kind_running_out(self):
         self.history("claude", 0.0, start=50)
         self.history("codex:codex", 1.0, start=20)

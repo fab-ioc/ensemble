@@ -56,6 +56,8 @@ def projection_limit(margin=None):
         margin = float(margin)
     except (TypeError, ValueError):
         margin = 10.0
+    if not math.isfinite(margin):
+        margin = 10.0
     return 100.0 + max(0.0, min(40.0, margin))
 
 
@@ -193,10 +195,10 @@ def burn(key, percent, end, now, at_least=False):
         return unknown("the history could not be read")
 
 
-def past_limit(reading, limit=None):
+def past_limit(reading, margin=None):
     """``reading`` (:func:`_kind_pace`) has a projection past its week."""
     seen = (reading or {}).get("burn") or {}
-    return seen.get("state") == "known" and seen["projected"] >= projection_limit(limit)
+    return seen.get("state") == "known" and seen["projected"] >= projection_limit(margin)
 
 
 def known(reading):

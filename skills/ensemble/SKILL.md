@@ -839,7 +839,8 @@ the final choice without a network call:
 - The hub projects each kind's week from its recent burn rate. The plan-panel
   allowance slider (0–40 points, shared with Settings › Agent models) sets the
   pace margin and raises the projection threshold to `100 + margin`; at the
-  default 10 points this remains 110%. A kind projected past that threshold
+  default 10 points this remains 110% (values below 10 tighten it). However high
+  this is set, new work moves off a plan once it has used 80% of its week. A kind projected past that threshold
   gives new seats to the other. When every usable kind is past it,
   the pacing brake holds new work of medium or lower priority:
   `ensemble_start_task` and `ensemble_create_task` with `start: true` return

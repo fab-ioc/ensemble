@@ -27,6 +27,7 @@ import getpass
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import os
 import plistlib
@@ -15214,6 +15215,8 @@ def pace_settings(snapshot: dict | None = None) -> dict:
     try:
         margin = float(settings.get("paceMarginPoints", PACE_MARGIN_DEFAULT))
     except (TypeError, ValueError):
+        margin = float(PACE_MARGIN_DEFAULT)
+    if not math.isfinite(margin):
         margin = float(PACE_MARGIN_DEFAULT)
     try:
         hysteresis = float(settings.get("balanceHysteresisPercent",

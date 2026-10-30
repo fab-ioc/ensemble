@@ -4347,7 +4347,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <label for="usage-pace-slider">Allowance above pace <output id="usage-pace-value">10 points</output></label>
     <input id="usage-pace-slider" type="range" min="0" max="40" step="1" value="10"
            aria-describedby="usage-pace-help">
-    <div id="usage-pace-help" class="usage-why">Drag to preview; it saves when released. The brake threshold is 100% plus this margin. The 80% warning cap still wins at week end.</div>
+    <div id="usage-pace-help" class="usage-why">Drag to preview; it saves when released. The brake threshold is 100% plus this margin. However high this is set, new work moves off a plan once it has used 80% of its week.</div>
   </div>
   <div id="usage-list"></div>
   <div class="usage-foot" id="usage-foot"></div>
@@ -19792,7 +19792,8 @@ function usagePaceOf(src) {
   if (!k || k.state !== 'known') return null;
   const margin = USAGE_PREVIEW_MARGIN;
   if (margin == null || k.elapsed == null) return k;
-  const pace = Math.min(USAGE.warnPercent ?? 80, k.elapsed * 100 + margin);
+  const cap = k.nearReset ? Infinity : (USAGE.warnPercent ?? 80);
+  const pace = Math.min(cap, k.elapsed * 100 + margin);
   return { ...k, pace, ahead: Number(k.percent) > pace };
 }
 
@@ -19845,11 +19846,11 @@ function usageBurnLine(pace) {
 function usageBrakeHtml() {
   const b = (USAGE.pace || {}).brake;
   if (!b) return '';
-  if (!b.on) return '<div class="usage-pace">No pacing brake is holding work. The 80% warning cap still limits the pace line near week end.</div>';
+  if (!b.on) return '<div class="usage-pace">No pacing brake is holding work. However high this is set, new work moves off a plan once it has used 80% of its week.</div>';
   const said = b.mode === 'hold' ? 'Pacing brake on: new work of medium or lower priority waits.'
     : 'Pacing brake would be on: nothing is held (Tell only).';
   return `<div class="usage-pace" title="${esc(b.why || '')}">${esc(said)}${
-    b.until ? ` Until ${esc(b.until)}.` : ''}</div>`;
+    b.until ? ` Until ${esc(b.until)}.` : ''} However high this is set, new work moves off a plan once it has used 80% of its week.</div>`;
 }
 
 function renderUsage() {
@@ -19901,8 +19902,11 @@ document.getElementById('usage-pace-slider')?.addEventListener('input', (ev) => 
 });
 document.getElementById('usage-pace-slider')?.addEventListener('change', async (ev) => {
   const value = Math.max(0, Math.min(40, Number(ev.target.value) || 0));
-  await setPref('paceMarginPoints', value);
-  USAGE_PREVIEW_MARGIN = null;
+  try {
+    await setPref('paceMarginPoints', value);
+  } finally {
+    USAGE_PREVIEW_MARGIN = null;
+  }
   await refreshUsage();
 });
 document.addEventListener('click', (ev) => {
