@@ -39,8 +39,8 @@ goes to Waiting, and comes back when the work resumes. Only from In progress,
 never over a move made in that stretch, and it leaves ``workflowAt`` alone (as
 ``dashboard.settle_finished``), so a merge still takes the card to Done. The
 tick covers every project, so no pass at hub start is needed. A card in Done
-whose owner works on real work newer than the card's move goes to In progress
-(``dashboard.work_after_done``); a merged task left running stays.
+whose owner is seen working goes to In progress, unless it is merged or a person
+put it there (``workflowPerson``, set only by the page); merged stays Done.
 
 **Stopped** takes two looks ``STOP_LOOK_S`` apart, none of them in the first
 ``BOOT_GRACE_S`` of a hub, while a restore runs or while the room is resuming:
@@ -82,6 +82,7 @@ _REPORT_WORDS = 80
 
 _LOCK = threading.Lock()
 _LAST = 0.0
+MERGE_MOVE_S = 300              # a card moved this soon after its merge: the merge's move
 _STARTED = time.time()
 _UNSAVED: dict | None = None    # a state the disk refused: the next tick starts from it
 
@@ -106,10 +107,10 @@ def _load() -> dict | None:
         d = {}
     except (OSError, ValueError):
         return None
-    if not isinstance(d, dict):
+    keys = ("tasks", "projects", "resolved", "stopped")
+    if not isinstance(d, dict) or any(not isinstance(d.get(k, {}), dict) for k in keys):
         return None
-    return {k: d[k] if isinstance(d.get(k), dict) else {}
-            for k in ("tasks", "projects", "resolved", "stopped")}
+    return {k: d.get(k, {}) for k in keys}
 
 
 def _save(state: dict) -> None:
@@ -264,6 +265,8 @@ def open_mids(room: dict) -> set[str] | None:
     """The open cards of a task and its PO; None when a read failed."""
     cr = _d.chatroom
     po = _d.room_po_id(room)
+    if not po and _d.po_unreadable(room):
+        return None
     po_room = cr.get_room(po, public=False) if po else None
     full = cr.get_room(room["id"], public=False)
     if full is None or (po and po_room is None and not _gone(po)):
@@ -399,10 +402,17 @@ def _wait_marked(room: dict, now: float) -> str:
 
 
 def _merged(room: dict) -> bool:
-    """Merged and nothing since: no real work and no commit newer than the
-    merge. A head that cannot be read is no proof of a commit."""
+    """Merged and nothing since: still in Done, no later move of the card (a
+    solo send is typed, never posted, so its reopening may be all there is to
+    see), no real work and no commit newer than the merge. The hub's own merge
+    move stamps ``workflowAt`` too, any time later: ``mergeMoveAt`` says which
+    one it was, ``MERGE_MOVE_S`` covers the cards moved before that field. A
+    head that cannot be read is no proof of a commit."""
     at = float(room.get("mergedAt") or 0)
-    if not at or _d._last_real_work(room) > at:
+    if not at or _d.workflow_of(room) != "done" or _d._last_real_work(room) > at:
+        return False
+    if float(room.get("workflowAt") or 0) > max(at + MERGE_MOVE_S,
+                                                float(room.get("mergeMoveAt") or 0)):
         return False
     head = _d._git_out(room.get("cwd", ""), "rev-parse", "HEAD") if room.get("mergedHead") else ""
     return not head or head == room["mergedHead"]
@@ -435,7 +445,8 @@ def _look(light: dict, state: dict, now: float, limit: int, live_ptys: set) -> s
         if room.get("waitMark") and seen["why"] in ("command", "teammate"):
             return _wait_marked(room, now)
         if (seen["why"] == "working" and _d.workflow_of(room) == "done"
-                and _d.work_after_done(room) and _d.reopen_done(rid, "running")):
+                and room.get("workflowPerson") != "done" and not _merged(room)
+                and _d.reopen_done(rid, "running")):
             return "out of Done"
         return "back to In progress" if _to_progress(room, now) else ""
     if verdict == "hold":

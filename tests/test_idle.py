@@ -31,6 +31,9 @@ class _Hub(unittest.TestCase):
         old = chatroom.ROOMS_DIR
         chatroom.ROOMS_DIR = root / "rooms"
         self.addCleanup(setattr, chatroom, "ROOMS_DIR", old)
+        projects_root = mock.patch.object(dashboard, "PROJECTS_ROOT", root / "projects")
+        projects_root.start()
+        self.addCleanup(projects_root.stop)
         self.projects = [{"id": "p-trade", "name": "Trading", "poRoomId": ""}]
         self.links: dict[str, str] = {}
         self.alive: set[str] = set()
@@ -746,18 +749,6 @@ class RunningNeverReadsAsDone(_Hub):
         self._handler()._ring_recipients(rid, {"recipients": [], "message": {"from": "po"}})
         self.assertEqual(self.column(rid), "done")
 
-    def test_the_start_pass(self):
-        ran_on = self.task("Ran on", workflow="done", pty="pty-a", at=T0)
-        left = self.task("Left", workflow="done", pty="pty-b", at=T0, mergedAt=T0 + 5)
-        stopped = self.task("Stopped", workflow="done", pty="", at=T0)
-        for rid in (ran_on, left, stopped):
-            chatroom.patch_room(rid, specAt=T0 + 1)
-        chatroom.patch_room(ran_on, specAt=T0 + 10)
-        moved = dashboard.reopen_done_at_start()
-        self.assertEqual(moved, {"Trading": 1})
-        self.assertEqual([self.column(r) for r in (ran_on, left, stopped)],
-                         ["inprogress", "done", "done"])
-
 
 class Tool(_Hub):
     def ctx(self, rid, identity="claude"):
@@ -994,18 +985,17 @@ class PoFindings(_Hub):
             self.tick(T0 + 120)
         self.assertEqual(self.column(rid), "waiting")
 
-    def test_working_on_newer_work_leaves_done(self):
-        rid = self.task(workflow="done", at=T0 - 600, specAt=T0 - 60)
+    def test_working_leaves_done_with_no_work_newer_than_the_move(self):
+        rid = self.task(workflow="done", at=T0 - 60, specAt=T0 - 600)
         self.working.add("pty-1")
         self.tick()
         self.assertEqual(self.column(rid), "inprogress")
 
-    def test_working_in_done_stays_when_merged_or_moved_after_the_work(self):
-        merged = self.task(workflow="done", at=T0 - 600, specAt=T0 - 300, mergedAt=T0 - 60)
-        moved = self.task(workflow="done", at=T0 - 60, specAt=T0 - 300, pty="pty-2")
-        self.working.update(("pty-1", "pty-2"))
+    def test_working_in_done_stays_when_merged(self):
+        rid = self.task(workflow="done", at=T0 - 600, specAt=T0 - 300, mergedAt=T0 - 60)
+        self.working.add("pty-1")
         self.tick()
-        self.assertEqual([self.column(merged), self.column(moved)], ["done", "done"])
+        self.assertEqual(self.column(rid), "done")
 
     def test_an_archived_task_is_no_longer_listed(self):
         rid = self.alerted()
@@ -1014,6 +1004,150 @@ class PoFindings(_Hub):
         self.tick(T0 + 60)
         self.assertNotIn(rid, idle.records())
         self.assertEqual(ensemble_tools._idle_rows("*", {}), [])
+
+
+class PoFindingsTwo(_Hub):
+    """The PO's last read (PO-FINDINGS-292-2.md)."""
+
+    def test_a_merged_card_sent_work_is_no_merged_task(self):
+        # A: a solo send leaves no trace in the room but the reopening.
+        rid = self.task(workflow="done", at=T0 - 7200, mergedAt=T0 - 7200)
+        self.idle_s["pty-1"] = 25 * MIN
+        dashboard.reopen_done(rid, "work sent")
+        self.assertFalse(idle._merged(chatroom.get_room(rid, public=False)))
+        self.tick()
+        self.assertNotIn("agent left running", self.lines[0])
+        self.tick(T0 + 2 * 3600)
+        self.assertEqual(len(self.lines), 2)    # the repeats go on
+
+    def test_merged_needs_the_card_still_where_the_merge_left_it(self):
+        for more, want in (({"workflow": "done", "workflowAt": T0}, True),
+                           ({"workflow": "done", "workflowAt": T0 + 200}, True),    # allowance
+                           ({"workflow": "done", "workflowAt": T0 + 400}, False),
+                           ({"workflow": "done", "workflowAt": T0 + 1800,           # the digest
+                             "mergeMoveAt": T0 + 1800}, True),                      # came later
+                           ({"workflow": "done", "workflowAt": T0 + 1900,
+                             "mergeMoveAt": T0 + 1800}, False),
+                           ({"workflow": "inprogress", "workflowAt": T0}, False)):
+            with self.subTest(more):
+                self.assertEqual(idle._merged({"mergedAt": T0, **more}), want)
+
+    def test_the_merge_move_stamps_itself(self):
+        rid = self.task(at=T0 - 7200, workflowPerson="inprogress")
+        with mock.patch.object(digest, "_merged_at", return_value=T0 - 3600):
+            digest._settle_merges([{"id": rid, "merged": True, "sha": "abc", "base": "main",
+                                    "column": "inprogress", "title": "x"}])
+        room = chatroom.get_room(rid, public=False)
+        self.assertEqual(room["workflowAt"], room["mergeMoveAt"])
+        self.assertIsNone(room["workflowPerson"])
+        with mock.patch.object(dashboard, "_git_out", return_value="abc"):
+            self.assertTrue(idle._merged(room))
+
+    def test_only_the_page_marks_a_person(self):
+        rid = self.task(workflow="inprogress")
+        dashboard.update_task(rid, workflow="done", by_person=True)
+        self.assertEqual(chatroom.get_room(rid, public=False)["workflowPerson"], "done")
+        dashboard.update_task(rid, workflow="done")     # the tool's way, a PO's
+        self.assertIsNone(chatroom.get_room(rid, public=False)["workflowPerson"])
+
+    def test_a_card_a_person_put_in_done_stays(self):
+        person = self.task(workflow="inprogress")
+        po = self.task(workflow="inprogress", pty="pty-2")
+        dashboard.update_task(person, workflow="done", by_person=True)
+        dashboard.update_task(po, workflow="done")
+        self.working.update(("pty-1", "pty-2"))
+        self.tick()
+        self.assertEqual([self.column(person), self.column(po)], ["done", "inprogress"])
+
+    def test_a_person_mark_from_another_column_does_not_hold_done(self):
+        rid = self.task(workflow="done", workflowPerson="inreview")
+        self.working.add("pty-1")
+        self.tick()
+        self.assertEqual(self.column(rid), "inprogress")
+
+    def _card_wait(self):
+        rid = self.task()
+        chatroom.patch_room(rid, waitMark={"kind": "card", "mids": ["m1"], "at": T0, "until": 0})
+        self.idle_s["pty-1"] = 300 * MIN
+        return rid
+
+    def _project_file(self, text):
+        d = dashboard.PROJECTS_ROOT / "broken"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "project.json").write_text(text, encoding="utf-8")
+
+    def test_an_unreadable_project_keeps_a_wait_on_a_card(self):
+        rid = self._card_wait()
+        self._project_file("{nope")
+        with mock.patch.object(dashboard, "room_po_id", return_value=""):
+            self.tick()
+        self.assertTrue(chatroom.get_room(rid, public=False).get("waitMark"))
+        self.assertEqual(self.lines, [])
+
+    def test_a_po_that_cannot_be_found_keeps_a_wait_on_a_card(self):
+        rid = self._card_wait()
+        self.projects[0]["poRoomId"] = "room-lost"
+        with mock.patch.object(dashboard, "room_po_id", return_value=""), \
+                mock.patch.object(dashboard, "load_session_projects", return_value={rid: "p-trade"}):
+            self.tick()
+        self.assertTrue(chatroom.get_room(rid, public=False).get("waitMark"))
+        self.assertEqual(self.lines, [])
+
+    def test_a_task_with_no_po_still_reads_its_own_cards(self):
+        rid = self.task()
+        with mock.patch.object(dashboard, "room_po_id", return_value=""), \
+                mock.patch.object(dashboard, "load_session_projects", return_value={rid: "p-trade"}):
+            self.assertEqual(idle.open_mids(chatroom.get_room(rid, public=False)), set())
+
+    def _open_ask(self, rid):
+        return mock.patch.object(dashboard.attention, "open_ask", return_value={"from": "claude"})
+
+    def _answered(self, rid):
+        part = chatroom.participant(chatroom.get_room(rid, public=False), "claude")
+        return float(part.get("answeredAt") or 0)
+
+    def test_a_held_hub_line_answers_nothing(self):
+        rid = self.task(workflow="done")
+        with self._open_ask(rid), mock.patch.object(dashboard.sends, "mark"):
+            dashboard._typed_sends(rid, [{"text": "x", "key": "k", "origin": "hub"}])
+            self.assertFalse(dashboard.note_answer(rid, "claude"))
+            self.assertEqual(self._answered(rid), 0)
+            self.assertEqual(self.column(rid), "done")
+            self.assertTrue(dashboard.note_answer(rid, "claude"))   # only that one line
+
+    def test_a_held_line_of_a_person_still_answers(self):
+        rid = self.task()
+        with self._open_ask(rid), mock.patch.object(dashboard.sends, "mark"):
+            dashboard._typed_sends(rid, [{"text": "x", "key": "k", "origin": "hub"},
+                                         {"text": "y", "key": "l", "origin": "po"}])
+            self.assertTrue(dashboard.note_answer(rid, "claude"))
+        self.assertGreater(self._answered(rid), 0)
+
+    def test_a_caller_that_filters_leaves_no_flag(self):
+        rid = self.task()
+        with self._open_ask(rid), mock.patch.object(dashboard.sends, "mark"):
+            dashboard._typed_sends(rid, [{"text": "x", "key": "k", "origin": "hub"}], noted=True)
+            self.assertTrue(dashboard.note_answer(rid, "claude"))   # a person typing later
+
+    def test_a_damaged_key_is_a_damaged_file(self):
+        for text in ('{"tasks": []}', '{"tasks": {}, "resolved": null}'):
+            with self.subTest(text):
+                idle._state_file().write_text(text, encoding="utf-8")
+                self.assertIsNone(idle._load())
+                self.assertEqual(self.tick(), {})
+                self.assertEqual(idle._state_file().read_text(encoding="utf-8"), text)
+
+    def test_a_missing_key_is_no_damage(self):
+        idle._state_file().write_text('{"tasks": {}}', encoding="utf-8")
+        self.assertEqual(idle._load(), {"tasks": {}, "projects": {}, "resolved": {}, "stopped": {}})
+
+    def test_no_owner_gives_work(self):
+        room = {"participants": [], "specAt": 0, "messages": [
+            {"from": "claude", "ts": 500}, {"from": "codex", "ts": 600}]}
+        with mock.patch.object(chatroom, "owners", return_value=["claude", "codex"]):
+            self.assertEqual(dashboard._last_real_work(room), 0)
+        with mock.patch.object(chatroom, "owners", return_value=["claude"]):
+            self.assertEqual(dashboard._last_real_work(room), 600)
 
 
 if __name__ == "__main__":

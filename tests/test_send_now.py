@@ -201,7 +201,7 @@ class Delivery(unittest.TestCase):
             mock.patch.object(dashboard, "send_now_way",
                               lambda p: {"claude": "into-turn", "codex": "interrupt"}[p["agent"]]),
             mock.patch.object(dashboard.sends, "note_how", lambda rid, key, how: self.noted.append((key, how))),
-            mock.patch.object(dashboard, "_typed_sends", lambda *a: None),
+            mock.patch.object(dashboard, "_typed_sends", lambda *a, **k: None),
             mock.patch.object(dashboard, "note_answer", lambda *a: None),
             mock.patch.object(dashboard, "with_message_refs", lambda text, rid, proj: text),
             mock.patch.object(dashboard.rotation, "room_rotating", lambda rid: False),

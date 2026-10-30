@@ -654,10 +654,12 @@ after 6 hours. A turn that never closed counts as idle once the screen has been
 silent for an hour, or the idle setting if that is longer; a silent tool call
 that long alerts too, so look before you stop it. `ensemble_list_attention` lists idle tasks under `idle`.
 Only a running task can be marked, and `card` takes only a card still open on
-the task or its PO's chat. A task counts as merged only while no real work or
-commit is newer than the merge. Work that reached an agent brings a Done task
-back to In progress; a Working agent with no real work since the move to Done
-stays there.
+the task or its PO's chat. A task counts as merged only while its card is in
+Done, has not moved since the merge, and no real work or commit is newer than
+it. Work that reached an agent brings a Done task back to In progress, and so
+does the hub's look when the agent is Working, unless the task is merged or a
+person put the card in Done from the page. A PO's move to Done does not hold a
+Working card there: stop the agent first.
 
 **Keep a living handover.** `PO-HANDOVER.md` in the project home holds what a
 successor with no memory would need: how the product owner likes to work,

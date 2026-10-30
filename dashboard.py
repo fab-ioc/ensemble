@@ -4389,11 +4389,18 @@ def _menu_drain(sess) -> None:
                 _menu_save()
 
 
-def _typed_sends(room_id: str, items: list[dict]) -> None:
+_HELD_HUB = threading.local()    # the room whose held line was only the hub's
+
+
+def _typed_sends(room_id: str, items: list[dict], noted: bool = False) -> None:
     """The person's sends among ``items`` were typed into a one-agent chat's
     terminal: delivered, until its transcript shows them (sends.sync). A
-    ``/command`` never shows as a turn: typed is all it gets."""
+    ``/command`` never shows as a turn: typed is all it gets. rotation.py calls
+    note_answer after this whatever the origin; ``noted`` is the callers that
+    filter it themselves."""
     now = time.time()
+    _HELD_HUB.room = "" if noted or any((it.get("origin") or "human") in {"human", "po"}
+                                        for it in items) else room_id
     sends.mark(room_id, [it.get("key") for it in items if sends.typed_confirms(it.get("text"))],
                "confirmed", now=now)
     sends.mark(room_id, [it.get("key") for it in items if not sends.typed_confirms(it.get("text"))],
@@ -5376,6 +5383,9 @@ def note_answer(room_id: str, identity: str) -> bool:
     (a doorbell, a progress check, the note after a restart, the restart
     helper's)."""
     if not room_id or not identity:
+        return False
+    if getattr(_HELD_HUB, "room", "") == room_id:
+        _HELD_HUB.room = ""
         return False
     try:
         room = chatroom.get_room(room_id, public=False)
@@ -8862,6 +8872,24 @@ def room_po_id(room: dict, projects: list[dict] | None = None,
     if not po or po == rid or not _po_room_there(po):
         return ""
     return po
+
+
+def po_unreadable(room: dict) -> bool:
+    """Whether a "" from room_po_id may hide a PO: a project.json that cannot
+    be read (load_projects skips it), or a project naming a PO whose room is
+    not there."""
+    try:
+        for d in (PROJECTS_ROOT.iterdir() if PROJECTS_ROOT.is_dir() else ()):
+            pj = d / "project.json"
+            if pj.is_file() and not isinstance(json.loads(pj.read_text(encoding="utf-8")), dict):
+                return True
+    except (OSError, ValueError):
+        return True
+    projects, rid = load_projects(), room.get("id", "")
+    pid = (load_session_projects().get(rid) or room.get("projectId")
+           or _project_for_cwd(room.get("cwd", ""), projects))
+    po = next(((p.get("poRoomId") or "").strip() for p in projects if p.get("id") == pid), "")
+    return bool(po) and po != rid
 
 
 def _write_task_json(folder: str, data: dict) -> None:
@@ -16268,10 +16296,12 @@ def _patch_task_json(folder: str, **fields) -> None:
     _write_task_json(folder, data)
 
 
-def update_task(rid: str, title=None, spec=None,
-                priority=None, workflow=None) -> tuple[bool, dict | None, str]:
+def update_task(rid: str, title=None, spec=None, priority=None, workflow=None,
+                by_person: bool = False) -> tuple[bool, dict | None, str]:
     """Amend a task's title, spec, priority and/or workflow column (room
-    record, task.json and any label override the user set from the UI)."""
+    record, task.json and any label override the user set from the UI).
+    ``by_person``: the page moved the card, so ``workflowPerson`` names the
+    column; the mark means nothing once the card has left it."""
     room = chatroom.get_room(rid, public=False)
     if room is None:
         return False, None, "no_such_room"
@@ -16317,6 +16347,7 @@ def update_task(rid: str, title=None, spec=None,
         # When the card was last moved, by anyone: a merge only moves a card
         # nobody has moved since (digest._settle_merges).
         room["workflowAt"] = time.time()
+        room["workflowPerson"] = w if by_person else None
         patch["workflow"] = w
     if not patch:
         return False, None, "nothing_to_change"
@@ -16397,7 +16428,7 @@ def settle_finished_at_start() -> dict[str, int]:
 # Never a hub line, never the owner's own message, never a send that reached
 # nobody, and never a merge: a merged task whose agent is merely left running
 # stays in Done and gets its one idle alert. idle.py moves an owner seen working
-# on work newer than the card's move (work_after_done).
+# on a card that is not merged, unless a person put it in Done.
 def reopen_done(room_id: str, why: str) -> bool:
     """A task in Done goes to In progress. True when it moved. Never raises:
     the input has already gone in."""
@@ -16423,48 +16454,15 @@ def _last_real_work(room: dict) -> float:
     """When someone last gave the owner work: an answer, a spec amendment, a
     message from another than the owner that is no hub line."""
     owners = chatroom.owners(room)
-    owner = owners[0] if owners else ""
     ts = [float(room.get("specAt") or 0)]
     for p in room.get("participants") or []:
         ts.append(float(p.get("answeredAt") or 0))
     for m in room.get("messages") or []:
-        if (m.get("from") not in (owner, "ensemble", "")
+        if (m.get("from") not in (*owners, "ensemble", "")
                 and m.get("kind") not in ("notice", "report", "digest")
                 and not chatroom.is_command_record(m)):
             ts.append(float(m.get("ts") or 0))
     return max(ts)
-
-
-def work_after_done(room: dict) -> bool:
-    """Real work newer than the card's last move and its merge: a move or a
-    merge made after the last work stands. ``room`` carries its messages."""
-    settled = max(float(room.get("workflowAt") or 0), float(room.get("mergedAt") or 0))
-    return _last_real_work(room) > settled
-
-
-def reopen_done_at_start() -> dict[str, int]:
-    """Once at hub start, in every project: a running task in Done whose last
-    real work is newer than its move to Done and its merge goes to In
-    progress. Merged and merely left running stays. Returns {project: moved}."""
-    projects = load_projects()
-    names = {p.get("id"): p.get("name") or p.get("id") for p in projects}
-    po_ids = {p.get("poRoomId") for p in projects if p.get("poRoomId")}
-    links = load_session_projects()
-    archived = load_archived()
-    moved: dict[str, int] = {}
-    for rid in [r.get("id") or "" for r in chatroom.list_rooms(copy_rooms=False)]:
-        try:
-            light = chatroom.get_room(rid, public=False, copy_room=False, messages=False)
-            if (not light or light.get("pruned") or light.get("archived") or rid in archived
-                    or rid in po_ids or workflow_of(light) != "done" or not _room_is_live(light)):
-                continue
-            room = chatroom.get_room(rid, public=False) or light
-            if work_after_done(room) and reopen_done(rid, "running at hub start"):
-                name = names.get(_room_project_id(rid, room, links)) or "no project"
-                moved[name] = moved.get(name, 0) + 1
-        except Exception as e:          # one bad room does not stop the rest
-            print(f"running task {rid} not moved out of Done: {e!r}", flush=True)
-    return moved
 
 
 def _seats_kept_live(rid: str, room: dict, members: list[dict]) -> tuple[set[str], str]:
@@ -19961,7 +19959,7 @@ class Handler(BaseHTTPRequestHandler):
         if not (_type_input(sess, text, delivered[0][1], parts=delivered, now=way) if way
                 else _type_input(sess, text, delivered[0][1], parts=delivered)):
             return items     # it looked alive, but the write found it gone
-        _typed_sends(rid, items)
+        _typed_sends(rid, items, noted=True)
         if way:
             for it in items:
                 sends.note_how(rid, it.get("key"), send_now_how([way]))
@@ -20163,7 +20161,7 @@ class Handler(BaseHTTPRequestHandler):
                 if it.get("posted"):
                     it["wake"] = [w for w in it["wake"] if w != ident]
             if solo:
-                _typed_sends(room_id, items)
+                _typed_sends(room_id, items, noted=True)
             if solo and any((it.get("origin") or "human") in {"human", "po"} for it in items):
                 note_answer(room_id, ident)
             if ident in notes:
@@ -22160,7 +22158,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "bad_workflow",
                                       "expected": WORKFLOW_CHOICES})
                 return
-            ok, room, err = update_task(rid, workflow=w)
+            ok, room, err = update_task(rid, workflow=w, by_person=True)
             if not ok:
                 self._send_json(404 if err == "no_such_room" else 400,
                                 pruned_refusal(chatroom.get_room(rid, public=False) or {})
@@ -22790,13 +22788,6 @@ def main():
             print(f"finished tasks moved to In review: {name}: {n}", flush=True)
     except Exception as e:
         print(f"finished tasks not moved to In review: {e!r}", flush=True)
-
-    startup.step("Moving running tasks out of Done")
-    try:
-        for name, n in sorted(reopen_done_at_start().items()):
-            print(f"running tasks moved out of Done: {name}: {n}", flush=True)
-    except Exception as e:
-        print(f"running tasks not moved out of Done: {e!r}", flush=True)
 
     startup.step("Updating questions and points")
     # Answers recorded before an ask of two questions became two asks (#195)

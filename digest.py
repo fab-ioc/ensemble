@@ -297,7 +297,7 @@ def _settle_merges(tasks: list[dict]) -> list[str]:
         move = (t["column"] != "done" and
                 float(room.get("workflowAt") or 0) <= (merged_at or now))
         if move:
-            fields.update(workflow="done", workflowAt=now)
+            fields.update(workflow="done", workflowAt=now, mergeMoveAt=now, workflowPerson=None)
         if _d.chatroom.patch_room(t["id"], **fields) is None:
             continue
         if move:
