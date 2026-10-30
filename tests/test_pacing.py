@@ -323,7 +323,7 @@ class Brake(Base):
         self.room("first", 3, no=9)
         self.room("second", 3, no=10)
         for rid in ("late", "first", "second"):
-            pacing.hold(self.rooms[rid], "gate", NOW)
+            pacing.hold(self.rooms[rid], "agent", NOW)
         self.calm()
         pacing.tick(NOW + 7 * H)
         self.assertEqual(self.started, ["first"])
@@ -450,9 +450,10 @@ class Brake(Base):
     def gated(self, satisfied):
         self.both_over()
         pacing.tick(NOW)
-        room = self.room("g", 3, launched=False, after=[{"task": "t"}], paceHold={"at": NOW})
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}],
+                         paceHold={"at": NOW, "by": "gate"})
         self.calm()
-        gate = (["#1 merged"], NOW) if satisfied else ([], 0)
+        gate =(["#1 merged"], NOW) if satisfied else ([], 0)
         with (mock.patch.object(board, "gate_state", return_value=gate),
               mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p"),
               mock.patch.object(dashboard, "task_label", return_value="#2")):
@@ -572,6 +573,73 @@ class Brake(Base):
         self.assertEqual(self.started, ["g"])
         self.assertEqual(room["gateAction"]["result"], "started")
         self.assertIn("started", room["gateAction"]["notice"])
+
+    def check_board(self, now):
+        with (mock.patch.object(dashboard.chatroom, "_listed_copy", side_effect=lambda r: r),
+              mock.patch.object(dashboard, "load_session_projects", return_value={}),
+              mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p"),
+              mock.patch.object(dashboard, "task_label", return_value="#2"),
+              mock.patch.object(board, "gate_state", return_value=(["#1 merged"], now)),
+              mock.patch.object(board, "_save"), mock.patch.object(board, "_load", return_value={})):
+            board.check(self.projects[0], now)
+
+    def release_after_recovery(self):
+        self.calm()
+        with mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p"):
+            pacing.tick(NOW + 7 * H)
+
+    def test_an_agent_start_of_a_gated_draft_starts_after_the_brake(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}])
+        pacing.hold(room, "agent", NOW)
+        self.check_board(NOW + 60)                  # the board's look must not make it the gate's
+        self.assertEqual(room["paceHold"]["by"], "agent")
+        self.release_after_recovery()
+        self.assertEqual(self.started, ["g"])
+
+    def test_a_relaunch_of_a_stopped_gated_task_starts_after_the_brake(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 3, launched=True, after=[{"task": "t"}],
+                         gateAction={"result": "started", "told": NOW})
+        pacing.hold(room, "agent", NOW)
+        self.release_after_recovery()
+        self.assertEqual(self.started, ["g"])
+
+    def test_a_start_after_a_tell_starts_after_the_brake(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("t", 3, launched=False, after=[{"task": "x"}], onReady="tell",
+                         gateAction={"result": "tell", "told": NOW})
+        pacing.hold(room, "agent", NOW)
+        self.release_after_recovery()
+        self.assertEqual(self.started, ["t"])
+
+    def test_a_gate_hold_whose_start_failed_is_not_retried(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}],
+                         gateAction={"result": "failed", "told": NOW})
+        pacing.hold(room, "gate", NOW)
+        self.release_after_recovery()
+        self.assertEqual(self.started, [])
+        self.assertFalse(room["paceHold"])
+
+    def test_a_failed_mark_clear_does_not_undo_a_start(self):
+        handler = mock.Mock(spec=[])
+        room = {"id": "m", "participants": [], "paceHold": {"at": NOW}}
+        ended = []
+        with (mock.patch.object(dashboard.rotation, "room_rotating", return_value=False),
+              mock.patch.object(dashboard.rotation, "launch_lock", return_value=mock.MagicMock()),
+              mock.patch.object(dashboard, "unrecorded_room_ptys", return_value=[]),
+              mock.patch.object(dashboard, "room_ptys", side_effect=[[], [{"id": "new"}]]),
+              mock.patch.object(dashboard.running_rooms, "note_started"),
+              mock.patch.object(dashboard.ptyrun, "kill", side_effect=ended.append),
+              mock.patch.object(dashboard.chatroom, "patch_room", side_effect=OSError("locked"))):
+            out = dashboard.Handler._launch_guarded(handler, room, lambda r: [{"ptyId": "new"}], room)
+        self.assertEqual(out, [{"ptyId": "new"}])
+        self.assertEqual(ended, [])
 
     def test_a_gate_that_reopened_while_held_does_not_start(self):
         room = self.gated(False)

@@ -19211,8 +19211,6 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 launched = fn(*args, **kw)
                 running_rooms.note_started(rid)     # what a cold start brings back
-                pacing.clear_hold(room_full)
-                return launched
             except BaseException:
                 for x in room_ptys(rid):
                     if x["id"] not in before:
@@ -19223,6 +19221,11 @@ class Handler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
                 raise
+            try:
+                pacing.clear_hold(room_full)
+            except Exception as e:      # the start stands; the next tick clears a live room's mark
+                print(f"[launch] {rid}: hold mark not cleared: {str(e)[:200]}", flush=True)
+            return launched
 
     def _start_room_now(self, room_full: dict) -> list[dict]:
         """First launch of a task's agents (a fresh conversation seeded with the

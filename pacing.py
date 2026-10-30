@@ -302,7 +302,10 @@ def hold(room, by, now=None):
         brake = dict(_state()["brake"])
         if not brake["on"] or _judge(_d.usage.snapshot(), now)["lowest"] is None:
             return None
-        mark = {"at": (room.get("paceHold") or {}).get("at", now), "by": by,
+        # The first hold stands: the board re-checks a held task's gate, and an
+        # agent's start must stay one.
+        prior = room.get("paceHold") or {}
+        mark = {"at": prior.get("at", now), "by": prior.get("by", by),
                 "why": brake["why"], "until": brake["until"]}
         if _d.chatroom.patch_room(room["id"], paceHold=mark) is None:
             return None
@@ -372,10 +375,14 @@ def _release(how):
 
 def _start_held(first):
     room = _d.chatroom.get_room(first["id"], public=False) or first
+    mark = room.get("paceHold")
+    if not mark:                    # started or stopped since the look
+        return False
     try:
-        # A gated task goes the gate's own way: re-tested, claimed, told. A gate
-        # that no longer holds leaves it waiting for the gate, not the brake.
-        if room.get("after"):
+        # A task its gate started goes the gate's own way: re-tested, claimed,
+        # told. A gate that no longer holds leaves it waiting for the gate, not
+        # the brake. An agent's start was a start, gate or none.
+        if mark.get("by") == "gate":
             _d.board.start_gated(room)
         else:
             _d.hub_launcher()._resume_room(room)
