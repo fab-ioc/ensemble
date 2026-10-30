@@ -487,7 +487,10 @@ _ALL_TOOLS = [
         "name": "ensemble_start_task",
         "description": (
             "Launch a draft task's agents, or relaunch a stopped task's agents "
-            "resuming their previous conversation. A draft's first launch checks "
+            "resuming their previous conversation. While the pacing brake is on, "
+            "a task of medium or lower priority does not start: the result has "
+            "held=true and the note says why, and it starts by itself on recovery. "
+            "A draft's first launch checks "
             "the latest cached plan allowance, records the preferred and chosen "
             "line-ups, and returns the reason; a relaunch keeps the kinds that own "
             "the existing conversations. A resumed owner is then typed one line: "
@@ -1488,7 +1491,10 @@ def _plan_usage(ctx, args, handler):
         "kinds": {kind: _d._kind_usage(snap, kind) for kind in ("claude", "codex")},
         # Each kind's weekly pace mark: past it, new seats go to the other kind.
         "pace": _d.pace_view(snap),
-        "note": ("`pace`: the hub spreads each kind's 7-day allowance over the "
+        "note": ("`pace.kinds.*.burn`: points an hour and the percent projected at the "
+                 "reset; \"unknown\" means too little history. `pace.brake`: on while every "
+                 "usable kind is projected past its week, and new work of medium or lower "
+                 "priority then waits. `pace`: the hub spreads each kind's 7-day allowance over the "
                  "week. A kind whose 7-day percent is above its pace mark "
                  "(share of the week gone + the margin, capped at the warning) is "
                  "ahead of pace, and new owners, reviews and handovers go to the "
@@ -1627,7 +1633,8 @@ def _create_task(ctx, args, handler):
                            gateConfiguredAt=room_full["gateConfiguredAt"])
     _d._patch_task_json(room_full.get("taskDir", ""), after=gates, onReady=room_full["onReady"])
     started = False
-    if args.get("start") is True:
+    held = _d.pacing.hold(room_full, "agent") if args.get("start") is True else None
+    if args.get("start") is True and not held:
         try:
             handler._start_room(room_full)
         except _d.StartRoomError as exc:
@@ -1642,7 +1649,9 @@ def _create_task(ctx, args, handler):
             "cwd": room_full.get("cwd", ""),
             "agents": _agents_view(room_full),
             **({"allocation": allocation} if allocation else {}),
-            "note": ((allocation or {}).get("reason", "launched") if started else
+            **({"held": True} if held else {}),
+            "note": (_d.pacing.note_text(held) if held else
+                     (allocation or {}).get("reason", "launched") if started else
                      "created as a draft — the product owner can start it from the "
                      "dashboard, or call ensemble_start_task")}
 
@@ -1867,6 +1876,10 @@ def _start_task(ctx, args, handler):
     _not_self(ctx, room, "start")
     if _d._room_is_live(room):
         raise ToolError("that task is already running")
+    held = _d.pacing.hold(room, "agent")
+    if held:
+        return {"ok": True, "taskId": room["id"], "status": _status(room), "held": True,
+                "note": _d.pacing.note_text(held)}
     first_launch = not room.get("launched", True)
     try:
         # Through the hub's resume guard: one resume per task at a time, and
@@ -1892,6 +1905,10 @@ def _stop_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "stop_task")
     _not_self(ctx, room, "stop")
     if not _d._room_is_live(room):
+        if room.get("paceHold"):
+            _d.pacing.cancel_hold(room)
+            return {"ok": True, "taskId": room["id"], "status": _status(room),
+                    "note": "it was waiting for the pacing brake: it will not start by itself now"}
         return {"ok": True, "taskId": room["id"], "status": _status(room),
                 "note": "it was not running"}
     _d.stop_task(room["id"])

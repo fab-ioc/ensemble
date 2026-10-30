@@ -167,6 +167,49 @@ def _recover_attempt(room, action):
     return action
 
 
+def _claim(room, why, ready_at, now):
+    """Claim a gate and act on it. False when the claim could not be written."""
+    # Claim before launching, including failures and process interruption.
+    action = {"at": now, "readyAt": ready_at, "result": "attempted",
+              "onReady": room.get("onReady", "start"), "reason": ", ".join(why)}
+    room["gateAction"] = action
+    if _d.chatroom.patch_room(room["id"], gateAction=action) is None:
+        return False
+    label = _d.task_label(room)
+    if room.get("onReady", "start") == "tell":
+        text = f"{label} is unblocked: {', '.join(why)}."
+        action["result"] = "tell"
+    else:
+        try:
+            _d.hub_launcher()._resume_room(room)
+            room["launched"] = True
+            text = f"{label} started: {', '.join(why)}."
+            action["result"] = "started"
+        except Exception as exc:
+            text = f"{label} could not start: {exc}. Start it manually after resolving this."
+            action["result"] = "failed"
+    action["notice"] = text
+    room["gateAction"] = action
+    _d.chatroom.patch_room(room["id"], gateAction=action)
+    return True
+
+
+def start_gated(room, now=None):
+    """A gated task the pacing brake held: start it if its gate still holds
+    and has not been used. Its notice goes out on the project's next check.
+    Under the board's lock, like a check: the room is read again inside it, in
+    case a check claimed the gate first. Git and the launch run under it too,
+    on the scheduler thread, as they do in a check."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        room = _d.chatroom.get_room(room["id"], public=False) or room
+        if room.get("gateAction") or room.get("launched", True):
+            return
+        why, ready_at = gate_state(room, _d.ensemble_tools._project_of_room(room), {}, now)
+        if why:
+            _claim(room, why, ready_at, now)
+
+
 def check(project, now=None):
     now = time.time() if now is None else now
     with _LOCK:
@@ -189,35 +232,21 @@ def check(project, now=None):
             if room.get("launched", True) or _d.workflow_of(room) == "done":
                 continue
             why, ready_at = gate_state(room, project["id"], git, now)
-            if why and not room.get("gateAction"):
-                # Claim before launching, including failures and process interruption.
-                action = {"at": now, "readyAt": ready_at, "result": "attempted",
-                          "onReady": room.get("onReady", "start"), "reason": ", ".join(why)}
-                room["gateAction"] = action
-                if _d.chatroom.patch_room(room["id"], gateAction=action) is None:
-                    continue
-                label = _d.task_label(room)
-                if room.get("onReady", "start") == "tell":
-                    text = f"{label} is unblocked: {', '.join(why)}."
-                    action["result"] = "tell"
-                else:
-                    try:
-                        _d.hub_launcher()._resume_room(room)
-                        room["launched"] = True
-                        text = f"{label} started: {', '.join(why)}."
-                        action["result"] = "started"
-                    except Exception as exc:
-                        text = f"{label} could not start: {exc}. Start it manually after resolving this."
-                        action["result"] = "failed"
-                action["notice"] = text
-                room["gateAction"] = action
-                _d.chatroom.patch_room(room["id"], gateAction=action)
+            # Held by the pacing brake: the gate is not used up, and a held task
+            # is no idle-board news.
+            if (why and not room.get("gateAction") and room.get("onReady", "start") == "start"
+                    and _d.pacing.hold(room, "gate", now)):
+                continue
+            if why and not room.get("gateAction") and not _claim(room, why, ready_at, now):
+                continue
             action = room.get("gateAction") or {}
             if action.get("notice") and not action.get("told") and deliver(project, action["notice"]):
                 action["told"] = now
                 _d.chatroom.patch_room(room["id"], gateAction=action)
-            if not room.get("launched", True) and (why or (
-                    not room.get("after") and _d.priority_of(room) <= 2)):
+            # Neither a held task nor one stopped while held is idle-board news.
+            if (not room.get("launched", True) and not room.get("paceHold")
+                    and action.get("result") != "stopped"
+                    and (why or (not room.get("after") and _d.priority_of(room) <= 2))):
                 ready.append(room)
         # Reload after launches: normal allocation/start changes the live seats.
         rooms = [_d.chatroom.get_room(r["id"], copy_room=False, messages=False) or r for r in rooms]
