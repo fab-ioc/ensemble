@@ -648,8 +648,10 @@ agent in Done counts. A task with a merged branch alerts once, and a finished
 report you left alone alerts after 4 hours. For each task do one of three: send
 it work, stop it, or mark the wait with `ensemble_mark_wait` (kind `card`,
 `time`, `task` or `background`; `clear` removes it). A marked wait ends by
-itself and types you one line then. A background wait with no time ends after
-6 hours. `ensemble_list_attention` lists idle tasks under `idle`.
+itself and types you one line then, within the hour, except a background wait
+the owner ended by going back to work. A background wait with no time ends
+after 6 hours. A turn that never closed counts as idle once the screen has been
+silent for an hour. `ensemble_list_attention` lists idle tasks under `idle`.
 
 **Keep a living handover.** `PO-HANDOVER.md` in the project home holds what a
 successor with no memory would need: how the product owner likes to work,

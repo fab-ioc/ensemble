@@ -10,6 +10,9 @@ column: a stopped task never alerts, a live agent in Done does.
 
 Not idle while the owner works, hands over or retries a provider's refusal, a
 reviewer runs, or its own command runs (up to ``attention.OWN_WORK_CAP_S``).
+A turn that never closed counts as work until the screen has been silent for
+``STUCK_S``: an agent working prints, so that is a hang or a missing transcript.
+No look at all during a drain or its restart.
 Held, no column move and no alert: paused, held by the pacing brake, at a model
 limit. Quiet, no alert: a marked wait, an open ask the PO has read, an open
 card, a finished report younger than ``MERGE_AFTER_S``.
@@ -18,11 +21,13 @@ card, a finished report younger than ``MERGE_AFTER_S``.
 idle PO, ``[idle] #412 idle since 09:42 ...``, at most one per ``FLOOR_S``.
 Repeats back off: ``BACKOFF_MIN``, then every 6 h. A merged task whose agent is
 merely left running gets one alert and no repeat. A failed read means no alert.
+With the setting at 0 no line is typed, and a wait that ends then is not kept.
 
 **A marked wait** (``waitMark`` on the room, ``ensemble_mark_wait``) survives a
 restart and a rotation. It ends when the card is answered, the time comes, the
-other task is done, or the owner works again; the PO is woken once. A background
-wait with no wake time ends after ``BACKGROUND_CAP_S`` so it never goes silent.
+other task is done, or the owner works again; the PO is woken once, except when
+the owner went back to work, which needs no wake. A background wait with no wake
+time ends after ``BACKGROUND_CAP_S`` so it never goes silent.
 
 **The column** (P246). In progress holds only moving work: a card not moving
 goes to Waiting, and comes back when the work resumes. Only from In progress,
@@ -30,7 +35,12 @@ never over a move made in that stretch, and it leaves ``workflowAt`` alone (as
 ``dashboard.settle_finished``), so a merge still takes the card to Done. The
 tick covers every project, so no pass at hub start is needed.
 
-State: ``DASHBOARD_DIR/idle.json``, so a hub restart repeats nothing.
+**Stopped** takes two looks ``STOP_LOOK_S`` apart, none of them in the first
+``BOOT_GRACE_S`` of a hub or while the room is resuming: rooms the restart lost
+are not live until they are brought back.
+
+State: ``DASHBOARD_DIR/idle.json``, saved as soon as a line is typed, so a hub
+restart repeats nothing but a line typed in the moment before it died.
 """
 from __future__ import annotations
 
@@ -54,7 +64,9 @@ BACKOFF_MIN = (30, 120, 360)    # after the 1st, 2nd and every later alert
 FLOOR_S = 3600                  # one line per project in this time
 MERGE_AFTER_S = 4 * 3600        # a finished report nobody acted on alerts after this
 BACKGROUND_CAP_S = 6 * 3600     # a background wait with no wake time ends after this
+STUCK_S = 3600                  # a turn not closed, screen silent this long, counts as idle
 STOP_LOOK_S = 120               # not live on two looks this far apart is stopped
+BOOT_GRACE_S = 600              # no such look this soon after the hub started
 _EPISODE_S = 60                 # the idle clock moving later by this is a new stretch
 _LINE_MAX = 900
 PREFIX = "[idle] "              # how the typed line starts (HUB_INPUT_KINDS)
@@ -63,6 +75,8 @@ _REPORT_WORDS = 80
 
 _LOCK = threading.Lock()
 _LAST = 0.0
+_STARTED = time.time()
+_UNSAVED: dict | None = None    # a state the disk refused: the next tick starts from it
 
 
 def _log(msg: str) -> None:
@@ -87,14 +101,24 @@ def _load() -> dict:
 
 
 def _save(state: dict) -> None:
+    """Windows refuses ``replace`` while a reader has the file open, so it tries
+    again; if it still cannot, the tick keeps the state in memory."""
+    global _UNSAVED
     f = _state_file()
-    try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        tmp = f.with_suffix(".json.tmp")
-        durable.write_tmp(tmp, json.dumps(state, indent=2, ensure_ascii=False))
-        tmp.replace(f)
-    except OSError as e:
-        _log(f"cannot save: {e}")
+    for attempt in range(3):
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".json.tmp")
+            durable.write_tmp(tmp, json.dumps(state, indent=2, ensure_ascii=False))
+            tmp.replace(f)
+            _UNSAVED = None
+            return
+        except OSError as e:
+            if attempt == 2:
+                _log(f"cannot save: {e}")
+            else:
+                time.sleep(0.2)
+    _UNSAVED = state
 
 
 def threshold_s() -> int:
@@ -151,9 +175,10 @@ def assess(room: dict, now: float, limit: int) -> dict:
     if sess is None:
         return {"state": "unknown", "why": "owner not running"}
     tpath, reader = rot._transcript_of(part)
-    if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
-        return {"state": "moving", "why": "working"}
     idle = float(sess.info().get("idleSeconds") or 0)
+    stuck = not rot._idle(part, reader(tpath))
+    if rot._submitted_lately(sess) or (stuck and idle < max(limit, STUCK_S)):
+        return {"state": "moving", "why": "working"}
     if st.own_work(sess) and idle < att.OWN_WORK_CAP_S:
         return {"state": "moving", "why": "command"}
     # The stalled nudge's own echo resets the screen's clock: its record keeps
@@ -162,7 +187,7 @@ def assess(room: dict, now: float, limit: int) -> dict:
     stalled = st.record(rid)
     if stalled and float(stalled.get("idleSince") or now) < since:
         since = float(stalled["idleSince"])
-    out = {"since": since, "tpath": tpath}
+    out = {"since": since, "tpath": tpath, "stuck": stuck}
     if room.get("waitMark"):
         return {**out, "state": "quiet", "why": "marked"}
     ask = att.open_ask(room)
@@ -321,6 +346,7 @@ def _look_stopped(room: dict, state: dict, now: float, live_ptys: set) -> str:
     relevant = (_d.workflow_of(room) == "inprogress" or room.get("waitMark")
                 or rid in state["tasks"] or rid in state["resolved"])
     if (not relevant or room.get("paceHold") or rid in live_ptys
+            or now - _STARTED < BOOT_GRACE_S or _d.restart_drain._resuming(rid)
             or _d._room_has_linked_agent(room)):
         state["stopped"].pop(rid, None)
         return ""
@@ -387,7 +413,8 @@ def _look(light: dict, state: dict, now: float, limit: int, live_ptys: set) -> s
         if told:                        # the stalled line said it already
             rec.update(alerts=1, lastAt=told, nextAt=told + BACKOFF_MIN[0] * 60)
     rec["current"] = True
-    rec["why"] = ("merged" if room.get("mergedAt") else "finished" if seen.get("finished")
+    rec["why"] = ("stuck" if seen.get("stuck") else "merged" if room.get("mergedAt")
+                  else "finished" if seen.get("finished")
                   else "ask" if seen.get("ask") else "done" if _d.workflow_of(room) == "done" else "")
     return moved
 
@@ -417,7 +444,8 @@ def _item(room: dict, rec: dict) -> str:
         return f"{head}, merged, agent left running: stop it"
     said = _last_report_words(room)
     bits = [head, f'last report "{said}"' if said else "no report yet"]
-    bits.append({"finished": "finished report not acted on",
+    bits.append({"stuck": "its turn never ended and its screen is silent",
+                 "finished": "finished report not acted on",
                  "ask": "its question is not read yet",
                  "done": "in Done, agent still running"}.get(why, "waiting on nothing"))
     return ", ".join(bits)
@@ -474,6 +502,7 @@ def _wake(state: dict, now: float, rooms: dict) -> dict:
             rec["lastAt"] = now
             rec["nextAt"] = now + BACKOFF_MIN[min(rec["alerts"], len(BACKOFF_MIN)) - 1] * 60
             out[rid] = f"PO told ({rec['alerts']})"
+        _save(state)                    # typed: a failed save must not type it twice
     return out
 
 
@@ -487,8 +516,10 @@ def tick(now: float | None = None) -> dict[str, str]:
     if not _LOCK.acquire(blocking=False):
         return {}                       # the last one is still at it
     try:
-        state = _load()
-        before = json.dumps(state, sort_keys=True)
+        if _d.restart_drain.holding():
+            return {}                   # agents sit ready on purpose
+        state = _UNSAVED or _load()
+        before = "" if _UNSAVED else json.dumps(state, sort_keys=True)
         try:
             ids = [p.stem for p in _d.chatroom.ROOMS_DIR.glob("room-*.json")]
         except OSError as e:
@@ -524,6 +555,8 @@ def tick(now: float | None = None) -> dict[str, str]:
         if limit:
             for rid, did in _wake(state, now, rooms).items():
                 out[rid] = f"{out[rid]}; {did}" if rid in out else did
+        else:
+            state["resolved"].clear()   # off is off: no line saved up for later
         for rid, did in out.items():
             _log(f"{rid}: {did}")
         if json.dumps(state, sort_keys=True) != before:

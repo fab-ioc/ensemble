@@ -43,6 +43,8 @@ class _Hub(unittest.TestCase):
         self.minutes = 20
         self.seen_ask = True
         self.stall_rec: dict[str, dict] = {}
+        self.draining = False
+        self.resuming: set[str] = set()
         rot = dashboard.rotation
 
         def sess_of(part):
@@ -58,6 +60,10 @@ class _Hub(unittest.TestCase):
 
         for patch in (
                 mock.patch.object(dashboard, "DASHBOARD_DIR", root),
+                mock.patch.object(dashboard.restart_drain, "holding", side_effect=lambda: self.draining),
+                mock.patch.object(dashboard.restart_drain, "_resuming", side_effect=lambda rid: rid in self.resuming),
+                mock.patch.object(idle, "_STARTED", 0.0),
+                mock.patch.object(idle, "_UNSAVED", None),
                 mock.patch.object(dashboard, "load_projects", side_effect=lambda: self.projects),
                 mock.patch.object(dashboard, "load_session_projects", side_effect=lambda: self.links),
                 mock.patch.object(dashboard, "load_archived", side_effect=set),
@@ -118,6 +124,88 @@ class _Hub(unittest.TestCase):
         return idle._load()
 
 
+class ReviewOne(_Hub):
+    """Review 1: a restart, a drain, a hang, a save that fails, the setting off."""
+
+    def marked(self):
+        rid = self.task(pty="")
+        chatroom.patch_room(rid, waitMark={"kind": "time", "until": T0 + 3600, "at": T0 - 600})
+        idle._save({"tasks": {}, "projects": {}, "resolved": {}, "stopped": {rid: T0 - 3600}})
+        return rid
+
+    def mark_of(self, rid):
+        return chatroom.get_room(rid, public=False).get("waitMark")
+
+    def test_a_look_from_before_the_restart_does_not_stop_a_room(self):
+        rid = self.marked()
+        with mock.patch.object(idle, "_STARTED", T0 - 60):
+            self.tick()
+        self.assertTrue(self.mark_of(rid))
+        self.assertEqual(self.column(rid), "inprogress")
+        self.assertNotIn(rid, self.state()["stopped"])
+
+    def test_a_room_resuming_is_not_stopped(self):
+        rid = self.marked()
+        self.resuming.add(rid)
+        self.tick()
+        self.assertTrue(self.mark_of(rid))
+        self.assertEqual(self.column(rid), "inprogress")
+
+    def test_after_the_grace_two_looks_still_stop_it(self):
+        rid = self.marked()
+        self.tick()
+        self.assertIsNone(self.mark_of(rid))
+        self.assertEqual(self.column(rid), "waiting")
+
+    def test_a_drain_is_not_idle(self):
+        rid = self.task()
+        self.idle_s["pty-1"] = 60 * MIN
+        self.draining = True
+        self.assertEqual(self.tick(), {})
+        self.assertEqual(self.lines, [])
+        self.assertEqual(self.column(rid), "inprogress")
+        self.draining = False
+        self.tick()
+        self.assertEqual(len(self.lines), 1)
+
+    def test_a_turn_that_never_closed_alerts_after_an_hour(self):
+        rid = self.task()
+        self.working.add("pty-1")
+        self.idle_s["pty-1"] = 59 * MIN
+        self.tick()
+        self.assertEqual(self.lines, [])
+        self.idle_s["pty-1"] = 61 * MIN
+        self.tick()
+        self.assertEqual(len(self.lines), 1)
+        self.assertIn("turn never ended", self.lines[0])
+        self.assertEqual(self.column(rid), "waiting")
+
+    def test_a_failed_save_does_not_repeat_the_line(self):
+        rid = self.task()
+        self.idle_s["pty-1"] = 25 * MIN
+        idle._state_file().mkdir()      # replace refuses, as a reader's open file does
+        with mock.patch.object(idle.time, "sleep"):
+            self.tick()
+            self.assertEqual(len(self.lines), 1)
+            self.tick(T0 + 120)
+        self.assertEqual(len(self.lines), 1)
+        idle._state_file().rmdir()
+        self.tick(T0 + 180)
+        self.assertEqual(len(self.lines), 1)
+        self.assertEqual(self.state()["tasks"][rid]["alerts"], 1)
+
+    def test_off_drops_a_wait_that_ended(self):
+        rid = self.task()
+        self.idle_s["pty-1"] = 25 * MIN
+        chatroom.patch_room(rid, waitMark={"kind": "time", "until": T0 - 1, "at": T0 - 600})
+        self.minutes = 0
+        self.tick()
+        self.assertEqual(self.state()["resolved"], {})
+        self.minutes = 20
+        self.tick(T0 + 120)
+        self.assertEqual(self.lines, [])
+
+
 class WhatIsIdle(_Hub):
     def test_an_agent_idle_past_the_limit_alerts_once(self):
         rid = self.task()
@@ -138,7 +226,7 @@ class WhatIsIdle(_Hub):
 
     def test_each_reason_it_is_not_idle(self):
         rid = self.task()
-        self.idle_s["pty-1"] = 60 * MIN
+        self.idle_s["pty-1"] = 50 * MIN
         rot = dashboard.rotation
         for name, patch in (
                 ("working", mock.patch.object(rot, "_idle", return_value=False)),
@@ -395,6 +483,7 @@ class Marks(_Hub):
         self.working.clear()
         self.idle_tick(T0 + 60)
         self.working.add("pty-1")
+        self.idle_s["pty-1"] = 0
         self.tick(T0 + 120)
         self.assertIsNone(chatroom.get_room(rid, public=False).get("waitMark"))
         self.assertEqual(self.lines, [])
