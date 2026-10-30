@@ -1905,6 +1905,10 @@ def _stop_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "stop_task")
     _not_self(ctx, room, "stop")
     if not _d._room_is_live(room):
+        if room.get("paceHold"):
+            _d.pacing.cancel_hold(room)
+            return {"ok": True, "taskId": room["id"], "status": _status(room),
+                    "note": "it was waiting for the pacing brake: it will not start by itself now"}
         return {"ok": True, "taskId": room["id"], "status": _status(room),
                 "note": "it was not running"}
     _d.stop_task(room["id"])

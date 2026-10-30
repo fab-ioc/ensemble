@@ -6,10 +6,10 @@ kind's reset. Seat choice reads the projection; the brake holds new work of
 medium or lower priority while every usable kind is projected past its week.
 
 Unknown is never a guess and never a brake: any failure here leaves a start
-free. The figures below come from replaying 14 days of stored readings; the
-document `#291 Pacing that paces.md` says why each is what it is.
+free. The figures below come from replaying 14 days of stored readings.
 """
 import json
+import math
 import threading
 import time
 
@@ -31,7 +31,6 @@ WEEK_H = 7 * 24
 PROJECTED_LIMIT = 110       # 100 plus what a projection is off by a day ahead
 RELEASE_POINTS = 5          # the brake lets go this far under the limit
 DWELL_S = 6 * 3600          # and not sooner than this after it engaged
-UNKNOWN_RELEASE_S = 1800    # held work waits out a short gap in the readings
 TICK_EVERY_S = 60
 USE_EVERY_S = 3600
 HELD_FROM_PRIORITY = 3      # medium; high and highest always start
@@ -50,9 +49,45 @@ def _path():
 
 
 def _blank():
-    return {"series": {}, "brake": {"on": False, "episode": 0, "since": 0, "unknownSince": 0,
+    return {"series": {}, "brake": {"on": False, "episode": 0, "since": 0, "latest": 0,
                                     "ended": "", "why": "", "until": ""},
             "told": {}, "use": []}
+
+
+def _number(value):
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
+
+
+def _pair(value):
+    return isinstance(value, list) and len(value) == 2 and all(map(_number, value))
+
+
+def _clean(saved):
+    """What the file holds that this code can use: a damaged entry is dropped
+    alone, so it cannot break a seat choice or a usage read for good."""
+    data = _blank()
+    series = saved.get("series")
+    for key, rec in (series.items() if isinstance(series, dict) else ()):
+        samples = rec.get("samples") if isinstance(rec, dict) else None
+        samples = [s for s in samples if _pair(s)] if isinstance(samples, list) else []
+        if samples and _number(rec.get("reset")):
+            data["series"][key] = {"reset": rec["reset"], "samples": samples}
+    brake = saved.get("brake")
+    for key, blank in data["brake"].items():
+        value = brake.get(key) if isinstance(brake, dict) else None
+        if type(value) is type(blank) if isinstance(blank, (bool, str)) else _number(value):
+            data["brake"][key] = value
+    told = saved.get("told")
+    for pid, rec in (told.items() if isinstance(told, dict) else ()):
+        if isinstance(rec, dict) and all(_number(rec.get(k)) for k in ("engage", "release")):
+            data["told"][pid] = {k: rec[k] for k in ("engage", "release")}
+    use = saved.get("use")
+    for entry in (use if isinstance(use, list) else ()):
+        if (isinstance(entry, list) and len(entry) == 2 and _number(entry[0])
+                and isinstance(entry[1], dict) and all(map(_number, entry[1].values()))):
+            data["use"].append(entry)
+    return data
 
 
 def _state():
@@ -64,10 +99,10 @@ def _state():
         try:
             saved = json.loads(_path().read_text(encoding="utf-8"))
             if isinstance(saved, dict):
-                data.update({k: saved[k] for k in data if isinstance(saved.get(k), type(data[k]))})
-                data["brake"] = {**_blank()["brake"], **data["brake"]}
-        except (OSError, ValueError):
-            pass
+                data = _clean(saved)
+        except Exception as e:                              # noqa: BLE001
+            if not isinstance(e, FileNotFoundError):
+                print(f"[pacing] history could not be read: {str(e)[:200]}", flush=True)
         _CACHE.update(path=path, data=data)
     return _CACHE["data"]
 
@@ -139,7 +174,7 @@ def burn(key, percent, end, now, at_least=False):
         rate = RECENT_SHARE * recent + (1 - RECENT_SHARE) * average
         return {"state": "known", "ratePerHour": round(rate, 2),
                 "projected": round(percent + rate * hours_left, 1), "samples": len(samples)}
-    except (TypeError, ValueError, KeyError, IndexError, OSError):
+    except Exception:                                       # noqa: BLE001
         return unknown("the history could not be read")
 
 
@@ -223,29 +258,35 @@ def _until(kinds, now):
             f"or {_d._reset_clock(soonest.get('resetsAt'), now)} at the latest")
 
 
+def _latest(kinds, now):
+    """When the soonest week resets, 0 when no reading says."""
+    hours = [float(r["hoursToReset"]) for r in kinds.values() if r.get("hoursToReset")]
+    return now + min(hours) * 3600 if hours else 0
+
+
 def _step(how, judged, now):
-    """Move the brake one tick. Unknown keeps what is held for a short while,
-    so one failed read does not start everything at once."""
+    """Move the brake one tick. An outage keeps the state and tells nobody: the
+    same episode carries on when readings return. It ends the brake only by
+    outlasting the reset the card promised as the latest, so nothing is held
+    for good."""
     brake = _state()["brake"]
     before = dict(brake)
     lowest = judged["lowest"]
     if how == "off":
         if brake["on"]:
-            brake.update(on=False, unknownSince=0, ended="off")
+            brake.update(on=False, ended="off")
     elif lowest is None:
-        if brake["on"]:
-            brake["unknownSince"] = brake["unknownSince"] or now
-            if now - brake["unknownSince"] >= UNKNOWN_RELEASE_S:
-                brake.update(on=False, unknownSince=0, ended="unknown")
+        if brake["on"] and brake["latest"] and now >= brake["latest"]:
+            brake.update(on=False, ended="reset")
     else:
-        brake["unknownSince"] = 0
         if lowest >= PROJECTED_LIMIT and not brake["on"]:
             brake.update(on=True, since=now, episode=brake["episode"] + 1, ended="")
         elif (brake["on"] and lowest < PROJECTED_LIMIT - RELEASE_POINTS
                 and now - brake["since"] >= DWELL_S):
             brake.update(on=False, ended="recovered")
         if brake["on"]:
-            brake.update(why=_why(judged["kinds"], now), until=_until(judged["kinds"], now))
+            brake.update(why=_why(judged["kinds"], now), until=_until(judged["kinds"], now),
+                         latest=_latest(judged["kinds"], now))
     return brake != before
 
 
@@ -284,9 +325,33 @@ def clear_hold(room):
         _d.chatroom.patch_room(room["id"], paceHold=None)
 
 
+def cancel_hold(room):
+    """A held task someone stopped: it neither starts at the release nor, with
+    a gate, at the gate. A gate edit or a Start brings it back."""
+    if not room.get("paceHold"):
+        return
+    if room.get("after") and not room.get("gateAction"):
+        action = {"at": time.time(), "result": "stopped", "onReady": room.get("onReady", "start")}
+        room["gateAction"] = action
+        _d.chatroom.patch_room(room["id"], gateAction=action)
+    clear_hold(room)
+
+
 def _project_of(room):
     pid = _d.ensemble_tools._project_of_room(room)
     return next((p for p in _d.load_projects() if p["id"] == pid), None)
+
+
+def _sort_held(listed, brake, holding, waiting):
+    mark = listed["paceHold"]
+    if _d._room_is_live(listed) or _d.workflow_of(listed) == "done":
+        clear_hold(listed)
+    elif not holding or _d.priority_of(listed) < HELD_FROM_PRIORITY:
+        waiting.append(listed)
+    elif (mark.get("why"), mark.get("until")) != (brake["why"], brake["until"]):
+        # The card says what is true now, not what was at the hold.
+        _d.chatroom.patch_room(listed["id"], paceHold={**mark, "why": brake["why"],
+                                                       "until": brake["until"]})
 
 
 def _release(how):
@@ -297,17 +362,8 @@ def _release(how):
     holding = how == "hold" and brake["on"]
     waiting = []
     for listed in _d.chatroom.list_rooms(copy_rooms=False):
-        mark = listed.get("paceHold")
-        if not mark:
-            continue
-        if _d._room_is_live(listed) or _d.workflow_of(listed) == "done":
-            clear_hold(listed)
-        elif not holding or _d.priority_of(listed) < HELD_FROM_PRIORITY:
-            waiting.append(listed)
-        elif (mark.get("why"), mark.get("until")) != (brake["why"], brake["until"]):
-            # The card says what is true now, not what was at the hold.
-            _d.chatroom.patch_room(listed["id"], paceHold={**mark, "why": brake["why"],
-                                                           "until": brake["until"]})
+        if listed.get("paceHold"):
+            _stage("a held task", _sort_held, listed, brake, holding, waiting)
     for first in sorted(waiting, key=lambda r: (_d.priority_of(r), r.get("no") or 0)):
         # One start a tick; a room that cannot be handled gives way to the next.
         if _stage("a held start", _start_held, first, default=False):
@@ -354,7 +410,7 @@ def _tell(how):
                 told["engage"] = episode
                 changed = True
         elif not brake["on"] and told["engage"] == episode and told["release"] < episode:
-            ended = {"unknown": "the usage readings are not available, so nothing is held",
+            ended = {"reset": "the week reset while the usage readings were not available",
                      "off": "it was turned off in Settings"}.get(brake["ended"],
                                                                  "the projection recovered")
             if _d.board.deliver(project, f"Pacing brake off: {ended}. Waiting tasks start by "
@@ -456,8 +512,7 @@ def tick(now=None):
     """The lock is held only over the state itself: never across a delivery
     or the transcripts, so a usage read does not wait on either. Only the
     scheduler thread writes this state; other threads only read it. A setting
-    that cannot be read counts as no reading: the brake lets go after the
-    grace, and says that."""
+    that cannot be read counts as no reading: the brake stays as it is."""
     now = time.time() if now is None else now
     how = _stage("the setting", mode, default=None)
     if how is None:

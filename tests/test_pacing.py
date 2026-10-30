@@ -352,16 +352,33 @@ class Brake(Base):
         pacing.tick(NOW + 120)
         self.assertEqual(self.started, ["m"])
 
-    def test_a_short_gap_keeps_held_work_then_lets_go(self):
+    def test_an_outage_keeps_the_state_and_tells_nobody(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing.hold(self.room("m", 3), "agent", NOW)
+        self.delivered.clear()
+        episode = pacing._state()["brake"]["episode"]
+        pacing._state()["series"].clear()
+        for later in (60, H, 5 * H):
+            pacing.tick(NOW + later)
+        self.assertEqual(self.started, [])
+        self.assertTrue(pacing._state()["brake"]["on"])
+        self.assertEqual(self.delivered, [])
+        self.both_over()
+        pacing.tick(NOW + 5 * H + 60)
+        self.assertEqual(pacing._state()["brake"]["episode"], episode)
+        self.assertEqual(self.delivered, [])
+
+    def test_an_outage_past_the_reset_lets_go_and_says_why(self):
         self.both_over()
         pacing.tick(NOW)
         pacing.hold(self.room("m", 3), "agent", NOW)
         pacing._state()["series"].clear()
-        pacing.tick(NOW + 60)
+        pacing.tick(END - 60)
         self.assertEqual(self.started, [])
-        self.assertTrue(pacing._state()["brake"]["on"])
-        pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
+        pacing.tick(END + 60)
         self.assertEqual(self.started, ["m"])
+        self.assertIn("week reset", self.delivered[-1])
 
     def test_turning_it_off_releases_and_says_so_once(self):
         self.both_over()
@@ -374,15 +391,6 @@ class Brake(Base):
         self.assertEqual(self.started, ["m"])
         self.assertEqual(len(self.delivered), 1)
         self.assertIn("turned off in Settings", self.delivered[0])
-
-    def test_a_release_for_lost_readings_says_that(self):
-        self.both_over()
-        pacing.tick(NOW)
-        pacing._state()["series"].clear()
-        pacing.tick(NOW + 60)
-        pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
-        self.assertIn("readings are not available", self.delivered[-1])
-        self.assertNotIn("recovered", self.delivered[-1])
 
     def test_new_work_stays_held_through_the_dwell(self):
         self.both_over()
@@ -406,15 +414,14 @@ class Brake(Base):
                 pacing.tick(NOW + 7 * H)
             self.assertEqual(self.started, ["m"], name)
 
-    def test_a_failing_usage_reading_releases_after_the_grace(self):
+    def test_a_failing_usage_reading_keeps_the_brake(self):
         self.both_over()
         pacing.tick(NOW)
         pacing.hold(self.room("m", 3), "agent", NOW)
         with mock.patch.object(dashboard.usage, "snapshot", side_effect=OSError("no")):
-            pacing.tick(NOW + 60)
-            self.assertEqual(self.started, [])
-            pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
-        self.assertEqual(self.started, ["m"])
+            pacing.tick(NOW + 2 * H)
+        self.assertEqual(self.started, [])
+        self.assertTrue(pacing._state()["brake"]["on"])
 
     def test_no_lock_over_a_delivery_and_usage_reads_never_wait(self):
         seen = []
@@ -491,16 +498,74 @@ class Brake(Base):
                          ("new why", "new until"))
         self.assertEqual(self.started, [])
 
-    def test_a_setting_that_cannot_be_read_says_so_not_turned_off(self):
+    def test_a_setting_that_cannot_be_read_changes_nothing(self):
         self.both_over()
         pacing.tick(NOW)
         pacing.hold(self.room("m", 3), "agent", NOW)
+        self.delivered.clear()
         with mock.patch.object(pacing, "mode", side_effect=ValueError("bad")):
-            pacing.tick(NOW + 60)
-            self.assertEqual(self.started, [])
-            pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
-        self.assertEqual(self.started, ["m"])
-        self.assertIn("readings are not available", self.delivered[-1])
+            pacing.tick(NOW + 2 * H)
+        self.assertEqual(self.started, [])
+        self.assertEqual(self.delivered, [])
+
+    def test_one_room_that_fails_the_look_does_not_stop_the_others(self):
+        self.room("bad", 3, no=1, paceHold={"at": NOW})
+        self.room("good", 3, no=2, paceHold={"at": NOW})
+        def live(room):
+            if room["id"] == "bad":
+                raise OSError("no")
+            return False
+        with mock.patch.object(dashboard, "_room_is_live", side_effect=live):
+            pacing._release("hold")
+        self.assertEqual(self.started, ["good"])
+
+    def stop(self, room):
+        ctx = {"projectId": "p", "room": {"id": "other"}, "identity": "x"}
+        with (mock.patch.object(ensemble_tools, "_load_target", return_value=room),
+              mock.patch.object(ensemble_tools, "_check_write_scope"),
+              mock.patch.object(ensemble_tools, "_not_self"),
+              mock.patch.object(ensemble_tools, "_status", return_value="draft")):
+            return ensemble_tools._stop_task(ctx, {"taskId": room["id"]}, mock.Mock())
+
+    def test_stopping_a_held_task_cancels_it(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("m", 3, launched=False)
+        pacing.hold(room, "agent", NOW)
+        self.assertIn("will not start", self.stop(room)["note"])
+        self.assertFalse(room["paceHold"])
+        self.calm()
+        pacing.tick(NOW + 7 * H)
+        self.assertEqual(self.started, [])
+
+    def test_stopping_a_held_gated_task_uses_its_gate_up(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}], paceHold={"at": NOW})
+        self.stop(room)
+        self.assertEqual(room["gateAction"]["result"], "stopped")
+        self.calm()
+        with (mock.patch.object(dashboard.chatroom, "_listed_copy", side_effect=lambda r: r),
+              mock.patch.object(dashboard, "load_session_projects", return_value={}),
+              mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p"),
+              mock.patch.object(board, "gate_state", return_value=(["#1 merged"], NOW)),
+              mock.patch.object(board, "_save"), mock.patch.object(board, "_load", return_value={})):
+            board.check(self.projects[0], NOW + 7 * H)
+        self.assertEqual(self.started, [])
+
+    def test_a_held_task_that_gets_told_is_no_board_news(self):
+        self.both_over()
+        pacing.tick(NOW)
+        self.room("t", 3, launched=False, after=[{"task": "x"}], onReady="tell",
+                  gateAction={"result": "tell", "told": NOW}, paceHold={"at": NOW})
+        with (mock.patch.object(dashboard.chatroom, "_listed_copy", side_effect=lambda r: r),
+              mock.patch.object(dashboard, "load_session_projects", return_value={}),
+              mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p"),
+              mock.patch.object(board, "gate_state", return_value=(["#1 merged"], NOW)),
+              mock.patch.object(board, "_save"), mock.patch.object(board, "_load", return_value={})):
+            board.check(self.projects[0], NOW)
+            board.check(self.projects[0], NOW + 3600)
+        self.assertEqual([t for t in self.delivered if "idle" in t.lower()], [])
 
     def test_a_gated_task_goes_the_gates_way(self):
         room = self.gated(True)
@@ -642,6 +707,35 @@ class Brake(Base):
     def test_pacing_off_turns_the_brake_off(self):
         (self.dir / "settings.json").write_text('{"paceWeek": false}', encoding="utf-8")
         self.assertEqual(pacing.mode(), "off")
+
+
+class DamagedFile(Base):
+    def load(self, text):
+        (self.dir / "pace-history.json").write_text(text, encoding="utf-8")
+        pacing._CACHE.update(path=None, data=None)
+        return pacing._state()
+
+    def test_bad_entries_go_and_good_ones_stay(self):
+        good = {"reset": END, "samples": [[NOW - H, 10.0], [NOW, 11.0]]}
+        state = self.load(json.dumps({
+            "series": {"claude": "x", "codex:codex": {"reset": END, "samples": [1, [NOW, "a"]]},
+                       "codex:reserve": {"samples": [[NOW, 1]]}, "keep": good},
+            "brake": {"on": "yes", "since": "x", "episode": 2, "why": 5},
+            "told": {"a": 1, "b": {"engage": 1, "release": 0}},
+            "use": [3, [NOW, {"a": 1}], [NOW, {"a": "x"}]]}))
+        self.assertEqual(state["series"], {"keep": good})
+        self.assertEqual((state["brake"]["on"], state["brake"]["since"],
+                          state["brake"]["episode"], state["brake"]["why"]), (False, 0, 2, ""))
+        self.assertEqual(state["told"], {"b": {"engage": 1, "release": 0}})
+        self.assertEqual(state["use"], [[NOW, {"a": 1}]])
+
+    def test_a_damaged_file_breaks_no_read_or_note(self):
+        for text in ('{"series": {"claude": 7}}', '{"series": [1]}', '[]', 'not json',
+                     '{"series": {"claude": {"reset": 1, "samples": [[NaN, 1]]}}}'):
+            self.load(text)
+            self.assertEqual(pacing.burn("claude", 40, END, NOW)["state"], "unknown")
+            self.assertTrue(pacing.note("claude", NOW, 40.0, END))
+            self.assertEqual(pacing.view()["on"], False)
 
 
 class PoLine(Base):

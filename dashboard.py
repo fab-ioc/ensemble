@@ -16510,6 +16510,7 @@ def stop_task(rid: str) -> bool:
     # Cleared through the room lock, and only after the kills: writing the room
     # we read before a slow kill loop would drop a chat message posted during it.
     chatroom.patch_room(rid, stoppedAt=time.time())
+    pacing.cancel_hold(room)            # a task waiting for the brake stays stopped
     chatroom.clear_exits(rid)
     running_rooms.note_stopped(rid)     # stopped on purpose: a cold start leaves it
     hub_typing.forget_room(rid)         # and no hub-typing alarm names it any more

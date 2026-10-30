@@ -243,7 +243,7 @@ def check(project, now=None):
             if action.get("notice") and not action.get("told") and deliver(project, action["notice"]):
                 action["told"] = now
                 _d.chatroom.patch_room(room["id"], gateAction=action)
-            if not room.get("launched", True) and (why or (
+            if not room.get("launched", True) and not room.get("paceHold") and (why or (
                     not room.get("after") and _d.priority_of(room) <= 2)):
                 ready.append(room)
         # Reload after launches: normal allocation/start changes the live seats.
