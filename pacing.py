@@ -293,18 +293,28 @@ def _release(how):
     """Start the waiting task that comes first, one a tick, so the brake is
     judged again before each. Raised to high or highest, a task needs no
     recovery. A start that fails goes to its PO and is not retried."""
-    holding = how == "hold" and _state()["brake"]["on"]
+    brake = _state()["brake"]
+    holding = how == "hold" and brake["on"]
     waiting = []
     for listed in _d.chatroom.list_rooms(copy_rooms=False):
-        if not listed.get("paceHold"):
+        mark = listed.get("paceHold")
+        if not mark:
             continue
         if _d._room_is_live(listed) or _d.workflow_of(listed) == "done":
             clear_hold(listed)
         elif not holding or _d.priority_of(listed) < HELD_FROM_PRIORITY:
             waiting.append(listed)
-    if not waiting:
-        return
-    first = min(waiting, key=lambda r: (_d.priority_of(r), r.get("no") or 0))
+        elif (mark.get("why"), mark.get("until")) != (brake["why"], brake["until"]):
+            # The card says what is true now, not what was at the hold.
+            _d.chatroom.patch_room(listed["id"], paceHold={**mark, "why": brake["why"],
+                                                           "until": brake["until"]})
+    for first in sorted(waiting, key=lambda r: (_d.priority_of(r), r.get("no") or 0)):
+        # One start a tick; a room that cannot be handled gives way to the next.
+        if _stage("a held start", _start_held, first, default=False):
+            return
+
+
+def _start_held(first):
     room = _d.chatroom.get_room(first["id"], public=False) or first
     try:
         # A gated task goes the gate's own way: re-tested, claimed, told. A gate
@@ -320,6 +330,7 @@ def _release(how):
         if project:
             _d.board.deliver(project, f"{_d.task_label(room)} could not start after the pacing "
                                       f"brake: {exc}. Start it manually after resolving this.")
+    return True
 
 
 def _tell(how):
@@ -443,10 +454,16 @@ def _save_locked():
 
 def tick(now=None):
     """The lock is held only over the state itself: never across a delivery
-    or the transcripts, so a usage read does not wait on either."""
+    or the transcripts, so a usage read does not wait on either. Only the
+    scheduler thread writes this state; other threads only read it. A setting
+    that cannot be read counts as no reading: the brake lets go after the
+    grace, and says that."""
     now = time.time() if now is None else now
-    how = _stage("the setting", mode, default="off")
-    snapshot = _stage("the usage reading", _d.usage.snapshot, default=None)
+    how = _stage("the setting", mode, default=None)
+    if how is None:
+        how, snapshot = "hold", None
+    else:
+        snapshot = _stage("the usage reading", _d.usage.snapshot, default=None)
     unknown = {"kinds": {}, "lowest": None}
     changed = bool(snapshot) and _stage("sampling", sample, snapshot)
     judged = (_stage("the reading", _judge, snapshot, now, default=unknown)

@@ -452,6 +452,56 @@ class Brake(Base):
             pacing.tick(NOW + 7 * H)
         return room
 
+    def test_a_gate_already_claimed_is_not_claimed_twice(self):
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}],
+                         gateAction={"result": "started", "notice": "first"})
+        stale = dict(room, gateAction=None)
+        with mock.patch.object(board, "gate_state", return_value=(["#1 merged"], NOW)):
+            board.start_gated(stale, NOW)
+        self.assertEqual(room["gateAction"]["notice"], "first")
+        self.assertEqual(self.started, [])
+
+    def test_a_room_that_cannot_be_handled_gives_way_to_the_next(self):
+        self.room("bad", 3, no=1, paceHold={"at": NOW})
+        self.room("good", 3, no=2, paceHold={"at": NOW})
+        real = pacing.clear_hold
+        def clear(room):
+            if room["id"] == "bad":
+                raise OSError("no")
+            real(room)
+        dashboard.hub_launcher.return_value._resume_room.side_effect = None
+        def start(room):
+            if room["id"] == "bad":
+                raise RuntimeError("no")
+            self.started.append(room["id"])
+        dashboard.hub_launcher.return_value._resume_room.side_effect = start
+        with (mock.patch.object(pacing, "clear_hold", side_effect=clear),
+              mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p")):
+            pacing._release("hold")
+        self.assertEqual(self.started, ["good"])
+
+    def test_a_waiting_card_follows_the_brake(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("m", 3)
+        pacing.hold(room, "agent", NOW)
+        pacing._state()["brake"].update(why="new why", until="new until")
+        pacing._release("hold")
+        self.assertEqual((room["paceHold"]["why"], room["paceHold"]["until"]),
+                         ("new why", "new until"))
+        self.assertEqual(self.started, [])
+
+    def test_a_setting_that_cannot_be_read_says_so_not_turned_off(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing.hold(self.room("m", 3), "agent", NOW)
+        with mock.patch.object(pacing, "mode", side_effect=ValueError("bad")):
+            pacing.tick(NOW + 60)
+            self.assertEqual(self.started, [])
+            pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
+        self.assertEqual(self.started, ["m"])
+        self.assertIn("readings are not available", self.delivered[-1])
+
     def test_a_gated_task_goes_the_gates_way(self):
         room = self.gated(True)
         self.assertEqual(self.started, ["g"])

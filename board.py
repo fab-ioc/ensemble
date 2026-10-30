@@ -196,11 +196,17 @@ def _claim(room, why, ready_at, now):
 
 def start_gated(room, now=None):
     """A gated task the pacing brake held: start it if its gate still holds
-    and has not been used. Its notice goes out on the project's next check."""
+    and has not been used. Its notice goes out on the project's next check.
+    Under the board's lock, like a check: the room is read again inside it, in
+    case a check claimed the gate first. Git and the launch run under it too,
+    on the scheduler thread, as they do in a check."""
     now = time.time() if now is None else now
     with _LOCK:
+        room = _d.chatroom.get_room(room["id"], public=False) or room
+        if room.get("gateAction") or room.get("launched", True):
+            return
         why, ready_at = gate_state(room, _d.ensemble_tools._project_of_room(room), {}, now)
-        if why and not room.get("gateAction"):
+        if why:
             _claim(room, why, ready_at, now)
 
 
