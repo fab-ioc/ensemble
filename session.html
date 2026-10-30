@@ -1527,7 +1527,7 @@
     #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* A row's fixed parts add up to less than the screen (#295); the sender has
        the most, so its time stays in sight, and the line takes what is left. */
-    .msg-fold .from { display:flex; align-items:baseline; max-width:55%; min-width:0; white-space:nowrap; } .msg-fold .from .who, .msg-fold .from .to { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; } .msg-fold .from .to { margin-left:.3em; } .msg-fold .from .at, .msg-fold .from .send-how { flex:0 0 auto; }
+    .msg-fold .from { display:flex; align-items:baseline; max-width:55%; min-width:0; white-space:nowrap; } .msg-fold .from .who, .msg-fold .from .to, .msg-fold .from .send-how { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; } .msg-fold .from .to { margin-left:.3em; } .msg-fold .from .send-how { margin-left:var(--s-100); } .msg-fold .from .at { flex:0 0 auto; }
     .msg-fold .chips, .msg-fold.gap .gasks { max-width:35%; }
   }
   .pt-sum-oq { display: none; }

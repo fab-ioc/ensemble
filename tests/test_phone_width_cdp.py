@@ -9,8 +9,9 @@ rows drawn by the page's own renderers with long chips and many asks:
 
 * no visible element's right edge is past the screen unless it sits inside a
   box that scrolls or clips within the screen;
-* the messages do not scroll sideways, a row keeps its time (on a desktop
-  with the longest sender too), and the closed task panel waits on the
+* the messages do not scroll sideways, a row keeps its time and how it was
+  sent inside its sender block and the screen (on a desktop with the longest
+  sender too), and the closed task panel waits on the
   screen, not past its edge;
 * the session page clips its root on a touch screen;
 * all three pages ask iOS not to shrink to fit;
@@ -41,6 +42,9 @@ const WIDE_ROWS = `(() => {
   gapAsks = () => ({ n: 14, ids: Array.from({ length: 14 }, (_, i) => 'P' + (1000 + i)) });
   const items = [0, 1].map(i => ({ id: 'gap-' + i, from: 'ensemble', to: m.from, ts: now - 60 + i, text: 'progress check ' + line }));
   box.insertAdjacentHTML('beforeend', gapRowHtml({ key: 'gap-w', seen: 1, first: 0, last: 1, idx: [0, 1] }, items, false, N));
+  ROOM_OBJ.sendHows = { ...(ROOM_OBJ.sendHows || {}), 'wide-3': 'into-turn', 'wide-4': 'interrupted' };
+  for (const id of ['wide-3', 'wide-4'])
+    box.insertAdjacentHTML('beforeend', foldBalloonHtml({ id, from: 'user', to: m.from, ts: now, text: line }, 0, 'row', { }));
   return box.querySelectorAll('.msg-fold').length;
 })()`;
 // A sender too long for the share a phone's row keeps, as a desktop draws it.
@@ -65,8 +69,8 @@ const OVER = `(doc => {
 const WIDTHS = doc => `(d => ({ inner: d.defaultView.innerWidth, root: d.documentElement.scrollWidth, over: ${OVER}(d),
   msgs: d.getElementById('msgs') ? [d.getElementById('msgs').scrollWidth, d.getElementById('msgs').clientWidth] : null,
   rows: d.querySelectorAll('.msg-fold').length,
-  real: { chips: d.querySelectorAll('.msg-fold .chips .hub-kind').length, lozenges: d.querySelectorAll('.msg-fold .chips .lz').length, asks: d.querySelectorAll('.msg-fold.gap .gasks').length },
-  timeCut: [...d.querySelectorAll('.msg-fold .from .at')].filter(e => e.getBoundingClientRect().right > e.closest('.from').getBoundingClientRect().right + 0.5).length, rootClip: d.defaultView.getComputedStyle(d.documentElement).overflowX }))(${doc})`;
+  real: { chips: d.querySelectorAll('.msg-fold .chips .hub-kind').length, lozenges: d.querySelectorAll('.msg-fold .chips .lz').length, asks: d.querySelectorAll('.msg-fold.gap .gasks').length, sendHows: d.querySelectorAll('.msg-fold .from .send-how').length },
+  timeCut: [...d.querySelectorAll('.msg-fold .from .at, .msg-fold .from .send-how')].filter(e => e.getBoundingClientRect().right > Math.min(e.closest('.from').getBoundingClientRect().right, d.defaultView.innerWidth) + 0.5).length, rootClip: d.defaultView.getComputedStyle(d.documentElement).overflowX }))(${doc})`;
 const VIEWPORT = doc => `${doc}.querySelector('meta[name=viewport]').content`;
 async function main() {
   const { ch, ws } = await launch(); const c = new Cdp(ws); await c.open();
@@ -178,6 +182,7 @@ class PhoneWidth(unittest.TestCase):
                     self.assertGreaterEqual(g['real']['chips'], 1)
                     self.assertGreaterEqual(g['real']['lozenges'], 1)
                     self.assertGreaterEqual(g['real']['asks'], 1)
+                    self.assertEqual(g['real']['sendHows'], 2)
                     self.assertEqual(g['timeCut'], 0)
                     self.assertLessEqual(g['msgs'][0], g['msgs'][1])
 
