@@ -4398,6 +4398,8 @@ def _typed_sends(room_id: str, items: list[dict]) -> None:
                "confirmed", now=now)
     sends.mark(room_id, [it.get("key") for it in items if not sends.typed_confirms(it.get("text"))],
                "delivered", now=now)
+    if any((it.get("origin") or "human") != "hub" for it in items):
+        reopen_done(room_id, "work sent")
 
 
 def _posted_send(room_id: str, item: dict, result: dict | None) -> None:
@@ -5375,7 +5377,6 @@ def note_answer(room_id: str, identity: str) -> bool:
     helper's)."""
     if not room_id or not identity:
         return False
-    reopen_done(room_id, "work sent")
     try:
         room = chatroom.get_room(room_id, public=False)
         if not room:
@@ -16391,10 +16392,12 @@ def settle_finished_at_start() -> dict[str, int]:
 
 
 # A running task never reads as Done (#292): OP-269, OP-412 and OP-385 ran in
-# Done and the board looked empty. Starting it, resuming it or sending it real
-# work moves it to In progress, from a person, a PO or an agent. Never a hub
-# line and never a merge: a merged task whose agent is merely left running
-# stays in Done and gets its one idle alert.
+# Done and the board looked empty. Real work that reached an agent, or an agent
+# really started, moves it to In progress, from a person, a PO or another agent.
+# Never a hub line, never the owner's own message, never a send that reached
+# nobody, and never a merge: a merged task whose agent is merely left running
+# stays in Done and gets its one idle alert. idle.py moves an owner seen working
+# on work newer than the card's move (work_after_done).
 def reopen_done(room_id: str, why: str) -> bool:
     """A task in Done goes to In progress. True when it moved. Never raises:
     the input has already gone in."""
@@ -16432,6 +16435,13 @@ def _last_real_work(room: dict) -> float:
     return max(ts)
 
 
+def work_after_done(room: dict) -> bool:
+    """Real work newer than the card's last move and its merge: a move or a
+    merge made after the last work stands. ``room`` carries its messages."""
+    settled = max(float(room.get("workflowAt") or 0), float(room.get("mergedAt") or 0))
+    return _last_real_work(room) > settled
+
+
 def reopen_done_at_start() -> dict[str, int]:
     """Once at hub start, in every project: a running task in Done whose last
     real work is newer than its move to Done and its merge goes to In
@@ -16449,8 +16459,7 @@ def reopen_done_at_start() -> dict[str, int]:
                     or rid in po_ids or workflow_of(light) != "done" or not _room_is_live(light)):
                 continue
             room = chatroom.get_room(rid, public=False) or light
-            settled = max(float(room.get("workflowAt") or 0), float(room.get("mergedAt") or 0))
-            if _last_real_work(room) > settled and reopen_done(rid, "running at hub start"):
+            if work_after_done(room) and reopen_done(rid, "running at hub start"):
                 name = names.get(_room_project_id(rid, room, links)) or "no project"
                 moved[name] = moved.get(name, 0) + 1
         except Exception as e:          # one bad room does not stop the rest
@@ -18711,8 +18720,9 @@ class Handler(BaseHTTPRequestHandler):
             return []
         msg = result.get("message") or {}
         room = chatroom.get_room(room_id) or {}
-        if msg.get("from") not in ("ensemble", "") and msg.get("kind") not in ("report", "notice", "digest"):
-            reopen_done(room_id, "work sent")
+        work = (msg.get("from") not in ("ensemble", "", *chatroom.owners(room))
+                and msg.get("kind") not in ("report", "notice", "digest"))
+        reached = False
         # A reviewer on mention that isn't mid-review is not rung — it is not
         # running. The message starts a fresh reviewer briefed with it.
         rest = []
@@ -18720,14 +18730,17 @@ class Handler(BaseHTTPRequestHandler):
             part = chatroom.participant(room, ident) or {}
             if chatroom.is_on_mention(room, part) and not _pty_alive(part.get("ptyId")):
                 try:
-                    self._start_review(room_id, ident, msg)
+                    review = self._start_review(room_id, ident, msg)
+                    reached = reached or bool(review and not review.get("held")
+                                              and not review.get("limited"))
                 except Exception as e:      # a failed launch must not fail the send
                     print(f"[review] could not start {ident} in {room_id}: {e}", flush=True)
             else:
                 rest.append(ident)
-        if not rest:
-            return []
-        rung = self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")), ways=ways)
+        rung = (self._ring(room_id, rest, _relay_wake(msg.get("from", "your partner")), ways=ways)
+                if rest else [])
+        if work and (reached or rung):
+            reopen_done(room_id, "work sent")
         return [ident for ident in rest if ident not in rung]
 
     def _start_review(self, room_id: str, ident: str, msg: dict, note: str = "",
@@ -19322,7 +19335,6 @@ class Handler(BaseHTTPRequestHandler):
         """First launch of a task's agents (a fresh conversation seeded with the
         spec / collaboration briefing). Marks the room launched. Returns
         [{identity, ptyId}]."""
-        reopen_done(room_full.get("id", ""), "started")
         apply_first_launch_allocation(room_full)
         task = room_full.get("spec", "") or ""
         collab = room_full.get("mode") != "solo"
@@ -19349,6 +19361,8 @@ class Handler(BaseHTTPRequestHandler):
         # correctness must not depend on a gesture nobody has a reason to make.
         room_full.setdefault("workflow", "inprogress")
         chatroom.update_room(room_full)
+        if launched:
+            reopen_done(room_full.get("id", ""), "started")
         return launched
 
     def _start_or_resume_room(self, room_full: dict, restart: dict | None = None,
@@ -19525,8 +19539,6 @@ class Handler(BaseHTTPRequestHandler):
         now, the new text reaches a busy agent at once (send_now_way); held
         or carried, it goes the settled way."""
         rid = room_full["id"]
-        if (not quiet or text) and origin != "hub":
-            reopen_done(rid, "resumed")
         items = [send_item(text, to, time.time(), key, project, origin)] if text else []
         if items and now:
             items[0]["now"] = True
@@ -19594,6 +19606,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not resumed and res.queue and _RESUMES.get(rid) is res:
                     res.fail("no agent of this task could be started")
                     raise StartRoomError("no agent of this task could be started")
+            if resumed and (not quiet or text) and origin != "hub":
+                reopen_done(rid, "resumed")
             return {"resumed": resumed, "queued": len(items), "delivered": 0}
         return {"resumed": list(res.resumed), "queued": len(items), "delivered": 0,
                 "inFlight": True}
@@ -21162,6 +21176,7 @@ class Handler(BaseHTTPRequestHandler):
                         print(f"[input-provenance] PTY input not recorded: {exc!r}", flush=True)
             if answers:
                 meta = sess.meta or {}
+                reopen_done(meta.get("room", ""), "work sent")
                 note_answer(meta.get("room", ""), meta.get("identity", ""))
             if hub_line and not submits and (sess.meta or {}).get("agent") == "codex":
                 # The helper's next HTTP request carries Enter. Let Codex

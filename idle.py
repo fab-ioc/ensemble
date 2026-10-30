@@ -23,18 +23,24 @@ idle PO, ``[idle] #412 idle since 09:42 ...``, at most one per ``FLOOR_S``.
 Repeats back off: ``BACKOFF_MIN``, then every 6 h. A merged task whose agent is
 merely left running gets one alert and no repeat. A failed read means no alert.
 With the setting at 0 no line is typed, and a wait that ends then is not kept.
+Each look starts by clearing ``current``: only a look that reaches the verdict
+can make a task due. A state file that cannot be read skips the tick, unwritten.
 
 **A marked wait** (``waitMark`` on the room, ``ensemble_mark_wait``) survives a
 restart and a rotation. It ends when the card is answered, the time comes, the
 other task is done, or the owner works again; the PO is woken once, except when
 the owner went back to work, which needs no wake. A background wait with no wake
-time ends after ``BACKGROUND_CAP_S`` so it never goes silent.
+time ends after ``BACKGROUND_CAP_S`` so it never goes silent. A read that fails
+ends nothing. The owner's own command or a teammate's turn does not end a wait:
+the card stays in Waiting.
 
 **The column** (P246). In progress holds only moving work: a card not moving
 goes to Waiting, and comes back when the work resumes. Only from In progress,
 never over a move made in that stretch, and it leaves ``workflowAt`` alone (as
 ``dashboard.settle_finished``), so a merge still takes the card to Done. The
-tick covers every project, so no pass at hub start is needed.
+tick covers every project, so no pass at hub start is needed. A card in Done
+whose owner works on real work newer than the card's move goes to In progress
+(``dashboard.work_after_done``); a merged task left running stays.
 
 **Stopped** takes two looks ``STOP_LOOK_S`` apart, none of them in the first
 ``BOOT_GRACE_S`` of a hub, while a restore runs or while the room is resuming:
@@ -91,12 +97,17 @@ def _state_file() -> Path:
     return _d.DASHBOARD_DIR / "idle.json"
 
 
-def _load() -> dict:
+def _load() -> dict | None:
+    """The saved state, empty when there is none yet. None when the file is
+    there and cannot be read: floors and back-off must not start over."""
     try:
         d = json.loads(_state_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         d = {}
-    d = d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict):
+        return None
     return {k: d[k] if isinstance(d.get(k), dict) else {}
             for k in ("tasks", "projects", "resolved", "stopped")}
 
@@ -225,6 +236,17 @@ def wait_words(mark: dict) -> str:
     return "on background work"
 
 
+def _gone(room_id: str) -> bool:
+    """Whether a room's file is really not there, as a failed read is not."""
+    try:
+        (_d.chatroom.ROOMS_DIR / f"{room_id}.json").stat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
 def card_ids(room: dict) -> list[str]:
     """The cards a wait on a card of ``room`` waits for: the open ones of its
     own chat and the PO's that name it, else every open one of its PO's."""
@@ -238,13 +260,20 @@ def card_ids(room: dict) -> list[str]:
     return list(dict.fromkeys(own + (named or ([] if own else [c["mid"] for c in theirs]))))
 
 
-def _still_open(room: dict, mark: dict) -> bool:
+def open_mids(room: dict) -> set[str] | None:
+    """The open cards of a task and its PO; None when a read failed."""
     cr = _d.chatroom
     po = _d.room_po_id(room)
     po_room = cr.get_room(po, public=False) if po else None
-    full = cr.get_room(room["id"], public=False) or room
-    mids = {c["mid"] for r in (full, po_room) if r for c in _d.asks.open_cards(r)}
-    return bool(mids & set(mark.get("mids") or []))
+    full = cr.get_room(room["id"], public=False)
+    if full is None or (po and po_room is None and not _gone(po)):
+        return None
+    return {c["mid"] for r in (full, po_room) if r for c in _d.asks.open_cards(r)}
+
+
+def _still_open(room: dict, mark: dict) -> bool:
+    mids = open_mids(room)
+    return mids is None or bool(mids & set(mark.get("mids") or []))
 
 
 def _mark_over(room: dict, mark: dict, now: float) -> str:
@@ -256,7 +285,8 @@ def _mark_over(room: dict, mark: dict, now: float) -> str:
     if kind == "task":
         other = _d.chatroom.get_room(mark.get("taskId", ""), public=False,
                                      copy_room=False, messages=False)
-        if other is None or _d.workflow_of(other) == "done":
+        if (_gone(mark.get("taskId", "")) if other is None
+                else _d.workflow_of(other) == "done"):
             return f"{mark.get('what') or 'the other task'} is done"
         return ""
     if kind == "card":
@@ -363,10 +393,28 @@ def _look_stopped(room: dict, state: dict, now: float, live_ptys: set) -> str:
     return "to Waiting (stopped)" if _to_waiting(room, _stopped_at(room), "stopped", now) else ""
 
 
+def _wait_marked(room: dict, now: float) -> str:
+    start = float(room["waitMark"].get("at") or now)
+    return "to Waiting (wait marked)" if _to_waiting(room, start, "wait", now) else ""
+
+
+def _merged(room: dict) -> bool:
+    """Merged and nothing since: no real work and no commit newer than the
+    merge. A head that cannot be read is no proof of a commit."""
+    at = float(room.get("mergedAt") or 0)
+    if not at or _d._last_real_work(room) > at:
+        return False
+    head = _d._git_out(room.get("cwd", ""), "rev-parse", "HEAD") if room.get("mergedHead") else ""
+    return not head or head == room["mergedHead"]
+
+
 def _look(light: dict, state: dict, now: float, limit: int, live_ptys: set) -> str:
     """One task: "" when nothing was done, else what was."""
     rot, cr = _d.rotation, _d.chatroom
     rid = light["id"]
+    rec = state["tasks"].get(rid)
+    if rec:
+        rec["current"] = False          # any way out of this look: no line
     if not _d._room_is_live(light):
         return _look_stopped(light, state, now, live_ptys)
     state["stopped"].pop(rid, None)
@@ -379,13 +427,16 @@ def _look(light: dict, state: dict, now: float, limit: int, live_ptys: set) -> s
     _settle_mark(room, seen, state, now, po)
     tasks = state["tasks"]
     rec = tasks.get(rid)
-    if rec:
-        rec["current"] = False
     verdict, since = seen["state"], seen.get("since")
     if verdict == "unknown":
         return ""
     if verdict == "moving" and seen["why"] != "short":
         tasks.pop(rid, None)
+        if room.get("waitMark") and seen["why"] in ("command", "teammate"):
+            return _wait_marked(room, now)
+        if (seen["why"] == "working" and _d.workflow_of(room) == "done"
+                and _d.work_after_done(room) and _d.reopen_done(rid, "running")):
+            return "out of Done"
         return "back to In progress" if _to_progress(room, now) else ""
     if verdict == "hold":
         return ""
@@ -402,8 +453,7 @@ def _look(light: dict, state: dict, now: float, limit: int, live_ptys: set) -> s
         else:
             return "back to In progress" if not rec and _to_progress(room, now) else ""
     if room.get("waitMark"):
-        return ("to Waiting (wait marked)"
-                if _to_waiting(room, float(room["waitMark"].get("at") or now), "wait", now) else "")
+        return _wait_marked(room, now)
     if not limit or since is None or now - since < limit:
         return ""
     moved = "to Waiting (idle)" if _to_waiting(room, since, "idle", now) else ""
@@ -415,7 +465,7 @@ def _look(light: dict, state: dict, now: float, limit: int, live_ptys: set) -> s
         if told:                        # the stalled line said it already
             rec.update(alerts=1, lastAt=told, nextAt=told + BACKOFF_MIN[0] * 60)
     rec["current"] = True
-    rec["why"] = ("stuck" if seen.get("stuck") else "merged" if room.get("mergedAt")
+    rec["why"] = ("stuck" if seen.get("stuck") else "merged" if _merged(room)
                   else "finished" if seen.get("finished")
                   else "ask" if seen.get("ask") else "done" if _d.workflow_of(room) == "done" else "")
     return moved
@@ -521,6 +571,9 @@ def tick(now: float | None = None) -> dict[str, str]:
         if _d.restart_drain.holding():
             return {}                   # agents sit ready on purpose
         state = _UNSAVED or _load()
+        if state is None:
+            _log("cannot read the state: no look this tick, nothing saved")
+            return {}
         before = "" if _UNSAVED else json.dumps(state, sort_keys=True)
         try:
             ids = [p.stem for p in _d.chatroom.ROOMS_DIR.glob("room-*.json")]
@@ -541,8 +594,12 @@ def tick(now: float | None = None) -> dict[str, str]:
         for rid in ids:
             try:
                 room = _d.chatroom.get_room(rid, public=False, copy_room=False, messages=False)
-                if (not room or not room.get("launched", True) or room.get("pruned")
+                if not room:
+                    continue
+                if (not room.get("launched", True) or room.get("pruned")
                         or room.get("archived") or rid in archived or rid in po_ids):
+                    for key in ("tasks", "resolved", "stopped"):
+                        state[key].pop(rid, None)
                     continue
                 rooms[rid] = room
                 did = _look(room, state, now, limit, live_ptys)
@@ -572,7 +629,8 @@ def records() -> dict[str, dict]:
     """The tasks idle right now, ``{since, alerts, ...}``. One read of the file
     for a whole list. A copy of the items: ``_UNSAVED`` is the dict a tick is
     changing."""
-    return {rid: rec for rid, rec in list((_UNSAVED or _load())["tasks"].items()) if rec.get("current")}
+    state = _UNSAVED or _load() or {"tasks": {}}
+    return {rid: rec for rid, rec in list(state["tasks"].items()) if rec.get("current")}
 
 
 def maybe_tick() -> None:

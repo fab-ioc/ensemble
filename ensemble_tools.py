@@ -324,7 +324,8 @@ _ALL_TOOLS = [
             "when the owner works again, at until or minutes when given, else "
             "after 6 hours. \"clear\": no wait any more. When a wait ends the PO "
             "gets one `[idle]` line. Reasons a task is idle and nothing ends it "
-            "are not waits: send it work or stop it."
+            "are not waits: send it work or stop it. A stopped task cannot be "
+            "marked, and a card id must be open on the task or its PO's chat."
         ),
         "inputSchema": {
             "type": "object",
@@ -1889,11 +1890,12 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
                 == "idle"}
     except Exception:       # noqa: BLE001 — unknown reads as busy: no mark
         idle = set()
-    _d.reopen_done(room["id"], "spec amended")
     try:
         rung = handler._ring(room["id"], owners, line)
     except Exception:       # noqa: BLE001 — the amendment is saved either way
         rung = []
+    if rung:
+        _d.reopen_done(room["id"], "spec amended")
     if not rung:
         return ("the task is running but its owner could not be told (its terminal did "
                 "not take the line); tell it in chat")
@@ -2268,6 +2270,9 @@ def _mark_wait(ctx, args, handler):
         return {"ok": True, "taskId": room["id"], "waitMark": None}
     if kind not in _d.idle.WAIT_KINDS:
         raise ToolError(f"kind must be one of {', '.join(_d.idle.WAIT_KINDS)} or clear")
+    if not _d._room_is_live(room) and not _d._room_has_linked_agent(room):
+        raise ToolError("this task is stopped: only a running task can wait. Start it, "
+                        "or leave it stopped.")
     now = time.time()
     mark = {"kind": kind, "what": str(args.get("what") or "").strip()[:200], "until": 0,
             "by": ctx["identity"], "at": now}
@@ -2284,6 +2289,12 @@ def _mark_wait(ctx, args, handler):
         mark.update(taskId=other["id"], what=_d.task_label(other) or other.get("title", "")[:80])
     else:
         mid = str(args.get("card") or "").strip()
+        if mid:
+            open_now = _d.idle.open_mids(room)
+            if open_now is None:
+                raise ToolError("the open cards cannot be read just now: try again")
+            if mid not in open_now:
+                raise ToolError(f"no open card {mid} on this task or its PO's chat")
         mark["mids"] = [mid] if mid else _d.idle.card_ids(room)
         if not mark["mids"]:
             raise ToolError("no open card to wait on: ask it first, or give card: its id")

@@ -127,6 +127,16 @@ class _Hub(unittest.TestCase):
 class ReviewOne(_Hub):
     """Review 1: a restart, a drain, a hang, a save that fails, the setting off."""
 
+    def refused(self):
+        """The disk refuses idle.json alone, as a reader's open file does."""
+        real = idle.durable.write_tmp
+
+        def write_tmp(tmp, text):
+            if tmp.name.startswith("idle."):
+                raise OSError("refused")
+            return real(tmp, text)
+        return mock.patch.object(idle.durable, "write_tmp", side_effect=write_tmp)
+
     def marked(self):
         rid = self.task(pty="")
         chatroom.patch_room(rid, waitMark={"kind": "time", "until": T0 + 3600, "at": T0 - 600})
@@ -214,8 +224,8 @@ class ReviewOne(_Hub):
     def test_the_board_reads_a_state_the_disk_refused(self):
         rid = self.task()
         self.idle_s["pty-1"] = 25 * MIN
-        idle._state_file().mkdir()
-        with mock.patch.object(idle.time, "sleep"):
+        with mock.patch.object(idle.time, "sleep"), \
+                self.refused():
             self.tick()
         self.assertEqual(idle.records()[rid]["alerts"], 1)
 
@@ -234,13 +244,12 @@ class ReviewOne(_Hub):
     def test_a_failed_save_does_not_repeat_the_line(self):
         rid = self.task()
         self.idle_s["pty-1"] = 25 * MIN
-        idle._state_file().mkdir()      # replace refuses, as a reader's open file does
-        with mock.patch.object(idle.time, "sleep"):
+        with mock.patch.object(idle.time, "sleep"), \
+                self.refused():
             self.tick()
             self.assertEqual(len(self.lines), 1)
             self.tick(T0 + 120)
         self.assertEqual(len(self.lines), 1)
-        idle._state_file().rmdir()
         self.tick(T0 + 180)
         self.assertEqual(len(self.lines), 1)
         self.assertEqual(self.state()["tasks"][rid]["alerts"], 1)
@@ -653,53 +662,84 @@ class RunningNeverReadsAsDone(_Hub):
         rid = self.task(workflow="done", pty="", pruned=True)
         self.assertFalse(dashboard.reopen_done(rid, "x"))
 
-    def test_note_answer_moves_it(self):
+    def test_a_line_typed_moves_it_a_hub_line_does_not(self):
         rid = self.task(workflow="done")
-        dashboard.note_answer(rid, "claude")
+        with mock.patch.object(dashboard.sends, "mark"):
+            dashboard.note_answer(rid, "claude")    # rotation.py's held line: no origin
+            dashboard._typed_sends(rid, [{"text": "x", "key": "k", "origin": "hub"}])
+            self.assertEqual(self.column(rid), "done")
+            dashboard._typed_sends(rid, [{"text": "x", "key": "k", "origin": "po"}])
         self.assertEqual(self.column(rid), "inprogress")
 
     def _handler(self):
         return dashboard.Handler.__new__(dashboard.Handler)
 
-    def test_resume_moves_it_a_quiet_return_does_not(self):
-        class Stop(Exception):
+    def _resume(self, started, **kw):
+        rid = self.task(workflow="done", pty="")
+        h = self._handler()
+        h._start_or_resume_room = mock.Mock(**started)
+        self.addCleanup(dashboard._RESUMES.pop, rid, None)
+        try:
+            h._resume_room(chatroom.get_room(rid, public=False), **kw)
+        except dashboard.StartRoomError:
             pass
-        rid = self.task(workflow="done")
-        room = chatroom.get_room(rid, public=False)
-        with mock.patch.object(dashboard.restart_drain, "holding", side_effect=Stop):
-            with self.assertRaises(Stop):
-                self._handler()._resume_room(room, quiet=True)
-            self.assertEqual(self.column(rid), "done")
-            with self.assertRaises(Stop):
-                self._handler()._resume_room(room, text="go", origin="hub")
-            self.assertEqual(self.column(rid), "done")
-            with self.assertRaises(Stop):
-                self._handler()._resume_room(room, text="go", origin="po")
-            self.assertEqual(self.column(rid), "inprogress")
+        return self.column(rid)
 
-    def test_start_moves_it(self):
-        class Stop(Exception):
-            pass
+    def test_a_resume_moves_it_once_an_agent_is_up(self):
+        up = {"return_value": [{"identity": "claude"}]}
+        self.assertEqual(self._resume(up, text="go", origin="po"), "inprogress")
+        self.assertEqual(self._resume(up), "inprogress")
+        self.assertEqual(self._resume(up, quiet=True), "done")
+        self.assertEqual(self._resume(up, text="go", origin="hub"), "done")
+
+    def test_a_refused_resume_leaves_it(self):
+        refused = {"side_effect": dashboard.StartRoomError("no")}
+        self.assertEqual(self._resume(refused, text="go", origin="po"), "done")
+        self.assertEqual(self._resume({"return_value": []}, text="go", origin="po"), "done")
+
+    def test_a_resume_held_for_a_restart_leaves_it(self):
+        self.draining = True
+        with mock.patch.object(dashboard.restart_drain, "try_hold", return_value=True):
+            self.assertEqual(self._resume({"return_value": [{}]}, text="go", origin="po"), "done")
+
+    def test_a_start_moves_it_once_launched(self):
         rid = self.task(workflow="done")
         room = chatroom.get_room(rid, public=False)
-        with mock.patch.object(dashboard, "apply_first_launch_allocation", side_effect=Stop):
-            with self.assertRaises(Stop):
-                self._handler()._start_room_now(room)
+        h = self._handler()
+        info = {"sessionId": "s", "cwd": "c", "ptyId": "pty-1"}
+        with mock.patch.object(dashboard, "apply_first_launch_allocation"):
+            h._launch_room_agent_pty = mock.Mock(side_effect=OSError("no"))
+            with self.assertRaises(OSError):
+                h._start_room_now(room)
+            self.assertEqual(self.column(rid), "done")
+            h._launch_room_agent_pty = mock.Mock(return_value=info)
+            h._start_room_now(chatroom.get_room(rid, public=False))
         self.assertEqual(self.column(rid), "inprogress")
 
-    def test_a_chat_message_moves_it_a_hub_line_or_report_does_not(self):
-        h = self._handler()
-        with mock.patch.object(chatroom, "get_room", wraps=chatroom.get_room):
-            for msg, col in (({"from": "ensemble"}, "done"),
-                             ({"from": "claude", "kind": "report"}, "done"),
-                             ({"from": "po"}, "inprogress")):
-                with self.subTest(msg):
-                    rid = self.task(workflow="done", pty="")
-                    try:
-                        h._ring_recipients(rid, {"recipients": ["nobody"], "message": msg})
-                    except Exception:   # noqa: BLE001 — only the column is looked at
-                        pass
-                    self.assertEqual(self.column(rid), col)
+    def test_a_chat_message_moves_it_only_when_it_reached_someone(self):
+        for msg, rung, col in (({"from": "ensemble"}, ["claude"], "done"),
+                               ({"from": "claude", "kind": "report"}, ["claude"], "done"),
+                               ({"from": "claude"}, ["reviewer"], "done"),  # the owner's own
+                               ({"from": "reviewer"}, [], "done"),          # a late verdict, stopped
+                               ({"from": "po"}, ["claude"], "inprogress")):
+            with self.subTest(msg):
+                rid = self.task(workflow="done", pty="")
+                h = self._handler()
+                h._ring = lambda *a, **k: rung
+                h._ring_recipients(rid, {"recipients": ["claude"], "message": msg})
+                self.assertEqual(self.column(rid), col)
+
+    def test_a_reviewer_held_or_refused_is_not_reached(self):
+        for review, col in (({"held": True}, "done"), ({"limited": True}, "done"),
+                            (None, "done"), ({"n": 1}, "inprogress")):
+            with self.subTest(review):
+                rid = self.task(workflow="done", pty="")
+                h = self._handler()
+                h._start_review = lambda *a: review
+                with mock.patch.object(chatroom, "is_on_mention", return_value=True), \
+                        mock.patch.object(dashboard, "_pty_alive", return_value=False):
+                    h._ring_recipients(rid, {"recipients": ["reviewer"], "message": {"from": "po"}})
+                self.assertEqual(self.column(rid), col)
 
     def test_no_recipients_moves_nothing(self):
         rid = self.task(workflow="done", pty="")
@@ -753,6 +793,27 @@ class Tool(_Hub):
             with self.subTest(args), self.assertRaises(ensemble_tools.ToolError):
                 self.mark(rid, **args)
 
+    def test_a_stopped_task_is_refused_and_its_mark_can_still_be_cleared(self):
+        rid = self.task(pty="")
+        with self.assertRaisesRegex(ensemble_tools.ToolError, "stopped"):
+            self.mark(rid, kind="time", minutes=30)
+        self.assertIsNone(chatroom.get_room(rid, public=False).get("waitMark"))
+        self.assertTrue(self.mark(rid, kind="clear")["ok"])
+
+    def test_an_unknown_card_is_refused(self):
+        rid = self.task()
+        self.cards[rid] = [{"mid": "m1"}]
+        with self.assertRaisesRegex(ensemble_tools.ToolError, "no open card m2"):
+            self.mark(rid, kind="card", card="m2")
+        self.assertEqual(self.mark(rid, kind="card", card="m1")["waitMark"]["mids"], ["m1"])
+        self.cards["room-po"] = [{"mid": "m9"}]
+        with mock.patch.object(chatroom, "get_room", side_effect=self._po_room()):
+            self.assertEqual(self.mark(rid, kind="card", card="m9")["waitMark"]["mids"], ["m9"])
+
+    def _po_room(self):
+        real = chatroom.get_room
+        return lambda rid, *a, **k: ({"id": rid} if rid == "room-po" else real(rid, *a, **k))
+
     def test_a_clock_time_past_today_means_tomorrow(self):
         now = T0
         at = time.strftime("%H:%M", time.localtime(now - 3600))
@@ -761,7 +822,7 @@ class Tool(_Hub):
         self.assertLessEqual(ts - now, 86400)
 
     def test_another_task_needs_the_po(self):
-        rid, other = self.task(), self.task("Other", pty="")
+        rid, other = self.task(), self.task("Other", pty="pty-2")
         with self.assertRaises(ensemble_tools.ToolError):
             self.mark(rid, taskId=other, kind="background")
         with mock.patch.object(ensemble_tools, "_is_project_po", return_value=True):
@@ -805,9 +866,154 @@ class Parts(_Hub):
         self.assertEqual(dashboard.WORKFLOW_LABELS["waiting"], "Waiting")
         self.assertEqual(dashboard.normalize_workflow("Waiting"), "waiting")
 
-    def test_a_broken_state_file_is_empty(self):
-        idle._state_file().write_text("{nope", encoding="utf-8")
+    def test_no_state_file_is_empty(self):
         self.assertEqual(idle._load(), {"tasks": {}, "projects": {}, "resolved": {}, "stopped": {}})
+
+
+class PoFindings(_Hub):
+    """The PO's review of 10-30 (PO-FINDINGS-292.md)."""
+
+    def alerted(self, **more):
+        rid = self.task(**more)
+        self.idle_s["pty-1"] = 25 * MIN
+        self.tick()
+        self.assertEqual(len(self.lines), 1)
+        return rid
+
+    LATER = T0 + 2 * 3600       # past the floor and the back-off
+
+    def test_stale_current_a_task_stopped_before_it_is_due(self):
+        self.alerted()
+        self.alive.clear()
+        self.tick(self.LATER)
+        self.assertEqual(len(self.lines), 1)
+
+    def test_stale_current_rooms_a_restart_has_not_brought_back(self):
+        rid = self.alerted()
+        self.alive.clear()
+        with mock.patch.object(idle, "_STARTED", self.LATER - 60):
+            self.tick(self.LATER)
+        self.assertEqual(len(self.lines), 1)
+        self.assertEqual(self.state()["tasks"][rid]["alerts"], 1)   # the back-off is kept
+
+    def test_stale_current_a_stopped_room_under_a_pacing_hold(self):
+        rid = self.alerted()
+        chatroom.patch_room(rid, paceHold={"at": T0})
+        self.alive.clear()
+        self.tick(self.LATER)
+        self.assertEqual(len(self.lines), 1)
+
+    def test_stale_current_a_failed_read_on_a_recorded_task(self):
+        self.alerted()
+        with mock.patch.object(dashboard.rotation, "_transcript_of", side_effect=OSError("no")):
+            self.tick(self.LATER)
+        self.assertEqual(len(self.lines), 1)
+
+    def test_a_reworked_merged_task_is_no_merged_task(self):
+        for more, stop_it in (({"specAt": T0 - 3600}, False),   # work after the merge
+                              ({"mergedHead": "aaa"}, False),   # a commit after it
+                              ({"mergedHead": "bbb"}, True)):   # nothing since
+            with self.subTest(more):
+                self.lines.clear()
+                idle._save({"tasks": {}, "projects": {}, "resolved": {}, "stopped": {}})
+                rid = self.task(workflow="done", at=T0 - 7200, mergedAt=T0 - 7200, **more)
+                self.idle_s["pty-1"] = 25 * MIN
+                with mock.patch.object(dashboard, "_git_out", return_value="bbb"):
+                    self.tick()
+                self.assertEqual("agent left running" in self.lines[0], stop_it)
+                chatroom.patch_room(rid, archived=True)
+
+    def test_a_reworked_merged_task_alerts_again(self):
+        self.alerted(workflow="done", at=T0 - 7200, mergedAt=T0 - 7200, specAt=T0 - 3600)
+        self.tick(self.LATER)
+        self.assertEqual(len(self.lines), 2)
+
+    def _unreadable(self, rid):
+        real = chatroom.get_room
+        return mock.patch.object(chatroom, "get_room", side_effect=lambda r, *a, **k: (
+            None if r == rid else real(r, *a, **k)))
+
+    def _wait_on_task(self):
+        other = self.task("Other", pty="")
+        rid = self.task()
+        chatroom.patch_room(rid, waitMark={"kind": "task", "taskId": other, "what": "#301",
+                                           "at": T0, "until": 0})
+        self.idle_s["pty-1"] = 300 * MIN
+        return rid, other
+
+    def test_a_failed_read_keeps_a_wait_on_a_task(self):
+        rid, other = self._wait_on_task()
+        with self._unreadable(other):
+            self.tick()
+        self.assertTrue(chatroom.get_room(rid, public=False).get("waitMark"))
+        self.assertEqual(self.lines, [])
+
+    def test_a_task_really_gone_ends_the_wait(self):
+        rid, other = self._wait_on_task()
+        chatroom._room_path(other).unlink()
+        self.tick()
+        self.assertIsNone(chatroom.get_room(rid, public=False).get("waitMark"))
+        self.assertEqual(len(self.lines), 1)
+
+    def test_a_failed_read_keeps_a_wait_on_a_card(self):
+        rid = self.task()
+        chatroom.patch_room(rid, waitMark={"kind": "card", "mids": ["m1"], "at": T0, "until": 0})
+        self.idle_s["pty-1"] = 300 * MIN
+        chatroom._room_path("room-po").write_text("{nope", encoding="utf-8")
+        self.tick()
+        self.assertTrue(chatroom.get_room(rid, public=False).get("waitMark"))
+        self.assertEqual(self.lines, [])
+
+    def test_a_damaged_state_skips_the_tick_and_is_not_written(self):
+        rid = self.task()
+        self.idle_s["pty-1"] = 25 * MIN
+        idle._state_file().write_text("{nope", encoding="utf-8")
+        self.assertEqual(self.tick(), {})
+        self.assertEqual(self.lines, [])
+        self.assertEqual(self.column(rid), "inprogress")
+        self.assertEqual(idle._state_file().read_text(encoding="utf-8"), "{nope")
+        self.assertEqual(idle.records(), {})
+
+    def test_a_background_wait_with_its_command_running_stays_in_waiting(self):
+        rid = self.task()
+        chatroom.patch_room(rid, waitMark={"kind": "background", "at": T0, "until": 0, "what": ""})
+        self.idle_s["pty-1"] = 5 * MIN
+        with mock.patch.object(stall, "own_work", return_value=1):
+            self.tick(T0 + 60)
+            self.assertEqual(self.column(rid), "waiting")
+            self.tick(T0 + 120)
+        self.assertEqual(self.column(rid), "waiting")
+
+    def test_a_teammate_turn_leaves_a_marked_card_in_waiting(self):
+        rid = self.task()
+        chatroom.patch_room(rid, waitMark={"kind": "time", "at": T0, "until": T0 + 3600, "what": ""})
+        self.idle_s["pty-1"] = 5 * MIN
+        self.tick(T0 + 60)
+        with mock.patch.object(chatroom, "agent_participants", return_value=[{"identity": "rev"}]), \
+                mock.patch.object(stall, "_busy", return_value=True):
+            self.tick(T0 + 120)
+        self.assertEqual(self.column(rid), "waiting")
+
+    def test_working_on_newer_work_leaves_done(self):
+        rid = self.task(workflow="done", at=T0 - 600, specAt=T0 - 60)
+        self.working.add("pty-1")
+        self.tick()
+        self.assertEqual(self.column(rid), "inprogress")
+
+    def test_working_in_done_stays_when_merged_or_moved_after_the_work(self):
+        merged = self.task(workflow="done", at=T0 - 600, specAt=T0 - 300, mergedAt=T0 - 60)
+        moved = self.task(workflow="done", at=T0 - 60, specAt=T0 - 300, pty="pty-2")
+        self.working.update(("pty-1", "pty-2"))
+        self.tick()
+        self.assertEqual([self.column(merged), self.column(moved)], ["done", "done"])
+
+    def test_an_archived_task_is_no_longer_listed(self):
+        rid = self.alerted()
+        self.assertIn(rid, idle.records())
+        chatroom.patch_room(rid, archived=True)
+        self.tick(T0 + 60)
+        self.assertNotIn(rid, idle.records())
+        self.assertEqual(ensemble_tools._idle_rows("*", {}), [])
 
 
 if __name__ == "__main__":
