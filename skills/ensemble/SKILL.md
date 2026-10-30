@@ -631,7 +631,7 @@ PO, Stopped) and the column header's "N working", never the column.
 successor with no memory would need: how the product owner likes to work,
 priorities and decisions with the why, what is running, what waits on whom,
 and what you have promised. Update it whenever one of those changes, not only
-when asked. Past the rotation limit (200k tokens by default) the hub asks you
+when asked. Past the rotation limit (150k tokens by default) the hub asks you
 to bring it up to date, then starts a fresh PO whose first prompt is to read it
 and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
 a fresh session as an instruction: it redoes the work.

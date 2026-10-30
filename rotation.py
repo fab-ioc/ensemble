@@ -519,6 +519,17 @@ def _hook_idle(part: dict, since: float) -> bool:
         return False
 
 
+def _at_prompt(part: dict) -> bool:
+    """Its screen shows a prompt: it waits for a person's answer (a permission
+    prompt, a question), which reads as a turn still running."""
+    att = _d.attention
+    try:
+        return bool((att._evidence(part, att._claude_status_by_session()).get("scan")
+                     or {}).get("prompt"))
+    except Exception:
+        return False
+
+
 def _handover_refreshed(st: dict, hp: Path | None) -> bool:
     """The handover was written after the ask was typed (newer than the ask's
     time and than the file just before it), and says something."""
@@ -688,15 +699,19 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         # A handover written since the ask answers it, even when the ask never
         # shows in the transcript (measured 2026-09-23: written at 15:14,
         # rotated on the timeout at 15:34).
-        if _handover_refreshed(st, s["handover"]) and (
-                idle or _hook_idle(part, float(st.get("askedAt") or 0))):
+        refreshed = _handover_refreshed(st, s["handover"])
+        if refreshed and (idle or _hook_idle(part, float(st.get("askedAt") or 0))):
             return _rotate(s, tr, done, answered=True, by_file=True)
         if idle and (waited > ASK_TIMEOUT_S or overdue):
             return _rotate(s, tr, done, answered=False)
         # Only an owner: its work is in the repo and its handover is one note,
         # a PO's conversation is the only copy of what it has not written down.
-        if overdue and s["kind"] == "owner":
-            return _rotate(s, tr, done, answered=False, forced=True)
+        # One that has written it is finishing: it gets one more margin. A prompt
+        # waits for a person, and ending the session would lose the question.
+        final_call = last_call + (MARGIN_TOKENS if refreshed else 0)
+        if (s["kind"] == "owner" and limit > 0 and (tr["tokens"] or 0) >= final_call
+                and not _at_prompt(part)):
+            return _rotate(s, tr, done, answered=refreshed, forced=True)
         if waited > GIVE_UP_S:
             st.update(phase="watching", lastAttempt=now)
             return done(f"gave up waiting for the handover after {int(waited // 60)} min "
@@ -749,6 +764,8 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         if warning:
             st["archiveWarnedSession"] = sid
     else:
+        last_call = (f" If it is not written by {_k(max(limit, tr['tokens']) + MARGIN_TOKENS)}, "
+                     f"the hub ends this session." if limit > 0 else "")
         ask = (f"[handover] Your conversation has reached {_k(tr['tokens'])} tokens "
                f"(the limit is {_k(limit)}), so the hub will start a fresh session for you "
                f"that continues this task from a written handover instead of this history. "
@@ -760,8 +777,7 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                f"Anything that is not in that file, the repo or the "
                f"task's spec will be forgotten. When it is written, end your turn without "
                f"messaging anyone; the hub rotates you as soon as you are idle. Do this "
-               f"before anything else: at {_k(max(limit, tr['tokens']) + MARGIN_TOKENS)} "
-               f"the hub ends this session whether the file is written or not.")
+               f"before anything else.{last_call}")
     sess = _pty(part)
     # Typed now even mid-turn: the agent queues it and reads it at its next
     # pause. The transcript's size is read before the ask, so the ask lands
@@ -1796,12 +1812,14 @@ def _open_points(room: dict) -> str:
 
 
 def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
-                      kinds: tuple[str, str] | None = None, forced: bool = False) -> str:
+                      kinds: tuple[str, str] | None = None, forced: bool = False,
+                      written: bool = False) -> str:
     """A rotated owner's first prompt. It never carries the spec: a fresh
     session handed its spec as an instruction does the task again (seen
     2026-09-10). The handover is its state; the spec is only a reference.
     ``kinds`` (old, new) when the fresh session is the other kind; ``forced``
-    when the hub ended the old session mid-turn."""
+    when the hub ended the old session mid-turn, ``written`` when it had
+    written its handover by then."""
     rid = room["id"]
     title = room.get("title") or rid
     parts = [
@@ -1815,10 +1833,13 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
                      f"{name(kinds[1])}, chosen from the plan allowance, under the same "
                      f"name and with the same tools.")
     if forced:
-        parts[0] += (" The hub ended it in mid-turn because it had not written its handover "
-                     "in time, so the handover may be behind or missing: a command it was "
-                     "running was cut off, and its last changes may be uncommitted. Compare "
-                     "the handover with git status and git log before you rely on it.")
+        parts[0] += (" The hub ended it in mid-turn after it had written its handover, so "
+                     "what it did after that is not in the handover: " if written else
+                     " The hub ended it in mid-turn because it had not written its handover "
+                     "in time, so the handover may be behind or missing: ")
+        parts[0] += ("a command it was running was cut off, and its last changes may be "
+                     "uncommitted. Compare the handover with git status and git log before "
+                     "you rely on it, and remove a stale .git/index.lock if one is left.")
     parts += [
         f"Your state is {hp}: the handover your previous session wrote just before it "
         f"stopped: the goal and how far it got, decisions and why, branch and commits, "
@@ -2281,7 +2302,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             def text_for(kind: str) -> str:
                 return task_first_prompt(room_full, old_sid, tokens, hp, solo,
                                          kinds=(old_kind, kind) if kind != old_kind else None,
-                                         forced=forced)
+                                         forced=forced, written=answered)
 
             info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
                                                cwd, choice)
@@ -2362,8 +2383,8 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         st["phase"] = "watching"
         return done(f"{s['whose']} task was deleted as it rotated — nothing posted")
     if forced:
-        how = (f"in mid-turn: {who} had gone on to {_k(rec['tokensAtEnd'])} without "
-               f"handing over")
+        how = (f"in mid-turn: {who} had gone on to {_k(rec['tokensAtEnd'])} "
+               + (f"after writing {hname}" if answered else "without handing over"))
     elif not asked:
         how = "without asking for a handover first"
     elif not answered:

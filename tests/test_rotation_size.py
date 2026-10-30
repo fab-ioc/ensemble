@@ -26,7 +26,8 @@ class AskByAge(_Base):
         with started:
             out = self.check(s)
         self.assertEqual(out["phase"], "asked")
-        self.assertIn("at 280k the hub ends this session", self.sess.typed[0])
+        self.assertIn("If it is not written by 280k, the hub ends this session.",
+                      self.sess.typed[0])
 
     def test_a_young_session_that_started_over_the_limit_is_left_alone(self):
         s, started = self.young(240_000)
@@ -46,6 +47,13 @@ class AskByAge(_Base):
         with mock.patch.object(rotation, "_session_started",
                                return_value=time.time() - rotation.COOLDOWN_S - 1):
             self.assertEqual(self.check(s)["phase"], "asked")
+
+    def test_a_manual_ask_under_limit_0_promises_no_end(self):
+        s = self.subject()
+        s["limit"] = 0
+        rotation._check(s, True, False)
+        self.assertEqual(len(self.sess.typed), 1)
+        self.assertNotIn("the hub ends this session", self.sess.typed[0])
 
     def test_a_dropped_attempt_still_waits(self):
         s = self.subject(firstTokens=50_000, lastAttempt=time.time() - 60)
@@ -119,6 +127,43 @@ class Fallback(_Base):
         self.idle = self.tr["turnOver"] = True
         self.check(s)
         self.assertEqual(len(self.rotated), 1)
+
+    def test_a_written_handover_is_not_ended_within_its_extra_margin(self):
+        s = self.over(240_000)
+        with mock.patch.object(rotation, "_handover_refreshed", return_value=True):
+            out = self.check(s)
+            self.assertEqual(self.rotated, [])
+            self.assertIn("waiting for the owner", out["result"])
+            self.tr["tokens"] = 270_000
+            self.check(s)
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+        self.assertTrue(s["forced"])
+
+    def test_a_session_at_a_prompt_is_not_ended(self):
+        s = self.over(240_000)
+        with mock.patch.object(rotation, "_at_prompt", return_value=True):
+            out = self.check(s)
+        self.assertEqual(self.rotated, [])
+        self.assertIn("waiting for the owner", out["result"])
+        self.check(s)
+        self.assertEqual(len(self.rotated), 1)
+
+    def test_at_prompt_reads_the_screen(self):
+        att = dashboard.attention
+        for scan, want in (({"prompt": "Allow?"}, True), ({}, False)):
+            with mock.patch.object(att, "_claude_status_by_session", return_value={}), \
+                    mock.patch.object(att, "_evidence", return_value={"scan": scan}):
+                self.assertEqual(rotation._at_prompt({}), want)
+
+    def test_the_fresh_session_hears_whether_it_was_written(self):
+        room = {"id": "room-1", "title": "t"}
+        unwritten = rotation.task_first_prompt(room, "s", 240_000, Path("h"), False, forced=True)
+        written = rotation.task_first_prompt(room, "s", 270_000, Path("h"), False,
+                                             forced=True, written=True)
+        self.assertIn("had not written its handover", unwritten)
+        self.assertIn("after it had written its handover", written)
+        self.assertNotIn("had not written", written)
+        self.assertIn(".git/index.lock", written)
 
     def test_off_means_off(self):
         s = self.over(240_000)
