@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="ensemble-pages" content="">
 <meta name="ensemble-file-drag" content="">
 <title>Ensemble — session</title>
@@ -1525,6 +1525,10 @@
     #points-line { margin: 0; border-radius: 0; border-width: 0 0 1px; }
     #points-line .pt-sum-oq { display: inline; }
     #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* A row's fixed parts add up to less than the screen (#295); the sender has
+       the most, so its time stays in sight, and the line takes what is left. */
+    .msg-fold .from { display:flex; align-items:baseline; max-width:55%; min-width:0; white-space:nowrap; } .msg-fold .from .who, .msg-fold .from .to, .msg-fold .from .send-how { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; } .msg-fold .from .to { margin-left:.3em; } .msg-fold .from .send-how { margin-left:var(--s-100); } .msg-fold .from .at { flex:0 0 auto; }
+    .msg-fold .chips, .msg-fold.gap .gasks { max-width:35%; }
   }
   .pt-sum-oq { display: none; }
   @media not all and (pointer: coarse) {
@@ -1626,6 +1630,8 @@
   .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
   .theme-dd-item .star:focus-visible, .theme-dd-item .name:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   @media (pointer: coarse) {
+    /* Nothing wider than the screen on a touch screen: iOS would zoom out for it (#295). */
+    html, body { overflow-x: hidden; max-width: 100vw; }
     .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
     .am-btn { height: auto; min-width: var(--touch-min); }
     .theme-dd-item .star { min-width: var(--touch-min); }

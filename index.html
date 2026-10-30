@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="ensemble-pages" content="">
 <meta name="ensemble-file-drag" content="">
 <title>Ensemble</title>
@@ -3245,14 +3245,21 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-agents .agent-row { margin: 4px 0; font-size: 13px; }
   #settings-agents .agent-row a { color: var(--link); }
   #settings-app .autostart-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 8px; }
-  /* The panels (the Dock) not loading (pdBanner): a warning, with Reload. */
-  #dock-banner {
+  /* The panels (the Dock) not loading (pdBanner): a warning, with Reload.
+     #wide-banner: a phone drawing the page wider than its screen (wideBanner). */
+  #dock-banner, #wide-banner {
     display: flex; align-items: center; gap: 12px; padding: 8px 16px;
     background: var(--c-warning-bg); border-bottom: 1px solid var(--border);
     color: var(--fg); font-size: 13px; position: sticky; top: 0; z-index: 100;
   }
-  #dock-banner[hidden] { display: none; }
-  #dock-banner-text { flex: 1; }
+  #dock-banner[hidden], #wide-banner[hidden] { display: none; }
+  #dock-banner-text, #wide-banner-text { flex: 1; min-width: 0; }
+  #wide-banner-dismiss {
+    background: transparent; border: 0; color: var(--fg-muted);
+    font-size: 16px; line-height: 1; padding: 4px 6px; cursor: pointer; border-radius: 3px;
+  }
+  #wide-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
+  #wide-banner-dismiss:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   #dock-banner-go {
     background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); padding: 4px 14px; border-radius: 5px;
     cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
@@ -3476,7 +3483,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px)));
       border-left: 0; border-radius: 0; box-shadow: none;
       padding: var(--s-300) var(--s-300) var(--s-600);
+      /* Closed, it waits hidden in place: parked past the right edge it is a
+         screenful of content iOS could zoom the page out for (#295). */
+      transform: none; visibility: hidden; opacity: 0;
+      transition: opacity .15s, visibility 0s .15s;
     }
+    body.detail-open #detail-panel { visibility: visible; opacity: 1; transition: opacity .15s; }
     #detail-panel-resize { display: none !important; }
     body.detail-open main { padding-right: 0; }
     body.po-peek #po-panel { top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto; height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px))); }
@@ -3675,7 +3687,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go,
+    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go, #wide-banner-dismiss,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -4263,6 +4275,10 @@ window.DOC_LISTENERS_PAUSED = false;
 <div id="dock-banner" role="status" hidden>
   <span id="dock-banner-text"></span>
   <button id="dock-banner-go" type="button">Reload</button>
+</div>
+<div id="wide-banner" role="status" hidden>
+  <span id="wide-banner-text"></span>
+  <button id="wide-banner-dismiss" type="button" title="Hide" aria-label="Hide">×</button>
 </div>
 <div id="update-overlay" hidden>
   <div class="update-modal">
@@ -20542,11 +20558,30 @@ async function setAppearance(pref) {
 window.addEventListener('cd-theme', markAppearance);
 queueMicrotask(renderThemeLists);
 
+// A phone drawing the page wider than its screen looks like a desktop page
+// (#295): Safari's Request Desktop Website, its page zoom, anything that zooms
+// out. The page cannot undo those, so it says so, with the numbers. A screen
+// of 600px or more on its short side is no phone (an iPad also calls itself a
+// Mac); iOS's screen.width does not turn with the phone, so the orientation
+// picks the side.
+function wideBanner() {
+  const b = document.getElementById('wide-banner');
+  if (!b || b.dataset.closed) return;
+  const a = screen.width, c = screen.height, narrow = Math.min(a, c);
+  if (narrow >= 600 || !matchMedia('(pointer: coarse)').matches) { b.hidden = true; return; }
+  const side = matchMedia('(orientation: landscape)').matches ? Math.max(a, c) : narrow;
+  const scale = window.visualViewport ? visualViewport.scale : 1;
+  const mac = /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+  b.hidden = !(mac || innerWidth > side + 1 || scale < 0.95);
+  if (!b.hidden) document.getElementById('wide-banner-text').textContent =
+    `Drawn ${innerWidth}px wide on a ${side}px screen, so everything looks small. In Safari: aA › Request Mobile Website, and 100%.`;
+}
+
 // The banners sit above the bar and push it down; everything hung off the
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner'];
+  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -22839,6 +22874,12 @@ window.ensUpdPlace = () => ({
   });
   drainPoll();
   document.getElementById('dock-banner-go')?.addEventListener('click', () => ensUpd.reload());
+  wideBanner();
+  addEventListener('resize', wideBanner);
+  document.getElementById('wide-banner-dismiss')?.addEventListener('click', e => {
+    const b = e.currentTarget.parentElement;
+    b.dataset.closed = '1'; b.hidden = true;
+  });
   document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
     UPDATE_DISMISSED = true;
     document.getElementById('update-banner').hidden = true;
