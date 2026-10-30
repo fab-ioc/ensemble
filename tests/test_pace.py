@@ -90,7 +90,7 @@ class ThePaceLine(unittest.TestCase):
         snap = _snap(30, 30, claude_reset=None)
         self.assertEqual(dashboard._kind_pace(snap, "claude", now=WEEK_START)["state"], "unknown")
         codex = dashboard._kind_pace(snap, "codex", now=WEEK_START + 2 * DAY)
-        self.assertEqual((codex["state"], codex["ahead"], codex["pace"]), ("known", False, 43.6))
+        self.assertEqual((codex["state"], codex["ahead"], codex["pace"]), ("known", False, 38.6))
 
     def test_codex_is_paced_on_the_pool_it_runs_on(self):
         snap = _snap(10, 60)
@@ -314,7 +314,7 @@ class TheSettingsRoundTrip(unittest.TestCase):
     def test_defaults_then_saved_then_read_back(self):
         got = self.call("GET", "/api/settings")
         self.assertEqual((got["paceWeek"], got["paceMarginPoints"], got["balanceHysteresisPercent"]),
-                         (True, 15, 25))
+                         (True, 10, 25))
         self.call("PUT", "/api/settings", {"paceWeek": False, "paceMarginPoints": 20,
                                              "balanceHysteresisPercent": 8})
         got = self.call("GET", "/api/settings")

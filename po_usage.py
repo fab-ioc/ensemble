@@ -1,6 +1,7 @@
 """A short, cache-only usage head for the PO's live context."""
 import time
 
+import pacing
 import usage
 
 
@@ -33,6 +34,7 @@ def head(snapshot=None, now=None):
                     pool = "reserve"
                 windows.append(f"{pool + ' ' if kind == 'codex' else ''}{period} {value}")
             parts.append(f"{name} " + (" · ".join(windows) if windows else "unknown"))
-        return "usage: " + " | ".join(parts)
+        burn = pacing.line(snap, now)
+        return "usage: " + " | ".join(parts) + (f" | {burn}" if burn else "")
     except (TypeError, ValueError, KeyError, AttributeError):
         return "usage unknown"

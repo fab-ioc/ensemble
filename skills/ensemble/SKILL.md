@@ -802,6 +802,15 @@ the final choice without a network call:
   every owner, reviewer and handover on that kind while it is usable (below
   100%, not blocked, installed) and ignores pacing; the allocation note says
   "Claude preferred by Settings". Do not set `keepAgents` to get that.
+- The hub projects each kind's week from its recent burn rate. A kind projected
+  past 110% gives new seats to the other. When every usable kind is past it,
+  the pacing brake holds new work of medium or lower priority:
+  `ensemble_start_task` and `ensemble_create_task` with `start: true` return
+  `held: true` with why in `note`. Do not retry or raise the priority to get
+  round it. The task starts by itself on recovery, highest priority first. High
+  and highest priority, reviews, handovers, PO wakes and a person's Start from
+  the page always go through. `ensemble_plan_usage` shows `pace.brake` and each
+  kind's `burn`.
 - A seat that names no model runs on the one the person chose for its kind in
   Settings (Agent models; for Codex a reasoning effort too), else on the
   agent's own default. Leave `model` out unless the task needs a particular
