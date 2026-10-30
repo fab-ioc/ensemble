@@ -45,6 +45,22 @@ def bind(dashboard_module):
     _d = dashboard_module
 
 
+def projection_limit(margin=None):
+    """Return the projection threshold for the current pace allowance."""
+    if margin is None:
+        try:
+            margin = _d.pace_settings().get("margin", 10)
+        except Exception:  # noqa: BLE001
+            margin = 10
+    try:
+        margin = float(margin)
+    except (TypeError, ValueError):
+        margin = 10.0
+    if not math.isfinite(margin):
+        margin = 10.0
+    return 100.0 + max(0.0, min(40.0, margin))
+
+
 def _path():
     return _d.DASHBOARD_DIR / "pace-history.json"
 
@@ -179,10 +195,10 @@ def burn(key, percent, end, now, at_least=False):
         return unknown("the history could not be read")
 
 
-def past_limit(reading):
+def past_limit(reading, margin=None):
     """``reading`` (:func:`_kind_pace`) has a projection past its week."""
     seen = (reading or {}).get("burn") or {}
-    return seen.get("state") == "known" and seen["projected"] >= PROJECTED_LIMIT
+    return seen.get("state") == "known" and seen["projected"] >= projection_limit(margin)
 
 
 def known(reading):
@@ -254,8 +270,9 @@ def _why(kinds, now):
 
 
 def _until(kinds, now):
+    limit = projection_limit()
     soonest = min(kinds.values(), key=lambda r: r.get("hoursToReset") or 0)
-    return (f"the projection falls under {PROJECTED_LIMIT - RELEASE_POINTS}%, "
+    return (f"the projection falls under {limit - RELEASE_POINTS:g}%, "
             f"or {_d._reset_clock(soonest.get('resetsAt'), now)} at the latest")
 
 
@@ -267,6 +284,7 @@ def _step(how, judged, now):
     brake = _state()["brake"]
     before = dict(brake)
     lowest = judged["lowest"]
+    limit = projection_limit()
     if how == "off":
         if brake["on"]:
             brake.update(on=False, ended="off")
@@ -277,9 +295,9 @@ def _step(how, judged, now):
                 brake.update(on=False, ended="unknown")
     else:
         brake["unknownSince"] = 0
-        if lowest >= PROJECTED_LIMIT and not brake["on"]:
+        if lowest >= limit and not brake["on"]:
             brake.update(on=True, since=now, episode=brake["episode"] + 1, ended="")
-        elif (brake["on"] and lowest < PROJECTED_LIMIT - RELEASE_POINTS
+        elif (brake["on"] and lowest < limit - RELEASE_POINTS
                 and now - brake["since"] >= DWELL_S):
             brake.update(on=False, ended="recovered")
         if brake["on"]:
@@ -494,7 +512,7 @@ def view():
     """The brake for /api/usage: the plan chip's tray."""
     brake = _state()["brake"]
     return {"mode": mode(), "on": bool(brake["on"]), "why": brake["why"],
-            "until": brake["until"], "limit": PROJECTED_LIMIT}
+            "until": brake["until"], "limit": projection_limit()}
 
 
 def _stage(what, fn, *args, default=False):

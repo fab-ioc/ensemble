@@ -79,6 +79,11 @@ class ThePaceLine(unittest.TestCase):
         # A reset already passed reads as the whole week gone.
         self.assertEqual(usage.pace_mark(CODEX_RESET.isoformat(), WEEK_START + 9 * DAY, 15, 80)["pace"], 80)
 
+    def test_last_twelve_hours_are_uncapped(self):
+        mark = usage.pace_mark(CODEX_RESET.isoformat(), WEEK_START + 6.6 * DAY, 15, 80)
+        self.assertTrue(mark["nearReset"])
+        self.assertAlmostEqual(mark["pace"], 15 + 660 / 7, places=1)
+
     def test_an_epoch_reset_is_read_too(self):
         self.assertEqual(usage.pace_mark(CODEX_RESET.timestamp(), WEEK_START, 0, 80)["pace"], 0)
 
@@ -328,7 +333,7 @@ class TheSettingsRoundTrip(unittest.TestCase):
 
     def test_a_margin_is_clamped_and_nonsense_is_ignored(self):
         self.call("PUT", "/api/settings", {"paceMarginPoints": 250})
-        self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 100)
+        self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 40)
         self.call("PUT", "/api/settings", {"paceMarginPoints": 12.5})
         self.assertEqual(self.call("GET", "/api/settings")["paceMarginPoints"], 12.5)
         for bad in ("lots", None, True, [3]):

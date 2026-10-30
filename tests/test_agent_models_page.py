@@ -232,7 +232,8 @@ class AgentModelsInSettings(unittest.TestCase):
                 self.assertEqual([(r["id"], r["label"]) for r in first["rows"]], [
                     ("pref-model-claude", "Claude model"), ("pref-model-codex", "Codex model"),
                     ("pref-effort-codex", "Codex reasoning effort"),
-                    ("pref-task-agent-tools", "Task agents' tools")])
+                    ("pref-task-agent-tools", "Task agents' tools"),
+                    ("pref-pace-brake", "When both plans run too fast")])
                 self.assertTrue(all(r["labelAbove"] and not r["disabled"]
                                     for r in first["rows"]), first["rows"])
                 self.assertTrue(all(rows[x]["value"] == "" for x in

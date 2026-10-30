@@ -2871,6 +2871,16 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-size: var(--fs-100); font-weight: 600; color: var(--fg-subtle);
     text-transform: uppercase; letter-spacing: .06em; padding: 4px 6px 8px;
   }
+  .usage-allowance-control {
+    margin: 0 6px 10px; padding: 8px 0 10px; border-bottom: 1px solid var(--border);
+  }
+  .usage-allowance-control label {
+    display: flex; justify-content: space-between; gap: 10px;
+    color: var(--fg-subtle); font-size: var(--fs-100); font-weight: 600;
+  }
+  .usage-allowance-control output { color: var(--fg); font-variant-numeric: tabular-nums; }
+  #usage-pace-slider { display: block; width: 100%; min-height: 44px; margin: 4px 0 0; accent-color: var(--accent); cursor: pointer; }
+  #usage-pace-slider:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .usage-src { padding: 6px 6px 10px; }
   .usage-src + .usage-src { border-top: 1px solid var(--border); padding-top: 10px; }
   .usage-src-head { display: flex; align-items: baseline; gap: 6px; }
@@ -4333,6 +4343,12 @@ window.DOC_LISTENERS_PAUSED = false;
 <div id="proj-menu" hidden></div>
 <div id="usage-tray" hidden>
   <div class="usage-head">Plan allowance <span id="usage-sub"></span></div>
+  <div class="usage-allowance-control">
+    <label for="usage-pace-slider">Allowance above pace <output id="usage-pace-value">10 points</output></label>
+    <input id="usage-pace-slider" type="range" min="0" max="40" step="1" value="10"
+           aria-describedby="usage-pace-help">
+    <div id="usage-pace-help" class="usage-why">Drag to preview; it saves when released. The brake threshold is 100% plus this margin. However high this is set, new work moves off a plan once it has used 80% of its week.</div>
+  </div>
   <div id="usage-list"></div>
   <div class="usage-foot" id="usage-foot"></div>
 </div>
@@ -4450,8 +4466,8 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <div class="pref-row" style="margin-top: 14px;">
-      <label class="pref-label" for="pref-pace-margin">Head start</label>
-      <span><input type="number" id="pref-pace-margin" min="0" max="100" step="1"
+      <label class="pref-label" for="pref-pace-margin">Allowance above pace</label>
+      <span><input type="number" id="pref-pace-margin" min="0" max="40" step="1"
              placeholder="10" autocomplete="off"> <span class="pref-label">points</span></span>
     </div>
     <div class="pref-row">
@@ -19484,6 +19500,7 @@ const USAGE_SRC_SHORT = { claude: 'C', codex: 'X' };
 const USAGE_WIN_NAME = {
   five_hour: '5-hour', seven_day: 'Weekly', seven_day_model: 'Weekly',
 };
+let USAGE_PREVIEW_MARGIN = null;
 
 async function refreshUsage() {
   if (_usageInFlight) return;
@@ -19491,6 +19508,14 @@ async function refreshUsage() {
   try {
     // A cache read on the server: it never waits on a reading.
     USAGE = await api('/api/usage') || USAGE;
+    const remoteMargin = Number(USAGE?.pace?.marginPoints);
+    const marginInput = document.getElementById('pref-pace-margin');
+    if (Number.isFinite(remoteMargin) && document.activeElement !== marginInput
+        && document.activeElement?.id !== 'usage-pace-slider') {
+      if (!PREFS) PREFS = {};
+      PREFS.paceMarginPoints = Math.max(0, Math.min(40, remoteMargin));
+      renderPrefs();
+    }
     renderUsage();
     const detected = document.getElementById('pref-detected-plans');
     if (detected) {
@@ -19765,7 +19790,12 @@ function usagePaceOf(src) {
   const p = USAGE.pace;
   if (!p || !p.enabled || p.prefer) return null;
   const k = (p.kinds || {})[src.source];
-  return k && k.state === 'known' ? k : null;
+  if (!k || k.state !== 'known') return null;
+  const margin = USAGE_PREVIEW_MARGIN;
+  if (margin == null || k.elapsed == null) return k;
+  const cap = k.nearReset ? Infinity : (USAGE.warnPercent ?? 80);
+  const pace = Math.min(cap, k.elapsed * 100 + margin);
+  return { ...k, pace, ahead: Number(k.percent) > pace };
 }
 
 // A kind whose week resets within hours (ED-181): the hub seats it up to the
@@ -19816,11 +19846,12 @@ function usageBurnLine(pace) {
 }
 function usageBrakeHtml() {
   const b = (USAGE.pace || {}).brake;
-  if (!b || !b.on) return '';
+  if (!b) return '';
+  if (!b.on) return '<div class="usage-pace">No pacing brake is holding work. However high this is set, new work moves off a plan once it has used 80% of its week.</div>';
   const said = b.mode === 'hold' ? 'Pacing brake on: new work of medium or lower priority waits.'
     : 'Pacing brake would be on: nothing is held (Tell only).';
   return `<div class="usage-pace" title="${esc(b.why || '')}">${esc(said)}${
-    b.until ? ` Until ${esc(b.until)}.` : ''}</div>`;
+    b.until ? ` Until ${esc(b.until)}.` : ''} However high this is set, new work moves off a plan once it has used 80% of its week.</div>`;
 }
 
 function renderUsage() {
@@ -19831,6 +19862,11 @@ function renderUsage() {
     return;
   }
   chip.hidden = false;
+  const paceSlider = document.getElementById('usage-pace-slider');
+  const margin = USAGE_PREVIEW_MARGIN ?? (USAGE.pace || {}).marginPoints ?? 10;
+  if (paceSlider && document.activeElement !== paceSlider) paceSlider.value = String(Math.max(0, Math.min(40, margin)));
+  const paceValue = document.getElementById('usage-pace-value');
+  if (paceValue) paceValue.textContent = `${Math.round(margin)} point${Math.round(margin) === 1 ? '' : 's'}`;
   const parts = sources.map(usageChipPart).filter(Boolean);
   body.innerHTML = parts.join('<span class="usage-chip-label">·</span>');
 
@@ -19859,6 +19895,20 @@ $('#usage-chip').addEventListener('click', (ev) => {
   if (!tray.hidden) {
     refreshUsage();
   }
+});
+document.getElementById('usage-pace-slider')?.addEventListener('input', (ev) => {
+  const value = Math.max(0, Math.min(40, Number(ev.target.value) || 0));
+  USAGE_PREVIEW_MARGIN = value;
+  renderUsage();
+});
+document.getElementById('usage-pace-slider')?.addEventListener('change', async (ev) => {
+  const value = Math.max(0, Math.min(40, Number(ev.target.value) || 0));
+  try {
+    await setPref('paceMarginPoints', value);
+  } finally {
+    USAGE_PREVIEW_MARGIN = null;
+  }
+  await refreshUsage();
 });
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#usage-chip') || ev.target.closest('#usage-tray')) return;

@@ -27,6 +27,7 @@ import getpass
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import os
 import plistlib
@@ -2736,6 +2737,7 @@ def _save_settings_locked(settings: dict) -> dict:
             if v != v:                                   # NaN
                 continue
             v = (max(1, min(1000, v)) if k.endswith("PlanWeight")
+                 else max(0, min(40, v)) if k == "paceMarginPoints"
                  else max(0, min(100, v)))
             v = int(v) if v == int(v) else round(v, 1)
         if k in ("codexToolOutputTokens", "readCapBytes", "readCapLines"):
@@ -15214,6 +15216,8 @@ def pace_settings(snapshot: dict | None = None) -> dict:
         margin = float(settings.get("paceMarginPoints", PACE_MARGIN_DEFAULT))
     except (TypeError, ValueError):
         margin = float(PACE_MARGIN_DEFAULT)
+    if not math.isfinite(margin):
+        margin = float(PACE_MARGIN_DEFAULT)
     try:
         hysteresis = float(settings.get("balanceHysteresisPercent",
                                         BALANCE_HYSTERESIS_DEFAULT))
@@ -15245,7 +15249,7 @@ def pace_settings(snapshot: dict | None = None) -> dict:
                 labels[kind] = _agent_kind_name(kind) + " plan weight unavailable"
     return {"enabled": settings.get("paceWeek", True) is not False,
             "prefer": hub_preference(settings),
-            "margin": max(0.0, min(100.0, margin)),
+            "margin": max(0.0, min(40.0, margin)),
             "hysteresis": max(0.0, min(100.0, hysteresis)),
             "weights": weights, "labels": labels, "sources": sources}
 
@@ -15497,6 +15501,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                               pace.get("margin", PACE_MARGIN_DEFAULT), now)
              for kind in ("claude", "codex")}
     hysteresis = float(pace.get("hysteresis", BALANCE_HYSTERESIS_DEFAULT))
+    projection_limit = pacing.projection_limit(pace.get("margin", PACE_MARGIN_DEFAULT))
     weights = pace.get("weights") or {"claude": 1, "codex": 1}
     capacity = {}
     for kind in ("claude", "codex"):
@@ -15535,6 +15540,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
             "nearReset": near,
             "pace": {"enabled": bool(pace.get("enabled")), "keepAgents": bool(keep_agents),
                      "marginPoints": pace.get("margin", PACE_MARGIN_DEFAULT),
+                     "projectionLimit": projection_limit,
                      "hysteresisPercent": hysteresis, "planWeights": weights,
                      "planLabels": pace.get("labels") or {},
                      "planSources": pace.get("sources") or {},
@@ -15604,7 +15610,9 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         # the other kind's is known and inside it, or the balance rule below
         # could move the seat onto the kind that is running out.
         if pace.get("enabled") and pacing.known(mine) and pacing.known(theirs):
-            mine_over, theirs_over = pacing.past_limit(mine), pacing.past_limit(theirs)
+            margin = pace.get("margin", PACE_MARGIN_DEFAULT)
+            mine_over = pacing.past_limit(mine, margin)
+            theirs_over = pacing.past_limit(theirs, margin)
             if (mine_over and not theirs_over and not near[preferred_kind]
                     and theirs_pct < limit[other_kind]):
                 return result(other_kind, "switch_projection")

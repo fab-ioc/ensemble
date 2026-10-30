@@ -140,8 +140,8 @@ class History(Base):
 
 
 class SeatChoice(Base):
-    def decide(self, preferred, claude=50, codex=50):
-        pace = {"enabled": True, "prefer": "", "margin": 10, "hysteresis": 25,
+    def decide(self, preferred, claude=50, codex=50, margin=10):
+        pace = {"enabled": True, "prefer": "", "margin": margin, "hysteresis": 25,
                 "weights": {"claude": 20, "codex": 5}, "labels": {}, "sources": {}}
         return dashboard.choose_agent_kind_for_seat(
             preferred, snapshot(claude, codex), installed=lambda k: True, pace=pace, now=NOW)
@@ -152,6 +152,27 @@ class SeatChoice(Base):
         d = self.decide("claude")
         self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "switch_projection"))
         self.assertIn("heading for", dashboard._projection_reason(d))
+
+    def test_raised_margin_reaches_projection_seat_choice_limit(self):
+        self.history("claude", 0.65, start=30)
+        self.history("codex:codex", 0.0, start=50)
+        self.assertEqual(self.decide("claude", margin=10)["decision"], "switch_projection")
+        self.assertNotEqual(self.decide("claude", margin=20)["decision"], "switch_projection")
+
+    def test_saved_margin_reaches_seat_choice_without_restart(self):
+        (self.dir / "settings.json").write_text(
+            json.dumps({"paceMarginPoints": 20}), encoding="utf-8")
+        self.history("claude", 0.65, start=30)
+        self.history("codex:codex", 0.0, start=50)
+        d = dashboard.choose_agent_kind_for_seat(
+            "claude", snapshot(), installed=lambda k: True, now=NOW)
+        self.assertEqual(d["pace"]["marginPoints"], 20)
+        self.assertNotEqual(d["decision"], "switch_projection")
+
+    def test_nan_margin_falls_back_to_default(self):
+        (self.dir / "settings.json").write_text(
+            '{"paceMarginPoints": NaN}', encoding="utf-8")
+        self.assertEqual(dashboard.pace_settings(snapshot())["margin"], 10)
 
     def test_balance_cannot_move_a_seat_onto_the_kind_running_out(self):
         self.history("claude", 0.0, start=50)
@@ -245,6 +266,13 @@ class Brake(Base):
     def both_over(self):
         self.history("claude", 1.0, start=20)
         self.history("codex:codex", 1.0, start=20)
+
+    def test_raised_margin_raises_brake_limit(self):
+        (self.dir / "settings.json").write_text(
+            json.dumps({"paceBrake": "hold", "paceMarginPoints": 20}), encoding="utf-8")
+        pacing._step("hold", {"lowest": 115, "kinds": {}}, NOW)
+        self.assertFalse(pacing._state()["brake"]["on"])
+        self.assertEqual(pacing.view()["limit"], 120)
 
     def calm(self):
         pacing._state()["series"].clear()
