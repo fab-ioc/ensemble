@@ -307,12 +307,14 @@ which types no line.
 
 Every model call re-sends the whole conversation, so a task's owner (the
 engineer, or the only agent) is not kept on one conversation forever. Past the
-task rotation limit (`taskRotateTokens`, 200k tokens by default) the hub waits
-until you are idle and asks you, with a line starting `[handover]`, to write
-`TASK-HANDOVER.md` in the task folder. It must hold the current goal and how far
+task rotation limit (`taskRotateTokens`, 200k tokens by default, in Settings ›
+Agent models) the hub asks you, even in mid-turn, with a line starting
+`[handover]`, to write `TASK-HANDOVER.md` in the task folder. It must hold the current goal and how far
 you got, decisions and why, branch and commits, changed files, tests run and
 their results, open review findings, blockers, and the exact next action. Write
-it, then end your turn without messaging anyone.
+it first, then end your turn without messaging anyone. If you are still working
+30k tokens after the ask, the hub ends your session and starts the fresh one
+anyway.
 
 The hub then ends your session and starts a fresh one (same identity, token
 and folder) whose first prompt, starting `[rotation]`, says to read

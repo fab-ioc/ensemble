@@ -30,10 +30,15 @@ settings; 0 turns them off):
    handover file to be newer than the ask and it idle (by the transcript, or
    by an idle hook since the ask that nothing on its screen contradicts). If
    it never answers — the line did not submit,
-   say — it is rotated anyway once idle past ``ASK_TIMEOUT_S``; if it stays
-   busy past ``GIVE_UP_S`` the attempt is dropped and made again later. Only a
-   person typing at its terminal since the ask drops the attempt; the hub's
-   own lines (doorbells, reports, digests) do not.
+   say — it is rotated anyway once idle past ``ASK_TIMEOUT_S``, or as soon as
+   it is idle once it has gone ``MARGIN_TOKENS`` past the limit (or past where
+   it was asked, if that is later). An owner still working by then has ignored
+   the ask for that many tokens, so the hub ends it mid-turn: size, not time,
+   because a session grows ~5k a minute (measured 2026-10-30), so 20 minutes
+   was 100k. If it stays busy past ``GIVE_UP_S`` without growing the attempt
+   is dropped and made again later. Only a person typing at its terminal since
+   the ask drops the attempt; the hub's own lines (doorbells, reports, digests)
+   do not.
 3. **Rotate.** The old terminal is ended, and a new session starts in the same
    room, same agent, model and working dir, whose first prompt is to read the
    handover. The participant keeps its identity and token, so messages and
@@ -95,17 +100,23 @@ def bind(dashboard_module) -> None:
 HANDOVER_NAME = "PO-HANDOVER.md"
 TASK_HANDOVER_NAME = "TASK-HANDOVER.md"
 DEFAULT_TOKENS = 200_000
+DEFAULT_PO_TOKENS = 150_000
 # A fresh PO starts at ~55k (measured 2026-09-10: Claude Code's own prompt, the
 # MCP tools, the handover and the roadmap); a threshold near that would rotate
 # it again after every cool-down.
 MIN_TOKENS = 100_000
 MAX_TOKENS = 5_000_000
+MARGIN_TOKENS = 30_000      # asked and this far on: the hub hands over by itself
+MIN_GROWTH = 30_000         # a young session that has not grown this much stays
 TICK_S = 60
 IDLE_S = 5.0                # terminal quiet this long after an end_turn = idle
 HUB_LINE_LEASE_S = 90.0      # stale typing marks age out after a failed thread
 ASK_TIMEOUT_S = 20 * 60     # no answer to the ask by then: rotate once idle
 GIVE_UP_S = 60 * 60         # still busy by then: drop the attempt, try later
-COOLDOWN_S = 30 * 60        # a session this young is never rotated, nor re-asked
+# After a dropped attempt, no new ask for this long. A session this young is
+# only left alone if it has not grown: half the sessions past the limit reached
+# it inside this time, and waited for it at up to 449k (measured 2026-10-30).
+COOLDOWN_S = 30 * 60
 SENDER = "ensemble"         # who the notice is from in the room
 ASK_MARK = "[handover]"     # how the ask starts, and how its arrival is told
 _KILL_WAIT_S = 8.0
@@ -150,8 +161,9 @@ def clamp_tokens(v) -> int | None:
 
 
 def threshold(key: str = "poRotateTokens") -> int:
-    v = clamp_tokens(_d.load_settings().get(key, DEFAULT_TOKENS))
-    return DEFAULT_TOKENS if v is None else v
+    default = DEFAULT_PO_TOKENS if key == "poRotateTokens" else DEFAULT_TOKENS
+    v = clamp_tokens(_d.load_settings().get(key, default))
+    return default if v is None else v
 
 
 def task_threshold() -> int:
@@ -631,6 +643,7 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         # A new session (a rotation, a reassignment): any pending ask was for
         # the old one.
         st.update(phase="watching", sessionId=sid)
+        st.pop("firstTokens", None)
     live = _pty(part) is not None
     if not live:
         st["phase"] = "watching"
@@ -665,7 +678,10 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     if st["phase"] == "asked":
         waited = now - float(st.get("askedAt") or now)
         idle = _idle(part, tr)
-        if unwritten and idle and (tr["promptSince"] or waited > ASK_TIMEOUT_S):
+        # Past this size it has ignored the ask: the size fallback.
+        last_call = max(limit, int(st.get("tokensAtAsk") or 0)) + MARGIN_TOKENS
+        overdue = limit > 0 and (tr["tokens"] or 0) >= last_call
+        if unwritten and idle and (tr["promptSince"] or waited > ASK_TIMEOUT_S or overdue):
             return not_without_handover()
         if idle and tr["promptSince"]:
             return _rotate(s, tr, done, answered=True)
@@ -675,8 +691,12 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         if _handover_refreshed(st, s["handover"]) and (
                 idle or _hook_idle(part, float(st.get("askedAt") or 0))):
             return _rotate(s, tr, done, answered=True, by_file=True)
-        if idle and waited > ASK_TIMEOUT_S:
+        if idle and (waited > ASK_TIMEOUT_S or overdue):
             return _rotate(s, tr, done, answered=False)
+        # Only an owner: its work is in the repo and its handover is one note,
+        # a PO's conversation is the only copy of what it has not written down.
+        if overdue and s["kind"] == "owner":
+            return _rotate(s, tr, done, answered=False, forced=True)
         if waited > GIVE_UP_S:
             st.update(phase="watching", lastAttempt=now)
             return done(f"gave up waiting for the handover after {int(waited // 60)} min "
@@ -688,12 +708,19 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         return done(f"rotation is off ({s['setting']} = 0)", quiet=routine)
     if tr["tokens"] is None:
         return done("no model call in the transcript yet", quiet=routine)
+    first = st.setdefault("firstTokens", tr["tokens"])
     if tr["tokens"] < limit and not force:
         return done(f"{_k(tr['tokens'])} tokens, under the {_k(limit)} limit", quiet=routine)
-    young = now - max(_session_started(part), float(st.get("lastAttempt") or 0))
-    if young < COOLDOWN_S and not force:
-        return done(f"{_k(tr['tokens'])} tokens, over the limit, but the last rotation "
-                    f"or attempt was {int(young // 60)} min ago", quiet=routine)
+    attempted = now - float(st.get("lastAttempt") or 0)
+    if attempted < COOLDOWN_S and not force:
+        return done(f"{_k(tr['tokens'])} tokens, over the limit, but the last attempt "
+                    f"was {int(attempted // 60)} min ago", quiet=routine)
+    # A fresh session that starts over the limit (a long handover under a low
+    # limit) would only be replaced by another: it must have grown first.
+    young = now - _session_started(part)
+    if young < COOLDOWN_S and tr["tokens"] - first < MIN_GROWTH and not force:
+        return done(f"{_k(tr['tokens'])} tokens, over the limit, but the session started "
+                    f"{int(young // 60)} min ago at {_k(first)}", quiet=routine)
     busy = not _idle(part, tr)
     if immediate:
         if unwritten:
@@ -732,7 +759,9 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                f"exact next action. {due_rule()} "
                f"Anything that is not in that file, the repo or the "
                f"task's spec will be forgotten. When it is written, end your turn without "
-               f"messaging anyone; the hub rotates you as soon as you are idle.")
+               f"messaging anyone; the hub rotates you as soon as you are idle. Do this "
+               f"before anything else: at {_k(max(limit, tr['tokens']) + MARGIN_TOKENS)} "
+               f"the hub ends this session whether the file is written or not.")
     sess = _pty(part)
     # Typed now even mid-turn: the agent queues it and reads it at its next
     # pause. The transcript's size is read before the ask, so the ask lands
@@ -1767,11 +1796,12 @@ def _open_points(room: dict) -> str:
 
 
 def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
-                      kinds: tuple[str, str] | None = None) -> str:
+                      kinds: tuple[str, str] | None = None, forced: bool = False) -> str:
     """A rotated owner's first prompt. It never carries the spec: a fresh
     session handed its spec as an instruction does the task again (seen
     2026-09-10). The handover is its state; the spec is only a reference.
-    ``kinds`` (old, new) when the fresh session is the other kind."""
+    ``kinds`` (old, new) when the fresh session is the other kind; ``forced``
+    when the hub ended the old session mid-turn."""
     rid = room["id"]
     title = room.get("title") or rid
     parts = [
@@ -1784,6 +1814,11 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
         parts[0] += (f" The previous session ran on {name(kinds[0])}; you run on "
                      f"{name(kinds[1])}, chosen from the plan allowance, under the same "
                      f"name and with the same tools.")
+    if forced:
+        parts[0] += (" The hub ended it in mid-turn because it had not written its handover "
+                     "in time, so the handover may be behind or missing: a command it was "
+                     "running was cut off, and its last changes may be uncommitted. Compare "
+                     "the handover with git status and git log before you rely on it.")
     parts += [
         f"Your state is {hp}: the handover your previous session wrote just before it "
         f"stopped: the goal and how far it got, decisions and why, branch and commits, "
@@ -1874,12 +1909,13 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
 
 
 def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
-            by_file: bool = False) -> dict:
+            by_file: bool = False, forced: bool = False) -> dict:
     """End the old session and start the fresh one. From the last idle check
     until the fresh terminal is on the room, the agent is marked as rotating
     under GATE: a doorbell for it is held and typed into the fresh session
     once that has settled (see the dashboard's ``_ring``), and a Stop or
-    Delete is noted and ends the fresh session."""
+    Delete is noted and ends the fresh session. ``forced`` does not wait for
+    its turn to end; a person at its terminal still holds it."""
     key = (s["room"]["id"], s["part"]["identity"])
     flags = {"stopped": False}
     st, part = s["state"], s["part"]
@@ -1897,7 +1933,7 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
         # enough for the transcript's turn end (see _hook_idle).
         settled = _idle(part, reader(tpath)) or (
             by_file and _hook_idle(part, float(st.get("askedAt") or 0)))
-        busy = not person and (not settled or _submitted_lately(sess))
+        busy = not person and not forced and (not settled or _submitted_lately(sess))
         waited = time.time() - float(st.get("askedAt") or 0)
         if busy and asked and waited <= GIVE_UP_S:
             return done(f"{s['who']} started working again — rotating once it is idle",
@@ -1907,6 +1943,7 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
             return done(f"{s['who']} was typed to or started working again — this "
                         f"attempt is dropped and made again later")
         _ROTATING[key] = flags
+        s["forced"] = forced
     try:
         return _rotate_marked(s, tr, done, answered, asked, key, flags)
     finally:
@@ -2187,6 +2224,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     tokens = tokens or tr["tokens"] or 0
     updated = _mtime(hp) > float(st.get("handoverAtAsk") or 0) if asked else False
     owner = s["kind"] == "owner"
+    forced = bool(s.get("forced"))
 
     # Under the room's launch lock from the last look at the seat to the
     # write, as every start: a live terminal of this seat that no one records
@@ -2242,7 +2280,8 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
 
             def text_for(kind: str) -> str:
                 return task_first_prompt(room_full, old_sid, tokens, hp, solo,
-                                         kinds=(old_kind, kind) if kind != old_kind else None)
+                                         kinds=(old_kind, kind) if kind != old_kind else None,
+                                         forced=forced)
 
             info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
                                                cwd, choice)
@@ -2251,7 +2290,8 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         n = len(fpart.get("rotations") or []) + 1
         rec = {"n": n, "at": now, "fromSessionId": old_sid, "toSessionId": info["sessionId"],
                "tokens": tokens, "threshold": limit, "handover": str(hp),
-               "handoverUpdated": updated, "asked": asked, "answered": answered}
+               "handoverUpdated": updated, "asked": asked, "answered": answered,
+               "tokensAtEnd": tr["tokens"] or tokens, "forced": forced}
         fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
                   "cwd": info["cwd"], "pid": None}
         drop = ("lastExit", "fresh", "nextCwd")
@@ -2321,7 +2361,10 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             _WATCHING.pop(key, None)
         st["phase"] = "watching"
         return done(f"{s['whose']} task was deleted as it rotated — nothing posted")
-    if not asked:
+    if forced:
+        how = (f"in mid-turn: {who} had gone on to {_k(rec['tokensAtEnd'])} without "
+               f"handing over")
+    elif not asked:
         how = "without asking for a handover first"
     elif not answered:
         how = f"after {who} did not answer the handover request"
@@ -2360,6 +2403,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
                 _log(f"{s['name']}: could not report the rotation to the PO: "
                      f"{str(e)[:200]}")
     st.update(phase="watching", sessionId=info["sessionId"], lastRotation=now)
+    st.pop("firstTokens", None)
     for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk", "askSubmit"):
         st.pop(k, None)
     return done(f"rotated at {_k(tokens)} tokens {how} — new session "

@@ -4413,6 +4413,20 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="5" autocomplete="off"> <span class="pref-label">rounds</span></span>
     </div>
     <p class="cfg-hint">After this many reviews of one task no reviewer starts: the owner stops and sends the findings still open to the PO, who puts them to you to decide. A PO can give one task more, saying why. 0 = no limit.</p>
+    <h5 class="sp-sub">Handover</h5>
+    <!-- #290: the size at which a session hands over to a fresh one. -->
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-task-rotate">Hand a task session over at</label>
+      <span><input type="number" id="pref-task-rotate" min="0" max="5000000" step="10000"
+             placeholder="200000" autocomplete="off"> <span class="pref-label">tokens</span></span>
+    </div>
+    <p class="cfg-hint">Every model call re-sends the whole conversation. At this size the engineer (or only agent) of a running task writes <code>TASK-HANDOVER.md</code> in the task folder and a fresh session carries on from it. If it is still working 30,000 tokens later, the hub ends it and starts the fresh session anyway. The smallest limit is 100,000. 0 = off.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-po-rotate">Hand the PO over at</label>
+      <span><input type="number" id="pref-po-rotate" min="0" max="5000000" step="10000"
+             placeholder="150000" autocomplete="off"> <span class="pref-label">tokens</span></span>
+    </div>
+    <p class="cfg-hint">The same for <span data-noun="{a project}'s PO">a project's PO</span>: it brings <code>PO-HANDOVER.md</code> up to date and a fresh session picks up from it and <code>ROADMAP.md</code>. The old conversation is kept. A PO is never ended in mid-turn. 0 = off.</p>
     <h5 class="sp-sub">Weekly pacing</h5>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -4470,19 +4484,6 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span>
     </div>
     <p class="cfg-hint">A restart or an update first asks every working agent to reach a safe point and waits for all of them, at most this long.</p>
-    <h5 class="sp-sub">Fresh sessions</h5>
-    <div class="pref-row" style="margin-top: 14px;">
-      <span class="pref-label">Start the PO afresh past</span>
-      <input type="number" id="pref-po-rotate" min="0" max="5000000" step="10000"
-             placeholder="200000" autocomplete="off"> <span class="pref-label">tokens</span>
-    </div>
-    <p class="cfg-hint"><span data-noun="Every wake of {a project}'s PO">Every wake of a project's PO</span> re-sends its whole conversation. Past this size the PO brings <code>PO-HANDOVER.md</code> up to date and a fresh session picks up from it and <code>ROADMAP.md</code>; the old conversation is kept. 0 = never.</p>
-    <div class="pref-row" style="margin-top: 14px;">
-      <span class="pref-label">Start a task's owner afresh past</span>
-      <input type="number" id="pref-task-rotate" min="0" max="5000000" step="10000"
-             placeholder="200000" autocomplete="off"> <span class="pref-label">tokens</span>
-    </div>
-    <p class="cfg-hint">The same for the engineer (or only agent) of a running task: it writes <code>TASK-HANDOVER.md</code> in the task folder and a fresh session carries on from it. 0 = never.</p>
     <h5 class="sp-sub">Command output</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">RTK for task agents</span>
@@ -8076,7 +8077,7 @@ function renderPrefs() {
   }
   const rotInput = document.getElementById('pref-po-rotate');
   if (rotInput && document.activeElement !== rotInput) {
-    rotInput.value = PREFS.poRotateTokens ?? 200000;
+    rotInput.value = PREFS.poRotateTokens ?? 150000;
   }
   const taskRotInput = document.getElementById('pref-task-rotate');
   if (taskRotInput && document.activeElement !== taskRotInput) {
