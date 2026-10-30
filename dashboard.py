@@ -15309,6 +15309,7 @@ def pace_view(snapshot: dict, now: float | None = None) -> dict:
     the pool a seat naming no model runs on."""
     cfg = pace_settings(snapshot)
     return {"enabled": cfg["enabled"], "prefer": cfg["prefer"], "marginPoints": cfg["margin"],
+            "naturalMarginPoints": PACE_MARGIN_DEFAULT,
             "hysteresisPercent": cfg["hysteresis"], "planWeights": cfg["weights"],
             "planLabels": cfg["labels"], "planSources": cfg["sources"],
             "brake": pacing.view(),

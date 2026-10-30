@@ -2879,8 +2879,45 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-subtle); font-size: var(--fs-100); font-weight: 600;
   }
   .usage-allowance-control output { color: var(--fg); font-variant-numeric: tabular-nums; }
-  #usage-pace-slider { display: block; width: 100%; min-height: 44px; margin: 4px 0 0; accent-color: var(--accent); cursor: pointer; }
+  /* A range thumb's centre travels the track less one thumb, so the thumb is
+     drawn here (its width is then known) and --pace-x is where it sits at
+     --pace-at (0 to 1), at any width (P250). */
+  .usage-allowance-control {
+    --pace-thumb: 16px;
+    --pace-x: calc(var(--pace-thumb) / 2 + (100% - var(--pace-thumb)) * var(--pace-at, 0));
+  }
+  .usage-pace-rail { position: relative; margin-top: var(--s-100); }
+  #usage-pace-slider {
+    -webkit-appearance: none; appearance: none; position: relative; display: block; width: 100%;
+    min-height: 44px; margin: 0; padding: 0; background: transparent; cursor: pointer;
+  }
+  #usage-pace-slider::-webkit-slider-runnable-track { height: 4px; border-radius: var(--r-full); background: var(--border-strong); }
+  #usage-pace-slider::-moz-range-track { height: 4px; border-radius: var(--r-full); background: var(--border-strong); }
+  #usage-pace-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: var(--pace-thumb); height: var(--pace-thumb); margin-top: -6px;
+    border: 0; border-radius: var(--r-full); background: var(--accent);
+  }
+  #usage-pace-slider::-moz-range-thumb {
+    width: var(--pace-thumb); height: var(--pace-thumb);
+    border: 0; border-radius: var(--r-full); background: var(--accent);
+  }
   #usage-pace-slider:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  /* Normal: taller than the thumb, so it still shows with the thumb on it. */
+  .usage-pace-normal-tick {
+    position: absolute; left: var(--pace-x); top: 50%; width: 2px; height: 22px;
+    transform: translate(-50%, -50%); background: var(--fg-muted); pointer-events: none;
+  }
+  .usage-pace-foot {
+    position: relative; display: flex; align-items: center; justify-content: flex-end;
+    min-height: 32px; margin-bottom: var(--s-100);
+  }
+  .usage-pace-foot[hidden] { display: none; }
+  .usage-pace-foot.far { justify-content: flex-start; }
+  .usage-pace-normal {
+    position: absolute; left: var(--pace-x); top: 0; transform: translateX(-50%);
+    font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
   .usage-src { padding: 6px 6px 10px; }
   .usage-src + .usage-src { border-top: 1px solid var(--border); padding-top: 10px; }
   .usage-src-head { display: flex; align-items: baseline; gap: 6px; }
@@ -2924,6 +2961,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .usage-pace-tick {
     position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px;
     background: var(--fg-subtle);
+  }
+  /* Where the pace line sits at normal, while the slider is elsewhere: thinner
+     than the pace tick, with an edge so it shows on the fill as on the track. */
+  .usage-pace-natural {
+    position: absolute; top: 0; bottom: 0; width: 1px;
+    background: var(--fg-muted); outline: 1px solid var(--surface-overlay);
   }
   .usage-pace { font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px;
     font-variant-numeric: tabular-nums; }
@@ -3572,6 +3615,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #usage-tray { left: var(--s-200); right: var(--s-200); width: auto; }
+    .usage-pace-foot { min-height: var(--touch-min); }
+    #usage-pace-reset { height: var(--touch-min); }
     /* Settings is the whole screen: the tab list first, a tap opens that
        page with a Back arrow to the list (.sp-page). */
     #settings-panel { align-items: stretch; justify-content: stretch; }
@@ -4345,8 +4390,15 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="usage-head">Plan allowance <span id="usage-sub"></span></div>
   <div class="usage-allowance-control">
     <label for="usage-pace-slider">Allowance above pace <output id="usage-pace-value">10 points</output></label>
-    <input id="usage-pace-slider" type="range" min="0" max="40" step="1" value="10"
-           aria-describedby="usage-pace-help">
+    <div class="usage-pace-rail">
+      <i class="usage-pace-normal-tick" id="usage-pace-normal-tick" aria-hidden="true" hidden></i>
+      <input id="usage-pace-slider" type="range" min="0" max="40" step="1" value="10"
+             aria-describedby="usage-pace-help">
+    </div>
+    <div class="usage-pace-foot" id="usage-pace-foot" hidden>
+      <span class="usage-pace-normal" id="usage-pace-normal"></span>
+      <button type="button" class="rm-btn" id="usage-pace-reset" hidden>Back to normal</button>
+    </div>
     <div id="usage-pace-help" class="usage-why">Drag to preview; it saves when released. The brake threshold is 100% plus this margin. However high this is set, new work moves off a plan once it has used 80% of its week.</div>
   </div>
   <div id="usage-list"></div>
@@ -4468,8 +4520,9 @@ window.DOC_LISTENERS_PAUSED = false;
     <div class="pref-row" style="margin-top: 14px;">
       <label class="pref-label" for="pref-pace-margin">Allowance above pace</label>
       <span><input type="number" id="pref-pace-margin" min="0" max="40" step="1"
-             placeholder="10" autocomplete="off"> <span class="pref-label">points</span></span>
+             autocomplete="off"> <span class="pref-label">points</span></span>
     </div>
+    <div class="cfg-hint" id="pref-pace-normal" hidden></div>
     <div class="pref-row">
       <label class="pref-label" for="pref-pace-brake">When both plans run too fast</label>
       <select id="pref-pace-brake" class="pref-select">
@@ -19502,6 +19555,17 @@ const USAGE_WIN_NAME = {
 };
 let USAGE_PREVIEW_MARGIN = null;
 
+// The allowance the slider stands at: the one being dragged, else the saved one.
+function usagePaceMargin() {
+  return USAGE_PREVIEW_MARGIN ?? (USAGE.pace || {}).marginPoints ?? 10;
+}
+// The natural allowance from the hub, or null from an older hub, which has none
+// to show: the marks that depend on it stay hidden.
+function usageNaturalMargin() {
+  const value = (USAGE.pace || {}).naturalMarginPoints;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 async function refreshUsage() {
   if (_usageInFlight) return;
   _usageInFlight = true;
@@ -19660,12 +19724,17 @@ function usageWindowRow(win, srcName, pace) {
   const reset = !win.rolledOver && win.resetsAt ? usageResetText(win.resetsAt) : '';
   // Today's pace mark on this kind's paced 7-day bar; none in a week's last
   // hours, when the week is no longer paced (ED-181).
-  const tick = pace && pace.state === 'known' && !pace.nearReset && !win.rolledOver && win.percent != null
+  const paced = pace && pace.state === 'known' && !pace.nearReset && !win.rolledOver && win.percent != null;
+  const tick = paced
     ? `<b class="usage-pace-tick" style="left:${Math.max(0, Math.min(100, pace.pace))}%"
          title="Pace: ${esc(String(pace.pace))}% by today"></b>` : '';
+  // Where that mark sits at normal, while the slider is away from it (P250).
+  const normal = paced && pace.normalPace != null
+    ? `<b class="usage-pace-natural" style="left:${Math.max(0, Math.min(100, pace.normalPace))}%"
+         title="At normal: pace ${esc(String(Math.round(pace.normalPace)))}% by today"></b>` : '';
   return `<div class="usage-win" title="${esc(why || reset)}">
     <span class="usage-win-label">${esc(label)}</span>
-    <span class="usage-bar"><i class="${barCls}" style="width:${barPct}%"></i>${tick}</span>
+    <span class="usage-bar"><i class="${barCls}" style="width:${barPct}%"></i>${normal}${tick}</span>
     <span class="usage-win-pct ${pctCls}">${esc(pct)}</span>
     <span class="usage-win-reset">${esc(win.rolledOver ? 'reset passed'
       : win.resetUnknown ? 'no reset time' : reset)}</span>
@@ -19791,11 +19860,22 @@ function usagePaceOf(src) {
   if (!p || !p.enabled || p.prefer) return null;
   const k = (p.kinds || {})[src.source];
   if (!k || k.state !== 'known') return null;
-  const margin = USAGE_PREVIEW_MARGIN;
-  if (margin == null || k.elapsed == null) return k;
+  if (k.elapsed == null) return k;
+  const seen = { ...k };
+  if (USAGE_PREVIEW_MARGIN != null) {
+    seen.pace = usagePaceAt(k, USAGE_PREVIEW_MARGIN);
+    seen.ahead = Number(k.percent) > seen.pace;
+  }
+  const natural = usageNaturalMargin();
+  if (natural != null && natural !== usagePaceMargin()) seen.normalPace = usagePaceAt(k, natural);
+  return seen;
+}
+
+// The pace line at a margin, as usage.pace_mark draws it: the week gone by plus
+// the margin, held to the warning except in a week's last hours (ED-181).
+function usagePaceAt(k, margin) {
   const cap = k.nearReset ? Infinity : (USAGE.warnPercent ?? 80);
-  const pace = Math.min(cap, k.elapsed * 100 + margin);
-  return { ...k, pace, ahead: Number(k.percent) > pace };
+  return Math.min(cap, k.elapsed * 100 + margin);
 }
 
 // A kind whose week resets within hours (ED-181): the hub seats it up to the
@@ -19854,19 +19934,58 @@ function usageBrakeHtml() {
     b.until ? ` Until ${esc(b.until)}.` : ''} However high this is set, new work moves off a plan once it has used 80% of its week.</div>`;
 }
 
+// "20 points · 10 above normal", "10 points · normal"; only the points from an
+// older hub, which does not say what normal is.
+function usagePaceValueText(margin, natural) {
+  const num = n => String(Math.round(n * 10) / 10);
+  const points = `${num(margin)} point${margin === 1 ? '' : 's'}`;
+  if (natural == null) return points;
+  if (margin === natural) return `${points} · normal`;
+  return `${points} · ${num(Math.abs(margin - natural))} ${margin > natural ? 'above' : 'below'} normal`;
+}
+
+// The slider and everything saying where normal is, the Settings field's too.
+function renderUsagePace() {
+  const slider = document.getElementById('usage-pace-slider');
+  const margin = usagePaceMargin(), natural = usageNaturalMargin();
+  // While a preview runs the slider leads; after it the hub does, so a save
+  // that failed does not leave the thumb where the save asked for.
+  if (slider && USAGE_PREVIEW_MARGIN == null) slider.value = String(Math.max(0, Math.min(40, margin)));
+  const text = usagePaceValueText(margin, natural);
+  const value = document.getElementById('usage-pace-value');
+  if (value) value.textContent = text;
+  slider?.setAttribute('aria-valuetext', text);
+  const known = natural != null;
+  const foot = document.getElementById('usage-pace-foot');
+  const tick = document.getElementById('usage-pace-normal-tick');
+  if (slider && foot && tick) {
+    foot.hidden = tick.hidden = !known;
+    if (known) {
+      const at = Math.max(0, Math.min(1, natural / Number(slider.max)));
+      foot.parentElement.style.setProperty('--pace-at', String(at));
+      foot.classList.toggle('far', at > 0.5);
+      document.getElementById('usage-pace-normal').textContent = `normal ${natural}`;
+      document.getElementById('usage-pace-reset').hidden = margin === natural;
+    }
+  }
+  const field = document.getElementById('pref-pace-margin');
+  if (field) field.placeholder = known ? String(natural) : '';
+  const hint = document.getElementById('pref-pace-normal');
+  if (hint) {
+    hint.hidden = !known;
+    hint.textContent = known ? `Normal is ${natural} points.` : '';
+  }
+}
+
 function renderUsage() {
   const chip = $('#usage-chip'), body = $('#usage-chip-body');
   const sources = USAGE.sources || [];
+  renderUsagePace();
   if (USAGE.state === 'loading' || !sources.length) {
     chip.hidden = true;                       // nothing worth a chip yet
     return;
   }
   chip.hidden = false;
-  const paceSlider = document.getElementById('usage-pace-slider');
-  const margin = USAGE_PREVIEW_MARGIN ?? (USAGE.pace || {}).marginPoints ?? 10;
-  if (paceSlider && document.activeElement !== paceSlider) paceSlider.value = String(Math.max(0, Math.min(40, margin)));
-  const paceValue = document.getElementById('usage-pace-value');
-  if (paceValue) paceValue.textContent = `${Math.round(margin)} point${Math.round(margin) === 1 ? '' : 's'}`;
   const parts = sources.map(usageChipPart).filter(Boolean);
   body.innerHTML = parts.join('<span class="usage-chip-label">·</span>');
 
@@ -19901,14 +20020,26 @@ document.getElementById('usage-pace-slider')?.addEventListener('input', (ev) => 
   USAGE_PREVIEW_MARGIN = value;
   renderUsage();
 });
-document.getElementById('usage-pace-slider')?.addEventListener('change', async (ev) => {
-  const value = Math.max(0, Math.min(40, Number(ev.target.value) || 0));
+async function usagePaceSave(value) {
   try {
     await setPref('paceMarginPoints', value);
   } finally {
     USAGE_PREVIEW_MARGIN = null;
   }
   await refreshUsage();
+}
+document.getElementById('usage-pace-slider')?.addEventListener('change', (ev) => {
+  usagePaceSave(Math.max(0, Math.min(40, Number(ev.target.value) || 0)));
+});
+document.getElementById('usage-pace-reset')?.addEventListener('click', () => {
+  const natural = usageNaturalMargin();
+  if (natural == null) return;
+  const slider = document.getElementById('usage-pace-slider');
+  USAGE_PREVIEW_MARGIN = natural;
+  slider.value = String(natural);
+  slider.focus();   // this button is about to hide
+  renderUsage();
+  usagePaceSave(natural);
 });
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#usage-chip') || ev.target.closest('#usage-tray')) return;
