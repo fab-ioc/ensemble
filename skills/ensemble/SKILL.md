@@ -307,12 +307,14 @@ which types no line.
 
 Every model call re-sends the whole conversation, so a task's owner (the
 engineer, or the only agent) is not kept on one conversation forever. Past the
-task rotation limit (`taskRotateTokens`, 200k tokens by default) the hub waits
-until you are idle and asks you, with a line starting `[handover]`, to write
-`TASK-HANDOVER.md` in the task folder. It must hold the current goal and how far
+task rotation limit (`taskRotateTokens`, 200k tokens by default, in Settings ›
+Agent models) the hub asks you, even in mid-turn, with a line starting
+`[handover]`, to write `TASK-HANDOVER.md` in the task folder. It must hold the current goal and how far
 you got, decisions and why, branch and commits, changed files, tests run and
 their results, open review findings, blockers, and the exact next action. Write
-it, then end your turn without messaging anyone.
+it first, then end your turn without messaging anyone. If you are still working
+30k tokens after the ask, the hub ends your session and starts the fresh one
+anyway.
 
 The hub then ends your session and starts a fresh one (same identity, token
 and folder) whose first prompt, starting `[rotation]`, says to read
@@ -629,7 +631,7 @@ PO, Stopped) and the column header's "N working", never the column.
 successor with no memory would need: how the product owner likes to work,
 priorities and decisions with the why, what is running, what waits on whom,
 and what you have promised. Update it whenever one of those changes, not only
-when asked. Past the rotation limit (200k tokens by default) the hub asks you
+when asked. Past the rotation limit (150k tokens by default) the hub asks you
 to bring it up to date, then starts a fresh PO whose first prompt is to read it
 and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
 a fresh session as an instruction: it redoes the work.

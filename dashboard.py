@@ -1915,7 +1915,7 @@ _SETTINGS_DEFAULTS = {
     # The PO's rotation (rotation.py): past this many tokens of context per
     # model call, the PO writes its handover and a fresh session takes over
     # from it. 0 = off.
-    "poRotateTokens": rotation.DEFAULT_TOKENS,
+    "poRotateTokens": rotation.DEFAULT_PO_TOKENS,
     # Model for an emergency PO switch when its seat has no alternative model.
     # The PO's agentPreference.alt takes precedence when it is present.
     "poFallbackModels": dict(rotation.DEFAULT_PO_FALLBACK_MODELS),
