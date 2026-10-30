@@ -151,6 +151,26 @@ class ReviewOne(_Hub):
         self.assertTrue(self.mark_of(rid))
         self.assertEqual(self.column(rid), "inprogress")
 
+    def test_a_restore_outlasting_the_grace_stops_no_room(self):
+        rid = self.marked()
+        with mock.patch.object(dashboard, "_ROOMS_RESTORING", 1):
+            self.tick()
+        self.assertTrue(self.mark_of(rid))
+        self.assertEqual(self.column(rid), "inprogress")
+        self.assertNotIn(rid, self.state()["stopped"])
+
+    def test_a_restore_counts_while_it_runs_even_if_it_fails(self):
+        h = dashboard.Handler.__new__(dashboard.Handler)
+        seen = []
+
+        def now(*a, **k):
+            seen.append(dashboard._ROOMS_RESTORING)
+            raise ValueError("no")
+        with mock.patch.object(dashboard.Handler, "_bring_back_rooms_now", now), \
+                self.assertRaises(ValueError):
+            h._bring_back_rooms([], fresh=True, wake_room="", po_rooms=set())
+        self.assertEqual((seen, dashboard._ROOMS_RESTORING), ([1], 0))
+
     def test_after_the_grace_two_looks_still_stop_it(self):
         rid = self.marked()
         self.tick()
@@ -179,6 +199,25 @@ class ReviewOne(_Hub):
         self.assertEqual(len(self.lines), 1)
         self.assertIn("turn never ended", self.lines[0])
         self.assertEqual(self.column(rid), "waiting")
+
+    def test_with_a_limit_over_the_hour_the_limit_decides(self):
+        self.minutes = 90
+        self.task()
+        self.working.add("pty-1")
+        self.idle_s["pty-1"] = 80 * MIN
+        self.tick()
+        self.assertEqual(self.lines, [])
+        self.idle_s["pty-1"] = 95 * MIN
+        self.tick()
+        self.assertEqual(len(self.lines), 1)
+
+    def test_the_board_reads_a_state_the_disk_refused(self):
+        rid = self.task()
+        self.idle_s["pty-1"] = 25 * MIN
+        idle._state_file().mkdir()
+        with mock.patch.object(idle.time, "sleep"):
+            self.tick()
+        self.assertEqual(idle.records()[rid]["alerts"], 1)
 
     def test_a_failed_save_does_not_repeat_the_line(self):
         rid = self.task()

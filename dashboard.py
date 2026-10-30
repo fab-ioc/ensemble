@@ -14409,6 +14409,8 @@ _BOOT_HOST_ROOMS: set | None = None
 # brings the rooms back, even when its lease has aged past RESTART_BUSY_S.
 _RESTART_RESTORING = False
 _RESTORE_LOCK = threading.Lock()    # one restore of a snapshot: the hub's or the helper's
+_ROOMS_RESTORING = 0            # _bring_back_rooms running now: idle.py calls no room stopped
+_RESTORE_COUNT_LOCK = threading.Lock()
 
 
 _BOOT_HOST_UNKNOWN = False      # that lookup failed: no boot restore this start
@@ -19676,7 +19678,17 @@ class Handler(BaseHTTPRequestHandler):
             _update_log(f"after the update: {line}")
         return {"ok": True, "rooms": out, "note": line}
 
-    def _bring_back_rooms(self, entries: list[dict], *, fresh: bool, wake_room: str,
+    def _bring_back_rooms(self, *a, **k) -> list[dict]:
+        global _ROOMS_RESTORING
+        with _RESTORE_COUNT_LOCK:
+            _ROOMS_RESTORING += 1
+        try:
+            return self._bring_back_rooms_now(*a, **k)
+        finally:
+            with _RESTORE_COUNT_LOCK:
+                _ROOMS_RESTORING -= 1
+
+    def _bring_back_rooms_now(self, entries: list[dict], *, fresh: bool, wake_room: str,
                           po_rooms: set, drained=None, drain_notes: dict | None = None,
                           notice: str = "", gap: float = 0.0, what: str = "restart",
                           lease: str = "", since: float = 0.0) -> list[dict]:

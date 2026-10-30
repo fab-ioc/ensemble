@@ -11,7 +11,8 @@ column: a stopped task never alerts, a live agent in Done does.
 Not idle while the owner works, hands over or retries a provider's refusal, a
 reviewer runs, or its own command runs (up to ``attention.OWN_WORK_CAP_S``).
 A turn that never closed counts as work until the screen has been silent for
-``STUCK_S``: an agent working prints, so that is a hang or a missing transcript.
+``STUCK_S`` (or the limit, if longer): a hang, a transcript the hub cannot find,
+or a silent tool call that long, which the PO is told of all the same.
 No look at all during a drain or its restart.
 Held, no column move and no alert: paused, held by the pacing brake, at a model
 limit. Quiet, no alert: a marked wait, an open ask the PO has read, an open
@@ -36,8 +37,8 @@ never over a move made in that stretch, and it leaves ``workflowAt`` alone (as
 tick covers every project, so no pass at hub start is needed.
 
 **Stopped** takes two looks ``STOP_LOOK_S`` apart, none of them in the first
-``BOOT_GRACE_S`` of a hub or while the room is resuming: rooms the restart lost
-are not live until they are brought back.
+``BOOT_GRACE_S`` of a hub, while a restore runs or while the room is resuming:
+rooms the restart lost are not live until they are brought back.
 
 State: ``DASHBOARD_DIR/idle.json``, saved as soon as a line is typed, so a hub
 restart repeats nothing but a line typed in the moment before it died.
@@ -346,7 +347,8 @@ def _look_stopped(room: dict, state: dict, now: float, live_ptys: set) -> str:
     relevant = (_d.workflow_of(room) == "inprogress" or room.get("waitMark")
                 or rid in state["tasks"] or rid in state["resolved"])
     if (not relevant or room.get("paceHold") or rid in live_ptys
-            or now - _STARTED < BOOT_GRACE_S or _d.restart_drain._resuming(rid)
+            or now - _STARTED < BOOT_GRACE_S or _d._ROOMS_RESTORING
+            or _d.restart_drain._resuming(rid)
             or _d._room_has_linked_agent(room)):
         state["stopped"].pop(rid, None)
         return ""
@@ -569,7 +571,7 @@ def tick(now: float | None = None) -> dict[str, str]:
 def records() -> dict[str, dict]:
     """The tasks idle right now, ``{since, alerts, ...}``. One read of the file
     for a whole list."""
-    return {rid: rec for rid, rec in _load()["tasks"].items() if rec.get("current")}
+    return {rid: rec for rid, rec in (_UNSAVED or _load())["tasks"].items() if rec.get("current")}
 
 
 def maybe_tick() -> None:
