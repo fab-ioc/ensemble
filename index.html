@@ -14332,7 +14332,8 @@ function wcCommentLink(win, link, d) {
   wcChoose(t);
   const f = document.getElementById('workspace-compose-frame');
   if (!WC.base || wcKey(WC.target) !== wcKey(t)) return false;
-  const put = () => { try { f.contentWindow.edCommentLink(link); } catch (e) {} };
+  // Put only while the box is still aimed there: moved meanwhile, the page that loads is another chat's.
+  const put = () => { if (wcKey(WC.target) === wcKey(t)) try { f.contentWindow.edCommentLink(link); } catch (e) {} };
   if (f.contentDocument?.readyState === 'complete' && f.contentDocument.URL.includes(WC.base)) put(); else f.addEventListener('load', put, {once:true});
   return true;
 }

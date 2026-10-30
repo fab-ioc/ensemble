@@ -230,6 +230,24 @@ async function main() {
           box: '.dcx', add: '.dcx .dcx-add', tray: `([...PD.els.changes.querySelectorAll('.cmt-tray-head')].find(h => h.getClientRects().length) || {}).parentElement`,
           words: 'Comment on the diff at 390', shot: 'ph390-changes' }); }],
     ]);
+    // Last, as opening a thread marks its answer seen and so empties the Needs-you lists above.
+    await view('ws1440-thread', 1440, 900, false, '/', WS_READY, [
+      ['open', async P => { await P.ev(`SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); 0`);
+        await P.until(`!!${PO}?.contentDocument?.querySelector('.thr-line .thr-open')`, 'PO chat');
+        await P.until(`!document.getElementById('workspace-compose').hidden && !!${WCF}.contentWindow?.eval('typeof ED === "undefined" ? null : ED')`, 'workspace box');
+        await sleep(800); return true; }],
+      // The PO's thread, open in its own panel beside the chat (#236): Comment under the answer there.
+      ['threadPoint', async P => {
+        const THR = `document.querySelector('iframe.po-thread')`;
+        await P.pressOn(`${PO}.contentDocument.querySelector('.thr-line .thr-open')`, 'thread');
+        await P.until(`!!${THR}?.contentDocument?.querySelector('#msgs .pt-btn[data-pt-act=comment]')`, 'thread panel');
+        await sleep(600);
+        const r = await pointComment(P, { btn: `${THR}.contentDocument.querySelector('#msgs .pt-btn[data-pt-act=comment]')`, box: `${WCF}.contentWindow`,
+          own: `${THR}.contentWindow`, mid: A.poAnswer, shot: 'ws1440-thread-point' });
+        r.guest = await P.ev(`${THR}.contentDocument.body.classList.contains('workspace-guest')`);
+        r.target = await P.ev(`({ room: WC.target && WC.target.room, kind: WC.target && WC.target.kind })`);
+        return r; }],
+    ]);
   } finally {
     try { await send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -453,6 +471,12 @@ class EveryComment(unittest.TestCase):
 
     def test_needs_you_comment_in_the_workspace_goes_in_the_send_box(self):
         self.point_ok("ws1440", "needsYou", self.got_mid("po"))
+
+    def test_point_comment_in_a_docked_thread_goes_in_the_send_box(self):
+        r = self.got["ws1440-thread"]["threadPoint"]
+        self.assertTrue(r.get("guest"), r)
+        self.point_ok("ws1440-thread", "threadPoint", self.got_mid("po"))
+        self.assertEqual(r["target"], {"room": self.po, "kind": "thread"})
 
     def test_point_comment_in_a_chat_page_and_on_the_phone(self):
         for tag in ("pg1440", "ph390"):
