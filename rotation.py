@@ -35,7 +35,10 @@ settings; 0 turns them off):
    it was asked, if that is later). An owner still working by then has ignored
    the ask for that many tokens, so the hub ends it mid-turn: size, not time,
    because a session grows ~5k a minute (measured 2026-10-30), so 20 minutes
-   was 100k. If it stays busy past ``GIVE_UP_S`` without growing the attempt
+   was 100k. One that has written its handover and is still finishing gets
+   one more ``MARGIN_TOKENS``; a prompt on its screen, or a hub line being
+   typed to it, holds the end. If it stays busy past ``GIVE_UP_S`` without
+   growing the attempt
    is dropped and made again later. Only a person typing at its terminal since
    the ask drops the attempt; the hub's own lines (doorbells, reports, digests)
    do not.
@@ -153,7 +156,7 @@ def clamp_tokens(v) -> int | None:
     """A threshold in tokens: 0 (off) or MIN … MAX; None when not a number."""
     try:
         v = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):     # Infinity arrives from JSON
         return None
     if v <= 0:
         return 0
@@ -731,9 +734,11 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         return done(f"{_k(tr['tokens'])} tokens, over the limit, but the last attempt "
                     f"was {int(attempted // 60)} min ago", quiet=routine)
     # A fresh session that starts over the limit (a long handover under a low
-    # limit) would only be replaced by another: it must have grown first.
+    # limit) would only be replaced by another: it must have grown first. A PO
+    # just waits: made from a past session, it is writing its first handover.
     young = now - _session_started(part)
-    if young < COOLDOWN_S and tr["tokens"] - first < MIN_GROWTH and not force:
+    grew = s["kind"] != "po" and tr["tokens"] - first >= MIN_GROWTH
+    if young < COOLDOWN_S and not grew and not force:
         return done(f"{_k(tr['tokens'])} tokens, over the limit, but the session started "
                     f"{int(young // 60)} min ago at {_k(first)}", quiet=routine)
     busy = not _idle(part, tr)
@@ -1936,7 +1941,8 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
     under GATE: a doorbell for it is held and typed into the fresh session
     once that has settled (see the dashboard's ``_ring``), and a Stop or
     Delete is noted and ends the fresh session. ``forced`` does not wait for
-    its turn to end; a person at its terminal still holds it."""
+    its turn to end; a person at its terminal still holds it, and a hub line
+    being typed puts it off to the next check, or the line would be lost."""
     key = (s["room"]["id"], s["part"]["identity"])
     flags = {"stopped": False}
     st, part = s["state"], s["part"]
@@ -1954,9 +1960,10 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
         # enough for the transcript's turn end (see _hook_idle).
         settled = _idle(part, reader(tpath)) or (
             by_file and _hook_idle(part, float(st.get("askedAt") or 0)))
-        busy = not person and not forced and (not settled or _submitted_lately(sess))
+        busy = not person and (hub_line_pending(sess) if forced
+                               else not settled or _submitted_lately(sess))
         waited = time.time() - float(st.get("askedAt") or 0)
-        if busy and asked and waited <= GIVE_UP_S:
+        if busy and asked and (forced or waited <= GIVE_UP_S):
             return done(f"{s['who']} started working again — rotating once it is idle",
                         quiet=s["kind"] == "owner")
         if person or busy:

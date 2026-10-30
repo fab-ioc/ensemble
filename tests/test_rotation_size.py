@@ -55,6 +55,15 @@ class AskByAge(_Base):
         self.assertEqual(len(self.sess.typed), 1)
         self.assertNotIn("the hub ends this session", self.sess.typed[0])
 
+    def test_a_young_po_only_waits_out_the_cool_down(self):
+        # A past session made PO, at 300k, writing its first handover.
+        s, started = self.young(240_000)
+        s["kind"] = "po"
+        self.tr["tokens"] = 240_000 + rotation.MIN_GROWTH
+        with started:
+            out = self.check(s)
+        self.assertEqual((out["phase"], self.sess.typed), ("watching", []))
+
     def test_a_dropped_attempt_still_waits(self):
         s = self.subject(firstTokens=50_000, lastAttempt=time.time() - 60)
         self.assertEqual((self.check(s)["phase"], self.sess.typed), ("watching", []))
@@ -139,6 +148,24 @@ class Fallback(_Base):
         self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
         self.assertTrue(s["forced"])
 
+    def test_a_hub_line_being_typed_puts_the_end_off_one_check(self):
+        s = self.over(240_000)
+        self.sess.hub_line_typing_at = time.time()
+        self.check(s)
+        s["state"]["askedAt"] -= rotation.GIVE_UP_S + 1
+        out = self.check(s)
+        self.assertEqual(self.rotated, [])
+        self.assertEqual(out["phase"], "asked", "the attempt is not dropped")
+        self.sess.hub_line_typing_at = 0
+        self.check(s)
+        self.assertEqual(len(self.rotated), 1)
+
+    def test_a_recent_submit_does_not_hold_the_end(self):
+        s = self.over(240_000)
+        self.sess._last_submit = time.time()
+        self.check(s)
+        self.assertEqual(len(self.rotated), 1)
+
     def test_a_session_at_a_prompt_is_not_ended(self):
         s = self.over(240_000)
         with mock.patch.object(rotation, "_at_prompt", return_value=True):
@@ -173,6 +200,13 @@ class Fallback(_Base):
 
 
 class Defaults(unittest.TestCase):
+    def test_an_endless_limit_is_not_a_number(self):
+        self.assertIsNone(rotation.clamp_tokens(float("inf")))
+        self.assertIsNone(rotation.clamp_tokens(1e999))
+        with mock.patch.object(dashboard, "load_settings",
+                               return_value={"taskRotateTokens": float("inf")}):
+            self.assertEqual(rotation.task_threshold(), rotation.DEFAULT_TOKENS)
+
     def test_each_seat_has_its_own_default_and_value(self):
         with mock.patch.object(dashboard, "load_settings", return_value={}):
             self.assertEqual((rotation.threshold(), rotation.task_threshold()),
