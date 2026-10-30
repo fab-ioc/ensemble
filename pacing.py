@@ -31,6 +31,7 @@ WEEK_H = 7 * 24
 PROJECTED_LIMIT = 110       # 100 plus what a projection is off by a day ahead
 RELEASE_POINTS = 5          # the brake lets go this far under the limit
 DWELL_S = 6 * 3600          # and not sooner than this after it engaged
+OUTAGE_S = 6 * 3600         # readings gone this long end the brake
 TICK_EVERY_S = 60
 USE_EVERY_S = 3600
 HELD_FROM_PRIORITY = 3      # medium; high and highest always start
@@ -49,7 +50,7 @@ def _path():
 
 
 def _blank():
-    return {"series": {}, "brake": {"on": False, "episode": 0, "since": 0, "latest": 0,
+    return {"series": {}, "brake": {"on": False, "episode": 0, "since": 0, "unknownSince": 0,
                                     "ended": "", "why": "", "until": ""},
             "told": {}, "use": []}
 
@@ -258,17 +259,11 @@ def _until(kinds, now):
             f"or {_d._reset_clock(soonest.get('resetsAt'), now)} at the latest")
 
 
-def _latest(kinds, now):
-    """When the soonest week resets, 0 when no reading says."""
-    hours = [float(r["hoursToReset"]) for r in kinds.values() if r.get("hoursToReset")]
-    return now + min(hours) * 3600 if hours else 0
-
-
 def _step(how, judged, now):
     """Move the brake one tick. An outage keeps the state and tells nobody: the
-    same episode carries on when readings return. It ends the brake only by
-    outlasting the reset the card promised as the latest, so nothing is held
-    for good."""
+    same episode carries on when readings return. Past OUTAGE_S it ends the
+    brake, with the release tell, so nothing is held for good. New work starts
+    all through it (``hold``)."""
     brake = _state()["brake"]
     before = dict(brake)
     lowest = judged["lowest"]
@@ -276,17 +271,19 @@ def _step(how, judged, now):
         if brake["on"]:
             brake.update(on=False, ended="off")
     elif lowest is None:
-        if brake["on"] and brake["latest"] and now >= brake["latest"]:
-            brake.update(on=False, ended="reset")
+        if brake["on"]:
+            brake["unknownSince"] = brake["unknownSince"] or now
+            if now - brake["unknownSince"] >= OUTAGE_S:
+                brake.update(on=False, ended="unknown")
     else:
+        brake["unknownSince"] = 0
         if lowest >= PROJECTED_LIMIT and not brake["on"]:
             brake.update(on=True, since=now, episode=brake["episode"] + 1, ended="")
         elif (brake["on"] and lowest < PROJECTED_LIMIT - RELEASE_POINTS
                 and now - brake["since"] >= DWELL_S):
             brake.update(on=False, ended="recovered")
         if brake["on"]:
-            brake.update(why=_why(judged["kinds"], now), until=_until(judged["kinds"], now),
-                         latest=_latest(judged["kinds"], now))
+            brake.update(why=_why(judged["kinds"], now), until=_until(judged["kinds"], now))
     return brake != before
 
 
@@ -302,10 +299,11 @@ def hold(room, by, now=None):
         brake = dict(_state()["brake"])
         if not brake["on"] or _judge(_d.usage.snapshot(), now)["lowest"] is None:
             return None
-        # The first hold stands: the board re-checks a held task's gate, and an
-        # agent's start must stay one.
+        # The board re-checks a held task's gate: an agent's start stays one,
+        # and one asked for on a task its gate held becomes one.
         prior = room.get("paceHold") or {}
-        mark = {"at": prior.get("at", now), "by": prior.get("by", by),
+        mark = {"at": prior.get("at", now),
+                "by": "agent" if by == "agent" else prior.get("by", by),
                 "why": brake["why"], "until": brake["until"]}
         if _d.chatroom.patch_room(room["id"], paceHold=mark) is None:
             return None
@@ -378,6 +376,7 @@ def _start_held(first):
     mark = room.get("paceHold")
     if not mark:                    # started or stopped since the look
         return False
+    failure = None
     try:
         # A task its gate started goes the gate's own way: re-tested, claimed,
         # told. A gate that no longer holds leaves it waiting for the gate, not
@@ -386,14 +385,16 @@ def _start_held(first):
             _d.board.start_gated(room)
         else:
             _d.hub_launcher()._resume_room(room)
-        clear_hold(room)
     except Exception as exc:                                # noqa: BLE001
-        clear_hold(room)
-        project = _project_of(room)
-        if project:
-            _d.board.deliver(project, f"{_d.task_label(room)} could not start after the pacing "
-                                      f"brake: {exc}. Start it manually after resolving this.")
-    return True
+        failure = exc
+    _stage("a held mark", clear_hold, room)
+    if failure is None:
+        return True
+    project = _project_of(room)
+    if project:
+        _d.board.deliver(project, f"{_d.task_label(room)} could not start after the pacing "
+                                  f"brake: {failure}. Start it manually after resolving this.")
+    return False
 
 
 def _tell(how):
@@ -417,7 +418,7 @@ def _tell(how):
                 told["engage"] = episode
                 changed = True
         elif not brake["on"] and told["engage"] == episode and told["release"] < episode:
-            ended = {"reset": "the week reset while the usage readings were not available",
+            ended = {"unknown": "the usage readings have been unavailable for 6 hours",
                      "off": "it was turned off in Settings"}.get(brake["ended"],
                                                                  "the projection recovered")
             if _d.board.deliver(project, f"Pacing brake off: {ended}. Waiting tasks start by "

@@ -369,16 +369,43 @@ class Brake(Base):
         self.assertEqual(pacing._state()["brake"]["episode"], episode)
         self.assertEqual(self.delivered, [])
 
-    def test_an_outage_past_the_reset_lets_go_and_says_why(self):
+    def test_an_outage_never_holds_a_new_start(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing._state()["series"].clear()
+        pacing.tick(NOW + 60)
+        self.assertIsNone(pacing.hold(self.room("m", 3), "agent", NOW + 120))
+
+    def test_an_outage_past_six_hours_releases_once_and_says_why(self):
         self.both_over()
         pacing.tick(NOW)
         pacing.hold(self.room("m", 3), "agent", NOW)
+        self.delivered.clear()
         pacing._state()["series"].clear()
-        pacing.tick(END - 60)
+        pacing.tick(NOW + 60)
+        pacing.tick(NOW + 60 + 6 * H - 1)
         self.assertEqual(self.started, [])
-        pacing.tick(END + 60)
+        self.assertTrue(pacing._state()["brake"]["on"])
+        self.assertEqual(self.delivered, [])
+        pacing.tick(NOW + 60 + 6 * H)
+        pacing.tick(NOW + 120 + 6 * H)
         self.assertEqual(self.started, ["m"])
-        self.assertIn("week reset", self.delivered[-1])
+        self.assertEqual(len(self.delivered), 1)
+        self.assertTrue(self.delivered[0].startswith("Pacing brake off"))
+        self.assertIn("unavailable for 6 hours", self.delivered[0])
+
+    def test_a_reading_that_returns_restarts_the_outage_clock(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing.hold(self.room("m", 3), "agent", NOW)
+        pacing._state()["brake"]["unknownSince"] = NOW - 5 * H
+        pacing.tick(NOW + 60)
+        self.assertEqual(pacing._state()["brake"]["unknownSince"], 0)
+        pacing._state()["series"].clear()
+        pacing.tick(NOW + 2 * H)
+        pacing.tick(NOW + 7 * H)
+        self.assertTrue(pacing._state()["brake"]["on"])
+        self.assertEqual(self.started, [])
 
     def test_turning_it_off_releases_and_says_so_once(self):
         self.both_over()
@@ -554,6 +581,17 @@ class Brake(Base):
             board.check(self.projects[0], NOW + 7 * H)
         self.assertEqual(self.started, [])
 
+    def test_a_stopped_held_gated_task_is_no_board_news(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 2, launched=False, after=[{"task": "t"}],
+                         paceHold={"at": NOW, "by": "gate"})
+        self.stop(room)
+        self.delivered.clear()
+        self.check_board(NOW)
+        self.check_board(NOW + 3600)
+        self.assertEqual(self.delivered, [])
+
     def test_a_held_task_that_gets_told_is_no_board_news(self):
         self.both_over()
         pacing.tick(NOW)
@@ -597,6 +635,30 @@ class Brake(Base):
         self.assertEqual(room["paceHold"]["by"], "agent")
         self.release_after_recovery()
         self.assertEqual(self.started, ["g"])
+
+    def test_an_agent_start_of_a_gate_held_task_is_kept(self):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}])
+        pacing.hold(room, "gate", NOW)
+        pacing.hold(room, "agent", NOW)
+        self.assertEqual(room["paceHold"]["by"], "agent")
+        self.release_after_recovery()
+        self.assertEqual(self.started, ["g"])
+
+    def test_a_start_whose_mark_will_not_clear_is_still_the_ticks_one_start(self):
+        self.room("a", 3, no=1, paceHold={"at": NOW})
+        self.room("b", 3, no=2, paceHold={"at": NOW})
+        real = pacing.clear_hold
+        def clear(room):
+            if room["id"] == "a":
+                raise OSError("no")
+            real(room)
+        dashboard.hub_launcher.return_value._resume_room.side_effect = (
+            lambda room: self.started.append(room["id"]))
+        with mock.patch.object(pacing, "clear_hold", side_effect=clear):
+            pacing._release("hold")
+        self.assertEqual(self.started, ["a"])
 
     def test_a_relaunch_of_a_stopped_gated_task_starts_after_the_brake(self):
         self.both_over()
