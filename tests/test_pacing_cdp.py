@@ -59,7 +59,7 @@ async function main() {
       const hold = document.querySelector('.card[data-room="${A.room}"] .chold');
       const card = hold.closest('.card'), cr = card.getBoundingClientRect(), r = hold.getBoundingClientRect();
       const tray = document.getElementById('usage-tray'), tr = tray.getBoundingClientRect();
-      return { hold: hold.textContent, title: hold.title, whole: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5 && r.bottom <= cr.bottom + 0.5,
+      return { hold: hold.textContent, whole: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5 && r.bottom <= cr.bottom + 0.5,
         tray: tray.textContent.replace(/\\s+/g, ' '), trayFits: tr.left >= -0.5 && tr.right <= innerWidth + 0.5,
         over: !!tray.querySelector('.usage-pace .ahead'),
         scroll: document.documentElement.scrollWidth, width: innerWidth }; })()`;
@@ -165,8 +165,8 @@ class TheHoldIsVisible(unittest.TestCase):
         cls.tmp.cleanup()
 
     def check(self, view):
-        self.assertIn("until the projection falls under 105%", view["hold"])
-        self.assertIn("heading for 150%", view["title"])
+        self.assertIn("Until the projection falls under 105%", view["hold"])
+        self.assertIn("heading for 150%", view["hold"])
         self.assertTrue(view["whole"], view)
         self.assertIn("Pacing brake on", view["tray"])
         self.assertIn("points an hour", view["tray"])

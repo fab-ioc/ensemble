@@ -1,6 +1,7 @@
 """The burn rate, its seat rule and the brake on new work (#291)."""
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -362,15 +363,106 @@ class Brake(Base):
         pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
         self.assertEqual(self.started, ["m"])
 
-    def test_turning_it_off_releases_and_tells_nothing_more(self):
+    def test_turning_it_off_releases_and_says_so_once(self):
         self.both_over()
         pacing.tick(NOW)
         pacing.hold(self.room("m", 3), "agent", NOW)
         self.delivered.clear()
         self.setting("off")
         pacing.tick(NOW + 60)
+        pacing.tick(NOW + 120)
         self.assertEqual(self.started, ["m"])
-        self.assertEqual(self.delivered, [])
+        self.assertEqual(len(self.delivered), 1)
+        self.assertIn("turned off in Settings", self.delivered[0])
+
+    def test_a_release_for_lost_readings_says_that(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing._state()["series"].clear()
+        pacing.tick(NOW + 60)
+        pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
+        self.assertIn("readings are not available", self.delivered[-1])
+        self.assertNotIn("recovered", self.delivered[-1])
+
+    def test_new_work_stays_held_through_the_dwell(self):
+        self.both_over()
+        pacing.tick(NOW)
+        self.calm()
+        pacing.tick(NOW + H)
+        self.assertTrue(pacing._state()["brake"]["on"])
+        self.assertIsNotNone(pacing.hold(self.room("m", 3), "agent", NOW + H))
+
+    def test_a_failing_stage_never_stops_the_release(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing.hold(self.room("m", 3), "agent", NOW)
+        self.calm()
+        for target, name in ((pacing, "_tell"), (pacing, "_save"), (pacing, "sample"),
+                             (pacing, "_note_use"), (pacing, "_judge")):
+            self.started.clear()
+            self.rooms["m"]["paceHold"] = {"at": NOW}
+            pacing._state()["brake"].update(on=False)
+            with mock.patch.object(target, name, side_effect=OSError("no")):
+                pacing.tick(NOW + 7 * H)
+            self.assertEqual(self.started, ["m"], name)
+
+    def test_a_failing_usage_reading_releases_after_the_grace(self):
+        self.both_over()
+        pacing.tick(NOW)
+        pacing.hold(self.room("m", 3), "agent", NOW)
+        with mock.patch.object(dashboard.usage, "snapshot", side_effect=OSError("no")):
+            pacing.tick(NOW + 60)
+            self.assertEqual(self.started, [])
+            pacing.tick(NOW + 60 + pacing.UNKNOWN_RELEASE_S)
+        self.assertEqual(self.started, ["m"])
+
+    def test_no_lock_over_a_delivery_and_usage_reads_never_wait(self):
+        seen = []
+        def free():
+            got = pacing._LOCK.acquire(blocking=False)
+            if got:
+                pacing._LOCK.release()
+            seen.append(got)
+        def deliver(project, text):
+            thread = threading.Thread(target=free)
+            thread.start()
+            thread.join()
+            return True
+        self.both_over()
+        with mock.patch.object(board, "deliver", side_effect=deliver):
+            pacing.tick(NOW)
+        self.assertEqual(seen, [True])
+        out = []
+        with pacing._LOCK:
+            thread = threading.Thread(target=lambda: out.extend(
+                [pacing.view(), pacing.burn("claude", 50.0, END, NOW)]))
+            thread.start()
+            thread.join(5)
+        self.assertEqual(len(out), 2)
+
+    def gated(self, satisfied):
+        self.both_over()
+        pacing.tick(NOW)
+        room = self.room("g", 3, launched=False, after=[{"task": "t"}], paceHold={"at": NOW})
+        self.calm()
+        gate = (["#1 merged"], NOW) if satisfied else ([], 0)
+        with (mock.patch.object(board, "gate_state", return_value=gate),
+              mock.patch.object(dashboard.ensemble_tools, "_project_of_room", return_value="p"),
+              mock.patch.object(dashboard, "task_label", return_value="#2")):
+            pacing.tick(NOW + 7 * H)
+        return room
+
+    def test_a_gated_task_goes_the_gates_way(self):
+        room = self.gated(True)
+        self.assertEqual(self.started, ["g"])
+        self.assertEqual(room["gateAction"]["result"], "started")
+        self.assertIn("started", room["gateAction"]["notice"])
+
+    def test_a_gate_that_reopened_while_held_does_not_start(self):
+        room = self.gated(False)
+        self.assertEqual(self.started, [])
+        self.assertFalse(room.get("gateAction"))
+        self.assertFalse(room["paceHold"])
 
     def test_one_tell_per_engage_and_release(self):
         self.both_over()
@@ -517,6 +609,18 @@ class PoLine(Base):
             head = po_usage.head(snapshot(60), NOW)
         self.assertIn("/h to", head)
         self.assertIn("top Two 75%", head)
+
+    def test_a_task_first_seen_now_is_not_its_whole_life(self):
+        pacing._state()["use"] = [[NOW - 20 * H, {"a": 100}], [NOW - H, {"a": 150, "old": 9000}],
+                                  [NOW, {"a": 200, "old": 9010}]]
+        projects = [{"id": "p1", "name": "One"}, {"id": "p2", "name": "Two"}]
+        with (mock.patch.object(dashboard, "load_projects", return_value=projects),
+              mock.patch.object(dashboard, "load_session_projects", return_value={}),
+              mock.patch.object(dashboard.chatroom, "get_room",
+                                side_effect=lambda rid, **k: {"id": rid}),
+              mock.patch.object(dashboard.ensemble_tools, "_project_of_room",
+                                side_effect=lambda r, l=None: "p1" if r["id"] == "a" else "p2")):
+            self.assertEqual(pacing.top_project(), ("One", 91))
 
     def test_a_failure_leaves_the_line_out(self):
         with mock.patch.object(dashboard, "pace_settings", side_effect=ValueError("x")):

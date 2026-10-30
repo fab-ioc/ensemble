@@ -51,7 +51,7 @@ def _path():
 
 def _blank():
     return {"series": {}, "brake": {"on": False, "episode": 0, "since": 0, "unknownSince": 0,
-                                    "muted": 0, "why": "", "until": ""},
+                                    "ended": "", "why": "", "until": ""},
             "told": {}, "use": []}
 
 
@@ -121,8 +121,8 @@ def burn(key, percent, end, now, at_least=False):
     try:
         if at_least:
             return unknown("the reading is only a floor")
-        with _LOCK:
-            samples = list((_state()["series"].get(key) or {}).get("samples") or [])
+        # A copy, no lock: this runs on every usage read and seat choice.
+        samples = list((_state()["series"].get(key) or {}).get("samples") or [])
         if len(samples) < MIN_SAMPLES:
             return unknown("too few samples")
         span = (now - samples[0][0]) / 3600
@@ -210,8 +210,9 @@ def _judge(snapshot, now):
 def _why(kinds, now):
     parts = []
     for kind, r in kinds.items():
+        rate = r["burn"]["ratePerHour"]
         parts.append(f"{_d._agent_kind_name(kind)} at {float(r['percent']):g}%, "
-                     f"{r['burn']['ratePerHour']:g} points an hour, heading for "
+                     f"{rate:g} {'point' if rate == 1 else 'points'} an hour, heading for "
                      f"{r['burn']['projected']:g}% by {_d._reset_clock(r.get('resetsAt'), now)}")
     return "; ".join(parts)
 
@@ -229,19 +230,20 @@ def _step(how, judged, now):
     before = dict(brake)
     lowest = judged["lowest"]
     if how == "off":
-        brake.update(on=False, unknownSince=0, muted=brake["episode"])
+        if brake["on"]:
+            brake.update(on=False, unknownSince=0, ended="off")
     elif lowest is None:
         if brake["on"]:
             brake["unknownSince"] = brake["unknownSince"] or now
             if now - brake["unknownSince"] >= UNKNOWN_RELEASE_S:
-                brake.update(on=False, unknownSince=0)
+                brake.update(on=False, unknownSince=0, ended="unknown")
     else:
         brake["unknownSince"] = 0
         if lowest >= PROJECTED_LIMIT and not brake["on"]:
-            brake.update(on=True, since=now, episode=brake["episode"] + 1)
+            brake.update(on=True, since=now, episode=brake["episode"] + 1, ended="")
         elif (brake["on"] and lowest < PROJECTED_LIMIT - RELEASE_POINTS
                 and now - brake["since"] >= DWELL_S):
-            brake["on"] = False
+            brake.update(on=False, ended="recovered")
         if brake["on"]:
             brake.update(why=_why(judged["kinds"], now), until=_until(judged["kinds"], now))
     return brake != before
@@ -249,19 +251,15 @@ def _step(how, judged, now):
 
 def hold(room, by, now=None):
     """Whether a start of ``room`` waits: the hold mark, written on the room,
-    or None. A start waits only while the brake is on and today's readings
-    still say so; a read that fails starts it."""
+    or None. A start waits while the brake is on, the same test the release
+    goes by; a reading that is unknown or fails starts it."""
     now = time.time() if now is None else now
     try:
         if (mode() != "hold" or _d.priority_of(room) < HELD_FROM_PRIORITY
                 or any(p.get("poRoomId") == room["id"] for p in _d.load_projects())):
             return None
-        with _LOCK:
-            brake = dict(_state()["brake"])
-        if not brake["on"]:
-            return None
-        judged = _judge(_d.usage.snapshot(), now)
-        if judged["lowest"] is None or judged["lowest"] < PROJECTED_LIMIT - RELEASE_POINTS:
+        brake = dict(_state()["brake"])
+        if not brake["on"] or _judge(_d.usage.snapshot(), now)["lowest"] is None:
             return None
         mark = {"at": (room.get("paceHold") or {}).get("at", now), "by": by,
                 "why": brake["why"], "until": brake["until"]}
@@ -309,7 +307,12 @@ def _release(how):
     first = min(waiting, key=lambda r: (_d.priority_of(r), r.get("no") or 0))
     room = _d.chatroom.get_room(first["id"], public=False) or first
     try:
-        _d.hub_launcher()._resume_room(room)
+        # A gated task goes the gate's own way: re-tested, claimed, told. A gate
+        # that no longer holds leaves it waiting for the gate, not the brake.
+        if room.get("after"):
+            _d.board.start_gated(room)
+        else:
+            _d.hub_launcher()._resume_room(room)
         clear_hold(room)
     except Exception as exc:                                # noqa: BLE001
         clear_hold(room)
@@ -325,14 +328,14 @@ def _tell(how):
     data = _state()
     brake = data["brake"]
     episode = brake["episode"]
-    if not episode or episode <= brake["muted"] or how == "off":
+    if not episode:
         return False
     changed = False
     for project in _d.load_projects():
         if not project.get("poRoomId"):
             continue
         told = data["told"].setdefault(project["id"], {"engage": 0, "release": 0})
-        if brake["on"] and told["engage"] < episode:
+        if brake["on"] and how != "off" and told["engage"] < episode:
             what = ("New work of medium or lower priority waits; high and highest still start."
                     if how == "hold" else "Nothing is held: the setting is Tell only.")
             if _d.board.deliver(project, f"Pacing brake on: {brake['why']}. {what} "
@@ -340,8 +343,11 @@ def _tell(how):
                 told["engage"] = episode
                 changed = True
         elif not brake["on"] and told["engage"] == episode and told["release"] < episode:
-            if _d.board.deliver(project, "Pacing brake off: the projection recovered. "
-                                         "Waiting tasks start by themselves, highest priority first."):
+            ended = {"unknown": "the usage readings are not available, so nothing is held",
+                     "off": "it was turned off in Settings"}.get(brake["ended"],
+                                                                 "the projection recovered")
+            if _d.board.deliver(project, f"Pacing brake off: {ended}. Waiting tasks start by "
+                                         "themselves, highest priority first."):
                 told["release"] = episode
                 changed = True
     return changed
@@ -366,15 +372,19 @@ def _note_use(now):
 
 def top_project():
     """(name, percent) of the project with the largest share of the tokens
-    between the oldest and newest totals, or None."""
+    since each task's first total here, or None. A task seen once has no
+    recent use yet: its total is its whole life, not this day."""
     use = _state()["use"]
     if len(use) < 2:
         return None
     links = _d.load_session_projects()
-    old, new = use[0][1], use[-1][1]
+    first = {}
+    for _, totals in use:
+        for rid, total in totals.items():
+            first.setdefault(rid, total)
     by_project, whole = {}, 0
-    for rid, total in new.items():
-        spent = max(0, total - old.get(rid, 0))
+    for rid, total in use[-1][1].items():
+        spent = max(0, total - first[rid])
         room = _d.chatroom.get_room(rid, copy_room=False, messages=False)
         pid = _d.ensemble_tools._project_of_room(room, links) if room else ""
         by_project[pid] = by_project.get(pid, 0) + spent
@@ -407,29 +417,46 @@ def line(snapshot, now):
 
 def view():
     """The brake for /api/usage: the plan chip's tray."""
+    brake = _state()["brake"]
+    return {"mode": mode(), "on": bool(brake["on"]), "why": brake["why"],
+            "until": brake["until"], "limit": PROJECTED_LIMIT}
+
+
+def _stage(what, fn, *args, default=False):
+    """One step of a tick: a failure costs that step, never the release."""
+    try:
+        return fn(*args)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[pacing] {what} failed: {str(e)[:200]}", flush=True)
+        return default
+
+
+def _step_locked(how, judged, now):
     with _LOCK:
-        brake = _state()["brake"]
-        return {"mode": mode(), "on": bool(brake["on"]), "why": brake["why"],
-                "until": brake["until"], "limit": PROJECTED_LIMIT}
+        return _step(how, judged, now)
+
+
+def _save_locked():
+    with _LOCK:
+        _save()
 
 
 def tick(now=None):
+    """The lock is held only over the state itself: never across a delivery
+    or the transcripts, so a usage read does not wait on either."""
     now = time.time() if now is None else now
-    snapshot = _d.usage.snapshot()
-    how = mode()
-    with _LOCK:
-        changed = sample(snapshot)
-        try:
-            judged = _judge(snapshot, now)
-        except Exception as e:                              # noqa: BLE001
-            print(f"[pacing] reading failed: {str(e)[:200]}", flush=True)
-            judged = {"kinds": {}, "lowest": None}
-        changed = _step(how, judged, now) or changed
-        changed = _tell(how) or changed
-        changed = _note_use(now) or changed
-        if changed:
-            _save()
-    _release(how)
+    how = _stage("the setting", mode, default="off")
+    snapshot = _stage("the usage reading", _d.usage.snapshot, default=None)
+    unknown = {"kinds": {}, "lowest": None}
+    changed = bool(snapshot) and _stage("sampling", sample, snapshot)
+    judged = (_stage("the reading", _judge, snapshot, now, default=unknown)
+              if snapshot else unknown)
+    changed = _stage("the brake", _step_locked, how, judged, now) or changed
+    changed = _stage("the tell", _tell, how) or changed
+    changed = _stage("project use", _note_use, now) or changed
+    if changed:
+        _stage("saving", _save_locked)
+    _stage("the release", _release, how)
 
 
 def maybe_tick():
