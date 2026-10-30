@@ -174,6 +174,13 @@ class SeatChoice(Base):
             '{"paceMarginPoints": NaN}', encoding="utf-8")
         self.assertEqual(dashboard.pace_settings(snapshot())["margin"], 10)
 
+    def test_natural_margin_is_not_the_saved_one(self):
+        self.assertEqual(dashboard.pace_view(snapshot())["naturalMarginPoints"], 10)
+        (self.dir / "settings.json").write_text(
+            '{"paceMarginPoints": 20}', encoding="utf-8")
+        view = dashboard.pace_view(snapshot())
+        self.assertEqual((view["marginPoints"], view["naturalMarginPoints"]), (20, 10))
+
     def test_balance_cannot_move_a_seat_onto_the_kind_running_out(self):
         self.history("claude", 0.0, start=50)
         self.history("codex:codex", 1.0, start=20)

@@ -1,7 +1,8 @@
 """#291: a task held by the pacing brake says why and until what on its card,
 and the plan chip's tray shows the rate and the projected end of each kind,
 in headless Chrome over CDP against a throwaway hub in a thread, at 1728x1117
-and on a phone (390x844).
+and on a phone (390x844). #294: the slider shows where normal is and goes back
+to it in one click.
 
 Skipped without Node or Chrome.
 """
@@ -65,6 +66,64 @@ async function main() {
         over: !!tray.querySelector('.usage-pace .ahead'),
         slider: !!slider && slider.min === '0' && slider.max === '40' && slider.getBoundingClientRect().width > 0 && slider.getBoundingClientRect().height >= 44,
         scroll: document.documentElement.scrollWidth, width: innerWidth }; })()`;
+    // The real thumb's centre, from the range input's own shadow tree.
+    const thumbX = async () => {
+      await send('DOM.enable', {}, sessionId);
+      const { root } = await send('DOM.getDocument', { depth: -1, pierce: true }, sessionId);
+      const attr = (n, k) => { const a = n.attributes || []; for (let i = 0; i < a.length; i += 2) if (a[i] === k) return a[i + 1]; return null; };
+      const find = (n, ok) => { if (ok(n)) return n; for (const c of [...(n.children || []), ...(n.shadowRoots || [])]) { const f = find(c, ok); if (f) return f; } return null; };
+      const input = find(root, n => n.localName === 'input' && attr(n, 'id') === 'usage-pace-slider');
+      const thumb = find(input, n => n !== input && (attr(n, 'pseudo') === '-webkit-slider-thumb' || attr(n, 'id') === 'thumb'));
+      const { model } = await send('DOM.getBoxModel', { nodeId: thumb.nodeId }, sessionId);
+      return (model.border[0] + model.border[2]) / 2;
+    };
+    const state = `(() => { const on = el => !!el && !el.hidden && el.getBoundingClientRect().width > 0;
+      const tick = document.getElementById('usage-pace-normal-tick'), t = tick.getBoundingClientRect();
+      const reset = document.getElementById('usage-pace-reset'), r = reset.getBoundingClientRect();
+      const label = document.getElementById('usage-pace-normal'), l = label.getBoundingClientRect();
+      const slider = document.getElementById('usage-pace-slider'), sl = slider.getBoundingClientRect();
+      const hint = document.getElementById('pref-pace-normal');
+      return { value: document.getElementById('usage-pace-value').textContent, slider: slider.value,
+        tick: on(tick), tickX: t.left + t.width / 2, label: on(label) ? label.textContent : null, labelX: l.left + l.width / 2,
+        reset: on(reset), resetH: r.height, resetW: r.width, gap: r.top - sl.top,
+        marks: document.querySelectorAll('#usage-list .usage-pace-natural').length,
+        ticks: document.querySelectorAll('#usage-list .usage-pace-tick').length,
+        foot: on(document.getElementById('usage-pace-foot')),
+        hint: hint.hidden ? null : hint.textContent, placeholder: document.getElementById('pref-pace-margin').placeholder,
+        focus: document.activeElement && document.activeElement.id,
+        scroll: document.documentElement.scrollWidth, width: innerWidth }; })()`;
+    const saved = `api('/api/settings').then(s => s.paceMarginPoints)`;
+    const until = async expr => { const t = Date.now(); while (Date.now() - t < 10000) { if (await evalIn(expr)) return true; await sleep(50); } return false; };
+    const normal = async () => {
+      const out = {};
+      await evalIn(`(async () => { document.getElementById('usage-tray').hidden = false; await setPref('paceMarginPoints', 10); await refreshUsage(); })()`);
+      out.atNormal = await evalIn(state);
+      out.thumbAtNormal = await thumbX();
+      await evalIn(`(() => { const s = document.getElementById('usage-pace-slider'); s.value = '20'; s.dispatchEvent(new Event('input', {bubbles: true})); })()`);
+      out.dragging = await evalIn(state);
+      out.savedWhileDragging = await evalIn(saved);
+      await evalIn(`document.getElementById('usage-pace-slider').dispatchEvent(new Event('change', {bubbles: true}))`);
+      await until(`USAGE.pace.marginPoints === 20`);
+      out.away = await evalIn(state);
+      out.savedAway = await evalIn(saved);
+      // A real press, at the button's middle, and then the keyboard's way.
+      const box = await evalIn(`(() => { const r = document.getElementById('usage-pace-reset').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...box }, sessionId);
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...box }, sessionId);
+      out.atOnce = await evalIn(state);
+      await until(`USAGE.pace.marginPoints === 10`);
+      out.back = await evalIn(state);
+      out.savedBack = await evalIn(saved);
+      out.thumbBack = await thumbX();
+      // Below normal, and a hub from before the natural value.
+      await evalIn(`(() => { USAGE_PREVIEW_MARGIN = 4; renderUsage(); })()`);
+      out.below = await evalIn(state);
+      await evalIn(`(() => { USAGE_PREVIEW_MARGIN = 20; delete USAGE.pace.naturalMarginPoints; renderUsage(); })()`);
+      out.older = await evalIn(state);
+      await evalIn(`USAGE_PREVIEW_MARGIN = null; refreshUsage()`);
+      await until(`USAGE.pace.naturalMarginPoints === 10`);
+      return out;
+    };
     const wait = async () => { const t = Date.now(); while (Date.now() - t < 30000) { try { if (await evalIn(show)) return true; } catch (e) {} await sleep(250); } return false; };
     const got = {};
     await send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
@@ -73,11 +132,22 @@ async function main() {
     got.keyboard = await evalIn(`(() => { const s = document.getElementById('usage-pace-slider'); s.focus(); const before = s.value; s.value = String(Number(before) + 1); s.dispatchEvent(new Event('input', {bubbles: true})); s.dispatchEvent(new Event('change', {bubbles: true})); return s.value !== before; })()`);
     await sleep(100);
     got.desk = await evalIn(read);
+    got.deskNormal = await normal();
+    got.formula = await evalIn(`({ near: usagePaceAt({ elapsed: 0.97, nearReset: true }, 10), far: usagePaceAt({ elapsed: 0.97, nearReset: false }, 10) })`);
+    got.themes = await evalIn(`(() => { const lum = c => { const v = c.match(/[0-9.]+/g).slice(0, 3).map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+      const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+      const paint = (prop, name) => { const d = document.createElement('i'); d.style[prop] = 'var(' + name + ')'; document.body.append(d); const c = getComputedStyle(d)[prop]; d.remove(); return c; };
+      const was = document.documentElement.getAttribute('data-theme'), rows = {};
+      for (const t of cdTheme.themes.filter(n => n !== 'system')) { document.documentElement.setAttribute('data-theme', t);
+        const tray = paint('backgroundColor', '--surface-overlay'), muted = paint('color', '--fg-muted'), sunken = paint('backgroundColor', '--surface-sunken');
+        rows[t] = { text: ratio(muted, tray), mark: ratio(muted, sunken) }; }
+      document.documentElement.setAttribute('data-theme', was || 'light'); return rows; })()`);
     await evalIn(`document.getElementById('usage-tray').hidden = true`);
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, sessionId);
     await sleep(400);
     got.shownPhone = await wait();
     got.phone = await evalIn(read);
+    got.phoneNormal = await normal();
     console.log(JSON.stringify(got));
   } finally { ch.kill(); }
 }
@@ -181,6 +251,63 @@ class TheHoldIsVisible(unittest.TestCase):
         self.assertTrue(view["slider"], view)
         self.assertTrue(view["trayFits"], view)
         self.assertLessEqual(view["scroll"], view["width"], view)
+
+    def normal(self, seen):
+        self.assertEqual(seen["atNormal"]["value"], "10 points · normal")
+        self.assertEqual(seen["atNormal"]["label"], "normal 10")
+        self.assertFalse(seen["atNormal"]["reset"], seen["atNormal"])
+        self.assertEqual(seen["atNormal"]["marks"], 0)
+        self.assertLessEqual(abs(seen["atNormal"]["tickX"] - seen["thumbAtNormal"]), 2, seen)
+        self.assertLessEqual(abs(seen["atNormal"]["labelX"] - seen["thumbAtNormal"]), 2, seen)
+        self.assertEqual(seen["atNormal"]["hint"], "Normal is 10 points.")
+        self.assertEqual(seen["atNormal"]["placeholder"], "10")
+        # Dragging previews at once and saves nothing; the row does not shift.
+        drag = seen["dragging"]
+        self.assertEqual(drag["value"], "20 points · 10 above normal")
+        self.assertTrue(drag["reset"], drag)
+        self.assertEqual(drag["marks"], drag["ticks"])
+        self.assertGreater(drag["marks"], 0)
+        self.assertEqual(drag["tickX"], seen["atNormal"]["tickX"])
+        self.assertEqual(seen["savedWhileDragging"], 10)
+        self.assertEqual(seen["savedAway"], 20)
+        self.assertTrue(seen["away"]["reset"], seen["away"])
+        self.assertGreater(seen["away"]["marks"], 0)
+        # Back to normal: the lines move at once, the save lands, it hides.
+        self.assertEqual(seen["atOnce"]["value"], "10 points · normal")
+        self.assertEqual(seen["atOnce"]["marks"], 0)
+        self.assertFalse(seen["atOnce"]["reset"], seen["atOnce"])
+        self.assertEqual(seen["atOnce"]["focus"], "usage-pace-slider")
+        self.assertEqual(seen["savedBack"], 10)
+        self.assertEqual(seen["back"]["slider"], "10")
+        self.assertFalse(seen["back"]["reset"], seen["back"])
+        self.assertEqual(seen["back"]["marks"], 0)
+        self.assertLessEqual(abs(seen["back"]["tickX"] - seen["thumbBack"]), 2, seen)
+        self.assertEqual(seen["below"]["value"], "4 points · 6 below normal")
+        # An older hub: nothing crashes and the marks are gone.
+        old = seen["older"]
+        self.assertEqual(old["value"], "20 points")
+        self.assertFalse(old["tick"] or old["foot"] or old["reset"], old)
+        self.assertEqual(old["marks"], 0)
+        self.assertIsNone(old["hint"])
+        self.assertEqual(old["placeholder"], "")
+        self.assertLessEqual(seen["away"]["scroll"], seen["away"]["width"], seen["away"])
+
+    def test_normal_on_a_computer(self):
+        self.normal(self.got["deskNormal"])
+
+    def test_normal_on_a_phone(self):
+        self.normal(self.got["phoneNormal"])
+        self.assertGreaterEqual(self.got["phoneNormal"]["away"]["resetH"], 44)
+        self.assertGreaterEqual(self.got["phoneNormal"]["away"]["resetW"], 44)
+
+    def test_the_formula_keeps_the_near_reset_rule(self):
+        self.assertEqual(self.got["formula"], {"near": 107, "far": 80})
+
+    def test_the_new_marks_read_in_every_theme(self):
+        self.assertGreaterEqual(len(self.got["themes"]), 7)
+        for theme, row in self.got["themes"].items():
+            self.assertGreaterEqual(row["text"], 4.5, theme)
+            self.assertGreaterEqual(row["mark"], 3, theme)
 
     def test_card_and_tray_on_a_computer(self):
         self.assertTrue(self.got["shown"])
