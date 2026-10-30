@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="ensemble-pages" content="">
 <script src="/static/hub-resilience.js"></script>
 <meta name="ensemble-file-drag" content="">
@@ -691,6 +691,8 @@
      Keyed on a touch screen, not on width: on a desktop this page sits in the
      dashboard's Workspace pane, which can be narrower than a phone. */
   @media (pointer: coarse) {
+    /* Nothing wider than the screen on a touch screen: iOS would zoom out for it (#295). */
+    html, body { overflow-x: hidden; max-width: 100vw; }
     .sel-bar { gap: var(--s-200); }
     .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     /* The reactions take a row of their own under Comment and Copy, spread across it. */

@@ -1726,6 +1726,12 @@ desktop they sit in the task panel, the PO's drawer and the Workspace pane, all 
 a width query would restyle them there. Phone rules go inside those blocks and nowhere else, so the
 desktop is untouched by construction.
 
+**Nothing wider than the screen.** iOS zooms a page out to fit content wider than the screen, whatever
+the viewport tag asks, and the page then looks like a desktop one (#295). Wide content wraps or scrolls in
+a box of its own; all three pages carry `shrink-to-fit=no` and clip their root on a touch screen. When a
+phone still draws the page wider than its screen (Safari's Request Desktop Website, its page zoom),
+`#wide-banner` says so with the two widths. `tests/test_phone_width_cdp.py` holds this.
+
 1. **Every tap target is at least `--touch-min` (44px)** in both directions. When the look must stay
    small (a 16px lozenge that is also a picker), give it an invisible `::after` margin instead of a
    bigger box — and remember a sideways-scrolling row clips that margin, so the row carries it as
