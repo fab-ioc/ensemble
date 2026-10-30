@@ -102,6 +102,7 @@ import due
 import issues
 # A task in a PO project that stopped without saying so: nudge, then tell the PO.
 import stall
+import idle
 # Messages between two projects' POs (ensemble_message_po).
 import po_messages
 import quiet_reports
@@ -192,6 +193,7 @@ pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
+idle.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
 provider_retry.bind(sys.modules[__name__])
 permission_mode.bind(sys.modules[__name__])
@@ -1927,6 +1929,7 @@ _SETTINGS_DEFAULTS = {
     # A point of the person's still open this many minutes while its agent is
     # idle and running: the hub types it one [points] line (points.py). 0 = off.
     "pointsRemindMin": points.DEFAULT_REMIND_MIN,
+    "idleAlertMin": idle.DEFAULT_MIN,
     # A planned point whose task has been Done this many minutes and that its
     # agent has not said is live: one [points] line, once. 0 = off.
     "pointsDeliverRemindMin": points.DEFAULT_DELIVER_REMIND_MIN,
@@ -2706,6 +2709,12 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440 if k == "pointsRemindMin" else 1440 * 7, v))
+        if k == "idleAlertMin":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = 0 if v <= 0 else max(5, min(1440, v))
         if k in ("backupEnabled", "rtkForTasks", "paceWeek"):
             v = bool(v)
         if k == "preferAgent" and v not in PREFER_CHOICES:
@@ -5248,6 +5257,7 @@ HUB_INPUT_KINDS = (
     ("[from the restart helper, not ", "helper"),   # the note after a hub restart
     ("[points] ", "points"),            # points.py: the person's points still open
     ("[stalled] ", "stalled"),          # stall.py: an idle owner with nothing open
+    ("[idle] ", "idle"),                # idle.py: running tasks that do nothing, to the PO
     ("[typed again] ", "again"),        # sends.py: a message the agent had not taken in
     ("[from the PO]", "po"),             # PO/tool ruling typed into a task
     ("[checkpoint] ", "checkpoint"),    # _checkpoint_told_line: the code was put back (ED-197)
@@ -5365,6 +5375,7 @@ def note_answer(room_id: str, identity: str) -> bool:
     helper's)."""
     if not room_id or not identity:
         return False
+    reopen_done(room_id, "work sent")
     try:
         room = chatroom.get_room(room_id, public=False)
         if not room:
@@ -12753,6 +12764,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     except Exception:
         po_waits = {}
     try:
+        idling = idle.records()
+    except Exception:
+        idling = {}
+    try:
         reported = attention.reported_by_room()
     except Exception:
         reported = {}
@@ -12790,13 +12805,15 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 row = dict(hit[1])
                 pend = pending_input(rid)
                 row.update(board.view(rm), waitingOnPo=po_waits.get(rid), reported=reported.get(rid),
-                           resuming=bool(pend) and pend.get("state") != "failed")
+                           resuming=bool(pend) and pend.get("state") != "failed",
+                           waitMark=rm.get("waitMark") or None,
+                           idleSince=(idling.get(rid) or {}).get("since") or None)
                 room_rows.append(row)
                 continue
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
             live = False if cold else _room_is_live(rm)
-            idle = None
+            quiet_s = None
             if live:
                 for pp in agents_in:
                     pid = pp.get("ptyId")
@@ -12804,7 +12821,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                     if sess:
                         isec = sess.info().get("idleSeconds")
                         if isec is not None:
-                            idle = isec if idle is None else min(idle, isec)
+                            quiet_s = isec if quiet_s is None else min(quiet_s, isec)
             # Busy is an agent in a turn, as attention reads it (its hooks,
             # Claude's status file, else the screen), not a terminal that
             # printed in the last moments: every run dot reads this, and green
@@ -12842,6 +12859,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "priority": priority_of(rm),
                 "priorityName": PRIORITY_NAMES[priority_of(rm)],
                 "paceHold": rm.get("paceHold") or None,
+                "waitMark": rm.get("waitMark") or None,
+                "idleSince": (idling.get(rid) or {}).get("since") or None,
                 "workflow": workflow_of(rm),
                 "workflowName": WORKFLOW_LABELS[workflow_of(rm)],
                 # A draft is a task created (e.g. by a planning agent) but never
@@ -12864,7 +12883,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
                 "turns": facts.get("turns", 0),
-                "idleSeconds": (idle if live else None),
+                "idleSeconds": (quiet_s if live else None),
                 "pid": None, "archived": False,
                 "parent": "", "jira": [],
                 "cost": None if cold else room_cost.get("dollars", 0.0),
@@ -14872,7 +14891,7 @@ def priority_of(record: dict) -> int:
 # tells the truth about what was decided. They are allowed to disagree.
 WORKFLOW_NAMES = ensemble_tools.WORKFLOW_NAMES   # one list of columns, owned by the tools module
 WORKFLOW_LABELS = {"backlog": "Backlog", "todo": "To do",
-                   "inprogress": "In progress", "inreview": "In review",
+                   "inprogress": "In progress", "waiting": "Waiting", "inreview": "In review",
                    "done": "Done"}
 WORKFLOW_CHOICES = ", ".join(WORKFLOW_NAMES)
 # Only a ProductOwner may accept work. Assigned by the human alone — see
@@ -16314,7 +16333,7 @@ def update_task(rid: str, title=None, spec=None,
 def _finished_unmoved(room: dict) -> bool:
     """In progress, its last report a completed one, and nobody moved the card
     after that report."""
-    if workflow_of(room) != "inprogress":
+    if workflow_of(room) not in ("inprogress", "waiting"):
         return False
     rep = chatroom.last_real_report(room)
     if rep.get("kind") != "completed":
@@ -16323,7 +16342,7 @@ def _finished_unmoved(room: dict) -> bool:
 
 
 def settle_finished(room: dict | None, po_ids: set[str] | None = None) -> bool:
-    """Move ``room`` from In progress to In review when its last report is a
+    """Move ``room`` from In progress or Waiting to In review when its last report is a
     completed one nobody moved the card after. True when it moved. The test
     is made again on the stored room under the room lock, so a merge's Done
     or a person's move made meanwhile is never undone."""
@@ -16334,7 +16353,7 @@ def settle_finished(room: dict | None, po_ids: set[str] | None = None) -> bool:
         po_ids = {p.get("poRoomId") for p in load_projects() if p.get("poRoomId")}
     if rid in po_ids:
         return False
-    auto = {"at": time.time(), "from": "inprogress", "why": "completed"}
+    auto = {"at": time.time(), "from": workflow_of(room), "why": "completed"}
     cur = chatroom.patch_room_if(rid, _finished_unmoved, workflow="inreview", workflowAuto=auto)
     if cur is None:
         return False
@@ -16366,6 +16385,74 @@ def settle_finished_at_start() -> dict[str, int]:
                 moved[name] = moved.get(name, 0) + 1
         except Exception as e:          # one bad room does not stop the rest
             print(f"finished task {rid} not moved to In review: {e!r}", flush=True)
+    return moved
+
+
+# A running task never reads as Done (#292): OP-269, OP-412 and OP-385 ran in
+# Done and the board looked empty. Starting it, resuming it or sending it real
+# work moves it to In progress, from a person, a PO or an agent. Never a hub
+# line and never a merge: a merged task whose agent is merely left running
+# stays in Done and gets its one idle alert.
+def reopen_done(room_id: str, why: str) -> bool:
+    """A task in Done goes to In progress. True when it moved. Never raises:
+    the input has already gone in."""
+    def test(r: dict) -> bool:
+        return workflow_of(r) == "done" and not r.get("pruned")
+    try:
+        room = chatroom.get_room(room_id, public=False, copy_room=False, messages=False)
+        if not room or not test(room):
+            return False
+        now = time.time()
+        cur = chatroom.patch_room_if(room_id, test, workflow="inprogress", workflowAt=now,
+                                     workflowAuto={"at": now, "from": "done", "why": why})
+        if cur is None:
+            return False
+        _patch_task_json(cur.get("taskDir", ""), workflow="inprogress")
+        return True
+    except Exception as e:      # noqa: BLE001 — the input itself went in
+        print(f"[board] {room_id}: not moved out of Done: {e!r}", flush=True)
+        return False
+
+
+def _last_real_work(room: dict) -> float:
+    """When someone last gave the owner work: an answer, a spec amendment, a
+    message from another than the owner that is no hub line."""
+    owners = chatroom.owners(room)
+    owner = owners[0] if owners else ""
+    ts = [float(room.get("specAt") or 0)]
+    for p in room.get("participants") or []:
+        ts.append(float(p.get("answeredAt") or 0))
+    for m in room.get("messages") or []:
+        if (m.get("from") not in (owner, "ensemble", "")
+                and m.get("kind") not in ("notice", "report", "digest")
+                and not chatroom.is_command_record(m)):
+            ts.append(float(m.get("ts") or 0))
+    return max(ts)
+
+
+def reopen_done_at_start() -> dict[str, int]:
+    """Once at hub start, in every project: a running task in Done whose last
+    real work is newer than its move to Done and its merge goes to In
+    progress. Merged and merely left running stays. Returns {project: moved}."""
+    projects = load_projects()
+    names = {p.get("id"): p.get("name") or p.get("id") for p in projects}
+    po_ids = {p.get("poRoomId") for p in projects if p.get("poRoomId")}
+    links = load_session_projects()
+    archived = load_archived()
+    moved: dict[str, int] = {}
+    for rid in [r.get("id") or "" for r in chatroom.list_rooms(copy_rooms=False)]:
+        try:
+            light = chatroom.get_room(rid, public=False, copy_room=False, messages=False)
+            if (not light or light.get("pruned") or light.get("archived") or rid in archived
+                    or rid in po_ids or workflow_of(light) != "done" or not _room_is_live(light)):
+                continue
+            room = chatroom.get_room(rid, public=False) or light
+            settled = max(float(room.get("workflowAt") or 0), float(room.get("mergedAt") or 0))
+            if _last_real_work(room) > settled and reopen_done(rid, "running at hub start"):
+                name = names.get(_room_project_id(rid, room, links)) or "no project"
+                moved[name] = moved.get(name, 0) + 1
+        except Exception as e:          # one bad room does not stop the rest
+            print(f"running task {rid} not moved out of Done: {e!r}", flush=True)
     return moved
 
 
@@ -18622,6 +18709,8 @@ class Handler(BaseHTTPRequestHandler):
             return []
         msg = result.get("message") or {}
         room = chatroom.get_room(room_id) or {}
+        if msg.get("from") not in ("ensemble", "") and msg.get("kind") not in ("report", "notice", "digest"):
+            reopen_done(room_id, "work sent")
         # A reviewer on mention that isn't mid-review is not rung — it is not
         # running. The message starts a fresh reviewer briefed with it.
         rest = []
@@ -19231,6 +19320,7 @@ class Handler(BaseHTTPRequestHandler):
         """First launch of a task's agents (a fresh conversation seeded with the
         spec / collaboration briefing). Marks the room launched. Returns
         [{identity, ptyId}]."""
+        reopen_done(room_full.get("id", ""), "started")
         apply_first_launch_allocation(room_full)
         task = room_full.get("spec", "") or ""
         collab = room_full.get("mode") != "solo"
@@ -19433,6 +19523,8 @@ class Handler(BaseHTTPRequestHandler):
         now, the new text reaches a busy agent at once (send_now_way); held
         or carried, it goes the settled way."""
         rid = room_full["id"]
+        if (not quiet or text) and origin != "hub":
+            reopen_done(rid, "resumed")
         items = [send_item(text, to, time.time(), key, project, origin)] if text else []
         if items and now:
             items[0]["now"] = True
@@ -22671,6 +22763,13 @@ def main():
             print(f"finished tasks moved to In review: {name}: {n}", flush=True)
     except Exception as e:
         print(f"finished tasks not moved to In review: {e!r}", flush=True)
+
+    startup.step("Moving running tasks out of Done")
+    try:
+        for name, n in sorted(reopen_done_at_start().items()):
+            print(f"running tasks moved out of Done: {name}: {n}", flush=True)
+    except Exception as e:
+        print(f"running tasks not moved out of Done: {e!r}", flush=True)
 
     startup.step("Updating questions and points")
     # Answers recorded before an ask of two questions became two asks (#195)

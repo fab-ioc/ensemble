@@ -28,6 +28,7 @@ import collections
 import json
 import threading
 import time
+from datetime import datetime
 
 from chatroom import REPORT_KINDS   # a plain module, safe to import here
 
@@ -58,7 +59,7 @@ def bind(dashboard_module) -> None:
 # The board's columns. Defined here, not read from the dashboard: this module
 # is imported before the dashboard binds itself, so any `_d.` lookup at import
 # time crashes the hub on start. The dashboard takes its copy from here.
-WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "inreview", "done")
+WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "waiting", "inreview", "done")
 
 _TASK_ID_DOC = ("The task: its number (#18 or 18 in your project, ED-18 in any) "
                 "or its id (room-1a2b3c4d).")
@@ -262,7 +263,8 @@ _ALL_TOOLS = [
             "continue (blocked — a usage or credit limit, an expired login; the "
             "offending line is quoted), one waiting on a human answer "
             "(waiting_for_you), or one that was asked to do something, isn't "
-            "working, and never reported back (stalled). Defaults to your own "
+            "working, and never reported back (stalled). The result also lists "
+            "`idle`: tasks whose agent runs and does nothing. Defaults to your own "
             "project; pass projectId for another, or \"*\" for every project. "
             "Nothing here is acted on automatically — deciding what to do is "
             "yours or the product owner's."
@@ -308,6 +310,38 @@ _ALL_TOOLS = [
             "unknown and never fall back to `stalePercent`."
         ),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ensemble_mark_wait",
+        "description": (
+            "Say what a running task is waiting for, so the hub does not call it "
+            "idle: a PO for any task of its project, an owner for its own. The "
+            "task moves to Waiting and its card reads the wait. The mark survives "
+            "a restart and a handover. kind \"card\": an open card is answered "
+            "(card: its id; omit for the task's open cards). \"time\": until a "
+            "time (until or minutes). \"task\": another task reaches Done (task: "
+            "#n). \"background\": work of its own that runs by itself; it ends "
+            "when the owner works again, at until or minutes when given, else "
+            "after 6 hours. \"clear\": no wait any more. When a wait ends the PO "
+            "gets one `[idle]` line. Reasons a task is idle and nothing ends it "
+            "are not waits: send it work or stop it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "taskId": {"type": "string",
+                           "description": "The task (#18, ED-18 or its id); omit for your own."},
+                "kind": {"type": "string",
+                         "description": "card | time | task | background | clear."},
+                "what": {"type": "string", "description": "What it waits for, in a few words."},
+                "until": {"type": "string",
+                          "description": "HH:MM local time (today, or tomorrow once past) or an ISO time."},
+                "minutes": {"type": "number", "description": "Or: this many minutes from now."},
+                "task": {"type": "string", "description": "kind task: the other task."},
+                "card": {"type": "string", "description": "kind card: the card's id."},
+            },
+            "required": ["kind"],
+        },
     },
     {
         "name": "ensemble_points",
@@ -459,7 +493,8 @@ _ALL_TOOLS = [
                 "workflow": {"type": "string",
                              "enum": list(WORKFLOW_NAMES),
                              "description": "Board column (omit to keep). backlog | todo | "
-                                            "inprogress | inreview | done. A completed report "
+                                            "inprogress | waiting | inreview | done. The hub "
+                                            "moves a card to \"waiting\" and back by itself. A completed report "
                                             "moves your task to \"inreview\" by itself. \"done\" is "
                                             "the ProductOwner's alone."},
                 "agents": {"type": "array", "items": _AGENT_SPEC,
@@ -590,7 +625,7 @@ COMMON_TOOL_NAMES = frozenset({
     "ensemble_whoami", "ensemble_report", "ensemble_ask", "ensemble_list_tasks",
     "ensemble_list_attention", "ensemble_plan_usage", "ensemble_get_task",
     "ensemble_update_task", "ensemble_get_roadmap", "ensemble_points",
-    "ensemble_ready_for_restart",
+    "ensemble_ready_for_restart", "ensemble_mark_wait",
 })
 ADMIN_TOOL_NAMES = frozenset(t["name"] for t in _ALL_TOOLS) - COMMON_TOOL_NAMES
 COMMON_TOOLS = [t for t in _ALL_TOOLS if t["name"] in COMMON_TOOL_NAMES]
@@ -907,8 +942,8 @@ def _attention_view(item: dict | None) -> dict | None:
     return out
 
 
-def _po_waits() -> tuple[dict, dict]:
-    """(tasks waiting for their PO, tasks stalled), read once for a list."""
+def _po_waits() -> tuple[dict, dict, dict]:
+    """(tasks waiting for their PO, tasks stalled, tasks idle), read once for a list."""
     try:
         waits = _d.attention.waiting_on_po()
     except Exception:
@@ -917,16 +952,22 @@ def _po_waits() -> tuple[dict, dict]:
         stalls = _d.stall.records()
     except Exception:
         stalls = {}
-    return waits, stalls
+    try:
+        idling = _d.idle.records()
+    except Exception:
+        idling = {}
+    return waits, stalls, idling
 
 
 def _po_wait_view(room: dict, po_waits: tuple | None = None) -> dict:
     """``waitingOn: "po"`` (+ since, kind) while the task waits for its PO's
     answer, ``stalled`` (+ since, nudgedAt, toldAt) while the hub has nudged
-    it for stopping without a word (stall.py); {} otherwise. ``po_waits``:
-    ``_po_waits()``, read once by a caller listing many tasks."""
+    it for stopping without a word (stall.py), ``idle`` (+ since, alerts) while
+    an agent runs and does nothing (idle.py), ``waitMark`` while a wait is
+    marked; {} otherwise. ``po_waits``: ``_po_waits()``, read once by a caller
+    listing many tasks."""
     out = {}
-    waits, stalls = po_waits if po_waits is not None else _po_waits()
+    waits, stalls, idling = po_waits if po_waits is not None else _po_waits()
     w = waits.get(room["id"])
     if w:
         out["waitingOn"] = {"who": "po", "since": w["since"], "kind": w["kind"]}
@@ -936,6 +977,11 @@ def _po_wait_view(room: dict, po_waits: tuple | None = None) -> dict:
                           "toldAt": st.get("toldAt", 0),
                           **({"reason": f"background command running for {_d.stall._cap_words()}"}
                              if st.get("command") else {})}
+    idle = idling.get(room["id"])
+    if idle:
+        out["idle"] = {"since": idle.get("since", 0), "alerts": idle.get("alerts", 0)}
+    if room.get("waitMark"):
+        out["waitMark"] = room["waitMark"]
     return out
 
 
@@ -1465,14 +1511,31 @@ def _list_attention(ctx, args, handler):
         if not it.get("otherStates"):
             it.pop("otherStates", None)
     scope = "all projects" if pid == "*" else (projects.get(pid, {}).get("name") or "Unassigned")
+    idle = _idle_rows(pid, projects)
     return {"scope": scope, "projectId": ("" if pid == "*" else pid),
             "count": len(items), "needAttention": items,
+            "idleCount": len(idle), "idle": idle,
             "states": {"agent_gone": "its terminal died and nobody asked it to",
                        "blocked": "running, but it says it cannot continue",
                        "waiting_for_you": "it is waiting on a human answer: a question, a "
                                           "message or a prompt nobody has answered (a finished report is "
                                           "not one: the list shows it as ready for a check)",
-                       "stalled": "asked to do something, not working, never reported back"}}
+                       "stalled": "asked to do something, not working, never reported back",
+                       "idle": "its agent runs and has not worked for the Settings' minutes: "
+                               "send it work, stop it, or mark the wait"}}
+
+
+def _idle_rows(pid: str, projects: dict) -> list[dict]:
+    """The tasks idle right now, in ``pid`` or everywhere ("*"), longest first."""
+    rows = []
+    for rid, rec in _d.idle.records().items():
+        room = _d.chatroom.get_room(rid, public=False, copy_room=False, messages=False)
+        if not room or (pid != "*" and _project_of_room(room) != pid):
+            continue
+        rows.append({"task": _ref(room, projects) or _d.task_label(room), "taskId": rid,
+                     "title": room.get("title", ""), "since": rec.get("since", 0),
+                     "alerts": rec.get("alerts", 0), "workflow": _d.workflow_of(room)})
+    return sorted(rows, key=lambda r: r["since"])
 
 
 def _plan_usage(ctx, args, handler):
@@ -1826,6 +1889,7 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
                 == "idle"}
     except Exception:       # noqa: BLE001 — unknown reads as busy: no mark
         idle = set()
+    _d.reopen_done(room["id"], "spec amended")
     try:
         rung = handler._ring(room["id"], owners, line)
     except Exception:       # noqa: BLE001 — the amendment is saved either way
@@ -2160,6 +2224,74 @@ def _ready_for_restart(ctx, args, handler):
                      "you are typed what you said and carry on from there.")}
 
 
+def _wait_until(args: dict, now: float) -> float:
+    """``minutes``, or ``until`` as "HH:MM" (today, or tomorrow once past) or
+    ISO, as a time; 0 when neither is given."""
+    if args.get("minutes") not in (None, ""):
+        try:
+            minutes = float(args["minutes"])
+        except (TypeError, ValueError):
+            raise ToolError(f"minutes must be a number: {args['minutes']!r}") from None
+        if minutes <= 0:
+            raise ToolError("minutes must be above 0")
+        return now + minutes * 60
+    text = str(args.get("until") or "").strip()
+    if not text:
+        return 0.0
+    try:
+        at = datetime.strptime(text, "%H:%M").time()
+    except ValueError:
+        try:
+            when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            raise ToolError(f"until must be HH:MM or an ISO time: {text!r}") from None
+        ts = when.timestamp()
+        if ts <= now:
+            raise ToolError(f"until is in the past: {text}")
+        return ts
+    day = datetime.fromtimestamp(now)
+    ts = day.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0).timestamp()
+    return ts if ts > now else ts + 86400
+
+
+def _mark_wait(ctx, args, handler):
+    """A PO marks any task of its project, an owner its own."""
+    arg = args.get("taskId")
+    room = _load_target(arg, ctx) if arg not in (None, "") else ctx["room"]
+    if room["id"] != ctx["room"]["id"] or ctx["identity"] not in _d.chatroom.owners(room):
+        if not _is_project_po(ctx["room"], ctx["identity"]):
+            raise ToolError("a PO marks a task of its project, an owner its own task")
+        _check_write_scope(ctx, _project_of_room(room), "mark_wait")
+    kind = str(args.get("kind") or "").strip()
+    if kind == "clear":
+        _d.chatroom.patch_room(room["id"], waitMark=None)
+        return {"ok": True, "taskId": room["id"], "waitMark": None}
+    if kind not in _d.idle.WAIT_KINDS:
+        raise ToolError(f"kind must be one of {', '.join(_d.idle.WAIT_KINDS)} or clear")
+    now = time.time()
+    mark = {"kind": kind, "what": str(args.get("what") or "").strip()[:200], "until": 0,
+            "by": ctx["identity"], "at": now}
+    if kind in ("time", "background"):
+        mark["until"] = _wait_until(args, now)
+        if kind == "time" and not mark["until"]:
+            raise ToolError("a wait on a time needs until or minutes")
+    elif kind == "task":
+        if not args.get("task"):
+            raise ToolError("a wait on a task needs task: its number")
+        other = _load_target(args["task"], ctx)
+        if other["id"] == room["id"]:
+            raise ToolError("a task cannot wait on itself")
+        mark.update(taskId=other["id"], what=_d.task_label(other) or other.get("title", "")[:80])
+    else:
+        mid = str(args.get("card") or "").strip()
+        mark["mids"] = [mid] if mid else _d.idle.card_ids(room)
+        if not mark["mids"]:
+            raise ToolError("no open card to wait on: ask it first, or give card: its id")
+    _d.chatroom.patch_room(room["id"], waitMark=mark)
+    return {"ok": True, "taskId": room["id"], "waitMark": mark,
+            "reads": f"Waiting {_d.idle.wait_words(mark)}"}
+
+
 _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_report": _report,
@@ -2180,6 +2312,7 @@ _IMPL = {
     "review_done": _review_done,
     "ensemble_restart_hub": _restart_hub,
     "ensemble_ready_for_restart": _ready_for_restart,
+    "ensemble_mark_wait": _mark_wait,
     "ensemble_points": _points,
     "ensemble_message_po": _message_po,
     "ensemble_read_message": _read_message,

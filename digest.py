@@ -500,7 +500,10 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         if old.get("status") != t["status"]:
             what.append(f"status {old.get('status')} → {t['status']}")
             finished |= t["status"] == "stopped"
-        if old.get("column") != t["column"]:
+        # In progress and Waiting swap as the agent stops and starts (idle.py):
+        # the state of the work, not a decision, so no news.
+        if (old.get("column") != t["column"]
+                and {old.get("column"), t["column"]} != {"inprogress", "waiting"}):
             what.append(f"moved {old.get('column')} → {t['column']}")
             finished |= t["column"] in ("inreview", "done")
         attention = _attention_news(old, t)
@@ -853,6 +856,11 @@ def start_scheduler() -> None:
                 stall.maybe_tick()
             except Exception as e:
                 _log(f"stall check error: {str(e)[:200]}")
+            # A running task that does nothing: the PO's line, the column (idle.py).
+            try:
+                _d.idle.maybe_tick()
+            except Exception as e:
+                _log(f"idle check error: {str(e)[:200]}")
             # Messages between POs waiting for their PO to be idle (po_messages.py).
             try:
                 po_messages.maybe_tick()

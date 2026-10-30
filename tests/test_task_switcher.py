@@ -190,6 +190,14 @@ const team = (rid, no, turns) => row(rid, no, 'Team', { isLive: false, hasConver
                                                         members: [{ agent: 'claude' }, { agent: 'codex' }] });
 const gt = swGroups([team('r1', 12, 2), team('r2', 7, 0)], [], P, opts);
 log.team = keys(gt);
+// #292: a task in a turn is under Running, whatever its column says; stopped
+// in Waiting it is paused.
+const gw = swGroups([row('r1', 12, 'Review, working', { status: 'busy', workflow: 'inreview' }),
+                     row('r2', 7, 'Done, working', { status: 'busy', workflow: 'done' }),
+                     row('r3', 3, 'Review, idle', { workflow: 'inreview' }),
+                     row('r4', 9, 'Waiting, running', { workflow: 'waiting' }),
+                     row('r5', 2, 'Waiting, stopped', { workflow: 'waiting', isLive: false })], [], P, opts);
+log.working = keys(gw);
 console.log(JSON.stringify(log));
 """
 
@@ -257,6 +265,11 @@ class TaskSwitcher(unittest.TestCase):
         })
         self.assertEqual(self.r["projects"]["running"], ["Ensemble Dashboard", "Ensemble Dashboard", "Motors"])
         self.assertEqual(self.r["projects"]["needs"], ["Motors", "Ensemble Dashboard", "Motors", "Motors"])
+
+    def test_a_task_in_a_turn_is_running_whatever_its_column_says(self):
+        got = self.r["working"]
+        self.assertEqual(sorted(got["running"]), ["r1", "r2", "r4"], got)
+        self.assertEqual(sorted(got["review"]), ["r3", "r5"], got)
 
     def test_a_stopped_team_task_is_paused_once_it_has_run(self):
         # review 1: hasConversation is false for every multi-agent task

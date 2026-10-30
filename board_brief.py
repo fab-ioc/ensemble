@@ -103,7 +103,7 @@ def _tasks(d, project):
         # A completion survives later update reports. A subsequent move back
         # into an active column reopens it and must win over that history,
         # including the next move from In progress to In review.
-        reopened = (workflow in ('inprogress', 'inreview')
+        reopened = (workflow in ('inprogress', 'waiting', 'inreview')
                     and float(room.get('workflowAt') or 0) > float(rep.get('ts') or 0))
         completed = workflow == 'done' or (rep.get('kind') == 'completed' and not reopened)
         if (not completed and d.ensemble_tools._status(room) == 'stopped'
