@@ -2309,6 +2309,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      change count and points can outgrow 248px. */
   .crow1 { flex-wrap: wrap; row-gap: var(--s-050); }
   .crow1 .prio-ico { display: inline-block; margin: 0; flex: 0 0 auto; }
+  /* #291: what a task held by the pacing brake waits for. Plain words, it needs nobody. */
+  .chold { flex: 1 0 100%; min-width: 0; font-size: var(--fs-200); color: var(--fg-subtle); }
   .run { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-200); color: var(--fg-subtle); }
   .run.off { color: var(--fg-muted); }
   .run .dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--run-off); }
@@ -4425,8 +4427,17 @@ window.DOC_LISTENERS_PAUSED = false;
     <div class="pref-row" style="margin-top: 14px;">
       <label class="pref-label" for="pref-pace-margin">Head start</label>
       <span><input type="number" id="pref-pace-margin" min="0" max="100" step="1"
-             placeholder="15" autocomplete="off"> <span class="pref-label">points</span></span>
+             placeholder="10" autocomplete="off"> <span class="pref-label">points</span></span>
     </div>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-pace-brake">When both plans run too fast</label>
+      <select id="pref-pace-brake" class="pref-select">
+        <option value="off">Off</option>
+        <option value="tell">Tell only</option>
+        <option value="hold">Hold new work</option>
+      </select>
+    </div>
+    <p class="cfg-hint">When every usable agent kind is projected to run out before its reset, new work of medium or lower priority waits and starts by itself once the projection recovers. Highest and high priority, running tasks, reviews, handovers and a Start from this page are never held. Tell only tells each PO and holds nothing.</p>
     <div class="pref-row">
       <label class="pref-label" for="pref-balance-margin">Switch hysteresis</label>
       <span><input type="number" id="pref-balance-margin" min="0" max="100" step="1"
@@ -6868,6 +6879,12 @@ function gateChip(r) {
   return `<span class="gate-chip" title="${esc(detail)}">${esc(label)}</span>`;
 }
 
+function paceHoldHtml(r) {
+  const h = r.paceHold;
+  if (!h) return '';
+  return `<span class="chold" title="${esc(h.why || '')}">Waits for the pacing brake: until ${esc(h.until || 'it recovers')}</span>`;
+}
+
 function cardHtml(r, now) {
   const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
@@ -6882,7 +6899,7 @@ function cardHtml(r, now) {
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
     <div class="ctitle">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${taskStateChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${taskStateChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}${paceHoldHtml(r)}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }
@@ -8119,7 +8136,11 @@ function renderPrefs() {
   }
   const paceMargin = document.getElementById('pref-pace-margin');
   if (paceMargin && document.activeElement !== paceMargin) {
-    paceMargin.value = PREFS.paceMarginPoints ?? 15;
+    paceMargin.value = PREFS.paceMarginPoints ?? 10;
+  }
+  const paceBrake = document.getElementById('pref-pace-brake');
+  if (paceBrake && document.activeElement !== paceBrake) {
+    paceBrake.value = PREFS.paceBrake || 'hold';
   }
   const balanceMargin = document.getElementById('pref-balance-margin');
   if (balanceMargin && document.activeElement !== balanceMargin) {
@@ -19694,6 +19715,7 @@ function usageSourceHtml(src) {
     ${inUse}
     ${rows}
     ${usagePaceLine(name, pace, usageUseItOf(src))}
+    ${usageBurnLine(pace)}
     ${spent}${frozen}${rolled}${unverifiable}${via}
   </div>`;
 }
@@ -19738,8 +19760,29 @@ function usagePaceLine(name, pace, useIt) {
   }
   if (!pace) return '';
   const pool = pace.poolLabel ? ` (${pace.poolLabel} pool)` : '';
-  return `<div class="usage-pace" title="The share of the week gone by plus ${esc(String((USAGE.pace || {}).marginPoints ?? 15))} points, never above the warning. Ahead of it, new seats go to the other kind while that one is not.">${esc(usagePaceText(name, pace) + pool)}${
+  return `<div class="usage-pace" title="The share of the week gone by plus ${esc(String((USAGE.pace || {}).marginPoints ?? 10))} points, never above the warning. Ahead of it, new seats go to the other kind while that one is not.">${esc(usagePaceText(name, pace) + pool)}${
     pace.ahead ? ' · <span class="ahead">ahead of pace</span>' : ' · within pace'}</div>`;
+}
+
+// #291: points an hour and where the week ends up at that rate.
+function usageBurnLine(pace) {
+  const b = pace && pace.burn;
+  if (!b) return '';
+  const limit = ((USAGE.pace || {}).brake || {}).limit ?? 110;
+  if (b.state !== 'known') {
+    return `<div class="usage-pace">Burn rate not known yet (${esc(b.why || 'no history')})</div>`;
+  }
+  const end = `heading for ${Math.round(b.projected)}% at its reset`;
+  return `<div class="usage-pace" title="Points an hour over the last day, blended with the week so far. At ${esc(String(limit))}% or more the kind counts as running out.">${esc(`${b.ratePerHour} points an hour · `)}${
+    b.projected >= limit ? `<span class="ahead">${esc(end)}</span>` : esc(end)}</div>`;
+}
+function usageBrakeHtml() {
+  const b = (USAGE.pace || {}).brake;
+  if (!b || !b.on) return '';
+  const said = b.mode === 'hold' ? 'Pacing brake on: new work of medium or lower priority waits.'
+    : 'Pacing brake would be on: nothing is held (Tell only).';
+  return `<div class="usage-pace" title="${esc(b.why || '')}">${esc(said)}${
+    b.until ? ` Until ${esc(b.until)}.` : ''}</div>`;
 }
 
 function renderUsage() {
@@ -19763,7 +19806,7 @@ function renderUsage() {
     : 'Plan allowance — click for detail';
 
   $('#usage-sub').textContent = '— account-wide, not per task';
-  $('#usage-list').innerHTML = sources.map(usageSourceHtml).join('');
+  $('#usage-list').innerHTML = usageBrakeHtml() + sources.map(usageSourceHtml).join('');
   $('#usage-foot').textContent =
     'Claude and Codex have separate allowances — they are never added together. '
     + 'These windows are shared by every task on this machine, so they say nothing '
@@ -22424,6 +22467,8 @@ window.ensUpdPlace = () => ({
     if (!sel) return;
     if (sel.id === 'pref-task-agent-tools') {
       setPref('taskAgentTools', sel.value);
+    } else if (sel.id === 'pref-pace-brake') {
+      setPref('paceBrake', sel.value).then(refreshUsage);
     } else if (sel.dataset.kind) {
       setAgentModel(sel);
     }

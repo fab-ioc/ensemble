@@ -847,6 +847,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
             seat, _ = _preferred_seats(room)
             if code in ("switch_balance", "switch_reset"):
                 why = _d._balance_reason(decision)
+            elif code == "switch_projection":
+                why = _d._projection_reason(decision)
             elif code == "switch_pace":
                 why = pace_why
             elif code == "both_ahead_of_pace":
@@ -856,6 +858,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
                 why = _d._usage_reason_phrase(cur, mine)
             out.update(agent=other, model=_model_for(seat, other), changed=True, why=why,
                        reason=f"Owner switched to {name(other)}: {why}.")
+        elif code == "preferred_projection":
+            out["reason"] = f"Owner kept on {name(cur)}: {_d._projection_reason(decision)}."
         elif code == "keep_agents":
             out["reason"] = (f"Owner kept on {name(cur)}: this task keeps its agents, "
                              f"{_d._keep_agents_why(cur, mine, warn)}.")

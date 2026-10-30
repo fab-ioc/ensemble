@@ -83,7 +83,7 @@ class ThePaceLineNearTheReset(unittest.TestCase):
         self.assertEqual((claude["nearReset"], claude["ahead"]), (True, False))
         self.assertEqual((codex["nearReset"], codex["ahead"]), (False, True))   # 30% vs ~16%
         before = dashboard._kind_pace(_snap(), "claude", now=MID_WEEK)
-        self.assertEqual((before["nearReset"], before["ahead"], before["pace"]), (False, True, 65.0))
+        self.assertEqual((before["nearReset"], before["ahead"], before["pace"]), (False, True, 60.0))
 
 
 class TheSeatChoiceNearTheReset(unittest.TestCase):

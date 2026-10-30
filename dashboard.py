@@ -95,6 +95,7 @@ import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
 import board
+import pacing
 import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
@@ -187,6 +188,7 @@ ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
+pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
@@ -1862,7 +1864,7 @@ def save_archived(arch: set[str]) -> None:
 # built, so every later turn of the conversation re-reads the smaller one.
 CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
 # The weekly pace line's head start, in percentage points (ED-164).
-PACE_MARGIN_DEFAULT = 15
+PACE_MARGIN_DEFAULT = 10
 # A preferred seat changes kinds only for this relative capacity advantage.
 BALANCE_HYSTERESIS_DEFAULT = 25
 # Settings › Agent models › Prefer: a kind every seat goes to while it is
@@ -1947,6 +1949,7 @@ _SETTINGS_DEFAULTS = {
     # warning and pacing rule above.
     "preferAgent": "balanced",
     "paceMarginPoints": PACE_MARGIN_DEFAULT,
+    "paceBrake": pacing.MODE_DEFAULT,
     "balanceHysteresisPercent": BALANCE_HYSTERESIS_DEFAULT,
     "claudePlanWeight": "",  # empty: use detected plan tier
     "codexPlanWeight": "",
@@ -2706,6 +2709,8 @@ def _save_settings_locked(settings: dict) -> dict:
         if k in ("backupEnabled", "rtkForTasks", "paceWeek"):
             v = bool(v)
         if k == "preferAgent" and v not in PREFER_CHOICES:
+            continue
+        if k == "paceBrake" and v not in pacing.MODES:
             continue
         if k in ("paceMarginPoints", "balanceHysteresisPercent",
                  "claudePlanWeight", "codexPlanWeight"):
@@ -12836,6 +12841,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "taskDir": rm.get("taskDir", ""),
                 "priority": priority_of(rm),
                 "priorityName": PRIORITY_NAMES[priority_of(rm)],
+                "paceHold": rm.get("paceHold") or None,
                 "workflow": workflow_of(rm),
                 "workflowName": WORKFLOW_LABELS[workflow_of(rm)],
                 # A draft is a task created (e.g. by a planning agent) but never
@@ -15239,7 +15245,9 @@ def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
             "resetsAt": window.get("resetsAt"), "nearReset": mark["nearReset"], "at": now,
             "hoursToReset": hours_to_reset,
             "ahead": percent > mark["pace"],
-            "by": round(percent - mark["pace"], 1)}
+            "by": round(percent - mark["pace"], 1),
+            "burn": pacing.burn(pacing.series_key(kind, named.get("pool", "")), percent, end, now,
+                                not window.get("trusted"))}
 
 
 def pace_view(snapshot: dict, now: float | None = None) -> dict:
@@ -15249,6 +15257,7 @@ def pace_view(snapshot: dict, now: float | None = None) -> dict:
     return {"enabled": cfg["enabled"], "prefer": cfg["prefer"], "marginPoints": cfg["margin"],
             "hysteresisPercent": cfg["hysteresis"], "planWeights": cfg["weights"],
             "planLabels": cfg["labels"], "planSources": cfg["sources"],
+            "brake": pacing.view(),
             "kinds": {k: _kind_pace(snapshot, k, "", cfg["margin"], now)
                       for k in ("claude", "codex")}}
 
@@ -15262,6 +15271,18 @@ def _pace_reason_phrase(kind: str, reading: dict) -> str:
     state = "ahead of pace" if reading.get("ahead") else "within pace"
     return (f"{_usage_reason_phrase(kind, reading)}, {state} "
             f"({float(reading.get('pace') or 0):g}% by today)")
+
+
+def _projection_reason(decision: dict) -> str:
+    """"Claude 7-day window at 62%, heading for 118% by its reset, Codex for
+    71%": the seat goes to the kind that stays inside its week (#291)."""
+    kinds = (decision.get("pace") or {}).get("kinds") or {}
+    chosen = decision["chosenKind"]
+    other = "codex" if chosen == "claude" else "claude"
+    def heading(kind):
+        return f"{float(kinds[kind]['burn']['projected']):g}%"
+    return (f"{_usage_reason_phrase(other, kinds.get(other, {}))}, heading for {heading(other)} "
+            f"by its reset, {_agent_kind_name(chosen)} for {heading(chosen)}")
 
 
 def _balance_weeks(decision: dict) -> str:
@@ -15529,6 +15550,16 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                 and near[other_kind] and not near[preferred_kind]
                 and warn <= theirs_pct < alarm):
             return result(other_kind, "switch_reset")
+        # A projection past the week (#291) outweighs spare capacity: only when
+        # the other kind's is known and inside it, or the balance rule below
+        # could move the seat onto the kind that is running out.
+        if pace.get("enabled") and pacing.known(mine) and pacing.known(theirs):
+            mine_over, theirs_over = pacing.past_limit(mine), pacing.past_limit(theirs)
+            if (mine_over and not theirs_over and not near[preferred_kind]
+                    and theirs_pct < limit[other_kind]):
+                return result(other_kind, "switch_projection")
+            if theirs_over and not mine_over:
+                return result(preferred_kind, "preferred_projection")
         # The spare-capacity rule only compares two known weeks below warning.
         # The existing near-reset allowance above warning remains an exception
         # to the warning guard for a kind already preferred.
@@ -15670,6 +15701,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
             chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], old_owner_kind)
         if decision["decision"] in ("switch_balance", "switch_reset"):
             why = _balance_reason(decision)
+        elif decision["decision"] == "switch_projection":
+            why = _projection_reason(decision)
         elif decision["decision"] == "switch_pace":
             why = (f"{_pace_reason_phrase(old_owner_kind, paced[old_owner_kind])}, while "
                    f"{_pace_reason_phrase(other_kind, paced[other_kind])}")
@@ -15681,6 +15714,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
             why = _usage_reason_phrase(old_owner_kind, owner_usage)
         reason = f"Owner switched to {_agent_kind_name(other_kind)}: {why}."
         return result(reason, True)
+    elif decision["decision"] == "preferred_projection":
+        reason = f"Preferred line-up kept: {_projection_reason(decision)}."
     elif decision["decision"] == "keep_agents":
         reason = ("Preferred line-up kept: this task keeps its agents, "
                   f"{_keep_agents_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
@@ -15934,6 +15969,8 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
     if code in ("switch_balance", "switch_reset", "preferred_within_margin",
                 "preferred_more_room", "preferred_reset"):
         return f"Reviewer {action} {chosen_name}: {_balance_reason(decision)}."
+    if code in ("switch_projection", "preferred_projection"):
+        return f"Reviewer {action} {chosen_name}: {_projection_reason(decision)}."
     if code == "switch_pace":
         return (f"Reviewer {action} {chosen_name}: "
                 f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}, "
@@ -19173,6 +19210,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 launched = fn(*args, **kw)
                 running_rooms.note_started(rid)     # what a cold start brings back
+                pacing.clear_hold(room_full)
                 return launched
             except BaseException:
                 for x in room_ptys(rid):

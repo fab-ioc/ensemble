@@ -830,6 +830,11 @@ def start_scheduler() -> None:
                 board.maybe_tick()
             except Exception as e:
                 _log(f"board check error: {str(e)[:200]}")
+            # The burn rate's history and the brake on new work (pacing.py).
+            try:
+                _d.pacing.maybe_tick()
+            except Exception as e:
+                _log(f"pacing check error: {str(e)[:200]}")
             # What a handover says is due at a time (due.py) rides this loop,
             # once a minute whatever a project's interval: a digest that is
             # off, or has nothing new, must not keep a promise from its PO.

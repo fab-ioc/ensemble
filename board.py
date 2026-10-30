@@ -189,6 +189,11 @@ def check(project, now=None):
             if room.get("launched", True) or _d.workflow_of(room) == "done":
                 continue
             why, ready_at = gate_state(room, project["id"], git, now)
+            # Held by the pacing brake: the gate is not used up, and a held task
+            # is no idle-board news.
+            if (why and not room.get("gateAction") and room.get("onReady", "start") == "start"
+                    and _d.pacing.hold(room, "gate", now)):
+                continue
             if why and not room.get("gateAction"):
                 # Claim before launching, including failures and process interruption.
                 action = {"at": now, "readyAt": ready_at, "result": "attempted",
