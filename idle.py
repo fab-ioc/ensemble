@@ -570,8 +570,9 @@ def tick(now: float | None = None) -> dict[str, str]:
 
 def records() -> dict[str, dict]:
     """The tasks idle right now, ``{since, alerts, ...}``. One read of the file
-    for a whole list."""
-    return {rid: rec for rid, rec in (_UNSAVED or _load())["tasks"].items() if rec.get("current")}
+    for a whole list. A copy of the items: ``_UNSAVED`` is the dict a tick is
+    changing."""
+    return {rid: rec for rid, rec in list((_UNSAVED or _load())["tasks"].items()) if rec.get("current")}
 
 
 def maybe_tick() -> None:

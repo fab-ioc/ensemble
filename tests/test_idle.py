@@ -219,6 +219,18 @@ class ReviewOne(_Hub):
             self.tick()
         self.assertEqual(idle.records()[rid]["alerts"], 1)
 
+    def test_the_board_reads_a_refused_state_a_tick_is_changing(self):
+        tasks = {}
+
+        class Grows(dict):
+            def get(self, *a):
+                tasks["room-new"] = {}      # a tick adds a task during the read
+                return super().get(*a)
+
+        tasks["room-old"] = Grows(current=True)
+        with mock.patch.object(idle, "_UNSAVED", {"tasks": tasks}):
+            self.assertEqual(list(idle.records()), ["room-old"])
+
     def test_a_failed_save_does_not_repeat_the_line(self):
         rid = self.task()
         self.idle_s["pty-1"] = 25 * MIN
