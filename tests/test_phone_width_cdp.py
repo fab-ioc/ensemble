@@ -5,11 +5,12 @@ desktop page, so a page that holds nothing wider gives it no reason to. In
 headless Chrome over CDP, as a touch phone at 440x956 and 390x844, against
 test_phone_layout's isolated hub, on the list, an open PO conversation, an open
 task, the plan tray, /session and /session?embed=1, with chats holding folded
-rows that have long senders, many chips and many asks:
+rows drawn by the page's own renderers with long chips and many asks:
 
 * no visible element's right edge is past the screen unless it sits inside a
   box that scrolls or clips within the screen;
-* the messages do not scroll sideways, and the closed task panel waits on the
+* the messages do not scroll sideways, a row keeps its time (on a desktop
+  with the longest sender too), and the closed task panel waits on the
   screen, not past its edge;
 * the session page clips its root on a touch screen;
 * all three pages ask iOS not to shrink to fit;
@@ -28,19 +29,26 @@ from tests import test_phone_layout as phone
 
 JS = phone.HEAD + r"""
 const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
-// A sender, a line and chips, all long, through the page's own row; and a gap
-// of team activity naming long asks.
+// Rows through the page's own renderers, with what they are given at its
+// longest: a PO's kind, superseded and unanswered; a gap naming many asks.
 const WIDE_ROWS = `(() => {
-  const now = Date.now() / 1000, box = document.getElementById('msgs');
-  const chip = '<span class="hub-kind">a kind of input with a long name</span><span class="task-chip">#295 a long task title</span>';
-  foldChips = () => chip.repeat(8);
-  ROOM_OBJ && (tick = () => {});
-  const line = 'A first line that runs on and on, with a #295 task chip and more words than any phone can hold on one row. '.repeat(4);
-  const m = { id: 'wide-1', from: ROOM_OBJ.participants.find(p => p.kind === 'agent').identity, to: 'user', ts: now, text: line };
-  box.insertAdjacentHTML('beforeend', foldBalloonHtml(m, 0, 'row', { }));
-  box.insertAdjacentHTML('beforeend', '<button type="button" class="msg-fold gap user hub"><span class="from">Team activity with a long name</span>'
-    + '<span class="gasks">' + 'Shall I send the long reply? '.repeat(8) + '</span><span class="fl gkinds">' + '5 progress checks, '.repeat(20) + '</span></button>');
+  const now = Date.now() / 1000, box = document.getElementById('msgs'), N = CHAT_NAMES;
+  tick = () => {};
+  const line = 'A first line that runs on and on, with more words than any phone can hold on one row. '.repeat(4);
+  const m = { id: 'wide-1', from: ROOM_OBJ.participants.find(p => p.kind === 'agent').identity, to: 'user', ts: now, text: line,
+    kind: 'pomsg', poKind: 'a kind with a very long name '.repeat(6) };
+  box.insertAdjacentHTML('beforeend', foldBalloonHtml(m, 0, 'row', { un: 'past', superseded: true }));
+  gapAsks = () => ({ n: 14, ids: Array.from({ length: 14 }, (_, i) => 'P' + (1000 + i)) });
+  const items = [0, 1].map(i => ({ id: 'gap-' + i, from: 'ensemble', to: m.from, ts: now - 60 + i, text: 'progress check ' + line }));
+  box.insertAdjacentHTML('beforeend', gapRowHtml({ key: 'gap-w', seen: 1, first: 0, last: 1, idx: [0, 1] }, items, false, N));
   return box.querySelectorAll('.msg-fold').length;
+})()`;
+// A sender too long for the share a phone's row keeps, as a desktop draws it.
+const LONG_SENDER = `(() => {
+  const box = document.getElementById('msgs');
+  const m = { id: 'wide-2', from: 'a-sender-with-a-very-long-name-that-goes-on-and-on-and-on-and-on-and-on-and-on-and-on', to: 'user', ts: Date.now() / 1000, text: 'A line.' };
+  box.insertAdjacentHTML('beforeend', foldBalloonHtml(m, 1, 'row', { }));
+  return 0;
 })()`;
 const FRAME = `(document.body.classList.contains('detail-open') ? document.querySelector('#detail-panel iframe.dp-session') : document.querySelector('#po-panel iframe.po-session:not([hidden])'))`;
 // What runs past the screen, with no box between it and the page to hold it.
@@ -56,7 +64,9 @@ const OVER = `(doc => {
 })`;
 const WIDTHS = doc => `(d => ({ inner: d.defaultView.innerWidth, root: d.documentElement.scrollWidth, over: ${OVER}(d),
   msgs: d.getElementById('msgs') ? [d.getElementById('msgs').scrollWidth, d.getElementById('msgs').clientWidth] : null,
-  rows: d.querySelectorAll('.msg-fold').length, rootClip: d.defaultView.getComputedStyle(d.documentElement).overflowX }))(${doc})`;
+  rows: d.querySelectorAll('.msg-fold').length,
+  real: { chips: d.querySelectorAll('.msg-fold .chips .hub-kind').length, lozenges: d.querySelectorAll('.msg-fold .chips .lz').length, asks: d.querySelectorAll('.msg-fold.gap .gasks').length },
+  timeCut: [...d.querySelectorAll('.msg-fold .from .at')].filter(e => e.getBoundingClientRect().right > e.closest('.from').getBoundingClientRect().right + 0.5).length, rootClip: d.defaultView.getComputedStyle(d.documentElement).overflowX }))(${doc})`;
 const VIEWPORT = doc => `${doc}.querySelector('meta[name=viewport]').content`;
 async function main() {
   const { ch, ws } = await launch(); const c = new Cdp(ws); await c.open();
@@ -66,7 +76,7 @@ async function main() {
     const { sessionId: s } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, s);
     await c.send('Emulation.setDeviceMetricsOverride', { deviceScaleFactor: 3, mobile: true, ...metrics }, s);
-    await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, s);
+    await c.send('Emulation.setTouchEmulationEnabled', { enabled: metrics.mobile !== false, maxTouchPoints: 5 }, s);
     if (ua) await c.send('Emulation.setUserAgentOverride', { userAgent: ua }, s);
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}" }, s);
     const ev = async expression => { const r = await c.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, s); if (r.exceptionDetails) throw Error(expression.slice(0, 120) + ' ' + JSON.stringify(r.exceptionDetails).slice(0, 800)); return r.result.value; };
@@ -111,6 +121,13 @@ async function main() {
       }
       await p.close();
     }
+    // A desktop keeps the whole sender and its time.
+    const d = await page({ width: 1728, height: 1117, mobile: false, deviceScaleFactor: 1 });
+    await d.go(`/session?id=${A.po}`);
+    await d.until(`typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && !!ROOM_OBJ.participants`); await sleep(500);
+    await d.ev(WIDE_ROWS); await d.ev(LONG_SENDER); await sleep(300);
+    out.desktop = await d.ev(WIDTHS('document'));
+    await d.close();
     // The notice: what each screen says.
     const said = async (metrics, ua) => { const p = await page(metrics, ua); await home(p); const b = await p.ev(banner); await p.close(); return b; };
     out.desktopSite = await said({ width: 980, height: 2128, screenWidth: 440, screenHeight: 956 }, MAC);
@@ -158,7 +175,16 @@ class PhoneWidth(unittest.TestCase):
                 with self.subTest(width=w, screen=name):
                     g = self.got[w][name]
                     self.assertGreaterEqual(g['rows'], 2)   # the wide rows are there
+                    self.assertGreaterEqual(g['real']['chips'], 1)
+                    self.assertGreaterEqual(g['real']['lozenges'], 1)
+                    self.assertGreaterEqual(g['real']['asks'], 1)
+                    self.assertEqual(g['timeCut'], 0)
                     self.assertLessEqual(g['msgs'][0], g['msgs'][1])
+
+    def test_a_desktop_keeps_a_long_sender_and_its_time(self):
+        g = self.got['desktop']
+        self.assertGreaterEqual(g['rows'], 3)
+        self.assertEqual(g['timeCut'], 0)
 
     def test_the_closed_panel_waits_on_the_screen(self):
         for w in self.PHONES:

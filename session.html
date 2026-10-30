@@ -704,7 +704,7 @@
   .msg-fold:hover { background:var(--hover); }
   .msg-fold:focus-visible, .fold-btn:focus-visible, #to-latest:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .msg-fold.user { border-left:3px solid var(--border-strong); }
-  .msg-fold .from { flex:0 0 auto; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--fg-muted); }
+  .msg-fold .from { flex:0 0 auto; font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--fg-muted); }
   /* Who writes to whom reads as names ("#26 claude → PO"), not as a shouted label. */
   .msg .from .who, .msg .from .to, .msg-fold .from .who, .msg-fold .from .to { text-transform:none; letter-spacing:0; }
   /* When it was written: quiet, after the names, digits of equal width. */
@@ -1525,8 +1525,10 @@
     #points-line { margin: 0; border-radius: 0; border-width: 0 0 1px; }
     #points-line .pt-sum-oq { display: inline; }
     #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* Beside the sender and the gaps, so a row holds inside the screen (#295). */
-    .msg-fold.gap .gasks { max-width:45%; }
+    /* A row's fixed parts add up to less than the screen (#295); the sender has
+       the most, so its time stays in sight, and the line takes what is left. */
+    .msg-fold .from { max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .msg-fold .chips, .msg-fold.gap .gasks { max-width:35%; }
   }
   .pt-sum-oq { display: none; }
   @media not all and (pointer: coarse) {
