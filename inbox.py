@@ -56,6 +56,9 @@ DEBUG_DAYS = 14                 # debug: asks left out are listed back to this m
 
 _LOCK = threading.Lock()
 _CACHE: dict[tuple, tuple[float, dict]] = {}
+COLD_THREADS_S = 30.0           # a PO chat not opened since start: its threads looked at again after this
+_COLD_THREADS: dict[str, tuple[float, dict]] = {}   # room id → (when, index) of that look
+_COLD_BUILDING: set[str] = set()
 
 
 def _line(text: str, n: int = 160) -> str:
@@ -184,8 +187,9 @@ def _thread_index(th_mod, rid: str, _s=None) -> dict | None:
     """A PO chat's thread index: the last one built (as the thread view uses
     between its polls), ``{}`` for a chat that is not threaded, None while a
     first build runs. A cold chat (no index since the hub started) is built in
-    the background, as opening its chat would (``warm_room``), so a fresh
-    request never waits minutes and never misses its threads for long."""
+    the background as a look only (``threads.build(keep=False)``: nothing of
+    the chat's record is written, review 2), kept here for COLD_THREADS_S, so
+    a fresh request never waits minutes and never misses its threads for long."""
     hit = th_mod._INDEX.get(rid)
     if hit:
         return hit[1] or {}
@@ -194,19 +198,27 @@ def _thread_index(th_mod, rid: str, _s=None) -> dict | None:
             return {}
     except Exception:       # noqa: BLE001
         return {}
-    with th_mod._LOCK:
-        busy = rid in th_mod._BUILDING
-    if not busy:
-        threading.Thread(target=_warm_threads, args=(rid,), daemon=True,
+    with _LOCK:
+        cold = _COLD_THREADS.get(rid)
+        start = rid not in _COLD_BUILDING and (cold is None or time.time() - cold[0] > COLD_THREADS_S)
+        if start:
+            _COLD_BUILDING.add(rid)
+    if start:
+        threading.Thread(target=_read_threads, args=(th_mod, rid), daemon=True,
                          name=f"inbox-threads-{rid}").start()
-    return None
+    return cold[1] if cold else None
 
 
-def _warm_threads(rid: str) -> None:
+def _read_threads(th_mod, rid: str) -> None:
     try:
-        _d.warm_room(rid)
+        idx = th_mod.build(rid, show_progress=False, keep=False)
+        with _LOCK:
+            _COLD_THREADS[rid] = (time.time(), idx or {})
     except Exception as e:      # noqa: BLE001 — the next poll tries again
         print(f"[inbox] {rid}: threads not read: {e!r}", flush=True)
+    finally:
+        with _LOCK:
+            _COLD_BUILDING.discard(rid)
 
 
 def build(project_id: str = "", debug: bool = False, now: float | None = None) -> dict:

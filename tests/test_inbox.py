@@ -65,11 +65,12 @@ class World:
                                         is_threaded=lambda rid: rid in w.threads or rid in w.cold)
         w.warmed = []
 
-        def warm_room(rid):     # what opening the chat builds: the thread source's index
-            w.warmed.append(rid)
-            threads._INDEX[rid] = ("sig", w.cold.get(rid, {"threads": {}}))
+        def look(rid, show_progress=True, keep=True):   # the thread source's index, a look only
+            w.warmed.append((rid, keep))
+            return w.cold.get(rid, {"threads": {}})
+        threads.build = look
         return types.SimpleNamespace(
-            attention=attention, asks=asks, points=pts, threads=threads, warm_room=warm_room,
+            attention=attention, asks=asks, points=pts, threads=threads,
             load_projects=lambda: w.projects, load_session_projects=lambda: {},
             project_keys=lambda ps: {}, load_labels=lambda: {},
             _project_for_cwd=lambda cwd, ps: "",
@@ -79,6 +80,8 @@ class World:
 class InboxTest(unittest.TestCase):
     def setUp(self):
         self.w = World()
+        inbox._COLD_THREADS.clear()
+        self.addCleanup(inbox._COLD_THREADS.clear)
 
     def build(self, **kw):
         inbox.bind(self.w.module())
@@ -124,12 +127,23 @@ class InboxTest(unittest.TestCase):
             if t.name.startswith("inbox-threads-"):
                 t.join(5)
         self.assertTrue(first.get("pending"), first)
-        self.assertIn(PO, self.w.warmed)
+        self.assertEqual(self.w.warmed, [(PO, False)], "a look only, review 2")
+        self.assertNotIn(PO, mod.threads._INDEX, "the chat's own view is left its first build")
         out = inbox.build(now=NOW, debug=True)
         self.assertEqual(out["count"], 1, out["rows"])
         self.assertIn("thread:t1", out["rows"][0]["sources"])
         self.assertEqual(out["rows"][0]["threads"], ["t1"])
         self.assertFalse(out.get("pending"), out)
+
+    def test_cold_chat_with_no_threads_stops_being_pending(self):
+        self.w.cold[PO] = {"threads": {}}
+        inbox.bind(self.w.module())
+        self.assertTrue(inbox.build(now=NOW).get("pending"))
+        for t in threading.enumerate():
+            if t.name.startswith("inbox-threads-"):
+                t.join(5)
+        self.assertFalse(inbox.build(now=NOW).get("pending"))
+        self.assertEqual(len(self.w.warmed), 1, "looked at once, not on every poll")
 
     def test_point_folds_into_card_on_its_answer_message(self):
         # The card does not name its point, but it sits on the point's answer.

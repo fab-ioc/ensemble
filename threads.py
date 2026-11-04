@@ -827,16 +827,21 @@ def _who(r: dict) -> str:
     return "hub"
 
 
-def build(room_id: str, room: dict | None = None, *, show_progress: bool = True) -> dict | None:
+def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
+          keep: bool = True) -> dict | None:
     """The chat's threads, worked out again only when one of its transcripts,
-    its ledger or its record changed. None for a chat that is not threaded."""
+    its ledger or its record changed. None for a chat that is not threaded.
+    ``keep=False`` (the inbox, #302): a look only — the record is not written
+    (no ``since``, no replies paired for good) and the index is not kept for
+    the chat's own view, whose first build still does both."""
     if room is None:
         room = _d.chatroom.get_room(room_id)
     if room is None:
         return None
     # The first build saves the record (``since``) first: the signature then
     # holds it, and the next poll does not build it again.
-    _ensure_since(room_id)
+    if keep:
+        _ensure_since(room_id)
     lsig = _led_sig(room_id)
     sig = _signature(room_id, room, lsig)
     with _LOCK:
@@ -876,7 +881,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
     # while it may still come is made again on the next build.
     settled = {k: m for k, (m, at) in (out.get("paired") or {}).items()
                if time.time() - at > PAIR_LATE_S + PAIR_SLACK_S}
-    if settled:
+    if settled and keep:
         try:
             confirmed(room_id, settled)
         except Exception as e:      # noqa: BLE001 — paired again by what they hold next time
@@ -926,8 +931,9 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True)
            # turn the next build brings, its send drawn till then (#259).
            "sendMids": sorted({m for m in claimed.values() if m in by_mid})}
     idx["channel"] = _channel(idx)
-    with _LOCK:
-        _INDEX[room_id] = (sig, idx)
+    if keep:
+        with _LOCK:
+            _INDEX[room_id] = (sig, idx)
     progress.clear(key)
     if idx["took"] >= SLOW_BUILD_S:
         _log(f"{room_id}: built in {idx['took']:.1f} s ({waited[0]:.1f} s standing aside)")
