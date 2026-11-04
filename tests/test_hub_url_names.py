@@ -140,6 +140,36 @@ class HubUrlNames(unittest.TestCase):
                     self.assertEqual(got, want)
                     self.assertTrue(href.startswith("/session?room=" + ROOM) or href == "/?task=" + ROOM, href)
 
+    def test_a_crafted_file_name_is_text_not_markup(self):
+        evil = r'C:\x\a"><img src=x onerror=alert(1)>&b.md'
+        enc = quote(evil, safe="")
+        cases = [f"see http://127.0.0.1:8765/fileview?path={enc} now",
+                 f"`http://127.0.0.1:8765/fileview?path={enc}`",
+                 f"[http://x](http://127.0.0.1:8765/fileview?path={enc})",
+                 f"see http://127.0.0.1:8765/fileview?path={quote('C:/x/a&lt;b&quot;.md', safe='')} now"]
+        for where, r in self.both(cases).items():
+            for case in cases:
+                with self.subTest(where=where, case=case):
+                    html = r[case]
+                    self.assertNotIn("<img", html)
+                    self.assertNotIn('"><', html.replace('"><a', '').replace('"><code', ''))
+                    for href, _, title in anchors(html):
+                        self.assertTrue(href.startswith("/fileview?path="), href)
+
+    def test_a_message_link_is_ensembles_on_any_https_address(self):
+        # #238: a link to a message (/session?room=room-<8 hex>&msg=…) is Ensemble's
+        # whatever host it names, since the hub may answer on an https address
+        # of its own (not *.ts.net); it opens in place from this origin.
+        cases = [f"see https://hub.example.net/session?room={ROOM}&msg=m-1 now",
+                 "see https://example.com/session?room=general&msg=m-1 now"]
+        for where, r in self.both(cases).items():
+            with self.subTest(where=where):
+                href, words, _ = self.one_link(r[cases[0]], cases[0])
+                self.assertEqual((href, words), (f"/session?room={ROOM}&msg=m-1", "the message"))
+                href, words, _ = self.one_link(r[cases[1]], cases[1])
+                self.assertEqual(href, words)   # not a room id: someone else's page, as written
+                self.assertTrue(href.startswith("https://example.com/"), href)
+
     def test_a_template_copied_literally_is_text(self):
         case = "open it (http://127.0.0.1:8765/fileview?path=<URL-encoded absolute path>) here"
         for where, r in self.both([case]).items():
