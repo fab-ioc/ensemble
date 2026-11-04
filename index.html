@@ -635,7 +635,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .bar-sep { color: var(--fg-muted); flex: none; }
   /* The project you are in is where you are: it reads as a name, not a
      control, and its caret says it opens. */
-  #proj-switch { min-width: 0; max-width: 280px; }
+  #proj-switch { min-width: 0; max-width: 280px; flex: 0 1 auto; }
   body.in-proj #proj-switch { color: var(--fg); font-size: var(--fs-300); font-weight: 600; }
   #bar-here { display: flex; align-items: center; gap: var(--s-100); flex: none; }
   #bar-here:empty, .bar-break { display: none; }
@@ -655,15 +655,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      conversation › tool › file, one line. Every part but the last goes up to
      its level; the last is where you are. Each part gives way with an
      ellipsis, the conversation's title first, so the bar keeps one row. The
-     project's name leads (#proj-go) and its caret keeps the menu. */
-  #proj-go, #bar-crumbs { display: none; }
-  body.mid.bar-proj #proj-go { display: inline-flex; }
-  body.mid.bar-proj #proj-switch #proj-switch-name { display: none; }
-  body.mid.bar-proj #proj-switch { padding: 0 var(--s-100); margin-left: calc(-1 * var(--s-100)); }
+     project's name is the switcher (#proj-switch, #303). */
+  #bar-crumbs { display: none; }
+  body.mid.bar-proj #proj-switch { color: var(--fg); font-size: var(--fs-300); font-weight: 500; }
   body.mid #bar-crumbs { display: flex; align-items: center; gap: var(--s-100); min-width: 0; flex: 0 1 auto; }
   /* Every part at the body size, as the mockup: the project a plain name,
      the levels between quieter, where you are the one in weight. */
-  #proj-go { color: var(--fg); font-size: var(--fs-300); font-weight: 400; min-width: 0; flex: 0 1 auto; max-width: 240px; padding-right: var(--s-050); }
   .bar-crumb > span, .crumb-here { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #bar-crumbs .bar-crumb { min-width: 0; flex: 0 1 auto; max-width: 280px; color: var(--fg-subtle); font-size: var(--fs-300); }
   #bar-crumbs .bar-crumb[data-crumb="task"] { flex-shrink: 4; max-width: 420px; }
@@ -701,7 +698,21 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pm-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
   .pm-head { padding: var(--s-100) 10px; font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
     letter-spacing: .05em; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #proj-menu { max-height: 60vh; overflow-y: auto; max-width: 320px; }
+  /* The project switcher (#303): Recent, then All projects with its filter,
+     then this project's settings and New project. */
+  #proj-menu { max-height: 60vh; overflow-y: auto; width: 320px; max-width: calc(100vw - 16px); box-sizing: border-box; }
+  .pm-head .pm-n { font-weight: 400; margin-left: var(--s-050); }
+  .pm-findrow { padding: var(--s-050) var(--s-100) var(--s-100); }
+  .pm-find {
+    width: 100%; box-sizing: border-box; height: 32px; padding: 0 var(--s-200); border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-200);
+  }
+  .pm-find::placeholder { color: var(--fg-muted); }
+  .pm-find:focus { outline: none; border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent); }
+  .pm-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .pm-none { margin: 0; padding: 7px 10px; font-size: var(--fs-200); color: var(--fg-muted); }
+  #proj-menu.pm-finding .pm-recent, #proj-menu.pm-finding .pm-recent + .pm-rule,
+  #proj-menu.pm-finding #pm-recent-h, #proj-menu.pm-finding .pm-tail { display: none; }
   /* Search syntax. A placeholder is not documentation. */
   #search-help-pop { width: 300px; padding: var(--s-300); }
   #search-help-pop .shp-title {
@@ -3570,9 +3581,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* An open task's breadcrumb: the project's name goes up to its screen,
        the caret beside it is its menu, then the task and its tab; each part
        a finger's height, the title giving way first. */
-    body.row2.bar-proj #proj-go { display: inline-flex; order: 2; height: var(--touch-min); max-width: 30%; padding: 0 var(--s-100); }
-    body.row2.bar-proj #proj-switch-name { display: none; }
-    body.row2.bar-proj #proj-switch { flex: none; min-width: var(--touch-min); padding: 0; justify-content: center; }
+    body.row2.bar-proj #proj-switch { max-width: 40%; padding: 0 var(--s-100); }
     body.row2 #bar-crumbs .bar-crumb { height: var(--touch-min); max-width: none; padding: 0 var(--s-100); }
     body.row2 #bar-crumbs .crumb-here { max-width: none; }
     /* The list is home: the whole screen under the bar, the page under it
@@ -3662,6 +3671,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #settings-panel .sp-pages input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
     #settings-models .pref-row, #settings-models .cfg-hint { max-width: none; }
     .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt, .cm-item { min-height: var(--touch-min); }
+    .pm-find { height: var(--touch-min); font-size: 16px; }   /* 16px: a phone does not zoom into it */
     /* Create's menu: the width of the screen less the gutters, under the bar. */
     #create-menu { left: var(--s-200); right: var(--s-200) !important; min-width: 0; max-width: none; }
     .cm-key { display: none; }
@@ -4332,12 +4342,11 @@ window.DOC_LISTENERS_PAUSED = false;
       <img class="logo" src="/static/icons/favicon.svg" alt="" width="22" height="22"><!-- wordmark: tools/make_wordmark.py --><svg class="bar-word wm-tile" viewBox="0 -56 2264 400" width="124.5" height="22.0" aria-hidden="true" focusable="false"><image href="/static/icons/favicon.svg" x="0" y="-56" width="400" height="400"/><polygon class="wm-ink" points="460,0 532,0 672,288 600,288"/><rect class="wm-ink" x="448" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="600" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="732" y="0" width="84" height="182" rx="30"/><rect class="wm-ink" x="848" y="106" width="84" height="182" rx="30"/><rect class="wm-ink" x="732" y="0" width="200" height="76" rx="38"/><rect class="wm-ink" x="732" y="106" width="200" height="76" rx="38"/><rect class="wm-ink" x="732" y="212" width="200" height="76" rx="38"/><rect class="wm-ink" x="1020" y="0" width="160" height="76" rx="38"/><rect class="wm-ink" x="1020" y="106" width="128" height="76" rx="38"/><rect class="wm-ink" x="1020" y="212" width="160" height="76" rx="38"/><rect class="wm-ink" x="980" y="0" width="84" height="288" rx="30"/><polygon class="wm-ink" points="1240,0 1312,0 1420,236 1336,236"/><polygon class="wm-ink" points="1516,0 1444,0 1336,236 1420,236"/><rect class="wm-ink" x="1228" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1444" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1688" y="0" width="84" height="182" rx="30"/><rect class="wm-ink" x="1708" y="106" width="84" height="182" rx="30"/><rect class="wm-ink" x="1616" y="0" width="156" height="76" rx="38"/><rect class="wm-ink" x="1616" y="106" width="176" height="76" rx="38"/><rect class="wm-ink" x="1616" y="212" width="176" height="76" rx="38"/><rect class="wm-ink" x="1576" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1880" y="212" width="136" height="76" rx="38"/><rect class="wm-ink" x="1840" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="2104" y="0" width="160" height="76" rx="38"/><rect class="wm-ink" x="2104" y="106" width="128" height="76" rx="38"/><rect class="wm-ink" x="2104" y="212" width="160" height="76" rx="38"/><rect class="wm-ink" x="2064" y="0" width="84" height="288" rx="30"/></svg><!-- /wordmark -->
     </a></h1>
     <span class="bar-sep" aria-hidden="true">/</span>
-    <!-- The breadcrumb (body.mid, a desktop): the project, which goes up to
-         its PO's conversation, its menu on the caret beside it, then the
-         conversation, the tool and the file (barCrumbs). On a phone the
-         project's name is the menu button, as before. -->
-    <button id="proj-go" class="bar-btn bar-crumb" type="button"><span class="proj-go-name"></span></button>
-    <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s kind and key" title="Switch project, or change this project's kind and key" aria-haspopup="true" aria-expanded="false">
+    <!-- The breadcrumb (body.mid, a desktop): the project's name is the
+         switcher (#303: recent projects, then all of them, and this
+         project's settings), then the conversation, the tool and the file
+         (barCrumbs). -->
+    <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s settings" title="Switch project, or change this project's settings" aria-haspopup="true" aria-expanded="false" aria-controls="proj-menu">
       <span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
     </button>
     <span id="bar-crumbs"></span>
@@ -4437,7 +4446,7 @@ window.DOC_LISTENERS_PAUSED = false;
   <button class="me-item" data-me="feedback">Send feedback…</button>
   <button class="me-item" data-me="settings">Settings</button>
 </div>
-<div id="proj-menu" hidden></div>
+<div id="proj-menu" role="dialog" aria-label="Switch project" data-noun-aria-label="Switch {project}" hidden></div>
 <div id="usage-tray" hidden>
   <div class="usage-head">Plan allowance <span id="usage-sub"></span></div>
   <div class="usage-allowance-control">
@@ -20359,7 +20368,8 @@ function barPaint() {
   if (here) writeSlot(here, LD?.dock || (inProj && tabs && panels) ? pdCtlHtml() : '');
   barCrumbs();
   const sw = document.getElementById('proj-switch');
-  if (sw) sw.title = inProj ? `${projSwitchLabel()}: switch ${noun('one')}, or change this ${noun('one')}'s kind and key` : nounText('Switch {project}');
+  if (sw) sw.title = document.body.classList.contains('bar-proj') || inProj
+    ? `${sw.querySelector('#proj-switch-name').textContent}: switch ${noun('one')}, or change this ${noun('one')}'s settings` : nounText('Switch {project}');
 }
 // Home: the list on a phone (#129). A desktop has no home page (#135): the
 // middle empties and the list shows its Needs you.
@@ -20463,7 +20473,7 @@ function crumbsOf(s) {
   if (out.length) out[out.length - 1].current = true;
   return out;
 }
-// Everything after the project (which is #proj-go): a button per level you
+// Everything after the project (which is the switcher, #proj-switch): a button per level you
 // can go up to, the last one as text.
 function crumbsHtml(cs) {
   return cs.filter(c => c.level !== 'project').map(c => '<span class="crumb-sep" aria-hidden="true">›</span>'
@@ -20569,19 +20579,17 @@ function crumbState() {
 // Written only when it changes. A phone has them in its bar's second row
 // while a task is open (#129): ← project ▾ › #18 title › tool › file.
 function barCrumbs() {
-  const box = document.getElementById('bar-crumbs'), go = document.getElementById('proj-go');
-  if (!box || !go) return;
+  const box = document.getElementById('bar-crumbs'), name = document.getElementById('proj-switch-name');
+  if (!box || !name) return;
   const mid = document.body.classList.contains('mid');
   const cs = mid || crumbTask() ? crumbsOf(crumbState()) : [];
   const pc = cs.find(c => c.level === 'project');
   document.body.classList.toggle('bar-proj', !!pc);
-  const name = go.querySelector('.proj-go-name');
-  if (pc) {
-    if (name.textContent !== pc.text) name.textContent = pc.text;
-    go.title = pc.current ? pc.text : pc.title;
-    if (pc.current) go.setAttribute('aria-current', 'location'); else go.removeAttribute('aria-current');
-  }
+  // The switcher names the project you are in: an open task's too (#303).
+  const nm = pc ? pc.text : projSwitchLabel();
+  if (name.textContent !== nm) name.textContent = nm;
   writeSlot(box, crumbsHtml(cs));
+  projNoteOpened(projHere());
 }
 // Going up to a level.
 function crumbGo(level) {
@@ -20636,11 +20644,6 @@ function crumbGo(level) {
   }
   barCrumbs();
 }
-document.getElementById('proj-go').addEventListener('click', (e) => {
-  // A phone, or no project to go up to: the name is the menu, as before.
-  if (!document.body.classList.contains('bar-proj')) { e.stopPropagation(); $('#proj-switch').click(); return; }
-  crumbGo('project');
-});
 document.getElementById('bar-crumbs').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-crumb]');
   if (b) crumbGo(b.dataset.crumb);
@@ -20655,7 +20658,7 @@ function projMenuSettingsHtml(pj) {
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
   const items = [
     `<button class="pm-item pm-set task-tools-btn" data-proj="${esc(pj.id)}" title="Which MCP servers and connectors its task owners, reviewers and handovers start with">`
-      + `<span class="pm-name">Task agents' tools: ${esc(pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit')}â€¦</span></button>`,
+      + `<span class="pm-name">Task agents' tools: ${esc(pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit')}…</span></button>`,
     pj.path ? `<button class="pm-item pm-set kind-btn" data-proj="${esc(pj.id)}" title="Code or documents: what its Overview and Workspace are">`
       + `<span class="pm-name">Kind: ${esc(nounText(isDocsProject(pj) ? 'Documents {project}' : 'Code {project}'))}…</span></button>` : '',
     pj.key ? `<button class="pm-item pm-set key-btn" data-proj="${esc(pj.id)}" title="${esc(`Its tasks are ${pj.key}-18 where tasks of several ${noun('many')} are listed`)}">`
@@ -20667,53 +20670,183 @@ function projMenuSettingsHtml(pj) {
   ].filter(Boolean);
   return items.length ? `<div class="pm-rule"></div><div class="pm-head">${esc(pj.name)}</div>` + items.join('') : '';
 }
-function closeProjMenu() {
-  $('#proj-menu').hidden = true;
+// ---- The project switcher (#303, Layout A step 2): begin ---------------------
+// The bar's project name is the switcher: its menu lists the two or three
+// projects worked in most recently first (the list's own activity, swRecent,
+// and the projects opened in this browser, PROJ_OPENED_KEY), each with its
+// Inbox count (/api/inbox) and its unread dot; then a filter and every
+// project (All projects: a stale one too, and Unassigned, where Make PO is);
+// then this project's settings and New project. A pick opens the project as
+// its row in the list does: its PO's conversation, else its page.
+// projRecent and projMatches are pure: tests/test_project_switcher.py runs them.
+const PROJ_OPENED_KEY = 'cd-proj-opened';   // { projectId: ms }, the projects opened in this browser
+const PROJ_RECENT_N = 3;
+function projOpened() {
+  try { const v = JSON.parse(localStorage.getItem(PROJ_OPENED_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; }
+}
+var PROJ_NOTED = '';
+// The project the page shows is one this browser opened: noted when it changes.
+function projNoteOpened(pid) {
+  if (!pid || pid === UNASSIGNED_ID || pid === PROJ_NOTED) return;
+  PROJ_NOTED = pid;
+  const o = projOpened();
+  o[pid] = Date.now();
+  const keep = Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 30);
+  try { localStorage.setItem(PROJ_OPENED_KEY, JSON.stringify(Object.fromEntries(keep))); } catch (e) {}
+}
+// `recent`: swRecent's entries (seconds); `opened`: { id: ms }. The newest of
+// the two for each project, latest first; a project with neither is not recent.
+function projRecent(projects, recent, opened, n) {
+  const at = new Map();
+  for (const e of recent || []) if (e && e.pid && (e.po || e.proj)) at.set(e.pid, Math.max(at.get(e.pid) || 0, Number(e.at) || 0));
+  for (const [pid, ms] of Object.entries(opened || {})) at.set(pid, Math.max(at.get(pid) || 0, (Number(ms) || 0) / 1000));
+  return (projects || []).filter(p => p && p.id !== UNASSIGNED_ID && p.registered !== false && (at.get(p.id) || 0) > 0)
+    .sort((a, b) => (at.get(b.id) - at.get(a.id)) || String(a.name).localeCompare(String(b.name)))
+    .slice(0, n || PROJ_RECENT_N);
+}
+// Every project, by name, Unassigned last; `q` keeps the ones whose name or key holds it.
+function projMatches(projects, q) {
+  const t = String(q || '').trim().toLowerCase();
+  return (projects || []).filter(p => p && (!t || String(p.name || '').toLowerCase().includes(t) || String(p.key || '').toLowerCase().includes(t)))
+    .sort((a, b) => ((a.id === UNASSIGNED_ID) - (b.id === UNASSIGNED_ID)) || String(a.name).localeCompare(String(b.name)));
+}
+function projInboxN(pid) {
+  return IBX.data ? (IBX.data.rows || []).filter(r => r.projectId === pid).length : 0;
+}
+function projItemHtml(pj, here, cls) {
+  const n = projInboxN(pj.id);
+  const po = pj.registered && pj.poRoomId;
+  const tip = po ? `${pj.name}: its PO's conversation` : `${pj.name}`;
+  return `<button type="button" class="pm-item ${cls}${here === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}" title="${esc(tip)}"`
+    + (here === pj.id ? ' aria-current="true"' : '') + `>`
+    + `<span class="pm-name">${esc(pj.name)}</span>${unreadDotHtml(poRowOf(pj))}`
+    + (n ? `<span class="pm-needs" title="${esc(`${n} in your Inbox`)}">${n}</span>` : '') + '</button>';
+}
+// The project the bar names: an open task's (also one opened from Home), else the page's.
+function projHere() {
+  const crumb = document.body.classList.contains('bar-proj') ? crumbProject(crumbTask()) : null;
+  return crumb ? crumb.id : SELECTED_PROJECT;
+}
+function projAllHtml(list, here, q) {
+  const got = projMatches(list, q);
+  return got.length ? got.map(pj => projItemHtml(pj, here, 'pm-any')).join('')
+    : `<p class="pm-none">No ${esc(noun('one'))} matches “${esc(q)}”</p>`;
+}
+function projMenuHtml() {
+  const list = (PROJECTS && PROJECTS.projects) || [];
+  const here = projHere();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const un = projectById(UNASSIGNED_ID);
+  let recent = [];
+  try {
+    recent = projRecent(list, swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
+      { dayStart: today / 1000, unassigned: (un && un.sessions) || [] }).recent, projOpened());
+  } catch (e) { recent = projRecent(list, [], projOpened()); }
+  // All projects is a phone's cards page; a desktop has no such page (#135).
+  const cards = phoneNow() ? `<button type="button" class="pm-item pm-cards${!here ? ' on' : ''}" data-proj="">${esc(nounText('All {projects} as cards'))}</button>` : '';
+  const pj = projectById(here);
+  return (recent.length ? `<div class="pm-head" id="pm-recent-h">Recent</div><div class="pm-recent" role="group" aria-labelledby="pm-recent-h">`
+      + recent.map(p => projItemHtml(p, here, 'pm-rec')).join('') + '</div><div class="pm-rule"></div>' : '')
+    + `<div class="pm-head" id="pm-all-h">${esc(nounText('All {projects}'))} <span class="pm-n">${list.length}</span></div>`
+    + `<div class="pm-findrow"><input type="search" class="pm-find" placeholder="${esc(nounText('Find a {project}…'))}"`
+    + ` aria-label="${esc(nounText('Find a {project}'))}" autocomplete="off" spellcheck="false"></div>`
+    + `<div class="pm-all" role="group" aria-labelledby="pm-all-h">${cards}${projAllHtml(list, here, '')}</div>`
+    + `<div class="pm-tail">${projMenuSettingsHtml(pj)}<div class="pm-rule"></div>`
+    + `<button type="button" class="pm-item pm-new" title="A name, then code or documents">${esc(nounText('New {project}…'))}</button></div>`;
+}
+function projMenuItems() {
+  return [...$('#proj-menu').querySelectorAll('.pm-item, .pm-find')].filter(e => e.offsetParent !== null);
+}
+function closeProjMenu(back) {
+  const m = $('#proj-menu');
+  const was = !m.hidden;
+  m.hidden = true;
   $('#proj-switch').setAttribute('aria-expanded', 'false');
+  if (was && back) $('#proj-switch').focus();
+}
+function openProjMenu(focusFirst) {
+  closeCreateMenu(); closeMeMenu();
+  const m = $('#proj-menu'), b = $('#proj-switch');
+  m.innerHTML = projMenuHtml();
+  m.hidden = false;
+  const r = b.getBoundingClientRect(), vw = document.documentElement.clientWidth;
+  const top = Math.round(r.bottom + 6);
+  m.style.top = top + 'px';
+  m.style.maxHeight = Math.max(160, Math.round(window.innerHeight - top - 8)) + 'px';
+  // Under its button, never past the screen's right edge (a phone: the screen's width less a margin).
+  const w = m.getBoundingClientRect().width;
+  m.style.left = Math.round(Math.max(8, Math.min(r.left, vw - w - 8))) + 'px';
+  b.setAttribute('aria-expanded', 'true');
+  // The keyboard lands on the filter (a desktop) or the first project (a
+  // phone: no keyboard springing up; or the arrow key that opened it).
+  const find = m.querySelector('.pm-find');
+  const first = m.querySelector('.pm-item');
+  if (!phoneNow() && !focusFirst && find) find.focus();
+  else if (first && (focusFirst || !phoneNow())) first.focus();
+  else { m.setAttribute('tabindex', '-1'); m.focus({ preventScroll: true }); }
 }
 $('#proj-switch').addEventListener('click', (ev) => {
   ev.stopPropagation();
-  closeCreateMenu();
-  const m = $('#proj-menu');
-  if (!m.hidden) { closeProjMenu(); return; }
-  const list = (PROJECTS && PROJECTS.projects) || [];
-  // On a desktop the caret is the project named beside it: an open task's,
-  // also one opened from Home.
-  const crumb = document.body.classList.contains('bar-proj') ? crumbProject(crumbTask()) : null;
-  const here = crumb ? crumb.id : SELECTED_PROJECT;
-  // All projects is a phone's cards page; a desktop has no such page (#135).
-  const all = phoneNow() ? `<button class="pm-item${!here ? ' on' : ''}" data-proj="">${esc(nounText('All {projects}'))}</button>`
-    + (list.length ? '<div class="pm-rule"></div>' : '') : '';
-  m.innerHTML = all
-    + list.map(pj => {
-        const needs = projectNeeds(pj, list);
-        return `<button class="pm-item${here === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
-          + `<span class="pm-name">${esc(pj.name)}</span>${unreadDotHtml(poRowOf(pj))}`
-          + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
-      }).join('')
-    + projMenuSettingsHtml(projectById(here));
-  m.hidden = false;
-  const r = ev.currentTarget.getBoundingClientRect();
-  m.style.top = Math.round(r.bottom + 6) + 'px';
-  m.style.left = Math.round(r.left) + 'px';
-  $('#proj-switch').setAttribute('aria-expanded', 'true');
+  if (!$('#proj-menu').hidden) { closeProjMenu(); return; }
+  openProjMenu(false);
 });
-$('#proj-menu').addEventListener('click', (ev) => {
-  const it = ev.target.closest('.pm-item');
-  if (!it) return;
-  // This project's settings: the page's own click handler opens its dialog.
-  if (it.classList.contains('pm-set')) { closeProjMenu(); return; }
-  ev.stopPropagation();
+$('#proj-switch').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown' && $('#proj-menu').hidden) { ev.preventDefault(); openProjMenu(true); }
+});
+$('#proj-menu').addEventListener('input', (ev) => {
+  if (!ev.target.matches('.pm-find')) return;
+  const m = $('#proj-menu'), q = ev.target.value;
+  const list = (PROJECTS && PROJECTS.projects) || [];
+  const box = m.querySelector('.pm-all');
+  const cards = q.trim() ? '' : (box.querySelector('.pm-cards') || { outerHTML: '' }).outerHTML;
+  box.innerHTML = cards + projAllHtml(list, projHere(), q);
+  // While it finds, the list it finds in is the menu: Recent and the settings step aside.
+  m.classList.toggle('pm-finding', !!q.trim());
+});
+$('#proj-menu').addEventListener('keydown', (ev) => {
+  const items = projMenuItems();
+  const i = items.indexOf(document.activeElement);
+  const go = j => { const it = items[Math.max(0, Math.min(items.length - 1, j))]; if (it) it.focus(); };
+  if (ev.key === 'Escape') {
+    ev.preventDefault(); ev.stopPropagation();
+    if (ev.target.matches('.pm-find') && ev.target.value) { ev.target.value = ''; ev.target.dispatchEvent(new Event('input', { bubbles: true })); return; }
+    closeProjMenu(true);
+  } else if (ev.key === 'ArrowDown') { go(i + 1); ev.preventDefault(); }
+  else if (ev.key === 'ArrowUp') { go(i < 0 ? items.length - 1 : i - 1); ev.preventDefault(); }
+  else if ((ev.key === 'Home' || ev.key === 'End') && !ev.target.matches('.pm-find')) { go(ev.key === 'Home' ? 0 : items.length - 1); ev.preventDefault(); }
+  else if (ev.key === 'Enter' && ev.target.matches('.pm-find')) {
+    // Enter in the filter opens the first project it found.
+    const first = $('#proj-menu').querySelector('.pm-all .pm-any');
+    ev.preventDefault();
+    if (first) first.click();
+  } else if (ev.key === 'Tab') closeProjMenu();
+});
+// A pick: as the project's row in the list (#189) opens it.
+function projPick(pid) {
   closeProjMenu();
+  const pj = pid ? projectById(pid) : null;
+  if (pj && pj.registered && pj.poRoomId) { openPoConv(pj); if (PD.dock && !PD.dock.narrow()) PD.dock.closeFly(); return; }
   midLeave();
-  SELECTED_PROJECT = it.dataset.proj || null;
+  SELECTED_PROJECT = pid || null;
   // A phone's All projects is its cards page (its home is the list, #129).
   if (!SELECTED_PROJECT && phoneNow()) PH_CARDS = true;
   PROJECT_TAB = 'tasks';
   WS_SCOPE = '';
   syncProjSwitch();
   renderRows();
+}
+$('#proj-menu').addEventListener('click', (ev) => {
+  if (ev.target.closest('.pm-find, .pm-findrow')) { ev.stopPropagation(); return; }
+  const it = ev.target.closest('.pm-item');
+  if (!it) return;
+  // This project's settings: the page's own click handler opens its dialog.
+  if (it.classList.contains('pm-set')) { closeProjMenu(); return; }
+  ev.stopPropagation();
+  if (it.classList.contains('pm-new')) { closeProjMenu(); projectSetupFlow(); return; }
+  projPick(it.dataset.proj || '');
 });
+window.addEventListener('resize', () => { if (!phoneNow()) closeProjMenu(); });
+// ---- The project switcher: end -------------------------------------------------
 $('#search-help').addEventListener('click', (ev) => {
   ev.stopPropagation();
   const pop = $('#search-help-pop');
@@ -21389,6 +21522,12 @@ document.addEventListener('keydown', (ev) => {
   // leaves it on the page), not the open task under it.
   if (ev.key === 'Escape' && !$('#create-menu').hidden) {
     closeCreateMenu(true);
+    ev.stopImmediatePropagation(); ev.preventDefault();
+    return;
+  }
+  // So does the project switcher's (#303).
+  if (ev.key === 'Escape' && !$('#proj-menu').hidden) {
+    closeProjMenu(true);
     ev.stopImmediatePropagation(); ev.preventDefault();
     return;
   }
