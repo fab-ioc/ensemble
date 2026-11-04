@@ -12289,7 +12289,9 @@ def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> d
             while len(_THREAD_VIEWS) > _THREAD_VIEWS_MAX:
                 del _THREAD_VIEWS[next(iter(_THREAD_VIEWS))]
     if base is None:
-        return {**out, "sig": sig, **extra}
+        # A whole view is a changed view: its watched replies keep their
+        # bodies, or two answers of one poll are not drawn in the chat.
+        return {**out, "sig": sig, **{k: v for k, v in extra.items() if k != "watchedReplies"}}
     return {"sig": sig, "delta": True, "ids": list(rows),
             "rows": {str(t.get("mid")): t for t in out.get("items") or []
                      if base["rows"].get(str(t.get("mid"))) != rows[str(t.get("mid"))]},
