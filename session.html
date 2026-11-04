@@ -807,6 +807,50 @@
   #topic-note { display:flex; align-items:center; gap:var(--s-200); min-height:var(--touch-min); padding:0 var(--s-300);
     border-bottom:1px solid var(--border); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #topic-note[hidden] { display:none; }
+  /* The chat's filter (#304): All · Threads N · Topics N · Unread N. One row;
+     too narrow, it scrolls sideways in itself, never the page. */
+  #chat-filters { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-100); padding:var(--s-100) var(--s-300);
+    border-bottom:1px solid var(--border); overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
+  #chat-filters[hidden], body.thread #chat-filters { display:none; }
+  #chat-filters button { flex:0 0 auto; display:inline-flex; align-items:center; gap:var(--s-050); height:28px; padding:0 var(--s-300);
+    border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--fg); font:inherit;
+    font-size:var(--fs-200); line-height:16px; white-space:nowrap; cursor:pointer; }
+  #chat-filters button:hover { background:var(--hover); }
+  #chat-filters button[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:transparent; }
+  #chat-filters button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #chat-filters .cf-n { color:inherit; opacity:.75; }
+  #chat-filters .cf-n:empty { display:none; }
+  @media (pointer: coarse) { #chat-filters button { height:var(--touch-min); } }
+  #topics-pop { position:absolute; z-index:30; top:var(--cf-top, 40px); left:var(--s-300); width:min(360px, calc(100vw - 32px));
+    max-height:min(60vh, 480px); overflow:auto; padding:var(--s-100) 0; background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--r-200); box-shadow:0 8px 24px rgba(0,0,0,.18); font-size:var(--fs-200); }
+  #topics-pop[hidden] { display:none; }
+  #topics-pop .tp-head { display:flex; align-items:center; gap:var(--s-100); padding:var(--s-100) var(--s-300); color:var(--fg-muted); }
+  #topics-pop .tp-head .grow { flex:1 1 auto; }
+  #topics-pop .tp-row { display:flex; align-items:flex-start; gap:var(--s-100); padding:0 var(--s-100) 0 0; }
+  #topics-pop .tp-row.on { background:var(--selected-bg); }
+  #topics-pop .tp-open { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; padding:var(--s-200) var(--s-300);
+    border:0; background:transparent; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+  #topics-pop .tp-open:hover, #topics-pop .tp-act:hover { background:var(--hover); }
+  #topics-pop .tp-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #topics-pop .tp-snippet, #topics-pop .tp-meta { color:var(--fg-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #topics-pop .tp-dot { display:inline-block; width:8px; height:8px; margin-right:var(--s-100); border-radius:50%; background:var(--c-warning-fg); vertical-align:middle; }
+  #topics-pop .tp-act { min-height:32px; min-width:32px; padding:0 var(--s-200); border:0; border-radius:var(--r-200); background:transparent;
+    color:var(--link); font:inherit; cursor:pointer; }
+  #topics-pop details.tp-menu { flex:0 0 auto; }
+  #topics-pop details.tp-menu > summary { list-style:none; }
+  #topics-pop details.tp-menu > summary::-webkit-details-marker { display:none; }
+  #topics-pop .tp-options, #topics-pop .tp-picker { display:flex; flex-direction:column; align-items:stretch; gap:var(--s-050); padding:var(--s-100); }
+  #topics-pop .tp-options[hidden], #topics-pop .tp-picker[hidden] { display:none; }
+  #topics-pop .tp-picker label { display:flex; flex-direction:column; gap:2px; color:var(--fg-muted); }
+  #topics-pop .tp-picker input, #topics-pop .tp-picker select { min-width:0; max-width:100%; font:inherit; }
+  #topics-pop .tp-picker-actions { display:flex; gap:var(--s-100); }
+  #topics-pop .tp-empty { padding:var(--s-200) var(--s-300); color:var(--fg-muted); }
+  #topics-pop button:focus-visible, #topics-pop summary:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  @media (pointer: coarse) {
+    #topics-pop .tp-act, #topics-pop .tp-open { min-height:var(--touch-min); }
+    #topics-pop .tp-picker input, #topics-pop .tp-picker select { font-size:16px; min-height:var(--touch-min); }
+  }
   #topic-note span { flex:1 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #topic-note button, #topic-suggestion button { min-height:var(--touch-min); padding:0 var(--s-200); border:0;
     border-radius:var(--r-200); background:transparent; color:inherit; font:inherit; cursor:pointer; }
@@ -1520,8 +1564,6 @@
     #msgpane:has(#points-line:not([hidden])) #open-questions,
     #msgpane:has(#points-line:not([hidden])) #thread-catchup { display: none; }
     body.po-thread-channel #chatbar { display: none; }
-    /* In the list of threads, its bar says so and leads back. */
-    body.po-thread-channel #chatbar:has(#threads-view[aria-pressed="true"]) { display: flex; }
     #points-line { margin: 0; border-radius: 0; border-width: 0 0 1px; }
     #points-line .pt-sum-oq { display: inline; }
     #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1675,11 +1717,14 @@
       <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
       <div id="open-questions" hidden></div>
       <div id="ask-line" role="status" hidden></div>
+      <!-- A PO chat's filter (#304): what the conversation shows. Topics are one of them, not a place of their own. -->
+      <div id="chat-filters" role="toolbar" aria-label="Show in this chat" hidden><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="threads" aria-pressed="false">Threads<span class="cf-n"></span></button><button type="button" data-filter="topics" aria-pressed="false" aria-haspopup="dialog" aria-expanded="false" aria-controls="topics-pop">Topics<span class="cf-n"></span> <span aria-hidden="true">&#9662;</span></button><button type="button" data-filter="unread" aria-pressed="false">Unread<span class="cf-n"></span></button></div>
+      <div id="topics-pop" role="dialog" aria-label="Topics" hidden></div>
       <div id="chat-controls">
         <div id="points-line" hidden></div>
         <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="earlier-threads" hidden>Earlier messages</button></div>
       </div>
-      <div id="topic-note" hidden><span></span><button type="button">Clear</button></div>
+      <div id="topic-note" role="status" hidden><span></span><button type="button">Show all</button></div>
       <div id="topic-suggestion" hidden><span></span><button type="button" data-topic-reply="add">Add</button><button type="button" data-topic-reply="reject">Not this topic</button></div>
       <div id="thread-catchup" hidden></div>
       <div id="msgs"></div>
@@ -5711,6 +5756,8 @@ function landPending() {
   const box = $('#msgs');
   if (GOTO && typeof THREADED !== 'undefined' && THREADED && typeof THREAD_MODE !== 'undefined' && !THREAD_MODE) {
     if (!THR_DRAWN) return;
+    // The Unread list shows thread cards, not the balloon: the whole chat (#304).
+    if (THR_LIST) { chatFilterSet({ kind: 'all' }); return; }
     if (!(LAST_ITEMS || []).some(m => m.id === GOTO)) {
       // An older message of the chat: ask for the channel back to it first.
       if (THR_ASKED !== GOTO) { renderThreaded(true); return; }
@@ -6731,7 +6778,7 @@ const THR_KNOWN = 'ens-threaded:';
 function thrPrefetch() {
   let known = false;
   try { known = localStorage.getItem(THR_KNOWN + ROOM) === '1'; } catch (e) {}
-  if (!known || THREAD_MODE || GOTO || TOPIC_FILTER) return;
+  if (!known || THREAD_MODE || GOTO || chatFiltered()) return;
   const url = thrUrl('');
   THR_PRE = { url, p: pollFetch(url, null, 90000) };
   THR_PRE.p.catch(() => {});
@@ -6741,8 +6788,219 @@ function thrRemember(threaded) {
   if (!threaded) THR_PRE = null;
 }
 let THR_DRAWN = false;    // the channel or thread is what is drawn
-let TOPIC_FILTER = null;   // the dashboard's selected topic in this PO channel
+let TOPIC_FILTER = null;   // the topic the channel's filter shows ({id, name})
 let TOPIC_SUGGESTION = null;
+// ---- The chat's filter (#304) -------------------------------------------------
+// One of All, Threads (only the balloons of a thread, the hub's &threads=1),
+// a topic (&topic=) or Unread (the threads with new replies, THR_LIST). Kept
+// per chat in this browser; a thread page has none.
+let CHAT_FILTER = { kind: 'all' };
+let THREADS_ONLY = false;
+const CF_KEY = 'ens-chat-filter:';
+const CF_COUNTS = { threads: null, unread: null };
+const CF_TOPICS = { data: null, at: 0, busy: false, expanded: false, timer: 0 };
+// The channel shows a subset by choice: guards for the newest entry stand down.
+const chatFiltered = () => !!(TOPIC_FILTER || THREADS_ONLY);
+const cfQuery = () => (TOPIC_FILTER?.id || '') + '|' + (THREADS_ONLY ? 1 : 0);
+function chatFilterSet(f, { persist = true, redraw = true } = {}) {
+  const was = cfQuery();
+  CHAT_FILTER = f?.kind === 'topic' && f.topic && typeof f.topic.id === 'string' && f.topic.id
+    ? { kind: 'topic', topic: { id: f.topic.id, name: String(f.topic.name || 'Topic') } }
+    : f?.kind === 'threads' || f?.kind === 'unread' ? { kind: f.kind } : { kind: 'all' };
+  TOPIC_FILTER = CHAT_FILTER.kind === 'topic' ? CHAT_FILTER.topic : null;
+  THREADS_ONLY = CHAT_FILTER.kind === 'threads';
+  THR_LIST = CHAT_FILTER.kind === 'unread';
+  if (persist) {
+    try {
+      if (CHAT_FILTER.kind === 'all') localStorage.removeItem(CF_KEY + ROOM);
+      else localStorage.setItem(CF_KEY + ROOM, JSON.stringify(CHAT_FILTER));
+    } catch (e) {}
+  }
+  chatFiltersPaint();
+  showTopicFilter();
+  showThreadCatchup();
+  if (!redraw || !THREADED || THREAD_MODE) return;
+  if (cfQuery() !== was) { thrRestart(); renderThreaded(true); }
+  else renderBubbles(LAST_ITEMS || []);
+}
+if (!THREAD_MODE) {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(CF_KEY + ROOM) || 'null'); } catch (e) {}
+  if (saved) chatFilterSet(saved, { persist: false, redraw: false });
+}
+function chatFiltersPaint() {
+  const row = $('#chat-filters');
+  if (!row) return;
+  row.hidden = !(THREADED && !THREAD_MODE);
+  if (row.hidden) { topicsPopClose(); return; }
+  const n = (kind, v) => setText(row.querySelector(`[data-filter="${kind}"] .cf-n`), v == null ? '' : ' ' + v);
+  n('threads', CF_COUNTS.threads);
+  const topics = CF_TOPICS.data && !CF_TOPICS.data.pending ? (CF_TOPICS.data.topics || []).length : null;
+  n('topics', topics);
+  n('unread', CF_COUNTS.unread != null ? CF_COUNTS.unread : THR_UNREAD.length);
+  const kind = CHAT_FILTER.kind;
+  for (const b of row.querySelectorAll('[data-filter]')) {
+    const k = b.dataset.filter === 'topics' ? 'topic' : b.dataset.filter;
+    b.setAttribute('aria-pressed', String(k === kind));
+  }
+  const tb = row.querySelector('[data-filter="topics"]');
+  tb.title = TOPIC_FILTER ? 'Topic: ' + TOPIC_FILTER.name : 'Show one topic';
+  if (THREADED && !THREAD_MODE && !CF_TOPICS.data && !CF_TOPICS.busy) topicsRefresh();
+}
+async function topicsRefresh(force = false) {
+  if (THREAD_MODE || !THREADED || document.hidden) return;
+  if (CF_TOPICS.busy || (!force && CF_TOPICS.data && Date.now() - CF_TOPICS.at < 15000)) return;
+  CF_TOPICS.busy = true;
+  try {
+    const r = await fetch('/api/room/topics?id=' + encodeURIComponent(ROOM), { signal: AbortSignal.timeout(30000) });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data) return;
+    CF_TOPICS.data = data; CF_TOPICS.at = Date.now();
+    // The topic shown was renamed, merged away or archived.
+    if (TOPIC_FILTER && !data.pending && !data.building) {
+      const row = (data.topics || []).find(t => t.id === TOPIC_FILTER.id);
+      if (!row) chatFilterSet({ kind: 'all' });
+      else if (row.name !== TOPIC_FILTER.name) chatFilterSet({ kind: 'topic', topic: row }, { redraw: false });
+    }
+    chatFiltersPaint();
+    if (!$('#topics-pop').hidden) topicsPaint();
+    clearTimeout(CF_TOPICS.timer);
+    if (data.pending || data.building) CF_TOPICS.timer = setTimeout(() => topicsRefresh(true), 1500);
+  } catch (e) {
+  } finally { CF_TOPICS.busy = false; }
+}
+setInterval(() => topicsRefresh(), 30000);
+function topicTime(ts) {
+  return ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+}
+// The Topics list: the active ones (Show all for the rest), each picked to
+// filter the chat, each with its corrections (#246) behind ⋯.
+function topicsPaint() {
+  const box = $('#topics-pop');
+  const data = CF_TOPICS.data, all = data?.topics || [];
+  const selected = TOPIC_FILTER?.id || '';
+  const recent = Date.now() / 1000 - 48 * 3600;
+  const list = CF_TOPICS.expanded ? all
+    : all.filter(t => t.threadCount > 1 || t.unread || t.decisions || (t.latest?.ts || 0) > recent || t.id === selected);
+  const head = '<div class="tp-head"><span class="grow">Topics</span>'
+    + (all.length > list.length || CF_TOPICS.expanded ? `<button type="button" class="tp-act" data-tp-all>${CF_TOPICS.expanded ? 'Show fewer' : 'Show all ' + all.length}</button>` : '')
+    + (data?.archived?.length ? `<details class="tp-menu"><summary class="tp-act">Archived (${data.archived.length})</summary><div class="tp-picker"><label>Topic<select data-tp-restore-id>${data.archived.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></label><div class="tp-picker-actions"><button type="button" class="tp-act" data-tp-restore>Restore</button></div></div></details>` : '')
+    + '</div>';
+  const rows = !data || data.pending ? '<div class="tp-empty">Reading topics…</div>'
+    : !list.length ? `<div class="tp-empty">${all.length ? 'No active topics. Show all to browse.' : 'No topics yet'}</div>`
+    : list.map(t => {
+      const latest = t.latest || {}, title = t.name || 'Topic';
+      const state = [t.task, t.state, `${t.threadCount} thread${t.threadCount === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+      const badge = t.decisions ? `${t.decisions} decision${t.decisions === 1 ? '' : 's'}` : t.unread ? 'New answer' : '';
+      return `<div class="tp-row${t.id === selected ? ' on' : ''}"><button type="button" class="tp-open" data-tp-open="${esc(t.id)}" aria-pressed="${t.id === selected}" aria-label="Show only ${esc(title)}">`
+        + `<span class="tp-name">${badge ? '<span class="tp-dot" aria-hidden="true"></span>' : ''}${esc(title)}</span>`
+        + `<span class="tp-snippet">${latest.ts ? 'PO ' + esc(topicTime(latest.ts)) + ': ' : ''}${esc(latest.text || 'No PO answer yet')}</span>`
+        + `<span class="tp-meta">${esc(state)}${badge ? ' · ' + esc(badge) : ''}</span></button>`
+        + `<details class="tp-menu"><summary class="tp-act" aria-label="Actions for ${esc(title)}">⋯</summary><div class="tp-options">`
+        + `<button type="button" class="tp-act" data-tp-action="rename" data-topic="${esc(t.id)}">Rename</button>`
+        + `<button type="button" class="tp-act" data-tp-action="merge" data-topic="${esc(t.id)}">Merge into…</button>`
+        + `<button type="button" class="tp-act" data-tp-action="move" data-topic="${esc(t.id)}">Move a thread…</button>`
+        + `<button type="button" class="tp-act" data-tp-action="out" data-topic="${esc(t.id)}">Move thread out…</button>`
+        + `<button type="button" class="tp-act" data-tp-action="archive" data-topic="${esc(t.id)}">Archive</button>`
+        + '</div><div class="tp-picker" hidden></div></details></div>';
+    }).join('');
+  box.innerHTML = head + rows;
+}
+function topicsPopOpen() {
+  const box = $('#topics-pop'), btn = $('#chat-filters [data-filter="topics"]');
+  const row = $('#chat-filters');
+  box.style.setProperty('--cf-top', (row.offsetTop + row.offsetHeight + 4) + 'px');
+  topicsPaint();
+  box.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  topicsRefresh(true);
+  (box.querySelector('.tp-row.on .tp-open') || box.querySelector('.tp-open, .tp-act'))?.focus({ preventScroll: true });
+}
+function topicsPopClose(focus = false) {
+  const box = $('#topics-pop');
+  if (!box || box.hidden) return false;
+  box.hidden = true;
+  const btn = $('#chat-filters [data-filter="topics"]');
+  btn?.setAttribute('aria-expanded', 'false');
+  if (focus) btn?.focus({ preventScroll: true });
+  return true;
+}
+async function topicChange(action, body) {
+  try {
+    const r = await fetch('/api/room/topics', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: ROOM, action, ...body }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) { showGotoNote(out.message || 'The topic change could not be saved.'); return; }
+    CF_TOPICS.data = out; CF_TOPICS.at = Date.now();
+    topicsPaint(); chatFiltersPaint();
+    topicsRefresh(true);
+  } catch (e) { showGotoNote('The topic change could not be saved.'); }
+}
+$('#chat-filters').addEventListener('click', e => {
+  const b = e.target.closest('[data-filter]');
+  if (!b) return;
+  const kind = b.dataset.filter;
+  if (kind === 'topics') { if (!topicsPopClose(true)) topicsPopOpen(); return; }
+  topicsPopClose();
+  chatFilterSet({ kind });
+});
+$('#topics-pop').addEventListener('click', e => {
+  const open = e.target.closest('[data-tp-open]');
+  if (open) {
+    const row = (CF_TOPICS.data?.topics || []).find(t => t.id === open.dataset.tpOpen);
+    if (row) { topicsPopClose(true); chatFilterSet({ kind: 'topic', topic: row }); }
+    return;
+  }
+  if (e.target.closest('[data-tp-all]')) { CF_TOPICS.expanded = !CF_TOPICS.expanded; topicsPaint(); return; }
+  if (e.target.closest('[data-tp-restore]')) {
+    const topic = $('#topics-pop [data-tp-restore-id]')?.value;
+    if (topic) topicChange('restore', { topic });
+    return;
+  }
+  const save = e.target.closest('[data-tp-save]');
+  if (save) {
+    const picker = save.closest('.tp-picker'), action = picker.dataset.action, topic = picker.dataset.topic;
+    const name = picker.querySelector('[data-tp-name]')?.value.trim();
+    const other = picker.querySelector('[data-tp-destination]')?.value;
+    const thread = picker.querySelector('[data-tp-thread]')?.value;
+    if (action === 'rename' && name) topicChange('rename', { topic, name });
+    else if (action === 'merge' && other) topicChange('merge', { topic, other });
+    else if (action === 'move' && other && thread) topicChange('move', { thread, topic: other });
+    else if (action === 'out' && thread) topicChange('out', { thread });
+    return;
+  }
+  if (e.target.closest('[data-tp-cancel]')) {
+    const menu = e.target.closest('.tp-menu');
+    menu.querySelector('.tp-options').hidden = false;
+    menu.querySelector('.tp-picker').hidden = true;
+    return;
+  }
+  const btn = e.target.closest('[data-tp-action]');
+  if (!btn) return;
+  const all = CF_TOPICS.data?.topics || [];
+  const action = btn.dataset.tpAction, row = all.find(t => t.id === btn.dataset.topic);
+  if (!row) return;
+  if (action === 'archive') { topicChange('archive', { topic: row.id }); return; }
+  const menu = btn.closest('.tp-menu'), picker = menu.querySelector('.tp-picker');
+  const choices = row.threadOptions || row.threads.map(id => ({ id, title: id }));
+  const destinations = all.filter(t => t.id !== row.id);
+  if ((action === 'move' || action === 'merge') && !destinations.length) return;
+  const select = (attr, label, options) => `<label>${label}<select ${attr}>${options.map(t => `<option value="${esc(t.id)}">${esc(t.name || t.title || t.id)}</option>`).join('')}</select></label>`;
+  picker.dataset.topic = row.id; picker.dataset.action = action;
+  picker.innerHTML = (action === 'rename' ? `<label>Topic name<input type="text" data-tp-name maxlength="80" value="${esc(row.name)}"></label>` : '')
+    + ((action === 'move' || action === 'out') ? select('data-tp-thread', 'Thread', choices) : '')
+    + ((action === 'move' || action === 'merge') ? select('data-tp-destination', 'Destination topic', destinations) : '')
+    + `<div class="tp-picker-actions"><button type="button" class="tp-act" data-tp-save>${action === 'out' ? 'Move out' : action === 'merge' ? 'Merge' : 'Save'}</button><button type="button" class="tp-act" data-tp-cancel>Cancel</button></div>`;
+  menu.querySelector('.tp-options').hidden = true;
+  picker.hidden = false;
+  picker.querySelector('input, select')?.focus();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && topicsPopClose(true)) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest?.('#topics-pop, #chat-filters [data-filter="topics"]')) topicsPopClose();
+});
 let WORK_LOG_OPEN = false;
 let WORK_LOG_THREAD = '';
 document.addEventListener('click', e => {
@@ -6762,7 +7020,7 @@ function thrBase() {
   return THREAD_MODE
     ? '/api/room/thread?id=' + encodeURIComponent(ROOM) + (THREAD ? '&t=' + encodeURIComponent(THREAD) : '&mid=' + encodeURIComponent(THREAD_MID))
     : '/api/room/channel?id=' + encodeURIComponent(ROOM)
-      + (TOPIC_FILTER?.id ? '&topic=' + encodeURIComponent(TOPIC_FILTER.id) : '');
+      + (TOPIC_FILTER?.id ? '&topic=' + encodeURIComponent(TOPIC_FILTER.id) : THREADS_ONLY ? '&threads=1' : '');
 }
 // The first read is light (&lite=1); a link's balloon asks for as many as
 // reach it (&upto=), which starts the pages again.
@@ -6793,7 +7051,7 @@ function thrWatch(mid) {
   const latest = THR_LATEST_MID;
   // A thread, topic, old link window, or Threads list intentionally shows a
   // subset. The channel's latest page is the view this guard checks.
-  if (!latest || !THR_DRAWN || (!THREAD_MODE && TOPIC_FILTER) || GOTO || THR_AFTER || THR_LIST) {
+  if (!latest || !THR_DRAWN || (!THREAD_MODE && chatFiltered()) || GOTO || THR_AFTER || THR_LIST) {
     THR_MISSING = THR_REPAIR_FAIL = null; return;
   }
   if (thrMidDrawn(latest)) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
@@ -6847,7 +7105,7 @@ function thrWatchedReplies(d) {
     if (THR_AUTO_OPENED.size > 100) THR_AUTO_OPENED.delete(THR_AUTO_OPENED.values().next().value);
   }
 }
-function thrNewestView() { return !TOPIC_FILTER && !GOTO && !THR_AFTER && !THR_LIST; }
+function thrNewestView() { return !chatFiltered() && !GOTO && !THR_AFTER && !THR_LIST; }
 function thrAnyWatch(d) {
   thrWatchedReplies(d);
   if (THREAD_MODE || !THR_DRAWN || !d?.latestAnyMid) return;
@@ -6855,7 +7113,7 @@ function thrAnyWatch(d) {
   const a = THR_ANY;
   // A topic, link window, or Threads list is an intentional subset. Its
   // newest item need not be in that view; do not discard the selection.
-  if (TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) { THR_ANY_MISSING = null; return; }
+  if (chatFiltered() || GOTO || THR_AFTER || THR_LIST) { THR_ANY_MISSING = null; return; }
   if (a.mid === THR_LATEST_MID) return; // the channel guard covers it
   if (thrAnyShown(a)) { THR_ANY_MISSING = null; return; }
   if (THR_ANY_TRIED.has(a.mid)) return;
@@ -6863,7 +7121,7 @@ function thrAnyWatch(d) {
   if (!THR_ANY_TIMER) THR_ANY_TIMER = setTimeout(() => {
     THR_ANY_TIMER = 0;
     if (!THR_ANY_MISSING || THR_ANY?.mid !== a.mid || THR_ANY_MISSING.mid !== a.mid || thrAnyShown(THR_ANY)
-        || THR_ANY_TRIED.has(a.mid) || TOPIC_FILTER || GOTO || THR_AFTER || THR_LIST) return;
+        || THR_ANY_TRIED.has(a.mid) || chatFiltered() || GOTO || THR_AFTER || THR_LIST) return;
     if (THR_FETCHING) {
       THR_ANY_TIMER = setTimeout(() => { THR_ANY_TIMER = 0; thrAnyWatch({latestAnyMid: a.mid,
         latestAnyThread: a.thread, latestAnyRole: a.role}); }, 150);
@@ -6888,7 +7146,7 @@ function thrAnyWatch(d) {
 }
 async function thrRepair() {
   if (THR_REPAIRING || !THR_MISSING) return;
-  if ((!THREAD_MODE && TOPIC_FILTER) || GOTO || THR_AFTER || THR_LIST) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
+  if ((!THREAD_MODE && chatFiltered()) || GOTO || THR_AFTER || THR_LIST) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
   const missing = THR_MISSING.mid;
   if (thrMidDrawn(missing)) { THR_MISSING = THR_REPAIR_FAIL = null; return; }
   if (THR_FETCHING) {
@@ -7050,6 +7308,12 @@ async function renderThreaded(force) {
     else globalThis.EnsembleProgress?.clear('thread-build');
     THR_META = Object.assign({}, d.threads || {});
     THR_UNREAD = d.unreadThreads || [];
+    // The filter's counts are of the whole chat (an older hub sends none).
+    if (!THREAD_MODE) {
+      CF_COUNTS.threads = typeof d.threadCount === 'number' ? d.threadCount : null;
+      CF_COUNTS.unread = typeof d.unreadCount === 'number' ? d.unreadCount : null;
+      chatFiltersPaint();
+    }
     THR_ACTIVITY = d.activity || null;
     if (THR_ACTIVITY) THR_META[THR_ACTIVITY.id] = THR_ACTIVITY;
     THR_UNREAD.forEach(t => { THR_META[t.id] = t; });
@@ -7123,6 +7387,12 @@ function thrNotShown(d) {
   // A room message (no "<session>:") is in no thread, also when a later poll
   // has replaced the answer that said so (#265: P894 opened an empty thread).
   const room = !String(target).includes(':');
+  // A filter hides it: the whole chat again, landing on it there (#304).
+  if (!THREAD_MODE && chatFiltered()) {
+    GOTO = target; GOTO_PART = part; THR_ASKED = '';
+    chatFilterSet({ kind: 'all' });
+    return;
+  }
   if (at === 'balloon' || (at === undefined && !room)) { openThread('', target, part); return; }
   showGotoNote(at === 'room' || (at == null && room) ? 'The linked message is not shown in this chat.'
     : 'The linked message was not found in this conversation.');
@@ -7168,8 +7438,11 @@ function showThreadCatchup() {
 function showTopicFilter() {
   const el = $('#topic-note');
   if (!el) return;
-  el.hidden = THREAD_MODE || !TOPIC_FILTER;
-  if (TOPIC_FILTER) setText(el.querySelector('span'), 'Topic: ' + TOPIC_FILTER.name);
+  const kind = THREAD_MODE ? 'all' : CHAT_FILTER.kind;
+  el.hidden = kind === 'all';
+  if (kind === 'topic') setText(el.querySelector('span'), 'Showing topic ' + TOPIC_FILTER.name);
+  else if (kind === 'threads') setText(el.querySelector('span'), 'Showing threads only');
+  else if (kind === 'unread') setText(el.querySelector('span'), 'Showing threads with new replies');
 }
 function showTopicSuggestion() {
   const el = $('#topic-suggestion');
@@ -7180,11 +7453,7 @@ function showTopicSuggestion() {
     setText(el.querySelector('[data-topic-reply="add"]'), 'Add to ' + TOPIC_SUGGESTION.name);
   }
 }
-$('#topic-note').querySelector('button').addEventListener('click', () => {
-  const host = embedHost();
-  if (host) host.postMessage({type:'topic-clear', roomId:ROOM}, location.origin);
-  else { TOPIC_FILTER = null; showTopicFilter(); thrRestart(); renderThreaded(true); }
-});
+$('#topic-note').querySelector('button').addEventListener('click', () => chatFilterSet({ kind: 'all' }));
 $('#topic-suggestion').addEventListener('click', async e => {
   const choice = e.target.closest('[data-topic-reply]');
   if (!choice) return;
@@ -7397,8 +7666,10 @@ function replyInThreadHtml(m) {
 function showThreadsBtn() {
   const tv = $('#threads-view');
   if (!tv) return;
-  tv.hidden = !(THREADED && !THREAD_MODE);
+  // The Unread filter took its place (#304); kept for its phone mirror.
+  tv.hidden = true;
   tv.setAttribute('aria-pressed', String(THR_LIST));
+  chatFiltersPaint();
 }
 // ---- Threads in a PO chat (#210): end -----------------------------------------
 
@@ -9682,16 +9953,10 @@ $('#terms').onclick = () => {
 window.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.ensemble === 'topic-filter' && e.source === window.parent && e.origin === location.origin && !THREAD_MODE) {
-    const next = d.topic && typeof d.topic.id === 'string' ? {id:d.topic.id, name:String(d.topic.name || 'Topic')} : null;
-    const changed = (TOPIC_FILTER?.id || '') !== (next?.id || '');
-    TOPIC_FILTER = next;
-    showTopicFilter();
-    if (changed) {
-      thrRestart();
-      THR_LIST = false;
-      showThreadsBtn();
-      renderThreaded(true);
-    }
+    // The dashboard opened a topic (its Needs you row): the chat shows it.
+    const next = d.topic && typeof d.topic.id === 'string' && d.topic.id ? {id:d.topic.id, name:String(d.topic.name || 'Topic')} : null;
+    if (next) chatFilterSet({ kind: 'topic', topic: next });
+    else if (CHAT_FILTER.kind === 'topic') chatFilterSet({ kind: 'all' });
     return;
   }
   if (d.ensemble === 'toggleTerms') $('#terms').click();
@@ -10475,7 +10740,7 @@ $('#msgs').addEventListener('click', e => {
 });
 $('#to-latest').addEventListener('click', toLatest);
 $('#team-all').addEventListener('click', toggleTeam);
-$('#threads-view').addEventListener('click', () => { THR_LIST = !THR_LIST; $('#threads-view').setAttribute('aria-pressed', String(THR_LIST)); showThreadCatchup(); renderBubbles(LAST_ITEMS || []); });
+$('#threads-view').addEventListener('click', () => chatFilterSet({ kind: THR_LIST ? 'all' : 'unread' }));
 $('#ts-close').addEventListener('click', sideClose);
 $('#ts-back').addEventListener('click', sideClose);
 $('#thread-catchup').addEventListener('click', e => { const b = e.target.closest('button[data-thr]'); if (b) openThread(b.dataset.thr, b.dataset.mid); });

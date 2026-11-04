@@ -18274,7 +18274,8 @@ class Handler(BaseHTTPRequestHandler):
                         topic_tids = set(chosen["threads"]) if chosen else set()
                     watch_mids = [m for m in arg("watch").split(",") if m][:24]
                     out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
-                                               before, arg("from"), topic_tids, arg("after"), arg("to"), watch_mids)
+                                               before, arg("from"), topic_tids, arg("after"), arg("to"), watch_mids,
+                                               threads_only=arg("threads") == "1")
                     channel_hub_rows(out, room)
                     channel_latest_visible(out)
                     if arg("lite") == "1" and isinstance(out.get("unreadThreads"), list):

@@ -488,6 +488,33 @@ class AssignTest(unittest.TestCase):
         self.assertNotIn("unreadThreads", down, "a page below carries its entries only")
         self.assertEqual(mids(poll), mids(linked), "a window's poll keeps to the window")
 
+    def test_the_threads_filter_shows_only_balloons_of_a_thread_and_counts_the_whole_chat(self):
+        # #304: the chat's Threads filter (&threads=1) keeps a thread's
+        # balloons; the counts on the filter are the whole chat's, either way.
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done."), human("s:2", 100, "ok"),
+                po("s:3", 120, "Separately: deploy is live?"), human("s:4", 280, "ok"), note("s:5", 300)]
+        sd = side(sent=[{"thread": "P1", "key": "k", "at": T0 + 101, "words": "ok", "also": False}])
+        out = self.run_(recs, [point("P1", "s:0", "make the chart wider")], sd)
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}, "sig": 1,
+               "channel": threads._channel({**out, "recs": recs})}
+        with mock.patch.object(threads, "ready", return_value=idx):
+            plain = threads.channel_view("r", {}, 40)
+            only = threads.channel_view("r", {}, 40, threads_only=True)
+            topic = threads.channel_view("r", {}, 40, topic_tids=set(), threads_only=True)
+        mids = lambda v: [t["mid"] for t in v["items"]]      # noqa: E731
+        self.assertIn("s:4", mids(plain))
+        # s:4 nobody answered: a thread of its own (m:s:4), not one with replies.
+        self.assertEqual(out["parent"].get("s:4"), ["m:s:4"])
+        self.assertEqual(mids(only), ["s:0"], "only the balloon a thread with replies hangs on")
+        self.assertEqual(mids(topic), [], "a topic given wins over Threads")
+        self.assertNotEqual(plain["sig"], only["sig"], "a filtered view is never the plain one's delta")
+        for v in (plain, only, topic):
+            self.assertEqual(v["threadCount"], 1, "P1; not m:s:4 nor Team activity")
+            self.assertIsInstance(v["unreadCount"], int)
+        with mock.patch.object(threads, "ready", return_value=None):
+            self.assertTrue(threads.channel_view("r", {}, 40, threads_only=True).get("pending"),
+                            "a chat not read yet has no threads to show")
+
     def test_a_cursor_older_than_the_cap_gets_a_window_from_it(self):
         # Review 4, finding 3: 6,000 entries, a poll or a page from the first.
         recs = [human(f"s:{i}", i * 10, f"message {i}") for i in range(6000)]

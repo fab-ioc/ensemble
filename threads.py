@@ -1087,13 +1087,23 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
     return max(0, len(seq) - n), len(seq)
 
 
+def _replied(idx: dict) -> set[str]:
+    """The threads with replies (#304: what the Threads filter shows and
+    counts): more than their first balloon, Team activity aside."""
+    return {tid for tid, t in idx["threads"].items()
+            if tid != "team:activity" and len(t.get("members") or []) > 1}
+
+
 def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                  before: str = "", frm: str = "",
                  topic_tids: set[str] | None = None, after: str = "", to: str = "",
-                 watch_mids: list[str] | None = None) -> dict:
+                 watch_mids: list[str] | None = None, threads_only: bool = False) -> dict:
     """The channel: its last ``n`` entries (turns as /api/session gives
     them, each with its balloon id, ``thr`` on a parent, ``inThr`` on a reply
     also sent to the chat), the threads they show, and how many came before.
+    ``threads_only`` (#304, the Threads filter): only the balloons of a
+    thread with replies, as a topic of all of them (a topic given wins); a
+    balloon nobody answered is a thread of its own, not one shown there.
     ``upto``: a balloon a link lands on; when the channel has it, as many
     more as reach it (``n`` says how many were sent). ``before`` / ``frm``:
     a page above the one held, or the held one from its first entry on
@@ -1103,10 +1113,15 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
     read."""
     idx = ready(room_id, room)
     if idx is None:
-        if topic_tids is None and not (upto or before or frm or after):
+        if topic_tids is None and not threads_only and not (upto or before or frm or after):
             return _quick_channel(room_id, room, n)
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     ch = idx["channel"]
+    if topic_tids is None and threads_only:
+        topic_tids = _replied(idx)
+        filter_tag = ":threads"
+    else:
+        filter_tag = ":topic:" + ",".join(sorted(topic_tids)) if topic_tids is not None else ""
     if topic_tids is not None:
         # A topic: only the balloons of its threads (#246).
         ch = [mid for mid in ch if topic_tids.intersection(idx["parent"].get(mid) or [])
@@ -1127,7 +1142,7 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
     # A reply also in the chat names its thread ("replied to a thread: …").
     tids |= {t for m in shown if m in idx["also"] for t in idx["of"].get(m) or []}
-    sig = _sig_text(idx) + (":topic:" + ",".join(sorted(topic_tids)) if topic_tids is not None else "")
+    sig = _sig_text(idx) + filter_tag
     out = {"sig": sig, "latestMid": ch[-1] if ch else "",
            "progress": progress.snapshot().get("thread:" + room_id),
            "items": [_turn(idx, m) for m in shown],
@@ -1178,6 +1193,9 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                                    if t["id"] != "team:activity" and t.get("unread")
                                    and (topic_tids is None or t["id"] in topic_tids)),
                                   key=lambda t: t.get("lastAt") or 0, reverse=True)
+    # The chat's filter pills (#304) count the whole chat, whatever it shows.
+    out["threadCount"] = len(_replied(idx))
+    out["unreadCount"] = sum(1 for t in idx["threads"].values() if t["id"] != "team:activity" and t.get("unread"))
     return out
 
 

@@ -3937,36 +3937,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-item { padding: var(--s-100) 0; min-width: 0; }
   .ibx-item .ibx-line { font-size: var(--fs-200); line-height: var(--lh-200); }
   @media (hover: none) { .ibx-scope button { height: var(--touch-min); } .ibx-more > summary { min-height: var(--touch-min); display: flex; align-items: center; } }
-  .pd-topics { height:100%; min-height:0; overflow-y:auto; background:var(--surface); }
-  .topics-head { position:sticky; top:0; z-index:1; padding:var(--s-300); background:var(--surface); border-bottom:1px solid var(--border); font-weight:600; }
-  .topic-row { display:flex; align-items:flex-start; gap:var(--s-100); padding:var(--s-200); border-bottom:1px solid var(--border); }
-  .topic-open { flex:1 1 auto; min-width:0; min-height:var(--touch-min); padding:var(--s-100); border:0; border-radius:var(--r-200); background:transparent; color:var(--fg); text-align:left; font:inherit; cursor:pointer; }
-  .topic-open:hover, .topic-action:hover { background:var(--hover); }
-  .topic-open:focus-visible, .topic-action:focus-visible, .topic-chip:focus-visible, .topic-menu button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
-  .topic-name { display:block; font-weight:600; }
-  .topic-snippet { display:block; margin-top:var(--s-050); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--fg-muted); font-size:var(--fs-200); }
-  .topic-meta { display:block; margin-top:var(--s-050); color:var(--fg-subtle); font-size:var(--fs-100); }
-  .topic-dot { display:inline-block; width:8px; height:8px; margin-right:var(--s-100); border-radius:var(--r-full); background:var(--c-discovery-bold); }
-  .topic-action { flex:0 0 auto; min-width:var(--touch-min); min-height:var(--touch-min); padding:0 var(--s-100); border:0; border-radius:var(--r-200); background:transparent; color:var(--fg-muted); cursor:pointer; }
-  .topic-menu { flex:0 0 auto; }
-  .topic-menu summary { display:flex; align-items:center; justify-content:center; list-style:none; }
-  .topic-menu summary::-webkit-details-marker { display:none; }
-  .topic-menu[open] > div { display:flex; flex-direction:column; min-width:130px; padding:var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface-overlay); }
-  .topic-menu[open] > div[hidden] { display:none; }
-  .topic-menu button { min-height:var(--touch-min); padding:0 var(--s-200); border:0; border-radius:var(--r-200); background:transparent; color:var(--fg); text-align:left; font:inherit; cursor:pointer; }
-  .topic-menu button:hover { background:var(--hover); }
-  .topic-picker { display:flex; flex-direction:column; gap:var(--s-100); min-width:210px; padding:var(--s-100); }
-  .topic-picker[hidden] { display:none; }
-  .topic-picker label { display:flex; flex-direction:column; gap:var(--s-050); color:var(--fg-muted); font-size:var(--fs-200); }
-  .topic-picker input, .topic-picker select { width:100%; min-height:var(--touch-min); padding:0 var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; }
-  .topic-picker input:focus-visible, .topic-picker select:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
-  .topic-picker-actions { display:flex; gap:var(--s-100); }
-  .topic-restore { display:inline-block; vertical-align:middle; font-weight:400; }
-  .topic-restore > div { position:absolute; right:var(--s-100); z-index:2; border:1px solid var(--border); background:var(--surface-overlay); }
-  .topic-chips { display:none; flex:0 0 auto; gap:var(--s-100); padding:var(--s-100); overflow-x:auto; white-space:nowrap; border-bottom:1px solid var(--border); background:var(--surface); scrollbar-width:thin; }
-  .topic-chip { flex:0 0 auto; min-height:var(--touch-min); padding:0 var(--s-200); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; cursor:pointer; }
-  .topic-chip.on { background:var(--selected-bg); color:var(--selected-fg); }
-  @media (max-width:719px) { .topic-chips { display:flex; } }
   .dk-strip-btn.on .ti { --ti: currentColor; --ti-ink: var(--selected-bg); --ti-ring: var(--selected-bg); }
   .dk-menu .pd-mi { display: inline-flex; width: 16px; height: 16px; margin-right: var(--s-200); vertical-align: -3px; --ti-ring: var(--surface-overlay); }
   .dk-menu .pd-mi > svg { width: 100%; height: 100%; }
@@ -4745,7 +4715,6 @@ window.DOC_LISTENERS_PAUSED = false;
     <div id="po-dock-panels" hidden>
       <div data-panel="po-chat" data-title="PO chat" class="pd-chat"></div>
       <div data-panel="inbox" data-title="Inbox" class="pd-inbox pd-pane"></div>
-      <div data-panel="topics" data-title="Topics" class="pd-topics pd-pane"></div>
       <div data-panel="points" data-title="Needs you" class="pd-points pd-pane"></div>
       <div data-panel="board" data-title="Board" class="pd-board pd-pane"></div>
       <div data-panel="workspace" data-title="Files" class="pd-ws"></div>
@@ -13455,7 +13424,7 @@ function renderPo() {
   if (!pj || (split && !PD.lib)) { panel.hidden = true; return; }
   if (pj.id !== PO_LAST) { PO_LAST = pj.id; try { localStorage.setItem('cd-po-last', pj.id); } catch (e) {} }
   const row = poRowOf(pj);
-  if (!panel.querySelector('.po-frames')) panel.innerHTML = '<div class="po-head"></div><div class="topic-chips" aria-label="Topics"></div><div class="po-frames"></div>';
+  if (!panel.querySelector('.po-frames')) panel.innerHTML = '<div class="po-head"></div><div class="po-frames"></div>';
   panel.hidden = false;
   // The header follows the PO's state; it is rewritten only when that changes,
   // and keeps keyboard focus on the equivalent control when it is.
@@ -13552,10 +13521,11 @@ function poClosePeek() {
 // Pure down to pdPointsHtml, so tests/test_po_dock.py runs them in Node.
 // A layout saved while there was a Documents panel loads without it: the
 // library drops a panel it does not know (its documents are in the Workspace).
-const PD_IDS = ['po-chat', 'inbox', 'topics', 'points', 'board', 'workspace', 'changes', 'spec'];
+// So does one saved with a Topics panel (#304): topics are the chat's filter.
+const PD_IDS = ['po-chat', 'inbox', 'points', 'board', 'workspace', 'changes', 'spec'];
 // The conversation's tab is "Chat": on a phone it is an open task's too (#129).
-const PD_TITLES = { 'po-chat': 'Chat', inbox: 'Inbox', topics: 'Topics', points: 'Needs you', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
-const PD_MIN = { 'po-chat': { w: 360, h: 200 }, inbox: { w: 240, h: 160 }, topics: { w: 280, h: 160 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
+const PD_TITLES = { 'po-chat': 'Chat', inbox: 'Inbox', points: 'Needs you', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
+const PD_MIN = { 'po-chat': { w: 360, h: 200 }, inbox: { w: 240, h: 160 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
                  workspace: { w: 300, h: 200 }, changes: { w: 300, h: 200 }, spec: { w: 320, h: 160 } };
 // desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its
 // own, a new one since its tabs hold the spec too (#129): an older one had it hidden.
@@ -13563,7 +13533,7 @@ const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };
 // Layout A (#125), a desktop: the conversation in the middle (the PO's, or an
 // open task's), its tools on a strip at the right edge, in this order. A click
 // on one opens it beside the conversation, which narrows; Pin docks it there.
-const PD_TOOLS = ['inbox', 'topics', 'points', 'changes', 'workspace', 'board', 'spec'];
+const PD_TOOLS = ['inbox', 'points', 'changes', 'workspace', 'board', 'spec'];
 // ---- The tool icons (#166): the strip's, the task list's, the Panels menu's
 // and a popped-out panel's tab. Each tool has its own silhouette and its own
 // colour (--tool-*, fixed in meaning like an agent's: it says which tool, not
@@ -13641,7 +13611,6 @@ function pdToolSize(id, vw) {
   const avail = (vw || 1440) - (parseFloat(getComputedStyle(document.body).getPropertyValue('--list-w')) || 0) - 44;
   if (id === 'points') return 400;
   if (id === 'inbox') return 280;
-  if (id === 'topics') return 340;
   if (id === 'spec') return 480;
   return Math.round(Math.max(480, Math.min(760, avail * 0.6, avail - 400)));
 }
@@ -13652,8 +13621,9 @@ function pdToolSize(id, vw) {
 function pdDefaultLayout(L, ctx) {
   if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS], { active: 'po-chat' }) };
   // The inbox (#302) is a column left of the conversation, as in Layout A's mockup.
-  return { root: L.split('row', [L.stack(['inbox'], {size:280}), L.stack(['po-chat']), L.stack(['topics'], {size:340})]),
-           auto: PD_TOOLS.filter(id => id !== 'topics' && id !== 'inbox').map(id => ({ id, edge: 'right', home: { peers: [], near: 'po-chat', side: 'right' } })) };
+  // Topics are a filter on the conversation itself (#304), not a column.
+  return { root: L.split('row', [L.stack(['inbox'], {size:280}), L.stack(['po-chat'])]),
+           auto: PD_TOOLS.filter(id => id !== 'inbox').map(id => ({ id, edge: 'right', home: { peers: [], near: 'po-chat', side: 'right' } })) };
 }
 // Needs you (#209): what the panel lists, the same groups as the list above
 // the chat (session.html pointsListHtml), newest first in each: Decisions
@@ -15287,7 +15257,7 @@ function pdPopChat(out) {
 })();
 
 // ---- Topics: one project index, read only while its PO chat is on screen.
-const TOPICS = {room:'', data:null, busy:false, again:false, timer:0, filter:new Map(), expanded:new Set(), sig:''};
+const TOPICS = {room:'', data:null, busy:false, again:false, timer:0};
 function pdTopicNeedsRows(pv, now, thrRow) {
   if (!TOPICS.data || TOPICS.room !== PD.chatKey || TOPICS.data.pending) return null;
   const unread = new Map((pv.threads || []).map(t => [t.id, t]));
@@ -15309,41 +15279,6 @@ function pdTopicNeedsRows(pv, now, thrRow) {
 function pdTopicTime(ts) {
   return ts ? new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
 }
-function pdTopicPaint() {
-  const box = PD.els.topics, chips = PO_PANEL.querySelector('.topic-chips');
-  if (!box || !chips) return;
-  const data = TOPICS.data, room = TOPICS.room;
-  const all = data?.topics || [];
-  const selected = TOPICS.filter.get(room)?.id || '';
-  const expanded = TOPICS.expanded.has(room);
-  const recent = Date.now() / 1000 - 48 * 3600;
-  const list = expanded ? all : all.filter(t => t.threadCount > 1 || t.unread || t.decisions || (t.latest?.ts || 0) > recent || t.id === selected);
-  const sig = JSON.stringify([room, selected, expanded, all.map(t => [t.id,t.name,t.latest?.mid,t.unread,t.decisions,t.threadCount]), data?.archived]);
-  if (TOPICS.sig === sig) return;
-  TOPICS.sig = sig;
-  box.innerHTML = `<div class="topics-head">Topics${selected ? ' <button type="button" class="topic-action" data-topic-clear title="Clear topic filter">Clear</button>' : ''}`
-    + (all.length > list.length || expanded ? ` <button type="button" class="topic-action" data-topic-all>${expanded ? 'Show fewer' : 'Show all ' + all.length}</button>` : '')
-    + (data?.archived?.length ? `<details class="topic-restore"><summary class="topic-action">Archived (${data.archived.length})</summary><div class="topic-picker"><label>Topic<select data-topic-restore-id>${data.archived.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></label><button type="button" data-topic-restore>Restore</button></div></details>` : '') + '</div>'
-    + (data?.pending ? '<div class="topic-row">Reading topics…</div>' : !list.length ? `<div class="topic-row">${all.length ? 'No active topics. Show all to browse.' : 'No topics yet'}</div>` : list.map(t => {
-      const latest = t.latest || {}, title = t.name || 'Topic';
-      const state = [t.task, t.state, `${t.threadCount} thread${t.threadCount === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
-      const badge = t.decisions ? `${t.decisions} decision${t.decisions === 1 ? '' : 's'}` : t.unread ? 'New answer' : '';
-      return `<div class="topic-row"><button type="button" class="topic-open" data-topic-open="${esc(t.id)}" aria-label="Open ${esc(title)} at the latest PO answer">`
-        + `<span class="topic-name">${badge ? '<span class="topic-dot" aria-hidden="true"></span>' : ''}${esc(title)}</span>`
-        + `<span class="topic-snippet">${latest.ts ? 'PO ' + esc(pdTopicTime(latest.ts)) + ': ' : ''}${esc(latest.text || 'No PO answer yet')}</span>`
-        + `<span class="topic-meta">${esc(state)}${badge ? ' · ' + esc(badge) : ''}</span></button>`
-        + `<details class="topic-menu"><summary class="topic-action" aria-label="Actions for ${esc(title)}">⋯</summary><div class="topic-options">`
-        + `<button type="button" data-topic-action="rename" data-topic="${esc(t.id)}">Rename</button>`
-        + `<button type="button" data-topic-action="merge" data-topic="${esc(t.id)}">Merge into…</button>`
-        + `<button type="button" data-topic-action="move" data-topic="${esc(t.id)}">Move a thread…</button>`
-        + `<button type="button" data-topic-action="out" data-topic="${esc(t.id)}">Move thread out…</button>`
-        + `<button type="button" data-topic-action="archive" data-topic="${esc(t.id)}">Archive</button>`
-        + '</div><div class="topic-picker" hidden></div></details></div>';
-    }).join(''));
-  chips.innerHTML = `<button type="button" class="topic-chip${selected ? '' : ' on'}" data-topic-clear>All</button>`
-    + list.map(t => `<button type="button" class="topic-chip${selected === t.id ? ' on' : ''}" data-topic-open="${esc(t.id)}">${esc(t.name)}${t.decisions ? ' · ?' : t.unread ? ' · new' : ''}</button>`).join('')
-    + (all.length > list.length ? '<button type="button" class="topic-chip" data-topic-panel>More topics…</button>' : '');
-}
 async function pdTopicsRefresh(force=false) {
   const pj = poDockProject();
   if (!pj?.poRoomId || document.hidden) return;
@@ -15355,102 +15290,37 @@ async function pdTopicsRefresh(force=false) {
     const r = await fetch('/api/room/topics?id=' + encodeURIComponent(rid), {signal: AbortSignal.timeout(30000)});
     const data = await r.json();
     if (!r.ok || poDockProject()?.poRoomId !== rid) return;
-    TOPICS.room = rid; TOPICS.data = data; TOPICS.at = Date.now(); TOPICS.sig = '';
-    const active = TOPICS.filter.get(rid);
-    if (active && !data.pending) {
-      const row = data.topics?.find(t => t.id === active.id);
-      if (row) TOPICS.filter.set(rid, {id:row.id, name:row.name, threads:row.threads, latest:row.latest});
-      else TOPICS.filter.delete(rid);
-      pdTopicTell(rid);
-    }
-    pdTopicPaint();
+    TOPICS.room = rid; TOPICS.data = data; TOPICS.at = Date.now();
     pdPaintPoints();
     if (data.pending || data.building) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 1500); }
   } catch (e) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 3000); }
   finally { TOPICS.busy = false; if (TOPICS.again) { TOPICS.again = false; pdTopicsRefresh(true); } }
 }
 setInterval(() => { if (document.body.classList.contains('po-dock')) pdTopicsRefresh(); }, 15000);
+// A topic's row in Needs you: the chat shows that topic (its filter, #304)
+// and lands on its latest PO answer. Told now, and again when a chat still
+// loading says it is ready (its chat-ready) in the next few seconds.
+const TOPIC_TELL = new Map();
 function pdTopicTell(rid) {
-  const value = TOPICS.filter.get(rid) || null;
+  const tell = TOPIC_TELL.get(rid);
+  if (!tell) return;
+  if (Date.now() - tell.at > 10000) { TOPIC_TELL.delete(rid); return; }
   PO_PANEL.querySelectorAll('iframe.po-session').forEach(f => {
-    if (f.dataset.room === rid && f.contentWindow) f.contentWindow.postMessage({ensemble:'topic-filter', topic:value}, location.origin);
+    if (f.dataset.room === rid && f.contentWindow) f.contentWindow.postMessage({ensemble:'topic-filter', topic:tell.topic}, location.origin);
   });
 }
 function pdTopicOpen(id) {
   const row = TOPICS.data?.topics?.find(t => t.id === id);
   if (!row || !TOPICS.room) return;
-  TOPICS.filter.set(TOPICS.room, {id:row.id, name:row.name, threads:row.threads, latest:row.latest});
-  TOPICS.sig = ''; pdTopicPaint(); pdTopicTell(TOPICS.room);
+  TOPIC_TELL.set(TOPICS.room, {topic:{id:row.id, name:row.name}, at:Date.now()});
+  pdTopicTell(TOPICS.room);
   if (row.latest?.mid) openMsgLink(TOPICS.room, row.latest.mid);
   else pdReveal('po-chat');
 }
-async function pdTopicChange(action, data) {
-  try {
-    const r = await fetch('/api/room/topics', {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({roomId:TOPICS.room, action, ...data})});
-    const out = await r.json();
-    if (!r.ok) { toast(out.message || 'Topic change could not be saved', 4000, 'err'); return; }
-    TOPICS.data = out; TOPICS.sig = ''; pdTopicPaint();
-    pdTopicsRefresh(true);
-  } catch (err) { toast('Topic change could not be saved', 4000, 'err'); }
-}
-function pdTopicClicked(e) {
-  const open = e.target.closest('[data-topic-open]'), clear = e.target.closest('[data-topic-clear]');
-  if (open) { pdTopicOpen(open.dataset.topicOpen); return; }
-  if (clear) { TOPICS.filter.delete(TOPICS.room); TOPICS.sig = ''; pdTopicPaint(); pdTopicTell(TOPICS.room); return; }
-  if (e.target.closest('[data-topic-panel]')) { pdReveal('topics'); return; }
-  if (e.target.closest('[data-topic-all]')) {
-    if (TOPICS.expanded.has(TOPICS.room)) TOPICS.expanded.delete(TOPICS.room);
-    else TOPICS.expanded.add(TOPICS.room);
-    TOPICS.sig = ''; pdTopicPaint(); return;
-  }
-  const restore = e.target.closest('[data-topic-restore]');
-  if (restore) {
-    const topic = restore.closest('.topic-restore')?.querySelector('[data-topic-restore-id]')?.value;
-    if (topic) pdTopicChange('restore', {topic});
-    return;
-  }
-  const save = e.target.closest('[data-topic-save]');
-  if (save) {
-    const picker = save.closest('.topic-picker'), action = picker.dataset.action;
-    const topic = picker.dataset.topic, name = picker.querySelector('[data-topic-name]')?.value.trim();
-    const other = picker.querySelector('[data-topic-destination]')?.value;
-    const thread = picker.querySelector('[data-topic-thread]')?.value;
-    if (action === 'rename' && name) pdTopicChange('rename', {topic, name});
-    else if (action === 'merge' && other) pdTopicChange('merge', {topic, other});
-    else if (action === 'move' && other && thread) pdTopicChange('move', {thread, topic:other});
-    else if (action === 'out' && thread) pdTopicChange('out', {thread});
-    return;
-  }
-  const cancel = e.target.closest('[data-topic-cancel]');
-  if (cancel) {
-    const menu = cancel.closest('.topic-menu');
-    menu.querySelector('.topic-options').hidden = false;
-    menu.querySelector('.topic-picker').hidden = true;
-    return;
-  }
-  const btn = e.target.closest('[data-topic-action]');
-  if (!btn) return;
-  const action = btn.dataset.topicAction, row = TOPICS.data?.topics?.find(t => t.id === btn.dataset.topic);
-  if (!row) return;
-  if (action === 'archive') { pdTopicChange('archive', {topic:row.id}); return; }
-  const menu = btn.closest('.topic-menu'), picker = menu.querySelector('.topic-picker');
-  const choices = row.threadOptions || row.threads.map(id => ({id, title:id}));
-  const destinations = TOPICS.data.topics.filter(t => t.id !== row.id);
-  if ((action === 'move' || action === 'merge') && !destinations.length) return;
-  const select = (attr, label, options) => `<label>${label}<select ${attr}>${options.map(t => `<option value="${esc(t.id)}">${esc(t.name || t.title || t.id)}</option>`).join('')}</select></label>`;
-  picker.dataset.topic = row.id; picker.dataset.action = action;
-  picker.innerHTML = (action === 'rename' ? `<label>Topic name<input type="text" data-topic-name maxlength="80" value="${esc(row.name)}"></label>` : '')
-    + ((action === 'move' || action === 'out') ? select('data-topic-thread', 'Thread', choices) : '')
-    + ((action === 'move' || action === 'merge') ? select('data-topic-destination', 'Destination topic', destinations) : '')
-    + `<div class="topic-picker-actions"><button type="button" data-topic-save>${action === 'out' ? 'Move out' : action === 'merge' ? 'Merge' : 'Save'}</button><button type="button" data-topic-cancel>Cancel</button></div>`;
-  menu.querySelector('.topic-options').hidden = true;
-  picker.hidden = false;
-  picker.querySelector('input, select')?.focus();
-}
-PD.els.topics.addEventListener('click', pdTopicClicked);
-PD.els.points.addEventListener('click', pdTopicClicked);
-PO_PANEL.addEventListener('click', pdTopicClicked);
+PD.els.points.addEventListener('click', e => {
+  const open = e.target.closest('[data-topic-open]');
+  if (open) pdTopicOpen(open.dataset.topicOpen);
+});
 
 // ---- Points
 // The chat tells the page every change to the points (session.html
@@ -21409,9 +21279,6 @@ window.addEventListener('message', (ev) => {
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
   if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) { sendGotoMsg(String(d.roomId)); pdTopicTell(String(d.roomId)); }
-  if (d && d.type === 'topic-clear' && d.roomId && ev.origin === location.origin) {
-    TOPICS.filter.delete(String(d.roomId)); TOPICS.sig = ''; pdTopicPaint(); pdTopicTell(String(d.roomId));
-  }
   if (d && d.type === 'topics-changed' && d.roomId === TOPICS.room && ev.origin === location.origin) pdTopicsRefresh(true);
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
