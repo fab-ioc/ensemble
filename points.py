@@ -1125,7 +1125,11 @@ def _session_ids(room: dict, led: dict) -> list[str]:
     return sids
 
 
-def _session_stat(sid: str, *, immediate: bool = False) -> list | None:
+def _session_stat(sid: str, *, immediate: bool = False, ended: bool = False) -> list | None:
+    """[size, mtime] of a session's transcript (Claude's, the text the hub
+    kept of a deleted one, or Codex's rollouts), None when it has none.
+    ``ended``: a session that ended long ago (rotated out), whose Codex
+    rollout is not looked for as one written just now (#305)."""
     try:
         tp = _d.find_transcript(sid, immediate=immediate)
         if tp:
@@ -1137,7 +1141,7 @@ def _session_stat(sid: str, *, immediate: bool = False) -> list | None:
         if kept:
             return kept[1]
         cx = _d.agents.get_agent("codex")
-        st = cx.session_stat(sid) if cx is not None else None
+        st = (cx.session_stat(sid, new=False) if ended else cx.session_stat(sid)) if cx is not None else None
         return [st["size"], round(st["mtime"], 3)] if st else None
     except (OSError, TypeError, KeyError, AttributeError):
         return None
