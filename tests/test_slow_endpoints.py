@@ -11,6 +11,7 @@ from urllib.parse import quote
 import asks
 import chatroom
 import dashboard
+import file_refs
 import points
 import project_docs
 from tests.test_task_numbers import Hub
@@ -162,3 +163,68 @@ class BigBoard(Hub):
             for t in ts:
                 t.join()
         self.assertEqual(len(builds), 1)
+
+
+class BigTreeBareNames(Hub):
+    """Round 2: a chat's bare names ("sigma.yml") searched through a code
+    folder past the walk cap. A miss must not re-walk it inline each minute."""
+    FILES = 6000
+
+    def setUp(self):
+        super().setUp()
+        file_refs.forget_indexes()
+        self.addCleanup(file_refs.forget_indexes)
+        for p in (mock.patch.object(file_refs, "MAX_ENTRIES", 4000),):
+            p.start(); self.addCleanup(p.stop)
+        self.code = Path(dashboard.find_project(self.ed)["path"]) / "src"
+        for i in range(self.FILES):
+            d = self.code / f"pkg{i // 100}" / "sub"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"Mod{i}.java").write_text("x", encoding="utf-8")
+        (self.code / "pkg0" / "sigma-real.yml").write_text("x", encoding="utf-8")
+        self.rid = self.room("Trading PO", self.ed)
+        # one bare name per request: a folder at the cap spends the request's
+        # whole Budget, so the bare names after it go unsearched (as before)
+        names = [str(self.code / "pkg0" / "sub" / "Mod1.java"), "pkg1/sub/Mod101.java", "sigma.yml"]
+        self.q = {"ctx": [[self.rid, str(self.code)]], "items": [[n, 0] for n in names]}
+
+    def check(self, q=None):
+        t = time.perf_counter()
+        out = dashboard.files_check(q or self.q)["there"]
+        return time.perf_counter() - t, out
+
+    def test_answers_and_an_expired_index_answers_without_walking(self):
+        cold, got = self.check()
+        self.assertEqual(got, [True, True, False])
+        self.assertEqual(self.check({"ctx": [[self.rid, str(self.code)]], "items": [["Mod5.java", 0]]})[1], [True])
+        self.assertEqual(self.check({"ctx": [[self.rid, str(self.code)]], "items": [["sigma-real.yml", 0]]})[1], [True])
+        self.assertLess(cold, 2.0)
+        warm, again = self.check()
+        self.assertEqual(again, got)
+        self.assertLess(warm, 1.0)
+        gate = threading.Event()
+        real = file_refs._walk
+
+        def held(*a, **k):
+            gate.wait(10)
+            return real(*a, **k)
+        (self.code / "pkg1" / "sigma.yml").write_text("x", encoding="utf-8")
+        with mock.patch.object(file_refs, "INDEX_TTL", 0.0), mock.patch.object(file_refs, "_walk", held):
+            w = file_refs.WALKS
+            t, stale = self.check()       # the walk is held: the answer cannot have waited for it
+            self.assertLess(t, 1.0)
+            self.assertEqual(stale, got, "the old index answered")
+            t, stale = self.check()       # a second request does not start a second walk
+            self.assertEqual(len([th for th in threading.enumerate() if th.name == "file-refs-index"]),
+                             len(file_refs._BUILDING))
+            gate.set()
+            for ev in list(file_refs._BUILDING.values()):
+                ev.wait(10)
+        _, fresh = self.check()
+        self.assertEqual(fresh, [True, True, True], "the renewed index has the new file")
+
+    def test_past_the_stale_bound_the_walk_is_inline(self):
+        self.check()
+        (self.code / "pkg2" / "sigma.yml").write_text("x", encoding="utf-8")
+        with mock.patch.object(file_refs, "INDEX_TTL", 0.0), mock.patch.object(file_refs, "INDEX_STALE", 0.0):
+            self.assertEqual(self.check()[1], [True, True, True])

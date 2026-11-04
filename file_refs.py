@@ -48,6 +48,8 @@ MAX_DEPTH = 12          # Java sources sit 9 folders down (src/main/java/com/...
 MAX_ENTRIES = 40000     # entries walked for one request, over all its folders (Budget)
 INDEX_TTL = 60.0          # seconds a folder's name index is reused (a file at the
                           # written path is found without it, the moment it is there)
+INDEX_STALE = 900.0       # past INDEX_TTL and up to this, the index answers while
+                          # one walk renews it off the request (#305)
 INDEX_KEEP = 64           # folders whose index is kept; past it the oldest goes
 
 _PCT = re.compile(r"%[0-9A-Fa-f]{2}")
@@ -117,8 +119,24 @@ class Budget:
         self.left = MAX_ENTRIES if left is None else left
 
 
-def _usable(hit, cap: int, now: float) -> bool:
-    return bool(hit) and now - hit[0] < INDEX_TTL and (hit[3] or hit[4] >= cap)
+def _usable(hit, cap: int, now: float, ttl: float | None = None) -> bool:
+    return bool(hit) and now - hit[0] < (INDEX_TTL if ttl is None else ttl) and (hit[3] or hit[4] >= cap)
+
+
+def _refresh(key: str, top: str, cap: int, ev: threading.Event) -> None:
+    """Walk ``top`` again for an index past INDEX_TTL, off the request."""
+    try:
+        idx, n, complete = _walk(top, cap)
+        with _INDEX_LOCK:
+            _INDEX[key] = (time.monotonic(), idx, n, complete, cap)
+            while len(_INDEX) > INDEX_KEEP:
+                del _INDEX[min(_INDEX, key=lambda k: _INDEX[k][0])]
+    except Exception:
+        pass
+    finally:
+        with _INDEX_LOCK:
+            _BUILDING.pop(key, None)
+        ev.set()
 
 
 def name_index(root: str, cap: int | None = None) -> tuple[dict[str, list[tuple[int, str]]], int]:
@@ -126,7 +144,9 @@ def name_index(root: str, cap: int | None = None) -> tuple[dict[str, list[tuple[
     the files under ``root``: hidden and dependency folders skipped, at most
     MAX_DEPTH down and ``cap`` entries (default MAX_ENTRIES). Reused for
     INDEX_TTL seconds; a folder is walked by one request at a time, and the
-    others asking for it meanwhile wait for that walk and share it."""
+    others asking for it meanwhile wait for that walk and share it. Past
+    INDEX_TTL (up to INDEX_STALE) the old index answers and the walk runs in
+    the background; the next request has the new one."""
     cap = MAX_ENTRIES if cap is None else cap
     try:
         top = os.path.normpath(os.path.expanduser(root))
@@ -136,9 +156,20 @@ def name_index(root: str, cap: int | None = None) -> tuple[dict[str, list[tuple[
     while True:
         with _INDEX_LOCK:
             hit = _INDEX.get(key)
-            if _usable(hit, cap, time.monotonic()):
+            now = time.monotonic()
+            if _usable(hit, cap, now):
                 return hit[1], hit[2]
             ev = _BUILDING.get(key)
+            if _usable(hit, cap, now, INDEX_STALE):
+                # #305 round 2: past INDEX_TTL but not INDEX_STALE, the index
+                # answers now and one walk renews it in the background — a
+                # miss in a folder at the walk cap re-walked 40,000 entries
+                # inline every minute, 5 s on a busy hub.
+                if ev is None:
+                    ev = _BUILDING[key] = threading.Event()
+                    threading.Thread(target=_refresh, args=(key, top, max(cap, hit[4]), ev),
+                                     name="file-refs-index", daemon=True).start()
+                return hit[1], hit[2]
             if ev is None:
                 ev = _BUILDING[key] = threading.Event()
                 break
