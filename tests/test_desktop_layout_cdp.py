@@ -17,7 +17,8 @@ Wheels (a PO) and Alpha (none), and a task in no project. Checked:
 * a layout saved before this step (the list docked) opens once in the new
   default; the same layout saved after it keeps the list; a list popped out
   into its window opens again in its window;
-* a phone (390x844) still has its list as home;
+* a phone (390x844) has no list dock and no list on screen by default (its
+  list is a pane, #307: tests/test_phone_home_cdp.py);
 * the page threw nothing meanwhile.
 
 Measures go to $ENSEMBLE_SHOTS/desktop-layout.json and screenshots there too
@@ -207,7 +208,7 @@ async function main() {
       await q.evalIn('try { const w = LD.dock.popWindow("list"); if (w) LD.dock.popIn("list"); } catch (e) {} 0'); await sleep(300);
       await q.close();
     }
-    // ---- a phone: its list is home, as before
+    // ---- a phone: no list dock, no list on screen (#307)
     const ph = await page(390, 844, true);
     await sleep(800);
     out.phone = await ph.evalIn(GEOM);
@@ -390,10 +391,10 @@ class DesktopLayoutInChrome(unittest.TestCase):
                 self.assertGreaterEqual(g["chat"]["w"], 360)
                 self.assertLessEqual(g["scrollW"], g["W"])
 
-    def test_a_phone_keeps_its_list(self):
+    def test_a_phone_has_no_list_by_default(self):
         g = self.got["phone"]
         self.assertFalse(g["ld"], "no list dock on a phone")
-        self.assertIsNotNone(g["phoneList"], g)
+        self.assertIsNone(g["phoneList"], g)
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])

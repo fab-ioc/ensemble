@@ -2496,6 +2496,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--s-200);
     padding: var(--s-300) var(--s-300) var(--s-100);
   }
+  .sw-x, #ph-inbox, .ph-pane-head { display: none; }   /* a phone's (#307) */
   .sw-hover-toggle { display: flex; align-items: center; gap: var(--s-100); flex: 0 0 auto;
     color: var(--fg-subtle); font-size: var(--fs-100); white-space: nowrap; cursor: pointer; }
   .sw-hover-toggle input { margin: 0; accent-color: var(--accent); }
@@ -3538,7 +3539,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     header { gap: 0; padding: 0 var(--s-400); }
     .bar-sep { display: none; }
     #plan-usage-slot { display: none; }
-    #inbox-btn { display: none; }
+    /* The Inbox (#307): its count in row one, a finger's height; it opens
+       the Inbox pane (#ph-inbox), so the PO screen's tabs have no Inbox tab. */
+    #inbox-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-200); margin-left: auto; border-color: transparent; }
+    #inbox-btn[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
+    #po-dock.dk-narrow .dk-tab-wrap:has(> .dk-tab[data-dk-tab="inbox"]) { display: none; }
     .me-item.me-phone { display: flex; }
     #bar-back, #search-open, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
@@ -3546,13 +3551,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     }
     #bar-back { font-size: var(--fs-500); color: var(--fg); }
     #bar-back:not([hidden]) { display: inline-flex; }
-    #search-open { display: inline-flex; margin-left: auto; }
-    /* Home is the list (#129), so the bar is one row there. Everywhere else
-       (a project, an open task, the cards page, Needs you) the bar has a
-       second row: back to the list, the project's name (its menu), where you
-       are in it (an open task: › #18 title › its tab › the file) and what you
-       can do here (Panels ▾). --header-h follows, and with it everything that
-       hangs off the bar. */
+    #search-open { display: inline-flex; }
+    /* Home is a conversation (#307), so the bar always has its second row:
+       back (while a pane or a task is open), the project's name (the
+       switcher), where you are in it (an open task: › #18 title › its tab ›
+       the file) and what you can do here (Panels ▾). --header-h follows, and
+       with it everything that hangs off the bar. */
     /* The wordmark leads row one, on home and in a project alike (125px; row
        one's controls take 262px); below 410px it is the icon alone. The rest
        of where you are is row two's. */
@@ -3584,11 +3588,37 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     body.row2.bar-proj #proj-switch { max-width: 40%; padding: 0 var(--s-100); }
     body.row2 #bar-crumbs .bar-crumb { height: var(--touch-min); max-width: none; padding: 0 var(--s-100); }
     body.row2 #bar-crumbs .crumb-here { max-width: none; }
-    /* The list is home: the whole screen under the bar, the page under it
-       out of the way, every row and control a finger's size. Its foot goes
-       to the project cards. */
-    #switcher { width: auto; right: 0; border-right: 0; }
-    body.ph-list main { display: none; }
+    /* The panes (#307): the Inbox, the switcher and the task list each cover
+       the screen under the bar, one at a time, over the conversation (kept
+       live beneath); their height follows the visible viewport like the
+       task's. Every row and control a finger's size; the list's foot goes to
+       the project cards. */
+    #switcher, #ph-inbox, body.ph-switch #proj-menu {
+      position: fixed; left: 0; right: 0; width: auto; max-width: none; z-index: 40;
+      top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto;
+      height: calc(var(--vv-h, 100dvh) - var(--top-h) - var(--vv-safe, env(safe-area-inset-bottom, 0px)));
+      max-height: none; border: 0; border-radius: 0; box-shadow: none;
+    }
+    #ph-inbox:not([hidden]) { display: flex; flex-direction: column; background: var(--surface); }
+    .ph-pane-head { display: flex; align-items: center; gap: var(--s-100); flex: none; min-height: var(--touch-min);
+      padding: 0 var(--s-100) 0 var(--s-400); border-bottom: 1px solid var(--border); }
+    .ph-pane-head h2 { margin: 0; flex: 1 1 auto; min-width: 0; font-size: var(--fs-400); line-height: var(--lh-400); }
+    .ph-pane-x { width: var(--touch-min); height: var(--touch-min); flex: none; display: inline-flex; align-items: center; justify-content: center;
+      border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-500); cursor: pointer; }
+    .ph-pane-x:hover { background: var(--hover); }
+    /* A task's conversation keeps a smaller floor: at 360x740 with the keyboard
+       up, 280px pushed the composer under the keyboard (#307). */
+    #detail-panel { --dp-chat-min: 160px; }
+    #ph-inbox-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 var(--s-400) var(--s-400); }
+    #ph-inbox-body .ibx-title { display: none; }
+    #ph-inbox-body .ibx-scope button, #ph-inbox-body .ibx-more > summary { min-height: var(--touch-min); }
+    #ph-inbox-body .ibx-link { display: block; min-height: var(--touch-min); }
+    body.ph-switch #proj-menu { left: 0 !important; }
+    body.ph-switch #proj-menu .pm-item { min-height: var(--touch-min); }
+    body.ph-switch #proj-menu .pm-find { height: var(--touch-min); }
+    body.ph-switch #proj-menu { padding: 0 0 var(--s-200); }
+    body.ph-switch #proj-menu > .ph-pane-head { position: sticky; top: 0; z-index: 1; background: var(--surface-overlay); margin-bottom: var(--s-100); }
+    body:not(.ph-switch) #proj-menu > .ph-pane-head { display: none; }
     .sw-head { padding: var(--s-100) var(--s-200); }
     .sw-pick select, #sw-filter, .sw-clear { height: var(--touch-min); }
     .sw-find { padding: 0 var(--s-200); }
@@ -3936,6 +3966,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-items { list-style: none; margin: var(--s-100) 0 0; padding: 0 0 0 var(--s-300); border-left: 2px solid var(--border); }
   .ibx-item { padding: var(--s-100) 0; min-width: 0; }
   .ibx-item .ibx-line { font-size: var(--fs-200); line-height: var(--lh-200); }
+  .ibx-others { padding: 0; border: 0; background: none; font: inherit; color: var(--link); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; border-radius: var(--r-100); }
+  @media (hover: none) { .ibx-others { min-height: var(--touch-min); } }
   @media (hover: none) { .ibx-scope button { height: var(--touch-min); } .ibx-more > summary { min-height: var(--touch-min); display: flex; align-items: center; } }
   .dk-strip-btn.on .ti { --ti: currentColor; --ti-ink: var(--selected-bg); --ti-ring: var(--selected-bg); }
   .dk-menu .pd-mi { display: inline-flex; width: 16px; height: 16px; margin-right: var(--s-200); vertical-align: -3px; --ti-ring: var(--surface-overlay); }
@@ -4364,6 +4396,8 @@ window.DOC_LISTENERS_PAUSED = false;
 <aside id="switcher" hidden aria-label="Tasks and projects" data-noun-aria-label="Tasks and {projects}">
   <div class="sw-head">
     <label class="sw-pick sw-pick-proj"><select id="sw-proj" aria-label="Show the tasks of" title="Show every project, or one" data-noun-title="Show every {project}, or one"></select><span class="caret" aria-hidden="true">▾</span></label>
+    <!-- A phone (#307): the list is a pane over the conversation; this closes it. -->
+    <button type="button" class="ph-pane-x sw-x" data-ph-close aria-label="Close the task list" title="Back to the conversation">✕</button>
   </div>
   <!-- Narrows the rows as you type (#161); not kept across a reload. Under
        the head, whose free end holds the list dock's ⋯ and −. -->
@@ -4380,6 +4414,11 @@ window.DOC_LISTENERS_PAUSED = false;
 <!-- On a desktop the list is a panel of a dock of its own (#137): laid over
      the area under the bar, with #ld-page the page's stand-in, whose place the
      page follows (the script's "The list as a dock panel"). -->
+<!-- A phone's Inbox (#307): a pane over the conversation, opened by the bar's Inbox. -->
+<section id="ph-inbox" hidden aria-label="Inbox">
+  <div class="ph-pane-head"><h2>Inbox</h2><button type="button" class="ph-pane-x" data-ph-close aria-label="Close the Inbox" title="Back to the conversation">✕</button></div>
+  <div id="ph-inbox-body"></div>
+</section>
 <div id="list-dock" hidden></div>
 <div id="list-dock-panels" hidden><div id="ld-page" aria-hidden="true"></div></div>
 <div id="search-help-pop" hidden>
@@ -5606,6 +5645,8 @@ const detailWMax = () =>
 })();
 
 function openDetail(sid) {
+  phPanesClose(true);   // a phone: the pane it was opened from steps aside (#307)
+  if (phoneNow()) PH_BACK.sel = { sid };   // and marks this row when it comes back
   // A task open as a chat panel of its own (#150): that panel comes on
   // screen; the middle is not a second chat of it.
   {
@@ -5707,8 +5748,8 @@ function closeDetail() {
   document.body.classList.remove('detail-open');
   renderRows();
 }
-// The task closes by itself (Esc, archived, deleted): a phone goes back to
-// the list, as its ← does; a desktop stays on the project (#129).
+// The task closes by itself (Esc, archived, deleted): a phone goes home, to
+// its project's PO (#307); a desktop stays on the project (#129).
 function closeTask() {
   if (phoneNow()) goHome(); else closeDetail();
 }
@@ -13481,6 +13522,7 @@ function poNoteHtml() {
 // PO leads the page. Before its row has loaded, the project it leads.
 function openPoOf(pj) {
   if (!pj) return;
+  phPanesClose();
   const split = poSplitProject();
   if (!poRowOf(pj) || poMidGo() || split) {
     // A PO leads the page: this one, or go to the project this one leads.
@@ -15549,7 +15591,12 @@ function ibxHtml(d, scope, pid, now) {
       + `<ul class="pdp-list">${got.map(row).join('')}</ul></li>` : '';
   }).join('');
   const note = d.pending ? '<p class="pdp-note">Reading a conversation’s question cards: more may come.</p>' : '';
-  return `<div class="ibx">${head}${groups ? `<ul class="pdp-groups">${groups}</ul>` : '<p class="pdp-empty">Nothing waits on you.</p>'}${note}</div>`;
+  // This project has none but others do (the bar counts them all): say so, one tap to All (#307).
+  const others = !all && !groups ? ((d.rows || []).length - rows.length) : 0;
+  const empty = others ? `<p class="pdp-empty">${esc(nounText('Nothing waits on you in this {project}.'))} `
+      + `<button type="button" class="ibx-others" data-ibx-scope="all">${esc(`${others} in other ${noun(others === 1 ? 'one' : 'many')}`)}</button></p>`
+    : '<p class="pdp-empty">Nothing waits on you.</p>';
+  return `<div class="ibx">${head}${groups ? `<ul class="pdp-groups">${groups}</ul>` : empty}${note}</div>`;
 }
 function ibxPaint() {
   const el = PD.els.inbox;
@@ -15563,14 +15610,20 @@ function ibxPaint() {
     btn.title = all ? `${all} thing${all === 1 ? '' : 's'} wait${all === 1 ? 's' : ''} on you, in every project` : 'Nothing waits on you';
   }
   if (PD.dock) PD.dock.setBadge('inbox', n ? String(n) : null, n ? `${n} waiting on you` : null);
+  // A phone's Inbox pane (#307), while it is open: the project the bar names.
+  const ph = document.getElementById('ph-inbox');
+  if (ph && !ph.hidden) ibxPaintIn(document.getElementById('ph-inbox-body'), projHere() || '', 'phSig');
   if (!el) return;
+  ibxPaintIn(el, pid, 'sig');
+}
+function ibxPaintIn(el, pid, key) {
   const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000);
   const sig = html.replace(/(<span class="pdp-age"[^>]*>)[^<]*/g, '$1');
-  if (sig === IBX.sig) {
+  if (sig === IBX[key]) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
     return;
   }
-  IBX.sig = sig;
+  IBX[key] = sig;
   el.innerHTML = html;
 }
 function ibxPoll() {
@@ -15592,30 +15645,37 @@ function ibxOpenRoom(rid) {
   if (row) openDetail(row.sessionId);
   else window.open('/session?room=' + encodeURIComponent(rid), '_blank', 'noopener');
 }
-// A row's answers stay open across repaints.
-PD.els.inbox.addEventListener('toggle', e => {
-  const d = e.target;
-  if (!d.dataset || !d.dataset.ibxMore) return;
-  if (d.open) IBX.open.add(d.dataset.ibxMore); else IBX.open.delete(d.dataset.ibxMore);
-  IBX.sig = '';
-}, true);
-PD.els.inbox.addEventListener('click', e => {
-  const sc =e.target.closest && e.target.closest('[data-ibx-scope]');
-  if (sc) {
-    IBX.scope = sc.dataset.ibxScope === 'all' ? 'all' : 'project';
-    try { localStorage.setItem('cd-inbox-scope', IBX.scope); } catch (err) {}
-    ibxPaint();
-    return;
-  }
-  const a = e.target.closest && e.target.closest('a.ibx-link[data-room]');
-  if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button) return;
-  e.preventDefault();
-  if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, a.dataset.part || '');
-  else ibxOpenRoom(a.dataset.room);
-});
+// A row's answers stay open across repaints. The Inbox panel's handlers, and
+// a phone's Inbox pane's (#307).
+function ibxWire(box) {
+  box.addEventListener('toggle', e => {
+    const d = e.target;
+    if (!d.dataset || !d.dataset.ibxMore) return;
+    if (d.open) IBX.open.add(d.dataset.ibxMore); else IBX.open.delete(d.dataset.ibxMore);
+    IBX.sig = IBX.phSig = '';
+  }, true);
+  box.addEventListener('click', e => {
+    const sc = e.target.closest && e.target.closest('[data-ibx-scope]');
+    if (sc) {
+      IBX.scope = sc.dataset.ibxScope === 'all' ? 'all' : 'project';
+      try { localStorage.setItem('cd-inbox-scope', IBX.scope); } catch (err) {}
+      ibxPaint();
+      return;
+    }
+    const a = e.target.closest && e.target.closest('a.ibx-link[data-room]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button) return;
+    e.preventDefault();
+    if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, a.dataset.part || '');
+    else ibxOpenRoom(a.dataset.room);
+  });
+}
+ibxWire(PD.els.inbox);
+ibxWire(document.getElementById('ph-inbox-body'));
 // The bar's Inbox: the column beside the PO's conversation; from elsewhere,
-// the PO of this project (else of the first row's project) first.
+// the PO of this project (else of the first row's project) first. A phone's
+// opens (or closes) its Inbox pane over the conversation (#307).
 function ibxOpen() {
+  if (phoneNow()) { phPane(PH_PANE === 'inbox' ? '' : 'inbox'); return; }
   if (document.body.classList.contains('po-dock') && PD.dock && !pdTask()) { pdReveal('inbox'); return; }
   const rows = (IBX.data && IBX.data.rows) || [];
   const here = projectById(SELECTED_PROJECT);
@@ -19240,8 +19300,45 @@ var SW_FILTER = '';                           // the list's filter box (#161); n
 // scroll, the row opened), so coming back finds it there.
 var PH_CARDS = false, PH_BACK = { top: 0, sel: null };
 function phoneNow() { try { return isPhone(); } catch (e) { return false; } }   // before isPhone is defined
-function phList() {
-  return phoneNow() && !SELECTED_PROJECT && !PH_CARDS && !document.body.classList.contains('detail-open');
+// A phone's home is a conversation (#307). Over it, one pane at a time: the
+// Inbox ('inbox'), the task list ('list') or the switcher (the project menu,
+// open); opening one closes the others, and any conversation opening closes
+// them. PH_FROM: the pane a task was opened from, where its ← goes back to.
+var PH_PANE = '', PH_FROM = '';
+function phList() { return phoneNow() && PH_PANE === 'list'; }
+function phPane(p) {
+  if (!phoneNow()) p = '';
+  if (p === PH_PANE && !(p === '' && phSwitchOpen())) return;
+  if (phSwitchOpen()) closeProjMenu();
+  PH_PANE = p;
+  const ib = document.getElementById('ph-inbox');
+  if (ib) { ib.hidden = p !== 'inbox'; if (p === 'inbox') ibxPaint(); }
+  phPaneSync();
+  swRender();
+}
+function phSwitchOpen() { return document.body.classList.contains('ph-switch'); }
+// The bar's Inbox says whether its pane is open.
+function phPaneSync() {
+  const b = document.getElementById('inbox-btn');
+  if (b) { if (phoneNow()) b.setAttribute('aria-expanded', String(PH_PANE === 'inbox')); else b.removeAttribute('aria-expanded'); }
+  barPaint();
+}
+// A conversation (or a task) opening on a phone closes whatever pane was over it.
+function phPanesClose(task) {
+  if (!phoneNow()) return;
+  PH_FROM = task ? PH_PANE : '';
+  PH_CARDS = false;
+  if (PH_PANE || phSwitchOpen()) phPane('');
+}
+// Home on a phone: the last conversation, else the PO of the project opened
+// last, else of any project. False: no project has a PO (the cards show).
+function phOpenHome() {
+  if (openConv(lastConv())) return true;
+  const list = (PROJECTS && PROJECTS.projects) || [];
+  const pj = projRecent(list, [], projOpened()).map(p => projectById(p.id)).find(p => p && poRowOf(p))
+    || registeredProjects().find(p => poRowOf(p));
+  if (pj) { openPoConv(pj); return true; }
+  return false;
 }
 function swOn() { try { return !isPhone() || phList(); } catch (e) { return false; } }
 function swProject() {
@@ -19400,7 +19497,20 @@ function swDiagFit(box) {
   }
 }
 if (window.ResizeObserver) new ResizeObserver(() => { swDiagFit($('#sw-list')); swExpandHide(); }).observe($('#sw-list'));
-$('#sw-cards').addEventListener('click', () => { PH_CARDS = true; renderRows(); });
+$('#sw-cards').addEventListener('click', () => { phCards(); });
+// A phone's project cards page (the list's foot, the switcher's All projects as cards).
+function phCards() {
+  midLeave();
+  phPane('');
+  PH_CARDS = true; SELECTED_PROJECT = null;
+  syncProjSwitch();
+  renderRows();
+}
+// The panes' ✕: back to the conversation under them.
+document.addEventListener('click', (ev) => {
+  const x = ev.target.closest && ev.target.closest('[data-ph-close]');
+  if (x) { ev.preventDefault(); ev.stopPropagation(); phPane(''); }
+}, true);
 $('#sw-proj').addEventListener('change', (ev) => {
   try { localStorage.setItem(SW_KEY + '-project', ev.target.value); } catch (e) {}
   SW_SHOWN = null;
@@ -19507,6 +19617,7 @@ function swOpenRoomTab(rid) {
 // A PO's conversation from the list: its project's screen, where the PO leads
 // (the task panel steps aside). Where the dock failed to load, its drawer.
 function openPoConv(pj) {
+  phPanesClose();
   if (PD.failed) { openPoOf(pj); return; }
   if (PO_PEEK) { PO_PEEK = false; PO_PIN = ''; renderPo(); }
   openProjectPage(pj.id);
@@ -20241,11 +20352,13 @@ function syncProjSwitch() {
 // everywhere but its home, the list (#129), with ← back to the list.
 function barPaint() {
   const inProj = !!SELECTED_PROJECT;
-  const row2 = phoneNow() && !phList();
+  const phone = phoneNow(), row2 = phone;
   document.body.classList.toggle('in-proj', inProj);
   document.body.classList.toggle('row2', row2);
   const back = document.getElementById('bar-back');
-  if (back) back.hidden = !(inProj || row2);
+  if (back) back.hidden = phone ? !phBackTo() : !(inProj || row2);
+  // A phone opens on the conversation it last showed (#307).
+  if (phone && !PH_PANE && !phSwitchOpen()) rememberConv(swSelection());
   const here = document.getElementById('bar-here');
   // Panels also recovers a closed Window with no former strip button (the
   // default docked list, or a tool moved out of its strip before popping out).
@@ -20257,12 +20370,20 @@ function barPaint() {
   if (sw) sw.title = document.body.classList.contains('bar-proj') || inProj
     ? `${sw.querySelector('#proj-switch-name').textContent}: switch ${noun('one')}, or change this ${noun('one')}'s settings` : nounText('Switch {project}');
 }
-// Home: the list on a phone (#129). A desktop has no home page (#135): the
-// middle empties and the list shows its Needs you.
+// Home: a conversation on a phone (#307): the panes close, an open task
+// gives way to its project's PO, and a screen with no conversation (the
+// cards, a board without a PO) opens the last one. A desktop has no home page
+// (#135): the middle empties and the list shows its Needs you.
 function goHome() {
   midLeave();
+  if (phoneNow()) {
+    phPane(''); PH_FROM = '';
+    const pj = projectById(SELECTED_PROJECT);
+    if (pj && poRowOf(pj)) { PH_CARDS = false; renderRows(); return; }
+    if (phOpenHome()) { PH_CARDS = false; return; }
+    PH_CARDS = true; SELECTED_PROJECT = null; renderRows(); return;
+  }
   PH_CARDS = false; SELECTED_PROJECT = null; renderRows();
-  if (phoneNow()) return;
   // #306: with the list hidden (a computer's default) what waits is the Inbox.
   if (ldListShown()) swFocusNeeds(); else ibxOpen();
 }
@@ -20288,7 +20409,7 @@ function swFocusNeeds() {
 // desktop keeps what it shows, and a middle with nothing in it opens the
 // default conversation. A phone goes back to its list and scrolls it there.
 function swShowNeeds() {
-  if (phoneNow()) { goHome(); swFocusNeeds(); return; }
+  if (phoneNow()) { phPane('inbox'); return; }   // #307: a phone's is its Inbox pane
   if (!ldListShown()) { ibxOpen(); return; }   // #306: the list hidden, the Inbox
   if (!document.body.classList.contains('detail-open') && !SELECTED_PROJECT) openDefaultConv();
   swFocusNeeds();
@@ -20321,7 +20442,24 @@ window.addEventListener('hashchange', () => {
   history.replaceState(null, '', location.pathname + location.search);
   swShowNeeds();
 });
-document.getElementById('bar-back').addEventListener('click', goHome);
+// A phone's ← (#307): what it goes back to, or '' (none: it is hidden). A
+// pane closes to the conversation; a task goes back to the pane it was opened
+// from, else to its project's PO (or board); a page with no conversation on
+// it (the cards, a board without a PO) goes home.
+function phBackTo() {
+  if (PH_PANE || phSwitchOpen()) return 'pane';
+  if (document.body.classList.contains('detail-open')) return 'task';
+  const pj = projectById(SELECTED_PROJECT);
+  return pj && poRowOf(pj) ? '' : 'home';
+}
+function barBack() {
+  if (!phoneNow()) { goHome(); return; }
+  const to = phBackTo();
+  if (to === 'pane') phPane('');
+  else if (to === 'task') { const from = PH_FROM; closeDetail(); PH_FROM = ''; if (from) phPane(from); else barPaint(); }
+  else if (to === 'home') goHome();
+}
+document.getElementById('bar-back').addEventListener('click', barBack);
 document.getElementById('bar-home').addEventListener('click', (e) => {
   if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;   // a new tab or window of home
   e.preventDefault(); goHome();
@@ -20632,7 +20770,9 @@ function projMenuHtml() {
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] }).recent, projOpened());
   } catch (e) { recent = projRecent(list, [], projOpened()); }
   // All projects is a phone's cards page; a desktop has no such page (#135).
-  const cards = phoneNow() ? `<button type="button" class="pm-item pm-cards${!here ? ' on' : ''}" data-proj="">${esc(nounText('All {projects} as cards'))}</button>` : '';
+  // A phone's task list is a pane of its own (#307): every task, Unassigned and past sessions.
+  const cards = phoneNow() ? `<button type="button" class="pm-item pm-cards${!here ? ' on' : ''}" data-proj="">${esc(nounText('All {projects} as cards'))}</button>`
+    + `<button type="button" class="pm-item pm-cards pm-tasks" data-ph-list title="Every task, and your sessions with no ${esc(noun('one'))}">Task list</button>` : '';
   const pj = projectById(here);
   return (recent.length ? `<div class="pm-head" id="pm-recent-h">Recent</div><div class="pm-recent" role="group" aria-labelledby="pm-recent-h">`
       + recent.map(p => projItemHtml(p, here, 'pm-rec')).join('') + '</div><div class="pm-rule"></div>' : '')
@@ -20651,11 +20791,27 @@ function closeProjMenu(back) {
   const was = !m.hidden;
   m.hidden = true;
   $('#proj-switch').setAttribute('aria-expanded', 'false');
+  if (document.body.classList.contains('ph-switch')) { document.body.classList.remove('ph-switch'); barPaint(); }
   if (was && back) $('#proj-switch').focus();
 }
 function openProjMenu(focusFirst) {
   closeCreateMenu(); closeMeMenu();
   const m = $('#proj-menu'), b = $('#proj-switch');
+  // A phone (#307): the switcher is a pane under the bar, the one pane open.
+  if (phoneNow()) {
+    if (PH_PANE) phPane('');
+    m.innerHTML = `<div class="ph-pane-head"><h2>${esc(nounText('{Projects}'))}</h2>`
+      + `<button type="button" class="ph-pane-x" data-ph-close aria-label="${esc(nounText('Close the {project} switcher'))}" title="Back to the conversation">✕</button></div>` + projMenuHtml();
+    m.style.top = m.style.left = m.style.maxHeight = '';
+    m.hidden = false;
+    document.body.classList.add('ph-switch');
+    b.setAttribute('aria-expanded', 'true');
+    barPaint();
+    const first = m.querySelector('.pm-item');
+    if (first && focusFirst) first.focus();
+    else { m.setAttribute('tabindex', '-1'); m.focus({ preventScroll: true }); }
+    return;
+  }
   m.innerHTML = projMenuHtml();
   m.hidden = false;
   const r = b.getBoundingClientRect(), vw = document.documentElement.clientWidth;
@@ -20715,10 +20871,11 @@ function projPick(pid) {
   closeProjMenu();
   const pj = pid ? projectById(pid) : null;
   if (pj && pj.registered && pj.poRoomId) { openPoConv(pj); if (PD.dock && !PD.dock.narrow()) PD.dock.closeFly(); return; }
+  // A phone's All projects is its cards page (#129, #307).
+  if (!pid && phoneNow()) { phCards(); return; }
+  phPanesClose();
   midLeave();
   SELECTED_PROJECT = pid || null;
-  // A phone's All projects is its cards page (its home is the list, #129).
-  if (!SELECTED_PROJECT && phoneNow()) PH_CARDS = true;
   PROJECT_TAB = 'tasks';
   WS_SCOPE = '';
   syncProjSwitch();
@@ -20731,6 +20888,7 @@ $('#proj-menu').addEventListener('click', (ev) => {
   // This project's settings: the page's own click handler opens its dialog.
   if (it.classList.contains('pm-set')) { closeProjMenu(); return; }
   ev.stopPropagation();
+  if (it.hasAttribute('data-ph-list')) { phPane('list'); return; }
   if (it.classList.contains('pm-new')) { closeProjMenu(); projectSetupFlow(); return; }
   projPick(it.dataset.proj || '');
 });
@@ -21450,7 +21608,9 @@ document.addEventListener('keydown', (ev) => {
     return;
   }
   if (PO_PEEK) { poClosePeek(); return; }   // the topmost thing closes first
-  if (SELECTED_SID) closeTask();
+  // A phone's Esc is its ←: a pane closes, a task goes back to the pane it came from (#307).
+  if (phoneNow() && phBackTo() === 'pane') { phPane(''); return; }
+  if (SELECTED_SID) { if (phoneNow()) barBack(); else closeTask(); }
 });
 
 // ---------------------------------------------------------------------------
@@ -21705,7 +21865,8 @@ midSync();
   const mq = window.matchMedia(MOBILE_MQ);
   const redraw = () => {
     BOARD_SIG = '';
-    if (!isPhone()) PH_CARDS = false;   // a phone comes back to its list, not a stale cards page
+    if (!isPhone()) { PH_CARDS = false; PH_FROM = ''; phPane(''); }   // a phone's panes are a phone's (#307)
+    phPaneSync();
     midSync();
     pdToolsFit();
     renderRows();
@@ -23212,13 +23373,17 @@ window.ensUpdPlace = () => ({
     // #needs: the retired Needs you page's address, now the list's (#135).
     history.replaceState(null, '', location.pathname + location.search);
     swShowNeeds();
-  } else if (!deepTask && !phoneNow() && window.ensBootOpen !== false) {   // false: a test's page starts on none
+  } else if (!deepTask && window.ensBootOpen !== false) {   // false: a test's page starts on none
     // A desktop opens on the list plus the last conversation, else the first
-    // Needs you entry (#135). Which items are a PO's is known with the projects.
+    // Needs you entry (#135); a phone on the last conversation, else a PO's
+    // (#307). Which items are a PO's is known with the projects.
     if (!PROJECTS) await refreshProjects();
     await firstAttn;      // a second call now would find the first in flight and return at once
     renderAttention();
-    if (!SELECTED_PROJECT && !document.body.classList.contains('detail-open')) openDefaultConv();
+    if (!SELECTED_PROJECT && !document.body.classList.contains('detail-open')) {
+      if (!phoneNow()) openDefaultConv();
+      else if (!phOpenHome()) { PH_CARDS = true; renderRows(); }
+    }
   }
   // The first screen is set: what the page opened on is on screen (tests wait for it).
   window.ensBooted = true;

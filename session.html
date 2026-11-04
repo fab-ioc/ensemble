@@ -1565,6 +1565,9 @@
     #msgpane:has(#points-line:not([hidden])) #thread-catchup { display: none; }
     body.po-thread-channel #chatbar { display: none; }
     #points-line { margin: 0; border-radius: 0; border-width: 0 0 1px; }
+    /* Nothing waits (#307): the row goes to the messages; the bar's Inbox
+       and the Needs you tab still have it all. */
+    #points-line:has(> .pt-sum.pt-idle[aria-expanded="false"]) { display: none; }
     #points-line .pt-sum-oq { display: inline; }
     #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* A row's fixed parts add up to less than the screen (#295); the sender has
@@ -4640,7 +4643,9 @@ function pointsLineHtml(P, open, href, now) {
   // On a phone the open questions have no strip of their own (#242): their count is in the line.
   const older = (P.needs && (P.needs.olderCount || (P.needs.older || []).length)) || 0;
   const oq = older ? `<span class="pt-sum-oq"> · ${esc(plural(older, 'older question', 'older questions'))}</span>` : '';
-  return `<button type="button" class="pt-sum" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each ask, with your message and its answer'}">`
+  // Nothing waiting and nothing older: idle, a phone's chat leaves the line out (#307).
+  const idle = !older && !needsCounts(P).decisions && sum === 'Nothing waits on you';
+  return `<button type="button" class="pt-sum${idle ? ' pt-idle' : ''}" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each ask, with your message and its answer'}">`
     + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span><span class="pt-sum-t">${esc(sum)}${oq}</span></button>`
     + `<ul id="points-list"${open ? '' : ' hidden'}>${open ? pointsListHtml(P, href, now) : ''}</ul>`;
 }
