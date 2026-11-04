@@ -14,10 +14,13 @@ and the tests use it without the hub.
 """
 from __future__ import annotations
 
+import copy
 import os
 import re
 import shutil
 import tempfile
+import threading
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -124,7 +127,7 @@ def list_documents(docs_dir: str, code_docs: str = "", limit: int = LIST_MAX) ->
                 st = e.stat()
             except OSError:
                 continue
-            rel = os.path.relpath(e.path, base).replace("\\", "/")
+            rel = _rel(e.path, base)
             top = rel.split("/", 1)[0]
             no, title = doc_title(e.name)
             group = ""
@@ -141,13 +144,70 @@ def list_documents(docs_dir: str, code_docs: str = "", limit: int = LIST_MAX) ->
                 st = e.stat()
             except OSError:
                 continue
-            rel = os.path.relpath(e.path, cbase).replace("\\", "/")
+            rel = _rel(e.path, cbase)
             items.append({"path": e.path, "rel": "docs/" + rel, "title": doc_title(e.name)[1], "no": None,
                           "group": "", "mtime": int(st.st_mtime), "size": st.st_size, "inCode": True})
     items.sort(key=lambda x: (-x["mtime"], x["rel"].lower()))
     return {"dir": docs_dir, "exists": bool(base and base.is_dir()),
             "codeDocs": code_docs if cbase and cbase.is_dir() else "",
             "items": items[:limit], "truncated": len(items) > limit}
+
+
+def _rel(path: str, base: Path) -> str:
+    """``path`` (found by _walk under ``base``) relative to it, with forward
+    slashes: os.path.relpath's answer without its cost per file (#305)."""
+    b = str(base)
+    if path.startswith(b) and path[len(b):len(b) + 1] in ("\\", "/"):
+        return path[len(b) + 1:].replace("\\", "/")
+    return os.path.relpath(path, base).replace("\\", "/")
+
+
+# list_documents_cached: {(docs_dir, code_docs, limit): (built at, the folders' mtimes then, answer)}
+_LIST_CACHE: dict[tuple, tuple[float, tuple, dict]] = {}
+_LIST_LOCK = threading.Lock()
+_LIST_BUILDS: dict[tuple, threading.Lock] = {}
+LIST_TTL_S = 5.0     # an edit in place, or a file deeper down, shows after this
+
+
+def _folder_sig(*dirs: str) -> tuple:
+    out = []
+    for d in dirs:
+        try:
+            out.append(os.stat(d).st_mtime_ns if d else None)
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def list_documents_cached(docs_dir: str, code_docs: str = "", limit: int = LIST_MAX) -> dict:
+    """list_documents, kept LIST_TTL_S while neither folder's own mtime
+    changes (a report added, removed or renamed at its top shows at once),
+    one walk at a time per folder pair (#305: the Documents page polls it,
+    and a big folder took seconds per call on a busy hub). A deep copy each
+    call, so callers may change it."""
+    key = (docs_dir, code_docs, limit)
+
+    def hit():
+        now = time.monotonic()
+        sig = _folder_sig(docs_dir, code_docs)
+        with _LIST_LOCK:
+            got = _LIST_CACHE.get(key)
+        if got is not None and got[1] == sig and now - got[0] < LIST_TTL_S:
+            return got[2]
+        return None
+
+    out = hit()
+    if out is None:
+        with _LIST_LOCK:
+            build = _LIST_BUILDS.setdefault(key, threading.Lock())
+        with build:
+            out = hit()
+            if out is None:
+                now, sig = time.monotonic(), _folder_sig(docs_dir, code_docs)
+                out = list_documents(docs_dir, code_docs, limit)
+                with _LIST_LOCK:
+                    _LIST_CACHE[key] = (now, sig, out)
+    return copy.deepcopy(out)
 
 
 # ---- Migration: copy the reports task folders hold into Documents -------------

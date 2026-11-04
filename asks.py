@@ -876,17 +876,24 @@ def _asks_by_point(text: str, qs: list) -> dict[str, list[int]]:
     return {pid: sorted(set(ns)) for pid, ns in out.items()}
 
 
-def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
+def _session_cards(room: dict, sid: str, who: str, current: bool = True) -> list[tuple]:
     """A solo chat session's cards, as :func:`_session_asks` finds them, with
     the points they say ``Re`` to; one read of the transcript, kept while it
-    is unchanged (a rotated-out session never changes)."""
+    is unchanged (a rotated-out session never changes). A rotated-out
+    session with no transcript left (``current`` False) holds none."""
     if _d.room_po_id(room):
         return []
-    st = _d.points._session_stat(sid)
+    st = _d.points._session_stat(sid, ended=not current)
     hit = _SID_CARDS.get(sid)
-    if hit is not None and st is not None and hit[0] == st:
+    # A session with no transcript (None: deleted, never written) is kept as
+    # well, until one shows (#305: each change of a PO chat read its 200
+    # gone sessions again, each by a glob of every project folder).
+    if hit is not None and hit[0] == st:
         return hit[1]
     found = []
+    if st is None and not current:
+        _SID_CARDS[sid] = (st, found)
+        return found
     for n, (mid, t) in enumerate((_d.solo_turns(room, sid) or {}).items()):
         if n % 50 == 0:
             _d.yield_to_pages()
@@ -896,8 +903,7 @@ def _session_cards(room: dict, sid: str, who: str) -> list[tuple]:
         x = _marked(mid, _d._turn_epoch(t.get("timestamp")), text, who)
         if x:
             found.append((mid, x[1], x[2], _asks_by_point(text, x[2])))
-    if st is not None:
-        _SID_CARDS[sid] = (st, found)
+    _SID_CARDS[sid] = (st, found)
     return found
 
 
@@ -944,8 +950,9 @@ def _room_cards(summary: dict) -> tuple[dict, set]:
     cards = {}
     for mid, ts, qs, _who in message_asks(room):
         cards.setdefault(mid, (ts, qs, _asks_by_point(texts.get(mid) or "", qs)))
+    now = set(_current)
     for sid, who in sids:
-        for mid, ts, qs, by_point in _session_cards(room, sid, who):
+        for mid, ts, qs, by_point in _session_cards(room, sid, who, sid in now):
             cards.setdefault(mid, (ts, qs, by_point))
     out = (cards, set(texts) | {s for s, _w in sids})
     _CARDS[rid] = (sig, out)
