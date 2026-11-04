@@ -782,6 +782,7 @@ const PROJECTS = { projects: [] }, projectOfRoom = () => null;
 const CSS = { escape: s => s };
 const toast = (msg) => log.push('toast:' + msg);
 const tildeify = p => p;
+const fvRoomOf = r => r && r.headless && r.roomId ? { room: r.roomId, roomName: r.label || '' } : {};  // index.html's (#297)
 let REPOS_REPLY = { repos: [{ path: '/code/x', editor: 'code' }], lookedIn: [{ path: '/code/x', exists: true }] };
 const ADOPT_WAIT_MS = 1500;
 const closeThemeMenu = () => {};

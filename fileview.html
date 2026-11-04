@@ -650,7 +650,12 @@
   #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
   #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
-  #cmt-tray .cmt-clear { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; }
+  #cmt-tray .cmt-submit { min-width:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #cmt-tray .cmt-clear, #cmt-tray .cmt-copy { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; flex:none; }
+  /* Where the comments go (#297): a chooser when there is more than one place. */
+  #cmt-tray .cmt-dest { display:flex; flex-direction:column; gap:var(--s-100); padding:var(--s-200) 11px; border-bottom:1px solid var(--border); font-size:var(--fs-200); color:var(--fg-muted); }
+  #cmt-tray .cmt-dest label { display:flex; align-items:center; gap:var(--s-200); }
+  #cmt-tray .cmt-dest select { flex:1; min-width:0; height:28px; background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); border-radius:var(--r-200); font:inherit; font-size:var(--fs-200); }
   #cmt-tray .cmt-list { overflow-y:auto; }
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
   #cmt-tray .cmt-item:hover, #cmt-tray .cmt-item.hit { background:var(--hover); }
@@ -703,6 +708,7 @@
     }
     header a.btn, header button.btn, .missing button.btn { min-width: var(--touch-min); min-height: var(--touch-min); height: auto; }
     #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
+    #cmt-tray .cmt-dest select { height: var(--touch-min); }
     .dir-row, .out-pop button { min-height: var(--touch-min); }
     #cmt-tray .cmt-item { padding-right: var(--touch-min); }
     /* A phone zooms into any field under 16px and stays zoomed. The comment
@@ -983,6 +989,12 @@ function fileRefHtml(p, text, line, kind, title) {
     const q = PATH_ABBR && PATH_ABBR[kind === 'code' ? 'code' : 'text'].get(p);
     full = q && q.length ? q.shift() : '';
     if (!full) return null;
+  } else if (PATH_ABBR && PATH_ABBR.names && !/[\\\/]/.test(p)) {
+    // A bare name the same message also gives in full (#297: a comment's
+    // heading names the file, its link the path) is that file, its folder
+    // in the title; never looked for in the reading chat's folder.
+    const f = PATH_ABBR.names.get(p.toLowerCase());
+    if (f) { full = f; title = title || f.slice(0, f.length - p.length).replace(/[\\\/]$/, ''); }
   }
   if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line, title);
   const u = fileSrc(full), name = fileName(full);
@@ -1139,7 +1151,9 @@ function abbrevFull(abbr, bases, byDir) {
 // stands for none), in the order the render meets them; n counts the
 // occurrences.
 function pathAbbrevs(text) {
-  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0 };
+  // names: a file's bare name (lower case) -> the one absolute path the message
+  // gives it (null when it gives two).
+  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0, names: new Map() };
   const codes = [];
   const s = esc(String(text ?? '').replace(/\r\n/g, '\n')).replace(/```[\s\S]*?```/g, ' ').replace(LINK_MARK_RE, '')
     .replace(/`([^`\n]+)`/g, (_, body) => ` ${LINK_A}${codes.push(body) - 1}${LINK_Z} `);
@@ -1160,6 +1174,8 @@ function pathAbbrevs(text) {
       } else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) {
         const dirs = pathDirs(p), i = bases.push({ dirs, sep: p.includes('\\') ? '\\' : '/' }) - 1;
         for (const d of new Set(dirs.map(x => x.toLowerCase()))) { if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(i); }
+        const nm = (p.split(/[\\\/]/).pop() || '').toLowerCase();
+        if (nm && /\.\w{1,8}$/.test(nm)) out.names.set(nm, out.names.has(nm) && out.names.get(nm) !== p ? null : p);
       }
     }
   };
@@ -1191,8 +1207,10 @@ const PATH_Q = new URLSearchParams(location.search).get('path') || '';
 // hub's absolute one once the file is read (fvFound), so a rendered page's
 // pictures and its links resolve from the folder it is really in.
 let FILE_BASE = /[\\\/]/.test(PATH_Q) ? PATH_Q.replace(/[\\\/][^\\\/]*$/, '') : '';
+let FILE_AT = ABS_PATH_RE.test(PATH_Q) ? PATH_Q : '';   // the file's absolute path, once known
 function fvFound(at) {
   if (!at || !ABS_PATH_RE.test(at)) return;
+  FILE_AT = at;
   FILE_BASE = at.replace(/[\\\/][^\\\/]*$/, '');
 }
 // A page opened from a link in the rendered page before it, in this viewer:
@@ -1203,6 +1221,41 @@ const BACK = (() => {
 })();
 const CWD = new URLSearchParams(location.search).get('cwd') || '';
 const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' + encodeURIComponent(CWD) : '');
+// Where the tray's comments go (#297): the chat the viewer was opened from, else
+// the file's owner as the hub works it out (the task whose folder holds it, else
+// its project's PO). ROOM still resolves the path; DEST is only the send's.
+// DEST_CHOICES: what the tray's chooser offers. DEST_NONE: nothing owns the file.
+// Nothing is sent until the hub has answered: a room= in the address is only
+// used once the hub confirms it (DEST_STATE: 'pending' | 'ok' | 'failed').
+let DEST = { room: '', name: '' }, DEST_CHOICES = [], DEST_NONE = false, DEST_STATE = 'pending';
+const DEST_WHY = { opener: 'where it was opened', owner: '', po: 'its project', pick: '' };
+async function loadDest() {
+  if (!PATH_Q) { DEST_STATE = 'failed'; return; }
+  let j = null;
+  try {
+    const r = await fetch('/api/file/owner?path=' + encodeURIComponent(PATH_Q) + CTX, { cache: 'no-store' });
+    if (r.ok) j = await r.json();
+  } catch (e) {}
+  if (!j || !Array.isArray(j.choices)) {         // not found, not allowed, or no answer: Copy only
+    DEST_STATE = 'failed';
+    if (typeof renderTray === 'function') renderTray();
+    return;
+  }
+  DEST_STATE = 'ok';
+  DEST_CHOICES = j.choices;
+  if (!FILE_AT && j.path && ABS_PATH_RE.test(j.path)) FILE_AT = j.path;
+  DEST_NONE = !j.owner && !j.opener;
+  const c = j.choices.find(x => x.room === j.room);
+  // A given room the hub knows keeps the name the opener gave it, if any.
+  DEST = c ? { room: c.room, name: (c.why === 'opener' && ROOM_NAME) || c.name } : { room: '', name: '' };
+  if (typeof renderTray === 'function') renderTray();
+}
+loadDest();
+function setDest(room) {
+  const c = DEST_CHOICES.find(x => x.room === room);
+  DEST = c ? { room: c.room, name: c.name } : { room: '', name: '' };
+  renderTray();
+}
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
 const LINE = parseInt(new URLSearchParams(location.search).get('line') || '', 10) || 0;
 // A tab in the dashboard's Workspace reopens a file as it was left: its view,
@@ -1712,8 +1765,23 @@ function renderTray() {
   let tray = document.getElementById('cmt-tray');
   if (!CMTS.length) { if (tray) tray.remove(); return; }
   if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
-  const dest = ROOM ? (ROOM_NAME ? 'Send to “' + ROOM_NAME + '”' : 'Send to chat') : 'Copy';
-  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit" title="${ROOM ? esc(dest) : 'No task chat owns this file — copy the comments instead'}">${esc(dest)}</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
+  const dest = DEST.name ? 'Send to “' + DEST.name + '”' : 'Send to chat';
+  const send = DEST.room ? `<button class="cmt-submit" title="${esc(dest)}">${esc(dest)}</button>` : '';
+  // The chooser: when there is more than one place, or none chosen yet.
+  let pick = '';
+  if (DEST_CHOICES.length > 1 || (!DEST.room && DEST_CHOICES.length)) {
+    const opts = (DEST.room ? '' : '<option value="" selected>Choose a PO…</option>')
+      + DEST_CHOICES.map(c => {
+        const why = DEST_WHY[c.why] || '';
+        return `<option value="${esc(c.room)}"${c.room === DEST.room ? ' selected' : ''}>${esc(c.name)}${why ? ' (' + esc(why) + ')' : ''}</option>`;
+      }).join('');
+    pick = `<div class="cmt-dest">${DEST_NONE ? '<span class="cmt-dest-none">This file belongs to no task or project.</span>' : ''}<label>Send to <select class="cmt-dest-pick" aria-label="Where the comments go">${opts}</select></label></div>`;
+  } else if (DEST_STATE !== 'ok') {
+    pick = `<div class="cmt-dest"><span class="cmt-dest-none">${DEST_STATE === 'pending' ? 'Finding where this file’s comments go…' : 'Could not find where this file’s comments go: copy them.'}</span></div>`;
+  } else if (DEST_NONE) {
+    pick = '<div class="cmt-dest"><span class="cmt-dest-none">This file belongs to no task or project: copy the comments.</span></div>';
+  }
+  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span>${send}<button class="cmt-copy" title="Copy the comments as text">Copy</button><button class="cmt-clear">Clear</button></div>${pick}<div class="cmt-list"></div>`;
   const list = tray.querySelector('.cmt-list');
   CMTS.forEach((c, i) => {
     const it = document.createElement('div'); it.className = 'cmt-item'; it.dataset.cid = c.cid;
@@ -1735,7 +1803,9 @@ function renderTray() {
     };
     list.appendChild(it);
   });
-  tray.querySelector('.cmt-submit').onclick = () => submitCmts();
+  const sb = tray.querySelector('.cmt-submit'); if (sb) sb.onclick = () => submitCmts();
+  tray.querySelector('.cmt-copy').onclick = () => copyCmts();
+  const sel = tray.querySelector('.cmt-dest-pick'); if (sel) sel.onchange = () => setDest(sel.value);
   tray.querySelector('.cmt-clear').onclick = () => { dropCmts(CMTS.map(c => c.cid)); clearHl(); renderTray(); };
 }
 // Re-apply the highlights for every comment that has a passage. Called after
@@ -1767,7 +1837,14 @@ function buildBody(list = CMTS) {
   const fence = s => { let f = '```'; while (s.includes(f)) f += '`'; return f; };
   // A code span no backtick in its text can end early.
   const code = s => { s = String(s); let f = '`'; while (s.includes(f)) f += '`'; return f.length > 1 || /^`|`$/.test(s) ? f + ' ' + s + ' ' + f : f + s + f; };
-  return `## Review comments on ${code(base)} (${list.length})\nFile: ${code(path)}\n\n` +
+  // The heading's name is a link to the file's full path (#297, P257): a bare
+  // name alone was looked for in the reading chat's folder and marked "not
+  // written yet". A name or path a link cannot hold keeps the File: line.
+  const full = FILE_AT || path;
+  const head = ABS_PATH_RE.test(full) && !/[\[\]\n]/.test(base) && !/[<>\n]/.test(full) && /^(?:[^()]|\([^()]*\))*$/.test(full)
+    ? `## Review comments on [${base}](<${full}>) (${list.length})\n\n`
+    : `## Review comments on ${code(base)} (${list.length})\nFile: ${code(full)}\n\n`;
+  return head +
     list.map((c, i) => {
       if (c.kind === 'el') {
         const e = c.el, f = fence(e.html || '');
@@ -2094,7 +2171,7 @@ const FV_WAIT = new Set();
 async function submitCmts(only) {
   if (FV_SENDING) { if (only) only.forEach(cid => FV_WAIT.add(cid)); else FV_AGAIN = true; return; }
   const groups = only ? [CMTS.filter(c => only.includes(c.cid))]
-    : ROOM ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
+    : DEST.room ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
   FV_SENDING = true;
   let ok = true;
   try {
@@ -2112,12 +2189,19 @@ async function submitCmts(only) {
   const again = FV_AGAIN && ok; FV_AGAIN = false;
   if (again) submitCmts();
 }
+// Copy, beside Send: the comments as text, kept in the tray (nothing was sent).
+async function copyCmts() {
+  const body = buildBody(CMTS);
+  try { await navigator.clipboard.writeText(body); toast('Comments copied. They stay here until sent or cleared.'); }
+  catch (e) { showFallback('Copy your comments:', body); }
+}
 // One message of comments; true when it went (or the hub holds it).
 async function sendCmts(list) {
   const body = buildBody(list);
-  if (!ROOM) {
-    try { await navigator.clipboard.writeText(body); toast('No task chat to send to — comments copied.'); }
-    catch (e) { showFallback('No task chat to send to. Copy your comments:', body); }
+  const to = DEST.room, toName = DEST.name;
+  if (!to) {
+    try { await navigator.clipboard.writeText(body); toast('No chat chosen to send to — comments copied.'); }
+    catch (e) { showFallback('No chat chosen to send to. Copy your comments:', body); }
     return false;
   }
   // The hub's resume-or-deliver, never /api/room/say: a task that is not
@@ -2128,7 +2212,7 @@ async function sendCmts(list) {
   const key = 'fv:' + sent.join(',');
   try {
     // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
-    const r = await sendJson('/api/room/resume', { roomId: ROOM, text: body, to: '', key });
+    const r = await sendJson('/api/room/resume', { roomId: to, text: body, to: '', key });
     const j = r.data;
     if (!r.ok || !j || j.error) {
       // Refused but held by the hub: shown in the task's chat as not
@@ -2137,7 +2221,7 @@ async function sendCmts(list) {
       dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
       return true;
     }
-    dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('✓ Comments sent to the chat');
+    dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast(toName ? '✓ Comments sent to “' + toName + '”' : '✓ Comments sent to the chat');
     return true;
   } catch (e) {
     // No answer: they may have arrived. The same comments again have the same key, so they count once.
@@ -2225,7 +2309,7 @@ function enableComments(root) {
 function mountSel() {
   if (_cDocWired) return;                       // one document listener, not one per render
   _cDocWired = true;
-  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data), react: selReact, canReact: () => !!ROOM });
+  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data), react: selReact, canReact: () => !!DEST.room });
 }
 
 // ---- Rendering ------------------------------------------------------------

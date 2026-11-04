@@ -5038,6 +5038,12 @@ function fileRefHtml(p, text, line, kind, title) {
     const q = PATH_ABBR && PATH_ABBR[kind === 'code' ? 'code' : 'text'].get(p);
     full = q && q.length ? q.shift() : '';
     if (!full) return null;
+  } else if (PATH_ABBR && PATH_ABBR.names && !/[\\\/]/.test(p)) {
+    // A bare name the same message also gives in full (#297: a comment's
+    // heading names the file, its link the path) is that file, its folder
+    // in the title; never looked for in the reading chat's folder.
+    const f = PATH_ABBR.names.get(p.toLowerCase());
+    if (f) { full = f; title = title || f.slice(0, f.length - p.length).replace(/[\\\/]$/, ''); }
   }
   if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line, title);
   const u = fileSrc(full), name = fileName(full);
@@ -5194,7 +5200,9 @@ function abbrevFull(abbr, bases, byDir) {
 // stands for none), in the order the render meets them; n counts the
 // occurrences.
 function pathAbbrevs(text) {
-  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0 };
+  // names: a file's bare name (lower case) -> the one absolute path the message
+  // gives it (null when it gives two).
+  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0, names: new Map() };
   const codes = [];
   const s = esc(String(text ?? '').replace(/\r\n/g, '\n')).replace(/```[\s\S]*?```/g, ' ').replace(LINK_MARK_RE, '')
     .replace(/`([^`\n]+)`/g, (_, body) => ` ${LINK_A}${codes.push(body) - 1}${LINK_Z} `);
@@ -5215,6 +5223,8 @@ function pathAbbrevs(text) {
       } else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) {
         const dirs = pathDirs(p), i = bases.push({ dirs, sep: p.includes('\\') ? '\\' : '/' }) - 1;
         for (const d of new Set(dirs.map(x => x.toLowerCase()))) { if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(i); }
+        const nm = (p.split(/[\\\/]/).pop() || '').toLowerCase();
+        if (nm && /\.\w{1,8}$/.test(nm)) out.names.set(nm, out.names.has(nm) && out.names.get(nm) !== p ? null : p);
       }
     }
   };
@@ -10076,6 +10086,9 @@ function wsTaskFoldersOf(pj) {
   });
   return out;
 }
+// The chat of a task row, for a file opened from it: the file view's Send
+// names it (#297). {} for a row with no chat of Ensemble's.
+const fvRoomOf = r => r && r.headless && r.roomId ? { room: r.roomId, roomName: r.label || '' } : {};
 function wsFileUrl(v, path) {
   const room = wsRoomForPath(v, path);
   // The viewer names the chat it will post to, so nobody sends a review into a
@@ -11621,6 +11634,11 @@ function drStale(list) {
 // What Submit can do, and in words what it will do. A task that is not
 // running is resumed by the hub for the comments, as in the chat: it holds
 // them and types them in once the owner is up.
+// The review's chat, for a file the review opens in the file view (#297).
+function drRoomOpts(rv) {
+  const t = rv && rv.target ? rv.target(rv) : null;
+  return t && t.roomId ? { room: t.roomId, roomName: t.name || '' } : {};
+}
 function drSubmitState(rv) {
   const t = rv.target ? rv.target(rv) : null;
   const s = rv.sending ? { can: false, label: 'Sending…', note: '' }
@@ -11734,7 +11752,7 @@ function drShow(rv, box, root, file, text, keep) {
   if (!content && /\/$/.test(file) && root) {
     // An untracked folder is one entry to git: it opens as a folder instead.
     body = '<div class="wsp-empty">An untracked folder: git lists it as one entry, not the files in it. '
-      + '<a href="' + esc(FileLinks.href(wsJoin(root, file.replace(/\/$/, '')))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
+      + '<a href="' + esc(FileLinks.href(wsJoin(root, file.replace(/\/$/, '')), drRoomOpts(rv))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
   } else if (!content) {
     body = '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
   } else {
@@ -13204,7 +13222,7 @@ function openTurnChanges(rid, n, here) {
 function tchOpenInWorkspace(sid, root, file, line) {
   const path = drPath(root, file);
   if (!wsRoots({ kind: 'task', sid }).length) {
-    window.open(FileLinks.href(path, { line }), '_blank', 'noopener');
+    window.open(FileLinks.href(path, { line, ...fvRoomOf(ALL_ROWS.find(x => x.sessionId === sid)) }), '_blank', 'noopener');
     return;
   }
   openWorkspaceTab(sid);
@@ -21622,7 +21640,7 @@ async function ideAction(btn) {
 function openWorkspaceTab(sid) {
   const row = ALL_ROWS.find(x => x.sessionId === sid);
   if (row && row.cwd && !wsRoots({ kind: 'task', sid }).length) {
-    window.open(FileLinks.href(row.cwd), '_blank', 'noopener');
+    window.open(FileLinks.href(row.cwd, fvRoomOf(row)), '_blank', 'noopener');
     return;
   }
   ISSUE_TAB_SID = sid;
@@ -22319,7 +22337,7 @@ document.addEventListener('click', async (ev) => {
     const path = finderBtn.dataset.path;
     // From another computer, a file manager opening on the hub's screen is
     // nothing you can see. Show the folder here instead.
-    if (!onHubMachine()) { window.open(FileLinks.href(path), '_blank', 'noopener'); return; }
+    if (!onHubMachine()) { window.open(FileLinks.href(path, fvRoomOf(ALL_ROWS.find(x => x.sessionId === finderBtn.dataset.sid))), '_blank', 'noopener'); return; }
     finderBtn.classList.add('busy');
     try {
       const r = await api('/api/open-path', {

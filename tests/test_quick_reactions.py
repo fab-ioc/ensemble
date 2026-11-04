@@ -410,11 +410,12 @@ class InChrome(unittest.TestCase):
         self.assertTrue(g["offered"]["reacts"], g["offered"])
         ones = [s for s in self.sent if s["text"].startswith("## Review comments on ")]
         self.assertEqual(len(ones), 1, self.sent)
-        self.assertIn("(1)\nFile: ", ones[0]["text"])
+        self.assertRegex(ones[0]["text"], r"\A## Review comments on \[notes\.txt\]\(<[^>\n]+notes\.txt>\) \(1\)\n\n")
         self.assertTrue(ones[0]["text"].endswith("**1.** > line 3 of the notes\n\n👎 Disagree"), ones[0]["text"])
         self.assertEqual(g["tray"], 0, "sent, so gone from the tray")
         self.assertTrue(g["noRoom"]["shown"], g["noRoom"])
-        self.assertFalse(g["noRoom"]["reacts"], "no task chat: no one to react to")
+        # Opened without a chat, the file view finds the one the file belongs to (#297).
+        self.assertTrue(g["noRoom"]["reacts"], "the file's own chat was not found")
 
 
 class TheWiring(unittest.TestCase):
@@ -422,7 +423,7 @@ class TheWiring(unittest.TestCase):
 
     def test_every_surface_reacts(self):
         for page, mount in (("session.html", "react: selReact"),
-                            ("fileview.html", "react: selReact, canReact: () => !!ROOM"),
+                            ("fileview.html", "react: selReact, canReact: () => !!DEST.room"),
                             ("index.html", "react: drSelReact, canReact: drCanReact")):
             src = (ROOT / page).read_text(encoding="utf-8")
             with self.subTest(page):
