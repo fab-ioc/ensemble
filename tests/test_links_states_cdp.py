@@ -397,6 +397,9 @@ async function main() {
     // message id when the room is first read; that is not a link-side write.
     await py(`out = [points.sync(ids[k], force=True) for k in ["po", "A1", "A2", "A3"]]`);
     const snap0 = await py(`out = snapshot()`);
+    await sleep(500);
+    const snapPre = await py(`out = snapshot()`);
+    o.links.preWrote = [...new Set([...Object.keys(snap0), ...Object.keys(snapPre)])].filter(k => snap0[k] !== snapPre[k]).sort();
     let p = await app(b.c, `/?room=${I.po}&msg=${I.answer}`, true);
     o.links.poMsg = await p.until(`(() => { const f = ${FRAMES(I.po)}.find(x => x.landed); return f ? f : null; })()`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.po)) }));
     o.links.poMsgUrl = await p.ev('location.pathname + location.search');
@@ -411,7 +414,7 @@ async function main() {
     await p.close();
     // A thread started on a balloon (tmid), with another message to land on (msg).
     p = await app(b.c, `/?room=${I.po}&msg=${I.answer}&thread=&tmid=po-sid:0`, true);
-    o.links.tmid = await p.until(`${FRAMES(I.po)}.some(x => (x.threadMode && x.tmid === 'po-sid:0') || x.sideMid === 'po-sid:0') ? 'po-sid:0' : ''`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.po)) }));
+    o.links.tmid = await p.until(`(() => { const x = ${FRAMES(I.po)}.find(x => ((x.threadMode && x.tmid === 'po-sid:0') || x.sideMid === 'po-sid:0') && x.landed === '${I.answer}'); return x || null; })()`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.po)) }));
     await p.close();
     p = await tab(b.c, '/?room=room-0000dead&msg=x1');
     o.links.unknown = await p.until(`location.pathname === '/session' ? location.pathname + location.search : ''`, 30000).catch(e => ({ fail: e.message }));
@@ -523,7 +526,9 @@ class LinksAndStatesInChrome(unittest.TestCase):
                 self.assertEqual(L["poMsgUrl"], "/", "the app's own address once it opened")
                 self.assertEqual((L["taskCard"] or {}).get("landed"), I["A1ask"] + "|ask:0", L["taskCard"])
                 self.assertEqual(L["thread"], "P1")
-                self.assertEqual(L["tmid"], "po-sid:0", "the thread the link names, not one on its msg")
+                self.assertIsNotNone(L["tmid"], "tmid link did not land")
+                self.assertEqual(L["tmid"].get("tmid") or L["tmid"].get("sideMid"), "po-sid:0", L["tmid"])
+                self.assertEqual(L["tmid"].get("landed"), I["answer"], "the msg lands inside the tmid thread")
                 self.assertEqual(L["unknown"], "/session?room=room-0000dead&msg=x1&stay=1")
                 self.assertFalse(L["unknownToApp"], "no way back to an app that does not list it")
                 self.assertNotIn("fail", L["needs"] or {"fail": "none"}, L["needs"])
@@ -536,6 +541,7 @@ class LinksAndStatesInChrome(unittest.TestCase):
             L = g["links"]
             with self.subTest(w=w):
                 self.assertGreater(L["files"], 10)
+                self.assertEqual(L["preWrote"], [])
                 self.assertEqual(L["wrote"], [])
 
     def test_a_chat_in_its_own_tab_opens_in_the_app(self):
