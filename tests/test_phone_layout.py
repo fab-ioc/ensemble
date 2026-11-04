@@ -6,18 +6,19 @@ pages, with a project that has a PO (Motors, a task in it), one that has none
 (Plain, with enough tasks that the list scrolls) and a room in no project
 (Unassigned):
 
-* home is the list: the whole screen under a one-row bar, the same groups as
-  the desktop's with Unassigned, every row and control 44px, no sideways
-  scroll;
+* the list is a pane (#307: the project switcher's Task list): the whole
+  screen under the two-row bar, the same groups as the desktop's with
+  Unassigned, every row and control 44px, no sideways scroll;
 * a row opens its conversation full screen under a two-row bar whose second
   row is the breadcrumb (← project ▾ › #n title › tab), the task's tools as
   the dock's tabs (Chat, Your asks, Changes, Files, Board, Spec);
 * a tab is a crumb, and the task's crumb goes back to the Chat;
 * the keyboard (--vv-h, as fitVisualViewport sets it) shortens the screen, so
   the message box stays above it;
-* ← goes back to the list where you were: its scroll, the row you opened;
+* ← (and Esc) goes back to the list pane where you were: its scroll, the row
+  you opened;
 * the project cards stay reachable (the list's foot, the project menu's All
-  projects), with their Unassigned card, and ← goes back to the list.
+  projects), with their Unassigned card, and ← goes home (the conversation).
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -94,11 +95,20 @@ async function main() {
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}" }, sessionId);   // the grouped list: its rows include a project's tasks (#189)
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
-    await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ') && !!document.querySelector("#sw-list .sw-row")', 30000);
+    await until('window.ensBooted === true && typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
     await sleep(300);
-    return { evalIn, until, shot, close: () => c.send('Target.closeTarget', { targetId }) };
+    const p = { evalIn, until, shot, close: () => c.send('Target.closeTarget', { targetId }) };
+    await list(p);
+    return p;
   };
   const click = (p, sel) => p.evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) throw new Error('no ' + ${JSON.stringify(sel)}); e.click(); return 0; })()`);
+  // The list is a pane (#307): the project switcher's Task list.
+  const list = async (p) => {
+    await click(p, '#proj-switch'); await sleep(200);
+    await click(p, '#proj-menu [data-ph-list]');
+    await p.until('PH_PANE === "list" && !!document.querySelector("#sw-list .sw-row")', 15000);
+    await sleep(200);
+  };
   const row = room => `#sw-list .sw-row[data-room="${room}"]`;
   const tab = name => `[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].find(e => e.textContent.trim().startsWith(${JSON.stringify(name)}))`;
   const opened = p => p.until('document.body.classList.contains("dp-docked") && !!document.querySelector("#detail-panel iframe.dp-session") && document.querySelectorAll("#po-dock .dk-tab").length > 0', 30000);
@@ -141,7 +151,7 @@ async function main() {
       await sleep(400);
       out['back' + k] = await p.evalIn(LOOK);
       if (w !== 390) { await p.close(); continue; }
-      // The project cards: from the list's foot, with the Unassigned card; ← to the list.
+      // The project cards: from the list's foot, with the Unassigned card; ← home.
       await click(p, '#sw-cards');
       await sleep(400);
       out.cards = await p.evalIn(LOOK);
@@ -150,6 +160,7 @@ async function main() {
       await sleep(300);
       out.cardsBack = await p.evalIn(LOOK);
       // A task in a project without a PO; its project menu's All projects is the cards.
+      await list(p);
       await click(p, row(A.plainTask));
       await opened(p); await sleep(400);
       out.plainTask = await p.evalIn(LOOK);
@@ -162,21 +173,19 @@ async function main() {
       await click(p, '#proj-menu .pm-item[data-proj=""]');
       await sleep(400);
       out.menuAll = await p.evalIn(LOOK);
-      // A card: its project; ← back to the list, not the cards.
+      // A card: its project, its PO's conversation: home, no ←.
       await p.evalIn(`document.querySelector('#view .proj[data-proj="${A.proj}"]').click(); 0`);
       await sleep(600);
       out.cardProj = await p.evalIn(LOOK);
-      await click(p, '#bar-back');
-      await sleep(300);
-      out.cardProjBack = await p.evalIn(LOOK);
       // An Unassigned row, unfolded: its conversation opens the same way.
+      await list(p);
       await p.evalIn(`(() => { const d = document.querySelector('#sw-list details[data-group="unassigned"]'); if (d) d.open = true; return 0; })()`);
       await sleep(200);
       await click(p, `#sw-list [data-group="unassigned"] .sw-row[data-room="${A.loose}"]`);
       await opened(p); await sleep(400);
       out.loose = await p.evalIn(LOOK);
       await p.shot('phone-390-unassigned-task');
-      // Esc closes it the way ← does: back to the list, not a project's screen.
+      // Esc closes it the way ← does: back to the list pane it came from.
       await p.evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
       await sleep(300);
       out.looseEsc = await p.evalIn(LOOK);
@@ -191,8 +200,7 @@ async function main() {
       await p.evalIn(`PD.dock.setVisible('po-chat', false); 0`);
       await sleep(200);
       out.chatHidden = await p.evalIn(`PD.dock.isVisible('po-chat')`);
-      await click(p, '#bar-back');
-      await sleep(300);
+      await list(p);
       await click(p, row(A.task));
       await opened(p); await sleep(400);
       out.afterHidden = await p.evalIn(LOOK);
@@ -295,7 +303,7 @@ class ThePhone(unittest.TestCase):
         self.assertLessEqual(g["scrollW"], g["vw"], f"{what}: no sideways scroll")
         self.assertEqual(g["small"], [], f"{what}: every target is 44px")
 
-    def test_home_is_the_list(self):
+    def test_the_list_is_a_pane(self):
         for w in self.WIDTHS:
             g = self.got["home" + w]
             with self.subTest(w=w):
@@ -303,9 +311,8 @@ class ThePhone(unittest.TestCase):
                 self.assertEqual((g["list"]["x"], g["list"]["w"]), (0, g["vw"]), "the whole width")
                 self.assertEqual(g["list"]["y"], g["top"], "under the bar")
                 self.assertEqual(g["list"]["b"], g["vh"], "to the bottom")
-                self.assertFalse(g["main"], "the page under it is out of the way")
-                self.assertLessEqual(g["header"], 50, "the bar is one row")
-                self.assertFalse(g["back"])
+                self.assertEqual(g["header"], 89, "the bar is two rows on a phone (#307)")
+                self.assertTrue(g["back"], "← closes the pane")
                 for grp in ("needs", "running", "projects", "unassigned", "done"):
                     self.assertIn(grp, g["groups"])
                 self.fits(g, "the list")
@@ -357,12 +364,10 @@ class ThePhone(unittest.TestCase):
             with self.subTest(w=w):
                 g = self.got["back" + w]
                 self.assertFalse(g["open"])
-                self.assertIsNotNone(g["list"])
-                self.assertIsNone(g["proj"])
+                self.assertIsNotNone(g["list"], "the list pane it came from")
                 self.assertGreater(self.got["scrolled" + w], 0, "the list scrolls")
                 self.assertEqual(g["listTop"], self.got["scrolled" + w], "at the same scroll")
                 self.assertIn(self.task, g["on"], "the row you opened is marked")
-                self.assertLessEqual(g["header"], 50)
 
     def test_the_project_cards_stay_reachable(self):
         g = self.got["cards"]
@@ -374,9 +379,9 @@ class ThePhone(unittest.TestCase):
         self.assertEqual(g["switchName"], "All projects")
         self.fits(g, "the cards")
         b = self.got["cardsBack"]
-        self.assertIsNotNone(b["list"], "← goes back to the list")
+        self.assertIsNone(b["list"], "← goes home, not to a pane")
         self.assertFalse(b["cardsPage"])
-        self.assertIn(self.task, b["on"], "the row you last opened is still marked")
+        self.assertTrue(b["open"] or b["proj"], "home: the last conversation")
 
     def test_the_project_menu(self):
         g = self.got["plainTask"]
@@ -391,7 +396,7 @@ class ThePhone(unittest.TestCase):
         self.assertTrue(m["cardsPage"] and m["unCard"], "All projects is the cards")
         c = self.got["cardProj"]
         self.assertEqual(c["proj"], self.proj)
-        self.assertIsNotNone(self.got["cardProjBack"]["list"], "← from a project is the list")
+        self.assertFalse(c["back"], "a project's PO conversation is home: no ←")
 
     def test_an_unassigned_row(self):
         g = self.got["loose"]
@@ -401,14 +406,13 @@ class ThePhone(unittest.TestCase):
         self.fits(g, "an Unassigned task")
         e = self.got["looseEsc"]
         self.assertFalse(e["open"], "Esc closes the task")
-        self.assertIsNotNone(e["list"], "and goes back to the list")
-        self.assertIsNone(e["proj"])
+        self.assertIsNotNone(e["list"], "and goes back to the list pane")
 
     def test_a_po_row_opens_its_projects_screen(self):
         g = self.got["po"]
         self.assertEqual(g["proj"], self.proj)
         self.assertEqual(g["front"], "po-chat")
-        self.assertEqual(g["tabs"][0], "Chat")
+        self.assertEqual(g["tabs"][0], "Motors", "the PO's tab is its project's name (#261)")
         self.fits(g, "a PO")
 
     def test_a_chat_hidden_earlier_comes_back_with_a_task(self):
@@ -427,12 +431,12 @@ class TheWiring(unittest.TestCase):
 
     def test_a_task_closing_by_itself_goes_back_to_the_list(self):
         self.assertIn("function closeTask() {\n  if (phoneNow()) goHome(); else closeDetail();\n}", INDEX)
-        for line in ("if (SELECTED_SID) closeTask();", "if (archiving && SELECTED_SID === sid) closeTask();",
+        for line in ("if (SELECTED_SID) { if (phoneNow()) barBack(); else closeTask(); }", "if (archiving && SELECTED_SID === sid) closeTask();",
                      "if (SELECTED_SID === sid) closeTask();", "if (SELECTED_SID === row.sessionId) closeTask();"):
             self.assertIn(line, INDEX)
 
-    def test_a_wider_screen_drops_the_cards_page(self):
-        self.assertIn("if (!isPhone()) PH_CARDS = false;", INDEX)
+    def test_a_wider_screen_drops_the_cards_page_and_the_panes(self):
+        self.assertIn("if (!isPhone()) { PH_CARDS = false; PH_FROM = ''; phPane(''); }", INDEX)
 
     def test_chat_cannot_be_hidden_under_an_open_task(self):
         self.assertIn("(isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask()))", INDEX)

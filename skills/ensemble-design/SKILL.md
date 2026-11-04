@@ -1356,7 +1356,8 @@ self-contained component, so a later layout can host it elsewhere.
   "Pick a project in the bar above, or open the Inbox." The list is an optional tool: Panels ▾ ›
   Tasks shows it, its ⋯ and − can hide it again in any view mode. A layout stored before #306 with
   the list docked opens hidden once (`ldMigrate`, flag `cd-list-dock-a4`); one with the list on a
-  strip, floating or in its window keeps it. A phone (≤ 640px) still has the list as its home.
+  strip, floating or in its window keeps it. A phone (≤ 640px) has a conversation as its home and
+  the list as one of its panes (#307, below).
   Do not add a route that only the list offers.
 
 - **A Dock panel of its own** (#137, "The list as a dock panel"): on a desktop `#switcher` is the
@@ -1383,11 +1384,18 @@ self-contained component, so a later layout can host it elsewhere.
   its own window a row still opens the conversation in the main window (the list's code stays in
   the page). The layout is kept per browser (`cd-list-dock`). Before the library loads, or where it
   cannot, `#switcher` is the fixed column (`body.sw-on` gives `main` `padding-left: var(--list-w) + 20px`).
-- **On a phone it is home** (#129, `phList()`): the whole screen under a one-row bar, shown
-  whenever nothing else is (no project, open task or cards page), with `main` out of the
-  way (`body.ph-list`). A row opens its conversation full screen; the bar's `←` brings the list
-  back where it was (its scroll and the row last opened, marked: `PH_BACK`); a task that closes by
-  itself (Esc, archived, deleted: `closeTask()`) goes back there too. Every row, group head
+- **On a phone it is a pane** (#307, `phList()`, `PH_PANE`): home is a conversation (the last
+  one, `cd-last-conv`, else the PO of the project opened last, else any PO: `phOpenHome`); over it
+  one pane at a time, the **Inbox** (`#ph-inbox`, the bar's Inbox), the **task list** (the project
+  menu's *Task list*, `data-ph-list`) or the **project switcher** (the project menu itself, full
+  screen, `body.ph-switch`). Opening one closes the others; a conversation opening closes them all
+  (`phPanesClose`). The list pane covers the screen under the bar (`body.ph-list`). A row opens its
+  conversation full screen; the bar's `←` (`barBack`, `phBackTo`) closes a pane to the conversation,
+  takes a task back to the pane it was opened from (`PH_FROM`; the list where it was, its scroll and
+  the row last opened marked: `PH_BACK`), else to its project's PO; Esc on a phone is `←`. A task
+  that closes by itself (archived, deleted: `closeTask()`) goes back the same way. The Inbox pane in
+  project scope with nothing there but rows elsewhere says so and offers "N in other projects"
+  (`.ibx-others`). Every row, group head
   that folds, "Show all" and head control is `--touch-min`. Its foot is a quiet **Project cards**
   (`#sw-cards`, phone only): the project cards, with their Unassigned card, as a page of their own
   (`PH_CARDS`; also the project menu's All projects, which only a phone has), whose `←` goes back
@@ -1517,7 +1525,8 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
    a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group:
    **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; it opens the
-   Inbox column beside the PO's conversation; desktop only, a phone's Inbox tab carries the count), search,
+   Inbox column beside the PO's conversation; on a phone, in row one, it opens the Inbox pane, #307,
+   and the narrow dock has no Inbox tab), search,
    the plan chip, the avatar and **Create ▾** (a menu, see *Create's menu* in §4). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
@@ -1525,7 +1534,7 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    **The wordmark** (#108; `#bar-home`, drawn by `tools/make_wordmark.py`, which writes the SVG
    between its markers in `index.html`) is ENSEMBLE in the icon's bars: the icon is its E, the
    other letters are bars and stems on the icon's grid in `--fg`. It is the link home (on a desktop,
-   the list's Needs you; on a phone, the list), named
+   the list's Needs you; on a phone, home: the conversation, `phOpenHome`), named
    "Ensemble, all projects" (`aria-label`; the SVG is `aria-hidden`, the icon's `alt` empty).
    - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 125 × 22px in all (124.5 in the SVG),
      in a 32px link (44px on a phone). Never scaled to fit: where the word does not fit, the icon
@@ -1619,10 +1628,10 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    crumb, the PO's row) gives it back. The page does not scroll; each pane scrolls inside itself.
    Where the dock cannot load, the task panel has its tabs as in step 2 (`Activity · Changes ·
    Workspace · Spec · Details`, see *Tabs*).
-   **A phone** (#129) has no list beside it: one screen at a time. The list is home (§4 *The task
-   list*); a row opens the conversation full screen, in the same dock (narrow: its tools are tabs,
-   see *Panels*), and the project becomes the page's there too. `←` in the bar closes it and brings
-   the list back where it was.
+   **A phone** (#129, #307) has no list beside it: one screen at a time. A conversation is home and
+   the Inbox, the list and the switcher are panes over it (§4 *The task list*); a row opens the
+   conversation full screen, in the same dock (narrow: its tools are tabs, see *Panels*), and the
+   project becomes the page's there too. `←` in the bar closes it and goes back to the pane it came from.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view
@@ -1788,10 +1797,11 @@ phone still draws the page wider than its screen (Safari's Request Desktop Websi
    plan chip moves into the avatar menu, and its warnings still reach the banner. Anything new for the
    bar on a phone must replace something, not squeeze it.
 
-   **Home is one row; everywhere else is two** (#129). On home, the list, the bar is one row.
-   Anywhere else (a project, an open task, the cards page) the bar wraps (`body.row2`):
+   **A phone's bar is always two rows** (#129, #307: home is a conversation now, so the project
+   and its menu are always there) (`body.row2`):
    row one is the wordmark, then search, the avatar and Create; row two is the
-   back arrow `←` (`#bar-back`, to the list; phone only, the wordmark is the way back elsewhere),
+   back arrow `←` (`#bar-back`, `phBackTo`: a pane to the conversation, a task to the pane it came
+   from or its PO; hidden on a PO's conversation; phone only, the wordmark is the way back elsewhere),
    the project's name with its menu, truncated, where you are in it (an open task's breadcrumb) and
    Panels at the end. `--header-h` is redeclared on `body.row2` so everything hanging off the bar
    follows. Phone chat uses two 44px rows without the old inter-row padding (#167).

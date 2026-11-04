@@ -12,9 +12,9 @@ yet (a "check" row of the inbox). Checked:
 * a real click on a row opens its message: the PO chat lands on that balloon;
 * the bar's Inbox from another screen (the task list, no project chosen)
   opens a PO screen that has rows, with the Inbox column shown;
-* on a phone (390x844, and 360 and 430) Inbox is a tab of the one column, its
-  rows on screen, the bar's Inbox button gone, and nothing is wider than the
-  screen;
+* on a phone (390x844, and 360 and 430) the bar's Inbox opens the Inbox pane
+  over the conversation (#307), its rows on screen; the PO screen has no Inbox
+  tab; nothing is wider than the screen;
 * the page threw nothing meanwhile.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
@@ -151,18 +151,19 @@ async function main() {
     await p.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.isVisible("inbox")', 15000).catch(() => null);
     out.fromBar = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: !!PD.dock && PD.dock.isVisible("inbox"), pid: PD.pid })');
     await p.close();
-    // ---- phones: a tab of the one column
+    // ---- phones: the bar's Inbox opens its pane (#307)
     out.phone = {};
     for (const [w, h] of [[390, 844], [360, 780], [430, 932]]) {
       const q = await page(w, h, true);
       await toPo(q, A.phones[w]);   // its own project: the desk page opened Motors' chat, so its answers are seen
       await q.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.narrow() && !!IBX.data', 30000);
-      await q.click('document.querySelector(\'#po-dock .dk-tab[data-dk-tab="inbox"]\')'); await sleep(400);
-      await q.until('!!PD.els.inbox.querySelector(".ibx-row") && PD.els.inbox.getBoundingClientRect().width > 0', 10000).catch(() => null);
-      out.phone[w] = await q.evalIn(`(() => { ${R} const f = ${fits};
-        return { ...f, narrow: PD.dock.narrow(), front: PD.dock.frontOf('inbox'), col: R(PD.els.inbox),
-          rows: [...PD.els.inbox.querySelectorAll('.ibx-row')].map(r => R(r)),
-          tabs: [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab),
+      await q.click('document.getElementById("inbox-btn")'); await sleep(400);
+      const pane = 'document.getElementById("ph-inbox-body")';
+      await q.until(`!!${pane}.querySelector(".ibx-row") && ${pane}.getBoundingClientRect().width > 0`, 10000).catch(() => null);
+      out.phone[w] = await q.evalIn(`(() => { ${R} const f = ${fits}; const el = ${pane};
+        return { ...f, narrow: PD.dock.narrow(), pane: PH_PANE, col: R(el),
+          rows: [...el.querySelectorAll('.ibx-row')].map(r => R(r)),
+          tabs: [...document.querySelectorAll('#po-dock .dk-tab')].filter(t => t.getBoundingClientRect().width > 0).map(t => t.dataset.dkTab),
           btn: document.getElementById('inbox-btn').getBoundingClientRect().width }; })()`);
       await q.shot(`inbox-phone-${w}x${h}`);
       await q.close();
@@ -325,15 +326,15 @@ class InboxInChrome(unittest.TestCase):
                 self.assertLessEqual(p["body"], p["W"], p)
                 self.assertEqual(p["wide"], [], p)
 
-    def test_on_a_phone_the_inbox_is_a_tab(self):
+    def test_on_a_phone_the_inbox_is_a_pane(self):
         for w, p in self.got["phone"].items():
             with self.subTest(w=w):
                 self.assertTrue(p["narrow"], p)
-                self.assertIn("inbox", p["tabs"])
-                self.assertEqual(p["front"], "inbox")
+                self.assertNotIn("inbox", p["tabs"], "no Inbox tab: the bar has it (#307)")
+                self.assertEqual(p["pane"], "inbox")
+                self.assertGreater(p["btn"], 0, "the bar's Inbox is on a phone too")
                 self.assertTrue(p["rows"], p)
                 self.assertTrue(all(r["r"] <= int(w) and r["x"] >= 0 for r in p["rows"]), p["rows"])
-                self.assertEqual(p["btn"], 0, "the bar's Inbox gives way on a phone")
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])
