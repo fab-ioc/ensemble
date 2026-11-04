@@ -953,5 +953,45 @@ class Endpoints(tp._World):
         self.assertIsNotNone(threads.build(self.rid))
 
 
+class InboxLook(tp._World):
+    """#302 review 2: the inbox reads a PO chat's threads not opened since the
+    hub started as a look only: the chat's record stays as it was."""
+
+    def setUp(self):
+        super().setUp()
+        threads.forget()
+        self.addCleanup(threads.forget)
+        self.rid = self.solo_room()
+        p = mock.patch.object(threads, "is_threaded", lambda rid, projects=None: rid == self.rid)
+        p.start()
+        self.addCleanup(p.stop)
+        out, _ = self.send(self.rid, "Make the chart wider", at=self.t0)
+        self.add("sid-1", tp.turn("user", out, self.t0 + 1), tp.turn("assistant", "Done, it is wider.", self.t0 + 2))
+        points.sync(self.rid, force=True)
+
+    def test_a_cold_inbox_read_writes_nothing(self):
+        import inbox
+        inbox.bind(dashboard)
+        inbox._COLD_THREADS.clear()
+        self.addCleanup(inbox._COLD_THREADS.clear)
+        side = threads._path(self.rid)
+        before = side.read_bytes() if side.exists() else None
+        saves = threads.SAVES.get(self.rid, 0)
+        with mock.patch.object(threads, "confirmed", side_effect=AssertionError("pairs kept")) as kept:
+            self.assertIsNone(inbox._thread_index(threads, self.rid), "the first look is pending")
+            for t in threading.enumerate():
+                if t.name.startswith("inbox-threads-"):
+                    t.join(30)
+            idx = inbox._thread_index(threads, self.rid)
+        self.assertIn("P1", idx["threads"])
+        self.assertFalse(kept.called)
+        self.assertEqual(side.read_bytes() if side.exists() else None, before, "the record is unchanged")
+        self.assertEqual(threads.SAVES.get(self.rid, 0), saves)
+        self.assertNotIn(self.rid, threads._INDEX, "the chat's own view still makes its first build")
+        # The chat's own first build still sets its record.
+        threads.build(self.rid, show_progress=False)
+        self.assertTrue(threads.load_side(self.rid).get("since"))
+
+
 if __name__ == "__main__":
     unittest.main()

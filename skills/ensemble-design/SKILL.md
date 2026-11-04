@@ -210,7 +210,7 @@ begin with **C** — colour is load-bearing in that circle, not decorative.
 
 `--tool-points` (Needs you, amber) · `--tool-changes` (green) · `--tool-workspace` (Files, blue) ·
 `--tool-board` (violet) · `--tool-spec` (teal) · `--tool-list` (the task list, orange) ·
-`--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
+`--tool-inbox` (the Inbox, olive; #302) · `--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
 the strip can be scanned the way IntelliJ's tool windows are (#166). Like an avatar, a tool
 colour says **which**, never **what is true**: it is not a status, so it sits outside the
 semantic six, and nothing else uses these tokens but Create's menu, whose tiles take the colour
@@ -228,7 +228,7 @@ blue to violet ground); orange, not coral, so nothing reads as the one red.
 - **A drawing per tool, each its own silhouette at 16px:** Needs you a speech bubble with a
   question, Changes a branch with solid commits, Files a folder with its tree, Board three lanes
   with cards (the app icon's lanes), Spec a page with a check, the task list rows with state dots
-  and one row selected. 24-unit grid, 1.8 outline, a 22% tint of the same colour under it.
+  and one row selected, the Inbox a tray with an arrow coming down into it. 24-unit grid, 1.8 outline, a 22% tint of the same colour under it.
 - **Styles:** `glyph` (shipped), `tile` (the drawing on a tile of the tool's colour, as the app
   icon) and `dot` (the drawing in the button's colour, a dot of the tool's). Switching is
   `py tools/make_tool_icons.py tile`; the comparison is `Documents/#166 Tool icons.md`.
@@ -1483,7 +1483,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    its menu switches project and holds the project's settings, its kind and key and, for a
    documents project without one, setting up its PO; on a desktop this is the breadcrumb, see
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
-   a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search,
+   a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group:
+   **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; it opens the
+   Inbox column beside the PO's conversation; desktop only, a phone's Inbox tab carries the count), search,
    the plan chip, the avatar and **Create ▾** (a menu, see *Create's menu* in §4). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.

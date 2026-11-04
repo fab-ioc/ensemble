@@ -124,6 +124,7 @@ import points
 import asks
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
+import inbox
 import topics
 import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
@@ -208,6 +209,7 @@ restore_problems.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
+inbox.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
 restart_drain.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
@@ -18297,6 +18299,12 @@ class Handler(BaseHTTPRequestHandler):
             if out.get("sig") and not out.get("error"):
                 out = thread_view_answer(rid, out, arg("sig"), keep=not (before or arg("after")))
             self._send_json(404 if out.get("error") else 200, out)
+            return
+        if p == "/api/inbox":
+            # One row per thing that waits for the person (#302): the Ask
+            # cards, points, Needs you and Ready rows folded (inbox.py).
+            iq = lambda k: (parse_qs(u.query).get(k, [""])[0] or "").strip()      # noqa: E731
+            self._send_json(200, inbox.snapshot(iq("projectId"), iq("debug") in ("1", "true")))
             return
         if p == "/api/attention":
             # "What needs me, and why" — one item per task. Deliberately cheap
