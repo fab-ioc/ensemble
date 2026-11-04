@@ -31,7 +31,7 @@ PAGE = ROOT / "index.html"
 SHIPPED = "glyph"
 STYLES = ("glyph", "tile", "dot")
 BEGIN, END = "// tool-icons: tools/make_tool_icons.py", "// /tool-icons"
-TOOLS = (("points", "Needs you"), ("changes", "Changes"), ("workspace", "Files"), ("board", "Board"), ("spec", "Spec"),
+TOOLS = (("inbox", "Inbox"), ("points", "Needs you"), ("changes", "Changes"), ("workspace", "Files"), ("board", "Board"), ("spec", "Spec"),
          ("list", "Tasks (left list)"))
 
 

@@ -1652,7 +1652,8 @@ def _reported(room: dict, live_agents: list[str]) -> dict | None:
     ts = float(put.get("ts") or 0)
     if ts and (seen_at(room) >= ts or set_aside(room, ts)):
         return None
-    return {"since": ts, "line": put.get("line", ""), "agent": put.get("from", "")}
+    return {"since": ts, "line": put.get("line", ""), "agent": put.get("from", ""),
+            "mid": put.get("id", "")}
 
 
 def _items() -> list[dict]:
