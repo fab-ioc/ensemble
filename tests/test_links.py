@@ -156,7 +156,9 @@ class GeneratedLinks(unittest.TestCase):
         for text, html in r.items():
             for h in hrefs(html):
                 self.assertIsNone(LOOPBACK_OR_FILE.match(h), f"{text!r} links to {h}")
-        self.assertEqual(hrefs(r[CASES[0]]), ["http://hub-host:8765/fileview?path=C%3A%5Cx.md"])
+        # A file view at the hub's loopback address is the file's link on this origin, by its name (#296).
+        self.assertEqual(hrefs(r[CASES[0]]), ["/fileview?path=C%3A%5Cx.md"])
+        self.assertIn(">x.md</a>", r[CASES[0]])
         self.assertEqual(hrefs(r[CASES[1]]), ["http://hub-host:8765/"])
         # A chat's own link, whatever host it names, is its task's link (#235).
         self.assertEqual(hrefs(r[CASES[2]]), ["/?task=room-35d21def"])
@@ -271,7 +273,7 @@ class GeneratedLinks(unittest.TestCase):
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")
-        self.assertEqual(hrefs(r[CASES[0]]), ["http://127.0.0.1:8765/fileview?path=C%3A%5Cx.md"])
+        self.assertEqual(hrefs(r[CASES[0]]), ["/fileview?path=C%3A%5Cx.md"])
         # Another loopback port does open here, on the machine it runs on.
         self.assertEqual(hrefs(r[CASES[3]]), ["http://127.0.0.1:8797/"])
         for text, html in r.items():
