@@ -180,6 +180,35 @@ def _why_not_open(s: dict, led: dict, now: float) -> list[dict]:
     return out
 
 
+def _thread_index(th_mod, rid: str, _s=None) -> dict | None:
+    """A PO chat's thread index: the last one built (as the thread view uses
+    between its polls), ``{}`` for a chat that is not threaded, None while a
+    first build runs. A cold chat (no index since the hub started) is built in
+    the background, as opening its chat would (``warm_room``), so a fresh
+    request never waits minutes and never misses its threads for long."""
+    hit = th_mod._INDEX.get(rid)
+    if hit:
+        return hit[1] or {}
+    try:
+        if not th_mod.is_threaded(rid):
+            return {}
+    except Exception:       # noqa: BLE001
+        return {}
+    with th_mod._LOCK:
+        busy = rid in th_mod._BUILDING
+    if not busy:
+        threading.Thread(target=_warm_threads, args=(rid,), daemon=True,
+                         name=f"inbox-threads-{rid}").start()
+    return None
+
+
+def _warm_threads(rid: str) -> None:
+    try:
+        _d.warm_room(rid)
+    except Exception as e:      # noqa: BLE001 — the next poll tries again
+        print(f"[inbox] {rid}: threads not read: {e!r}", flush=True)
+
+
 def build(project_id: str = "", debug: bool = False, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     rooms, po_of, where = _context()
@@ -310,8 +339,10 @@ def build(project_id: str = "", debug: bool = False, now: float | None = None) -
     th_mod = getattr(_d, "threads", None)
     if th_mod is not None:
         for rid in po_of:
-            hit = th_mod._INDEX.get(rid)
-            idx = hit[1] if hit else None
+            idx = _thread_index(th_mod, rid, by_room.get(rid))
+            if idx is None:
+                pending.append(rid)     # being built: the next poll folds its threads
+                continue
             if not idx:
                 continue
             for tid, th in (idx.get("threads") or {}).items():

@@ -2,6 +2,7 @@
 existing sources. The sources are stubbed: each keeps its own rules for what
 is open, tested where it lives (asks, points, attention); here the folding,
 the kinds and the project of each row."""
+import threading
 import types
 import unittest
 
@@ -41,6 +42,7 @@ class World:
         self.ledgers = {}               # rid → {"points": [...]}
         self.snap = {"items": [], "reported": {}}
         self.threads = {}               # rid → index
+        self.cold = {}                  # rid → index a build makes (none until then)
 
     def module(self):
         w = self
@@ -58,9 +60,16 @@ class World:
             needs_you=real_points.needs_you, last_answer=real_points.last_answer,
             answer_balloon=real_points.answer_balloon, _first_words=lambda t, n=0: t[:n],
             _LAST_DECISIONS={})
-        threads = types.SimpleNamespace(_INDEX={rid: ("sig", idx) for rid, idx in w.threads.items()})
+        threads = types.SimpleNamespace(_INDEX={rid: ("sig", idx) for rid, idx in w.threads.items()},
+                                        _LOCK=threading.Lock(), _BUILDING=set(),
+                                        is_threaded=lambda rid: rid in w.threads or rid in w.cold)
+        w.warmed = []
+
+        def warm_room(rid):     # what opening the chat builds: the thread source's index
+            w.warmed.append(rid)
+            threads._INDEX[rid] = ("sig", w.cold.get(rid, {"threads": {}}))
         return types.SimpleNamespace(
-            attention=attention, asks=asks, points=pts, threads=threads,
+            attention=attention, asks=asks, points=pts, threads=threads, warm_room=warm_room,
             load_projects=lambda: w.projects, load_session_projects=lambda: {},
             project_keys=lambda ps: {}, load_labels=lambda: {},
             _project_for_cwd=lambda cwd, ps: "",
@@ -99,6 +108,28 @@ class InboxTest(unittest.TestCase):
         self.assertEqual(out["counts"], {"answer": 1, "check": 0, "waiting": 0})
         whys = [d["why"] for d in out["dropped"]]
         self.assertTrue(any(w.startswith("duplicate of row") for w in whys), whys)
+
+    def test_cold_thread_index_is_built_and_folded(self):
+        # Review 1: no view has built the PO chat's threads since the hub
+        # started. The inbox starts that build itself, says it is pending,
+        # and the next request folds the thread into the one row.
+        card = {"mid": "m-ans", "n": 0, "question": "Ship it?", "ts": NOW - 100, "who": "claude", "points": ["P12"]}
+        self.w.decisions[PO] = ([card], [])
+        self.w.ledgers[PO] = {"points": [delivered("P12", "m-q", "m-ans")]}
+        self.w.cold[PO] = {"threads": {"t1": {"members": ["m-q", "m-ans"], "points": ["P12"]}}}
+        mod = self.w.module()
+        inbox.bind(mod)
+        first = inbox.build(now=NOW, debug=True)
+        for t in threading.enumerate():
+            if t.name.startswith("inbox-threads-"):
+                t.join(5)
+        self.assertTrue(first.get("pending"), first)
+        self.assertIn(PO, self.w.warmed)
+        out = inbox.build(now=NOW, debug=True)
+        self.assertEqual(out["count"], 1, out["rows"])
+        self.assertIn("thread:t1", out["rows"][0]["sources"])
+        self.assertEqual(out["rows"][0]["threads"], ["t1"])
+        self.assertFalse(out.get("pending"), out)
 
     def test_point_folds_into_card_on_its_answer_message(self):
         # The card does not name its point, but it sits on the point's answer.
