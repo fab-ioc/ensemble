@@ -1272,6 +1272,26 @@ third of the panel empty).
 - The hub's rows keep their sunken rows; a send on its way keeps its dashed edge.
 - **Phone:** the same, full width under the bar's two rows (#129).
 
+### The chat's filter (#304)
+
+**Topics is a filter on the conversation, not a place of its own.** A threaded chat has one row of
+pills over its balloons (`#chat-filters`, session.html): **All · Threads N · Topics N ▾ · Unread N**.
+One is pressed at a time (`aria-pressed`, `--selected-bg`/`--selected-fg`); the counts are
+`.cf-n`, the pill's own colour at 75%, and none shows until the hub sent it.
+- **All** the channel; **Threads** only the balloons of a thread with replies (the hub's
+  `&threads=1`; an unanswered balloon is no thread); **Topics** opens a popover (`#topics-pop`,
+  `min(360px, 100vw - 32px)`) listing the active topics, Show all for the rest, and each topic's
+  corrections behind ⋯ (rename, merge, move, archive, restore); picking one filters the chat to it
+  (`&topic=`) and closes the list; **Unread** the threads with new replies, newest first.
+- A filter on says so in `#topic-note` ("Showing topic *X*", "Showing threads only") with **Show all**.
+- The choice is kept per chat in this browser (`ens-chat-filter:<room>`). A link to a balloon the
+  filter hides puts the filter back to All, then lands.
+- 28px pills, 44px (`--touch-min`) on a coarse pointer; the row never scrolls the page sideways at
+  360px. A thread page has no filter row.
+- There is **no Topics panel** in the PO page's dock any more: a layout saved with one opens
+  without it (Dock parks the unknown panel). The Needs you list's topic links open the chat with
+  that topic's filter on (`pdTopicTell`).
+
 ### A send on its way
 
 What the person sent that the conversation does not show yet (`sendHtml` in `session.html`; the

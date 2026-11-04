@@ -69,7 +69,7 @@ const VIEW = `(() => {
       unread: e.classList.contains('unread'), dot: !!e.querySelector('.thr-dot'), on: e.classList.contains('on'), after: sib(e, 'previousElementSibling') })),
     cards: [...document.querySelectorAll('#msgs .thr-card')].map(e => ({ thr: e.dataset.thr, unread: e.classList.contains('unread') })),
     ins: [...document.querySelectorAll('#msgs .thr-in')].map(e => ({ text: words(e), before: sib(e, 'nextElementSibling') })),
-    threads: document.getElementById('threads-view').getAttribute('aria-pressed'),
+    threads: document.querySelector("#chat-filters [data-filter=unread]").getAttribute('aria-pressed'),
     whole: !!document.getElementById('whole-chat') || !!document.querySelector('[data-phone-action="whole-chat"]'),
     folded: document.querySelectorAll('#msgs .msg-fold, #msgs .fold-note, #msgs .gap-row').length,
     scrollX: document.documentElement.scrollWidth - innerWidth,
@@ -153,11 +153,11 @@ async function main() {
       await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
       await shot('1-channel');
       // Threads with new replies, newest first, then the channel again.
-      await evalIn('document.getElementById("threads-view").click(); 0');
-      await until('document.getElementById("threads-view").getAttribute("aria-pressed") === "true"', 15000);
+      await evalIn('document.querySelector("#chat-filters [data-filter=unread]").click(); 0');
+      await until('document.querySelector("#chat-filters [data-filter=unread]").getAttribute("aria-pressed") === "true"', 15000);
       await sleep(400);
       o.unread = await evalIn(VIEW);
-      await evalIn('document.getElementById("threads-view").click(); 0');
+      await evalIn('document.querySelector("#chat-filters [data-filter=all]").click(); 0');
       await until('document.querySelectorAll("#msgs .thr-line").length > 0', 15000);
       const sid = 'po' + w;
       const closeSide = async () => {
