@@ -650,7 +650,12 @@
   #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
   #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
-  #cmt-tray .cmt-clear { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; }
+  #cmt-tray .cmt-submit { min-width:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #cmt-tray .cmt-clear, #cmt-tray .cmt-copy { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; flex:none; }
+  /* Where the comments go (#297): a chooser when there is more than one place. */
+  #cmt-tray .cmt-dest { display:flex; flex-direction:column; gap:var(--s-100); padding:var(--s-200) 11px; border-bottom:1px solid var(--border); font-size:var(--fs-200); color:var(--fg-muted); }
+  #cmt-tray .cmt-dest label { display:flex; align-items:center; gap:var(--s-200); }
+  #cmt-tray .cmt-dest select { flex:1; min-width:0; height:28px; background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); border-radius:var(--r-200); font:inherit; font-size:var(--fs-200); }
   #cmt-tray .cmt-list { overflow-y:auto; }
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
   #cmt-tray .cmt-item:hover, #cmt-tray .cmt-item.hit { background:var(--hover); }
@@ -703,6 +708,7 @@
     }
     header a.btn, header button.btn, .missing button.btn { min-width: var(--touch-min); min-height: var(--touch-min); height: auto; }
     #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
+    #cmt-tray .cmt-dest select { height: var(--touch-min); }
     .dir-row, .out-pop button { min-height: var(--touch-min); }
     #cmt-tray .cmt-item { padding-right: var(--touch-min); }
     /* A phone zooms into any field under 16px and stays zoomed. The comment
@@ -1162,6 +1168,33 @@ const BACK = (() => {
 })();
 const CWD = new URLSearchParams(location.search).get('cwd') || '';
 const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' + encodeURIComponent(CWD) : '');
+// Where the tray's comments go (#297): the chat the viewer was opened from, else
+// the file's owner as the hub works it out (the task whose folder holds it, else
+// its project's PO). ROOM still resolves the path; DEST is only the send's.
+// DEST_CHOICES: what the tray's chooser offers. DEST_NONE: nothing owns the file.
+let DEST = { room: ROOM, name: ROOM_NAME }, DEST_CHOICES = [], DEST_NONE = false;
+const DEST_WHY = { opener: 'where it was opened', owner: '', po: 'its project', pick: '' };
+async function loadDest() {
+  if (!PATH_Q) return;
+  let j = null;
+  try {
+    const r = await fetch('/api/file/owner?path=' + encodeURIComponent(PATH_Q) + CTX, { cache: 'no-store' });
+    if (r.ok) j = await r.json();
+  } catch (e) {}
+  if (!j || !Array.isArray(j.choices)) return;   // an older hub: the room given, as before
+  DEST_CHOICES = j.choices;
+  DEST_NONE = !j.owner && !j.opener;
+  const c = j.choices.find(x => x.room === j.room);
+  // A given room the hub knows keeps the name the opener gave it, if any.
+  DEST = c ? { room: c.room, name: (c.why === 'opener' && ROOM_NAME) || c.name } : { room: '', name: '' };
+  if (typeof renderTray === 'function') renderTray();
+}
+loadDest();
+function setDest(room) {
+  const c = DEST_CHOICES.find(x => x.room === room);
+  DEST = c ? { room: c.room, name: c.name } : { room: '', name: '' };
+  renderTray();
+}
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
 const LINE = parseInt(new URLSearchParams(location.search).get('line') || '', 10) || 0;
 // A tab in the dashboard's Workspace reopens a file as it was left: its view,
@@ -1671,8 +1704,21 @@ function renderTray() {
   let tray = document.getElementById('cmt-tray');
   if (!CMTS.length) { if (tray) tray.remove(); return; }
   if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
-  const dest = ROOM ? (ROOM_NAME ? 'Send to “' + ROOM_NAME + '”' : 'Send to chat') : 'Copy';
-  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit" title="${ROOM ? esc(dest) : 'No task chat owns this file — copy the comments instead'}">${esc(dest)}</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
+  const dest = DEST.name ? 'Send to “' + DEST.name + '”' : 'Send to chat';
+  const send = DEST.room ? `<button class="cmt-submit" title="${esc(dest)}">${esc(dest)}</button>` : '';
+  // The chooser: when there is more than one place, or none chosen yet.
+  let pick = '';
+  if (DEST_CHOICES.length > 1 || (!DEST.room && DEST_CHOICES.length)) {
+    const opts = (DEST.room ? '' : '<option value="" selected>Choose a PO…</option>')
+      + DEST_CHOICES.map(c => {
+        const why = DEST_WHY[c.why] || '';
+        return `<option value="${esc(c.room)}"${c.room === DEST.room ? ' selected' : ''}>${esc(c.name)}${why ? ' (' + esc(why) + ')' : ''}</option>`;
+      }).join('');
+    pick = `<div class="cmt-dest">${DEST_NONE ? '<span class="cmt-dest-none">This file belongs to no task or project.</span>' : ''}<label>Send to <select class="cmt-dest-pick" aria-label="Where the comments go">${opts}</select></label></div>`;
+  } else if (DEST_NONE) {
+    pick = '<div class="cmt-dest"><span class="cmt-dest-none">This file belongs to no task or project: copy the comments.</span></div>';
+  }
+  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span>${send}<button class="cmt-copy" title="Copy the comments as text">Copy</button><button class="cmt-clear">Clear</button></div>${pick}<div class="cmt-list"></div>`;
   const list = tray.querySelector('.cmt-list');
   CMTS.forEach((c, i) => {
     const it = document.createElement('div'); it.className = 'cmt-item'; it.dataset.cid = c.cid;
@@ -1694,7 +1740,9 @@ function renderTray() {
     };
     list.appendChild(it);
   });
-  tray.querySelector('.cmt-submit').onclick = () => submitCmts();
+  const sb = tray.querySelector('.cmt-submit'); if (sb) sb.onclick = () => submitCmts();
+  tray.querySelector('.cmt-copy').onclick = () => copyCmts();
+  const sel = tray.querySelector('.cmt-dest-pick'); if (sel) sel.onchange = () => setDest(sel.value);
   tray.querySelector('.cmt-clear').onclick = () => { dropCmts(CMTS.map(c => c.cid)); clearHl(); renderTray(); };
 }
 // Re-apply the highlights for every comment that has a passage. Called after

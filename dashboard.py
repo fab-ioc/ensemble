@@ -41,6 +41,7 @@ import socket
 import subprocess
 import feedback
 import file_refs
+import file_owner
 import sys
 import tempfile
 import threading
@@ -8581,6 +8582,61 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
     (file_refs; its docstring has the order): absolute paths as written, a
     relative one under ``_file_ref_bases``, else by its trailing path."""
     return resolve_file_ref_how(raw, room_id, cwd)[0]
+
+
+def file_owner_info(raw: str, room_id: str = "", cwd: str = "") -> dict:
+    """GET /api/file/owner (#297): where a comment made on this file in the
+    file view goes. The path is the one the viewer shows (resolved as
+    /api/file resolves it); its owner is file_owner.owner's (a task, else its
+    project's PO, else none). ``choices`` is what the tray's chooser offers,
+    the default first: the room the viewer was opened from when it is one
+    (it was chosen in context), then the owner, then the other POs that hold
+    the file; with no owner, every project's PO. ``room`` is the default's
+    id, or "" when the person has to pick."""
+    fp, _ = resolve_file_ref_how(raw, room_id=room_id, cwd=cwd, dirs=True) if raw else (None, "")
+    path = str(fp) if fp is not None else (raw if os.path.isabs(raw or "") else "")
+    projects = load_projects()
+    links = load_session_projects()
+    view = []
+    for pr in projects:
+        view.append({**pr, "home": project_home(pr, create=False),
+                     "documentsDir": project_documents_dir(pr, persist=False)})
+    rooms = []
+    for r in chatroom.list_rooms(copy_rooms=False):
+        rid = r.get("id") or ""
+        rooms.append({"id": rid, "no": r.get("no"), "title": r.get("title") or "",
+                      "taskDir": r.get("taskDir") or "", "cwd": r.get("cwd") or "",
+                      "projectId": _room_project_id(rid, r, links), "updatedAt": r.get("updatedAt") or 0})
+    got = file_owner.owner(path, view, rooms)
+    own, others = got["owner"], got["others"]
+    po_of = {pr.get("poRoomId"): pr for pr in projects if pr.get("poRoomId")}
+    opener = None
+    if room_id:
+        rm = next((r for r in rooms if r["id"] == room_id), None)
+        if rm is not None:
+            pr = po_of.get(room_id)
+            opener = ({"room": room_id, "name": file_owner.po_name(pr), "kind": "po", "projectId": pr.get("id") or ""}
+                      if pr else {"room": room_id, "name": file_owner.task_name(rm), "kind": "task",
+                                  "projectId": rm["projectId"]})
+    choices, seen = [], set()
+
+    def add(e: dict | None, why: str) -> None:
+        if e and e["room"] not in seen:
+            seen.add(e["room"])
+            choices.append({**e, "why": why})
+
+    add(opener, "opener")
+    add(own, "owner")
+    for e in others:
+        add(e, "po")
+    if own is None:
+        for pr in sorted(projects, key=lambda p: (p.get("name") or "").lower()):
+            if pr.get("poRoomId") and pr["poRoomId"] in {r["id"] for r in rooms}:
+                add({"room": pr["poRoomId"], "name": file_owner.po_name(pr), "kind": "po",
+                     "projectId": pr.get("id") or ""}, "pick")
+    default = opener or own
+    return {"path": path, "owner": own, "opener": opener, "openerGone": bool(room_id) and opener is None,
+            "room": default["room"] if default else "", "choices": choices}
 
 
 def _readable_check():
@@ -17772,6 +17828,13 @@ class Handler(BaseHTTPRequestHandler):
                 query = None
             got = files_check(query if isinstance(query, dict) else {})
             self._send_json(400 if got.get("error") else 200, got)
+            return
+        if p == "/api/file/owner":
+            # Where the file view sends a comment on this file (#297).
+            q = parse_qs(u.query)
+            self._send_json(200, file_owner_info((q.get("path", [""])[0] or "").strip(),
+                                                 room_id=(q.get("room", [""])[0] or "").strip(),
+                                                 cwd=(q.get("cwd", [""])[0] or "").strip()))
             return
         if p == "/api/file/suggest":
             # A missing path: the files of its name or a close one (moved, renamed).
