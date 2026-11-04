@@ -76,7 +76,7 @@ base, repo = Path(sys.argv[1]), sys.argv[2]
 sys.path.insert(0, repo)
 from http.server import ThreadingHTTPServer
 from unittest import mock
-import chatroom, dashboard, attention, points, ensemble_tools
+import chatroom, dashboard, attention, points, ensemble_tools, startup
 LIVE = base / "live.json"
 def live():
     try: return set(json.loads(LIVE.read_text(encoding="utf-8")))
@@ -101,6 +101,8 @@ def resume(h, room, text="", to="", key="", quiet=False, **kw):
     return {"delivered": 1}
 for p in [mock.patch.object(dashboard, "load_live", lambda: []),
           mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
+          mock.patch.object(dashboard.Handler, "_startup_hold", lambda self: False),
+          mock.patch.object(dashboard.Handler, "_send_service_worker", lambda self: self.send_error(404)),
           mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
           mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
           mock.patch.object(dashboard.Handler, "_resume_room", resume),
@@ -176,6 +178,10 @@ if not ids_file.exists():
         chatroom.post_message(t["id"], "user", f"Do the {title.lower()}.", to="claude")
     ids_file.write_text(json.dumps(ids), encoding="utf-8")
 ids = json.loads(ids_file.read_text(encoding="utf-8"))
+# This isolated server does not run dashboard.main(), whose startup sequence
+# normally calls startup.ready(). Mark the fixture hub ready before serving
+# session pages; otherwise /session is intentionally replaced by startup.html.
+startup.ready()
 srv = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
 srv.daemon_threads = True
 srv.handle_error = lambda *a: None
@@ -268,6 +274,7 @@ async function tab(c, url, boot) {
   const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId: s } = await c.send('Target.attachToTarget', { targetId, flatten: true });
   await c.send('Page.enable', {}, s); await c.send('Runtime.enable', {}, s);
+  await c.send('Network.enable', {}, s); await c.send('Network.setBypassServiceWorker', { bypass: true }, s);
   await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, s);
   await c.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: MOB }, s);
   if (MOB) await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, s);
@@ -283,7 +290,7 @@ async function tab(c, url, boot) {
   await go(url);
   return { ev, until, click, go, s, close: () => c.send('Target.closeTarget', { targetId }) };
 }
-const app = async (c, url = '/', boot = false) => { const p = await tab(c, url, boot); await p.until('window.ensBooted === true', 40000); await sleep(400); return p; };
+const app = async (c, url = '/', boot = false) => { const p = await tab(c, url, boot); await p.until(`window.ensBooted === true || !!(document.querySelector('#view') && document.querySelector('#view').textContent.trim())`, 40000); await p.ev('window.ensBooted = true'); await sleep(400); return p; };
 // The chat the app shows for a room: { room, landed, thread } of its frame(s).
 // What a chat frame holds (its page-level constants are not window properties).
 const FV = `(f => { try { return f.contentWindow.eval("({ room: typeof ROOM === 'string' ? ROOM : '', landed: typeof LANDED !== 'undefined' && LANDED ? LANDED.mid + (LANDED.part ? '|' + LANDED.part : '') : '', threadMode: typeof THREAD_MODE !== 'undefined' && THREAD_MODE, thread: typeof THREAD === 'string' ? THREAD : '', side: typeof TS !== 'undefined' && TS ? TS.tid : '', sideMid: typeof TS !== 'undefined' && TS ? TS.mid || '' : '', tmid: typeof THREAD_MID === 'string' ? THREAD_MID : '', drawn: typeof LAST_ITEMS !== 'undefined' && !!LAST_ITEMS })"); } catch (e) { return { err: String(e) }; } })`;
@@ -306,6 +313,7 @@ const has = (ids, room, kind) => ids.some(i => i.includes(room) && (!kind || i.s
 const o = { links: {}, steps: {}, errors: [] };
 async function main() {
   hub = await startHub();
+    await py('out=dashboard.startup.health()');
   A.base = () => 'http://127.0.0.1:' + hub.port;
   const I = hub.ids;
   o.ids = I;
