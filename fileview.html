@@ -989,6 +989,12 @@ function fileRefHtml(p, text, line, kind, title) {
     const q = PATH_ABBR && PATH_ABBR[kind === 'code' ? 'code' : 'text'].get(p);
     full = q && q.length ? q.shift() : '';
     if (!full) return null;
+  } else if (PATH_ABBR && PATH_ABBR.names && !/[\\\/]/.test(p)) {
+    // A bare name the same message also gives in full (#297: a comment's
+    // heading names the file, its link the path) is that file, its folder
+    // in the title; never looked for in the reading chat's folder.
+    const f = PATH_ABBR.names.get(p.toLowerCase());
+    if (f) { full = f; title = title || f.slice(0, f.length - p.length).replace(/[\\\/]$/, ''); }
   }
   if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line, title);
   const u = fileSrc(full), name = fileName(full);
@@ -1145,7 +1151,9 @@ function abbrevFull(abbr, bases, byDir) {
 // stands for none), in the order the render meets them; n counts the
 // occurrences.
 function pathAbbrevs(text) {
-  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0 };
+  // names: a file's bare name (lower case) -> the one absolute path the message
+  // gives it (null when it gives two).
+  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0, names: new Map() };
   const codes = [];
   const s = esc(String(text ?? '').replace(/\r\n/g, '\n')).replace(/```[\s\S]*?```/g, ' ').replace(LINK_MARK_RE, '')
     .replace(/`([^`\n]+)`/g, (_, body) => ` ${LINK_A}${codes.push(body) - 1}${LINK_Z} `);
@@ -1166,6 +1174,8 @@ function pathAbbrevs(text) {
       } else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) {
         const dirs = pathDirs(p), i = bases.push({ dirs, sep: p.includes('\\') ? '\\' : '/' }) - 1;
         for (const d of new Set(dirs.map(x => x.toLowerCase()))) { if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(i); }
+        const nm = (p.split(/[\\\/]/).pop() || '').toLowerCase();
+        if (nm && /\.\w{1,8}$/.test(nm)) out.names.set(nm, out.names.has(nm) && out.names.get(nm) !== p ? null : p);
       }
     }
   };
@@ -1197,8 +1207,10 @@ const PATH_Q = new URLSearchParams(location.search).get('path') || '';
 // hub's absolute one once the file is read (fvFound), so a rendered page's
 // pictures and its links resolve from the folder it is really in.
 let FILE_BASE = /[\\\/]/.test(PATH_Q) ? PATH_Q.replace(/[\\\/][^\\\/]*$/, '') : '';
+let FILE_AT = ABS_PATH_RE.test(PATH_Q) ? PATH_Q : '';   // the file's absolute path, once known
 function fvFound(at) {
   if (!at || !ABS_PATH_RE.test(at)) return;
+  FILE_AT = at;
   FILE_BASE = at.replace(/[\\\/][^\\\/]*$/, '');
 }
 // A page opened from a link in the rendered page before it, in this viewer:
@@ -1224,6 +1236,7 @@ async function loadDest() {
   } catch (e) {}
   if (!j || !Array.isArray(j.choices)) return;   // an older hub: the room given, as before
   DEST_CHOICES = j.choices;
+  if (!FILE_AT && j.path && ABS_PATH_RE.test(j.path)) FILE_AT = j.path;
   DEST_NONE = !j.owner && !j.opener;
   const c = j.choices.find(x => x.room === j.room);
   // A given room the hub knows keeps the name the opener gave it, if any.
@@ -1815,7 +1828,14 @@ function buildBody(list = CMTS) {
   const fence = s => { let f = '```'; while (s.includes(f)) f += '`'; return f; };
   // A code span no backtick in its text can end early.
   const code = s => { s = String(s); let f = '`'; while (s.includes(f)) f += '`'; return f.length > 1 || /^`|`$/.test(s) ? f + ' ' + s + ' ' + f : f + s + f; };
-  return `## Review comments on ${code(base)} (${list.length})\nFile: ${code(path)}\n\n` +
+  // The heading's name is a link to the file's full path (#297, P257): a bare
+  // name alone was looked for in the reading chat's folder and marked "not
+  // written yet". A name or path a link cannot hold keeps the File: line.
+  const full = FILE_AT || path;
+  const head = ABS_PATH_RE.test(full) && !/[\[\]\n]/.test(base) && !/[<>\n]/.test(full) && /^(?:[^()]|\([^()]*\))*$/.test(full)
+    ? `## Review comments on [${base}](<${full}>) (${list.length})\n\n`
+    : `## Review comments on ${code(base)} (${list.length})\nFile: ${code(full)}\n\n`;
+  return head +
     list.map((c, i) => {
       if (c.kind === 'el') {
         const e = c.el, f = fence(e.html || '');
@@ -2142,7 +2162,7 @@ const FV_WAIT = new Set();
 async function submitCmts(only) {
   if (FV_SENDING) { if (only) only.forEach(cid => FV_WAIT.add(cid)); else FV_AGAIN = true; return; }
   const groups = only ? [CMTS.filter(c => only.includes(c.cid))]
-    : ROOM ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
+    : DEST.room ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
   FV_SENDING = true;
   let ok = true;
   try {
@@ -2160,12 +2180,19 @@ async function submitCmts(only) {
   const again = FV_AGAIN && ok; FV_AGAIN = false;
   if (again) submitCmts();
 }
+// Copy, beside Send: the comments as text, kept in the tray (nothing was sent).
+async function copyCmts() {
+  const body = buildBody(CMTS);
+  try { await navigator.clipboard.writeText(body); toast('Comments copied. They stay here until sent or cleared.'); }
+  catch (e) { showFallback('Copy your comments:', body); }
+}
 // One message of comments; true when it went (or the hub holds it).
 async function sendCmts(list) {
   const body = buildBody(list);
-  if (!ROOM) {
-    try { await navigator.clipboard.writeText(body); toast('No task chat to send to — comments copied.'); }
-    catch (e) { showFallback('No task chat to send to. Copy your comments:', body); }
+  const to = DEST.room, toName = DEST.name;
+  if (!to) {
+    try { await navigator.clipboard.writeText(body); toast('No chat chosen to send to — comments copied.'); }
+    catch (e) { showFallback('No chat chosen to send to. Copy your comments:', body); }
     return false;
   }
   // The hub's resume-or-deliver, never /api/room/say: a task that is not
@@ -2176,7 +2203,7 @@ async function sendCmts(list) {
   const key = 'fv:' + sent.join(',');
   try {
     // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
-    const r = await sendJson('/api/room/resume', { roomId: ROOM, text: body, to: '', key });
+    const r = await sendJson('/api/room/resume', { roomId: to, text: body, to: '', key });
     const j = r.data;
     if (!r.ok || !j || j.error) {
       // Refused but held by the hub: shown in the task's chat as not
@@ -2185,7 +2212,7 @@ async function sendCmts(list) {
       dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
       return true;
     }
-    dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast('✓ Comments sent to the chat');
+    dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast(toName ? '✓ Comments sent to “' + toName + '”' : '✓ Comments sent to the chat');
     return true;
   } catch (e) {
     // No answer: they may have arrived. The same comments again have the same key, so they count once.
@@ -2273,7 +2300,7 @@ function enableComments(root) {
 function mountSel() {
   if (_cDocWired) return;                       // one document listener, not one per render
   _cDocWired = true;
-  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data), react: selReact, canReact: () => !!ROOM });
+  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data), react: selReact, canReact: () => !!DEST.room });
 }
 
 // ---- Rendering ------------------------------------------------------------

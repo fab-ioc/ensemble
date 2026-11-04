@@ -48,7 +48,7 @@ def inside(path: str, folder: str) -> bool:
 
 
 def task_name(room: dict) -> str:
-    """#296 Its title, or the title alone, or "a task"."""
+    """"#12 Its title", or the title alone, or "a task"."""
     no = room.get("no")
     title = (room.get("title") or "").strip()
     label = f"#{no}" if isinstance(no, int) and no > 0 else ""

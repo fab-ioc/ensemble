@@ -65,7 +65,7 @@ function sessionActions(s, env) {
   const auto = { id: 'auto', label: 'Suggest a name', cls: 'auto-btn', data: { sid }, title: 'Ask Claude to suggest a name from the conversation' };
   const move = { id: 'moveproj', label: nounText('Move to {project}…'), cls: 'moveproj-btn', data: { sid }, title: nounText('File it under {a project}, or take it out of one') };
   const finder = cwd
-    ? { id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', cls: 'finder-btn', data: { path: cwd },
+    ? { id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', cls: 'finder-btn', data: { path: cwd, sid },
         title: hub ? `Open its working folder in ${FM}` : 'Browse its working folder in the file viewer' }
     : off({ id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', title: '' }, NO_FOLDER);
   const ed = env.editorName || '';

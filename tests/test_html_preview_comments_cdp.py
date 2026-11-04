@@ -475,8 +475,9 @@ class InChrome(unittest.TestCase):
         mine = [s for s in g["sent"] if s.get("key") != "fake"]
         self.assertEqual(len(mine), 1, g["sent"])
         t = mine[0]["text"]
-        self.assertIn("## Review comments on `mockup.html` (2)", t)
-        self.assertIn("File: `", t)
+        # The heading links the file by its full path, so no File: line (#297).
+        self.assertRegex(t, r"## Review comments on \[mockup\.html\]\(<[^>\n]+mockup\.html>\) \(2\)\n\n")
+        self.assertNotIn("File: `", t)
         self.assertIn("**1.** > fixed ratio of seven to one", t)
         self.assertIn("(around line 29 of the source)", t)
         self.assertIn("The file changed since: this spot is not in it now.", t)
