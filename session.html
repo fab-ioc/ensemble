@@ -1944,7 +1944,7 @@ function urlTarget(raw) {
     if (!onHubMachine()) return { dead: x.host };
     return { href: u };
   }
-  return msg ? { msg } : { href: u };
+  return msg && hubHost(x) ? { msg } : { href: u };
 }
 // A sentence's full stop, comma or closing bracket is not part of its URL.
 function trimUrlTail(u) {
@@ -1959,8 +1959,8 @@ const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
 const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
 // A link to a chat message or card (/session?room=room-…&msg=…[&part=…]) is
-// Ensemble's own, whatever address it was written with (127.0.0.1, localhost,
-// the tailnet name, the https address): it opens in place, in the chat that
+// Ensemble's own on any address this hub answers on (hubHost: 127.0.0.1, localhost,
+// the tailnet name, this page's host): it opens in place, in the chat that
 // holds it (the page's click handler for a.msg-link), never in a window of its
 // own. Its href is this page's origin, so Ctrl-click or a middle click opens it
 // in a tab from any computer. A link to a chat alone (no msg) is the task's
@@ -1990,11 +1990,11 @@ function hubUrlOf(u) {
   let x = null;
   try { x = new URL(u); } catch (e) { return null; }
   if (!/^https?:$/.test(x.protocol)) return null;
+  if (!hubHost(x)) return null;
   const msg = msgLinkOf(x);
   if (msg) return msg.msg ? { msg } : { task: msg.room };
   const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
   if (x.pathname === '/session' && /^room-[0-9a-f]{8}$/.test(room)) return { thread: room, href: x.pathname + x.search + x.hash };
-  if (!hubHost(x)) return null;
   if (x.pathname === '/fileview' && x.searchParams.get('path')) return { file: x.searchParams.get('path').trim(), line: +(x.searchParams.get('line') || 0) || 0 };
   const task = (x.searchParams.get('task') || '').trim();
   if (x.pathname === '/' && /^room-[0-9a-f]{8}$/.test(task)) return { task };

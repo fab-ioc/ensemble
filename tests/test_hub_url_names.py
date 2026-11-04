@@ -156,19 +156,21 @@ class HubUrlNames(unittest.TestCase):
                     for href, _, title in anchors(html):
                         self.assertTrue(href.startswith("/fileview?path="), href)
 
-    def test_a_message_link_is_ensembles_on_any_https_address(self):
-        # #238: a link to a message (/session?room=room-<8 hex>&msg=…) is Ensemble's
-        # whatever host it names, since the hub may answer on an https address
-        # of its own (not *.ts.net); it opens in place from this origin.
-        cases = [f"see https://hub.example.net/session?room={ROOM}&msg=m-1 now",
-                 "see https://example.com/session?room=general&msg=m-1 now"]
-        for where, r in self.both(cases).items():
-            with self.subTest(where=where):
-                href, words, _ = self.one_link(r[cases[0]], cases[0])
-                self.assertEqual((href, words), (f"/session?room={ROOM}&msg=m-1", "the message"))
-                href, words, _ = self.one_link(r[cases[1]], cases[1])
-                self.assertEqual(href, words)   # not a room id: someone else's page, as written
-                self.assertTrue(href.startswith("https://example.com/"), href)
+    def test_only_this_hubs_addresses_are_rewritten(self):
+        # A message, task or file URL is Ensemble's only on an address this hub
+        # answers on; the same shape on any other host is someone else's page.
+        ext = [f"see https://example.com/session?room={ROOM}&msg=m-1 now",
+               f"see https://example.com/session?room={ROOM}&msg=m-1&part=ask:0 now",
+               f"see https://example.com/?task={ROOM} now",
+               f"see https://example.com/fileview?path={ENC} now"]
+        for where, r in self.both(ext).items():
+            for case in ext:
+                with self.subTest(where=where, case=case):
+                    href, words, _ = self.one_link(r[case], case)
+                    url = case[4:-4]
+                    self.assertEqual((href, words), (url, url))
+                    self.assertNotIn("msg-link", r[case])
+                    self.assertNotIn("task-link", r[case])
 
     def test_a_template_copied_literally_is_text(self):
         case = "open it (http://127.0.0.1:8765/fileview?path=<URL-encoded absolute path>) here"
