@@ -73,13 +73,13 @@ class Cdp {
 }
 // What the bar shows, left to right, and where.
 const BAR = `(() => {
-  const ids = ['bar-back', 'bar-home', 'proj-go', 'proj-switch', 'bar-here', 'search', 'search-open', 'me-btn', 'new-btn'];
+  const ids = ['bar-back', 'bar-home', 'proj-switch', 'bar-here', 'search', 'search-open', 'me-btn', 'new-btn'];
   const on = ids.map(id => document.getElementById(id)).filter(e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(e).visibility !== 'hidden'; });
   const at = e => { const b = e.getBoundingClientRect(); return { id: e.id, x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
   const h = document.querySelector('header').getBoundingClientRect();
   return { items: on.map(at), header: Math.round(h.height), crumbs: !!document.querySelector('.crumbs'), statusbar: !!document.querySelector('.statusbar'),
     ptabs: !!document.querySelector('.ptabs'), panels: !!document.querySelector('#bar-here .pd-panels'), here: document.getElementById('bar-here').innerHTML.trim() !== '',
-    name: document.getElementById('proj-switch-name').textContent, crumb: document.querySelector('#proj-go .proj-go-name').textContent,
+    name: document.getElementById('proj-switch-name').textContent,
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].map(e => e.textContent), scrollW: document.documentElement.scrollWidth, vw: innerWidth };
 })()`;
 // The wordmark (#bar-home): which of it shows, where, and whether anything in
@@ -88,7 +88,7 @@ const WM = `(() => {
   const a = document.getElementById('bar-home');
   const vis = e => !!e && e.getBoundingClientRect().width > 0 && getComputedStyle(e).visibility !== 'hidden';
   const box = e => { const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
-  const ctl = ['bar-back', 'bar-home', 'proj-go', 'proj-switch', 'bar-crumbs', 'bar-here', 'search', 'search-open', 'usage-chip', 'me-btn', 'new-btn']
+  const ctl = ['bar-back', 'bar-home', 'proj-switch', 'bar-crumbs', 'bar-here', 'search', 'search-open', 'usage-chip', 'me-btn', 'new-btn']
     .map(id => document.getElementById(id)).filter(vis).map(e => ({ id: e.id, ...box(e) }));
   const hit = [];
   for (let i = 0; i < ctl.length; i++) for (let j = i + 1; j < ctl.length; j++) {
@@ -307,9 +307,8 @@ class TheTopBar(unittest.TestCase):
 
     def test_left_to_right_where_you_are_what_you_can_do_then_the_rest(self):
         self.assertEqual(self.order(self.got["po"]),
-                         ["bar-home", "proj-go", "proj-switch", "bar-here", "search", "me-btn", "new-btn"])
-        self.assertEqual(self.got["po"]["name"], "Motors")
-        self.assertEqual(self.got["po"]["crumb"], "Motors", "the breadcrumb starts at the project")
+                         ["bar-home", "proj-switch", "bar-here", "search", "me-btn", "new-btn"])
+        self.assertEqual(self.got["po"]["name"], "Motors", "the breadcrumb starts at the project: its name is the switcher (#303)")
         self.assertEqual(self.got["po"]["trail"], ["PO"], "then its PO's conversation")
         self.assertLessEqual(self.got["po"]["header"], 50, "one row on a laptop")
         self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")

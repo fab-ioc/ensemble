@@ -6566,13 +6566,6 @@ function attentionShown(items, projects) {
   }
   return out;
 }
-// A project's needs-you count: its tasks', and its PO when Needs you lists it.
-// The PO belongs to the project that names it, whichever project keeps its room.
-function projectNeeds(pj, projects) {
-  const rid = pj && pj.registered && pj.poRoomId;
-  const po = rid && (projects || [pj]).flatMap(p => p.sessions || []).find(s => s.roomId === rid);
-  return projectTasks(pj).filter(x => x.attention).length + (po && poNeedsYou(po.attention) ? 1 : 0);
-}
 
 // What the list's filter reads of a row: what the row shows. A task shows its
 // title and number ("#18", "18" or "ED-18" finds it); its folder, room id and

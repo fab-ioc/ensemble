@@ -1480,8 +1480,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
 
    **One bar, one order, at every width** (#107). Left to right: **where you are** (the
    wordmark, which is the way home, `/`, then the project's name as a Subtle button with a caret:
-   its menu switches project and holds the project's settings, its kind and key and, for a
-   documents project without one, setting up its PO; on a desktop this is the breadcrumb, see
+   the project switcher (#303, see *The project switcher* below), which also holds the project's
+   settings, its kind and key and, for a documents project without one, setting up its PO; on a
+   desktop this is the breadcrumb, see
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
    a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group:
    **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; it opens the
@@ -1514,10 +1515,18 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    `ENSEMBLE / project ▾ › #18 the task (or PO) › its tool › the file`, four levels at most.
    - **Every part is at the body size** (`--fs-300`, #126, as the mockup): weight says where you
      are, not size.
-   - **The project** is `#proj-go`, `--fg` at `--fs-300` 400, a Subtle button that goes up to its
-     PO's conversation (closing an open task), or to its board when it has no PO. The caret beside
-     it (`#proj-switch`, its name hidden) keeps the project menu. With no project (home, or a task
-     in none) `#proj-switch` shows its name as before.
+   - **The project** is the switcher, `#proj-switch` (name + caret, #303), `--fg` at `--fs-300`
+     500. Going up to the project is picking it in the switcher (it is the marked row): its PO's
+     conversation (closing an open task), or its board when it has no PO. With no project (home,
+     or a task in none) it says All projects.
+   - **The project switcher** (`#proj-menu`, `projMenuHtml`; tested in
+     `tests/test_project_switcher.py`): **Recent** (three at most, newest first: the projects this
+     browser opened, `cd-proj-opened`, and the list's recent POs and pages, `projRecent`), a rule,
+     **All projects N** with a filter (name or key, `projMatches`; it has the keyboard on a desktop,
+     not on a phone, 16px there) over every project by name, Unassigned last, then this project's
+     settings and **New project…**. Each row carries the project's unread dot and its Inbox count.
+     While the filter holds text, Recent and the settings step aside; Enter opens the first match,
+     Escape clears the filter, then closes. A phone's list starts with All projects as cards.
    - **Then** the conversation: `PO` on a PO screen, or the open task's number and title; the
      tool (a task's tab other than Activity, or a PO screen's tab other than PO chat, or a project
      without a PO's Workspace or Changes tab); the file open in that Workspace or Changes, by its

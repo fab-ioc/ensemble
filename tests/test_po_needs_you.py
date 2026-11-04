@@ -65,7 +65,6 @@ log.shown = shown.map(i => i.roomId);
 log.pos = shown.filter(i => i.isPo).map(i => [i.roomId, i.title, i.ref, i.projectId, i.project]);
 log.task = shown.find(i => i.roomId === 'room-a');
 log.noProjects = attentionShown(ATTENTION.items, null).length;
-log.needs = PROJECTS.projects.map(p => projectNeeds(p, PROJECTS.projects));
 // A PO whose room is kept in another project: A's blocked PO and C's stalled PO sit in B's sessions.
 const LINK = [
   { id: 'a', name: 'A', registered: true, poRoomId: 'po-a', sessions: [{ roomId: 'a-task', attention: null }] },
@@ -74,7 +73,6 @@ const LINK = [
   { id: 'c', name: 'C', registered: true, poRoomId: 'po-c', sessions: [] },
 ];
 CURRENT = LINK;
-log.linkNeeds = LINK.map(p => projectNeeds(p, LINK));
 log.linkTasks = LINK.map(p => projectTasks(p).map(s => s.roomId));
 log.linkShown = attentionShown([item('po-a', 'blocked', { projectId: 'b', project: 'B' }),
                                 item('po-c', 'stalled', { projectId: 'b', project: 'B' })], LINK).map(i => [i.roomId, i.projectId, i.project]);
@@ -204,12 +202,8 @@ class PoNeedsYou(unittest.TestCase):
             ["resume", ['api:/api/room/resume {"roomId":"po-blocked"}'], "p1:po-blocked +resume", True],
         ])
 
-    def test_a_projects_count_agrees_with_needs_you(self):
-        self.assertEqual(self.r["needs"], [2, 1, 1, 0, 0, 0], "p1: its blocked PO and its stalled task")
-
     def test_a_po_belongs_to_the_project_that_names_it(self):
         self.assertEqual(self.r["linkShown"], [["po-a", "a", "A"]], "Needs you lists it under A")
-        self.assertEqual(self.r["linkNeeds"], [1, 0, 0], "A's menu counts it; B's counts neither PO kept there")
         self.assertEqual(self.r["linkTasks"], [["a-task"], [], []], "another project's PO is no task of B's")
 
     def test_the_page_uses_it(self):
@@ -217,7 +211,7 @@ class PoNeedsYou(unittest.TestCase):
         self.assertEqual(INDEX.count("PO_NEEDS_STATES"), 2, "one place decides which PO items pass")
         self.assertIn("openPoOf(pj);", fn(INDEX, "function openMsgLink("), "one way to open a project's PO")
         self.assertNotIn("PO_PEEK = true", fn(INDEX, "function openMsgLink("))
-        self.assertIn("projectNeeds(pj, list)", INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):])
+        self.assertIn("IBX.data.rows", fn(INDEX, "function projInboxN("), "a project's count in the switcher is its Inbox rows (#303)")
         self.assertIn("if (pj) openPoConv(pj);", INDEX[INDEX.index("$('#sw-list').addEventListener('click'"):])
         self.assertIn("openProjectPage(pj.id);\n  pdReveal('po-chat');", fn(INDEX, "function openPoConv("),
                       "a PO's row in Needs you opens its project's screen, the PO chat revealed")
