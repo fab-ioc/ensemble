@@ -3919,7 +3919,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .ibx-meta { display: flex; flex-wrap: wrap; gap: var(--s-050) var(--s-200); margin-top: var(--s-050); color: var(--fg-muted); min-width: 0; }
   .ibx-where { min-width: 0; overflow-wrap: anywhere; }
-  @media (hover: none) { .ibx-scope button { height: var(--touch-min); } }
+  .ibx-more { margin-top: var(--s-100); }
+  .ibx-more > summary { cursor: pointer; color: var(--fg-subtle); font-size: var(--fs-200); border-radius: var(--r-100); width: fit-content; }
+  .ibx-more > summary:hover { color: var(--fg); }
+  .ibx-more > summary:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ibx-items { list-style: none; margin: var(--s-100) 0 0; padding: 0 0 0 var(--s-300); border-left: 2px solid var(--border); }
+  .ibx-item { padding: var(--s-100) 0; min-width: 0; }
+  .ibx-item .ibx-line { font-size: var(--fs-200); line-height: var(--lh-200); }
+  @media (hover: none) { .ibx-scope button { height: var(--touch-min); } .ibx-more > summary { min-height: var(--touch-min); display: flex; align-items: center; } }
   .pd-topics { height:100%; min-height:0; overflow-y:auto; background:var(--surface); }
   .topics-head { position:sticky; top:0; z-index:1; padding:var(--s-300); background:var(--surface); border-bottom:1px solid var(--border); font-weight:600; }
   .topic-row { display:flex; align-items:flex-start; gap:var(--s-100); padding:var(--s-200); border-bottom:1px solid var(--border); }
@@ -15618,7 +15625,7 @@ setInterval(() => { if (PD.dock && document.body.classList.contains('po-dock') &
 // poll; "This project" filters them here, "All" lists them with the project.
 // A row opens its message or card (openMsgLink), or its task when it names
 // no message. The bar's Inbox N counts every project.
-const IBX = { data: null, busy: false, sig: '', scope: 'project', soon: 0 };
+const IBX = { data: null, busy: false, sig: '', scope: 'project', soon: 0, open: new Set() };
 try { if (localStorage.getItem('cd-inbox-scope') === 'all') IBX.scope = 'all'; } catch (e) {}
 const IBX_GROUPS = [['answer', 'Needs your answer'], ['check', 'Ready to check'], ['waiting', 'Waiting on you']];
 function ibxWhere(r, all) {
@@ -15648,7 +15655,20 @@ function ibxHtml(d, scope, pid, now) {
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
       + `<span class="ibx-line">${esc(line || 'Open it')}</span>${reason ? `<span class="ibx-reason">${esc(reason)}</span>` : ''}</a>`
       + `<div class="ibx-meta"><span class="ibx-where">${esc(ibxWhere(r, all))}</span>`
-      + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div></li>`;
+      + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
+      + (r.items && r.items.length ? more(r) : '') + '</li>';
+  };
+  // A PO chat's answers to check: one row, its answers listed under it, each opening its answer.
+  const more = r => {
+    const n = r.items.length;
+    return `<details class="ibx-more" data-ibx-more="${esc(r.id)}"${IBX.open.has(r.id) ? ' open' : ''}>`
+      + `<summary>${esc(`${n} answer${n === 1 ? '' : 's'}`)}</summary><ul class="ibx-items">`
+      + r.items.map(i => `<li class="ibx-item"><a class="ibx-link" href="${esc(href({ roomId: r.roomId, mid: i.mid }))}"`
+        + ` data-room="${esc(r.roomId)}" data-mid="${esc(i.mid || '')}" data-part="" title="Open the answer in its conversation">`
+        + `<span class="ibx-line">${esc(String(i.line || '').replace(/\*\*|__/g, ''))}</span>`
+        + (i.reason ? `<span class="ibx-reason">${esc(i.reason)}</span>` : '') + '</a>'
+        + `<div class="ibx-meta"><span class="pdp-age" data-at="${esc(String(i.since || 0))}">${esc(pdPtAge(i.since, now))}</span></div></li>`).join('')
+      + '</ul></details>';
   };
   const groups = IBX_GROUPS.map(([k, title]) => {
     const got = rows.filter(r => r.kind === k);
@@ -15699,8 +15719,15 @@ function ibxOpenRoom(rid) {
   if (row) openDetail(row.sessionId);
   else window.open('/session?room=' + encodeURIComponent(rid), '_blank', 'noopener');
 }
+// A row's answers stay open across repaints.
+PD.els.inbox.addEventListener('toggle', e => {
+  const d = e.target;
+  if (!d.dataset || !d.dataset.ibxMore) return;
+  if (d.open) IBX.open.add(d.dataset.ibxMore); else IBX.open.delete(d.dataset.ibxMore);
+  IBX.sig = '';
+}, true);
 PD.els.inbox.addEventListener('click', e => {
-  const sc = e.target.closest && e.target.closest('[data-ibx-scope]');
+  const sc =e.target.closest && e.target.closest('[data-ibx-scope]');
   if (sc) {
     IBX.scope = sc.dataset.ibxScope === 'all' ? 'all' : 'project';
     try { localStorage.setItem('cd-inbox-scope', IBX.scope); } catch (err) {}

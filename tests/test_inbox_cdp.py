@@ -91,7 +91,7 @@ async function main() {
     await until('window.ensBooted === true', 30000);
     return { evalIn, until, click, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const toPo = p => p.evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
+  const toPo = (p, pid = A.proj) => p.evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(pid)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && !!PD.els.inbox.querySelector(".ibx-row")', 30000);
   const R = 'const R = el => { const b = el.getBoundingClientRect(); return { x: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height) }; };';
   const fits = `(() => { const W = document.documentElement.clientWidth;
@@ -133,6 +133,16 @@ async function main() {
       const m = l && (l.closest('.msg[data-mid]') || l), el = [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(mid)});
       const er = el && el.getBoundingClientRect(), br = box.getBoundingClientRect();
       return { mid: ${JSON.stringify(mid)}, landed: m ? m.dataset.mid : '', inView: !!el && er.bottom > br.top && er.top < br.bottom, here: location.pathname }; })()`);
+    // The row's answers, listed under it: the second one opens its own answer.
+    await p.click('PD.els.inbox.querySelector(".ibx-more > summary")'); await sleep(200);
+    out.more = await p.evalIn(`(() => { const d = PD.els.inbox.querySelector('.ibx-more');
+      return { open: d.open, line: d.closest('.ibx-row').querySelector('.ibx-line').textContent, summary: d.querySelector('summary').textContent,
+        items: [...d.querySelectorAll('.ibx-item a.ibx-link')].map(a => a.dataset.mid) }; })()`);
+    await p.evalIn('(() => { IBX.sig = ""; ibxPaint(); return 0; })()');
+    out.moreKept = await p.evalIn('PD.els.inbox.querySelector(".ibx-more").open');
+    await p.click('PD.els.inbox.querySelectorAll(".ibx-item a.ibx-link")[1]');
+    await p.until(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(A.mid2)}; })()`, 10000).catch(() => null);
+    out.moreOpen = await p.evalIn(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return m ? m.dataset.mid : ''; })()`);
     // The bar's Inbox from the task list: the PO screen with its Inbox.
     await p.evalIn(`(() => { midLeave(); VIEW_MODE = 'board'; SELECTED_PROJECT = ''; renderRows(); return 0; })()`);
     await p.until('!document.body.classList.contains("po-dock")', 10000).catch(() => null);
@@ -145,7 +155,7 @@ async function main() {
     out.phone = {};
     for (const [w, h] of [[390, 844], [360, 780], [430, 932]]) {
       const q = await page(w, h, true);
-      await toPo(q);
+      await toPo(q, A.phones[w]);   // its own project: the desk page opened Motors' chat, so its answers are seen
       await q.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.narrow() && !!IBX.data', 30000);
       await q.click('document.querySelector(\'#po-dock .dk-tab[data-dk-tab="inbox"]\')'); await sleep(400);
       await q.until('!!PD.els.inbox.querySelector(".ibx-row") && PD.els.inbox.getBoundingClientRect().width > 0', 10000).catch(() => null);
@@ -201,7 +211,7 @@ class InboxInChrome(unittest.TestCase):
         members = lambda home: [{"identity": "claude", "agent": "claude", "cwd": str(home)},
                                 {"identity": "codex", "agent": "codex", "cwd": str(home)}]
 
-        def project(name, ask, answer):
+        def project(name, ask, answer, more=None):
             ok, proj, _ = dashboard.register_project(name)
             assert ok, proj
             home = Path(proj.get("home") or proj["path"])
@@ -213,13 +223,25 @@ class InboxInChrome(unittest.TestCase):
             assert ids == ["P1"], ids
             chatroom.post_message(po["id"], "user", text, to="claude")
             m = chatroom.post_message(po["id"], "claude", f"Re P1: {answer}", to="user")
+            mid = lambda m: ((m or {}).get("message") or {}).get("id", "")
+            first, second = mid(m), ""
+            if more:    # a second answer in the same PO chat: still one row
+                text, ids = points.take(chatroom.get_room(po["id"], public=False), more[0], to="claude", key="k2")
+                assert ids == ["P2"], ids
+                chatroom.post_message(po["id"], "user", text, to="claude")
+                for i in range(12):
+                    chatroom.post_message(po["id"], "codex", f"aside {i}\n\n" + "words " * 60, to="claude")
+                second = mid(chatroom.post_message(po["id"], "claude", f"Re P2: {more[1]}", to="user"))
             for i in range(25):   # enough talk that the answer is far up
                 chatroom.post_message(po["id"], "codex", f"note {i}\n\n" + "words " * 60, to="claude")
             points.sync(po["id"], force=True)
-            return proj["id"], po["id"], ((m or {}).get("message") or {}).get("id", "")
+            return proj["id"], po["id"], first, second
 
-        cls.proj, cls.po, cls.mid = project("Motors", "Please make the board wider", "it is wider now.")
-        cls.other, cls.other_po, _ = project("Wheels", "Rounder wheels", "they are round.")
+        cls.proj, cls.po, cls.mid, cls.mid2 = project("Motors", "Please make the board wider", "it is wider now.",
+                                                      ("And the cards taller", "they are taller now."))
+        cls.other, cls.other_po, _, _ = project("Wheels", "Rounder wheels", "they are round.")
+        # One project per phone width: opening a PO chat marks its answers seen, and the row leaves.
+        cls.phones = {w: project(f"Phone{w}", "Bigger buttons", "they are bigger.")[0] for w in (390, 360, 430)}
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None
@@ -228,7 +250,7 @@ class InboxInChrome(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "proj": cls.proj, "po": cls.po, "shots": shots}
+                "proj": cls.proj, "po": cls.po, "mid2": cls.mid2, "phones": cls.phones, "shots": shots}
         script = base / "inbox_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
@@ -252,7 +274,7 @@ class InboxInChrome(unittest.TestCase):
         self.assertEqual(d["heads"], [f"Ready to check {len(d['rows'])}"], d["heads"])
         self.assertTrue(all(w == "PO" for w in d["where"]), d["where"])
         self.assertTrue(all(a for a in d["ages"]), d["ages"])
-        self.assertTrue(any("wider" in x or "board" in x for x in d["lines"]), d["lines"])
+        self.assertTrue(any(x.startswith("Motors PO: ") for x in d["lines"]), d["lines"])
         self.assertEqual(d["scope"], ["project:true", "all:false"])
         self.assertTrue(d["tool"], "the Inbox's icon in its colour")
 
@@ -277,11 +299,21 @@ class InboxInChrome(unittest.TestCase):
         self.assertTrue(o["inView"], o)
         self.assertEqual(o["here"], "/", "in the page, not a new tab")
 
+    def test_a_po_chats_answers_are_one_row_listed_under_it(self):
+        # PO fix 6: two answers to check in the Motors PO chat are one row.
+        d, m = self.got["desk"], self.got["more"]
+        self.assertEqual(len(d["rows"]), 1, d["rows"])
+        self.assertEqual(m["line"], "Motors PO: 2 answers to check")
+        self.assertEqual((m["open"], m["summary"]), (True, "2 answers"))
+        self.assertEqual(m["items"], [self.mid, self.mid2], "oldest first")
+        self.assertTrue(self.got["moreKept"], "stays open when the inbox paints again")
+        self.assertEqual(self.got["moreOpen"], self.mid2, "an answer opens its own message")
+
     def test_the_bar_button_opens_the_po_screen_with_the_inbox(self):
         self.assertFalse(self.got["offPo"], "left the PO screen first")
         f = self.got["fromBar"]
         self.assertEqual((f["po"], f["inbox"]), (True, True), f)
-        self.assertIn(f["pid"], (self.proj, self.other), "no project selected: the first one with a row")
+        self.assertIn(f["pid"], (self.proj, self.other, *self.phones.values()), "no project selected: the first one with a row")
 
     def test_nothing_is_wider_than_the_screen(self):
         f = self.got["deskFits"]

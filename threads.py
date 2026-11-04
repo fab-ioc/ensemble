@@ -934,7 +934,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     if keep:
         with _LOCK:
             _INDEX[room_id] = (sig, idx)
-    progress.clear(key)
+        progress.clear(key)     # a look only never touches the chat's own progress line
     if idx["took"] >= SLOW_BUILD_S:
         _log(f"{room_id}: built in {idx['took']:.1f} s ({waited[0]:.1f} s standing aside)")
     return idx

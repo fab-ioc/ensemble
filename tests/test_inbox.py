@@ -3,8 +3,11 @@ existing sources. The sources are stubbed: each keeps its own rules for what
 is open, tested where it lives (asks, points, attention); here the folding,
 the kinds and the project of each row."""
 import threading
+import time
 import types
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import inbox
 import points as real_points
@@ -43,6 +46,7 @@ class World:
         self.snap = {"items": [], "reported": {}}
         self.threads = {}               # rid → index
         self.cold = {}                  # rid → index a build makes (none until then)
+        self.sig = {}                   # rid → what its threads are made of (default "s1")
 
     def module(self):
         w = self
@@ -62,15 +66,18 @@ class World:
             _LAST_DECISIONS={})
         threads = types.SimpleNamespace(_INDEX={rid: ("sig", idx) for rid, idx in w.threads.items()},
                                         _LOCK=threading.Lock(), _BUILDING=set(),
-                                        is_threaded=lambda rid: rid in w.threads or rid in w.cold)
+                                        is_threaded=lambda rid: rid in w.threads or rid in w.cold,
+                                        _signature=lambda rid, room, lsig: w.sig.get(rid, "s1"),
+                                        _led_sig=lambda rid: ())
         w.warmed = []
 
         def look(rid, show_progress=True, keep=True):   # the thread source's index, a look only
             w.warmed.append((rid, keep))
-            return w.cold.get(rid, {"threads": {}})
+            return {**w.cold.get(rid, {"threads": {}}), "sig": w.sig.get(rid, "s1")}
         threads.build = look
         return types.SimpleNamespace(
             attention=attention, asks=asks, points=pts, threads=threads,
+            chatroom=types.SimpleNamespace(get_room=lambda rid: {"id": rid}),
             load_projects=lambda: w.projects, load_session_projects=lambda: {},
             project_keys=lambda ps: {}, load_labels=lambda: {},
             _project_for_cwd=lambda cwd, ps: "",
@@ -216,6 +223,141 @@ class InboxTest(unittest.TestCase):
         out = self.build()
         self.assertEqual(out["count"], 1)
         self.assertEqual(out["rows"][0]["points"], ["P1", "P2"])
+        self.assertEqual(len(out["rows"][0]["items"]), 1, "one answer to check")
+
+
+def join_looks():
+    for t in threading.enumerate():
+        if t.name.startswith("inbox-threads-"):
+            t.join(5)
+
+
+class PoFixes(unittest.TestCase):
+    """The PO's fixes before merge (PO-FIXES.md, 11-04)."""
+    setUp = InboxTest.setUp
+    build = InboxTest.build
+
+    def test_1_cold_chat_is_not_built_again_while_its_signature_holds(self):
+        self.w.cold[PO] = {"threads": {}}
+        inbox.bind(self.w.module())
+        old = inbox.COLD_THREADS_S
+        inbox.COLD_THREADS_S = 0.0
+        self.addCleanup(setattr, inbox, "COLD_THREADS_S", old)
+        for _ in range(4):
+            inbox.build(now=NOW)
+            join_looks()
+        self.assertEqual(len(self.w.warmed), 1, "same signature: the look stands")
+        self.w.sig[PO] = "s2"           # a new turn in the chat
+        inbox.build(now=NOW)
+        join_looks()
+        self.assertEqual(len(self.w.warmed), 2)
+
+    def test_1_a_look_leaves_the_chats_progress_line(self):
+        import threads as real_threads
+        src = Path(real_threads.__file__).read_text(encoding="utf-8")
+        self.assertIn("    if keep:\n        with _LOCK:\n            _INDEX[room_id] = (sig, idx)\n"
+                      "        progress.clear(key)", src.replace("\r\n", "\n"))
+
+    def test_2_repeated_or_cleared_po_question_is_one_row(self):
+        new = {"mid": "m-new", "n": 0, "question": "Ship it?", "ts": NOW - 10, "who": "po"}
+        rep = {"mid": "m-old", "n": 0, "question": "Ship it?", "ts": NOW - 900, "who": "po", "why": "repeat"}
+        clr = {"mid": "m-clr", "n": 0, "question": "Before?", "ts": NOW - 2000, "who": "po", "why": "cleared"}
+        self.w.decisions[PO] = ([new], [rep, clr])
+        self.w.open_asks[PO] = [{"mid": m, "n": 0, "question": q, "ts": t, "who": "po"}
+                                for m, q, t in (("m-new", "Ship it?", NOW - 10), ("m-old", "Ship it?", NOW - 900),
+                                                ("m-clr", "Before?", NOW - 2000))]
+        for debug in (False, True):
+            out = self.build(debug=debug)
+            self.assertEqual([r["mid"] for r in out["rows"]], ["m-new"], debug)
+        whys = {(d["mid"], d["source"]): d["why"] for d in out["dropped"]}
+        self.assertTrue(whys[("m-old", "ask:open")].startswith("asked again"))
+        self.assertTrue(whys[("m-clr", "ask:open")].endswith("before Clear all"))
+
+    def test_3_one_cached_build_one_flight(self):
+        inbox.bind(self.w.module())
+        inbox._CACHE.clear()
+        self.addCleanup(inbox._CACHE.clear)
+        calls = []
+        real = inbox._build_all
+
+        def slow(debug=False, now=None):
+            calls.append(debug)
+            time.sleep(0.2)
+            return real(debug, now)
+        self.w.snap = {"items": [], "reported": {TASK: {"since": NOW, "line": "done", "agent": "claude"},
+                                                 OTHER: {"since": NOW, "line": "done", "agent": "codex"}}}
+        with mock.patch.object(inbox, "_build_all", slow):
+            got = {}
+            ts = [threading.Thread(target=lambda p=p: got.__setitem__(p, inbox.snapshot(p)))
+                  for p in ("", "proj-a", "proj-b", "junk-1", "junk-2")]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(5)
+        self.assertEqual(calls, [False], "concurrent misses waited for one build")
+        self.assertEqual(list(inbox._CACHE), [False], "no entry per projectId")
+        self.assertEqual((got[""]["count"], got["proj-a"]["count"], got["proj-b"]["count"], got["junk-1"]["count"]),
+                         (2, 1, 1, 0))
+
+    def test_4_row_ids_are_unique(self):
+        # Split points answered by a tool call: no answer message, so both
+        # fall back to the point's own message; and a report on that message.
+        a = {"id": "P12a", "mid": "m-q", "text": "a", "state": "delivered", "createdAt": NOW - 50,
+             "stateAt": NOW - 40, "answers": [{"said": "done", "at": NOW - 40}]}
+        b = dict(a, id="P12b", text="b")
+        self.w.ledgers[PO] = {"points": [a, b]}
+        self.w.snap = {"items": [{"roomId": TASK, "state": "stalled", "reason": "x", "since": NOW}],
+                       "reported": {TASK: {"since": NOW, "line": "done", "agent": "claude"}}}
+        ids = [r["id"] for r in self.build()["rows"]]
+        self.assertEqual(len(ids), len(set(ids)), ids)
+        R = inbox._Rows()
+        r1 = R.add({"id": "x", "roomId": "r", "mid": ""})
+        r2 = R.add({"id": "x", "roomId": "r", "mid": ""})
+        self.assertNotEqual(r1["id"], r2["id"])
+
+    def test_5_a_failing_source_is_skipped_and_named(self):
+        self.w.decisions[PO2] = ([{"mid": "b1", "n": 0, "question": "Beta?", "ts": NOW, "who": "po"}], [])
+        mod = self.w.module()
+
+        def boom(*a, **k):
+            raise RuntimeError("attention down")
+        mod.attention.snapshot = boom
+        mod.points.load = boom
+        self.w.ledgers[PO] = {"points": []}
+        inbox.bind(mod)
+        out = inbox.build(now=NOW, debug=True)
+        self.assertEqual([r["mid"] for r in out["rows"]], ["b1"])
+        self.assertEqual({e["source"] for e in out["errors"]}, {"attention", "points", "decisions"})
+        # Rooms not read at all: an empty inbox with an error, never a raise.
+        mod.attention._room_summaries = boom
+        inbox._CACHE.clear()
+        self.addCleanup(inbox._CACHE.clear)
+        out = inbox.snapshot("", True)
+        self.assertEqual((out["count"], out["error"]), (0, "rooms not read"))
+        with mock.patch.object(inbox, "_build_all", boom):
+            inbox._CACHE.clear()
+            self.assertEqual(inbox.snapshot()["error"], "not built")
+
+    def test_6_answers_to_check_are_one_row_per_po_chat(self):
+        self.w.ledgers[PO] = {"points": [
+            dict(delivered("P1", "q1", "m-a1"), stateAt=NOW - 300, answers=[{"mid": "m-a1", "said": "x", "at": NOW - 300}]),
+            dict(delivered("P2", "q2", "m-a2"), answers=[{"mid": "m-a2", "said": "please try it", "at": NOW - 200}]),
+            delivered("P3", "q3", "m-a3")]}
+        self.w.ledgers[PO2] = {"points": [delivered("P9", "q9", "m-b9")]}
+        # A question stays a row of its own.
+        self.w.decisions[PO] = ([{"mid": "m-ask", "n": 0, "question": "Ship?", "ts": NOW, "who": "po"}], [])
+        out = self.build()
+        rows = {(r["roomId"], r["kind"]): r for r in out["rows"]}
+        self.assertEqual(out["counts"], {"answer": 1, "check": 2, "waiting": 0})
+        g = rows[(PO, "check")]
+        self.assertEqual(g["line"], "Alpha PO: 3 answers to check")
+        self.assertEqual(g["id"], f"check:{PO}:points")
+        self.assertEqual((g["mid"], g["since"]), ("m-a1", NOW - 300), "opens the oldest answer, since the oldest")
+        self.assertEqual(g["points"], ["P1", "P2", "P3"])
+        self.assertEqual([i["mid"] for i in g["items"]], ["m-a1", "m-a2", "m-a3"])
+        self.assertTrue(g["items"][1]["try"])
+        self.assertEqual(g["reason"], "1 asks you to try something")
+        self.assertEqual(rows[(PO2, "check")]["line"], "Beta PO: 1 answer to check")
 
 
 if __name__ == "__main__":
