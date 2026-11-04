@@ -67,7 +67,7 @@ const LOOK = `(() => {
     tabs: [...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(vis).map(e => e.textContent.trim()),
     tabsB: (() => { const t = [...document.querySelectorAll('#po-dock .dk-stack > .dk-head')].find(vis); return t ? Math.round(t.getBoundingClientRect().bottom) : 0; })(),
     front: PD.dock ? PD.dock.frontOf('po-chat') : '',
-    project: vis(document.getElementById('proj-go')) ? document.querySelector('#proj-go .proj-go-name').textContent : null,
+    project: vis(document.getElementById('proj-switch')) ? document.getElementById('proj-switch-name').textContent : null,
     switchName: vis(document.getElementById('proj-switch-name')) ? document.getElementById('proj-switch-name').textContent : null,
     back: vis(document.getElementById('bar-back')),
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent, e.tagName === 'BUTTON']),

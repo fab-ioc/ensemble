@@ -67,7 +67,7 @@ class TheBar(unittest.TestCase):
         self.assertIn("body.mid .search-wrap:is(:has(#search:focus), :has(#search:not(:placeholder-shown))) .search-kbd { display: none; }", INDEX)
 
     def test_crumbs_are_body_size(self):
-        self.assertRegex(INDEX, r"#proj-go \{ color: var\(--fg\); font-size: var\(--fs-300\); font-weight: 400;")
+        self.assertRegex(INDEX, r"body\.mid\.bar-proj #proj-switch \{ color: var\(--fg\); font-size: var\(--fs-300\); font-weight: 500;")
         self.assertRegex(INDEX, r"#bar-crumbs \.bar-crumb \{[^}]*color: var\(--fg-subtle\); font-size: var\(--fs-300\);")
         self.assertRegex(INDEX, r"\.crumb-here \{ color: var\(--fg\); font-size: var\(--fs-300\); font-weight: 500;")
 

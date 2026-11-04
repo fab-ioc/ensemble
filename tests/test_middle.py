@@ -115,7 +115,7 @@ class TheCrumbs(unittest.TestCase):
 
     def test_every_level_but_the_last_is_a_button(self):
         h = self.got["html"]
-        self.assertNotIn('data-crumb="project"', h, "the project is #proj-go")
+        self.assertNotIn('data-crumb="project"', h, "the project is #proj-switch")
         for level in ("task", "tool"):
             self.assertIn(f'<button type="button" class="bar-btn bar-crumb" data-crumb="{level}"', h)
         self.assertIn('<span class="crumb-here" data-crumb="file" aria-current="location"', h)
@@ -157,9 +157,9 @@ const MID = `(() => {
       : open ? box(dp) : box(document.getElementById('po-dock-host')), chat: vis(chat) ? box(chat) : null,
     listR: (() => { const l = document.getElementById('switcher'); return l && !l.hidden ? Math.round(l.getBoundingClientRect().right) : 0; })(),
     convW: parseFloat(getComputedStyle(document.body).getPropertyValue('--conv-w')),
-    project: vis(document.getElementById('proj-go')) ? document.querySelector('#proj-go .proj-go-name').textContent : null,
+    project: vis(document.getElementById('proj-switch')) ? document.getElementById('proj-switch-name').textContent : null,
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent, e.tagName === 'BUTTON']),
-    crumbsShown: vis(document.getElementById('bar-crumbs')) || vis(document.getElementById('proj-go')),
+    crumbsShown: vis(document.getElementById('bar-crumbs')) || vis(document.getElementById('proj-switch')),
     header: Math.round(hd.height), scrollW: document.documentElement.scrollWidth, scrollH: document.documentElement.scrollHeight,
     itab: SELECTED_SID ? ISSUE_TAB : '', front: PD.dock ? PD.dock.frontOf('po-chat') : '', proj: SELECTED_PROJECT, ptab: PROJECT_TAB,
     fly: PD.dock ? PD.dock.flyOpen() : null,
@@ -199,6 +199,8 @@ async function main() {
     await sleep(400);
   };
   const click = (p, sel) => p.evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) throw new Error('no ' + ${JSON.stringify(sel)}); e.click(); return 0; })()`);
+  // Up to the project: its name opens the switcher, where it is the marked one (#303).
+  const projUp = async (p) => { await click(p, '#proj-switch'); await click(p, '#proj-menu .pm-any.on'); };
   try {
     for (const [w, h] of [[1280, 800], [1440, 900], [1728, 1117]]) {
       const p = await page(w, h);
@@ -227,7 +229,7 @@ async function main() {
       await sleep(400);
       out.reloaded = await p.evalIn(MID);
       // The project's crumb: its PO's conversation, the task closed.
-      await click(p, '#proj-go');
+      await projUp(p);
       await poReady(p); await sleep(400);
       out.projectUp = await p.evalIn(MID);
       // A PO screen's tool, and the PO crumb that goes back to the chat.
@@ -248,7 +250,7 @@ async function main() {
       await p.until('!!document.querySelector(".wsp") && document.querySelector(".wsp").getBoundingClientRect().height > 0');
       await sleep(300);
       out.plainWs = await p.evalIn(MID);
-      await click(p, '#proj-go');
+      await projUp(p);
       await sleep(300);
       out.plainUp = await p.evalIn(MID);
       // Every theme: the crumbs keep their contrast (colours read from the page).
@@ -259,7 +261,7 @@ async function main() {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; 0`);
         await sleep(120);
         out.themes[t] = await p.evalIn(`(() => { const hd = getComputedStyle(document.querySelector('header')).backgroundColor;
-          return ['#proj-go', '#bar-crumbs .bar-crumb', '#bar-crumbs .crumb-here', '#bar-crumbs .crumb-sep'].map(s => [s, getComputedStyle(document.querySelector(s)).color, hd]); })()`);
+          return ['#proj-switch', '#bar-crumbs .bar-crumb', '#bar-crumbs .crumb-here', '#bar-crumbs .crumb-sep'].map(s => [s, getComputedStyle(document.querySelector(s)).color, hd]); })()`);
       }
       await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
       // Going somewhere else with a task open: the task gives way (R1-F1).
@@ -276,7 +278,7 @@ async function main() {
       await openTask(p);
       await click(p, '#proj-switch');
       out.caretMenu = await p.evalIn(`(() => { const m = document.getElementById('proj-menu');
-        return { head: (m.querySelector('.pm-head') || {}).textContent || '', on: (m.querySelector('.pm-item.on') || { dataset: {} }).dataset.proj || '' }; })()`);
+        return { name: document.getElementById('proj-switch-name').textContent, on: (m.querySelector('.pm-item.on') || { dataset: {} }).dataset.proj || '' }; })()`);
       await click(p, '#proj-switch');
       // The PO's row with a task open, and a PO opened from Needs you (#needs)
       // and from Home: the PO takes the middle, no drawer (R1-F2).
@@ -645,7 +647,7 @@ class TheMiddle(unittest.TestCase):
         self.assertIsNone(self.got["homeAway"]["proj"])
 
     def test_the_caret_is_the_named_projects(self):
-        self.assertEqual(self.got["caretMenu"], {"head": "Motors", "on": self.proj})
+        self.assertEqual(self.got["caretMenu"], {"name": "Motors", "on": self.proj})
 
     def test_a_po_opens_in_the_middle_from_anywhere(self):
         for key in ("rowHome", "rowNeeds", "openPoHome"):
