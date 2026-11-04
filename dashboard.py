@@ -8325,6 +8325,7 @@ _POINT_INDEX: dict[str, tuple[float, tuple, dict]] = {}
 # {(project id, point id): (the index entry's built at, point_ref's answer)}
 _POINT_ANSWERS: dict[tuple[str, str], tuple[float, dict | None]] = {}
 _POINT_INDEX_LOCK = threading.Lock()
+_POINT_INDEX_BUILDS: dict[str, threading.Lock] = {}     # {project id: the lock its build holds}
 _POINT_INDEX_TTL_S = 10.0       # a ledger another hub wrote, a card in a transcript
 _POINT_INDEX_MISS_S = 1.0       # a point not in it: looked for again after this
 
@@ -8337,6 +8338,20 @@ def _point_index(project: dict, projects: list[dict], point_id: str = "") -> tup
     chat full of point chips asks for each; walking every room and ledger
     per chip held the hub for seconds."""
     pid = project["id"]
+    hit = _point_index_hit(pid, point_id)
+    if hit is not None:
+        return hit
+    with _POINT_INDEX_LOCK:
+        build = _POINT_INDEX_BUILDS.setdefault(pid, threading.Lock())
+    with build:     # one build per project at a time (#305): the others wait for it
+        hit = _point_index_hit(pid, point_id)
+        if hit is not None:
+            return hit
+        return _point_index_build(project, projects)
+
+
+def _point_index_hit(pid: str, point_id: str) -> tuple[float, dict] | None:
+    """_point_index's cached answer while it still holds, else None."""
     now = time.monotonic()
     saved = (points.SAVED, _stat_sig(SESSION_PROJECTS_FILE))
     with _POINT_INDEX_LOCK:
@@ -8344,6 +8359,13 @@ def _point_index(project: dict, projects: list[dict], point_id: str = "") -> tup
     if hit is not None and hit[1] == saved and now - hit[0] < _POINT_INDEX_TTL_S \
             and (not point_id or point_id in hit[2] or now - hit[0] < _POINT_INDEX_MISS_S):
         return hit[0], hit[2]
+    return None
+
+
+def _point_index_build(project: dict, projects: list[dict]) -> tuple[float, dict[str, list[dict]]]:
+    pid = project["id"]
+    now = time.monotonic()
+    saved = (points.SAVED, _stat_sig(SESSION_PROJECTS_FILE))
     links = load_session_projects()
     ledgers = points.with_ledgers()
     idx: dict[str, list[dict]] = {}
@@ -8547,7 +8569,8 @@ def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[
     add(cwd)
     if room_id:
         try:
-            rm = chatroom.get_room(room_id) or {}
+            # read only (#305): the indexed record, no copy, no chat read for a carded room
+            rm = chatroom.get_room(room_id, copy_room=False, messages=False) or {}
         except Exception:
             rm = {}
         add(rm.get("cwd")); add(rm.get("taskDir")); add(rm.get("sharedCwd"))
@@ -8660,8 +8683,29 @@ def _readable_check():
     the walk for a file by its name only goes through folders /api/file may
     read. What is written (an absolute path, or one at a relative path) is
     answered as /api/file answers it: there when the file is."""
-    roots = [p["path"] for p in load_projects()] + [str(CS_ROOT), str(PROJECTS_ROOT)]
-    return lambda path: bool(path) and (any(_within(path, r) for r in roots) or session_folder_ok(path))
+    # Each root's real path once, and each path's once (#305): _within resolved
+    # both for every root and every path, ~0.3 s a batch on a big board.
+    real: dict[str, str | None] = {}
+
+    def resolved(x: str) -> str | None:
+        if x not in real:
+            try:
+                real[x] = os.path.normcase(os.path.realpath(x))
+            except (OSError, ValueError):
+                real[x] = None
+        return real[x]
+
+    roots = [r for r in (resolved(x) for x in [p["path"] for p in load_projects()]
+                         + [str(CS_ROOT), str(PROJECTS_ROOT)]) if r is not None]
+
+    def ok(path: str) -> bool:
+        if not path:
+            return False
+        c = resolved(path)
+        if c is not None and any(c == r or c.startswith(r + os.sep) for r in roots):
+            return True
+        return session_folder_ok(path)
+    return ok
 
 
 def file_ref_suggestions(raw: str, room_id: str = "", cwd: str = "") -> dict:
@@ -10340,7 +10384,7 @@ def project_documents(project: dict) -> dict:
     code_docs = ""
     if project.get("kind") != "documents" and project.get("path"):
         code_docs = os.path.join(project["path"], "docs")
-    out = project_docs.list_documents(project_documents_dir(project), code_docs)
+    out = project_docs.list_documents_cached(project_documents_dir(project), code_docs)
     key = project_keys(load_projects()).get(project.get("id", ""), "") or project.get("key", "")
     return {"projectId": project.get("id", ""), "key": key, **out}
 

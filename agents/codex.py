@@ -354,7 +354,7 @@ class CodexAgent(AgentType):
             return []
         return [p for _, p in filetable.newest_first(_rollout_table(root))]
 
-    def rollouts_for_session(self, session_id: str) -> list[Path]:
+    def rollouts_for_session(self, session_id: str, new: bool = True) -> list[Path]:
         """Every rollout belonging to ``session_id``, oldest first.
 
         The id is the uuid in the filename, so the rollout table (a second
@@ -363,14 +363,18 @@ class CodexAgent(AgentType):
         history — this runs on the dashboard's poll loop, so it must not cost
         a full scan. Only when both miss (older
         layouts, or a resume that forked a file under a different name) do we
-        fall back to reading each rollout's `session_meta` line."""
+        fall back to reading each rollout's `session_meta` line.
+        ``new`` False: a session that ended long ago (a chat's rotated-out
+        one), whose rollout the table already lists if it has one — no glob
+        (#305: a room's cards asked for its 200 rotated sessions, the glob
+        walking every day folder for each that has no rollout)."""
         root = self.sessions_dir()
         if not session_id or not root.exists():
             return []
         tail = f"-{session_id}.jsonl"
         hits = [filetable.as_path(p) for p in _rollout_table(root, 1.0)
                 if p.endswith(tail) and os.path.basename(p).startswith("rollout-")]
-        if not hits:
+        if not hits and new:
             hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
         if not hits:
             # A missing old solo-session ID is common. Do not scan every
@@ -380,11 +384,11 @@ class CodexAgent(AgentType):
         hits.sort(key=_mtime)
         return hits
 
-    def session_stat(self, session_id: str) -> dict | None:
+    def session_stat(self, session_id: str, new: bool = True) -> dict | None:
         """Aggregate size + newest mtime across the session's rollouts, or None
         when it has none yet. Backs the dashboard's cheap "did the transcript
         grow?" poll, the same signal a Claude session's .jsonl provides."""
-        files = self.rollouts_for_session(session_id)
+        files = self.rollouts_for_session(session_id, new)
         if not files:
             return None
         size, mtime = 0, 0.0
