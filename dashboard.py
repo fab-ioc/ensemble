@@ -8562,7 +8562,20 @@ def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[
             except Exception:
                 pass
             add(pj.get("path"))
-    return bases, list(bases)
+    # P261: agents also write a path from the user's home or from the folder
+    # that holds the projects ("EnsembleProjects/<project>/x.html"). Those
+    # folders are tried for the path as written, never walked for a name.
+    search = list(bases)
+    roots = set()
+    for x in load_projects():
+        try:
+            roots.add(str(Path(project_home(x, create=False)).parent))
+        except Exception:
+            pass
+    for r in sorted(roots):
+        add(r)
+    add(str(Path.home()))
+    return bases, search
 
 
 def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
