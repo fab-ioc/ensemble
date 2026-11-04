@@ -181,7 +181,26 @@ srv.daemon_threads = True
 srv.handle_error = lambda *a: None
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 print(json.dumps({"port": srv.server_address[1], "ids": ids}), flush=True)
-ns = {"dashboard": dashboard, "chatroom": chatroom, "attention": attention, "points": points,
+# The state files as a person's looking must leave them: read marks dropped
+# (seenAt, seen, _revision), the cache left out.
+def snapshot():
+    import hashlib
+    root = Path.home() / ".ensemble"
+    def strip(v):
+        if isinstance(v, dict): return {k: strip(x) for k, x in v.items() if k not in ("seenAt", "seen", "_revision")}
+        if isinstance(v, list): return [strip(x) for x in v]
+        return v
+    out = {}
+    for f in sorted(root.rglob("*")):
+        rel = f.relative_to(root).as_posix()
+        if not f.is_file() or rel.startswith("cache/") or rel.endswith((".lock", ".tmp")): continue
+        b = f.read_bytes()
+        if f.suffix == ".json":
+            try: b = json.dumps(strip(json.loads(b.decode("utf-8"))), sort_keys=True).encode("utf-8")
+            except ValueError: pass
+        out[rel] = hashlib.sha1(b).hexdigest()
+    return out
+ns = {"dashboard": dashboard, "chatroom": chatroom, "snapshot": snapshot, "Path": Path, "attention": attention, "points": points,
       "report": report, "ids": ids, "live": live, "time": time}
 for line in sys.stdin:
     if not line.strip():
@@ -267,7 +286,7 @@ async function tab(c, url, boot) {
 const app = async (c, url = '/', boot = false) => { const p = await tab(c, url, boot); await p.until('window.ensBooted === true', 40000); await sleep(400); return p; };
 // The chat the app shows for a room: { room, landed, thread } of its frame(s).
 // What a chat frame holds (its page-level constants are not window properties).
-const FV = `(f => { try { return f.contentWindow.eval("({ room: typeof ROOM === 'string' ? ROOM : '', landed: typeof LANDED !== 'undefined' && LANDED ? LANDED.mid + (LANDED.part ? '|' + LANDED.part : '') : '', threadMode: typeof THREAD_MODE !== 'undefined' && THREAD_MODE, thread: typeof THREAD === 'string' ? THREAD : '', side: typeof TS !== 'undefined' && TS ? TS.tid : '', drawn: typeof LAST_ITEMS !== 'undefined' && !!LAST_ITEMS })"); } catch (e) { return { err: String(e) }; } })`;
+const FV = `(f => { try { return f.contentWindow.eval("({ room: typeof ROOM === 'string' ? ROOM : '', landed: typeof LANDED !== 'undefined' && LANDED ? LANDED.mid + (LANDED.part ? '|' + LANDED.part : '') : '', threadMode: typeof THREAD_MODE !== 'undefined' && THREAD_MODE, thread: typeof THREAD === 'string' ? THREAD : '', side: typeof TS !== 'undefined' && TS ? TS.tid : '', sideMid: typeof TS !== 'undefined' && TS ? TS.mid || '' : '', tmid: typeof THREAD_MID === 'string' ? THREAD_MID : '', drawn: typeof LAST_ITEMS !== 'undefined' && !!LAST_ITEMS })"); } catch (e) { return { err: String(e) }; } })`;
 // Visible frames, and the thread frame a chat holds inside it (a phone's thread is there).
 const FRAMES = room => `(() => { const vis = f => { const r = f.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const top = [...document.querySelectorAll('iframe')].filter(vis);
@@ -372,15 +391,27 @@ async function main() {
     S.over = await main.ev(OVER);
     await main.close();
     // ================= links (after the steps: opening P1's answer reads it)
+    await sleep(1500);
+    // Finish the hub's deferred point bookkeeping before the view-only
+    // snapshot. A person's earlier typed reply can acquire its transcript
+    // message id when the room is first read; that is not a link-side write.
+    await py(`out = [points.sync(ids[k], force=True) for k in ["po", "A1", "A2", "A3"]]`);
+    const snap0 = await py(`out = snapshot()`);
     let p = await app(b.c, `/?room=${I.po}&msg=${I.answer}`, true);
     o.links.poMsg = await p.until(`(() => { const f = ${FRAMES(I.po)}.find(x => x.landed); return f ? f : null; })()`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.po)) }));
     o.links.poMsgUrl = await p.ev('location.pathname + location.search');
+    // In the app's frames the chat is the app's: no icon back to it.
+    o.links.framedIcons = await p.ev(`[...document.querySelectorAll('iframe')].flatMap(f => { try { return ['to-app', 'ts-to-app'].map(id => f.contentDocument.getElementById(id)).filter(a => a && (!a.hidden || a.getClientRects().length)).map(a => a.id); } catch (e) { return []; } })`);
     await p.close();
     p = await app(b.c, `/?room=${I.A1}&msg=${I.A1ask}&part=ask:0`, true);
     o.links.taskCard = await p.until(`(() => { const f = ${FRAMES(I.A1)}.find(x => x.landed); return f ? f : null; })()`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.A1)) }));
     await p.close();
     p = await app(b.c, `/?room=${I.po}&thread=P1`, true);
     o.links.thread = await p.until(`${FRAMES(I.po)}.some(x => (x.threadMode && x.thread === 'P1') || x.side === 'P1') ? 'P1' : ''`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.po)) }));
+    await p.close();
+    // A thread started on a balloon (tmid), with another message to land on (msg).
+    p = await app(b.c, `/?room=${I.po}&msg=${I.answer}&thread=&tmid=po-sid:0`, true);
+    o.links.tmid = await p.until(`${FRAMES(I.po)}.some(x => (x.threadMode && x.tmid === 'po-sid:0') || x.sideMid === 'po-sid:0') ? 'po-sid:0' : ''`, 30000).catch(async e => ({ fail: e.message, frames: await p.ev(FRAMES(I.po)) }));
     await p.close();
     p = await tab(b.c, '/?room=room-0000dead&msg=x1');
     o.links.unknown = await p.until(`location.pathname === '/session' ? location.pathname + location.search : ''`, 30000).catch(e => ({ fail: e.message }));
@@ -407,6 +438,16 @@ async function main() {
       o.links.toAppLands = await p.until(`(() => { const f = ${FRAMES(I.po)}.find(x => x.landed); return f ? f.landed : ''; })()`, 30000).catch(async e => ({ fail: e.message, at: await p.ev(`location.href`), frames: await p.ev(`[...document.querySelectorAll('iframe')].map(f => (f.getAttribute('src') || '') + ' ' + Math.round(f.getBoundingClientRect().width))`), po: await p.ev(FRAMES(I.po)) }));
     }
     await p.close();
+
+    p = await tab(b.c, `/session?id=${I.po}&embed=1`);
+    await p.until('typeof ROOM !== "undefined" && !!LAST_ITEMS', 20000).catch(() => null);
+    o.links.embedIcons = await p.ev(`['to-app', 'ts-to-app'].map(id => document.getElementById(id)).filter(a => a && (!a.hidden || a.getClientRects().length)).map(a => a.id)`);
+    await p.close();
+    // Nothing the links opened wrote anything but read marks.
+    await sleep(1500);
+    const snap1 = await py(`out = snapshot()`);
+    o.links.wrote = [...new Set([...Object.keys(snap0), ...Object.keys(snap1)])].filter(k => snap0[k] !== snap1[k]).sort();
+    o.links.files = Object.keys(snap1).length;
 
     // A reload.
     const main2 = await app(b.c, '/');
@@ -482,10 +523,20 @@ class LinksAndStatesInChrome(unittest.TestCase):
                 self.assertEqual(L["poMsgUrl"], "/", "the app's own address once it opened")
                 self.assertEqual((L["taskCard"] or {}).get("landed"), I["A1ask"] + "|ask:0", L["taskCard"])
                 self.assertEqual(L["thread"], "P1")
+                self.assertEqual(L["tmid"], "po-sid:0", "the thread the link names, not one on its msg")
                 self.assertEqual(L["unknown"], "/session?room=room-0000dead&msg=x1&stay=1")
                 self.assertFalse(L["unknownToApp"], "no way back to an app that does not list it")
                 self.assertNotIn("fail", L["needs"] or {"fail": "none"}, L["needs"])
                 self.assertLessEqual(L["needsOver"], 1)
+                self.assertEqual(L["framedIcons"], [], "a chat in the app's frame has no icon back to it")
+                self.assertEqual(L["embedIcons"], [])
+
+    def test_opening_links_writes_nothing_but_read_marks(self):
+        for w, mob, g in self.each():
+            L = g["links"]
+            with self.subTest(w=w):
+                self.assertGreater(L["files"], 10)
+                self.assertEqual(L["wrote"], [])
 
     def test_a_chat_in_its_own_tab_opens_in_the_app(self):
         for w, mob, g in self.each():

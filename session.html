@@ -7579,6 +7579,13 @@ function threadMarkHtml(m) {
 }
 // A thread opens beside the channel (sideOpen). Inside a thread (the side
 // frame) it asks the channel page to switch; in a window of its own, a new tab.
+// A thread a link names: by its id, or by the balloon it started on (tmid),
+// landing on msg inside it.
+function gotoThread(w) {
+  if (w.thread || !w.tmid) openThread(w.thread, w.msg || '', w.part || '');
+  else if (THREAD_MODE) openThread('', w.tmid, w.part || '');
+  else sideOpen({ tid: '', mid: w.tmid, msg: w.msg || w.tmid, part: w.part || '' });
+}
 function openThread(tid, mid, part = '') {
   if (!tid && !mid) return;
   if (!THREAD_MODE) { sideOpen({ tid: tid || '', mid: tid ? '' : (mid || ''), msg: mid || '', part }); return; }
@@ -7932,7 +7939,7 @@ function refreshShow(room, ticket, sendsGen) {
     // (a link opened with the page, #308): it opens now.
     if (GOTO_THREAD_WAIT) {
       const w = GOTO_THREAD_WAIT; GOTO_THREAD_WAIT = null;
-      if (THREADED && !THREAD_MODE) openThread(w.thread, w.msg, w.part); else if (w.msg) gotoMsg(w.msg, w.part);
+      if (THREADED && !THREAD_MODE) gotoThread(w); else if (w.msg) gotoMsg(w.msg, w.part);
     }
     if (threadedView()) {
       // A PO chat's channel or thread: the hub answers "the same" while nothing changed.
@@ -10016,8 +10023,9 @@ window.addEventListener('message', (e) => {
   // The dashboard opened this chat for a link to one of its balloons.
   else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
     GOTO_OPEN = true;
-    if (d.thread && !THR_NOTED && !THREAD_MODE) GOTO_THREAD_WAIT = { thread: String(d.thread), msg: d.msg || '', part: d.part || '' };
-    else if (d.thread && THREADED && !THREAD_MODE) openThread(d.thread, d.msg || '', d.part || '');
+    const thr = d.thread || d.tmid ? { thread: String(d.thread || ''), tmid: d.thread ? '' : String(d.tmid), msg: d.msg || '', part: d.part || '' } : null;
+    if (thr && !THR_NOTED && !THREAD_MODE) GOTO_THREAD_WAIT = thr;
+    else if (thr && THREADED && !THREAD_MODE) gotoThread(thr);
     else gotoMsg(d.msg, d.part || '');
     try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
   }
