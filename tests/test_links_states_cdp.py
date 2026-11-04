@@ -73,6 +73,15 @@ HUB_PY = r'''
 import json, os, sys, threading, time, traceback, types
 from pathlib import Path
 base, repo = Path(sys.argv[1]), sys.argv[2]
+# The lines typed to this process come on a private copy of its stdin, and
+# its stdin becomes NUL. On Windows a program started while the main thread
+# waits in a read of that pipe inherits it as its own stdin and hangs in its
+# start-up until the read ends (git: no CPU, one thread): the hub's request
+# threads then wait for git for ever (operator_name, git_root), Chrome's six
+# connections to the host fill, and every later page waits or, through the
+# service worker, shows the start-up page.
+CMDS = os.fdopen(os.dup(0), "r", encoding="utf-8")
+_nul = os.open(os.devnull, os.O_RDONLY); os.dup2(_nul, 0); os.close(_nul)
 sys.path.insert(0, repo)
 from http.server import ThreadingHTTPServer
 from unittest import mock
@@ -202,7 +211,7 @@ def snapshot():
     return out
 ns = {"dashboard": dashboard, "chatroom": chatroom, "snapshot": snapshot, "Path": Path, "attention": attention, "points": points,
       "report": report, "ids": ids, "live": live, "time": time}
-for line in sys.stdin:
+for line in CMDS:
     if not line.strip():
         continue
     cmd = json.loads(line)
