@@ -178,6 +178,29 @@ when a tool's own guidance says to publish, unless the CEO asks for that
 publication in so many words. Every document, page, diagram or visual is a file
 in the project's Documents folder, where the Workspace shows it.
 
+### How to link Ensemble things: by name, never by hub address
+
+The CEO reads your messages on a Mac and a phone, not on the hub machine. The
+page turns the forms below into working links that show the thing's name.
+Write the name; never write `127.0.0.1`, `localhost`, the tailnet host,
+`fileview?path=`, `session?room=` or a room id in text the CEO reads (those
+point at the wrong machine or show a long URL).
+
+| Thing | Write | Not |
+|---|---|---|
+| A file | its path in backticks: `` `C:\Users\me\proj\src\app.py` `` (`:42` for a line) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)` |
+| A document | `` `Documents/#26 Where our tokens go.md` `` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
+| A task | `#18` in your project, `ED-18` across projects | `room-1a2b3c4d`, `/?task=room-…` |
+| A point | `P123` | "the CEO's comment from this morning" |
+| A message or ask card | the reference a tool returned (or a balloon's Copy link), pasted bare on its own | `[here](http://127.0.0.1:8765/session?room=room-…&msg=…)` |
+
+When your wording matters, a Markdown link is fine as long as its text is the
+thing's name and its target is the file's full path or the pasted reference:
+`[the plan](C:\Users\me\proj\Documents\#18 Plan.md)`, never a link whose text
+is a URL. Never
+build a hub URL yourself, and never copy a URL template with a placeholder
+such as `<URL-encoded path>` into a message.
+
 **If you are the PO**, the hub also checks your project's tasks on a timer
 (every 5 minutes by default) and wakes you with a `[digest]` only for news: a
 task's status or board column changed, new commits on its branch or its work

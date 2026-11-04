@@ -852,6 +852,14 @@ function urlTarget(raw) {
   if (/^file:/i.test(u)) { const s = splitLine(filePathOfUrl(u)); return { file: s.path, line: s.line }; }
   let x = null;
   try { x = new URL(u); } catch (e) { return { href: u }; }
+  // One of this hub's own files or tasks, by whatever address it was written
+  // (#296), opens from this page's origin. A file is this machine's at any
+  // loopback port (the file view of a test hub reads the same file); a task
+  // there is another hub's, so only on the hub's own port.
+  const h = hubUrlOf(u), loop = LOOPBACK_HOST_RE.test(x.hostname);
+  if (h && h.file != null) return hubFileOk(h.file) ? { file: h.file, line: h.line } : { text: true };
+  if (h && h.task && !h.msg && x.pathname === '/' && (!loop || (x.port || (x.protocol === 'https:' ? '443' : '80')) === hubPort()))
+    return { msg: { room: h.task, msg: '', part: '' } };
   const msg = /^https?:$/.test(x.protocol) ? msgLinkOf(x) : null;
   if (LOOPBACK_HOST_RE.test(x.hostname)) {
     const port = x.port || (x.protocol === 'https:' ? '443' : '80');
@@ -859,7 +867,7 @@ function urlTarget(raw) {
     if (!onHubMachine()) return { dead: x.host };
     return { href: u };
   }
-  return msg ? { msg } : { href: u };
+  return msg && hubHost(x) ? { msg } : { href: u };
 }
 // A sentence's full stop, comma or closing bracket is not part of its URL.
 function trimUrlTail(u) {
@@ -874,8 +882,8 @@ const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
 const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
 // A link to a chat message or card (/session?room=room-…&msg=…[&part=…]) is
-// Ensemble's own, whatever address it was written with (127.0.0.1, localhost,
-// the tailnet name, the https address): it opens in place, in the chat that
+// Ensemble's own on any address this hub answers on (hubHost: 127.0.0.1, localhost,
+// the tailnet name, this page's host): it opens in place, in the chat that
 // holds it (the page's click handler for a.msg-link), never in a window of its
 // own. Its href is this page's origin, so Ctrl-click or a middle click opens it
 // in a tab from any computer. A link to a chat alone (no msg) is the task's
@@ -894,23 +902,43 @@ const msgLinkHtml = (r, text) => !r.msg ? taskLinkHtml(r.room, text)
 // A link to one of the hub's own pages, whatever address it was written with
 // (#238): { msg } for a message or card (msgLinkOf), { file, line } for a file
 // view, { task } for a task's chat, { thread } for a thread, { href } for any
-// other page on this hub; null for any other URL.
+// other page on this hub; null for any other URL. A file view or a task is
+// the hub's only on an address the hub answers on (hubHost): this machine's
+// loopback on any port (the hub, a proxy in front of it), this page's own
+// host, a tailnet name (*.ts.net) or address (100.64.0.0/10); the same path
+// on any other host is someone else's page and stays as written.
+const TAILNET_HOST_RE = /\.ts\.net\.?$|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/i;
+const hubHost = x => LOOPBACK_HOST_RE.test(x.hostname) || x.hostname === location.hostname || TAILNET_HOST_RE.test(x.hostname);
 function hubUrlOf(u) {
   let x = null;
   try { x = new URL(u); } catch (e) { return null; }
   if (!/^https?:$/.test(x.protocol)) return null;
+  if (!hubHost(x)) return null;
   const msg = msgLinkOf(x);
   if (msg) return msg.msg ? { msg } : { task: msg.room };
   const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
   if (x.pathname === '/session' && /^room-[0-9a-f]{8}$/.test(room)) return { thread: room, href: x.pathname + x.search + x.hash };
-  if (x.pathname === '/fileview' && x.searchParams.get('path')) return { file: x.searchParams.get('path'), line: +(x.searchParams.get('line') || 0) || 0 };
+  if (x.pathname === '/fileview' && x.searchParams.get('path')) return { file: x.searchParams.get('path').trim(), line: +(x.searchParams.get('line') || 0) || 0 };
+  const task = (x.searchParams.get('task') || '').trim();
+  if (x.pathname === '/' && /^room-[0-9a-f]{8}$/.test(task)) return { task };
   const port = x.port || (x.protocol === 'https:' ? '443' : '80');
   if (x.host === location.host || (LOOPBACK_HOST_RE.test(x.hostname) && port === hubPort())) return { href: x.pathname + x.search + x.hash };
   return null;
 }
+// A file view's path that names a file: not a template's placeholder
+// ("?path=<URL-encoded absolute path>"), which stays text.
+const hubFileOk = p => !!p && !/[<>*?"|]/.test(p);
 // What a hub link opens, in words: the question card, the message, the file's name.
 const hubUrlLabel = h => h.msg ? (h.msg.part.startsWith('ask:') ? 'the question card' : 'the message')
   : h.file != null ? (fileName(h.file) || h.file) : h.task ? 'the task' : h.thread ? 'the thread' : 'Ensemble';
+// The words a hub URL written bare shows (#296): its file's name, what the
+// message chip says until the hub has named it, the task; null for any other.
+function hubUrlName(raw) {
+  const h = hubUrlOf(unescPath(raw));
+  if (!h || (h.href && !h.thread)) return null;
+  if (h.file != null) return hubFileOk(h.file) ? fileName(h.file.replace(/[\\\/]+$/, '')) || h.file : null;
+  return hubUrlLabel(h);
+}
 // A link to the card itself (self: its message id, in this page's room if it
 // has one, or { room, msg }; n: its number there, when known): that message in
 // that room, as a whole or that card; not another card of it, nor a message
@@ -955,18 +983,18 @@ const fileName = p => (p || '').split(/[\\\/]/).pop();
 // leaves the text alone), a picture as its thumbnail with the link under it,
 // any other file as its link. `kind` is 'code' for a code span, else 'text':
 // the render meets each kind in the order pathAbbrevs read it.
-function fileRefHtml(p, text, line, kind) {
+function fileRefHtml(p, text, line, kind, title) {
   let full = p;
   if (ABBREV_RE.test(p)) {
     const q = PATH_ABBR && PATH_ABBR[kind === 'code' ? 'code' : 'text'].get(p);
     full = q && q.length ? q.shift() : '';
     if (!full) return null;
   }
-  if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line);
+  if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line, title);
   const u = fileSrc(full), name = fileName(full);
   if (THUMB_GONE.has(u)) return fileLinkHtml(full, text, 0, 'not found on the hub');
   return `<span class="path-img"><a class="att-thumb" href="${u}"${A_NEW} title="${esc(name)}">`
-    + `<img src="${u}" alt="${esc(name)}" loading="lazy" onerror="pathThumbGone(this)"></a>${fileLinkHtml(full, text, 0)}</span>`;
+    + `<img src="${u}" alt="${esc(name)}" loading="lazy" onerror="pathThumbGone(this)"></a>${fileLinkHtml(full, text, 0, title)}</span>`;
 }
 // The hub had no picture for that request (the path, in that task): the
 // link stays, titled so, and the next render of it draws the link alone.
@@ -978,9 +1006,11 @@ function pathThumbGone(img) {
   if (a) a.title = 'not found on the hub';
   if (thumb) thumb.remove();
 }
-function urlLinkHtml(raw, text, kind) {
+// named: text is the thing's name, not the URL, so a file's path is its title.
+function urlLinkHtml(raw, text, kind, named) {
   const t = urlTarget(raw);
-  if (t.file != null) return fileRefHtml(t.file, text, t.line, kind);
+  if (t.text) return text;
+  if (t.file != null) return fileRefHtml(t.file, text, t.line, kind, named ? t.file : '');
   if (t.msg) return msgLinkHtml(t.msg, text);
   if (t.dead) return `<span class="dead-link" title="${esc(t.dead)} is an address on the hub machine itself">${text} (only on the hub machine)</span>`;
   return `<a href="${esc(t.href)}"${A_NEW}>${text}</a>`;
@@ -991,8 +1021,12 @@ function mdLinkHtml(m, txt, target) {
   let t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
   if (/^#/.test(t) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
   // "localhost:8765/session?…" written without its http://.
-  if (/^[\w.-]+:\d+\/session\?/.test(t)) t = 'http://' + t;
-  if (/^(?:https?|file):/i.test(t)) return urlLinkHtml(t, txt, 'text');
+  if (/^[\w.-]+:\d+\/(?:session|fileview)\?/.test(t)) t = 'http://' + t;
+  if (/^(?:https?|file):/i.test(t)) {
+    // A link whose words are a hub URL too reads as the thing's name (#296).
+    const nm = /^(?:https?|file):\/\//i.test(unescPath(txt).trim()) ? hubUrlName(t) : null;
+    return urlLinkHtml(t, nm != null ? esc(nm) : txt, 'text', nm != null);
+  }
   if (/^\/session\?/.test(t)) { const r = msgLinkOf(new URL(t, 'http://hub')); if (r) return msgLinkHtml(r, txt); }
   const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
   if (task) return taskLinkHtml(task[1], txt);
@@ -1011,7 +1045,10 @@ function codeSpanHtml(body) {
   const chip = typeof taskCodeHtml === 'function' ? taskCodeHtml(t) : null;
   if (chip) return chip;
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
-  if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code, 'code');
+  if (/^(?:https?|file):\/\/\S+$/i.test(t)) {
+    const nm = hubUrlName(t);
+    return urlLinkHtml(t, nm != null ? `<code class="ic">${esc(nm)}</code>` : code, 'code', nm != null);
+  }
   if (looksFilePath(t, true) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
   return code;
 }
@@ -1058,7 +1095,11 @@ function linkify(t, keep) {
   t = t.replace(LINK_MARK_RE, put);
   return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room) => {
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
-    if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u, 'text')) + tail; }
+    if (url != null) {
+      // A hub URL written bare shows the thing's name, not the address (#296).
+      const [u, tail] = trimUrlTail(url), nm = hubUrlName(u);
+      return p1 + put(urlLinkHtml(u, nm != null ? esc(nm) : u, 'text', nm != null)) + tail;
+    }
     if (room != null) return put(taskLinkHtml(room, room));
     if (win != null && !winPathSure(win)) return m;
     const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));

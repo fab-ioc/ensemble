@@ -133,7 +133,7 @@ CASES = [
     # 49-: #235 - a link to a chat message or card, written with any host, opens it in place.
     "[auto or copilot](http://127.0.0.1:8765/session?room=room-c30a8711&msg=3dca91a0-049b-452c-b2b0-373179c5372c:67&part=ask:1)",
     "see http://localhost:8765/session?room=room-c30a8711&msg=26e81eed-f553-491c-b2ad-f63fe5311680:67 now",
-    "[the task message](https://hub.example.net/session?room=room-75a3668e&msg=8e267f5e008c)",
+    "[the task message](https://hub.tail1234.ts.net/session?room=room-75a3668e&msg=8e267f5e008c)",
     "[relative](/session?room=room-75a3668e&msg=abc:3&part=ask:0)",
     "[no scheme](localhost:8765/session?room=room-75a3668e&msg=abc:3)",
     "[another hub](http://127.0.0.1:8797/session?room=room-75a3668e&msg=abc:3)",
@@ -156,7 +156,9 @@ class GeneratedLinks(unittest.TestCase):
         for text, html in r.items():
             for h in hrefs(html):
                 self.assertIsNone(LOOPBACK_OR_FILE.match(h), f"{text!r} links to {h}")
-        self.assertEqual(hrefs(r[CASES[0]]), ["http://hub-host:8765/fileview?path=C%3A%5Cx.md"])
+        # A file view at the hub's loopback address is the file's link on this origin, by its name (#296).
+        self.assertEqual(hrefs(r[CASES[0]]), ["/fileview?path=C%3A%5Cx.md"])
+        self.assertIn(">x.md</a>", r[CASES[0]])
         self.assertEqual(hrefs(r[CASES[1]]), ["http://hub-host:8765/"])
         # A chat's own link, whatever host it names, is its task's link (#235).
         self.assertEqual(hrefs(r[CASES[2]]), ["/?task=room-35d21def"])
@@ -271,7 +273,7 @@ class GeneratedLinks(unittest.TestCase):
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")
-        self.assertEqual(hrefs(r[CASES[0]]), ["http://127.0.0.1:8765/fileview?path=C%3A%5Cx.md"])
+        self.assertEqual(hrefs(r[CASES[0]]), ["/fileview?path=C%3A%5Cx.md"])
         # Another loopback port does open here, on the machine it runs on.
         self.assertEqual(hrefs(r[CASES[3]]), ["http://127.0.0.1:8797/"])
         for text, html in r.items():

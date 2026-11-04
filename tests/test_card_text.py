@@ -61,12 +61,12 @@ const chatStamp = () => '';
 const T = {
   localhost: 'Which one? http://localhost:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0',
   loopback: 'Which one? (see http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001)',
-  tailnet: 'Which one? http://hubbox:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001.',
-  https: 'Which one? https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:1',
+  tailnet: 'Which one? http://hubbox.tail1234.ts.net:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001.',
+  https: 'Which one? https://hub.tail1234.ts.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:1',
   pending: 'Which one? http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=unknown00001&part=ask:0',
   pointMsg: 'Read http://127.0.0.1:8765/session?room=room-0000c0de&msg=his00000215&part=pt:P215 first',
   afterPoint: 'should the TEST set-up let you choose the profile (P215)? http://127.0.0.1:8765/session?room=room-0000c0de&msg=his00000215&part=pt:P215',
-  afterPointCard: 'Which set-up (P215)? (card: https://hub.example.net/session?room=room-0000c0de&msg=card0000215&part=ask:0)',
+  afterPointCard: 'Which set-up (P215)? (card: https://hub.tail1234.ts.net/session?room=room-0000c0de&msg=card0000215&part=ask:0)',
   self: 'What do you want to do with the old data? (card: http://127.0.0.1:8765/session?room=room-0000c0de&msg=selfcard0001&part=ask:0)',
   selfBare: 'Which one? http://127.0.0.1:8765/session?room=room-0000c0de&msg=selfcard0001&part=ask:0',
   fileview: 'Build the hedge in the preview http://127.0.0.1:8765/fileview?path=C%%3A%%5CDocs%%5Chedge.html?',
@@ -77,7 +77,7 @@ const T = {
   html: 'A <b>bold</b> & "quoted" question?',
   twoAsks: 'Which: [the first](http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0) http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:1',
   otherPoint: 'Which set-up (P215)? http://127.0.0.1:8765/session?room=room-0000c0de&msg=his00000215&part=pt:P216',
-  mdAfterPoint: 'Which set-up (P215)? [card](https://hub.example.net/session?room=room-0000c0de&msg=his00000215&part=pt:P215)',
+  mdAfterPoint: 'Which set-up (P215)? [card](https://hub.tail1234.ts.net/session?room=room-0000c0de&msg=his00000215&part=pt:P215)',
   selfOther: 'And this one? http://127.0.0.1:8765/session?room=room-0000c0de&msg=selfcard0001&part=ask:1',
   otherRoom: 'Read http://localhost:8765/session?room=room-1a2b3c4d&msg=selfcard0001&part=ask:0',
 };
@@ -89,9 +89,9 @@ const T = {
   const m = { id: 'selfcard0001', from: 'claude', text: '' };
   const a = { n: 0, question: T.afterPoint, kind: 'decision', recommended: 0, options: [
     { label: 'Use the old one', detail: 'as in http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001', recommended: true },
-    { label: 'See https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001', detail: '', recommended: false }] };
+    { label: 'See https://hub.tail1234.ts.net/session?room=room-1a2b3c4d&msg=msg0aaa0001', detail: '', recommended: false }] };
   out.card = askCardHtml(m, a, 1, {});
-  out.answered = askCardHtml(m, a, 1, { asks: { selfcard0001: { 0: { option: 'Use the old one', comment: 'like https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001', at: 1 } } } });
+  out.answered = askCardHtml(m, a, 1, { asks: { selfcard0001: { 0: { option: 'Use the old one', comment: 'like https://hub.tail1234.ts.net/session?room=room-1a2b3c4d&msg=msg0aaa0001', at: 1 } } } });
   out.words = {
     self: hubUrlWords(T.self, 'selfcard0001'),
     selfBare: hubUrlWords(T.selfBare, 'selfcard0001'),
@@ -101,10 +101,10 @@ const T = {
     otherRoomOf: hubUrlWords(T.selfBare, { room: 'room-1a2b3c4d', msg: 'selfcard0001' }, 0),
     button: [
       'Keep the default, see http://localhost:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001',
-      'Keep it (card: https://hub.example.net/session?room=room-0000c0de&msg=selfcard0001&part=ask:0)',
-      'Or this (card: https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0)',
+      'Keep it (card: https://hub.tail1234.ts.net/session?room=room-0000c0de&msg=selfcard0001&part=ask:0)',
+      'Or this (card: https://hub.tail1234.ts.net/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0)',
       'As in [the notes](http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001)',
-      'See https://hub.example.net/session?room=room-1a2b3c4d&msg=msg0aaa0001',
+      'See https://hub.tail1234.ts.net/session?room=room-1a2b3c4d&msg=msg0aaa0001',
       'Wait and see',
       'Open hedge.html: http://127.0.0.1:8765/fileview?path=C%%3A%%5CDocs%%5Chedge.html',
       'Use (P215)',
