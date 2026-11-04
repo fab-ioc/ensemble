@@ -609,6 +609,13 @@
          padding-left:env(safe-area-inset-left, 0px); padding-right:env(safe-area-inset-right, 0px); }
   header { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border); flex:0 0 auto; }
   header h1 { font-size:14px; margin:0; }
+  /* A chat in a tab of its own: the way into the app, at the same place (#308). */
+  #to-app, #ts-to-app { flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:32px; height:32px; margin:-4px 0; border-radius:var(--r-200); }
+  #to-app[hidden], #ts-to-app[hidden], #thr-side:not(.layer) #ts-to-app { display:none; }
+  #to-app:hover, #ts-to-app:hover { background:var(--hover); }
+  #to-app:focus-visible, #ts-to-app:focus-visible { outline:2px solid var(--focus-ring); outline-offset:1px; }
+  #to-app img, #ts-to-app img { display:block; width:22px; height:22px; }
+  @media (pointer: coarse) { #to-app, #ts-to-app { width:var(--touch-min); height:var(--touch-min); margin:-8px 0; } }
   .grow { flex:1; }
   /* The conversation's state, said once (#232): a dot and a word beside the
      title, or in the state line over the chat when no header shows it. */
@@ -1703,6 +1710,7 @@
 </head>
 <body>
 <header>
+  <a id="to-app" href="/" hidden aria-label="Open in Ensemble" title="Open this conversation in Ensemble"><img src="/static/icons/favicon.svg" alt="" width="22" height="22"></a>
   <button type="button" id="thr-back" hidden title="Back to the chat">‹ Chat</button>
   <h1><span id="tno" class="tno" hidden></span><span id="title">session</span></h1>
   <span id="status" class="cstate" role="status"><span class="cs-dot"></span><span class="cs-txt"></span></span>
@@ -1773,7 +1781,7 @@
   </div>
   <!-- A thread beside the chat (#234), or over it on a phone: the thread page in a frame. -->
   <aside id="thr-side" hidden aria-label="Thread">
-    <div class="ts-head"><button type="button" id="ts-back" title="Back to the chat">&lsaquo; Back</button><span id="ts-title">Thread</span><button type="button" id="ts-close" title="Close the thread" aria-label="Close the thread">&times;</button></div>
+    <div class="ts-head"><button type="button" id="ts-back" title="Back to the chat">&lsaquo; Back</button><span id="ts-title">Thread</span><a id="ts-to-app" href="/" hidden aria-label="Open in Ensemble" title="Open this thread in Ensemble"><img src="/static/icons/favicon.svg" alt="" width="22" height="22"></a><button type="button" id="ts-close" title="Close the thread" aria-label="Close the thread">&times;</button></div>
     <iframe id="ts-frame" title="Thread"></iframe>
   </aside>
   <div id="agentcol"></div>
@@ -1800,6 +1808,30 @@ fetch('/api/settings').then(r => r.json()).then(s => {
 // The hub's port, so a link to its loopback address can be made this page's.
 fetch('/api/config').then(r => r.json()).then(c => { if (c && c.port) HUB_PORT = String(c.port); }).catch(() => {});
 if (qs.get('embed')) document.body.classList.add('embed');
+// A chat in a tab of its own (a link from GitHub, a bookmark, a pasted link):
+// the icon opens the same conversation in the app, at the same message or
+// thread (#308). Not in a frame, and not where the app sent it here because it
+// does not list this room (&stay=1).
+(() => {
+  const a = document.getElementById('to-app');
+  if (!a || qs.get('embed') || qs.has('stay') || window.top !== window || !/^room-[\w-]+$/.test(ROOM || '')) return;
+  const href = () => {
+    const p = new URLSearchParams({ room: ROOM });
+    for (const k of ['msg', 'part']) if (qs.get(k)) p.set(k, qs.get(k));
+    if (THREAD_MODE) { p.set('thread', THREAD || ''); if (!THREAD && THREAD_MID) p.set('tmid', THREAD_MID); }
+    // A thread open beside the chat (on a phone, over it): the app opens it too.
+    else { let t = null; try { t = !document.getElementById('thr-side').hidden && TS; } catch (e) {} if (t) { p.set('thread', t.tid || ''); if (!t.tid && t.mid) p.set('tmid', t.mid); } }
+    return '/?' + p.toString().replace(/%3A/gi, ':');
+  };
+  const b = document.getElementById('ts-to-app');
+  for (const x of [a, b]) {
+    if (!x) continue;
+    x.href = href();
+    x.addEventListener('pointerdown', () => { x.href = href(); });
+    x.addEventListener('focus', () => { x.href = href(); });
+    x.hidden = false;
+  }
+})();
 const WORKSPACE_COMPOSE = qs.has('workspace-compose');
 if (WORKSPACE_COMPOSE) document.body.classList.add('workspace-compose');
 if (!WORKSPACE_COMPOSE) {
@@ -6682,6 +6714,7 @@ async function renderSolo(sid, agentId, force) {
 // thread opens beside it (sideOpen), and the Threads toggle lists those with
 // new replies.
 let THREADED = false;      // this chat is a PO chat (the hub's `threaded`)
+let GOTO_THREAD_WAIT = null;   // {thread, msg, part}: asked for before the room was read (#308)
 let TS = null;             // the thread open beside the channel: {tid, mid}
 let TS_AUTO = false;       // opened by reply catch-up, not by the reader
 let SHARED_THREAD = null;  // destination of the channel's one visible box
@@ -7895,6 +7928,12 @@ function refreshShow(room, ticket, sendsGen) {
     if (!THR_NOTED || THREADED !== !!room.threaded) { THR_NOTED = true; thrRemember(!!room.threaded); }
     THREADED = !!room.threaded;
     showThreadsBtn();
+    // A thread the dashboard asked for before this chat knew it was a PO's
+    // (a link opened with the page, #308): it opens now.
+    if (GOTO_THREAD_WAIT) {
+      const w = GOTO_THREAD_WAIT; GOTO_THREAD_WAIT = null;
+      if (THREADED && !THREAD_MODE) openThread(w.thread, w.msg, w.part); else if (w.msg) gotoMsg(w.msg, w.part);
+    }
     if (threadedView()) {
       // A PO chat's channel or thread: the hub answers "the same" while nothing changed.
       if ((sendsChanged || cpChanged) && LAST_ITEMS) renderBubbles(LAST_ITEMS);
@@ -9977,7 +10016,8 @@ window.addEventListener('message', (e) => {
   // The dashboard opened this chat for a link to one of its balloons.
   else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
     GOTO_OPEN = true;
-    if (d.thread && THREADED && !THREAD_MODE) openThread(d.thread, d.msg || '', d.part || '');
+    if (d.thread && !THR_NOTED && !THREAD_MODE) GOTO_THREAD_WAIT = { thread: String(d.thread), msg: d.msg || '', part: d.part || '' };
+    else if (d.thread && THREADED && !THREAD_MODE) openThread(d.thread, d.msg || '', d.part || '');
     else gotoMsg(d.msg, d.part || '');
     try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
   }
