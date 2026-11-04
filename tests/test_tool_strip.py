@@ -119,6 +119,7 @@ async function main() {
     // A desktop opens on the last conversation or the first Needs you entry
     // (#135): each of these pages starts on none, as its checks expect.
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
     await until('window.ensBooted === true', 30000);

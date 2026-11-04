@@ -9,6 +9,8 @@ middle opens the last conversation, else the first Needs you entry; on a phone
 it is the list, scrolled there. A list filter that would hide an entry gives
 way, and a PO remembered where the dock failed opens in its drawer. The wiring (the wordmark, `#needs` at load and on
 hashchange, a page saved on the old Needs you page) is read from the source.
+Since #306 a computer's list is hidden by default; then the wordmark and
+`#needs` open the Inbox instead.
 The real page is driven in tests/test_middle.py (#needs in Chrome).
 """
 from __future__ import annotations
@@ -56,6 +58,10 @@ const swRender = () => calls.push('swRender');
 const openDetail = sid => { calls.push('openDetail:' + sid); body.open = true; };
 const openProjectPage = pid => calls.push('project:' + pid);
 const pdReveal = id => calls.push('reveal:' + id);
+// #306: on a computer the list is hidden by default; then home is the Inbox.
+let LIST_SHOWN = true;
+const ldListShown = () => LIST_SHOWN;
+const ibxOpen = () => calls.push('inbox');
 const PROJECTS = { p1: { id: 'p1', poRoomId: 'po-1' }, p2: { id: 'p2', poRoomId: '' } };
 const projectById = id => PROJECTS[id] || null;
 const body = { open: false, classList: { contains: c => c === 'detail-open' && body.open } };
@@ -119,6 +125,15 @@ reset(); PD.failed = 'no dock'; SELECTED_PROJECT = null; body.open = false; reme
 log.poFailed = calls; PD.failed = '';
 // Nothing remembered, or garbage.
 store.set(LAST_CONV_KEY, '{nope'); log.garbage = lastConv();
+// #306: the list hidden (a computer's default): the wordmark and #needs open the Inbox.
+LIST_SHOWN = false;
+reset(); SELECTED_PROJECT = 'p1'; goHome();
+log.homeHidden = { calls, focused, project: SELECTED_PROJECT };
+reset(); SELECTED_PROJECT = 'p1'; swShowNeeds();
+log.needsHidden = { calls, focused };
+reset(); PHONE = true; goHome();
+log.homeHiddenPhone = calls;
+PHONE = false; LIST_SHOWN = true;
 console.log(JSON.stringify(log));
 """
 
@@ -175,6 +190,14 @@ class NeedsYouEntryPoints(unittest.TestCase):
         self.assertEqual((self.r["filterFits"]["project"], self.r["filterFits"]["shown"]), ("p1", "frozen"),
                          "one that hides nothing stays")
         self.assertEqual(self.r["filterPhone"], "", "a phone too (an entry in no project)")
+
+    def test_with_the_list_hidden_home_is_the_inbox(self):
+        # #306: a computer's list is hidden by default.
+        h = self.r["homeHidden"]
+        self.assertEqual(h["calls"], ["midLeave", "renderRows", "inbox"])
+        self.assertEqual((h["focused"], h["project"]), (None, None))
+        self.assertEqual(self.r["needsHidden"], {"calls": ["inbox"], "focused": None})
+        self.assertEqual(self.r["homeHiddenPhone"], ["midLeave", "renderRows"], "a phone: its list")
 
     def test_a_po_where_the_dock_failed_opens_in_its_drawer(self):
         self.assertIn("drawer:p1", self.r["poFailed"])
