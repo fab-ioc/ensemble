@@ -14592,9 +14592,11 @@ function pdChatRemoved(id) {
 // A thread of a PO chat (#210, #234): the chat page opens it beside its
 // channel, so the chat framed here is told which thread (or balloon) to open,
 // as a balloon link is (GOTO_MSG); one still loading is told when it starts.
-function pdThreadOpen(roomId, thread, mid, source, part = '') {
+// tmid: a thread started on a balloon (no thread id yet), apart from the
+// message to land on (mid) inside it (#308).
+function pdThreadOpen(roomId, thread, mid, source, part = '', tmid = '') {
   if (!roomId) return false;
-  GOTO_MSG.set(roomId, { msg: mid || '', part: part || '', thread: thread || '' });
+  GOTO_MSG.set(roomId, { msg: mid || '', part: part || '', thread: thread || '', tmid: thread ? '' : (tmid || '') });
   sendGotoMsg(roomId);
   return true;
 }
@@ -21513,7 +21515,7 @@ function sendGotoMsg(rid) {
   if (!g) return;
   document.querySelectorAll('iframe.dp-session, iframe.po-session').forEach(f => {
     if (f.dataset.room !== rid || !f.contentWindow) return;
-    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '' }, location.origin); } catch (e) {}
+    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '' }, location.origin); } catch (e) {}
   });
 }
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,
@@ -23343,9 +23345,31 @@ window.ensUpdPlace = () => ({
     const deepAct = deepQs.get('act');
     if (deepAct && /^room-[\w-]+$/.test(deepTask)) runTaskAction(deepTask, deepAct);
   }
+  // /?room=room-…[&msg=…&part=…][&thread=…|&thread=&tmid=…] (#308): a chat
+  // opened in a tab of its own (a link from GitHub, a bookmark) brought into
+  // the app by its Ensemble link: the PO's or the task's conversation opens,
+  // landing on that message or thread. A room this page does not list goes
+  // back to the chat's own page, which then offers no way here (&stay=1).
+  const deepRoom = !deepTask && /^room-[\w-]+$/.test(deepQs.get('room') || '') ? deepQs.get('room') : '';
+  if (deepRoom) {
+    history.replaceState(null, '', location.pathname);
+    if (!PROJECTS) await refreshProjects();
+    const msg = deepQs.get('msg') || '', part = deepQs.get('part') || '';
+    const thr = deepQs.get('thread'), tmid = deepQs.get('tmid') || '';
+    const known = registeredProjects().some(p => p.poRoomId === deepRoom && poRowOf(p))
+      || ALL_ROWS.some(r => r.roomId === deepRoom || r.sessionId === deepRoom);
+    if (!known) {
+      location.replace('/session?room=' + encodeURIComponent(deepRoom) + (msg ? '&msg=' + encodeURIComponent(msg) : '')
+        + (part ? '&part=' + encodeURIComponent(part) : '') + '&stay=1');
+      return;
+    }
+    if (thr !== null && (thr || tmid)) { ibxOpenRoom(deepRoom); pdThreadOpen(deepRoom, thr, msg || tmid, null, part, tmid); }
+    else if (msg) openMsgLink(deepRoom, msg, part);
+    else ibxOpenRoom(deepRoom);
+  }
   // Back where it was after the page reloaded itself for an update: the same
   // project and tab, the same open task, the same scroll place.
-  const back = deepTask ? null : ensUpd.restore();
+  const back = deepTask || deepRoom ? null : ensUpd.restore();
   if (back && typeof back === 'object') {
     if (back.proj) {
       if (!PROJECTS) await refreshProjects();
@@ -23368,10 +23392,15 @@ window.ensUpdPlace = () => ({
     if (back.po) { PO_PEEK = true; PO_PIN = back.pin || ''; renderPo(); }
     if (back.top) (document.scrollingElement || document.documentElement).scrollTop = back.top;
     // A page saved on the retired Needs you page comes back to the list's (#135).
-    if (back.sb === 'needsyou') swShowNeeds();
+    if (back.sb === 'needsyou') { if (!PROJECTS) await refreshProjects(); swShowNeeds(); }
+  } else if (deepRoom) {
+    // Opened above.
   } else if (location.hash === '#needs') {
     // #needs: the retired Needs you page's address, now the list's (#135).
+    // The Inbox it opens is a PO's (#308): the projects are read first, or a
+    // computer's hidden list leaves an empty page.
     history.replaceState(null, '', location.pathname + location.search);
+    if (!PROJECTS) await refreshProjects();
     swShowNeeds();
   } else if (!deepTask && window.ensBootOpen !== false) {   // false: a test's page starts on none
     // A desktop opens on the list plus the last conversation, else the first
