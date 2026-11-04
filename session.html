@@ -7583,7 +7583,8 @@ function threadMarkHtml(m) {
 // landing on msg inside it.
 function gotoThread(w) {
   if (w.thread || !w.tmid) openThread(w.thread, w.msg || '', w.part || '');
-  else openThread('', w.tmid, w.part || '');
+  else if (THREAD_MODE) openThread('', w.tmid, w.part || '');
+  else sideOpen({ tid: '', mid: w.tmid, msg: w.msg || w.tmid, part: w.part || '' });
 }
 function openThread(tid, mid, part = '') {
   if (!tid && !mid) return;
