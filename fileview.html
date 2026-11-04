@@ -1225,16 +1225,23 @@ const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' +
 // the file's owner as the hub works it out (the task whose folder holds it, else
 // its project's PO). ROOM still resolves the path; DEST is only the send's.
 // DEST_CHOICES: what the tray's chooser offers. DEST_NONE: nothing owns the file.
-let DEST = { room: ROOM, name: ROOM_NAME }, DEST_CHOICES = [], DEST_NONE = false;
+// Nothing is sent until the hub has answered: a room= in the address is only
+// used once the hub confirms it (DEST_STATE: 'pending' | 'ok' | 'failed').
+let DEST = { room: '', name: '' }, DEST_CHOICES = [], DEST_NONE = false, DEST_STATE = 'pending';
 const DEST_WHY = { opener: 'where it was opened', owner: '', po: 'its project', pick: '' };
 async function loadDest() {
-  if (!PATH_Q) return;
+  if (!PATH_Q) { DEST_STATE = 'failed'; return; }
   let j = null;
   try {
     const r = await fetch('/api/file/owner?path=' + encodeURIComponent(PATH_Q) + CTX, { cache: 'no-store' });
     if (r.ok) j = await r.json();
   } catch (e) {}
-  if (!j || !Array.isArray(j.choices)) return;   // an older hub: the room given, as before
+  if (!j || !Array.isArray(j.choices)) {         // not found, not allowed, or no answer: Copy only
+    DEST_STATE = 'failed';
+    if (typeof renderTray === 'function') renderTray();
+    return;
+  }
+  DEST_STATE = 'ok';
   DEST_CHOICES = j.choices;
   if (!FILE_AT && j.path && ABS_PATH_RE.test(j.path)) FILE_AT = j.path;
   DEST_NONE = !j.owner && !j.opener;
@@ -1769,6 +1776,8 @@ function renderTray() {
         return `<option value="${esc(c.room)}"${c.room === DEST.room ? ' selected' : ''}>${esc(c.name)}${why ? ' (' + esc(why) + ')' : ''}</option>`;
       }).join('');
     pick = `<div class="cmt-dest">${DEST_NONE ? '<span class="cmt-dest-none">This file belongs to no task or project.</span>' : ''}<label>Send to <select class="cmt-dest-pick" aria-label="Where the comments go">${opts}</select></label></div>`;
+  } else if (DEST_STATE !== 'ok') {
+    pick = `<div class="cmt-dest"><span class="cmt-dest-none">${DEST_STATE === 'pending' ? 'Finding where this file’s comments go…' : 'Could not find where this file’s comments go: copy them.'}</span></div>`;
   } else if (DEST_NONE) {
     pick = '<div class="cmt-dest"><span class="cmt-dest-none">This file belongs to no task or project: copy the comments.</span></div>';
   }

@@ -127,6 +127,16 @@ async function main() {
     await p.ev(`document.querySelector('#cmt-tray .cmt-submit').click(), 1`);
     await p.until(`!document.getElementById('cmt-tray')`);
     out.pickSent = await sent(p);
+    // 4. Opened from the task's chat while the hub is slow to say where, then
+    // failing: no Send before it answers, and none when it cannot (review 1).
+    await p.ev(`fetch('/__owner?mode=hold').then(r => r.ok)`);
+    await p.go(A.docFromTask);
+    await p.ev(ADD);
+    out.pending = await p.ev(TRAY);
+    await p.ev(`fetch('/__owner?mode=fail').then(r => r.ok)`);
+    await p.until(`DEST_STATE === 'failed'`);
+    out.failed = await p.ev(TRAY);
+    out.failedReacts = await p.ev(`!!DEST.room`);
     await p.close();
   } finally {
     ch.kill();
@@ -189,6 +199,7 @@ class InChrome(unittest.TestCase):
         outside.write_text("# Notes\n\nNothing owns this.\n", encoding="utf-8")
         cls.po, cls.task, cls.doc = po, task, doc
         cls.sent = sent = []
+        owner_mode, owner_go = {"m": "pass"}, threading.Event()
 
         class Handler(dashboard.Handler):
             def do_POST(self):
@@ -203,6 +214,16 @@ class InChrome(unittest.TestCase):
                 if self.path == "/__sent":
                     self._send_json(200, sent)
                     return
+                if self.path.startswith("/__owner?mode="):
+                    owner_mode["m"] = self.path.split("=", 1)[1]
+                    (owner_go.clear if owner_mode["m"] == "hold" else owner_go.set)()
+                    self._send_json(200, {"ok": True})
+                    return
+                if self.path.startswith("/api/file/owner") and owner_mode["m"] != "pass":
+                    owner_go.wait(20)
+                    if owner_mode["m"] == "fail":
+                        self._send_json(500, {"error": "boom"})
+                        return
                 super().do_GET()
 
         # The pages' readable folders: the test's own, as the live hub has the projects'.
@@ -262,6 +283,14 @@ class InChrome(unittest.TestCase):
         self.assertEqual([(o[0], o[2]) for o in g["opts"]], [(self.task, True), (self.po, False)])
         self.assertEqual(self.got["switched"]["send"], "Send to “Motors PO”")
         self.assertEqual(self.got["switchSent"][-1]["roomId"], self.po)
+
+    def test_no_send_until_the_hub_says_where_and_none_when_it_cannot(self):
+        self.assertIsNone(self.got["pending"]["send"], self.got["pending"])
+        self.assertIn("Finding", self.got["pending"]["none"])
+        self.assertIsNone(self.got["failed"]["send"], self.got["failed"])
+        self.assertIn("Could not find", self.got["failed"]["none"])
+        self.assertTrue(self.got["failed"]["copy"])
+        self.assertFalse(self.got["failedReacts"], "a room= the hub never confirmed was used")
 
     def test_a_file_outside_every_project(self):
         g = self.got["outside"]

@@ -168,6 +168,23 @@ class TheHubsAnswer(unittest.TestCase):
         self.assertEqual(got["room"], "")
         self.assertEqual([(c["room"], c["why"]) for c in got["choices"]], [(self.po, "pick")])
 
+    # The endpoint keeps the file APIs' boundary (review 1).
+    def test_no_path_is_400(self):
+        self.assertEqual(self.d.file_owner_answer("  ")[0], 400)
+
+    def test_a_missing_file_is_404(self):
+        self.assertEqual(self.d.file_owner_answer(str(self.doc.parent / "nope.md")), (404, {"error": "not_found"}))
+
+    def test_a_file_the_viewer_may_not_read_is_403(self):
+        with mock.patch.object(self.d, "workspace_access_ok", lambda *a, **k: False):
+            self.assertEqual(self.d.file_owner_answer(str(self.doc)), (403, {"error": "path_not_allowed"}))
+
+    def test_a_readable_file_outside_every_project_gets_its_chooser(self):
+        with mock.patch.object(self.d, "workspace_access_ok", lambda p, *a, **k: p == str(self.out)):
+            code, got = self.d.file_owner_answer(str(self.out))
+        self.assertEqual(code, 200)
+        self.assertEqual([(c["room"], c["why"]) for c in got["choices"]], [(self.po, "pick")])
+
 
 if __name__ == "__main__":
     unittest.main()

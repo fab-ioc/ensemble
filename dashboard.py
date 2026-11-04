@@ -8594,7 +8594,7 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "") -> dict:
     the file; with no owner, every project's PO. ``room`` is the default's
     id, or "" when the person has to pick."""
     fp, _ = resolve_file_ref_how(raw, room_id=room_id, cwd=cwd, dirs=True) if raw else (None, "")
-    path = str(fp) if fp is not None else (raw if os.path.isabs(raw or "") else "")
+    path = str(fp) if fp is not None else ""
     projects = load_projects()
     links = load_session_projects()
     view = []
@@ -8779,6 +8779,20 @@ _FILE_DRAG_TEXT_EXTS = {
     ".log", ".ini", ".cfg", ".conf", ".rst", ".tex", ".java", ".kt", ".kts", ".go", ".rs", ".c", ".h", ".cpp",
     ".hpp", ".cs", ".swift", ".rb", ".php", ".lua", ".r", ".pl", ".vue", ".gradle", ".properties",
 }
+
+
+def file_owner_answer(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, dict]:
+    """GET /api/file/owner's status and body: the file APIs' boundary first
+    (no path 400, no such file 404, outside what the viewer may read 403, as
+    /api/file/download), then file_owner_info for the file found."""
+    if not (raw or "").strip():
+        return 400, {"error": "missing_path"}
+    fp, _ = resolve_file_ref_how(raw, room_id=room_id, cwd=cwd, dirs=True)
+    if fp is None:
+        return 404, {"error": "not_found"}
+    if not workspace_access_ok(str(fp)):
+        return 403, {"error": "path_not_allowed"}
+    return 200, file_owner_info(str(fp), room_id=room_id, cwd=cwd)
 
 
 def file_download_target(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, Path | None]:
@@ -17832,9 +17846,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/file/owner":
             # Where the file view sends a comment on this file (#297).
             q = parse_qs(u.query)
-            self._send_json(200, file_owner_info((q.get("path", [""])[0] or "").strip(),
-                                                 room_id=(q.get("room", [""])[0] or "").strip(),
-                                                 cwd=(q.get("cwd", [""])[0] or "").strip()))
+            self._send_json(*file_owner_answer((q.get("path", [""])[0] or "").strip(),
+                                               room_id=(q.get("room", [""])[0] or "").strip(),
+                                               cwd=(q.get("cwd", [""])[0] or "").strip()))
             return
         if p == "/api/file/suggest":
             # A missing path: the files of its name or a close one (moved, renamed).
