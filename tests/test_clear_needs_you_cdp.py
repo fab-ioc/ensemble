@@ -59,12 +59,14 @@ async function main() {
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, s); fs.writeFileSync(path.join(A.shots, `clear-needs-you-${w}-${name}.png`), Buffer.from(r.data, 'base64')); };
     const click = async (sel) => { await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b) throw new Error('no ' + ${JSON.stringify(sel)}); b.click(); return 0; })()`); };
     // The recent list (everyone's default) first: Clear all in a head of its own.
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, s);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, s);
     await until(`!!document.querySelector('#sw-list .sw-needs-head [data-clear="ask"]')`, 30000).catch(async e => {
       throw new Error(e.message + ' :: ' + await ev(`JSON.stringify({ list: document.querySelector('#sw-list').innerText.slice(0, 800), attn: ATTENTION.items.length })`)); });
     o.recentHead = await ev(`(() => { const hd = document.querySelector('#sw-list .sw-needs-head'); return hd ? hd.textContent.trim() : null; })()`);
     // Grouped by status: Needs you's own head.
     await ev(`localStorage.setItem('cd-switcher-view', 'status'); 0`);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, s);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, s);
     await until(`${ROWS}.length >= 3`, 30000);
     await sleep(300);

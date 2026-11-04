@@ -9114,7 +9114,8 @@ function projectsLandingHtml() {
 }
 // A desktop's middle with nothing open (#135): the list at the left is home.
 function homeEmptyHtml() {
-  return `<div class="home-empty"><p class="empty">Pick a task or a PO in the list.</p>`
+  const say = ldListShown() ? 'Pick a task or a PO in the list.' : nounText('Pick {a project} in the bar above, or open the Inbox.');
+  return `<div class="home-empty"><p class="empty">${esc(say)}</p>`
     + `<button class="newproj-btn" title="${esc(nounText('Register a folder as {a project} (any folder — a repo, or just notes)'))}">${esc(nounText('+ New {project}'))}</button></div>`;
 }
 function wireProjectsChrome() {
@@ -19537,9 +19538,29 @@ const LD_HOME = { parent: SW_EL.parentNode, next: SW_EL.nextElementSibling };
 const LD_ICON = toolIcon('list');
 var LD = { dock: null, insets: '', ro: null };   // var: swRender may run before this line
 function ldWanted() { return !!PD.lib && !PD.failed && !isPhone(); }
-function ldDefaultLayout(L) {
-  return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]) };
+// Layout A (#306): on a computer the list is hidden by default; the page takes
+// the whole width (the conversation and the Inbox). Its home, where Panels ▾ ›
+// Tasks puts it back, is still the 300px column at the left. A test page that
+// drives the list itself sets window.ensListDocked: the list docked, as before.
+function ldDefaultLayout(L, ctx) {
+  if ((ctx && ctx.purpose === 'home') || window.ensListDocked) return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]) };
+  return { root: L.stack(['page']), hidden: [{ id: 'list', was: { kind: 'dock', home: null } }] };
 }
+// A layout saved before #306 had the list docked because that was forced on:
+// it opens in the new default once (the list hidden). A list the person put
+// on a strip, floated or popped out is their choice and stays.
+const LD_A4_KEY = 'cd-list-dock-a4';
+function ldMigrate() {
+  let done = false;
+  try { done = localStorage.getItem(LD_A4_KEY) === '1'; } catch (e) {}
+  if (done || window.ensListDocked) return;
+  try { localStorage.setItem(LD_A4_KEY, '1'); } catch (e) {}
+  const d = LD.dock;
+  if (d && d.viewMode('list') === 'pinned') d.setVisible('list', false);
+}
+// Whether the list is on screen (a desktop with the dock and the list shown, or
+// the fixed column where there is no dock).
+function ldListShown() { return !LD || !LD.dock || LD.dock.isVisible('list'); }
 function ldSync() {
   if (!LD) return;   // before this block has run
   const want = ldWanted();
@@ -19559,7 +19580,7 @@ function ldMake() {
       panels: [{ id: 'list', title: 'Tasks', el: SW_EL, icon: LD_ICON, unpinSize: LD_W, menuItems: () => swMenuItems() },
                { id: 'page', title: 'Page', el: LD_PAGE }],
       storageKey: LD_KEY,
-      defaultLayout: () => ldDefaultLayout(L),
+      defaultLayout: (ctx) => ldDefaultLayout(L, ctx),
       fill: 'page',
       minSize: { list: { w: 220, h: 120 }, page: { w: 360, h: 200 } },
       sizes: { head: 32, strip: 44 },
@@ -19570,8 +19591,9 @@ function ldMake() {
       // a click elsewhere puts it back.
       stripHover: false,
       stripOpen: 'beside',
-      // The page stays where it is. A hidden list window reopens from Panels.
-      can: (id, a) => id === 'list' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window'),
+      // The page stays where it is. The list can be hidden (#306: it is by
+      // default); Panels ▾ › Tasks reopens it.
+      can: (id) => id === 'list',
       popName: 'ensemble-list-',
       popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
       // No bodyAttrs: the page's body classes are copied into the PO dock's windows only (#154);
@@ -19588,6 +19610,7 @@ function ldMake() {
   document.body.classList.add('ld-on');
   LD.dock.onChange(() => { ldKeepPage(); ldInsets(); pdOutMarks(); });
   pdOnAdopt('ld', LD_ROOT);
+  ldMigrate();
   // A splitter's resize tells no onChange: the page's ResizeObserver notes it.
   if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
   ldKeepPage();
@@ -20239,7 +20262,9 @@ function barPaint() {
 function goHome() {
   midLeave();
   PH_CARDS = false; SELECTED_PROJECT = null; renderRows();
-  if (!phoneNow()) swFocusNeeds();
+  if (phoneNow()) return;
+  // #306: with the list hidden (a computer's default) what waits is the Inbox.
+  if (ldListShown()) swFocusNeeds(); else ibxOpen();
 }
 // The list's Needs you in view and focused (by project, the first row that
 // needs you). It shows all of it: a project chosen in the list's filter that
@@ -20264,6 +20289,7 @@ function swFocusNeeds() {
 // default conversation. A phone goes back to its list and scrolls it there.
 function swShowNeeds() {
   if (phoneNow()) { goHome(); swFocusNeeds(); return; }
+  if (!ldListShown()) { ibxOpen(); return; }   // #306: the list hidden, the Inbox
   if (!document.body.classList.contains('detail-open') && !SELECTED_PROJECT) openDefaultConv();
   swFocusNeeds();
 }

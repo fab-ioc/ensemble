@@ -60,6 +60,7 @@ async function main() {
       const ev = async expression => { const r = await c.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, s); if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
       const until = async (expression, n = 180) => { for (let i = 0; i < n; i++) { try { if (await ev(expression)) return true; } catch {} await sleep(100); } return false; };
       const shot = async name => { if (!A.shots) return; const { data } = await c.send('Page.captureScreenshot', { format: 'png' }, s); fs.writeFileSync(path.join(A.shots, `left-bar-card-${width}-${name}.png`), Buffer.from(data, 'base64')); };
+      await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, s);   // the task list docked, as before #306 hid it on a computer
       await c.send('Page.navigate', { url: A.base + '/' }, s);
       const TK = `document.querySelector('#sw-list .sw-tk[data-room="${A.task}"]')`;
       R.listed = await until(`!!${TK}`);

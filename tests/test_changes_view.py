@@ -310,6 +310,7 @@ async function main() {
     const dragTo = async (x1, y1, x2, y2) => { await mouse('mouseMoved', x1, y1); await mouse('mousePressed', x1, y1); for (const s of [0.3, 0.6, 1]) { await mouse('mouseMoved', x1 + (x2 - x1) * s, y1 + (y2 - y1) * s); await sleep(30); } await mouse('mouseReleased', x2, y2); };
     const key = async (k, code, vk) => { for (const t of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type: t, key: k, code, windowsVirtualKeyCode: vk }, sessionId); };
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
     await until('window.ensBooted === true', 30000);

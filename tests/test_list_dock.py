@@ -110,6 +110,8 @@ async function main() {
       for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: code === 'ArrowRight' ? 39 : 0 }, sessionId);
     };
     const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
+    // #306: a computer's list is hidden by default; this test drives the list docked, as before.
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
     return { evalIn, until, shot, click, key, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
@@ -433,7 +435,7 @@ class TheWiring(unittest.TestCase):
     def test_the_list_is_a_panel_of_a_dock_of_its_own(self):
         block = INDEX[INDEX.index("// ---- The list as a dock panel (#137): begin"):INDEX.index("// ---- The list as a dock panel: end")]
         for used in ("el: SW_EL", "fill: 'page'", "stripHover: false", "stripOpen: 'beside'", "strip: 44",
-                     "can: (id, a) => id === 'list' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window')", "storageKey: LD_KEY",
+                     "can: (id) => id === 'list'", "storageKey: LD_KEY",
                      "L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])])"):
             self.assertIn(used, block, used)
         self.assertIn("const LD_KEY = 'cd-list-dock';", block)

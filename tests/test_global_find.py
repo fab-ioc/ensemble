@@ -232,6 +232,7 @@ async function main() {
       for (const ch of text) { await c.send('Input.insertText', { text: ch }, sessionId); await sleep(40); }
     };
     const clear = sel => evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); e.value = ''; e.dispatchEvent(new Event('input')); return 0; })()`);
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
     return { evalIn, until, shot, click, key, type, clear, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };

@@ -1348,10 +1348,21 @@ bottom. It is how the person gets around; the board stays the planning view. `in
 `swGroups` / `swListHtml` (the "Task switcher" block) are the reference, and `#switcher` is one
 self-contained component, so a later layout can host it elsewhere.
 
+- **Hidden by default on a computer** (#306, Layout A step 4): the list dock's default layout holds
+  `list` hidden (`was` its 300px column at the left, the `home` layout), so the page, the
+  conversation and the Inbox column, takes the whole width and `--list-w` is 0. Projects are
+  reached from the bar's switcher, what waits from the Inbox: the wordmark, `#needs` and the bell's
+  Show all open the Inbox while the list is hidden (`ldListShown()`), and the empty middle says
+  "Pick a project in the bar above, or open the Inbox." The list is an optional tool: Panels ▾ ›
+  Tasks shows it, its ⋯ and − can hide it again in any view mode. A layout stored before #306 with
+  the list docked opens hidden once (`ldMigrate`, flag `cd-list-dock-a4`); one with the list on a
+  strip, floating or in its window keeps it. A phone (≤ 640px) still has the list as its home.
+  Do not add a route that only the list offers.
+
 - **A Dock panel of its own** (#137, "The list as a dock panel"): on a desktop `#switcher` is the
   `list` panel of a second dock, `#list-dock`, laid over the area under the bar (fixed, `z-index` 15,
   clicks going through it); its other panel is `#ld-page`, an empty stand-in for the page (the
-  `fill`, no title bar, never moved). **Docked at the left and pinned by default**: 300px on
+  `fill`, no title bar, never moved). **Shown, it goes docked at the left and pinned** (its home): 300px on
   `--surface-sunken` (the mockup's ground: the list is where you go, the middle what you read), the
   splitter (5px) on its right, no shadow. Its ⋯ and − are the tools' (Dock v0.5.1): View Mode
   (Dock Pinned, Dock Unpinned: a 44px left strip with its icon, sliding out beside the middle,

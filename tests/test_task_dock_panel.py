@@ -152,6 +152,7 @@ async function main() {
     };
     const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: "try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}" }, sessionId);   // the grouped list: its rows include a project's tasks (#189)
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);   // the task list docked, as before #306 hid it on a computer
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
     return { evalIn, until, shot, shotWin, click, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
