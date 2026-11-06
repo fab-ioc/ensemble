@@ -15718,7 +15718,11 @@ function ibxPaint() {
   if (btn) {
     const t = all ? ' ' + all : '';
     if (btn.lastChild.textContent !== t) btn.lastChild.textContent = t;
-    btn.title = all ? `${all} thing${all === 1 ? '' : 's'} wait${all === 1 ? 's' : ''} on you, in every project` : 'Nothing waits on you';
+    // The count is what waits (as drawn in #309); older questions are listed, not counted.
+    const old = IBX.data ? (IBX.data.older || []).filter(r => !IBX.hide.has(r.id)).length : 0;
+    const olderT = old ? `${old} older question${old === 1 ? '' : 's'}` : '';
+    btn.title = all ? `${all} thing${all === 1 ? '' : 's'} wait${all === 1 ? 's' : ''} on you, in every project${old ? '; ' + olderT : ''}`
+      : old ? `Nothing new waits on you; ${olderT}` : 'Nothing waits on you';
   }
   if (PD.dock) PD.dock.setBadge('inbox', n ? String(n) : null, n ? `${n} waiting on you` : null);
   // A phone's Inbox pane (#307), while it is open: the project the bar names.
