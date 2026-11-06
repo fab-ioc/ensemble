@@ -243,6 +243,10 @@ vm.runInContext(code + `
   let COMMENTS = [], TEAM_ALL = true, GAP_OF_MID = new Map(), GAP_N = 0, GAP_MSGS = 0, SOLO_IDLE = false, ROOM_OBJ = null, ROOM_PENDING = null;
   let MD_CACHE = new Map(), MD_CTX = '', _cmtComposerOpen = false, selShown = () => false, PATH_ABBR = null;
   const THUMB_GONE = new Set();
+  let DRAW_HELD_AT = 0, DRAW_HELD_TIMER = 0;   // the cap on a held draw (210939b)
+  const reactionsByMid = () => new Map();      // quick reactions (#258) have their own tests; none here
+  const reactRowHtml = () => '';
+  let SOLO_WIN = null, SOLO_MODE = false, ROOM_WIN = null;   // a link's window: "Later messages" (not under test here)
   const ROOM_NOS = new Map(), HUB_PORT = '', ROOM = 'room-po', REF_GEN = 0;
   const $ = () => box, fileBase = () => '', mdToHtml = t => t, copyLinkHtml = () => '', refPlain = t => t;
   const foldedPointHtml = t => esc(foldLine(t));

@@ -248,7 +248,7 @@ class TheReadPoint(_Needs):
         draw = _js_fn(page, "function renderBubbles(")
         self.assertNotIn("DRAWN_ROOM_TS", draw)
         solo = _js_fn(page, "async function renderSolo(")
-        took, fetched = solo.index("const roomTs = roomLatestTs(ROOM_OBJ);"), solo.index("await fetch(")
+        took, fetched = solo.index("const roomTs = roomLatestTs(ROOM_OBJ);"), solo.index("await pollFetch(")
         self.assertLess(took, fetched)
         self.assertLess(solo.index("DRAWN_ROOM_TS = roomTs;"), solo.index("renderBubbles(items);"))
 
@@ -306,6 +306,8 @@ class TheReadPoint(_Needs):
                                  for k in ("const taskRefProject", "let TASK_REF_PID"))
         code += ("\nconst clearTimeout = () => {}, READ_KEY = () => 'k';"
                  "\nlet READ_TIMER = 0, READ_MEM = null, DRAWN_ROOM_TS = 0, DRAW_HELD = false, TOLD = [], TICKS = 0;"
+                 "\nconst THREAD_MODE = false;"                     # the chat, not a thread's own window
+                 "\nconst setTimeout = () => 1;"                    # the hold's 3.1s cap (210939b): the test ends the hold itself
                  "\nconst loadRead = () => READ_MEM; function seenTell(ts) { TOLD.push(ts); }"
                  # Checkpoint rows (#197) have their own tests; none are drawn here.
                  "\nfunction withCheckpoints(items) { return items; }\nconst isCheckpoint = () => false;\n")
