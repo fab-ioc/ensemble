@@ -182,7 +182,9 @@ class TheChatBox(unittest.TestCase):
         row = SESSION[SESSION.index('<div class="ed-row">'):]
         row = row[:row.index('<aside id="thr-side"')]      # the side thread (#234) has its own buttons
         self.assertEqual(re.findall(r'<button[^>]* id="(\w[\w-]*)"', row),
-                         ["add-point", "attach", "stop-agent", "send"])
+                         ["add-point", "attach", "stop-agent", "send",
+                          "send-more", "send-now",    # the split Send and its menu (#252)
+                          "thread-reply"])            # the shared composer's reply-in-thread (263f9e0)
         self.assertIn('<input type="file" id="attach-input" accept="image/*" multiple hidden>', row)
         wire = SESSION[SESSION.index("$('#attach').addEventListener"):]
         wire = wire[:wire.index("$('#att-chips')")]
