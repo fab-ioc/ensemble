@@ -1490,6 +1490,49 @@ def unclose_ask(room_id: str, mid: str, n: int, now: float | None = None,
         return True
 
 
+def close_asks(room_id: str, cards, batch: str, now: float | None = None) -> list[tuple[str, int]]:
+    """Close many unanswered cards of one room at once (the Inbox's Close
+    this and earlier, #310): the entry a single close writes, marked
+    ``quiet`` (nobody was told) and with the ``batch`` that may reopen it.
+    ``cards`` are ``(mid, n, question)``; one already answered or closed is
+    left as it is. One save. Returns the ``(mid, n)`` closed."""
+    now = time.time() if now is None else now
+    out = []
+    with _LOCK:
+        led = load(room_id)
+        for mid, n, question in cards:
+            if str(n) in (led["asks"].get(mid) or {}):
+                continue
+            led["asks"].setdefault(mid, {})[str(n)] ={"closed": True, "question": question, "quiet": True, "batch": batch, "at": now}
+            out.append((mid, n))
+        if out:
+            _save(room_id, led)
+    return out
+
+
+def reopen_asks(room_id: str, cards, batch: str, window: float, now: float | None = None) -> list[tuple[str, int]]:
+    """Undo of :func:`close_asks`: each ``(mid, n)`` the ``batch`` closed at
+    most ``window`` seconds ago is open again, its entry gone as before the
+    close. Returns the ``(mid, n)`` reopened."""
+    now = time.time() if now is None else now
+    out = []
+    with _LOCK:
+        led = load(room_id)
+        for mid, n in cards:
+            got = led["asks"].get(mid) or {}
+            e = got.get(str(n))
+            if (not isinstance(e, dict) or not e.get("closed") or not batch or e.get("batch") != batch
+                    or now - float(e.get("at") or 0) > window):
+                continue
+            del got[str(n)]
+            if not got:
+                led["asks"].pop(mid, None)
+            out.append((mid, n))
+        if out:
+            _save(room_id, led)
+    return out
+
+
 def settle_asks(room_id: str, text: str, now: float | None = None) -> None:
     """The person wrote in the chat (not a quick answer): the asks of the
     messages before it wait for them no more. Their cards still answer.

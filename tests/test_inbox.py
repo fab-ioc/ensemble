@@ -218,6 +218,29 @@ class InboxTest(unittest.TestCase):
         self.assertEqual(out["count"], 0)
         self.assertEqual(out["dropped"][0]["why"], "older question: the person wrote past it")
 
+    def test_older_questions_come_in_older_newest_first_with_their_ids(self):
+        # #310: the Inbox lists them under Older questions so they can be closed.
+        a = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "po", "why": "past", "task": "#7"}
+        b = {"mid": "o2", "n": 2, "question": "Newer?", "ts": NOW - 600, "who": "po", "why": "again"}
+        self.w.decisions[PO] = ([], [a, b])
+        m = self.w.module()
+        m._task_index = lambda: [{"id": TASK, "no": 7, "noProjectId": "proj-a", "workflow": "inprogress",
+                                  "participants": []}]
+        m.task_numbers.find_task = lambda idx, ref, pid, keys, any_project=False: (
+            (TASK, "") if ref == "#7" else ("", "no"))
+        m._room_is_live = lambda e: False
+        m.normalize_workflow = lambda v: v
+        inbox.bind(m)
+        out = inbox.build(now=NOW)
+        self.assertEqual(out["count"], 0)
+        self.assertEqual(out["olderCount"], 2)
+        self.assertEqual([(r["mid"], r["n"], r["roomId"]) for r in out["older"]], [("o2", 2, PO), ("o1", 0, PO)])
+        self.assertEqual([r["age"] for r in out["older"]], [600, 9000])
+        self.assertTrue(all(r["older"] and r["kind"] == "answer" for r in out["older"]))
+        self.assertEqual((out["older"][1]["taskRef"], out["older"][1]["taskState"]), ("#7", "stopped"))
+        self.assertNotIn("taskState", out["older"][0])
+        self.assertEqual(inbox.build(project_id="proj-b", now=NOW)["olderCount"], 0)
+
     def test_one_answer_to_two_points_is_one_row(self):
         self.w.ledgers[PO] = {"points": [delivered("P1", "q1", "m-a"), delivered("P2", "q2", "m-a")]}
         out = self.build()
