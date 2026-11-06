@@ -1260,12 +1260,16 @@
   body.workspace-compose #stop-note, body.workspace-compose #thr-side,
   body.workspace-compose #agentcol, body.workspace-compose #thread-reply { display:none !important; }
   body.workspace-compose main, body.workspace-compose #chatcol { display:block; height:auto; min-height:0; overflow:visible; }
-  body.workspace-compose #compose { display:flex !important; margin:0; border:0; border-radius:0; box-shadow:none; padding:var(--s-100) var(--s-300) var(--s-200); }
+  /* The chat's own box at every width (#232): the words, with only + and Send beside them; and its focus ring. */
+  body.workspace-compose #compose { display:grid !important; margin:0; border:0; border-radius:0; box-shadow:none; padding:var(--s-100) var(--s-300) var(--s-200); }
+  body.workspace-compose #compose:focus-within { box-shadow:inset 0 0 0 2px var(--focus-ring); }
   body.workspace-compose #compose-target { display:none !important; }
   /* 32% of the workspace's window (--host-h, set by script): this page is a
      frame as tall as the box, so 32vh of it held the box under one row and a
      drag began with a jump (P226). The words' own 40vh cap is still the frame's. */
   body.workspace-compose #editor { max-height:calc(var(--host-h, 100vh) * .32); }
+  /* The words' own cap too: 40vh of this frame, as short as the box, held them to one row. */
+  body.workspace-compose #compose #input { max-height:calc(var(--host-h, 100vh) * .32); }
   /* The / list's cap is the window's too, not this short frame's (P227). While
      a menu is open the frame reaches up over the chats: clear above the box. */
   body.workspace-compose #slashpop { max-height:min(320px, calc(var(--host-h, 100vh) * .45)); }
@@ -1823,8 +1827,27 @@ document.addEventListener('click', e => {
   const action = e.target.closest('[data-phone-action]');
   if (!action) return;
   action.closest('details').open = false;
+  if (action.dataset.phoneAction === 'team-all' && WORKSPACE_COMPOSE && wcTeamToggle()) return;
   document.getElementById(action.dataset.phoneAction).click();
 });
+// The shared box under the chats (f0a5f87): its Team activity is the chat's on
+// screen, not this frame's own (it shows no messages). The setting is stored
+// for every chat, so this frame's label follows it.
+function wcTeamToggle() {
+  let chat = null, frames = [];
+  try { frames = [...window.parent.document.querySelectorAll('iframe')]; } catch (e) { return false; }
+  for (const f of frames) {
+    try {
+      const w = f.contentWindow, q = new URLSearchParams(w.location.search);
+      if ((q.get('id') || q.get('room')) === ROOM && !q.has('workspace-compose') && f.getClientRects().length && typeof w.toggleTeam === 'function') { chat = w; break; }
+    } catch (e) {}   // another origin's frame
+  }
+  if (!chat) return false;
+  chat.toggleTeam();
+  try { TEAM_ALL = localStorage.getItem('cd-chat-team') === '1'; } catch (e) {}
+  showChatBar([], 0);
+  return true;
+}
 // Threads and Earlier messages: in the + menu whenever their buttons in the
 // chat's bar are offered (a phone has no such bar in a PO chat, #242).
 for (const id of ['threads-view', 'earlier-threads']) {
