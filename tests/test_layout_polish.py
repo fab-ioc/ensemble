@@ -135,7 +135,7 @@ class ThePoHeader(unittest.TestCase):
         self.assertIn('<div class="po-name" title="PO · claude opus">PO</div>', h)
         # The state comes first: it is the one place the PO's state is said (#232).
         self.assertIn('<div class="po-sub"><span class="run" data-state-room="po-1" title="idle: running, not working"><span class="dot idle"></span>idle</span>'
-                      '<span>2 tasks open</span><span class="po-pts"', h)
+                      '<span>2 tasks open</span></div>', h)
         self.assertNotIn("Ensemble Dashboard", h)
         # A drawer (peek) has no tab: it names the project. A part a span (CSS draws the " · "), so a
         # narrow header cuts the project's name first.

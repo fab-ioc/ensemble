@@ -325,10 +325,16 @@ async function main() {
     const main = await app(b.c, '/');
     S.start = await inboxUntil(main, ids => has(ids, I.po, 'check') && has(ids, I.po, 'answer') && ['A1', 'A2', 'A3', 'A6', 'A7'].every(k => has(ids, I[k])));
     // Reading P1's answer: a real click on its Inbox row.
-    if (MOB) { await main.click(`document.getElementById('inbox-btn')`); await main.until(`PH_PANE === 'inbox'`); }
+    // A phone (#311): on a PO's screen the Inbox is the tab beside Chat; elsewhere the bar's Inbox opens #307's pane.
+    const IN_TAB = `document.body.classList.contains('po-dock') && !!PD.dock && !pdTask()`;
+    const phoneInbox = async () => {
+      if (await main.ev(IN_TAB)) { await main.click(`document.querySelector('#po-dock .dk-tab[data-dk-tab="inbox"]')`); await main.until(`PD.dock.isShown('inbox')`); }
+      else { await main.click(`document.getElementById('inbox-btn')`); await main.until(`PH_PANE === 'inbox'`); }
+    };
+    if (MOB) await phoneInbox();
     else { await main.click(`document.getElementById('inbox-btn')`); await main.until(`!!PD.dock && PD.dock.isShown('inbox')`); }
     await sleep(500);
-    const box = MOB ? `document.getElementById('ph-inbox-body')` : `PD.els.inbox`;
+    const box = MOB ? `(PH_PANE === 'inbox' ? document.getElementById('ph-inbox-body') : PD.els.inbox)` : `PD.els.inbox`;
     // All projects' rows (Alpha's beside Motors'): its own control.
     // (No project open yet, as on a phone at first: no control, every row shown.)
     if (await main.ev(`!!${box}.querySelector('[data-ibx-scope="all"]')`)) {
@@ -368,11 +374,14 @@ async function main() {
     // A4 reports it finished; opening it reads it.
     await py(`out = report(ids["A4"], "completed", "The saddle is at 74 cm.", ids["Alpha"])`);
     S.reported = await inboxUntil(main, ids => has(ids, I.A4, 'check'));
-    if (MOB) { if (await main.ev(`PH_PANE !== 'inbox'`)) { await main.click(`document.getElementById('inbox-btn')`); await main.until(`PH_PANE === 'inbox'`); } }
+    if (MOB) { if (await main.ev(`PH_PANE !== 'inbox' && !(${IN_TAB} && PD.dock.isShown('inbox'))`)) await phoneInbox(); }
     else await main.ev(`pdReveal('inbox'); 0`);
     // On a phone the open project now scopes the Inbox: back to All.
-    if (await main.ev(`IBX.scope !== 'all' && !!${box}.querySelector('[data-ibx-scope="all"]')`)) await main.click(`${box}.querySelector('[data-ibx-scope="all"]')`);
-    await main.until(`!!${box}.querySelector('a.ibx-link[data-room="${I.A4}"]')`, 15000);
+    if (await main.ev(`IBX.scope !== 'all' && !!${box}.querySelector('[data-ibx-scope="all"]')`)) {
+      await main.click(`${box}.querySelector('[data-ibx-scope="all"]')`);
+      await main.until(`IBX.scope === 'all'`, 5000).catch(async e => { throw new Error(e.message + ' :: ' + await main.ev(`(() => { const b = ${box}.querySelector('[data-ibx-scope="all"]'), r = b.getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return JSON.stringify({ r: [r.left, r.top, r.width, r.height], hit: t && (t.tagName + '.' + t.className), H: innerHeight }); })()`)); });
+    }
+    await main.until(`!!${box}.querySelector('a.ibx-link[data-room="${I.A4}"]')`, 15000).catch(async e => { throw new Error(e.message + ' :: ' + await main.ev(`JSON.stringify({ scope: IBX.scope, pane: PH_PANE, tab: ${IN_TAB}, vis: !!PD.dock && PD.dock.isShown('inbox'), proj: SELECTED_PROJECT, links: [...${box}.querySelectorAll('a.ibx-link')].map(a => a.dataset.room), html: ${box}.innerHTML.slice(0, 600) })`)); });
     await main.click(`${box}.querySelector('a.ibx-link[data-room="${I.A4}"]')`);
     S.reportOpened = await main.until(`${FRAMES(I.A4)}.some(x => x.drawn)`, 30000).catch(e => ({ fail: e.message }));
     S.reportRead = await inboxUntil(main, ids => !has(ids, I.A4));
@@ -431,7 +440,8 @@ async function main() {
     o.links.unknownToApp = await p.ev(`(() => { const a = document.getElementById('to-app'); return a ? !a.hidden : null; })()`);
     await p.close();
     p = await app(b.c, '/#needs', true);
-    o.links.needs = await p.until(MOB ? `PH_PANE === 'inbox' && !document.getElementById('ph-inbox').hidden ? { pane: PH_PANE } : null`
+    o.links.needs = await p.until(MOB ? `PH_PANE === 'inbox' && !document.getElementById('ph-inbox').hidden ? { pane: PH_PANE }
+        : document.body.classList.contains('po-dock') && PD.dock && PD.dock.isShown('inbox') ? { tab: 'inbox' } : null`
       : `document.body.classList.contains('po-dock') && PD.dock && PD.dock.isShown('inbox') ? { po: PD.pid } : null`, 20000).catch(async e => ({ fail: e.message, body: await p.ev(`document.body.className`) }));
     o.links.needsOver = await p.ev(OVER);
     await p.close();

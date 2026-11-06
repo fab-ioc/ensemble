@@ -104,7 +104,7 @@ async function main() {
     out.desk = await p.evalIn(`(async () => { ${R}
       const api = await (await fetch('/api/inbox', { cache: 'no-store' })).json();
       const rows = [...PD.els.inbox.querySelectorAll('.ibx-row')];
-      return { col: R(PD.els.inbox), chat: R(PD.els['po-chat']), shown: PD.dock.isVisible('inbox') && PD.dock.frontOf('inbox') === 'inbox',
+      return { col: R(PD.els.inbox), chat: R(PD.els['po-chat']), shown: PD.dock.isShown('inbox') && PD.dock.frontOf('inbox') === 'inbox',
         auto: PD.dock.isAuto('inbox'),
         rows: rows.map(r => r.dataset.ibx), apiRows: api.rows.filter(r => r.projectId === ${JSON.stringify(A.proj)}).map(r => r.id),
         apiAll: api.rows.length, counts: api.counts || null,
@@ -151,17 +151,17 @@ async function main() {
     await p.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.isVisible("inbox")', 15000).catch(() => null);
     out.fromBar = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: !!PD.dock && PD.dock.isVisible("inbox"), pid: PD.pid })');
     await p.close();
-    // ---- phones: the bar's Inbox opens its pane (#307)
+    // ---- phones: the PO screen's Inbox tab, beside Chat (#311)
     out.phone = {};
     for (const [w, h] of [[390, 844], [360, 780], [430, 932]]) {
       const q = await page(w, h, true);
       await toPo(q, A.phones[w]);   // its own project: the desk page opened Motors' chat, so its answers are seen
       await q.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.narrow() && !!IBX.data', 30000);
-      await q.click('document.getElementById("inbox-btn")'); await sleep(400);
-      const pane = 'document.getElementById("ph-inbox-body")';
+      await q.click('document.querySelector("#po-dock .dk-tab[data-dk-tab=inbox]")'); await sleep(400);
+      const pane = 'PD.els.inbox';
       await q.until(`!!${pane}.querySelector(".ibx-row") && ${pane}.getBoundingClientRect().width > 0`, 10000).catch(() => null);
       out.phone[w] = await q.evalIn(`(() => { ${R} const f = ${fits}; const el = ${pane};
-        return { ...f, narrow: PD.dock.narrow(), pane: PH_PANE, col: R(el),
+        return { ...f, narrow: PD.dock.narrow(), pane: PH_PANE, shown: PD.dock.isShown('inbox'), col: R(el),
           rows: [...el.querySelectorAll('.ibx-row')].map(r => R(r)),
           tabs: [...document.querySelectorAll('#po-dock .dk-tab')].filter(t => t.getBoundingClientRect().width > 0).map(t => t.dataset.dkTab),
           btn: document.getElementById('inbox-btn').getBoundingClientRect().width }; })()`);
@@ -326,13 +326,14 @@ class InboxInChrome(unittest.TestCase):
                 self.assertLessEqual(p["body"], p["W"], p)
                 self.assertEqual(p["wide"], [], p)
 
-    def test_on_a_phone_the_inbox_is_a_pane(self):
+    def test_on_a_phone_the_inbox_is_a_tab_beside_chat(self):
         for w, p in self.got["phone"].items():
             with self.subTest(w=w):
                 self.assertTrue(p["narrow"], p)
-                self.assertNotIn("inbox", p["tabs"], "no Inbox tab: the bar has it (#307)")
-                self.assertEqual(p["pane"], "inbox")
-                self.assertGreater(p["btn"], 0, "the bar's Inbox is on a phone too")
+                self.assertEqual(p["tabs"][:2], ["po-chat", "inbox"], "Chat | Inbox (#311)")
+                self.assertTrue(p["shown"], p)
+                self.assertEqual(p["pane"], "", "the tab, not #307's pane")
+                self.assertEqual(p["btn"], 0, "the bar has no Inbox of its own beside the tab")
                 self.assertTrue(p["rows"], p)
                 self.assertTrue(all(r["r"] <= int(w) and r["x"] >= 0 for r in p["rows"]), p["rows"])
 

@@ -146,11 +146,9 @@ async function main() {
       await shot('0-progress-after');
       await sleep(400);
       o.channel = await evalIn(VIEW);
-      await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
-      await until('!!document.querySelector("#points-list .pt-thr")', 10000);
-      o.sum = await evalIn('(e => e ? e.textContent : "")(document.querySelector("#points-line .pt-sum-t"))');
-      o.needsThreads = await evalIn('[...document.querySelectorAll("#points-list .pt-thr")].map(e => e.dataset.thr)');
-      await evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
+      // #311: the chat has no Needs you line nor threads bar: nothing above the messages.
+      o.above = await evalIn('["points-line", "thread-catchup", "open-questions"].filter(id => document.getElementById(id))');
+      o.barShown = await evalIn('(b => !!b && !b.hidden && b.getBoundingClientRect().height > 0)(document.getElementById("chatbar"))');
       await shot('1-channel');
       // Threads with new replies, newest first, then the channel again.
       await evalIn('document.querySelector("#chat-filters [data-filter=unread]").click(); 0');
@@ -597,8 +595,9 @@ class ThreadsPage(unittest.TestCase):
                 self.assertIn("Last reply", lines["P1"]["text"])
                 self.assertIn("1 reply", lines["P2"]["text"])
                 self.assertTrue(lines["P1"]["unread"] and lines["P1"]["dot"], "replies not seen: the dot")
-                self.assertEqual(o["needsThreads"], ["P2", "P1"], "threads with new replies, newest first; Team activity is in the chat")
-                self.assertIn("2 threads with new replies", o["sum"])
+                # #311: the Inbox lists what waits; the chat has no line or bar above it.
+                self.assertEqual(o["above"], [])
+                self.assertFalse(o["barShown"], "no threads bar in a PO chat's channel")
                 self.assertEqual(ch["threads"], "false")
                 self.assertFalse(ch["side"]["open"])
                 self.assertLessEqual(ch["scrollX"], 1)

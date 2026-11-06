@@ -6,10 +6,10 @@ The fixtures of test_desktop_layout_cdp: Motors (a PO with an answer to check,
 so one Inbox row), Wheels (a PO), Alpha (no PO), and a task in no project.
 At 360x740, 390x844, 430x932 and 440x956, a fresh browser:
 
-* opens on a PO's conversation, ← hidden, the Inbox button in the bar (44px
-  tall, with its count), and no Inbox tab among the PO screen's tabs;
-* the Inbox button opens the Inbox pane under the bar, full width, ✕ closes
-  it; a row of it opens its conversation and the pane steps aside;
+* opens on a PO's conversation, ← hidden; the PO screen's tabs start
+  Chat | Inbox (with its count) and the bar has no Inbox of its own (#311);
+* the Inbox tab shows the Inbox full width, Chat brings the conversation
+  back; a row of it opens its conversation, the Chat tab in front;
 * the switcher is a full-width pane; a project in it opens its PO;
   switcher › Task list shows the list pane; a task in it opens, and ← goes
   back to the list;
@@ -57,6 +57,8 @@ const LOOK = `(() => {
     inboxText: document.getElementById('inbox-btn').textContent.trim(), inboxExpanded: document.getElementById('inbox-btn').getAttribute('aria-expanded'),
     tabs: [...document.querySelectorAll('#po-dock .dk-tab')].filter(e => B(e)).map(e => e.textContent.trim()),
     inboxPane: B(document.getElementById('ph-inbox')), inboxRows: document.querySelectorAll('#ph-inbox-body .ibx-row').length,
+    inboxTab: !!PD.dock && PD.dock.isShown('inbox'), chatTab: !!PD.dock && PD.dock.isShown('po-chat'),
+    inboxBox: PD.dock && PD.dock.isShown('inbox') ? B(PD.els.inbox) : null, tabRows: PD.els.inbox.querySelectorAll('.ibx-row').length,
     menu: B(document.getElementById('proj-menu')), list: B(document.getElementById('switcher')),
     small: bar.map(e => [e.id || e.className || e.textContent.trim().slice(0, 12), B(e).w, B(e).h]).filter(t => t[2] < 44),
     frame: fr ? B(fr) : null, inner,
@@ -93,26 +95,31 @@ async function main() {
       await tryUntil('document.body.classList.contains("po-dock") && !!document.querySelector("#po-panel iframe.po-session") && !!IBX.data', 30000);
       await sleep(1500);
       o.home = await evalIn(LOOK); await shot('home');
-      // The Inbox pane, ✕ closes it.
-      await tap('document.getElementById("inbox-btn")');
-      await tryUntil('!document.getElementById("ph-inbox").hidden && !!document.querySelector("#ph-inbox-body .ibx-row, #ph-inbox-body .ibx-others")', 8000);
+      // The Inbox tab (#311); Chat brings the conversation back.
+      const TAB = id => `document.querySelector('#po-dock .dk-tab[data-dk-tab="${id}"]')`;
+      await tap(TAB('inbox'));
+      await tryUntil('PD.dock.isShown("inbox") && !!PD.els.inbox.querySelector(".ibx-row, .ibx-others")', 8000);
       o.inbox = await evalIn(LOOK); await shot('inbox');
       // Home's project has nothing: its empty line offers the other projects'.
-      o.others = await evalIn('(document.querySelector("#ph-inbox-body .ibx-others") || {}).textContent || ""');
+      o.others = await evalIn('(PD.els.inbox.querySelector(".ibx-others") || {}).textContent || ""');
       if (o.others) {
-        await tap('document.querySelector("#ph-inbox-body .ibx-others")');
-        await tryUntil('document.querySelectorAll("#ph-inbox-body .ibx-row").length > 0', 8000);
+        await tap('PD.els.inbox.querySelector(".ibx-others")');
+        await tryUntil('PD.els.inbox.querySelectorAll(".ibx-row").length > 0', 8000);
         o.inboxAll = await evalIn(LOOK);
       }
-      await tap('document.querySelector("#ph-inbox [data-ph-close]")'); await sleep(300);
+      await tap(TAB('po-chat')); await sleep(300);
       o.inboxClosed = await evalIn(LOOK);
-      // A row of it: its conversation, the pane steps aside. Opening the
-      // answer settles the only row, so at the last size only.
+      // A row of it: its conversation, Chat in front. Opening the answer
+      // settles the only row, so at the last size only.
       if (w === A.widths[A.widths.length - 1][0]) {
-        await tap('document.getElementById("inbox-btn")');
-        await tryUntil('document.querySelectorAll("#ph-inbox-body .ibx-link").length > 0', 8000);
-        await tap('document.querySelector("#ph-inbox-body .ibx-link")');
-        await tryUntil('document.getElementById("ph-inbox").hidden && document.body.classList.contains("po-dock") && PD.pid === ' + JSON.stringify(P.Motors), 15000);
+        await tap(TAB('inbox'));
+        await tryUntil('PD.dock.isShown("inbox") && PD.els.inbox.querySelectorAll(".ibx-link").length > 0', 8000);
+        if (!(await evalIn('PD.els.inbox.querySelectorAll(".ibx-link").length'))) {   // home is Wheels: All
+          await tap('PD.els.inbox.querySelector(".ibx-others")');
+          await tryUntil('PD.els.inbox.querySelectorAll(".ibx-link").length > 0', 8000);
+        }
+        await tap('PD.els.inbox.querySelector(".ibx-link")');
+        await tryUntil('document.body.classList.contains("po-dock") && PD.pid === ' + JSON.stringify(P.Motors) + ' && PD.dock.isShown("po-chat")', 15000);
         await sleep(300);
         o.inboxRow = await evalIn(LOOK);
       }
@@ -201,41 +208,40 @@ class PhoneHomeInChrome(unittest.TestCase):
             self.assertFalse(g["open"])
             self.assertEqual(g["pane"], "")
 
-    def test_the_inbox_is_in_the_bar_not_a_tab(self):
+    def test_the_inbox_is_a_tab_beside_chat(self):
         for w, _, o in self.each():
             g = o["home"]
-            self.assertIsNotNone(g["inboxBtn"], g)
-            self.assertGreaterEqual(g["inboxBtn"]["h"], 44)
-            self.assertLess(g["inboxBtn"]["y"], 45, "on the bar's first row")
-            self.assertTrue(g["inboxText"].endswith("1"), g["inboxText"])
-            self.assertFalse(any(t.startswith("Inbox") for t in g["tabs"]), g["tabs"])
+            self.assertIsNone(g["inboxBtn"], "the tab is the Inbox: none in the bar (#311)")
+            self.assertEqual(g["tabs"][0], "Chat", g["tabs"])
+            self.assertTrue(g["tabs"][1].startswith("Inbox"), g["tabs"])
+            self.assertTrue(g["chatTab"] and not g["inboxTab"], g)
 
-    def test_the_inbox_pane(self):
+    def test_the_inbox_tab(self):
         for w, _, o in self.each():
             g = o["inbox"]
-            self.assertEqual(g["pane"], "inbox")
-            self.assertIsNotNone(g["inboxPane"], g)
-            self.assertGreaterEqual(g["inboxPane"]["y"], g["header"]["b"] - 1, "under the bar")
-            self.assertEqual(g["inboxPane"]["w"], w)
+            self.assertTrue(g["inboxTab"], g)
+            self.assertEqual(g["pane"], "", "the tab, not #307's pane")
+            self.assertIsNone(g["inboxPane"])
+            self.assertIsNotNone(g["inboxBox"], g)
+            self.assertGreaterEqual(g["inboxBox"]["y"], g["header"]["b"] - 1, "under the bar")
+            self.assertEqual(g["inboxBox"]["w"], w)
             if o["others"]:   # home's project has none: one tap to the other projects'
-                self.assertEqual(g["inboxRows"], 0)
+                self.assertEqual(g["tabRows"], 0)
                 self.assertEqual(g["pid"], self.ids["Wheels"])
                 self.assertIn("1 in other", o["others"])
-                self.assertEqual(o["inboxAll"]["inboxRows"], 1)
+                self.assertEqual(o["inboxAll"]["tabRows"], 1)
             else:
-                self.assertEqual(g["inboxRows"], 1)
-            self.assertEqual(g["inboxExpanded"], "true")
-            self.assertIsNotNone(g["back"], "← closes the pane")
+                self.assertEqual(g["tabRows"], 1)
             c = o["inboxClosed"]
-            self.assertIsNone(c["inboxPane"])
+            self.assertTrue(c["chatTab"] and not c["inboxTab"], c)
             self.assertEqual(c["pane"], "")
-            self.assertEqual(c["inboxExpanded"], "false")
 
     def test_an_inbox_row_opens_its_conversation(self):
         g = self.got[str(SIZES[-1][0])]["inboxRow"]
         if True:
             self.assertTrue(g["po"])
             self.assertEqual(g["pid"], self.ids["Motors"])
+            self.assertTrue(g["chatTab"] and not g["inboxTab"], g)
             self.assertIsNone(g["inboxPane"])
             self.assertEqual(g["pane"], "")
 

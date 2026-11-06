@@ -157,18 +157,18 @@ async function main() {
     out.rowClosed = await p.evalIn(state(D));
     out.deskFits = await p.evalIn(fits('#po-dock .ibx'));
     await p.close();
-    // ---- 390 x 844: a phone's Inbox pane
+    // ---- 390 x 844: a phone's Inbox tab, beside Chat (#311)
     const q = await page(390, 844, true);
     await toPo(q);
     await q.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.narrow() && !!IBX.data', 30000);
-    await q.click('document.getElementById("inbox-btn")');
-    const P = 'document.getElementById("ph-inbox-body")';
+    await q.click('document.querySelector("#po-dock .dk-tab[data-dk-tab=inbox]")');
+    const P = 'PD.els.inbox';
     await q.until(`${P}.querySelectorAll('li.ibx-row[data-q]').length >= 7 && ${P}.getBoundingClientRect().width > 0`, 15000);
     out.phBefore = await q.evalIn(state(P));
     const pt = out.phBefore.qs[1], psel = `${P}.querySelector('li.ibx-row[data-ibx="${pt}"]')`;
     await q.click(`${psel}.querySelector('[data-ibx-earlier]')`); await sleep(250);
     out.phConfirm = await q.evalIn(state(P));
-    out.phFits = await q.evalIn(fits('#ph-inbox-body'));
+    out.phFits = await q.evalIn(fits('#po-dock .ibx'));
     await q.shot('close-390-confirm');
     await q.click(`${P}.querySelector('[data-ibx-go]')`);
     await q.until(`!!${P}.querySelector('.ibx-undo')`, 15000);

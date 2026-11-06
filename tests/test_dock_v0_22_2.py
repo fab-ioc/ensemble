@@ -26,7 +26,7 @@ from tests.test_tool_strip import NODE, start_hub
 from tests import chrome_profile
 
 W, H = 1728, 1000
-COLUMN = {"points": 0.939, "board": 0.964, "workspace": 0.391}
+COLUMN = {"changes": 0.939, "board": 0.964, "workspace": 0.391}
 
 CDP_JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
@@ -53,7 +53,7 @@ const BOXES = `(() => { const r = e => { const b = e.getBoundingClientRect(); re
   const stacks = [...document.querySelectorAll('#po-dock .dk-stack')].filter(e => e.getBoundingClientRect().width > 0)
     .map(e => ({ ids: [...e.querySelectorAll('[data-dk-tab]')].map(t => t.dataset.dkTab), box: r(e) }));
   const tab = id => document.querySelector('#po-dock [data-dk-tab="' + id + '"]');
-  const col = tab('points') && tab('points').closest('.dk-split.dk-col');
+  const col = tab('changes') && tab('changes').closest('.dk-split.dk-col');
   return { dock: r(document.querySelector('#po-dock')), win: { w: innerWidth, h: innerHeight }, stacks, col: col ? r(col) : null }; })()`;
 const out = {};
 async function main() {
@@ -91,7 +91,7 @@ async function main() {
     await sleep(800);
     out.after = await evalIn(BOXES);
     const back = JSON.parse(await evalIn('PD.dock.exportLayout()'));
-    const find = n => !n ? null : n.t === 'split' && n.dir === 'col' && n.kids.some(k => k.t === 'stack' && k.panels.includes('points')) ? n : n.t === 'split' ? n.kids.map(find).find(Boolean) || null : null;
+    const find = n => !n ? null : n.t === 'split' && n.dir === 'col' && n.kids.some(k => k.t === 'stack' && k.panels.includes('changes')) ? n : n.t === 'split' ? n.kids.map(find).find(Boolean) || null : null;
     const col = find(back.docks[0].layout.root);
     out.exported = col ? col.kids.map(k => ({ ids: k.panels, size: k.size === undefined ? null : k.size })) : null;
   } finally {
@@ -154,9 +154,9 @@ class OverfullSplitFractions(unittest.TestCase):
         self.assertIsNotNone(a["col"])
         col = a["col"]["h"]
         h = {i: s["box"]["h"] for s in a["stacks"] for i in s["ids"] if i in COLUMN}
-        self.assertAlmostEqual(h["points"] / col, 0.409, delta=0.01, msg=h)
+        self.assertAlmostEqual(h["changes"] / col, 0.409, delta=0.01, msg=h)
         self.assertAlmostEqual(h["workspace"], max(0.17 * col, 200), delta=3, msg=h)
-        self.assertAlmostEqual(h["board"], col - h["points"] - h["workspace"] - 2 * 5, delta=1, msg=h)
+        self.assertAlmostEqual(h["board"], col - h["changes"] - h["workspace"] - 2 * 5, delta=1, msg=h)
         self.assertGreater(h["board"], h["workspace"], h)
 
     def test_an_export_now_promises_the_column_at_most_all_of_itself(self):

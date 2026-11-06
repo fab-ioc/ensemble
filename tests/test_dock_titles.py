@@ -71,7 +71,7 @@ class TheLibraryDoesIt(unittest.TestCase):
         self.assertIn("bodyAttrs: ['class'],", INDEX)
         self.assertIn("popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },", INDEX)
         self.assertIn("function pdSyncTitles() {", INDEX)
-        self.assertIn("d.setTitle('po-chat', d.narrow() && pdTaskWanted() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
+        self.assertIn("d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
         self.assertIn("if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }", INDEX)
         # When: the middle changes, and after each refresh of the rows (a rename).
         self.assertIn("if (PD.dock) pdPopChat(ph.ownerDocument !== document);\n  pdSyncTitles();", INDEX)
@@ -343,7 +343,7 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         self.assertTrue(p["narrow"], p)
         self.assertTrue(p["task"], "the task is still in the middle on the phone")
         self.everywhere(p, "Chat", window=False)
-        for name in ("Chat", "Needs you", "Board", "Spec"):
+        for name in ("Chat", "Inbox", "Board", "Spec"):  # since #311 the Inbox is a phone tab; Needs you is gone
             self.assertIn(name, p["tabs"], p["tabs"])
         # The tab is "Chat"'s width, not a title's 160px, and Board is on screen without scrolling (the six fixed
         # tabs need some 374px of a 390px phone's 331px row since #129: Spec's end was off it before this too).

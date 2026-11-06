@@ -5,9 +5,10 @@ a project that has a PO (Motors), a task in it with a folder of its own, and a
 project without a PO (Plain):
 
 * a desktop's dock is the conversation in the middle and a 44px strip at the
-  right edge: Your asks, Changes, Files, Board, Spec, each an icon whose name
+  right edge: Changes, Files, Board, Spec (the Inbox is the column left of
+  the chat), each an icon whose name
   is its tooltip and aria-label;
-* counts on the buttons: Your asks' open asks, Changes' uncommitted files for
+* counts on the buttons: Changes' uncommitted files for
   the PO and the branch's "+N" for a task;
 * a click opens a tool beside the conversation (which narrows; nothing is
   covered), at its own width; one at a time; a second click closes it;
@@ -20,7 +21,7 @@ project without a PO (Plain):
 * a tool opened by a click slides back on a click in the conversation (the
   PO's or an open task's, after a click on the tool's own text or in its file
   view too) or in the task list; typing in it, its ⋯ menu, Go to file, its
-  file view and Your asks' arrow keep it out; pinned, it stays (Dock v0.5.1);
+  file view keep it out; pinned, it stays (Dock v0.5.1);
 * at 1280, 1440 and 1728, nothing wider than the screen; in every theme the
   strip's icons and counts clear 4.5:1;
 * a phone keeps its tabs: no strip.
@@ -53,7 +54,7 @@ from tests import chrome_profile  # noqa: E402
 
 NODE = shutil.which("node")
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8")
-TOOLS = ["points", "changes", "workspace", "board", "spec"]
+TOOLS = ["changes", "workspace", "board", "spec"]  # the Inbox is the column left of the chat (#302), not a strip tool
 
 
 CDP_JS = chrome_profile.JS + r"""
@@ -216,7 +217,7 @@ async function main() {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; 0`);
         await sleep(150);
         out.themes[t] = await p.evalIn(`(() => { const bg = e => { for (let x = e; x; x = x.parentElement) { const c = getComputedStyle(x).backgroundColor; if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') return c; } return 'rgb(255, 255, 255)'; };
-          const b = document.querySelector('${tool('points')}'), badge = b.querySelector('.dk-strip-badge');
+          const b = document.querySelector('${tool('changes')}'), badge = b.querySelector('.dk-strip-badge');
           return { icon: [getComputedStyle(b).color, bg(b)], badge: badge ? [getComputedStyle(badge).color, bg(badge)] : null }; })()`);
       }
       await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
@@ -235,39 +236,6 @@ async function main() {
       await p.evalIn('closeDetail(); 0'); await sleep(500);
       out.plainClosed = await p.evalIn(`({ dock: document.body.classList.contains('po-dock'), view: getComputedStyle(document.getElementById('view')).display,
         dpHome: document.getElementById('detail-panel').parentNode === document.body })`);
-      await p.close();
-    }
-    // ---- Your asks follow the conversation in the middle
-    {
-      const p = await page(1440, 900);
-      await go(p, A.proj); await poReady(p);
-      await p.until('!!pdTold() && !!pdTold().points && pdTold().points.items.length > 0', 20000);
-      await p.evalIn('window.__motors = pdTold(); (() => { const b = pdChatFrame().contentDocument.getElementById("msgs"); b.scrollTop = b.scrollHeight; })(); 0');
-      await openTask(p);
-      await p.click(tool('points')); await sleep(400);
-      const asks = `({ rows: [...PD.els.points.querySelectorAll('.pdp-row')].map(r => r.dataset.pt), text: PD.els.points.innerText.slice(0, 200),
-        badge: (document.querySelector('${tool('points')} .dk-strip-badge') || {}).textContent || '', fly: PD.dock.flyOpen() })`;
-      out.asksTask = await p.evalIn(asks);
-      // A link from a task: the task closes, the PO's conversation is on screen at that message.
-      const link = '#po-dock .pdp-row[data-pt="P1"] a.pdp-link[title^="Go to your message"]';
-      await p.evalIn(`window.__mid = document.querySelector(${JSON.stringify(link)}).dataset.mid; 0`);
-      await p.click(link);
-      await p.until('!document.body.classList.contains("dp-docked")', 10000);
-      await p.until('(() => { const f = pdChatFrame(); return !!f && !f.contentWindow.eval("GOTO"); })()', 10000).catch(() => null);
-      await sleep(400);
-      out.asksLink = await p.evalIn(`(() => { const f = pdChatFrame(), box = f.contentDocument.getElementById('msgs');
-        const el = [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === window.__mid);
-        const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
-        return { open: document.body.classList.contains('detail-open'), shown: f.checkVisibility({ visibilityProperty: true }), poIn: PO_PANEL.parentNode === PD.els['po-chat'],
-          inView: er.top >= br.top - 1 && er.top < br.bottom, landed: el.classList.contains('landed') }; })()`);
-      // Then a task of a project without a PO, in the same page: nothing of Motors' PO stays, even if its chat tells again.
-      await go(p, A.plain, true); await sleep(500);
-      await p.evalIn(`openDetail(ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.plainTask)}).sessionId); 0`);
-      await p.until('document.body.classList.contains("dp-docked")', 20000); await sleep(400);
-      if (await p.evalIn('PD.dock.flyOpen()') !== 'points') { await p.click(tool('points')); await sleep(300); }
-      await p.evalIn('(() => { const f = document.querySelector("#po-panel iframe.po-session"); f.dispatchEvent(new CustomEvent("po-points", { detail: window.__motors })); })(); 0');
-      await sleep(200);
-      out.asksPlain = await p.evalIn(`({ ...${asks}, told: !!pdTold() })`);
       await p.close();
     }
     // ---- widths: a tool opened on a wide window gives way on a narrower one, and a layout saved wide too
@@ -423,12 +391,12 @@ async function main() {
       const chat = '#po-panel iframe.po-session:not([hidden])';
       const ah = out.autoHide = {};
       // Opened by a click, then a click in the conversation or the task list.
-      await open('points'); await p.click(chat); await sleep(400);
+      await open('spec'); await p.click(chat); await sleep(400);
       ah.chat = await fly();
       await open('board'); await p.click('#sw-list'); await sleep(400);
       ah.list = await fly();
       // A click on the tool's own text first (nothing in it has focus), then the conversation.
-      await open('points'); await p.click('#po-dock .dk-flyout.open .dk-body'); await sleep(300);
+      await open('spec'); await p.click('#po-dock .dk-flyout.open .dk-body'); await sleep(300);
       ah.ownText = await fly();
       await p.click(chat); await sleep(400);
       ah.chatAfterText = await fly();
@@ -453,15 +421,12 @@ async function main() {
       ah.fileFrame = { fly: await fly(), focus: await p.evalIn('document.activeElement.classList.contains("wsp-frame")') };
       await p.click(chat); await sleep(400);
       ah.chatAfterFrame = await fly();
-      // Your asks' arrow takes the conversation to the message: the list stays out.
-      await open('points');
-      await p.click('#po-dock .pdp-row[data-pt="P1"] a.pdp-link[data-mid]'); await sleep(1200);
-      ah.arrow = await fly();
+      await open('board');
       // Pinned (Dock Pinned): a click in the conversation or the task list leaves it.
       await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(500);
       await p.click(chat); await sleep(300);
       await p.click('#sw-list'); await sleep(400);
-      ah.pinned = await p.evalIn(`({ mode: PD.dock.viewMode('points'), shown: PD.dock.isVisible('points') && PD.els.points.getBoundingClientRect().width > 0 })`);
+      ah.pinned = await p.evalIn(`({ mode: PD.dock.viewMode('board'), shown: PD.dock.isVisible('board') && PD.els.board.getBoundingClientRect().width > 0 })`);
       // An open task: a click in its conversation puts its Spec back.
       await openTask(p);
       await open('spec');
@@ -502,7 +467,7 @@ class TheWiring(unittest.TestCase):
                      "      || (id !== 'po-chat' ? (a !== 'hide' || PD.dock?.viewMode(id) === 'window')\n"
                      "          : (a === 'float' || a === 'pop' || a === 'max' || a === 'min' || (a === 'hide' && PD.dock?.viewMode(id) === 'window')))"):
             self.assertIn(used, dock, used)
-        self.assertIn("const PD_TOOLS = ['points', 'changes', 'workspace', 'board', 'spec'];", INDEX)
+        self.assertIn("const PD_TOOLS = ['inbox', 'changes', 'workspace', 'board', 'spec'];", INDEX)
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
@@ -611,12 +576,12 @@ class TheStrip(unittest.TestCase):
         self.assertLessEqual(g["scrollW"], g["vw"], f"{what}: no sideways scroll")
         self.assertLessEqual(g["scrollH"], g["vh"], f"{what}: no page scroll")
 
-    def test_the_strip_holds_the_five_tools_as_icons(self):
+    def test_the_strip_holds_the_four_tools_as_icons(self):
         for w in (1280, 1440, 1728):
             g = self.got[f"po{w}"]
             with self.subTest(w=w):
                 self.assertEqual([b["id"] for b in g["btns"]], TOOLS)
-                self.assertEqual([b["label"] for b in g["btns"]], ["Needs you", "Changes", "Files", "Board", "Spec"])
+                self.assertEqual([b["label"] for b in g["btns"]], ["Changes", "Files", "Board", "Spec"])
                 self.assertEqual([b["title"] for b in g["btns"]], [b["label"] for b in g["btns"]], "the name is the tooltip")
                 self.assertTrue(all(b["svg"] for b in g["btns"]), "every button is an icon")
                 self.assertEqual((g["strip"]["w"], g["strip"]["r"]), (44, g["vw"]), "44px at the right edge")
@@ -637,7 +602,7 @@ class TheStrip(unittest.TestCase):
                     self.assertEqual(f["r"], g["strip"]["x"], "between the middle and the strip")
                     self.assertLessEqual(m["r"], f["x"], "beside the conversation: nothing is covered")
                     self.assertGreaterEqual(m["w"], 360, "the conversation keeps its minimum")
-                    want = {"points": 400, "spec": 480}.get(id)
+                    want = {"spec": 480}.get(id)
                     if want:
                         self.assertEqual(f["w"], want)
                     else:
@@ -654,7 +619,7 @@ class TheStrip(unittest.TestCase):
         g = self.got["autoHide"]
         self.assertIsNone(g["chat"], "a click in the conversation")
         self.assertIsNone(g["list"], "a click in the task list")
-        self.assertEqual(g["ownText"], "points", "a click on the tool's own text keeps it")
+        self.assertEqual(g["ownText"], "spec", "a click on the tool's own text keeps it")
         self.assertIsNone(g["chatAfterText"], "then the conversation: back (the chat's frame tells the page)")
         self.assertIsNone(g["chatAfterFrame"], "from the file view's frame to the conversation: back")
         self.assertIsNone(g["taskChat"], "an open task's conversation puts its Spec back")
@@ -665,7 +630,6 @@ class TheStrip(unittest.TestCase):
         self.assertEqual(g["menu"], {"fly": "workspace", "menu": True}, "its ⋯ menu open")
         self.assertEqual(g["goToFile"], "workspace", "Go to file opens the file as a panel; the tool stays")
         self.assertEqual(g["fileFrame"], {"fly": None, "focus": True}, "a click in the file's panel, outside the tool")
-        self.assertEqual(g["arrow"], "points", "Your asks' arrow takes the conversation to the message; the list stays")
 
     def test_a_pinned_tool_stays(self):
         self.assertEqual(self.got["autoHide"]["pinned"], {"mode": "pinned", "shown": True})
@@ -738,18 +702,6 @@ class TheStrip(unittest.TestCase):
         self.assertFalse(c["dock"], "closed: the project's own board again")
         self.assertNotEqual(c["view"], "none")
         self.assertTrue(c["dpHome"])
-
-    def test_your_asks_follow_the_conversation_in_the_middle(self):
-        t = self.got["asksTask"]
-        self.assertEqual((t["fly"], t["rows"], t["badge"]), ("points", ["P1"], "1"), "a task: its project's PO's asks")
-        a = self.got["asksLink"]
-        self.assertFalse(a["open"], "the task closed")
-        self.assertTrue(a["shown"] and a["poIn"], "the PO's conversation is in the middle, on screen")
-        self.assertTrue(a["inView"] and a["landed"], a)
-        g = self.got["asksPlain"]
-        self.assertEqual(g["fly"], "points")
-        self.assertEqual((g["rows"], g["badge"], g["told"]), ([], "", False), "nothing of the other project's PO")
-        self.assertIn("no PO", g["text"])
 
     def test_a_tool_gives_way_on_a_narrower_window(self):
         for k in ("1728", "1280", "1024", "reload", "wide"):
@@ -832,7 +784,7 @@ class TheStrip(unittest.TestCase):
         g = self.got["phone"]
         self.assertTrue(g["narrow"])
         self.assertEqual(g["strip"], 0)
-        self.assertEqual(g["tabs"], ["po-chat", "points", "changes", "workspace", "board", "spec"])
+        self.assertEqual(g["tabs"], ["po-chat", "inbox", "changes", "workspace", "board", "spec"])
         self.assertTrue(g["panels"], "a phone keeps its Panels menu")
         self.assertEqual(self.got["phoneTask"], {"docked": True, "tabs": 0}, "a phone's open task is in the dock too, its tools the dock's tabs (#129)")
 

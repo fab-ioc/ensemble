@@ -74,7 +74,7 @@ const ctx = { esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { CHAT_NAMES, forCeo, gapsOf, gapWords, gapRowHtml, chatBarNote, hasReMarks, pointMaps, pointsListHtml, pointBarHtml, heldBy, PT_WORD, PT_FOLDS };`, ctx);
+  globalThis.t = { CHAT_NAMES, forCeo, gapsOf, gapWords, gapRowHtml, chatBarNote, hasReMarks, pointMaps, pointBarHtml, heldBy, PT_WORD };`, ctx);
 const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = {};
@@ -130,7 +130,6 @@ const pv = { open: 0, planned: 0, delivered: 1, approvals: [], items: [
     answers: [{ mid: 'a2', at: 119, how: 'implicit', said: 'test_login.' }] },
 ] };
 const P = T.pointMaps(pv);
-out.list = T.pointsListHtml(P, href, 2000);
 out.barHis = T.pointBarHtml({ id: 'u1', from: 'user' }, P, href);
 out.barAnswer = T.pointBarHtml({ id: 'a1', from: 'claude', text: 'Re P1: a flaky test.' }, P, href);
 out.barChild = T.pointBarHtml({ id: 'u2', from: 'user' }, P, href);
@@ -141,10 +140,7 @@ out.word = T.PT_WORD.followed;
 // leads to the words it quoted; one whose answer has the paragraph leads there.
 const pv2 = { ...pv, items: [...pv.items.map(p => p.id === 'P2' ? { ...p, state: 'followed', followedBy: 'P3' } : p),
   { id: 'P3', state: 'open', text: '**1.** > test_login\n\nWhich file?', createdAt: 130, mid: 'u3', replyTo: 'P2', comment: true, quote: 'test_login', answers: [] }] };
-// P3 waits on the PO: it is under the With the PO fold, opened here.
-T.PT_FOLDS.add('po');
-out.listQ = T.pointsListHtml(T.pointMaps(pv2), href, 2000);
-T.PT_FOLDS.delete('po');
+out.barQ = T.pointBarHtml({ id: 'u3', from: 'user' }, T.pointMaps(pv2), href);
 console.log(JSON.stringify(out));
 """
 
@@ -200,23 +196,15 @@ class InNode(unittest.TestCase):
                                          "Your messages and the answers to you · 1 team message behind 1 line"])
 
     def test_an_ask_shows_its_answer_its_thread_and_comment(self):
-        lst = self.o["list"]
-        self.assertNotIn('data-pt="P1"', lst, "a followed-up ask is closed: not listed")
-        self.assertIn('<span class="pt-said">test_login.</span>', lst)
-        self.assertIn('follow-up to <a class="pt-link" href="/session?room=room-po&amp;msg=a1&amp;part=re:P1" data-ref-msg="a1" data-ref-part="re:P1"', lst)
-        self.assertIn('data-pt-act="ack"', lst)
-        self.assertIn('data-pt-act="comment"', lst)
-        self.assertIn('data-ref-part="re:P2" title="Go to the answer">answer ↓</a>', lst)
-        self.assertIn('data-ref-part="pt:P2" title="Go to your message">your message ↑</a>', lst)
+        # #311: the chat's Needs you list is gone; the bars under the balloons carry it.
+        self.assertIn('follow-up to <a class="pt-link" href="/session?room=room-po&amp;msg=a1&amp;part=re:P1" data-ref-msg="a1" data-ref-part="re:P1"', self.o["barChild"])
         self.assertEqual(self.o["word"], "followed up")
         self.assertEqual(self.o["keep"], ["a2"], "a followed-up ask may fold; the unacknowledged answer never")
 
     def test_a_follow_up_of_a_first_reply_leads_to_the_words_it_quoted(self):
-        lst = self.o["listQ"]
-        p3 = lst[lst.index('data-pt="P3"'):]
-        self.assertIn('follow-up to <a class="pt-link" href="/session?room=room-po&amp;msg=a2&amp;part=q:test_login" data-ref-msg="a2" data-ref-part="q:test_login"', p3,
+        self.assertIn('follow-up to <a class="pt-link" href="/session?room=room-po&amp;msg=a2&amp;part=q:test_login" data-ref-msg="a2" data-ref-part="q:test_login"', self.o["barQ"],
                       "P2's answer has no 'Re P2' paragraph: the link lands on the quoted words")
-        self.assertIn('data-ref-part="re:P1"', self.o["list"], "P1's answer has one: the link lands on it")
+        self.assertIn('data-ref-part="re:P1"', self.o["barChild"], "P1's answer has one: the link lands on it")
 
     def test_the_bars_read_as_one_thread(self):
         self.assertIn("P1 · followed up ↓", self.o["barHis"])
@@ -292,18 +280,9 @@ async function main() {
         return { text: a.textContent, title: g.title, w: Math.round(r.width), inRow: r.left >= rr.left - 1 && r.right <= rr.right + 1, fg: getComputedStyle(a).fontWeight }; })`);
       o.bars = await p.evalIn(`[...document.querySelectorAll('#msgs .msg .pt-bar')].map(b => [b.closest('.msg').dataset.mid, b.textContent])`);
       await p.shot(`po-chat-${w}-clean`);
-      // The asks line: P2 with its answer's words, its thread, 👍 and Comment.
-      await p.evalIn('document.querySelector("#points-line .pt-sum").click(); 0');
-      await sleep(200);
-      // The question cards are read in the background (#209): the list says so until they are there.
-      await p.until('!!document.querySelector("#points-list .pt-ask")', 15000).catch(() => null);
-      o.asks = await p.evalIn(`(() => { const rows = [...document.querySelectorAll('#points-list .pt-row[data-pt]')]; return {
-        decisions: [...document.querySelectorAll('#points-list .pt-ask')].map(r => r.textContent), ids: rows.map(r => r.dataset.pt), said: rows.map(r => (r.querySelector('.pt-said') || {}).textContent || ''),
-        thread: rows.map(r => (r.querySelector('.pt-thread') || {}).textContent || ''), btns: rows.map(r => [...r.querySelectorAll('.pt-btn')].map(b => b.dataset.ptAct)),
-        heights: [...document.querySelectorAll('#points-list .pt-btn, #points-list a.pt-link')].map(e => Math.round(e.getBoundingClientRect().height)) }; })()`);
-      await p.shot(`po-chat-${w}-asks`);
+      // #311: the chat's Needs you list is gone; the bars under the balloons lead the same ways.
       o.land = await p.evalIn(`(async () => {
-        const a = document.querySelector('#points-list .pt-row[data-pt="P2"] a.pt-link[data-ref-part="re:P2"]'); a.click();
+        const a = document.querySelector('#msgs .msg[data-mid="po-sid:11"] .pt-bar a.pt-link[data-ref-part="re:P2"]'); a.click();
         for (let i = 0; i < 40 && GOTO; i++) await new Promise(r => setTimeout(r, 100));
         await new Promise(r => setTimeout(r, 150));
         const el = document.querySelector('#msgs .landed');
@@ -312,14 +291,14 @@ async function main() {
       })()`);
       // "your message ↑" on P2 lands on its numbered item, not the whole balloon.
       o.landItem = await p.evalIn(`(async () => {
-        const a = document.querySelector('#points-list .pt-row[data-pt="P2"] a.pt-link[data-ref-part="pt:P2"]'); a.click();
+        const a = document.querySelector('#msgs .msg[data-mid="po-sid:12"] .pt-bar a.pt-link[data-ref-part="pt:P2"]'); a.click();
         for (let i = 0; i < 40 && GOTO; i++) await new Promise(r => setTimeout(r, 100));
         await new Promise(r => setTimeout(r, 150));
         const el = document.querySelector('#msgs .landed');
         return { tag: el ? el.tagName : '', cls: el ? el.className : '', msgMarked: !!document.querySelector('#msgs .msg.landed') };
       })()`);
       // Comment: a new ask in the box, linked to the answer.
-      await p.evalIn('document.querySelector(\'#points-list .pt-row[data-pt="P2"] .pt-btn[data-pt-act="comment"]\').click(); 0');
+      await p.evalIn('document.querySelector(\'#msgs .msg[data-mid="po-sid:12"] .pt-bar [data-pt-act="comment"]\').click(); 0');
       await sleep(300);
       o.comment = await p.evalIn(`(() => { const tas = [...document.querySelectorAll('#ed-points textarea')]; return { n: tas.length, text: tas.map(t => t.value).join('|'), focused: tas.includes(document.activeElement), chips: document.querySelectorAll('#ed-points .ed-refs a.ref-chip, #ed-points .ed-refs').length }; })()`);
       await p.shot(`po-chat-${w}-comment`);
@@ -507,19 +486,6 @@ class InChrome(unittest.TestCase):
                 self.assertGreater(second["w"], 0)
                 self.assertEqual(second["fg"], "600")
                 self.assertLessEqual(o["clean"]["scrollX"], 1)
-
-    def test_the_asks_line_shows_the_answer_with_thumbs_up_and_comment(self):
-        for w, o in self._both():
-            with self.subTest(width=w):
-                a = o["asks"]
-                self.assertEqual(len(a["decisions"]), 1, a["decisions"])
-                self.assertIn("ship on Friday?", a["decisions"][0], "the question card waits on the person: a decision on top")
-                self.assertEqual(a["ids"], ["P2"])
-                self.assertEqual(a["said"][0], "Re P2: tests/test_login.py, the retry on a cold cache.")
-                self.assertEqual(a["thread"][0], "follow-up to P1 ↑")
-                self.assertEqual(a["btns"][0], ["ack", "comment"])
-                if w == 390 and o["clean"]["coarse"]:
-                    self.assertTrue(all(h >= 44 for h in a["heights"]), a["heights"])
 
     def test_a_link_lands_on_the_passage_not_the_balloon(self):
         for w, o in self._both():

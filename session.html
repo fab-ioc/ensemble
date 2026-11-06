@@ -804,13 +804,7 @@
   .thr-work:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .thr-work .preview { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--fg-muted); font-size:var(--fs-200); }
   #threads-view[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
-  body.po-thread-channel #chatbar button { min-height:var(--touch-min); }
   .thr-card { gap:var(--s-100); min-height:44px; } .thr-card .thr-root { flex-basis:0; }
-  #thread-catchup { display:flex; align-items:center; gap:var(--s-200); min-height:32px; padding:0 var(--s-300);
-    border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); }
-  #thread-catchup[hidden], body.thread #thread-catchup { display:none; }
-  #thread-catchup button { background:transparent; border:0; color:var(--link); font:inherit; cursor:pointer; min-height:var(--touch-min); }
-  #thread-catchup button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #topic-note { display:flex; align-items:center; gap:var(--s-200); min-height:var(--touch-min); padding:0 var(--s-300);
     border-bottom:1px solid var(--border); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #topic-note[hidden] { display:none; }
@@ -828,6 +822,21 @@
   #chat-filters .cf-n { color:inherit; opacity:.75; }
   #chat-filters .cf-n:empty { display:none; }
   @media (pointer: coarse) { #chat-filters button { height:var(--touch-min); } }
+  /* Earlier messages (#311): the row's last control, at its right end, quiet. */
+  #chat-filters #earlier-threads { margin-left:auto; border-color:transparent; background:transparent; color:var(--fg-muted); }
+  #chat-filters #earlier-threads:hover { background:var(--hover); color:var(--fg); }
+  #chat-filters #earlier-threads[hidden] { display:none; }
+  /* What waits in the Inbox (#311), on a phone only and only while
+     something does: one 36 px line, the warning pair, its link the tab. */
+  #inbox-strip { display:none; }
+  @media (pointer: coarse) and (max-width: 767px) {
+    #inbox-strip:not([hidden]) { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); height:36px; padding:0 var(--s-300);
+      background:var(--c-warning-bg); color:var(--c-warning-fg); border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; }
+    body.thread #inbox-strip { display:none; }
+    #inbox-strip .is-t { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #inbox-strip a { flex:0 0 auto; display:inline-flex; align-items:center; min-height:36px; color:inherit; font-weight:600; text-decoration:none; touch-action:manipulation; }
+    #inbox-strip a:focus-visible { outline:none; border-radius:var(--r-100); box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  }
   #topics-pop { position:absolute; z-index:30; top:var(--cf-top, 40px); left:var(--s-300); width:min(360px, calc(100vw - 32px));
     max-height:min(60vh, 480px); overflow:auto; padding:var(--s-100) 0; background:var(--surface);
     border:1px solid var(--border); border-radius:var(--r-200); box-shadow:0 8px 24px rgba(0,0,0,.18); font-size:var(--fs-200); }
@@ -897,10 +906,10 @@
   #thr-side.layer #ts-back { min-height:var(--touch-min); }
   #ts-frame { flex:1 1 auto; min-height:0; width:100%; border:0; background:var(--bg); }
   /* The thread page inside that frame: the frame's head is its head. */
-  body.side > header, body.side #info, body.side #agentcol, body.side #open-questions { display:none; }
+  body.side > header, body.side #info, body.side #agentcol { display:none; }
   body.side #chatcol { border-right:0; }
   /* A thread: its own messages, all of them; the chat's own bars are not its. */
-  body.thread #chatbar, body.thread #points-line, body.thread #ask-line { display:none; }
+  body.thread #chatbar, body.thread #ask-line { display:none; }
   #thr-also-l { display:inline-flex; align-items:center; gap:var(--s-100); color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; white-space:nowrap; }
   #thr-back { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }
   @media (pointer:coarse) {
@@ -986,31 +995,15 @@
   #msgs > .catchup .cu-read { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; color:var(--fg-muted); font-size:var(--fs-200); }
   #msgs > .catchup .cu-read:hover { background:var(--hover); color:var(--fg); }
   #msgs > .catchup .cu-read:focus-visible, #msgs > .catchup .cu-link:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  /* What the task asked of the person and is still open, held above the
-     conversation until it closes (the hub decides: the room's openAsk). The
-     catch-up line's look: the words say it, no colour of its own. */
-  #open-questions { flex:0 0 auto; margin:var(--s-200) var(--s-300) 0; background:var(--surface);
-    border:1px solid var(--border); border-radius:var(--r-200); font-size:var(--fs-200); line-height:16px; }
-  #open-questions[hidden], #oq-list[hidden] { display:none; }
-  #oq-toggle { width:100%; min-height:28px; padding:var(--s-100) var(--s-300); border:0; background:transparent;
-    color:var(--fg); font:inherit; font-weight:600; text-align:left; cursor:pointer; }
-  #oq-toggle:hover, .oq-row:hover { background:var(--hover); }
-  #oq-list { max-height:min(40vh, 360px); overflow:auto; border-top:1px solid var(--border); }
-  .oq-row { display:flex; align-items:center; gap:var(--s-200); padding:var(--s-100) var(--s-300); border-bottom:1px solid var(--border); }
-  .oq-row:last-child { border-bottom:0; }
-  .oq-row a { flex:1 1 auto; min-width:0; color:var(--link); overflow-wrap:anywhere; text-decoration:none; }
-  .oq-row a:hover { text-decoration:underline; }
-  .oq-row small { display:block; color:var(--fg-muted); margin-top:var(--s-050); }
-  .oq-close, .qa-close { flex:0 0 auto; padding:var(--s-100) var(--s-200); border:0; border-radius:var(--r-100);
+  .qa-close { flex:0 0 auto; padding:var(--s-100) var(--s-200); border:0; border-radius:var(--r-100);
     background:transparent; color:var(--fg-subtle); font:inherit; cursor:pointer; }
   .qa-copy { flex:0 0 auto; padding:var(--s-100) var(--s-200); border:0; border-radius:var(--r-100);
     background:transparent; color:var(--fg-subtle); font:inherit; cursor:pointer; }
   .qa-copy:hover { background:var(--hover); color:var(--fg); }
-  .oq-close:hover, .qa-close:hover { background:var(--hover); color:var(--fg); }
-  .oq-row a:focus-visible, #oq-toggle:focus-visible, .oq-close:focus-visible, .qa-close:focus-visible, .qa-copy:focus-visible {
+  .qa-close:hover { background:var(--hover); color:var(--fg); }
+  .qa-close:focus-visible, .qa-copy:focus-visible {
     outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  #oq-undo { padding:var(--s-100) var(--s-300); color:var(--fg-muted); border-top:1px solid var(--border); }
-  @media (pointer:coarse) { #oq-toggle, .oq-close, .qa-close, .qa-copy, .oq-row a { min-height:var(--touch-min); } }
+  @media (pointer:coarse) { .qa-close, .qa-copy { min-height:var(--touch-min); } }
   #ask-line { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); margin:var(--s-200) var(--s-300) 0;
     padding:var(--s-100) var(--s-300); background:var(--surface); border:1px solid var(--border);
     border-radius:var(--r-200); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
@@ -1018,41 +1011,7 @@
   #ask-line .ask-text { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
   #ask-line .ask-link { color:var(--link); }
   #ask-line .ask-link:focus-visible { outline:none; border-radius:var(--r-100); box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  /* The person's points (points.py): the ask line's look, and the words say
-     it. Information, not an alarm: no colour of its own; an answer waiting
-     for the person's acknowledgement is the one word in --fg, weight 600. */
-  #points-line { flex:0 0 auto; margin:var(--s-200) var(--s-300) 0; background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--r-200); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
-  #points-line[hidden] { display:none; }
-  #points-line .pt-sum { display:flex; align-items:center; gap:var(--s-200); width:100%; min-height:24px; padding:var(--s-100) var(--s-300);
-    background:transparent; border:none; border-radius:var(--r-200); color:var(--fg-muted); font:inherit; text-align:left; cursor:pointer; }
-  #points-line .pt-sum:hover { background:var(--hover); }
-  #points-line .pt-caret { flex:0 0 auto; width:12px; }
-  #points-line .pt-sum-t { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
-  #points-list { list-style:none; margin:0; padding:0 var(--s-300); max-height:40vh; overflow-y:auto; border-top:1px solid var(--border); }
-  #points-list[hidden] { display:none; }
-  .pt-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-100) var(--s-200); padding:var(--s-100) 0; border-bottom:1px solid var(--border); }
-  .pt-row:last-child { border-bottom:none; }
-  .pt-id { flex:0 0 auto; font-family:var(--font-mono); font-size:var(--fs-200); color:var(--fg); font-variant-numeric:tabular-nums; }
-  .pt-words { flex:1 1 160px; min-width:0; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .pt-age, .pt-state { flex:0 0 auto; color:var(--fg-muted); font-variant-numeric:tabular-nums; }
-  .pt-state.delivered, .pt-chip.delivered { color:var(--fg); font-weight:600; }
-  #points-list .pt-group { padding:var(--s-200) 0 var(--s-050); color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
-  .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
-  /* Needs you (ED-209): a question card's row is its first line as the link; a
-     fold's head (Older questions, With the PO, Closed) is a disclosure button
-     in the group head's look; "Nothing waits on you" in --fg-muted. */
-  .pt-ask .pt-words a.pt-link { white-space:nowrap; }
-  #points-list .pt-fold { padding:var(--s-100) 0 0; }
-  #points-list .pt-fold-sum { display:flex; align-items:center; gap:var(--s-200); width:100%; min-height:24px; padding:0;
-    background:transparent; border:none; border-radius:var(--r-100); color:var(--fg-subtle); font:inherit; font-weight:600; text-align:left; cursor:pointer; }
-  #points-list .pt-fold-sum:hover { color:var(--fg); }
-  #points-list .pt-fold-sum:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  #points-list .pt-note { color:var(--fg-muted); }
-  /* Decisions' Clear all (#279), at the end of its head; its confirm in place. */
-  #points-list .pt-group:has(.pt-clear) { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-050) var(--s-100); }
-  .pt-clear { margin-left:auto; display:inline-flex; align-items:center; gap:var(--s-100); font-weight:500; white-space:nowrap; }
-  .pt-clear .pt-btn { font-weight:600; }
+  .pt-chip.delivered { color:var(--fg); font-weight:600; }
   a.pt-link { color:var(--link); white-space:nowrap; }
   /* A PO message's id written in a balloon, as its name (pmLinkHtml). */
   .msg .text.md a.pm-link { color:var(--link); }
@@ -1061,7 +1020,7 @@
     color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; cursor:pointer; }
   .pt-btn:hover { background:var(--hover); color:var(--fg); }
   .pt-btn:disabled { color:var(--fg-disabled); cursor:default; }
-  .pt-btn:focus-visible, a.pt-link:focus-visible, #points-line .pt-sum:focus-visible { outline:none; border-radius:var(--r-100);
+  .pt-btn:focus-visible, a.pt-link:focus-visible { outline:none; border-radius:var(--r-100);
     box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* Under a balloon: the points it holds or answers, and their one click. */
   .msg .pt-bar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-100) var(--s-200); margin-top:var(--s-200);
@@ -1494,9 +1453,8 @@
     #slashpop .sl-src { display:none; }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
-    /* Needs you: every link in the list and under a balloon is a tap target, and each fold's head. */
-    #points-list a.pt-link, .pt-bar a.pt-link, .pt-bar .pt-chip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
-    #points-list .pt-fold-sum { min-height: var(--touch-min); }
+    /* Every link under a balloon is a tap target. */
+    .pt-bar a.pt-link, .pt-bar .pt-chip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     .cp-line .cp-btn, #cp-dlg .cp-acts button { min-height: var(--touch-min); }   /* a checkpoint's buttons (#197) */
     /* Nothing needs hover: Copy link always shows. Chips have full finger targets. */
@@ -1516,7 +1474,7 @@
     #msgs > .catchup .cu-link { display:inline-flex; align-items:center; min-height:var(--touch-min); }
     #ask-line { min-height: var(--touch-min, 44px); }
     #ask-line .ask-link { min-height:var(--touch-min); }
-    #points-line .pt-sum, .pt-btn { min-height: var(--touch-min, 44px); }
+    .pt-btn { min-height: var(--touch-min, 44px); }
     a.pt-link { display:inline-flex; align-items:center; min-height:var(--touch-min); }
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
@@ -1528,7 +1486,6 @@
     #msgs .msg.needs-answer { border-inline-start:4px solid var(--c-warning-bold); }
     #msgs .msg.needs-answer > .from::after { content:'Reply needed'; color:var(--c-warning-fg); background:var(--c-warning-bg); padding:0 var(--s-100); margin-left:var(--s-200); font-size:var(--fs-100); }
     #chatbar { display:none; }
-    body.po-thread-channel #chatbar { display:flex; min-height:var(--touch-min); }
     #ask-line { margin:0; padding:0 var(--s-200); border-radius:0; min-height:var(--touch-min); }
     #ask-line .ask-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #ask-line .ask-link { display:block; min-height:var(--touch-min); line-height:var(--touch-min); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1563,26 +1520,16 @@
     #compose:has(.ed-pt) { grid-template-columns:minmax(0,1fr); }
     #compose:has(.ed-pt) .ed-row { justify-content:flex-end; }
   }
-  /* A phone's chat (#242): one row above the messages, never four. The Needs
-     you line already lists the open questions (under Older questions, its
-     count in the line) and the threads with new replies, so their own strips
-     go while it shows; Threads and Earlier messages are in the box's + menu. */
+  /* A phone's chat (#311): nothing above the messages but the filter chips
+     and, only while something waits, one line saying what and where: the
+     Inbox tab. Earlier messages is in the box's + menu. */
   @media (pointer: coarse) and (max-width: 767px) {
-    #msgpane:has(#points-line:not([hidden])) #open-questions,
-    #msgpane:has(#points-line:not([hidden])) #thread-catchup { display: none; }
-    body.po-thread-channel #chatbar { display: none; }
-    #points-line { margin: 0; border-radius: 0; border-width: 0 0 1px; }
-    /* Nothing waits (#307): the row goes to the messages; the bar's Inbox
-       and the Needs you tab still have it all. */
-    #points-line:has(> .pt-sum.pt-idle[aria-expanded="false"]) { display: none; }
-    #points-line .pt-sum-oq { display: inline; }
-    #points-line .pt-sum-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #chat-filters #earlier-threads { display: none; }
     /* A row's fixed parts add up to less than the screen (#295); the sender has
        the most, so its time stays in sight, and the line takes what is left. */
     .msg-fold .from { display:flex; align-items:baseline; max-width:55%; min-width:0; white-space:nowrap; } .msg-fold .from .who, .msg-fold .from .to, .msg-fold .from .send-how { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; } .msg-fold .from .to { margin-left:.3em; } .msg-fold .from .send-how { margin-left:var(--s-100); } .msg-fold .from .at { flex:0 0 auto; }
     .msg-fold .chips, .msg-fold.gap .gasks { max-width:35%; }
   }
-  .pt-sum-oq { display: none; }
   @media not all and (pointer: coarse) {
     #compose { margin:0 var(--s-300) var(--s-200); grid-template-columns:minmax(0,1fr) auto; }
     #compose #input { grid-column:1; grid-row:1; }
@@ -1591,16 +1538,12 @@
     #compose #thr-also-l { grid-row:3; min-height:0; }
     #compose:has(.ed-pt) .ed-row { grid-column:1; grid-row:auto; }
     #compose:has(.ed-pt) #thr-also-l { grid-row:auto; }
-    #points-line { margin:0; border-radius:0; }
-    #points-line .pt-sum { min-height:28px; padding:0 var(--s-200); }
     #ask-line, #ask-line .ask-link, #ask-line .ask-detail summary { min-height:28px; line-height:28px; }
     #chat-controls { display:flex; flex:0 0 auto; align-items:flex-start; min-width:0; max-height:160px; overflow:auto; border-bottom:1px solid var(--border); }
-    #chat-controls:has(#chatbar[hidden]):has(#points-line[hidden]) { display:none; }
+    #chat-controls:has(#chatbar[hidden]) { display:none; }
     #chatbar { display:flex; padding:0 var(--s-200); min-height:28px; margin-left:auto; }
     #chatbar-note { display:none; }
 
-    #points-line { flex:1 1 auto; min-width:0; border:0; }
-    #points-line .pt-sum-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   }
   /* ---- Session actions: begin shared block ---------------------------------
      The action bar (static/actions.js): one primary action and a More menu,
@@ -1726,18 +1669,16 @@
     <div id="state-line" hidden></div>
     <div id="msgpane">
       <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
-      <div id="open-questions" hidden></div>
       <div id="ask-line" role="status" hidden></div>
       <!-- A PO chat's filter (#304): what the conversation shows. Topics are one of them, not a place of their own. -->
-      <div id="chat-filters" role="toolbar" aria-label="Show in this chat" hidden><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="threads" aria-pressed="false">Threads<span class="cf-n"></span></button><button type="button" data-filter="topics" aria-pressed="false" aria-haspopup="dialog" aria-expanded="false" aria-controls="topics-pop">Topics<span class="cf-n"></span> <span aria-hidden="true">&#9662;</span></button><button type="button" data-filter="unread" aria-pressed="false">Unread<span class="cf-n"></span></button></div>
+      <div id="chat-filters" role="toolbar" aria-label="Show in this chat" hidden><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="threads" aria-pressed="false">Threads<span class="cf-n"></span></button><button type="button" data-filter="topics" aria-pressed="false" aria-haspopup="dialog" aria-expanded="false" aria-controls="topics-pop">Topics<span class="cf-n"></span> <span aria-hidden="true">&#9662;</span></button><button type="button" data-filter="unread" aria-pressed="false">Unread<span class="cf-n"></span></button><button type="button" id="earlier-threads" hidden>Earlier messages</button></div>
+      <div id="inbox-strip" role="status" hidden><span class="is-t"></span><a href="#inbox" class="is-go">Inbox ›</a></div>
       <div id="topics-pop" role="dialog" aria-label="Topics" hidden></div>
       <div id="chat-controls">
-        <div id="points-line" hidden></div>
-        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button><button type="button" id="earlier-threads" hidden>Earlier messages</button></div>
+        <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button><button type="button" id="threads-view" hidden aria-pressed="false">Threads</button></div>
       </div>
       <div id="topic-note" role="status" hidden><span></span><button type="button">Show all</button></div>
       <div id="topic-suggestion" hidden><span></span><button type="button" data-topic-reply="add">Add</button><button type="button" data-topic-reply="reject">Not this topic</button></div>
-      <div id="thread-catchup" hidden></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
@@ -3800,27 +3741,6 @@ async function askUndo(b) {
   }
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
-// Close and Undo use the same ten-second window as a sent answer.
-let OQ_OPEN = false, OQ_LAST_CLOSED = '', OQ_SIG = '';
-function showOpenQuestions() {
-  const root = $('#open-questions');
-  if (!root) return;
-  const cards = (ROOM_OBJ && ROOM_OBJ.openCards) || [];
-  const offered = OQ_LAST_CLOSED && askUndoLeft(OQ_LAST_CLOSED) > 0;
-  const show = cards.length || offered;
-  const sig = JSON.stringify(cards) + '|' + OQ_OPEN + '|' + (offered ? OQ_LAST_CLOSED : '');
-  if (sig === OQ_SIG) return;
-  OQ_SIG = sig;
-  root.hidden = !show;
-  if (!show) return;
-  const rows = cards.map(c => {
-    const key = c.mid + ':' + c.n, href = refHref(ROOM, c.mid, 'ask:' + c.n);
-    return `<div class="oq-row"><a class="card-jump" href="${esc(href)}" data-ask-mid="${esc(c.mid)}" data-ask-n="${c.n}">${esc(hubUrlWords(c.question, c.mid))}<small>${esc(c.who || 'Agent')} · since ${esc(chatStamp(c.ts) || 'earlier')}</small></a><button type="button" class="oq-close" data-ask="${esc(key)}" title="Close this question without answering">Close</button></div>`;
-  }).join('');
-  const undo = OQ_LAST_CLOSED && askUndoLeft(OQ_LAST_CLOSED) > 0
-    ? `<div id="oq-undo">Closed · <button type="button" class="qa-undo qa-reopen" data-ask="${esc(OQ_LAST_CLOSED)}">Undo</button></div>` : '';
-  root.innerHTML = `<button type="button" id="oq-toggle" aria-expanded="${OQ_OPEN}">Open questions (${cards.length})</button><div id="oq-list"${OQ_OPEN ? '' : ' hidden'}>${rows}</div>${undo}`;
-}
 async function askClose(key) {
   const cut = key.lastIndexOf(':'), mid = key.slice(0, cut), n = +key.slice(cut + 1);
   const c = ((ROOM_OBJ && ROOM_OBJ.openCards) || []).find(x => x.mid === mid && x.n === n);
@@ -3831,16 +3751,12 @@ async function askClose(key) {
     const r = await postOk('/api/room/ask/close', { roomId: ROOM, mid, n });
     if (r && r.points) pointsChanged(r.points, ptTicket());
     ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== mid || x.n !== n);
-    OQ_LAST_CLOSED = key;
     askUndoOffer(key);
-    showOpenQuestions();
   } catch (e) {
     if (e && e.points) pointsChanged(e.points, ptTicket());
     if (e && e.kept) {
       ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== mid || x.n !== n);
-      OQ_LAST_CLOSED = key;
       askUndoOffer(key);
-      showOpenQuestions();
     } else pointsNote('Not closed: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '.');
   }
   finally { ASK_LOCAL.delete(key); if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
@@ -3851,11 +3767,9 @@ async function askReopen(key) {
   try {
     const r = await postOk('/api/room/ask/reopen', { roomId: ROOM, mid: key.slice(0, cut), n: +key.slice(cut + 1) });
     ASK_UNDO.delete(key);
-    OQ_LAST_CLOSED = '';
     if (r && r.points) pointsChanged(r.points, ptTicket());
     await refresh();
   } catch (e) { pointsNote('Not reopened: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '.'); }
-  showOpenQuestions();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
 // A click on an option (or Send): sent once from this page, and the hub takes
@@ -4500,14 +4414,6 @@ function pointMaps(pv) {
 function heldBy(keys, keep) {
   return keys.size || keep.size ? (m, i) => keys.has(foldKey(m, i)) || (!!m.id && keep.has(m.id)) : null;
 }
-// "2m", "3h", "4d": how long a point has waited, from the reader's clock.
-function ptAge(ts, now) {
-  const s = Math.max(0, (now || Date.now() / 1000) - (ts || 0));
-  if (s < 90) return 'now';
-  if (s < 3600) return Math.round(s / 60) + 'm';
-  if (s < 48 * 3600) return Math.round(s / 3600) + 'h';
-  return Math.round(s / 86400) + 'd';
-}
 // Needs you (#209): only what waits on the person. Decisions: the question
 // cards still open (the hub's needs.decisions); To try: answers that ask them
 // to try or check something; New answers: answers they have not seen. An
@@ -4515,30 +4421,7 @@ function ptAge(ts, now) {
 // nothing waits for a tick. Each delivered item says which (needs: "try",
 // "new", "": seen); a hub from before Needs you sends none: every answer is new.
 const ptNeeds = p => p.state !== 'delivered' ? '' : (p.needs != null ? p.needs : 'new');
-function needsCounts(P) {
-  const n = P.needs || {};
-  const count = k => P.items.filter(p => ptNeeds(p) === k).length;
-  // A hub from before Needs you sends only counts (and at most 200 points): its delivered ones are new.
-  return { decisions: (n.decisions || []).length, totry: n.totry != null ? n.totry : count('try'),
-    news: n.news != null ? n.news : P.needs ? count('new') : Math.max(P.delivered, count('new')),
-    threads: (P.threads || []).length };
-}
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-// "Needs you: 2 decisions · 1 to try · 3 new answers"; "Nothing waits on you"
-// with only folds under it; '' with nothing at all.
-function pointsSummary(P) {
-  const c = needsCounts(P), n = P.needs || {};
-  const bits = [];
-  if (c.decisions) bits.push(plural(c.decisions, 'decision', 'decisions'));
-  if (c.totry) bits.push(`${c.totry} to try`);
-  if (c.news) bits.push(plural(c.news, 'new answer', 'new answers'));
-  if (c.threads) bits.push(plural(c.threads, 'thread with new replies', 'threads with new replies'));
-  if (bits.length) return 'Needs you: ' + bits.join(' · ');
-  const folds = (n.olderCount || 0) + (n.closedCount || 0) + P.open + P.planned + P.items.filter(p => p.state === 'delivered').length;
-  // Still reading the question cards with nothing else to fold: no line yet
-  // (it would show "Nothing waits on you" and then go, the chat jumping).
-  return folds ? 'Nothing waits on you' : '';
-}
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 // part: the passage to land on ("re:P12" the answer's paragraph, "pt:P12"
 // the point's item on the person's balloon), else the whole balloon.
@@ -4553,9 +4436,6 @@ const ackBtn = id => ptBtn(id, 'ack', '👍 Ack', `Acknowledge the answer to ${i
 const commentBtn = id => ptBtn(id, 'comment', 'Comment', `Comment on the answer to ${id}: a new ask linked to it goes in the box; sending it closes ${id}`);
 // The answer a point's links go to: its delivery, else its plan.
 const ptAnswerOf = p => p ? (p.state === 'planned' ? lastPlan(p) : (lastAnswer(p) || lastPlan(p))) : null;
-// What the answer says, for a list: its "Re Pn:" paragraph (the hub's
-// `said`), else the summary of an answer given by doing.
-const ptSaid = (a, n = 200) => { const t = a ? String(a.said || a.summary || '') : ''; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 // The thread a point is in: "follow-up to P103 ↑" (linked to P103's answer)
 // and, on P103, "followed up by P105 ↓" (linked to P105's message).
 // The passage of the answer a follow-up leads to: its "Re Pn:" paragraph; an
@@ -4568,118 +4448,6 @@ function ptThreadHtml(p, P, href) {
   const down = p.followedBy && P.byId.get(p.followedBy);
   if (down) bits.push(`<span class="pt-chip pt-thread">followed up by ${down.mid ? ptLink(down.mid, down.id + ' ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
   return bits.join('');
-}
-// The list's groups, in this order, newest first: Decisions, To try, New
-// answers; then folds, closed until opened (PT_FOLDS): the older questions
-// (asked again since, or old and written past), what waits on the PO (open,
-// in progress), what closed by itself (reopenable). A later group (Threads)
-// is one more entry.
-const PT_GROUPS = [['decisions', () => 'Decisions'], ['try', () => 'To try'], ['new', () => 'New answers'], ['threads', () => 'Threads']];
-const PT_FOLDS = new Set();
-let PT_DEC_CLEAR = null;   // Clear all on the Decisions (#279): {phase: confirm | busy | undo, before, n}
-let PT_DEC_TIMER = 0;
-const PT_REASON = { seen: 'seen', superseded: 'superseded', migrated: 'closed as old' };
-// A question card's row: its first line, linked to the card (landing on the ask), its task, since when.
-function ptAskRow(c, href, now) {
-  const q = hubUrlWords(foldLine(String(c.question || '')).replace(/\*\*|__/g, ''), c.mid);
-  const words = q.length > 120 ? q.slice(0, 119) + '…' : q;
-  return `<li class="pt-row pt-ask" data-mid="${esc(c.mid)}" data-n="${esc(String(c.n || 0))}">`
-    + `<span class="pt-words" title="${esc(q)}">${ptLink(c.mid, words || 'the question', href, 'Go to the question card', 'ask:' + (c.n || 0))}</span>`
-    + (c.task ? `<span class="pt-chip">${esc(c.task)}</span>` : '')
-    + `<span class="pt-age" data-at="${esc(String(c.ts || 0))}">${esc(ptAge(c.ts, now))}</span></li>`;
-}
-// An answered point's row: its words, the answer's, both ends linked, the
-// thumbs up (it still closes one at once) and Comment.
-function ptAnswerRow(p, P, href, now, word) {
-  const a = lastAnswer(p), plan = lastPlan(p), said = ptSaid(curAnswer(p));
-  return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
-    + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
-    + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
-    + `<span class="pt-state delivered">${esc(word)}</span>`
-    + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
-    + ptThreadHtml(p, P, href)
-    + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
-    + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
-    + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
-    + ackBtn(p.id) + commentBtn(p.id) + '</li>';
-}
-// What waits on the PO: an open point, or one in progress with its task.
-function ptWaitRow(p, P, href, now) {
-  const plan = p.state === 'planned' ? lastPlan(p) : null, said = plan ? ptSaid(plan) : '', task = p.state === 'planned' ? ptTaskWords(p) : '';
-  return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
-    + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
-    + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
-    + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
-    + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
-    + ptThreadHtml(p, P, href)
-    + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
-    + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
-    + ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`) + '</li>';
-}
-// A point that closed by itself: why, linked to its answer, Reopen.
-function ptClosedRow(c, href, now) {
-  const why = PT_REASON[c.reason] || c.reason || 'closed';
-  return `<li class="pt-row" data-pt="${esc(c.id)}"><span class="pt-id">${esc(c.id)}</span>`
-    + `<span class="pt-words" title="${esc(c.text || '')}">${esc(ptWords(c.text))}</span>`
-    + `<span class="pt-age" data-at="${esc(String(c.at || 0))}">${esc(ptAge(c.at, now))}</span>`
-    + `<span class="pt-state acked">${esc(why + (c.supersededBy ? ' by ' + c.supersededBy : ''))}</span>`
-    + (c.answer ? ptLink(c.answer, 'answer ↓', href, 'Go to the answer', 're:' + c.id) : '')
-    + ptBtn(c.id, 'reopen', 'Reopen', `Reopen ${c.id}: it is back under New answers`) + '</li>';
-}
-// A PO chat's thread with replies not seen yet (#210): its title opens it.
-function ptThreadRow(t, now) {
-  const n = +t.unread || 0;
-  return `<li class="pt-row pt-thr" data-thr="${esc(t.id)}">`
-    + `<span class="pt-words" title="${esc(t.title || '')}"><button type="button" class="thr-open pt-link" data-thr="${esc(t.id)}" title="Open the thread">${esc(t.title || 'Thread')}</button></span>`
-    + `<span class="pt-age" data-at="${esc(String(t.lastAt || 0))}">${esc(ptAge(t.lastAt, now))}</span>`
-    + `<span class="pt-state delivered">${esc(plural(n, 'new reply', 'new replies'))}</span></li>`;
-}
-// A fold: its head a button (open or closed per page, like the line itself).
-function ptFoldHtml(key, title, rows) {
-  if (!rows.length) return '';
-  const open = PT_FOLDS.has(key);
-  return `<li class="pt-group pt-fold"><button type="button" class="pt-fold-sum" data-fold="${esc(key)}" aria-expanded="${open}">`
-    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(title)}</button></li>` + (open ? rows.join('') : '');
-}
-function pointsListHtml(P, href, now) {
-  const n = P.needs || {}, newest = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
-  const by = k => P.items.filter(p => ptNeeds(p) === k).sort(newest);
-  const groups = {
-    decisions: (n.decisions || []).map(c => ptAskRow(c, href, now)),
-    try: by('try').map(p => ptAnswerRow(p, P, href, now, 'to try')),
-    new: by('new').map(p => ptAnswerRow(p, P, href, now, 'new answer')),
-    threads: (P.threads || []).map(t => ptThreadRow(t, now)),
-  };
-  if (n.pending && !groups.decisions.length) groups.decisions.push('<li class="pt-row pt-note">Reading the question cards…</li>');
-  // Clear all (#279): every open card to Older questions, none answered; Undo for a few seconds after.
-  const dc = PT_DEC_CLEAR, nDec = (n.decisions || []).length;
-  if (dc && dc.phase === 'undo' && !groups.decisions.length) groups.decisions.push(`<li class="pt-row pt-note">Cleared ${dc.n}: ${dc.n === 1 ? 'it is' : 'they are'} under Older questions.</li>`);
-  const decClear = dc && dc.phase === 'undo'
-    ? `<span class="pt-clear" role="status"><button type="button" class="pt-btn" data-dec-clear="undo">Undo</button></span>`
-    : dc && (dc.phase === 'confirm' || dc.phase === 'busy') && nDec
-      ? `<span class="pt-clear" role="group" aria-label="Clear all">Move ${nDec} to Older?`
-        + `<button type="button" class="pt-btn" data-dec-clear="go"${dc.phase === 'busy' ? ' disabled' : ''}>Clear</button>`
-        + `<button type="button" class="pt-btn" data-dec-clear="cancel"${dc.phase === 'busy' ? ' disabled' : ''}>Cancel</button></span>`
-      : nDec ? `<span class="pt-clear"><button type="button" class="pt-btn" data-dec-clear="ask" title="Move every question here to Older questions; none is answered and no agent is told">Clear all</button></span>` : '';
-  let html = PT_GROUPS.map(([k, head]) => groups[k].length ? `<li class="pt-group">${esc(head())}${k === 'decisions' ? decClear : ''}</li>` + groups[k].join('') : '').join('');
-  if (!html) html = '<li class="pt-row pt-note">Nothing waits on you</li>';
-  const waits = P.items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
-  html += ptFoldHtml('older', `Older questions (${n.olderCount || (n.older || []).length})`, (n.older || []).map(c => ptAskRow(c, href, now)));
-  html += ptFoldHtml('po', `${CHAT_NAMES.po ? 'With the PO' : 'Waiting for an answer'} (${waits.length})`, waits.map(p => ptWaitRow(p, P, href, now)));
-  html += ptFoldHtml('closed', `Closed (${n.closedCount || (n.closed || []).length})`, (n.closed || []).map(c => ptClosedRow(c, href, now)));
-  return html;
-}
-function pointsLineHtml(P, open, href, now) {
-  const sum = pointsSummary(P);
-  if (!sum) return '';
-  // On a phone the open questions have no strip of their own (#242): their count is in the line.
-  const older = (P.needs && (P.needs.olderCount || (P.needs.older || []).length)) || 0;
-  const oq = older ? `<span class="pt-sum-oq"> · ${esc(plural(older, 'older question', 'older questions'))}</span>` : '';
-  // Nothing waiting and nothing older: idle, a phone's chat leaves the line out (#307).
-  const idle = !older && !needsCounts(P).decisions && sum === 'Nothing waits on you';
-  return `<button type="button" class="pt-sum${idle ? ' pt-idle' : ''}" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each ask, with your message and its answer'}">`
-    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span><span class="pt-sum-t">${esc(sum)}${oq}</span></button>`
-    + `<ul id="points-list"${open ? '' : ' hidden'}>${open ? pointsListHtml(P, href, now) : ''}</ul>`;
 }
 // The bar under a balloon: on the person's own, each point it holds and where
 // it stands; on an agent's, the points it answers and the Ack that closes
@@ -4752,41 +4520,11 @@ async function pointAct(id, act, post) {
   } catch (e) { pointsNote('Not done: ' + ((e && e.message) || 'the hub did not answer') + '.'); return null; }
   finally { PT_BUSY.delete(k); }
 }
-// Clear all on the Decisions (#279): ask, then confirm in place; Clear sends
-// every open card to Older questions (nothing answered, no agent told);
-// Undo puts the mark back.
-function decClearEnd() { clearTimeout(PT_DEC_TIMER); PT_DEC_CLEAR = null; showPointsLine(); }
-async function decClear(what) {
-  if (what === 'ask') { PT_DEC_CLEAR = { phase: 'confirm' }; showPointsLine(); const go = document.querySelector('#points-list [data-dec-clear="go"]'); if (go) go.focus(); return; }
-  if (what === 'cancel') { decClearEnd(); return; }
-  const cur = PT_DEC_CLEAR;
-  if (what !== 'go' && !(what === 'undo' && cur && cur.phase === 'undo')) return;
-  const n = ((POINTS.needs && POINTS.needs.decisions) || []).length;
-  const body = what === 'go' ? { roomId: ROOM, action: 'clear' } : { roomId: ROOM, action: 'undo', before: cur.before };
-  clearTimeout(PT_DEC_TIMER);
-  PT_DEC_CLEAR = { phase: 'busy' };
-  showPointsLine();
-  try {
-    const r = await (window.pageWrite ? window.pageWrite('/api/room/points/decisions', body)
-      : fetch('/api/room/points/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
-    let j = {};
-    try { j = await r.json(); } catch (e) {}
-    if (!r.ok) throw new Error(j.message || j.error || ('error ' + r.status));
-    PT_DEC_CLEAR = what === 'go' ? { phase: 'undo', before: j.before || 0, n } : null;
-    if (PT_DEC_CLEAR) PT_DEC_TIMER = setTimeout(decClearEnd, 8000);
-    if (j.points) pointsChanged(j.points, ptTicket());
-    showPointsLine();
-  } catch (e) {
-    pointsNote((what === 'go' ? 'Not cleared: ' : 'Not undone: ') + ((e && e.message) || 'the hub did not answer') + '.');
-    decClearEnd();
-  }
-}
 // ---- The person's points: end
 // ---- Folding a long conversation: end
 let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
-// The person's points as the room's poll last gave them (pointMaps), and
-// whether the list under their line is open (per page, not remembered).
-let POINTS_SIG = '', POINTS_OPEN = false, POINTS_LINE_SIG = '';
+// The person's points as the room's poll last gave them (pointMaps).
+let POINTS_SIG = '';
 let GROUP_OF_MID = new Map();   // a folded message's id → its group's key, to land on it
 let FOLD_REV_OF_MID = new Map(); // expected row revision for each folded message
 let CHAT_VIEW = null;           // { items, sup }: what was drawn, for the comment tray
@@ -5120,20 +4858,12 @@ function ptTicket() { return ++PT_GEN; }
 function pointsChanged(pv, ticket) {
   if (ticket) { if (ticket < PT_DRAWN) return; PT_DRAWN = ticket; }
   const sig = JSON.stringify(pv || null);
-  if (sig === POINTS_SIG) { pointsAges(); return; }
+  if (sig === POINTS_SIG) return;
   POINTS_SIG = sig;
   POINT_REFS.refresh();      // the chips' stages and cards: asked again when drawn
   POINTS = pointMaps(pv);
   pointsTell(pv);
-  showPointsLine();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
-  if (typeof showOpenQuestions === 'function') showOpenQuestions();
-}
-// A chat framed in a project's PO screen (index.html) whose Points panel is
-// on screen: the panel lists the points, so the line above the chat does not
-// (the frame carries data-points-elsewhere while it does).
-function pointsElsewhere() {
-  try { return !!(window.frameElement && window.frameElement.hasAttribute('data-points-elsewhere')); } catch (e) { return false; }
 }
 // The page framing this chat hears of every change to the points, with each
 // one's first words as the chat's list shows them (the PO screen's Points panel).
@@ -5145,30 +4875,6 @@ function pointsTell(pv) {
     const f = window.frameElement;
     if (f) f.dispatchEvent(new f.ownerDocument.defaultView.CustomEvent('po-points', { detail: window.EMBED_POINTS }));
   } catch (e) {}
-}
-function showPointsLine() {
-  const el = $('#points-line');
-  if (!el) return;
-  const html = pointsLineHtml(POINTS, POINTS_OPEN, mid => refHref(ROOM, mid));
-  // The ages tick in place (pointsAges): they are not what makes a new line.
-  const sig = html.replace(/(<span class="pt-age"[^>]*>)[^<]*/g, '$1');
-  const away = pointsElsewhere();
-  if (sig === POINTS_LINE_SIG) { if (el.hidden !== (!html || away)) el.hidden = !html || away; pointsAges(); return; }
-  POINTS_LINE_SIG = sig;
-  const hadFocus = el.contains(document.activeElement) ? document.activeElement : null;
-  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.fold ? `.pt-fold-sum[data-fold="${hadFocus.dataset.fold}"]` : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]`
-    : hadFocus.dataset.decClear ? '[data-dec-clear]:not([disabled])' : '') : '';
-  el.hidden = !html || away;
-  el.innerHTML = html;
-  if (focusKey) { const f = el.querySelector(focusKey) || el.querySelector('.pt-sum'); if (f) f.focus(); }
-}
-function pointsAges() {
-  const now = Date.now() / 1000;
-  document.querySelectorAll('#points-line .pt-age[data-at]').forEach(s => {
-    const p = POINTS.items.find(x => x.id === s.closest('.pt-row').dataset.pt);
-    const t = ptAge(p ? p.createdAt : +s.dataset.at, now);
-    if (s.textContent !== t) s.textContent = t;
-  });
 }
 function pointsNote(text) { setText($('#hint'), text); }
 // ---- Seen answers (#209): the hub keeps which answers the person has seen
@@ -5384,11 +5090,8 @@ function showChatBar(items, quietRows) {
     phoneFilter.textContent = TEAM_ALL ? 'Team activity: shown' : 'Team activity: folded';
     phoneFilter.title = chatBarNote(TEAM_ALL, quietRows, GAP_N, GAP_MSGS);
   }
-  if (threadedView() && !THREAD_MODE) {
-    bar.hidden = false; btn.hidden = true;
-    setText($('#chatbar-note'), THR_LIST ? 'Threads with new replies' : 'Channel');
-    return;
-  }
+  // A PO chat's channel has no bar (#311): the filter chips say what shows.
+  if (threadedView() && !THREAD_MODE) { bar.hidden = true; return; }
   btn.hidden = false;
   const any = items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
   bar.hidden = !any;
@@ -6856,7 +6559,6 @@ function chatFilterSet(f, { persist = true, redraw = true } = {}) {
   }
   chatFiltersPaint();
   showTopicFilter();
-  showThreadCatchup();
   if (!redraw || !THREADED || THREAD_MODE) return;
   if (cfQuery() !== was) { thrRestart(); renderThreaded(true); }
   else renderBubbles(LAST_ITEMS || []);
@@ -7355,7 +7057,6 @@ async function renderThreaded(force) {
     THR_ACTIVITY = d.activity || null;
     if (THR_ACTIVITY) THR_META[THR_ACTIVITY.id] = THR_ACTIVITY;
     THR_UNREAD.forEach(t => { THR_META[t.id] = t; });
-    showThreadCatchup();
     if (THREAD_MODE) {
       THR_INFO = d.thread || null;
       TOPIC_SUGGESTION = d.topicSuggestion || null;
@@ -7465,14 +7166,6 @@ function threadSeen(items) {
 // "5 replies · you, PO · last reply 12:14 · answered": the line under a parent.
 const THR_STATE = { needs: 'needs you', po: 'with the PO', task: 'task working', answered: 'answered', done: 'done' };
 const THR_WHO = { you: 'you', po: 'PO', task: 'task', hub: 'hub' };
-function showThreadCatchup() {
-  const el = $('#thread-catchup');
-  if (!el) return;
-  const newest = !THREAD_MODE && !THR_LIST && THR_UNREAD[0];
-  el.hidden = !newest;
-  if (!newest) return;
-  el.innerHTML = `<span>${THR_UNREAD.length} thread${THR_UNREAD.length === 1 ? '' : 's'} with new replies</span><button type="button" data-thr="${esc(newest.id)}" data-mid="${esc(newest.lastMid || newest.root)}" data-last-mid="${esc(newest.lastMid || newest.root)}">Open newest reply</button>`;
-}
 function showTopicFilter() {
   const el = $('#topic-note');
   if (!el) return;
@@ -7893,7 +7586,6 @@ function refreshShow(room, ticket, sendsGen) {
   ROOM_OBJ = room;
   composerDestinationPaint();
   SOLO_MODE = soloMode;
-  showOpenQuestions();
   showInterrupt(room.interrupts || [], room);
   // The agents a message can be directed to with its @<identity> prefix:
   // from every poll, so a stopped room with its terminals hidden knows them too.
@@ -9291,7 +8983,7 @@ window.addEventListener('load', pgQueue, true);   // an image loading grows its 
 new MutationObserver(pgQueue).observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
 if (window.ResizeObserver) {
   const ro = new ResizeObserver(pgQueue);
-  ['#msgs', '#compose', '#points-line'].forEach(s => { const el = document.querySelector(s); if (el) ro.observe(el); });
+  ['#msgs', '#compose'].forEach(s => { const el = document.querySelector(s); if (el) ro.observe(el); });
   ro.observe(document.body);
 }
 pgQueue();
@@ -10055,6 +9747,32 @@ window.addEventListener('message', (e) => {
 // Inside the dashboard, say this chat has started: a balloon link opened while
 // it was still loading is sent to it again.
 try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
+// #311: on a phone the PO chat shows one line naming what waits in the Inbox
+// (CSS shows it only there). The page writes the counts on this frame as
+// data-inbox-wait='{"q":3,"check":1,"wait":0}', so a reloaded frame reads them
+// at once; Inbox › asks the page to open its Inbox.
+function inboxStrip() {
+  const el = $('#inbox-strip'); if (!el) return;
+  let c = null;
+  try { const f = window.frameElement; c = f && JSON.parse(f.getAttribute('data-inbox-wait') || 'null'); } catch (e) { c = null; }
+  const q = +(c && c.q) || 0, chk = +(c && c.check) || 0, w = +(c && c.wait) || 0;
+  const parts = [];
+  if (q) parts.push(q + (q === 1 ? ' question' : ' questions') + ' for you');
+  if (chk) parts.push(chk + ' to check');
+  if (w) parts.push(w + ' waiting on you');
+  const show = !THREAD_MODE && parts.length > 0;
+  el.querySelector('.is-t').textContent = parts.join(' · ');
+  if (el.hidden === show) el.hidden = !show;
+}
+try {
+  const f = window.frameElement;
+  if (f) new MutationObserver(inboxStrip).observe(f, { attributes: true, attributeFilter: ['data-inbox-wait'] });
+} catch (e) {}
+inboxStrip();
+$('#inbox-strip .is-go').addEventListener('click', (e) => {
+  e.preventDefault();
+  try { if (window.parent !== window) window.parent.postMessage({ type: 'inbox-open', roomId: ROOM }, location.origin); } catch (err) {}
+});
 // Inside the dashboard, a click in this chat puts a tool slid out of the
 // page's Dock back, and closes a Dock menu: once the click is over, never at
 // the press. Closing it at the press moved the conversation under the pointer
@@ -10689,20 +10407,6 @@ function pointClick(e) {
   pointAct(b.dataset.pt, b.dataset.ptAct, postOk).then(() => { if (b.isConnected) b.disabled = false; });
   return true;
 }
-$('#points-line').addEventListener('click', e => {
-  const to = e.target.closest && e.target.closest('.thr-open');
-  if (to) { openThread(to.dataset.thr, ''); return; }
-  const dec = e.target.closest && e.target.closest('[data-dec-clear]');
-  if (dec) { if (!dec.disabled) decClear(dec.dataset.decClear); return; }
-  if (pointClick(e)) return;
-  if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); return; }
-  const fold = e.target.closest && e.target.closest('.pt-fold-sum');
-  if (fold) { const k = fold.dataset.fold; if (PT_FOLDS.has(k)) PT_FOLDS.delete(k); else PT_FOLDS.add(k); showPointsLine(); return; }
-  // An answer given by doing has no balloon: its row, opened, is where it is read.
-  const row = e.target.closest && e.target.closest('.pt-row[data-pt]');
-  const p = row && POINTS.byId.get(row.dataset.pt), a = p && p.state === 'delivered' && curAnswer(p);
-  if (a && !a.mid && !p.seen) seenSend([], [p.id], 'link');
-});
 $('#msgs').addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
   if (!ta) return;
@@ -10733,14 +10437,6 @@ $('#msgs').addEventListener('compositionend', e => {
   const option = ASK_AFTER_COMPOSE.get(key);
   ASK_AFTER_COMPOSE.delete(key);
   setTimeout(() => { askSyncDraft(key); askSend(key, option, postOk); }, 0);
-});
-$('#open-questions').addEventListener('click', e => {
-  const toggle = e.target.closest('#oq-toggle');
-  if (toggle) { OQ_OPEN = !OQ_OPEN; showOpenQuestions(); return; }
-  const close = e.target.closest('.oq-close');
-  if (close) { askClose(close.dataset.ask); return; }
-  const undo = e.target.closest('.qa-reopen');
-  if (undo) { askReopen(undo.dataset.ask); return; }
 });
 $('#msgs').addEventListener('click', e => {
   const undo = e.target.closest && e.target.closest('.qa-undo');
@@ -10796,7 +10492,6 @@ $('#team-all').addEventListener('click', toggleTeam);
 $('#threads-view').addEventListener('click', () => chatFilterSet({ kind: THR_LIST ? 'all' : 'unread' }));
 $('#ts-close').addEventListener('click', sideClose);
 $('#ts-back').addEventListener('click', sideClose);
-$('#thread-catchup').addEventListener('click', e => { const b = e.target.closest('button[data-thr]'); if (b) openThread(b.dataset.thr, b.dataset.mid); });
 $('#earlier-threads').addEventListener('click', () => { thrLoadUp(); });
 $('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h.postMessage({ type: 'thread-back', roomId: ROOM }, location.origin); });
 // Where the reader is: at the end the chat follows new messages; scrolled up it
@@ -10861,7 +10556,7 @@ function openTaskFrom(a) {
 // the short tap's compatibility click. Activate only navigation controls from
 // a short, stationary touch; the capture listener eats a late native click.
 // Buttons that send or answer are deliberately outside this list.
-const TAP_NAV = 'a.task-chip, a.task-title-ref, .task-card a, a.ref-chip, a.msg-link, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a.card-jump, a[data-point], button.thr-open, button.thr-reply, #threads-view, #thread-catchup button[data-thr], #ts-back, #ts-close, .phone-compose-tools > summary, [data-phone-action="threads-view"]';
+const TAP_NAV = 'a.task-chip, a.task-title-ref, .task-card a, a.ref-chip, a.msg-link, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link, a.card-jump, a[data-point], button.thr-open, button.thr-reply, #threads-view, #ts-back, #ts-close, .phone-compose-tools > summary, [data-phone-action="threads-view"]';
 let TAP_PRESS = null, TAP_DONE = null;
 document.addEventListener('touchstart', e => {
   TAP_PRESS = null;

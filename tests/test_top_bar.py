@@ -350,17 +350,19 @@ class TheTopBar(unittest.TestCase):
         self.assertLess(h["header"], 60)
         self.assertLessEqual(h["scrollW"], h["vw"])
 
-    def test_a_project_on_a_phone_is_two_rows_and_the_panels_start_high(self):
+    def test_a_project_on_a_phone_is_one_row_and_the_panels_start_high(self):
+        # #311: the logo, the project's name, search, avatar and Create on one row;
+        # no back (the project is home) and no Panels (the panels are the tabs).
         g = self.got["phonePo"]
         at = {i["id"]: i for i in g["items"]}
-        row1 = {k for k in ("search-open", "me-btn", "new-btn") if k in at}
-        self.assertEqual(row1, {"search-open", "me-btn", "new-btn"})
-        for k in ("bar-back", "proj-switch", "bar-here"):
-            self.assertIn(k, at, k)
-            self.assertGreater(at[k]["y"], at["new-btn"]["y"] + 30, f"{k} is on the second row")
+        row = ["bar-home", "proj-switch", "search-open", "me-btn", "new-btn"]
+        self.assertEqual(sorted(at), sorted(row), at)
+        for k in row:
+            self.assertLessEqual(abs(at[k]["y"] - at["new-btn"]["y"]), 4, f"{k} is on the one row")
             self.assertGreaterEqual(at[k]["h"], 44, f"{k} is finger-sized")
+        self.assertEqual([k for k in sorted(row, key=lambda k: at[k]["x"])], row, "left to right")
         self.assertGreater(at["proj-switch"]["w"], 44, "the name shows")
-        self.assertLessEqual(g["tabsTop"], 130)
+        self.assertLessEqual(g["tabsTop"], 90)
         self.assertLessEqual(g["scrollW"], g["vw"])
 
     def test_the_workspace_on_a_phone_is_one_pane_at_a_time(self):
@@ -405,8 +407,8 @@ class TheTopBar(unittest.TestCase):
     def test_the_wordmark_leaves_a_phone_project_its_room(self):
         g = self.got["phonePo"]
         at = {i["id"]: i for i in g["items"]}
-        self.assertLess(at["bar-home"]["y"], at["bar-back"]["y"], "on row one, above back and the name")
-        self.assertLessEqual(g["tabsTop"], 110, "the panel tabs start where they did")
+        self.assertLessEqual(at["bar-home"]["x"] + at["bar-home"]["w"], at["proj-switch"]["x"], "the logo, then the name")
+        self.assertLessEqual(g["tabsTop"], 90, "the panel tabs start under the one row")
 
     def test_the_workspace_on_a_laptop_shows_the_tree_and_the_file_s_panel(self):
         w = self.got["wideWs"]
