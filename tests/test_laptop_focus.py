@@ -79,7 +79,10 @@ class LaptopFocus(focus.PhoneFocus):
             return
         for g in self.got:
             with self.subTest(width=g['width'], theme=g['theme'], kind=g['kind']):
-                self.assertGreaterEqual(g['share'], .75 if g['width'] == 1728 else .60)
+                # The shared message box under the chats (f0a5f87) is taller than the
+                # chat's own box was (a "To:" line over an 80px-min frame), on purpose:
+                # the PO set the bars to that design (#312), 70% at 1728 and 55% at 768.
+                self.assertGreaterEqual(g['share'], .70 if g['width'] == 1728 else .55)
                 self.assertLessEqual(g['scrollW'], g['width'])
                 self.assertFalse(g['overlap'])
                 self.assertFalse(g['balloonOverflow'])

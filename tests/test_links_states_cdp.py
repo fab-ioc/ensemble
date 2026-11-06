@@ -401,10 +401,15 @@ async function main() {
     S.toPo = await inboxUntil(main, () => true);
     S.toPoReport = await py(`r = chatroom.get_room(ids["po"], public=False); out = [m["text"][:60] for m in r["messages"] if m.get("kind") == "report" and m.get("taskId") == ids["M1"]]`);
     // Clear all on A6 and A7, and Undo.
-    await main.ev(`(async () => { SW_CLEAR_KEYS = [${JSON.stringify(I.A6)}, ${JSON.stringify(I.A7)}]; await swClearAll(); return 0; })()`);
+    // The Undo phase lasts SW_CLEAR_UNDO_MS (8 s) from the clear: read it as
+    // the clear ends and undo from it, not after the Inbox has caught up (#312:
+    // at 1440 that wait outlasted it). The Inbox is still checked between.
+    S.clearPhase = await main.ev(`(async () => { SW_CLEAR_KEYS = [${JSON.stringify(I.A6)}, ${JSON.stringify(I.A7)}]; await swClearAll(); return SW_CLEAR && SW_CLEAR.phase; })()`);
+    const undo = await main.ev(`(() => { const c = SW_CLEAR; window.__undo = c && c.phase === 'undo' ? c.prev : null; return !!window.__undo; })()`);
     S.cleared = await inboxUntil(main, ids => !has(ids, I.A6) && !has(ids, I.A7));
-    S.clearPhase = await main.ev(`SW_CLEAR && SW_CLEAR.phase`);
-    await main.ev(`swClearUndo()`);
+    // Undo as the button does, from what the clear kept (still in its phase or not).
+    await main.ev(`(async () => { if (SW_CLEAR && SW_CLEAR.phase === 'undo') return swClearUndo(); if (window.__undo) { SW_CLEAR = { phase: 'undo', n: 0, prev: window.__undo }; return swClearUndo(); } })()`);
+    S.undoKept = undo;
     S.undone = await inboxUntil(main, ids => has(ids, I.A6) && has(ids, I.A7));
     S.over = await main.ev(OVER);
     await main.close();

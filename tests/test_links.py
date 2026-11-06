@@ -351,6 +351,7 @@ ALLOW = {
     "actions": "its buttons carry the action classes wired in the document click handler",
     "offer": "its buttons are handled by the offer's own click listener",
     "pref-btn-row": "its buttons are wired by #pref-consolidate and #pref-split",
+    "ibx-scope": "its This project/All buttons are wired by [data-ibx-scope] in the Inbox's click listener (#302)",
 }
 
 
@@ -396,7 +397,7 @@ def element_attrs(src: str, tok: str) -> list[tuple[str, set[str]]]:
             if name in [re.sub(r"\$\{.*", "", c) for c in classes] or re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", m.group(3)):
                 rest = m.group(2) + m.group(4)
                 ids = re.findall(r"\bid=\"([\w-]+)\"", rest)
-                data = re.findall(r"\b(data-[\w-]+)=", rest)
+                data = re.findall(r"\b(data-[\w-]+)", rest)   # data-x="…" or bare (data-ph-close, data-ibx-go${…})
                 out.append((m.group(1).lower(), {"." + c for c in re.findall(r"[\w-]+", m.group(3))}
                             | {"#" + i for i in ids} | {"[" + d for d in data}))
         for m in re.finditer(rf"(\w+)\.className\s*=\s*['\"`][^'\"`]*(?<![\w-]){re.escape(name)}(?![\w-])", src):
@@ -430,9 +431,13 @@ def wired(js: str, tokens: set[str], tag: str) -> bool:
             pats.append(rf"['\"` ](?:[a-z]+)?\[{name}[\]=]")
         else:
             pats += [rf"['\"`][^'\"`\n]*#{name}(?![\w-])", rf"getElementById\(\s*['\"]{name}['\"]\s*\)"]
+    # A click listener's short name for e.target.closest (the Inbox's
+    # `const at = sel => e.target.closest(sel)`, #302) counts as closest().
+    aliases = sorted(set(re.findall(r"\b(\w+)\s*=\s*\(?\w+\)?\s*=>\s*\w+\.target\.closest\b", js)))
+    clickish = re.compile(CLICKISH.pattern + "".join(rf"|\b{re.escape(a)}\(" for a in aliases))
     for p in pats:
         for m in re.finditer(p, js):
-            if CLICKISH.search(js[max(0, m.start() - 80):m.end() + 120]):
+            if clickish.search(js[max(0, m.start() - 80):m.end() + 120]):
                 return True
     # const btn = document.getElementById('mode'); ... btn.onclick = ...
     for t in tokens:
@@ -554,7 +559,7 @@ class PoRoomFileBase(unittest.TestCase):
 
         room = {"id": "room-po1", "cwd": r"C:\code\Ensemble", "taskDir": "", "sharedCwd": "", "participants": []}
         projects = [{"id": "proj-1", "path": r"C:\code\Ensemble", "home": r"C:\home\Ensemble"}]
-        with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
+        with mock.patch.object(dashboard.chatroom, "get_room", lambda rid, **kw: dict(room) if rid == room["id"] else None), \
              mock.patch.object(dashboard, "load_projects", lambda: projects), \
              mock.patch.object(dashboard, "load_session_projects", lambda: {}),              mock.patch.object(dashboard, "_task_index", lambda: [
                  {"projectId": "proj-1", "taskDir": r"C:\home\Ensemble\t1", "createdAt": 1},
@@ -562,8 +567,11 @@ class PoRoomFileBase(unittest.TestCase):
             bases, search = dashboard._file_ref_places(room_id="room-po1", cwd=room["cwd"])
         # the order file_refs documents: the room's folders, the project home, its Documents; not
         # the other tasks' folders (the home holds them), neither tried nor walked
-        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents"])
-        self.assertEqual(search, bases)
+        self.assertEqual(search, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents"])
+        # P261 (d353ba6): the folder holding the projects and the user's home come
+        # after them, tried for a path as written but never walked
+        self.assertEqual(bases[:len(search)], search)
+        self.assertEqual(bases[len(search):], [r"C:\home", str(Path.home())])
 
     def test_resolves_a_documents_path_under_the_project_home(self):
         import tempfile
@@ -578,7 +586,7 @@ class PoRoomFileBase(unittest.TestCase):
             code.mkdir()
             room = {"id": "room-po1", "cwd": str(code), "taskDir": "", "sharedCwd": "", "participants": []}
             projects = [{"id": "proj-1", "path": str(code), "home": str(home)}]
-            with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
+            with mock.patch.object(dashboard.chatroom, "get_room", lambda rid, **kw: dict(room) if rid == room["id"] else None), \
                  mock.patch.object(dashboard, "load_projects", lambda: projects), \
                  mock.patch.object(dashboard, "load_session_projects", lambda: {}):
                 fp = dashboard.resolve_file_ref("Documents/x.md", room_id="room-po1", cwd=room["cwd"])
@@ -697,8 +705,9 @@ const unsent = rv => (rv ? rv.store.list.filter(c => !c.sent).map(c => c.note) :
   const pend = chOpenDiff('b.py'); chPickRepo('/r1'); await tick(); freeR2(); await pend; await tick();
   out.lateDiff = diff.innerHTML.includes('x/r2');
   delete slow['/r1']; delete slow['/r2'];
-  // A send pending on the same review: Submit again sends nothing, and a
-  // comment added meanwhile stays unsent.
+  // A send pending on the same review: Submit again sends nothing while it
+  // is on its way; since #258 (466c364) it goes right after it, in a message
+  // of its own, with the comment added meanwhile.
   const r1 = CH_RV;
   out.r1Key = r1.key;
   put(r1, 'A2');
@@ -707,10 +716,14 @@ const unsent = rv => (rv ? rv.store.list.filter(c => !c.sent).map(c => c.note) :
   await drSubmit(r1);
   while (sent.length === n0) await tick();      // the first send is on its way
   put(r1, 'C');
-  answer(); await first; hold = null;
+  for (let i = 0; i < 5; i++) await tick();
   out.sendsWhilePending = sent.length - n0;
+  answer(); await first; hold = null;
+  for (let i = 0; i < 50 && (sent.length < n0 + 2 || unsent(r1).length); i++) await tick();
+  out.sendsAfter = sent.length - n0;
   out.afterPendingSend = unsent(r1);
   out.sentPending = sent[n0].text.includes('on r1') && sent[n0].text.includes('A2') && !sent[n0].text.includes('\n\nC');
+  out.sentAgain = !!sent[n0 + 1] && sent[n0 + 1].text.includes('C') && !sent[n0 + 1].text.includes('A2');
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -752,7 +765,9 @@ class ChangesComments(unittest.TestCase):
         # A send pending on the same review.
         self.assertEqual(r["r1Key"], "project:pA|/r1")
         self.assertEqual(r["sendsWhilePending"], 1, "a second send went out while the first was pending")
-        self.assertEqual(r["afterPendingSend"], ["C"], "a comment added during the send was lost")
+        self.assertEqual(r["sendsAfter"], 2, "the Submit pressed during the send did not go after it")
+        self.assertTrue(r["sentAgain"], "the second message is not the comment added during the send alone")
+        self.assertEqual(r["afterPendingSend"], [], "a comment added during the send was left unsent")
         self.assertTrue(r["sentPending"])
         self.assertEqual(r["aAfterMove"], 0, "the comments sent are the ones marked sent")
         self.assertEqual(r["cAfterMove"], ["fix C"], "C's new comment was dropped")
