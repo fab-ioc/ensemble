@@ -1258,7 +1258,9 @@
   body.workspace-compose #msgpane, body.workspace-compose #promptcard,
   body.workspace-compose #cmdpanel, body.workspace-compose #livetail,
   body.workspace-compose #stop-note, body.workspace-compose #thr-side,
-  body.workspace-compose #agentcol, body.workspace-compose #thread-reply { display:none !important; }
+  body.workspace-compose #agentcol, body.workspace-compose #thread-reply,
+  /* The chat's frame says its state (#232); here it pushed the box 24px down a frame sized to the box (#312, 768px). */
+  body.workspace-compose #state-line { display:none !important; }
   body.workspace-compose main, body.workspace-compose #chatcol { display:block; height:auto; min-height:0; overflow:visible; }
   /* The chat's own box at every width (#232): the words, with only + and Send beside them; and its focus ring. */
   body.workspace-compose #compose { display:grid !important; margin:0; border:0; border-radius:0; box-shadow:none; padding:var(--s-100) var(--s-300) var(--s-200); }
