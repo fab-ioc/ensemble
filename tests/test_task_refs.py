@@ -411,7 +411,10 @@ class IndexNumbers(unittest.TestCase):
         self.assertIn("taskNoHtml(r, false)", fn(INDEX, "detailHead"))
         self.assertIn("it.ref", fn(INDEX, "swRowHtml"), "Needs you names a task by its key (#135)")
         self.assertIn("taskRefLinkHtml(", fn(INDEX, "mdToHtml"))
-        self.assertIn("taskChipsIn(", INDEX[INDEX.index("function pdPointsHtml"):], "Your asks' words show the chips")
+        # #311: the Needs you panel is gone (its asks are in the Inbox); a stuck
+        # task's reason still shows its chips.
+        self.assertNotIn("function pdPointsHtml", INDEX)
+        self.assertIn("taskChipsIn(it.reason, key)", fn(INDEX, "swDiagHtml"))
         self.assertIn('<script src="/static/taskcard.js"></script>', INDEX)
         self.assertIn("TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) });", INDEX)
         # A panel popped out into a window gets the card there: init on the

@@ -374,8 +374,8 @@ class IphoneChat(unittest.TestCase):
         for k in self.PHONES:
             with self.subTest(size=k):
                 self.assertLessEqual(self.got[k]['po']['threadLines'], 1, self.got[k]['po']['strips'])
-                # One row above the messages: the Needs you line.
-                self.assertEqual([i for i, _ in self.got[k]['po']['strips']], ['points-line'])
+                # #311: no row above the messages (what waits is in the Inbox tab).
+                self.assertEqual([i for i, _ in self.got[k]['po']['strips']], [])
 
     def test_a_file_stays_with_its_project(self):
         if self.before:
