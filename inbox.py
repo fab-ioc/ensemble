@@ -32,6 +32,15 @@ rules (answered, read where reading clears it, Done with this, older than the
 age-out, task done or stopped). Nothing is stored and nothing is changed: the
 inbox is a view.
 
+**Older questions** (#310). A PO chat's open Ask cards its Decisions no
+longer count (the person wrote past them, they were asked again later, or
+came before Clear all) are not rows: they come in ``older``, newest first,
+each with ``why``. Every ask row, in ``rows`` or ``older``, carries its ask
+ids (``roomId``, ``mid``, ``n``), its ``age`` in seconds, and the task it
+names (``taskRef``) with that task's state (``taskState``: running, stopped,
+done, or gone when it is no longer on the board), so the page can close it
+and say what it is about.
+
 ``debug``: each row lists its ``sources``; ``dropped`` lists the candidates
 left out and why (a duplicate of a row, answered, read, set aside, an older
 question, another project).
@@ -60,6 +69,47 @@ _CACHE: dict[bool, tuple[float, dict]] = {}     # debug → (when, the unfiltere
 COLD_THREADS_S = 30.0           # a PO chat not opened since start: its signature checked again after this
 _COLD_THREADS: dict[str, tuple[float, dict]] = {}   # room id → (when checked, index) of that look
 _COLD_BUILDING: set[str] = set()
+
+
+def forget() -> None:
+    """A question was closed or reopened: the next request builds again."""
+    with _LOCK:
+        _CACHE.clear()
+
+
+def _task_states():
+    """A function from (task reference, project id) — or a task room's id —
+    to that task's ``(ref, state)``: running, stopped, done, or gone (no
+    longer on the board). The hub's task index is read once per build."""
+    try:
+        index = _d._task_index()
+        projects = _d.load_projects()
+        keys = _d.project_keys(projects)
+        find = _d.task_numbers.find_task
+        live, norm = _d._room_is_live, _d.normalize_workflow
+    except Exception:       # noqa: BLE001 — the rows show without their task's state
+        return lambda ref, pid="", rid="": ("", "")
+    by_id = {e.get("id"): e for e in index}
+    memo: dict = {}
+
+    def state(ref: str, pid: str = "", rid: str = "") -> tuple[str, str]:
+        k = (ref, pid, rid)
+        if k in memo:
+            return memo[k]
+        try:
+            if not rid and ref:
+                rid = find(index, ref, pid, keys, any_project=not pid)[0]
+            e = by_id.get(rid) if rid else None
+            if e is None:
+                out = (ref, "gone" if ref else "")
+            else:
+                ref = ref or _d.task_numbers.label(e.get("no"), keys.get(e.get("noProjectId") or "", ""))
+                out = (ref, "done" if norm(e.get("workflow")) == "done" else "running" if live(e) else "stopped")
+        except Exception:   # noqa: BLE001
+            out = (ref, "")
+        memo[k] = out
+        return out
+    return state
 
 
 def _line(text: str, n: int = 160) -> str:
@@ -251,7 +301,8 @@ def _read_threads(th_mod, rid: str) -> None:
 
 
 def _empty(now: float, error: str = "") -> dict:
-    out = {"rows": [], "count": 0, "counts": {k: 0 for k in KIND_ORDER}, "generatedAt": now}
+    out = {"rows": [], "count": 0, "counts": {k: 0 for k in KIND_ORDER}, "older": [], "olderCount": 0,
+           "generatedAt": now}
     if error:
         out["error"] = error
     return out
@@ -286,6 +337,8 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
     #    Clear all, or that the person wrote past).
     pending = []
     older_of: dict[tuple, str] = {}     # (room, mid, part) → why a PO card no longer counts
+    older_rows: list[dict] = []         # those cards, as rows of the Older questions (#310)
+    task_state = _task_states()
     for rid in po_of:
         s = by_room.get(rid)
         if not s:
@@ -311,6 +364,12 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                        "past": "older question: the person wrote past it",
                        "cleared": "older question: before Clear all"}.get(c.get("why"), c.get("why") or "older")
                 older_of[key] = why
+                older_rows.append({"id": f"older:{rid}:{c['mid']}:{key[2]}", "kind": "answer", "older": True,
+                                   **where(s), "mid": c["mid"], "part": key[2], "n": c["n"],
+                                   "line": _line(c["question"]), "since": float(c.get("ts") or 0),
+                                   "reason": _line(f"{c.get('who') or 'The PO'} asks", 240),
+                                   "why": c.get("why") or "older", "taskRef": c.get("task") or "",
+                                   "points": list(c.get("points") or [])})
                 if debug:
                     R.drop(roomId=rid, mid=c["mid"], part=key[2], since=c["ts"], line=_line(c["question"]),
                            source="ask:decision", why=why)
@@ -478,14 +537,46 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
         o = {k: v for k, v in r.items() if k != "sources" or debug}
         if not o.get("points"):
             o.pop("points", None)
+        _ask_ids(o, now, task_state)
         out_rows.append(o)
-    out = {"rows": out_rows, "count": len(out_rows), "generatedAt": now}
+    # An older card already a row (a task's own Needs you holds it) is that row.
+    shown = {(r["roomId"], r.get("mid"), r.get("part")) for r in out_rows}
+    older = []
+    for o in sorted(older_rows, key=lambda r: -r["since"]):
+        if (o["roomId"], o["mid"], o["part"]) in shown:
+            continue
+        if not o.get("points"):
+            o.pop("points", None)
+        _ask_ids(o, now, task_state)
+        older.append(o)
+    out = {"rows": out_rows, "count": len(out_rows), "older": older, "generatedAt": now}
     if pending:
         out["pending"] = True       # a chat's cards or threads are still being read: the list may be short
     if debug:
         out["dropped"] = sorted(R.dropped, key=lambda d: -float(d.get("since") or 0))
         out["errors"] = R.errors
     return out
+
+
+def _ask_ids(o: dict, now: float, task_state) -> None:
+    """An ask row's ids, age and task (#310), in place: ``n`` from its part,
+    ``age`` in seconds, ``taskRef`` and ``taskState``. A PO chat's card names
+    its task in its words; a task's own card is about that task."""
+    part = o.get("part") or ""
+    if part.startswith("ask:") and part[4:].isdigit():
+        o["n"] = int(part[4:])
+    if o.get("since"):
+        o["age"] = max(0, int(now - o["since"]))
+    if o.get("isPo"):
+        ref, st = task_state(o.get("taskRef") or "", o.get("projectId") or "") if o.get("taskRef") else ("", "")
+    elif o.get("kind") == "answer":
+        ref, st = task_state(o.get("ref") or "", "", o.get("roomId") or "")
+    else:
+        return
+    if ref:
+        o["taskRef"] = ref
+    if st:
+        o["taskState"] = st
 
 
 def _filter(full: dict, project_id: str = "", debug: bool = False) -> dict:
@@ -501,11 +592,14 @@ def _filter(full: dict, project_id: str = "", debug: bool = False) -> dict:
                                     "source": ",".join(r.get("sources") or []),
                                     "why": f"another project ({r['project'] or r['projectId'] or 'none'})"})
         rows = [r for r in rows if r["projectId"] == project_id]
+    older = full.get("older") or []
+    if project_id:
+        older = [r for r in older if r["projectId"] == project_id]
     counts = {k: 0 for k in KIND_ORDER}
     for r in rows:
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1
     out = {**{k: v for k, v in full.items() if k not in ("dropped",)},
-           "rows": rows, "count": len(rows), "counts": counts}
+           "rows": rows, "count": len(rows), "counts": counts, "older": older, "olderCount": len(older)}
     if debug:
         dropped.sort(key=lambda d: -float(d.get("since") or 0))
         out["dropped"] = dropped[:DROPPED_MAX]

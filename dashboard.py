@@ -8271,6 +8271,109 @@ def attention_undo(restore) -> tuple[int, dict]:
     return 200, {"ok": True, "restored": back}
 
 
+# The Inbox's Close this and earlier (#310): at most this many questions in
+# one call (the page sends more in turns), and Undo for this long (the page
+# offers 30 s; the rest is the request's own time).
+CLOSE_MANY_MAX = 200
+CLOSE_MANY_UNDO_S = 45.0
+
+
+def _ask_items(items) -> tuple[list | None, dict | None]:
+    """The ``[{roomId, mid, n}]`` of a close-many or reopen-many request,
+    without repeats, or (None, the 400 body)."""
+    if not isinstance(items, list) or not items:
+        return None, {"error": "bad_items", "message": "items must be a list of {roomId, mid, n}"}
+    if len(items) > CLOSE_MANY_MAX:
+        return None, {"error": "too_many", "message": f"at most {CLOSE_MANY_MAX} questions at once"}
+    out, seen = [], set()
+    for it in items:
+        if not isinstance(it, dict):
+            return None, {"error": "bad_items", "message": "items must be a list of {roomId, mid, n}"}
+        rid, mid, n = str(it.get("roomId") or "").strip(), it.get("mid"), it.get("n")
+        if not _ROOM_ID.fullmatch(rid):
+            return None, {"error": "bad_room", "message": "not a room id"}
+        if not isinstance(mid, str) or not mid.strip() or len(mid) > 200 \
+                or isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            return None, {"error": "bad_items", "message": "each item needs mid and n"}
+        k = (rid, mid.strip(), n)
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out, None
+
+
+def ask_close_many(items, quiet) -> tuple[int, dict]:
+    """Close many open questions at once (the Inbox's Close this and earlier,
+    #310): ``(status, body)``. The ledger entry of a single close for each,
+    and nobody is told or woken: ``quiet`` must say so. A question no longer
+    open (answered, closed meanwhile, its room gone) is listed in ``skipped``.
+    The answer's ``batch`` and ``closed`` are what :func:`ask_reopen_many`
+    takes for Undo."""
+    if quiet is not True:
+        return 400, {"error": "quiet_only", "message": "Closing many questions tells nobody: send quiet: true."}
+    got, bad = _ask_items(items)
+    if bad:
+        return 400, bad
+    batch = f"close-many:{uuid.uuid4().hex}"
+    now = time.time()
+    by_room: dict[str, list] = {}
+    for rid, mid, n in got:
+        by_room.setdefault(rid, []).append((mid, n))
+    closed, skipped = [], []
+    for rid, want in by_room.items():
+        room = chatroom.get_room(rid, public=False)
+        if room is None:
+            skipped += [{"roomId": rid, "mid": m, "n": n, "why": "no_such_room"} for m, n in want]
+            continue
+        cards = {(c["mid"], c["n"]): c for c in asks.open_cards(room)}
+        todo = []
+        for mid, n in want:
+            c = cards.get((mid, n))
+            if c is None:
+                skipped.append({"roomId": rid, "mid": mid, "n": n, "why": "not_open"})
+            else:
+                todo.append((mid, n, c["question"]))
+        done = set(points.close_asks(rid, todo, batch, now)) if todo else set()
+        for mid, n, _q in todo:
+            if (mid, n) in done:
+                closed.append({"roomId": rid, "mid": mid, "n": n})
+            else:
+                skipped.append({"roomId": rid, "mid": mid, "n": n, "why": "not_open"})
+    if closed:
+        asks.forget()
+        inbox.forget()
+    return 200, {"ok": True, "batch": batch, "closed": closed, "skipped": skipped,
+                 "undoSeconds": CLOSE_MANY_UNDO_S}
+
+
+def ask_reopen_many(batch, items) -> tuple[int, dict]:
+    """Undo of :func:`ask_close_many`: the questions ``batch`` closed open
+    again, exactly as before (their ledger entries gone), within
+    :data:`CLOSE_MANY_UNDO_S`. Tells nobody. One past that time, or closed
+    otherwise since, is listed in ``kept``."""
+    if not isinstance(batch, str) or not batch.startswith("close-many:"):
+        return 400, {"error": "bad_batch", "message": "batch is the one close-many answered"}
+    got, bad = _ask_items(items)
+    if bad:
+        return 400, bad
+    now = time.time()
+    by_room: dict[str, list] = {}
+    for rid, mid, n in got:
+        by_room.setdefault(rid, []).append((mid, n))
+    reopened, kept = [], []
+    for rid, want in by_room.items():
+        back = set(points.reopen_asks(rid, want, batch, CLOSE_MANY_UNDO_S, now)) \
+            if chatroom.get_room(rid, copy_room=False, messages=False) is not None else set()
+        for mid, n in want:
+            (reopened if (mid, n) in back else kept).append({"roomId": rid, "mid": mid, "n": n})
+    if reopened:
+        asks.forget()
+        inbox.forget()
+    if not reopened and kept:
+        return 409, {"error": "undo_expired", "message": "The close can no longer be undone.", "kept": kept}
+    return 200, {"ok": True, "reopened": reopened, "kept": kept}
+
+
 def http_task_id(value, project_id: str = "") -> tuple[str, dict | None]:
     """A task named in a request: a room id as it is, or a number (#18 or 18
     in ``project_id``, ED-18 anywhere, or a number only one project has)
@@ -22063,6 +22166,24 @@ class Handler(BaseHTTPRequestHandler):
             if action not in points.ACTIONS:
                 self._send_json(400, {"error": "bad_action", "expected": list(points.ACTIONS)})
                 return
+            if "ids" in data:
+                # {ids: [...], action: ack}: the Inbox's Done on a PO chat's
+                # answers to check (#310), every one of them in one request.
+                ids = data.get("ids")
+                if action != "ack" or not isinstance(ids, list) or not ids or len(ids) > CLOSE_MANY_MAX \
+                        or not all(isinstance(i, str) and i for i in ids):
+                    self._send_json(400, {"error": "bad_ids", "message": "ids: a list of points to ack"})
+                    return
+                try:
+                    acked = [pt["id"] for pt in (points.act(rid, i, "ack") for i in ids) if pt is not None]
+                except Exception as e:  # noqa: BLE001
+                    print(f"[points] {rid}: ack not saved: {e!r}", flush=True)
+                    self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})
+                    return
+                if acked:
+                    inbox.forget()
+                self._send_json(200, {"ok": True, "acked": acked, "points": _points_view(rid)})
+                return
             try:
                 pt = points.act(rid, str(data.get("id") or ""), action)
             except Exception as e:  # noqa: BLE001 — said, not a dropped connection
@@ -22075,6 +22196,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "point": {"id": pt["id"], "state": pt["state"]},
                                   "points": _points_view(rid)})
+            return
+        if p in ("/api/room/ask/close-many", "/api/room/ask/reopen-many"):
+            # The Inbox's Close this and earlier (#310): {items: [{roomId, mid,
+            # n}], quiet: true} closes them all and tells nobody; {batch,
+            # items} is its Undo. Only the dashboard page, never an agent.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if p.endswith("/close-many"):
+                self._send_json(*ask_close_many(data.get("items"), data.get("quiet")))
+            else:
+                self._send_json(*ask_reopen_many(data.get("batch"), data.get("items")))
             return
         if p in ("/api/room/ask/close", "/api/room/ask/reopen"):
             if self._files_cross_site():
@@ -22106,6 +22240,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(200, {"ok": True, "duplicate": True, "points": _points_view(rid)})
                     return
                 asks.forget()
+                inbox.forget()
                 q = " ".join(card["question"].split())[:200]
                 text = f'[asks] The CEO closed your question "{q}" without an answer.'
                 stopped_asker = (_hub_task_room(room_full) and
@@ -22141,6 +22276,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._room_resume({"roomId": rid, "to": to, "key": "reopen:" + key,
                                        "text": f'[asks] The CEO reopened your question "{q}".'})
             asks.forget()
+            inbox.forget()
             self._send_json(200, {"ok": True, "points": _points_view(rid)})
             return
         if p == "/api/room/ask":
