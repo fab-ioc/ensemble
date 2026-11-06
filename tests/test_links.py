@@ -1093,13 +1093,16 @@ const pdSyncTitles = () => {};   // the panels' titles (#154) are not here
 const toast = () => {}, esc = s => String(s);
 const VIEW = { matches: () => false, innerHTML: '' };
 const $ = () => VIEW;
-globalThis.document = { hidden: false, getElementById: () => null };
+globalThis.document = { hidden: false, getElementById: () => null, body: { classList: { contains: () => false } } };
+const pdById = id => document.getElementById(id);   // the panels' lookup refresh() uses on a failed poll
 let ANSWER = false;
 // The task list: answers only once ANSWER is set; otherwise fails when aborted.
 const api = (url, opts) => new Promise((resolve, reject) => {
   if (ANSWER) return resolve([{ sessionId: 'new' }]);
   if (opts && opts.signal) opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
 });
+// refresh() reads the task list through its feed (the delta-aware list fetch); here the feed is the stub above.
+const SESS_FEED = { get: (url, opts) => api(url, opts) };
 %s
 // Node does not stay up for AbortSignal.timeout's timer alone; a browser tab does.
 setInterval(() => {}, 1000);

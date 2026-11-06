@@ -134,9 +134,12 @@ const vm = require('vm'), fs = require('fs');
 const context = vm.createContext({
   ROOM: 'room-12345678', SENDS_GEN: 0, structuredClone, ROOM_OBJ: null, ROOM_N: 150,
   ptTicket: () => 0,
-  fetch: async () => ({ok: true, json: async () => ({delta: true, revision: 'rev2',
+  setInterval: () => 0,   // the missing-message watch (roomWatch) the slice starts; not under test here
+  // refreshRoom() fetches through pollFetch (a fetch with the poll's timeout).
+  pollFetch: async () => ({ok: true, json: async () => ({delta: true, revision: 'rev2',
     statusSig: 'sig2', statusSame: true,
     messages: [{id: 'm1', text: 'server edit'}]})}),
+  THR_DRAWN: true, thrPrefetch: () => {}, chatCatchup: () => {},
   refreshShow: room => { room.messages[0].text = 'local edit'; room.openCards[0].label = 'local edit'; }
 });
 vm.runInContext(fs.readFileSync(0, 'utf8'), context);
