@@ -414,6 +414,27 @@ def element_attrs(src: str, tok: str) -> list[tuple[str, set[str]]]:
 CLICKISH = re.compile(r"closest\(|\.onclick\b|addEventListener\(\s*['\"](?:click|pointerdown|mousedown)['\"]|\.click\(\)")
 
 
+def closest_alias_calls(js: str) -> list[tuple[int, int]]:
+    """Spans of the selector strings passed to a click listener's own short
+    name for e.target.closest, inside that listener only:
+    `box.addEventListener('click', e => { const at = sel => e.target.closest(sel); ... at('[data-x]') ... })`.
+    Another function's alias, or a call outside the listener, is not one."""
+    spans = []
+    for m in re.finditer(r"addEventListener\(\s*['\"]click['\"]\s*,\s*(?:async\s+)?(?:\(?(\w+)\)?)\s*=>\s*\{", js):
+        ev, start = m.group(1), m.end()
+        d = re.compile(rf"\s*const\s+(\w+)\s*=\s*\(?(\w+)\)?\s*=>\s*{re.escape(ev)}\.target\.closest(?:\s*&&\s*{re.escape(ev)}\.target\.closest)?\(\s*\2\s*\)\s*;")
+        dm = d.match(js, start)
+        if not dm:
+            continue
+        depth, i = 1, start          # the listener's body: to its closing brace
+        while depth and i < len(js):
+            depth += {"{": 1, "}": -1}.get(js[i], 0)
+            i += 1
+        for c in re.finditer(rf"\b{re.escape(dm.group(1))}\(\s*(['\"`])[^'\"`\n]*\1", js[dm.end():i]):
+            spans.append((dm.end() + c.start(1), dm.end() + c.end()))
+    return spans
+
+
 def wired(js: str, tokens: set[str], tag: str) -> bool:
     """Whether the script handles a click on the element: a selector string
     naming one of its classes (".x"), its id ("#x", getElementById) or a data
@@ -431,13 +452,14 @@ def wired(js: str, tokens: set[str], tag: str) -> bool:
             pats.append(rf"['\"` ](?:[a-z]+)?\[{name}[\]=]")
         else:
             pats += [rf"['\"`][^'\"`\n]*#{name}(?![\w-])", rf"getElementById\(\s*['\"]{name}['\"]\s*\)"]
-    # A click listener's short name for e.target.closest (the Inbox's
-    # `const at = sel => e.target.closest(sel)`, #302) counts as closest().
-    aliases = sorted(set(re.findall(r"\b(\w+)\s*=\s*\(?\w+\)?\s*=>\s*\w+\.target\.closest\b", js)))
-    clickish = re.compile(CLICKISH.pattern + "".join(rf"|\b{re.escape(a)}\(" for a in aliases))
+    calls = closest_alias_calls(js)
     for p in pats:
         for m in re.finditer(p, js):
-            if clickish.search(js[max(0, m.start() - 80):m.end() + 120]):
+            if CLICKISH.search(js[max(0, m.start() - 80):m.end() + 120]):
+                return True
+            # The selector is the argument of a click listener's own alias for
+            # e.target.closest: `at('[data-ibx-go]')` (#302).
+            if any(a <= m.start() < b for a, b in calls):
                 return True
     # const btn = document.getElementById('mode'); ... btn.onclick = ...
     for t in tokens:
@@ -460,6 +482,25 @@ def wired(js: str, tokens: set[str], tag: str) -> bool:
 
 
 class ClickableHasHandler(unittest.TestCase):
+    def test_a_closest_alias_wires_only_its_own_selectors(self):
+        # #312 review 1: the alias counts for the selector it is called with,
+        # inside its own click listener; not for an element named near a call.
+        # The padding keeps '.lonely' out of the older ±120-char window around
+        # a closest( call, so only the alias rule could wire it.
+        pad = "// " + "x" * 220 + "\n"
+        js = ("box.addEventListener('click', e => {\n"
+              "  const at = sel => e.target.closest && e.target.closest(sel);\n"
+              "  if (at('[data-go]')) go();\n"
+              "});\n" + pad +
+              "function paint() { at('[data-x]'); at2('[data-x]'); const s = '.lonely'; }\n" + pad +
+              "const at2 = sel => ev.target.closest(sel);\n"
+              "other.addEventListener('keydown', e => { const at = sel => e.target.closest(sel);\n" + pad +
+              "  at('[data-key]'); });\n")
+        self.assertTrue(wired(js, {"[data-go"}, "button"))
+        self.assertFalse(wired(js, {".lonely"}, "button"), "a selector near an alias call is not wired by it")
+        self.assertFalse(wired(js, {"[data-x"}, "button"), "an alias outside a click listener does not wire")
+        self.assertFalse(wired(js, {"[data-key"}, "button"), "a keydown listener's alias is not a click")
+
     def test_every_pointer_styled_element_is_wired(self):
         problems = []
         for page, src in PAGES.items():
