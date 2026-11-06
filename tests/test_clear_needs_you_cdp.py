@@ -13,6 +13,8 @@ question (an ``Ask:`` card) and a fourth whose question the person wrote past.
 * the recent list has the same Clear all in a head of its own;
 * a row opens its chat at the card it stands for (the landing mark).
 
+(The chat's own Needs you list is gone since #311: the Inbox holds it.)
+
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
 from __future__ import annotations
@@ -107,26 +109,6 @@ async function main() {
       if (!o.land) o.landWhy = await ev(`JSON.stringify({ frames: [...document.querySelectorAll('iframe')].map(f => [f.className, f.dataset.room, (f.contentWindow && f.contentWindow.location.href) || '', f.contentDocument ? f.contentDocument.querySelectorAll('.msg[data-mid]').length : -1, (() => { try { const W = f.contentWindow; return JSON.stringify({ n: W.ROOM_OBJ && W.ROOM_OBJ.messages.length, drawn: W.CHAT_DRAWN, solo: W.SOLO_MODE, threaded: W.THREADED, kids: W.document.getElementById('msgs').children.length, cls: W.document.getElementById('msgs').className, hidden: W.document.getElementById('msgs').hidden, body: W.document.body.className }); } catch (e) { return String(e); } })()]), goto: [...GOTO_MSG.entries()] })`);
       await shot('6-landed');
     }
-    // The chat's own Needs you: Clear all moves its Decisions to Older questions, and Undo.
-    const chat = A.rooms[2], LIST = `[...document.querySelectorAll('#points-list > li')].map(li => (li.classList.contains('pt-ask') ? 'ask:' : '') + li.firstChild.textContent.trim())`;
-    await c.send('Page.navigate', { url: A.base + '/session?room=' + chat }, s);
-    await until(`!!document.querySelector('#points-line .pt-sum')`, 30000);
-    await click('#points-line .pt-sum');
-    await until(`!!document.querySelector('#points-list [data-dec-clear="ask"]')`);
-    o.chatBefore = await ev(LIST);
-    await click('#points-list [data-dec-clear="ask"]');
-    o.chatConfirm = await ev(`document.querySelector('#points-list .pt-clear').textContent.trim()`);
-    await shot('7-chat-confirm');
-    await click('#points-list [data-dec-clear="go"]');
-    await until(`!!document.querySelector('#points-list [data-dec-clear="undo"]')`);
-    o.chatCleared = await ev(LIST);
-    await click('#points-list .pt-fold-sum[data-fold="older"]');
-    o.chatOlder = await ev(LIST);
-    await shot('8-chat-cleared');
-    await click('#points-list [data-dec-clear="undo"]');
-    await until(`${LIST}[0] === 'Decisions'`);
-    o.chatUndone = await ev(LIST);
-    o.chatScrollX = await ev(`document.documentElement.scrollWidth - innerWidth`);
     await c.send('Target.closeTarget', { targetId });
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -248,17 +230,6 @@ class ClearNeedsYou(unittest.TestCase):
             with self.subTest(width=w):
                 self.assertIsNotNone(o["recentHead"])
                 self.assertIn("Clear all", o["recentHead"])
-
-    def test_chat_decisions_clear_all_and_undo(self):
-        for o, _mob, w in self.each():
-            with self.subTest(width=w):
-                self.assertEqual(o["chatBefore"][:2], ["Decisions", "ask:Which way for the chain?"], o["chatBefore"])
-                self.assertEqual(o["chatConfirm"], "Move 1 to Older?ClearCancel")
-                self.assertNotIn("ask:Which way for the chain?", o["chatCleared"], o["chatCleared"])
-                self.assertIn("Cleared 1: it is under Older questions.", o["chatCleared"])
-                self.assertIn("ask:Which way for the chain?", o["chatOlder"], "under Older questions, not answered")
-                self.assertEqual(o["chatUndone"][:2], ["Decisions", "ask:Which way for the chain?"], o["chatUndone"])
-                self.assertLessEqual(o["chatScrollX"], 1)
 
     def test_row_opens_at_its_card(self):
         o = self.got[1440]

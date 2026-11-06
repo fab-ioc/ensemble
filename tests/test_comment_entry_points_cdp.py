@@ -158,9 +158,8 @@ async function main() {
     return r;
   }
 
-  const ptBtn = doc => `((d) => { const b = d.querySelector('#msgs .pt-btn[data-pt-act=comment]'); if (b) return b;
-    const s = d.querySelector('#points-line .pt-sum[aria-expanded=false]'); if (s) s.click();
-    return d.querySelector('#points-list .pt-btn[data-pt-act=comment]'); })(${doc})`;
+  // The answer's own Comment, on its balloon (#311: the chat has no Needs you line any more).
+  const ptBtn = doc => `(${doc}).querySelector('#msgs .pt-btn[data-pt-act=comment]')`;
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
   const TASK = `document.querySelector('iframe.dp-session[data-room=${JSON.stringify(A.task)}]')`;
   const WCF = `document.getElementById('workspace-compose-frame')`;
@@ -181,18 +180,10 @@ async function main() {
         return P.ev(`({ guests: [${PO}, ${TASK}].map(f => f.contentDocument.body.classList.contains('workspace-guest')) })`); }],
       ...chatSteps(PO, A.po, 'ws1440-po', A.words.po),
       ...chatSteps(TASK, A.task, 'ws1440-task', A.words.task),
-      ['poPoint', P => pointComment(P, { btn: ptBtn(`${PO}.contentDocument`), box: `${WCF}.contentWindow`,
-        own: `${PO}.contentWindow`, mid: A.poAnswer, shot: 'ws1440-po-point' })],
-      ['wcAfterPo', P => P.ev(`({ room: WC.target && WC.target.room, kind: WC.target && WC.target.kind })`)],
+      // The PO's answer is in its thread: its Comment is checked in ws1440-thread (#311).
       ['taskPoint', P => pointComment(P, { btn: ptBtn(`${TASK}.contentDocument`), box: `${WCF}.contentWindow`,
         own: `${TASK}.contentWindow`, mid: A.taskAnswer, shot: 'ws1440-task-point' })],
       ['wcAfterTask', P => P.ev(`({ room: WC.target && WC.target.room, kind: WC.target && WC.target.kind })`)],
-      ['needsYou', async P => { await P.ev(`wcChoose({ kind: 'po', room: ${JSON.stringify(A.po)} }); 0`);
-        await P.until(`(() => { const w = ${WCF}.contentWindow; return w.eval('typeof ED !== "undefined" && typeof ROOM !== "undefined" && ROOM') === ${JSON.stringify(A.po)}; })()`, 'PO draft');
-        await P.ev(`${WCF}.contentWindow.eval('while (ED.points.length) edRemoveAt(0); ED.points.length')`);
-        await P.ev(`PD.dock.reveal('points'); 0`);
-        return pointComment(P, { btn: `PD.els.points.querySelector('.pdp-btn[data-pt-act=comment]')`, box: `${WCF}.contentWindow`,
-          own: `${PO}.contentWindow`, mid: A.poAnswer, shot: 'ws1440-needs-you' }); }],
       ['changes', async P => { await P.ev(`PD.dock.reveal('changes'); 0`);
         await P.until(`!!PD.els.changes.querySelector('.chf[data-file="motor.py"]')`, 'changes list');
         await P.ev(`PD.els.changes.querySelector('.chf[data-file="motor.py"]').click(); 0`);
@@ -207,10 +198,12 @@ async function main() {
       const tag = (phone ? 'ph' : 'pg') + w;
       for (const [who, room, mid] of [['po', A.po, A.poAnswer], ['task', A.task, A.taskAnswer]]) {
         await view(`${tag}-${who}`, w, h, phone, '/session?id=' + encodeURIComponent(room),
-          `document.querySelectorAll('#msgs .msg .text.md').length >= 2 && document.getElementById('points-line').getClientRects().length > 0`, [
+          `document.querySelectorAll('#msgs .msg .text.md').length >= 2 && (${who === 'po'} || !!document.querySelector('#msgs .pt-btn[data-pt-act=comment]'))`, [
           ['sel', P => selComment(P, { doc: 'document', select: choose('document', '#msgs .msg .text.md', A.words[who]),
             box: '.cmt-composer', add: '.cmt-composer .cmt-add', tray: `document.getElementById('cmt-tray')`, words: `Comment on ${tag} ${who}`, shot: `${tag}-${who}` })],
-          ['point', P => pointComment(P, { btn: ptBtn('document'), box: 'window', mid, shot: `${tag}-${who}-point` })],
+          // A PO's answer is in its thread (the channel); with no Needs you line (#311)
+          // its Comment is the thread's, checked in ws1440-thread, and the Inbox's.
+          ...(who === 'po' ? [] : [['point', P => pointComment(P, { btn: ptBtn('document'), box: 'window', mid, shot: `${tag}-${who}-point` })]]),
         ]);
       }
       await view(`${tag}-file`, w, h, phone, A.file, `!!document.querySelector('.md, #content, main') && document.body.textContent.includes(${JSON.stringify(A.fileWords)})`, [
@@ -464,13 +457,8 @@ class EveryComment(unittest.TestCase):
                 self.sel_ok(key, "changes", None)
 
     def test_point_comment_in_the_workspace_goes_in_the_send_box(self):
-        self.point_ok("ws1440", "poPoint", self.got_mid("po"))
-        self.assertEqual(self.got["ws1440"]["wcAfterPo"], {"room": self.po, "kind": "po"})
         self.point_ok("ws1440", "taskPoint", self.got_mid("task"))
         self.assertEqual(self.got["ws1440"]["wcAfterTask"], {"room": self.task, "kind": "task"})
-
-    def test_needs_you_comment_in_the_workspace_goes_in_the_send_box(self):
-        self.point_ok("ws1440", "needsYou", self.got_mid("po"))
 
     def test_point_comment_in_a_docked_thread_goes_in_the_send_box(self):
         r = self.got["ws1440-thread"]["threadPoint"]
@@ -480,7 +468,7 @@ class EveryComment(unittest.TestCase):
 
     def test_point_comment_in_a_chat_page_and_on_the_phone(self):
         for tag in ("pg1440", "ph390"):
-            for who in ("po", "task"):
+            for who in ("task",):  # a PO's answer: its thread's Comment (#311)
                 with self.subTest(at=tag, chat=who):
                     self.point_ok(f"{tag}-{who}", "point", self.got_mid(who), own=False)
 

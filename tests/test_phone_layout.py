@@ -329,7 +329,7 @@ class ThePhone(unittest.TestCase):
                 self.assertEqual((g["panel"]["x"], g["panel"]["w"]), (0, g["vw"]))
                 self.assertLessEqual(abs(g["panel"]["b"] - g["vh"]), 1, "to the bottom")
                 self.assertIsNotNone(g["chat"], "the conversation shows")
-                self.assertEqual(g["tabs"], ["Chat", "Needs you", "Changes", "Files", "Board", "Spec"])
+                self.assertEqual(g["tabs"], ["Chat", "Inbox", "Changes", "Files", "Board", "Spec"], "Chat | Inbox first (#311)")
                 self.assertEqual(g["front"], "po-chat")
                 self.assertTrue(g["back"], "← back to the list")
                 self.assertEqual(g["project"], "Motors")
@@ -412,7 +412,7 @@ class ThePhone(unittest.TestCase):
         g = self.got["po"]
         self.assertEqual(g["proj"], self.proj)
         self.assertEqual(g["front"], "po-chat")
-        self.assertEqual(g["tabs"][0], "Motors", "the PO's tab is its project's name (#261)")
+        self.assertEqual(g["tabs"][:2], ["Chat", "Inbox"], "the conversation tab is Chat, the project's name is in the bar (#311)")
         self.fits(g, "a PO")
 
     def test_a_chat_hidden_earlier_comes_back_with_a_task(self):

@@ -14,8 +14,8 @@ against a stand-in hub:
 * an option's answer button holds no link: its label's links follow it;
 * a file view link is its file's link; an external URL stays a link as
   written; text that only looks like a URL stays text;
-* a row that is itself a link (Needs you, Open questions) says the link in
-  words (hubUrlWords).
+* (the rows that said a link in words, Needs you and Open questions, are
+  gone since #311: the Inbox holds them).
 
 The card in a browser: tests/test_card_text_page.py. Skipped without Node.
 """
@@ -269,9 +269,6 @@ class CardLinks(unittest.TestCase):
         self.assertIn('<span class="qa-ol">${esc(label.words || \'Choose\')}</span>', SESSION)
         self.assertIn('<span class="qa-od">${cardTextHtml(o.detail, m.id, a.n)}</span>', SESSION)
         self.assertIn('<span class="qa-dc">${cardTextHtml(got.comment, m.id, a.n)}</span>', SESSION)
-        self.assertIn("esc(hubUrlWords(c.question, c.mid))", SESSION, "Open questions")
-        self.assertIn("hubUrlWords(foldLine(String(c.question || ''))", SESSION, "the chat's Needs you")
-        self.assertIn("hubUrlWords(String(c.question || '').split('\\n')[0]", INDEX, "the PO screen's Needs you")
 
 
 if __name__ == "__main__":

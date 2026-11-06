@@ -22,21 +22,12 @@ class LaptopFocus(focus.PhoneFocus):
               .replace("document.getElementById('chatbar').hidden=false;", "document.getElementById('hint').textContent=''; document.getElementById('chatbar').hidden=false;")
               .replace("r.attention={state:'blocked'", "r.attention={state:'waiting_for_you'")
               .replace('const top=document.querySelector', "r.lastAgent='**Report — completed** Reviewed D:/work/projects/security_audit/evidence/plans/codex/LOCKDOWN-PLAN.md and the next steps. Full evidence below.'; const top=document.querySelector")
-              .replace('renderBubbles(fixtureItems);', "POINTS=pointMaps({delivered:1,items:[{id:'P1',mid:'focus-1',text:'Confirm the next step',state:'delivered',answers:[{mid:'focus-ask',said:'Ready to check'}]}]}); showPointsLine(); LAST_ITEMS=fixtureItems; renderBubbles(fixtureItems);")
+              .replace('renderBubbles(fixtureItems);', "POINTS=pointMaps({delivered:1,items:[{id:'P1',mid:'focus-1',text:'Confirm the next step',state:'delivered',answers:[{mid:'focus-ask',said:'Ready to check'}]}]}); LAST_ITEMS=fixtureItems; renderBubbles(fixtureItems);")
               .replace('          g.actions=await ev', r"""
           g.desktop=await ev(`(() => {
           const f=document.querySelector('${sel}'),d=f.contentDocument,w=f.contentWindow;
           const b=e=>e.getBoundingClientRect(),m=d.getElementById('msgs'),input=d.getElementById('input'),send=d.getElementById('send');
-          const points=d.getElementById('points-line');
-          const filterRow=Math.abs(b(points).top-b(d.getElementById('chatbar')).top)<1;
-          points.querySelector('.pt-sum').click();
-          const expanded=!d.getElementById('points-list').hidden;
-          const jump=points.querySelector('[data-ref-msg="focus-1"]');
-          if(jump) jump.click();
-          const target=d.querySelector('[data-mid="focus-1"]');
-          const pointJump=!!jump && !!target && b(target).top>=b(m).top-1 && b(target).top<b(m).bottom;
-          points.querySelector('.pt-sum').click();
-          const overlap=()=>[...d.querySelectorAll('#ask-line,#points-line,#chatbar,#to-latest,.catchup')].some(e=>{
+          const overlap=()=>[...d.querySelectorAll('#ask-line,#chatbar,#to-latest,.catchup')].some(e=>{
             if(!b(e).height || e.closest('#msgs')) return false;
             return [...d.querySelectorAll('#msgs .msg')].some(msg=>{const r=b(msg),q=b(e),v=b(m);return Math.max(r.top,v.top,q.top)<Math.min(r.bottom,v.bottom,q.bottom) && Math.max(r.left,q.left)<Math.min(r.right,q.right);});
           });
@@ -44,13 +35,13 @@ class LaptopFocus(focus.PhoneFocus):
           const header=${kind!=='po'}?document.querySelector('#detail-panel .dp-top'):null;
           const fresh=document.querySelector('#detail-panel .dp-summary-phone summary');
           const elements=header?[...header.querySelectorAll('h2,.dp-meta,.dp-actions')]:[...document.querySelectorAll('#po-panel .po-name,#po-panel .po-sub')];
-          return {expanded,pointJump,overlaps,scrolls:m.scrollHeight>m.clientHeight,
+          return {overlaps,scrolls:m.scrollHeight>m.clientHeight,
             composerOneRow:Math.abs((b(input).top+b(input).bottom)/2-(b(send).top+b(send).bottom)/2)<1,
             header:elements.map(e=>({y:b(e).top,h:b(e).height,w:b(e).width})),
             rendered:!header || !!fresh.querySelector('strong'),
             shortPath:!header || fresh.querySelector('.file-link')?.textContent==='LOCKDOWN-PLAN.md',
             fullPath:!header || fresh.querySelector('.file-link')?.getAttribute('href').includes('security_audit'),
-            filterRow};
+            };
         })()`);
           g.actions=await ev
 """)
@@ -108,9 +99,8 @@ class LaptopFocus(focus.PhoneFocus):
                 self.assertLess(len(a['placeholder']), 30)
                 self.assertTrue(all(g['menuDismiss'].values()), g['menuDismiss'])
                 desktop = g['desktop']
-                self.assertTrue(desktop['expanded'] and desktop['pointJump'])
                 self.assertEqual(desktop['overlaps'], [False, False, False])
-                self.assertTrue(desktop['scrolls'] and desktop['composerOneRow'] and desktop['filterRow'])
+                self.assertTrue(desktop['scrolls'] and desktop['composerOneRow'])
                 self.assertTrue(desktop['rendered'] and desktop['shortPath'] and desktop['fullPath'])
                 if desktop['header']:
                     centers = [e['y'] + e['h']/2 for e in desktop['header']]

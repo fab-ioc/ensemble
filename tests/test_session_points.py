@@ -43,9 +43,9 @@ const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBl
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, pointsSummary, pointsListHtml, pointsLineHtml, heldBy, foldPlan,
+  globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, heldBy, foldPlan,
     chatGroups, quietItem, catchUp, pointAct, stripPointLines, hasPointLines, stripImagePlaceholders, hasImagePlaceholders, refPreview, lastAnswer,
-    setPoints: v => { POINTS = v; }, points: () => POINTS, PT_FOLDS };`, ctx);
+    setPoints: v => { POINTS = v; }, points: () => POINTS };`, ctx);
 const T = ctx.t;
 const out = {};
 const href = mid => '/session?room=room-po&msg=' + mid;
@@ -75,18 +75,6 @@ out.agentPlan = T.pointBarHtml({ id: 's:12', from: 'claude', text: 'Re P5 (plann
 out.hisDelivered = T.pointBarHtml({ id: 's:13', from: 'user' }, P, href);
 out.oldPlan = T.pointBarHtml({ id: 's:14', from: 'claude', text: 'Re P6 (planned #105): on it.' }, P, href);
 out.delivery = T.pointBarHtml({ id: 's:15', from: 'claude', text: 'Re P6: live.' }, P, href);
-out.summary = [T.pointsSummary(P), T.pointsSummary(T.pointMaps({ open: 0, answered: 2, items: [] })), T.pointsSummary(T.pointMaps(null))];
-T.CHAT_NAMES.po = 'claude';
-out.listPo = T.pointsListHtml(P, href, 2000);
-T.CHAT_NAMES.po = '';
-out.list = T.pointsListHtml(P, href, 2000);
-out.lineClosed = T.pointsLineHtml(P, false, href, 2000);
-out.listFolded = T.pointsListHtml(P, href, 2000);
-T.PT_FOLDS.add('po');
-out.list = T.pointsListHtml(P, href, 2000);
-T.CHAT_NAMES.po = 'claude';
-out.listPo = T.pointsListHtml(P, href, 2000);
-T.CHAT_NAMES.po = '';
 out.keep = [...P.keep].sort(); out.unacked = [...P.unacked].sort();
 out.images = [T.stripImagePlaceholders('[Image #2] [Image #3]\n\n## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png'),
   T.stripImagePlaceholders('[Image #3] a picture of my own'), T.stripImagePlaceholders('look at [Image #1] this one'),
@@ -183,44 +171,14 @@ class Points(unittest.TestCase):
         self.assertNotIn('data-pt-act="ack"', r["agentAcked"])
         self.assertEqual(r["nothing"], "")
 
-    def test_the_line_counts_and_lists_both_ends(self):
+    def test_what_never_folds(self):
+        # #311: the chat's Needs you line is gone (the Inbox lists what waits).
         r = self.r
-        # Needs you (#209): only what waits on them; a hub from before it sends
-        # no "needs": every answer is new.
-        self.assertEqual(r["summary"], ["Needs you: 3 new answers", "Needs you: 2 new answers", ""])
-        rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
-        self.assertEqual([re.search(r'data-pt="(P\w+)"', x).group(1) for x in rows], ["P6", "P4", "P2", "P7", "P5", "P3"],
-                         "new answers, then what waits on the PO (its fold open); newest first in each; not the acknowledged one")
-        heads = re.findall(r'<li class="pt-group">([^<]*)</li>', r["list"])
-        self.assertEqual(heads, ["New answers"])
-        self.assertIn('data-fold="po" aria-expanded="true"><span class="pt-caret" aria-hidden="true">▾</span>Waiting for an answer (3)</button>', r["list"])
-        self.assertIn('With the PO (3)</button>', r["listPo"], "in the PO's chat it says who")
-        self.assertIn('data-fold="po" aria-expanded="false"', r["listFolded"])
-        self.assertNotIn('data-pt="P3"', r["listFolded"], "a fold is closed until opened")
-        p2 = next(x for x in rows if 'data-pt="P2"' in x)
-        self.assertIn("your message ↑", p2)
-        self.assertIn("answer ↓", p2)
-        self.assertIn('data-pt="P2" data-pt-act="ack"', p2)
-        self.assertIn("claude: started as #75", r["list"], "an answer given by doing says what was done")
-        self.assertIn('data-pt="P3" data-pt-act="drop"', r["list"])
-        self.assertIn("Why is the build red?", r["list"])
-        self.assertNotIn("[point P3]", r["list"])
-        self.assertIn('aria-expanded="false"', r["lineClosed"])
-        self.assertIn("<ul id=\"points-list\" hidden>", r["lineClosed"])
         self.assertEqual((r["keep"], r["unacked"]), (["s:11", "s:12", "s:15", "s:16", "s:17", "s:2", "s:4"], ["s:15", "s:2"]),
                          "an open or planned point's balloon and its plan, an unacknowledged delivery")
 
     def test_a_planned_point_shows_its_task_and_takes_no_thumbs_up(self):
         r = self.r
-        rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
-        p5 = next(x for x in rows if 'data-pt="P5"' in x)
-        self.assertIn('<span class="pt-state planned">#104 · in progress</span>', p5)
-        self.assertIn('data-ref-msg="s:12" data-ref-part="re:P5" title="Go to where the work was planned">plan ↓</a>', p5)
-        self.assertIn('data-pt="P5" data-pt-act="drop"', p5)
-        self.assertNotIn('data-pt-act="ack"', p5)
-        p7 = next(x for x in rows if 'data-pt="P7"' in x)
-        self.assertIn('<span class="pt-state planned">#106 merged, awaiting go-live</span>', p7)
-        self.assertNotIn('data-pt-act="ack"', p7, "merged is not live")
         self.assertIn("P5 · in progress, #104 · in progress ↓", r["hisPlanned"])
         self.assertIn('data-ref-msg="s:12"', r["hisPlanned"])
         self.assertIn("P7 · in progress, #106 merged, awaiting go-live ↓", r["hisMerged"])
@@ -230,11 +188,6 @@ class Points(unittest.TestCase):
 
     def test_a_delivered_point_links_its_delivery_and_keeps_its_plan(self):
         r = self.r
-        rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
-        p6 = next(x for x in rows if 'data-pt="P6"' in x)
-        self.assertIn('data-ref-msg="s:14" data-ref-part="re:P6" title="Go to where the work was planned">plan ↓</a>', p6)
-        self.assertIn('data-ref-msg="s:15" data-ref-part="re:P6" title="Go to the answer">answer ↓</a>', p6)
-        self.assertIn('data-pt="P6" data-pt-act="ack"', p6)
         self.assertIn('data-ref-msg="s:15"', r["hisDelivered"], "the person's balloon leads to the delivery, not the plan")
         self.assertIn("P6 · answered ↓", r["hisDelivered"])
         self.assertIn("plans P6 ↑", r["oldPlan"])

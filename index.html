@@ -1457,7 +1457,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .po-sub > * { flex: 0 0 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .po-sub > * + *::before { content: "·"; margin: 0 var(--s-100); }
   .po-sub > .po-sub-proj { flex-shrink: 1000; }
-  .po-sub > .po-pts { flex-shrink: 1; }
   .po-more { position: relative; display: inline-flex; }
   .po-menu {
     position: absolute; top: calc(100% + var(--s-100)); right: 0; z-index: 30; min-width: 200px;
@@ -3540,10 +3539,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .bar-sep { display: none; }
     #plan-usage-slot { display: none; }
     /* The Inbox (#307): its count in row one, a finger's height; it opens
-       the Inbox pane (#ph-inbox), so the PO screen's tabs have no Inbox tab. */
+       the Inbox pane (#ph-inbox). #311: on the PO screen the Inbox is a tab
+       beside Chat instead, and the chat's strip names what waits, so the bar
+       has no Inbox there. */
     #inbox-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-200); margin-left: auto; border-color: transparent; }
     #inbox-btn[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
-    #po-dock.dk-narrow .dk-tab-wrap:has(> .dk-tab[data-dk-tab="inbox"]) { display: none; }
+    body.po-dock:not(.dp-docked) #inbox-btn { display: none; }
     .me-item.me-phone { display: flex; }
     #bar-back, #search-open, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
@@ -3561,7 +3562,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        one's controls take 262px); below 410px it is the icon alone. The rest
        of where you are is row two's. */
     .bar-where { display: contents; }
-    #proj-switch, #bar-here { display: none; }
+    /* #311: Panels is the computer's; a phone's PO screen has its tabs. Row one
+       names the project (the switcher) when there is no second row. */
+    #bar-here, body.row2 #bar-here:not(:empty) { display: none; }
+    body:not(.row2) #proj-switch { display: inline-flex; order: 0; flex: 0 1 auto; min-width: 0; margin-right: auto; }
     header h1 { order: 0; }
     #bar-home { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; padding: 0 var(--s-200); }
     header h1 .bar-word { display: block; }
@@ -3580,7 +3584,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     body.row2 #bar-back { order: 2; flex: none; }
     body.row2 #proj-switch { display: inline-flex; order: 2; flex: 0 1 auto; min-width: 0; }
     body.row2 #bar-crumbs { display: flex; align-items: center; order: 2; flex: 1 1 0; min-width: 0; }
-    body.row2 #bar-here:not(:empty) { display: flex; order: 3; flex: none; }
     body.row2.search-open .search-wrap { bottom: auto; height: var(--touch-min); top: var(--s-100); }
     /* An open task's breadcrumb: the project's name goes up to its screen,
        the caret beside it is its menu, then the task and its tab; each part
@@ -3610,9 +3613,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        up, 280px pushed the composer under the keyboard (#307). */
     #detail-panel { --dp-chat-min: 160px; }
     #ph-inbox-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 var(--s-400) var(--s-400); }
-    #ph-inbox-body .ibx-title { display: none; }
-    #ph-inbox-body .ibx-scope button, #ph-inbox-body .ibx-more > summary { min-height: var(--touch-min); }
-    #ph-inbox-body .ibx-link { display: block; min-height: var(--touch-min); }
+    /* #311: the PO screen's Inbox tab (.ibx-phone) is drawn like the pane. */
+    :is(#ph-inbox-body, .ibx-phone) .ibx-title { display: none; }
+    :is(#ph-inbox-body, .ibx-phone) .ibx-scope button, :is(#ph-inbox-body, .ibx-phone) .ibx-more > summary { min-height: var(--touch-min); }
+    :is(#ph-inbox-body, .ibx-phone) .ibx-link { display: block; min-height: var(--touch-min); }
     body.ph-switch #proj-menu { left: 0 !important; }
     body.ph-switch #proj-menu .pm-item { min-height: var(--touch-min); }
     body.ph-switch #proj-menu .pm-find { height: var(--touch-min); }
@@ -3642,6 +3646,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       background: var(--c-neutral-bg); color: var(--c-neutral-fg);
     }
     #new-btn { height: var(--touch-min); padding: 0 var(--s-300); margin-left: var(--s-100); }
+    /* #311: Create is a "+" on a phone (its aria-label still says Create). */
+    #new-btn { width: var(--touch-min); min-width: var(--touch-min); padding: 0; justify-content: center; font-size: 0; }
+    #new-btn::before { content: "+"; font-size: var(--fs-500); line-height: 1; }
+    #new-btn .nb-caret { display: none; }
     /* Search, opened. It stays open while it holds a query, so a list that
        search is filtering always shows why. */
     .search-wrap { display: none; }
@@ -4017,10 +4025,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ibx-undo { min-height: var(--touch-min); }
     .ibx-undo-btn { min-height: var(--touch-min); min-width: var(--touch-min); }
   }
-  #ph-inbox-body .ibx-acts { display: flex; }
-  #ph-inbox-body .ibx-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
-  #ph-inbox-body .ibx-undo { position: fixed; left: var(--s-400); right: var(--s-400); bottom: var(--s-400); z-index: 29; min-height: var(--touch-min); }
-  #ph-inbox-body .ibx-undo-btn { min-height: var(--touch-min); min-width: var(--touch-min); }
+  :is(#ph-inbox-body, .ibx-phone) .ibx-acts { display: flex; }
+  :is(#ph-inbox-body, .ibx-phone) .ibx-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+  :is(#ph-inbox-body, .ibx-phone) .ibx-undo { position: fixed; left: var(--s-400); right: var(--s-400); bottom: var(--s-400); z-index: 29; min-height: var(--touch-min); }
+  :is(#ph-inbox-body, .ibx-phone) .ibx-undo-btn { min-height: var(--touch-min); min-width: var(--touch-min); }
   .dk-strip-btn.on .ti { --ti: currentColor; --ti-ink: var(--selected-bg); --ti-ring: var(--selected-bg); }
   .dk-menu .pd-mi { display: inline-flex; width: 16px; height: 16px; margin-right: var(--s-200); vertical-align: -3px; --ti-ring: var(--surface-overlay); }
   .dk-menu .pd-mi > svg { width: 100%; height: 100%; }
@@ -4440,7 +4448,7 @@ window.DOC_LISTENERS_PAUSED = false;
   <button id="me-btn" class="bar-btn avatar-btn" title="You — settings and preferences"
           aria-haspopup="true" aria-expanded="false"><span id="me-initials">··</span></button>
   <button id="new-btn" title="Create a task, a sub-task or a project" data-noun-title="Create a task, a sub-task or {a project}"
-          aria-haspopup="menu" aria-expanded="false" aria-controls="create-menu">Create<span class="nb-caret" aria-hidden="true">▾</span></button>
+          aria-label="Create" aria-haspopup="menu" aria-expanded="false" aria-controls="create-menu">Create<span class="nb-caret" aria-hidden="true">▾</span></button>
 </header>
 <!-- Create's menu (#165): built on each opening from where you are (createMenuItems). -->
 <div id="create-menu" role="menu" aria-label="Create" tabindex="-1" hidden></div>
@@ -4806,7 +4814,6 @@ window.DOC_LISTENERS_PAUSED = false;
     <div id="po-dock-panels" hidden>
       <div data-panel="po-chat" data-title="PO chat" class="pd-chat"></div>
       <div data-panel="inbox" data-title="Inbox" class="pd-inbox pd-pane"></div>
-      <div data-panel="points" data-title="Needs you" class="pd-points pd-pane"></div>
       <div data-panel="board" data-title="Board" class="pd-board pd-pane"></div>
       <div data-panel="workspace" data-title="Files" class="pd-ws"></div>
       <div data-panel="changes" data-title="Changes" class="pd-changes"></div>
@@ -13416,18 +13423,17 @@ function poMenuItems(row) {
 function poHeadHtml(pj, row, peek) {
   const { m, cls } = poAgent(row);
   const model = shortModel(m.model);
-  const pts = pointsCountText(row.points);
   const open = poOpenCount(pj, ALL_ROWS);
   // One part a span, so a narrow header cuts a part (the project's name
-  // first, then what needs you) rather than letting the line run past the edge.
+  // first) rather than letting the line run past the edge. What needs you is
+  // the Inbox's (#311): this line says only the PO's state.
   // The PO is called PO; its kind and model are in the tooltip (#232).
   const who = [m.agent || '', model].filter(Boolean).join(' ');
   // In its panel the tab above is the project's name (#261): the header says
   // only "PO". A drawer has no tab, so it names the project.
   const sub = stateChip(row, false, ATTENTION_BY_ROOM.get(row.roomId) || row.attention)
     + (peek ? `<span class="po-sub-proj">${esc(noun('one') + ' ' + pj.name)}</span>` : '')
-    + `<span>${open} task${open === 1 ? '' : 's'} open</span>`
-    + (pts ? `<span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('needs you: ' + pts)}</span>` : '');
+    + `<span>${open} task${open === 1 ? '' : 's'} open</span>`;
   const acts = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
   const menu = poMenuItems(row).map(it => `<button class="po-mi" role="menuitem" data-po="${esc(it.key)}" title="${esc(it.title)}">${esc(it.label)}</button>`);
@@ -13511,9 +13517,6 @@ function renderPo() {
   document.body.classList.toggle('po-peek', !split && !!pj);
   // Where it is: in the PO chat panel, or at home as the drawer.
   if (PD.lib) pdPlaceChat();
-  // A task open in a project without a PO: its Needs you has no PO to
-  // follow, and says so (nothing of the PO seen before stays).
-  if (!dock && PD.dock && PD.chatKey !== null) { PD.chatKey = null; PD.ptSig = ''; pdPaintPoints(); }
   // While the panels load there is no panel yet for the PO to be in.
   if (!pj || (split && !PD.lib)) { panel.hidden = true; return; }
   if (pj.id !== PO_LAST) { PO_LAST = pj.id; try { localStorage.setItem('cd-po-last', pj.id); } catch (e) {} }
@@ -13550,14 +13553,11 @@ function renderPo() {
     cur.allow = 'clipboard-read; clipboard-write';
     cur.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1';
     frames.appendChild(cur);
+    try { ibxStrip(); } catch (e) {}   // #311: the new chat's phone strip knows its counts at load
   }
   frames.querySelectorAll('iframe.po-session').forEach(f => { f.hidden = f !== cur; });
-  pdTopicsRefresh();
   if (dock) {
     pdThreadFollow(row.roomId, cur);
-    if (PD.chatKey !== row.roomId) { PD.chatKey = row.roomId; PD.ptSig = ''; }
-    pdPointsFrame();
-    pdPaintPoints();
   }
 }
 // A project without a PO keeps its board and says how to get one.
@@ -13617,10 +13617,10 @@ function poClosePeek() {
 // A layout saved while there was a Documents panel loads without it: the
 // library drops a panel it does not know (its documents are in the Workspace).
 // So does one saved with a Topics panel (#304): topics are the chat's filter.
-const PD_IDS = ['po-chat', 'inbox', 'points', 'board', 'workspace', 'changes', 'spec'];
+const PD_IDS = ['po-chat', 'inbox', 'board', 'workspace', 'changes', 'spec'];
 // The conversation's tab is "Chat": on a phone it is an open task's too (#129).
-const PD_TITLES = { 'po-chat': 'Chat', inbox: 'Inbox', points: 'Needs you', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
-const PD_MIN = { 'po-chat': { w: 360, h: 200 }, inbox: { w: 240, h: 160 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
+const PD_TITLES = { 'po-chat': 'Chat', inbox: 'Inbox', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
+const PD_MIN = { 'po-chat': { w: 360, h: 200 }, inbox: { w: 240, h: 160 }, board: { w: 320, h: 160 },
                  workspace: { w: 300, h: 200 }, changes: { w: 300, h: 200 }, spec: { w: 320, h: 160 } };
 // desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its
 // own, a new one since its tabs hold the spec too (#129): an older one had it hidden.
@@ -13628,7 +13628,7 @@ const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };
 // Layout A (#125), a desktop: the conversation in the middle (the PO's, or an
 // open task's), its tools on a strip at the right edge, in this order. A click
 // on one opens it beside the conversation, which narrows; Pin docks it there.
-const PD_TOOLS = ['inbox', 'points', 'changes', 'workspace', 'board', 'spec'];
+const PD_TOOLS = ['inbox', 'changes', 'workspace', 'board', 'spec'];
 // ---- The tool icons (#166): the strip's, the task list's, the Panels menu's
 // and a popped-out panel's tab. Each tool has its own silhouette and its own
 // colour (--tool-*, fixed in meaning like an agent's: it says which tool, not
@@ -13704,7 +13704,6 @@ const PD_ICON = Object.fromEntries(PD_TOOLS.map(id => [id, toolIcon(id)]));
 // narrower window CSS keeps the conversation its 360px (the "tool strip").
 function pdToolSize(id, vw) {
   const avail = (vw || 1440) - (parseFloat(getComputedStyle(document.body).getPropertyValue('--list-w')) || 0) - 44;
-  if (id === 'points') return 400;
   if (id === 'inbox') return 280;
   if (id === 'spec') return 480;
   return Math.round(Math.max(480, Math.min(760, avail * 0.6, avail - 400)));
@@ -13720,164 +13719,13 @@ function pdDefaultLayout(L, ctx) {
   return { root: L.split('row', [L.stack(['inbox'], {size:280}), L.stack(['po-chat'])]),
            auto: PD_TOOLS.filter(id => id !== 'inbox').map(id => ({ id, edge: 'right', home: { peers: [], near: 'po-chat', side: 'right' } })) };
 }
-// Needs you (#209): what the panel lists, the same groups as the list above
-// the chat (session.html pointsListHtml), newest first in each: Decisions
-// (the question cards still open: a click lands on the card), To try (an
-// answer that asks them to try or check something), New answers (not seen
-// yet); then folds, closed until opened: older questions, what waits on the
-// PO, what closed by itself (reopenable). Nothing waits for a tick: an answer
-// they saw closes by itself once they write again.
-const PD_PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'answered' };
-const PD_PT_REASON = { seen: 'seen', superseded: 'superseded', migrated: 'closed as old' };
-// What the answer says (the hub's `said`, else an answer by doing's summary).
-const pdSaid = (a, n = 200) => { const t = a ? String(a.said || a.summary || '') : ''; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-const PD_PT_FOLDS = new Set();
-// A hub from before the stages says "answered" for delivered.
-const pdPtState = s => s === 'answered' ? 'delivered' : s;
-// Where a delivered point stands: "try", "new", "" (seen); none from a hub before Needs you: new.
-const pdPtNeeds = p => p.state !== 'delivered' ? '' : (p.needs != null ? p.needs : 'new');
-function pdLatest(p, plan) {
-  const a = ((p && p.answers) || []).filter(x => (x.kind === 'plan') === !!plan);
-  for (let i = a.length - 1; i >= 0; i--) if (a[i].mid) return a[i];
-  return a.length ? a[a.length - 1] : null;
-}
-const pdLastAnswer = p => pdLatest(p, false);
-// The answer that counts (seen, its words): the newest, with a balloon or not (session.html curAnswer).
-const pdCurAnswer = p => { const a = ((p && p.answers) || []).filter(x => x.kind !== 'plan'); return a.length ? a[a.length - 1] : null; };
-const pdLastPlan = p => pdLatest(p, true);
-// "#104 · in progress", "#104 merged, awaiting go-live".
-function pdTaskWords(p) {
-  const t = p && p.task;
-  if (!t || !t.ref) return '';
-  if (t.done) return `${t.ref} merged, awaiting go-live`;
-  return t.workflowName ? `${t.ref} · ${t.workflowName.toLowerCase()}` : t.ref;
-}
+// A row's age in the Inbox: "now", "5m", "3h", "2d".
 function pdPtAge(ts, now) {
   const s = Math.max(0, (now || Date.now() / 1000) - (ts || 0));
   if (s < 90) return 'now';
   if (s < 3600) return Math.round(s / 60) + 'm';
   if (s < 48 * 3600) return Math.round(s / 3600) + 'h';
   return Math.round(s / 86400) + 'd';
-}
-// { decisions, totry, news }: what the panel's groups count (its tab's count).
-function pdNeedsCounts(pv) {
-  const n = (pv && pv.needs) || null, items = (pv && pv.items) || [];
-  const count = k => items.filter(p => pdPtNeeds(Object.assign({}, p, { state: pdPtState(p.state) })) === k).length;
-  const d = (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0;
-  return { decisions: n ? (n.decisions || []).length : 0, totry: n && n.totry != null ? n.totry : count('try'),
-    news: n && n.news != null ? n.news : Math.max(d, count('new')), threads: ((pv && pv.threads) || []).length };
-}
-function pdPointsSummary(pv) {
-  const c = pdNeedsCounts(pv), bits = [];
-  if (c.decisions) bits.push(`${c.decisions} decision${c.decisions === 1 ? '' : 's'}`);
-  if (c.totry) bits.push(`${c.totry} to try`);
-  if (c.news) bits.push(`${c.news} new answer${c.news === 1 ? '' : 's'}`);
-  if (c.threads) bits.push(`${c.threads} thread${c.threads === 1 ? '' : 's'} with new replies`);
-  return bits.join(' · ');
-}
-// `told` is what the chat said ({ room, points, words }), null before it has.
-// A point's row: its id, its first words, the answer's, its stage and age,
-// "your message ↑", "plan ↓" and "answer ↓" (a click scrolls the PO chat to
-// that balloon and marks it), and its clicks: 👍 Ack and Comment for an
-// answer, Drop for one still waiting, Reopen for one closed by itself. A
-// question's row: its first line, a link to its card, its task, since when.
-function pdPointsHtml(told, now) {
-  if (!told || !told.points) return '<p class="pdp-empty">What needs you comes from the PO’s conversation once it has loaded.</p>';
-  const pv = told.points, words = told.words || {}, needs = pv.needs || {};
-  const items = (pv.items || []).map(p => Object.assign({}, p, { state: pdPtState(p.state) }));
-  const href = (mid, part) => '/session?room=' + encodeURIComponent(told.room || '') + '&msg=' + encodeURIComponent(mid).replace(/%3A/gi, ':')
-    + (part ? '&part=' + encodeURIComponent(part).replace(/%3A/gi, ':') : '');
-  // part: the passage the chat lands on ("re:P12" the answer's paragraph, "pt:P12" the ask's item, "ask:0" a card's ask).
-  const link = (mid, text, tip, part) => mid ? `<a class="pdp-link" href="${esc(href(mid, part))}" data-mid="${esc(mid)}"${part ? ` data-part="${esc(part)}"` : ''} title="${esc(tip)}">${esc(text)}</a>` : '';
-  const btn = (id, act, text, label) => `<button type="button" class="pdp-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
-  const byId = new Map(items.map(p => [p.id, p]));
-  const answerOf = p => p ? (p.state === 'planned' ? pdLastPlan(p) : (pdLastAnswer(p) || pdLastPlan(p))) : null;
-  // The thread: "follow-up to P103 ↑" (its answer), "followed up by P105 ↓" (the follow-up).
-  const thread = p => {
-    const bits = [];
-    const up = p.replyTo && byId.get(p.replyTo), ua = answerOf(up);
-    // An answer without a "Re Pn:" paragraph (a first reply) lands on the words the follow-up quoted.
-    const upPart = ua && ua.how !== 're' && p.quote ? 'q:' + p.quote : 're:' + (up ? up.id : '');
-    if (up) bits.push(`<span class="pdp-thread">follow-up to ${ua && ua.mid ? link(ua.mid, up.id + ' ↑', `Go to the answer to ${up.id}, which this follows up`, upPart) : esc(up.id)}</span>`);
-    const down = p.followedBy && byId.get(p.followedBy);
-    if (down) bits.push(`<span class="pdp-thread">followed up by ${down.mid ? link(down.mid, down.id + ' ↓', `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
-    return bits.join('');
-  };
-  const row = (p, word) => {
-    const st = p.state;
-    const a = st === 'delivered' ? pdLastAnswer(p) : null;
-    const plan = st !== 'open' ? pdLastPlan(p) : null;
-    // The answer's own words under the ask; a plan's summary for one in progress.
-    const said = pdSaid(st === 'delivered' ? pdCurAnswer(p) : null) || (st === 'planned' ? pdSaid(plan) : '');
-    const task = st === 'planned' ? pdTaskWords(p) : '';
-    const w = words[p.id] || '';
-    return `<li class="pdp-row" data-pt="${esc(p.id)}"><div class="pdp-top"><span class="pdp-id">${esc(p.id)}</span>`
-      + `<span class="pdp-words" title="${esc(w)}">${taskChipsIn(w, told.room)}</span></div>`
-      + (said ? `<p class="pdp-said">${taskChipsIn(said, told.room)}</p>` : '')
-      + `<div class="pdp-meta"><span class="pdp-state ${esc(st)}">${esc(word || task || PD_PT_WORD[st])}</span>`
-      + `<span class="pdp-age" data-at="${esc(String(p.createdAt || 0))}">${esc(pdPtAge(p.createdAt, now))}</span>`
-      + thread(p)
-      + link(p.mid, 'your message ↑', 'Go to your message in the PO chat', 'pt:' + p.id)
-      + (plan ? link(plan.mid, 'plan ↓', 'Go to where the PO planned the work', 're:' + p.id) : '')
-      + (a ? link(a.mid, 'answer ↓', 'Go to the answer in the PO chat', 're:' + p.id) : '')
-      + (st === 'delivered' ? btn(p.id, 'ack', '👍 Ack', `Acknowledge the answer to ${p.id}: nothing is sent to the agent`)
-                              + btn(p.id, 'comment', 'Comment', `Comment on the answer to ${p.id}: a new ask linked to it goes in the chat’s box; sending it closes ${p.id}`)
-                            : btn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
-      + `</div></li>`;
-  };
-  const askRow = c => {
-    const q = hubUrlWords(String(c.question || '').split('\n')[0].replace(/\*\*|__/g, ''), { room: told.room || '', msg: c.mid }).trim();
-    return `<li class="pdp-row pdp-ask" data-mid="${esc(c.mid)}"><div class="pdp-top">`
-      + `<span class="pdp-words" title="${esc(q)}">${link(c.mid, q || 'the question', 'Go to the question card in the PO chat', 'ask:' + (c.n || 0))}</span></div>`
-      + `<div class="pdp-meta">${c.task ? `<span class="pdp-state">${esc(c.task)}</span>` : ''}`
-      + `<span class="pdp-age" data-at="${esc(String(c.ts || 0))}">${esc(pdPtAge(c.ts, now))}</span></div></li>`;
-  };
-  const closedRow = c => `<li class="pdp-row" data-pt="${esc(c.id)}"><div class="pdp-top"><span class="pdp-id">${esc(c.id)}</span>`
-    + `<span class="pdp-words" title="${esc(c.text || '')}">${esc(c.text || '')}</span></div>`
-    + `<div class="pdp-meta"><span class="pdp-state">${esc((PD_PT_REASON[c.reason] || c.reason || 'closed') + (c.supersededBy ? ' by ' + c.supersededBy : ''))}</span>`
-    + `<span class="pdp-age" data-at="${esc(String(c.at || 0))}">${esc(pdPtAge(c.at, now))}</span>`
-    + (c.answer ? link(c.answer, 'answer ↓', 'Go to the answer in the PO chat', 're:' + c.id) : '')
-    + btn(c.id, 'reopen', 'Reopen', `Reopen ${c.id}: it is back under New answers`) + `</div></li>`;
-  const newest = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
-  const by = k => items.filter(p => pdPtNeeds(p) === k).sort(newest);
-  const group = (key, head, rows, extra) => rows.length ? `<li class="pdp-group" data-stage="${key}"><h3 class="pdp-head">${esc(head)} <span class="pdp-n">${rows.length}</span>${extra || ''}</h3>`
-    + `<ul class="pdp-list">${rows.join('')}</ul></li>` : '';
-  const fold = (key, head, n, rows) => {
-    if (!rows.length) return '';
-    const open = PD_PT_FOLDS.has(key);
-    return `<li class="pdp-group pdp-folded" data-stage="${key}"><h3 class="pdp-head"><button type="button" class="pdp-fold" data-fold="${key}" aria-expanded="${open}">`
-      + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> ${esc(head)} <span class="pdp-n">${n}</span></button></h3>`
-      + (open ? `<ul class="pdp-list">${rows.join('')}</ul>` : '') + '</li>';
-  };
-  const decisions = (needs.decisions || []).map(askRow);
-  if (needs.pending && !decisions.length) decisions.push('<li class="pdp-row"><p class="pdp-note">Reading the question cards…</p></li>');
-  // A PO chat's threads with replies not seen yet (#210), newest first: the title opens the thread.
-  const thrRow = t => `<li class="pdp-row" data-thr="${esc(t.id)}"><div class="pdp-top">`
-    + `<span class="pdp-words" title="${esc(t.title || '')}"><button type="button" class="pdp-thr" data-thr="${esc(t.id)}" title="Open the thread beside the chat">${esc(t.title || 'Thread')}</button></span></div>`
-    + `<div class="pdp-meta"><span class="pdp-state">${esc(`${+t.unread || 0} new repl${+t.unread === 1 ? 'y' : 'ies'}`)}</span>`
-    + `<span class="pdp-age" data-at="${esc(String(t.lastAt || 0))}">${esc(pdPtAge(t.lastAt, now))}</span></div></li>`;
-  const topicRows = typeof pdTopicNeedsRows === 'function' ? pdTopicNeedsRows(pv, now, thrRow) : null;
-  const threadRows = (pv.threads || []).map(thrRow);
-  // Clear all (#279): every open card to Older questions, none answered; Undo for a few seconds after.
-  const dc = typeof PD_DEC_CLEAR !== 'undefined' && PD_DEC_CLEAR && PD_DEC_CLEAR.room === told.room ? PD_DEC_CLEAR : null, nDec = (needs.decisions || []).length;
-  if (dc && dc.phase === 'undo' && !decisions.length) decisions.push(`<li class="pdp-row"><p class="pdp-note">Cleared ${dc.n}: ${dc.n === 1 ? 'it is' : 'they are'} under Older questions.</p></li>`);
-  const decClear = dc && dc.phase === 'undo'
-    ? `<span class="pdp-clear" role="status"><button type="button" class="pdp-ca" data-dec-clear="undo">Undo</button></span>`
-    : dc && (dc.phase === 'confirm' || dc.phase === 'busy') && nDec
-      ? `<span class="pdp-clear" role="group" aria-label="Clear all">Move ${nDec} to Older?`
-        + `<button type="button" class="pdp-ca" data-dec-clear="go"${dc.phase === 'busy' ? ' disabled' : ''}>Clear</button>`
-        + `<button type="button" class="pdp-ca" data-dec-clear="cancel"${dc.phase === 'busy' ? ' disabled' : ''}>Cancel</button></span>`
-      : nDec ? `<span class="pdp-clear"><button type="button" class="pdp-ca" data-dec-clear="ask" title="Move every question here to Older questions; none is answered and no agent is told">Clear all</button></span>` : '';
-  const top = group('decisions', 'Decisions', decisions, decClear) + group('try', 'To try', by('try').map(p => row(p, 'to try')))
-    + group('new', 'New answers', by('new').map(p => row(p, 'new answer')))
-    + group('threads', Array.isArray(topicRows) ? 'Topics' : 'Threads', Array.isArray(topicRows) ? topicRows : threadRows);
-  const waits = items.filter(p => p.state === 'open' || p.state === 'planned').sort(newest);
-  const folds = fold('older', 'Older questions', needs.olderCount || (needs.older || []).length, (needs.older || []).map(askRow))
-    + fold('po', 'With the PO', waits.length, waits.map(p => row(p)))
-    + fold('closed', 'Closed', needs.closedCount || (needs.closed || []).length, (needs.closed || []).map(closedRow));
-  const sum = pdPointsSummary(pv);
-  return `<div class="pdp">${sum ? `<p class="pdp-sum">Needs you: ${esc(sum)}</p>` : '<p class="pdp-empty">Nothing waits on you</p>'}`
-    + `<ul class="pdp-groups">${top}${folds}</ul></div>`;
 }
 
 // (A var, not a const: pdById is called from code that may run before this line.)
@@ -14279,7 +14127,7 @@ function pdEnsure() {
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
-  try { PD.dock.forget('documents'); } catch (e) {}
+  try { PD.dock.forget('documents'); PD.dock.forget('points'); } catch (e) {}
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); });
   pdOnAdopt('pd', PD_ROOT);
   pdToolsFit();
@@ -15167,7 +15015,6 @@ function pdShown(id) {
     return;
   }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
-  if (id === 'points') pdPaintPoints(true);
   if (pdTask() && id !== 'po-chat') renderDetail();
   pdPlaceChat();
   barCrumbs();
@@ -15224,7 +15071,6 @@ function pdPlaceChat() {
   pdPlaceTask(task);
   if (PD.dock) pdPopChat(ph.ownerDocument !== document);
   pdSyncTitles();
-  pdPointsFrame();   // what is on screen changed: the chat's points line follows
 }
 // What the conversation is called: the open task (#148 "#12 The title"), else
 // the PO's chat, by its project's name (#261: the header under it then says
@@ -15245,7 +15091,8 @@ function pdProjectName() { return (projectById(PD.pid) || {}).name || ''; }
 function pdSyncTitles() {
   const d = PD.dock;
   if (!d) return;
-  try { d.setTitle('po-chat', d.narrow() && pdTaskWanted() ? PD_TITLES['po-chat'] : pdChatTitle()); } catch (e) {}
+  // #311: a phone's conversation tab is always "Chat" (the bar names the project).
+  try { d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle()); } catch (e) {}
   for (const [id, e] of PD.rt) {
     if (e.kind !== 'chat') continue;
     const r = ALL_ROWS.find(x => x.roomId === e.room);
@@ -15326,7 +15173,7 @@ function pdPopChat(out) {
   own.allow = main.allow;
   own.src = main.src;
   own.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;display:block';
-  if (main.hasAttribute('data-points-elsewhere')) own.setAttribute('data-points-elsewhere', '');
+  if (main.hasAttribute('data-inbox-wait')) own.setAttribute('data-inbox-wait', main.getAttribute('data-inbox-wait'));
   ph.appendChild(own);
 }
 (() => {
@@ -15338,7 +15185,7 @@ function pdPopChat(out) {
   // panel slid out or back): those are class and style changes in the dock.
   new MutationObserver(() => {
     if (PD.raf) return;
-    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdPointsFrame(); pdToolRemember(); pdTabTips(); pdOutMarks(); });
+    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdToolRemember(); pdTabTips(); pdOutMarks(); });
   }).observe(PD_ROOT, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
   // A resize can also make the screen a phone's, or no longer one: the dock
   // turns narrow or wide, each with its own layout.
@@ -15352,240 +15199,6 @@ function pdPopChat(out) {
     renderRows();
   });
 })();
-
-// ---- Topics: one project index, read only while its PO chat is on screen.
-const TOPICS = {room:'', data:null, busy:false, again:false, timer:0};
-function pdTopicNeedsRows(pv, now, thrRow) {
-  if (!TOPICS.data || TOPICS.room !== PD.chatKey || TOPICS.data.pending) return null;
-  const unread = new Map((pv.threads || []).map(t => [t.id, t]));
-  const rows = TOPICS.data.topics.filter(t => t.decisions || t.threads.some(id => unread.has(id)));
-  if (!rows.length) return null;
-  const covered = new Set(rows.flatMap(t => t.threads));
-  const grouped = rows.map(t => {
-    const threads = t.threads.map(id => unread.get(id)).filter(Boolean);
-    const answers = threads.reduce((sum, th) => sum + (+th.unread || 0), 0);
-    const bits = [];
-    if (t.decisions) bits.push(`${t.decisions} decision${t.decisions === 1 ? '' : 's'}`);
-    if (answers) bits.push(`${answers} new answer${answers === 1 ? '' : 's'}`);
-    const ts = Math.max(...threads.map(th => +th.lastAt || 0), +(t.latest?.ts || 0));
-    return `<li class="pdp-row"><div class="pdp-top"><span class="pdp-words"><button type="button" class="pdp-thr" data-topic-open="${esc(t.id)}" title="Open this topic at its latest PO answer">${esc(t.name)}</button></span></div>`
-      + `<div class="pdp-meta"><span class="pdp-state">${esc(bits.join(' · '))}</span><span class="pdp-age" data-at="${esc(String(ts))}">${esc(pdPtAge(ts, now))}</span></div></li>`;
-  });
-  return grouped.concat((pv.threads || []).filter(t => !covered.has(t.id)).map(thrRow));
-}
-function pdTopicTime(ts) {
-  return ts ? new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
-}
-async function pdTopicsRefresh(force=false) {
-  const pj = poDockProject();
-  if (!pj?.poRoomId || document.hidden) return;
-  if (TOPICS.busy) { TOPICS.again = true; return; }
-  if (!force && TOPICS.room === pj.poRoomId && TOPICS.data && Date.now() - (TOPICS.at || 0) < 10000) return;
-  TOPICS.busy = true;
-  const rid = pj.poRoomId;
-  try {
-    const r = await fetch('/api/room/topics?id=' + encodeURIComponent(rid), {signal: AbortSignal.timeout(30000)});
-    const data = await r.json();
-    if (!r.ok || poDockProject()?.poRoomId !== rid) return;
-    TOPICS.room = rid; TOPICS.data = data; TOPICS.at = Date.now();
-    pdPaintPoints();
-    if (data.pending || data.building) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 1500); }
-  } catch (e) { clearTimeout(TOPICS.timer); TOPICS.timer = setTimeout(() => pdTopicsRefresh(true), 3000); }
-  finally { TOPICS.busy = false; if (TOPICS.again) { TOPICS.again = false; pdTopicsRefresh(true); } }
-}
-setInterval(() => { if (document.body.classList.contains('po-dock')) pdTopicsRefresh(); }, 15000);
-// A topic's row in Needs you: the chat shows that topic (its filter, #304)
-// and lands on its latest PO answer. Told now, and again when a chat still
-// loading says it is ready (its chat-ready) in the next few seconds.
-const TOPIC_TELL = new Map();
-function pdTopicTell(rid) {
-  const tell = TOPIC_TELL.get(rid);
-  if (!tell) return;
-  if (Date.now() - tell.at > 10000) { TOPIC_TELL.delete(rid); return; }
-  PO_PANEL.querySelectorAll('iframe.po-session').forEach(f => {
-    if (f.dataset.room === rid && f.contentWindow) f.contentWindow.postMessage({ensemble:'topic-filter', topic:tell.topic}, location.origin);
-  });
-}
-function pdTopicOpen(id) {
-  const row = TOPICS.data?.topics?.find(t => t.id === id);
-  if (!row || !TOPICS.room) return;
-  TOPIC_TELL.set(TOPICS.room, {topic:{id:row.id, name:row.name}, at:Date.now()});
-  pdTopicTell(TOPICS.room);
-  if (row.latest?.mid) openMsgLink(TOPICS.room, row.latest.mid);
-  else pdReveal('po-chat');
-}
-PD.els.points.addEventListener('click', e => {
-  const open = e.target.closest('[data-topic-open]');
-  if (open) pdTopicOpen(open.dataset.topicOpen);
-});
-
-// ---- Points
-// The chat tells the page every change to the points (session.html
-// pointsTell); the panel lists them and its arrows go to the balloons.
-// Whether the Points panel is on screen now: in its own window, or here in
-// front of its stack, not minimised, not under another maximised panel, and
-// slid out if it sits on a strip. In the layout but behind another tab or
-// slid in is not on screen: the chat then shows its own points line.
-function pdPointsOnScreen() {
-  if (!PD.dock || !document.body.classList.contains('po-dock')) return false;
-  if (PD.dock.popWindow('points') && PD.els.points.ownerDocument !== document) return true;
-  // A phone's open task covers the PO screen, and the drawer peeks over it.
-  if (document.body.classList.contains('po-peek')) return false;
-  const el = PD.els.points;
-  if (el.ownerDocument !== document || !el.isConnected || el.closest('.dk-parking') || el.classList.contains('dk-off')) return false;
-  const fly = el.closest('.dk-flyout');
-  if (fly && !fly.classList.contains('open')) return false;
-  const stack = el.closest('.dk-stack');
-  if (stack && stack.classList.contains('dk-min')) return false;
-  if (PD_ROOT.classList.contains('dk-has-max') && !(stack && stack.classList.contains('dk-max')) && !el.closest('.dk-float.dk-max')) return false;
-  return true;
-}
-function pdPointsFrame() {
-  const f = pdChatFrame();
-  if (!f) return;
-  const want = pdPointsOnScreen();
-  const frames = [f, PD.els['po-chat'].querySelector('iframe.pd-own')].filter(Boolean);
-  for (const x of frames) {
-    if (x.hasAttribute('data-points-elsewhere') === want) continue;
-    x.toggleAttribute('data-points-elsewhere', want);
-    try { if (x.contentWindow && x.contentWindow.showPointsLine) x.contentWindow.showPointsLine(); } catch (e) {}
-  }
-  if (!f._pdHeard) {
-    f._pdHeard = true;
-    f.addEventListener('po-points', e => { PD.told = e.detail; pdPaintPoints(); });
-    f.addEventListener('load', () => { pdHear(f); pdPointsFrame(); });
-  }
-  pdHear(f);
-}
-function pdHear(f) {
-  try { const t = f.contentWindow && f.contentWindow.EMBED_POINTS; if (t && t !== PD.told) { PD.told = t; pdPaintPoints(); } } catch (e) {}
-}
-// What the current PO's chat said: never another PO's (a chat seen before
-// may still be telling).
-function pdTold() { return PD.told && PD.chatKey && PD.told.room === PD.chatKey ? PD.told : null; }
-// Drawn again only when what it lists changed; the ages tick in place.
-function pdPaintPoints(force) {
-  const el = PD.els.points;
-  const told = pdTold();
-  const html = PD.chatKey === null ? `<p class="pdp-empty">${esc(nounText('This {project} has no PO, so there are no asks to follow here.'))}</p>`
-    : pdPointsHtml(told, Date.now() / 1000);
-  const sig = html.replace(/(<span class="pdp-age"[^>]*>)[^<]*/g, '$1');
-  const pv = told && told.points;
-  // The tab's count: what Needs you lists on top (decisions, to try, new answers).
-  const c = pv ? pdNeedsCounts(pv) : null, n = c ? c.decisions + c.totry + c.news : 0;
-  if (PD.dock) PD.dock.setBadge('points', n ? String(n) : null, n ? pdPointsSummary(pv) : null);
-  if (!force && sig === PD.ptSig) {
-    el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
-    return;
-  }
-  PD.ptSig = sig;
-  const focus = el.contains(el.ownerDocument.activeElement) ? el.ownerDocument.activeElement : null;
-  const key = focus && focus.dataset.ptAct ? `[data-pt="${focus.dataset.pt}"][data-pt-act="${focus.dataset.ptAct}"]`
-    : focus && focus.dataset.fold ? `.pdp-fold[data-fold="${focus.dataset.fold}"]`
-    : focus && focus.dataset.decClear ? '[data-dec-clear]:not([disabled])' : '';
-  el.innerHTML = html;
-  if (key) { const f = el.querySelector(key); if (f) f.focus(); }
-}
-// An arrow: the PO chat comes on screen and goes to that balloon, which it
-// marks for a moment (session.html gotoMsg), as the arrows in the chat do.
-// With a task in the middle, the task closes first: its project's PO takes
-// the middle (the asks listed are that PO's), then the chat goes there.
-function pdGoto(mid, part) {
-  if (pdTask()) closeDetail();
-  pdReveal('po-chat');
-  let tries = 0;
-  const go = () => {
-    const f = pdVisibleChat();
-    const shown = f && (!f.checkVisibility || f.checkVisibility({ visibilityProperty: true }));
-    try { if (shown && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid, part || ''); return; } } catch (e) {}
-    if (++tries < 20) setTimeout(go, 150);
-  };
-  go();
-}
-// Comment on a point's answer: the chat puts a new ask linked to the answer
-// in its box (session.html pointComment) and comes on screen with it.
-function pdComment(id) {
-  if (pdTask()) closeDetail();
-  pdReveal('po-chat');
-  let tries = 0;
-  const go = () => {
-    const f = pdVisibleChat();
-    const shown = f && (!f.checkVisibility || f.checkVisibility({ visibilityProperty: true }));
-    try { if (shown && f.contentWindow && f.contentWindow.pointComment) { f.contentWindow.pointComment(id); return; } } catch (e) {}
-    if (++tries < 20) setTimeout(go, 150);
-  };
-  go();
-}
-// Ack and Drop, as in the chat: the hub's answer is handed to the chat too,
-// so both show the same points at once.
-const PD_PT_BUSY = new Set();
-async function pdPointAct(id, act, btn) {
-  const told = pdTold();
-  const room = told && told.room;
-  const k = act + ':' + id;
-  if (!room || PD_PT_BUSY.has(k)) return;
-  PD_PT_BUSY.add(k);
-  if (btn) btn.disabled = true;
-  try {
-    // Given up after 20 s (sendJson, #251): the button never stays disabled.
-    const { ok, status, data: r } = await sendJson('/api/room/points', { roomId: room, id, action: act });
-    if (!ok) throw new Error((r && r.error) || ('error ' + status));
-    const f = pdChatFrame();
-    if (r && r.points && f && f.contentWindow && f.contentWindow.pointsChanged) f.contentWindow.pointsChanged(r.points, f.contentWindow.ptTicket());
-  } catch (e) { toast('Not done: ' + ((e && e.message) || 'the hub did not answer'), 5000, 'err'); }
-  finally { PD_PT_BUSY.delete(k); if (btn && btn.isConnected) btn.disabled = false; }
-}
-// Clear all on the Decisions (#279): {room, phase: confirm | busy | undo, before, n}.
-var PD_DEC_CLEAR = null;
-let PD_DEC_TIMER = 0;
-function pdDecEnd() { clearTimeout(PD_DEC_TIMER); PD_DEC_CLEAR = null; pdPaintPoints(true); }
-async function pdDecClear(what) {
-  const told = pdTold(), room = told && told.room;
-  if (!room) return;
-  const cur = PD_DEC_CLEAR && PD_DEC_CLEAR.room === room ? PD_DEC_CLEAR : null;
-  if (what === 'ask') { PD_DEC_CLEAR = { room, phase: 'confirm' }; pdPaintPoints(true); PD.els.points.querySelector('[data-dec-clear="go"]')?.focus(); return; }
-  if (what === 'cancel') { pdDecEnd(); return; }
-  if (what !== 'go' && !(what === 'undo' && cur && cur.phase === 'undo')) return;
-  const n = ((told.points && told.points.needs && told.points.needs.decisions) || []).length;
-  const body = what === 'go' ? { roomId: room, action: 'clear' } : { roomId: room, action: 'undo', before: cur.before };
-  clearTimeout(PD_DEC_TIMER);
-  PD_DEC_CLEAR = { room, phase: 'busy' };
-  pdPaintPoints(true);
-  try {
-    const r = await (window.pageWrite ? pageWrite('/api/room/points/decisions', body)
-      : fetch('/api/room/points/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
-    let j = {};
-    try { j = await r.json(); } catch (e) {}
-    if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
-    PD_DEC_CLEAR = what === 'go' ? { room, phase: 'undo', before: j.before || 0, n } : null;
-    if (PD_DEC_CLEAR) PD_DEC_TIMER = setTimeout(pdDecEnd, SW_CLEAR_UNDO_MS);
-    const f = pdChatFrame();
-    if (j.points && f && f.contentWindow && f.contentWindow.pointsChanged) f.contentWindow.pointsChanged(j.points, f.contentWindow.ptTicket());
-    pdPaintPoints(true);
-  } catch (e) {
-    toast((what === 'go' ? 'Not cleared: ' : 'Not undone: ') + e.message, 5000, 'err');
-    pdDecEnd();
-  }
-}
-PD.els.points.addEventListener('click', e => {
-  const dec = e.target.closest && e.target.closest('[data-dec-clear]');
-  if (dec) { if (!dec.disabled) pdDecClear(dec.dataset.decClear); return; }
-  const th = e.target.closest && e.target.closest('.pdp-thr[data-thr]');
-  if (th) { const told = PD.told || window.EMBED_POINTS; if (told && told.room) pdThreadOpen(told.room, th.dataset.thr, ''); return; }
-  const a = e.target.closest && e.target.closest('a.pdp-link[data-mid]');
-  if (a) { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); pdGoto(a.dataset.mid, a.dataset.part || ''); return; }
-  const fold = e.target.closest && e.target.closest('.pdp-fold[data-fold]');
-  if (fold) { const k = fold.dataset.fold; if (PD_PT_FOLDS.has(k)) PD_PT_FOLDS.delete(k); else PD_PT_FOLDS.add(k); pdPaintPoints(true); return; }
-  const b = e.target.closest && e.target.closest('.pdp-btn[data-pt]');
-  if (b && b.dataset.ptAct === 'comment') { pdComment(b.dataset.pt); return; }
-  if (b && !b.disabled) { pdPointAct(b.dataset.pt, b.dataset.ptAct, b); return; }
-  // An answer given by doing has no balloon: its row, clicked here, is where it is read (session.html seenSend).
-  const r = e.target.closest && e.target.closest('.pdp-row[data-pt]');
-  const told = pdTold(), p = r && told && ((told.points && told.points.items) || []).find(x => x.id === r.dataset.pt);
-  const ans = p && pdPtState(p.state) === 'delivered' && !p.seen ? pdCurAnswer(p) : null;
-  if (ans && !ans.mid) { const f = pdChatFrame(); try { if (f && f.contentWindow && f.contentWindow.seenSend) f.contentWindow.seenSend([], [p.id], 'link'); } catch (err) {} }
-});
-setInterval(() => { if (PD.dock && document.body.classList.contains('po-dock') && !document.hidden) pdPaintPoints(); }, 30000);
 
 // ---- The inbox (#302, Layout A step 1) ---------------------------------------
 // One row per thing that waits on the person, whatever list shows it today
@@ -15728,11 +15341,34 @@ function ibxPaint() {
   // A phone's Inbox pane (#307), while it is open: the project the bar names.
   const ph = document.getElementById('ph-inbox');
   if (ph && !ph.hidden) ibxPaintIn(document.getElementById('ph-inbox-body'), projHere() || '', 'phSig');
+  ibxStrip();
   if (!el) return;
-  ibxPaintIn(el, pid, 'sig');
+  // #311: on a phone the dock's Inbox is a full tab, drawn with the phone's touch sizes.
+  const phone = !!(PD.dock && PD.dock.narrow());
+  el.classList.toggle('ibx-phone', phone);
+  ibxPaintIn(el, pid, 'sig', phone);
 }
-function ibxPaintIn(el, pid, key) {
-  const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, key === 'phSig');
+// #311: what a PO chat's phone strip names ("3 questions for you · 1 to
+// check"): its project's counts, written on each PO chat frame; the chat reads
+// them on load and when they change (session.html inboxStrip).
+function ibxStripCounts(pid) {
+  const rows = IBX.data && pid ? ibxRows(IBX.data, 'project', pid) : [];
+  const n = k => rows.filter(r => r.kind === k).length;
+  return { q: n('answer'), check: n('check'), wait: n('waiting') };
+}
+function ibxStrip() {
+  if (!IBX.data) return;
+  const frames = new Set(PO_PANEL.querySelectorAll('iframe.po-session'));
+  try { const f = pdVisibleChat(); if (f) frames.add(f); } catch (e) {}
+  const pjs = registeredProjects();
+  frames.forEach(f => {
+    const pj = pjs.find(p => p.poRoomId === f.dataset.room);
+    const v = JSON.stringify(ibxStripCounts(pj ? pj.id : ''));
+    if (f.getAttribute('data-inbox-wait') !== v) f.setAttribute('data-inbox-wait', v);
+  });
+}
+function ibxPaintIn(el, pid, key, phone) {
+  const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
@@ -15958,8 +15594,9 @@ ibxWire(document.getElementById('ph-inbox-body'));
 // the PO of this project (else of the first row's project) first. A phone's
 // opens (or closes) its Inbox pane over the conversation (#307).
 function ibxOpen() {
-  if (phoneNow()) { phPane(PH_PANE === 'inbox' ? '' : 'inbox'); return; }
+  // #311: a phone with the PO's dock up has the Inbox as a tab beside Chat.
   if (document.body.classList.contains('po-dock') && PD.dock && !pdTask()) { pdReveal('inbox'); return; }
+  if (phoneNow()) { phPane(PH_PANE === 'inbox' ? '' : 'inbox'); return; }
   const rows = (IBX.data && IBX.data.rows) || [];
   const here = projectById(SELECTED_PROJECT);
   const pj = (here && poRowOf(here)) ? here
@@ -20635,11 +20272,10 @@ function syncProjSwitch() {
 // everywhere but its home, the list (#129), with ← back to the list.
 function barPaint() {
   const inProj = !!SELECTED_PROJECT;
-  const phone = phoneNow(), row2 = phone;
+  const phone = phoneNow();
   document.body.classList.toggle('in-proj', inProj);
-  document.body.classList.toggle('row2', row2);
   const back = document.getElementById('bar-back');
-  if (back) back.hidden = phone ? !phBackTo() : !(inProj || row2);
+  if (back) back.hidden = phone ? !phBackTo() : !inProj;
   // A phone opens on the conversation it last showed (#307).
   if (phone && !PH_PANE && !phSwitchOpen()) rememberConv(swSelection());
   const here = document.getElementById('bar-here');
@@ -20649,6 +20285,12 @@ function barPaint() {
   const tabs = poDockProject() || pdTaskWanted();
   if (here) writeSlot(here, LD?.dock || (inProj && tabs && panels) ? pdCtlHtml() : '');
   barCrumbs();
+  // #311: a phone's second row only when there is somewhere to go back to or
+  // a place to name (an open task, a pane); a PO's conversation has one row,
+  // the project's name (the switcher) in it beside the wordmark.
+  const crumbs = document.getElementById('bar-crumbs');
+  const row2 = phone && (!!phBackTo() || !!(crumbs && crumbs.children.length));
+  document.body.classList.toggle('row2', row2);
   const sw = document.getElementById('proj-switch');
   if (sw) sw.title = document.body.classList.contains('bar-proj') || inProj
     ? `${sw.querySelector('#proj-switch-name').textContent}: switch ${noun('one')}, or change this ${noun('one')}'s settings` : nounText('Switch {project}');
@@ -21745,9 +21387,10 @@ window.addEventListener('message', (ev) => {
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
-  if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) { sendGotoMsg(String(d.roomId)); pdTopicTell(String(d.roomId)); }
-  if (d && d.type === 'topics-changed' && d.roomId === TOPICS.room && ev.origin === location.origin) pdTopicsRefresh(true);
+  if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
+  // #311: a PO chat's phone strip, Inbox ›.
+  if (d && d.type === 'inbox-open' && ev.origin === location.origin) ibxOpen();
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
   // A PO chat's thread (#210): opened beside it; its page names it; its ‹ Chat.
   if (d && d.type === 'open-thread' && d.roomId && ev.origin === location.origin) {

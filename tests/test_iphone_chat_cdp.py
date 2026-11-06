@@ -63,11 +63,11 @@ const PO_STATE = `(() => {
     needs: { decisions: [], older, olderCount: older.length, news: 1, totry: 0, closed: [], closedCount: 0 } });
   THREADED = true; THR_UNREAD = [{ id: 'po-5', lastMid: 'po-6', root: 'po-5' }, { id: 'po-8', lastMid: 'po-9', root: 'po-8' }];
   LAST_ITEMS = items; renderBubbles(items);
-  showOpenQuestions(); showPointsLine(); pointsTell({ items: [], needs: { news: 1 }, delivered: 1, threads: [{}, {}] });
+  pointsTell({ items: [], needs: { news: 1 }, delivered: 1, threads: [{}, {}] });
   document.body.classList.add('po-thread-channel');
   document.getElementById('chatbar').hidden = false;
   document.getElementById('earlier-threads').hidden = false;
-  showThreadsBtn(); showThreadCatchup();
+  showThreadsBtn();
   return 0;
 })()`;
 const TASK_STATE = `(() => {
