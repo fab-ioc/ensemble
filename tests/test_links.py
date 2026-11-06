@@ -351,6 +351,7 @@ ALLOW = {
     "actions": "its buttons carry the action classes wired in the document click handler",
     "offer": "its buttons are handled by the offer's own click listener",
     "pref-btn-row": "its buttons are wired by #pref-consolidate and #pref-split",
+    "ibx-scope": "its This project/All buttons are wired by [data-ibx-scope] in the Inbox's click listener (#302)",
 }
 
 
@@ -396,7 +397,7 @@ def element_attrs(src: str, tok: str) -> list[tuple[str, set[str]]]:
             if name in [re.sub(r"\$\{.*", "", c) for c in classes] or re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", m.group(3)):
                 rest = m.group(2) + m.group(4)
                 ids = re.findall(r"\bid=\"([\w-]+)\"", rest)
-                data = re.findall(r"\b(data-[\w-]+)=", rest)
+                data = re.findall(r"\b(data-[\w-]+)", rest)   # data-x="…" or bare (data-ph-close, data-ibx-go${…})
                 out.append((m.group(1).lower(), {"." + c for c in re.findall(r"[\w-]+", m.group(3))}
                             | {"#" + i for i in ids} | {"[" + d for d in data}))
         for m in re.finditer(rf"(\w+)\.className\s*=\s*['\"`][^'\"`]*(?<![\w-]){re.escape(name)}(?![\w-])", src):
@@ -411,6 +412,27 @@ def element_attrs(src: str, tok: str) -> list[tuple[str, set[str]]]:
 
 
 CLICKISH = re.compile(r"closest\(|\.onclick\b|addEventListener\(\s*['\"](?:click|pointerdown|mousedown)['\"]|\.click\(\)")
+
+
+def closest_alias_calls(js: str) -> list[tuple[int, int]]:
+    """Spans of the selector strings passed to a click listener's own short
+    name for e.target.closest, inside that listener only:
+    `box.addEventListener('click', e => { const at = sel => e.target.closest(sel); ... at('[data-x]') ... })`.
+    Another function's alias, or a call outside the listener, is not one."""
+    spans = []
+    for m in re.finditer(r"addEventListener\(\s*['\"]click['\"]\s*,\s*(?:async\s+)?(?:\(?(\w+)\)?)\s*=>\s*\{", js):
+        ev, start = m.group(1), m.end()
+        d = re.compile(rf"\s*const\s+(\w+)\s*=\s*\(?(\w+)\)?\s*=>\s*{re.escape(ev)}\.target\.closest(?:\s*&&\s*{re.escape(ev)}\.target\.closest)?\(\s*\2\s*\)\s*;")
+        dm = d.match(js, start)
+        if not dm:
+            continue
+        depth, i = 1, start          # the listener's body: to its closing brace
+        while depth and i < len(js):
+            depth += {"{": 1, "}": -1}.get(js[i], 0)
+            i += 1
+        for c in re.finditer(rf"\b{re.escape(dm.group(1))}\(\s*(['\"`])[^'\"`\n]*\1", js[dm.end():i]):
+            spans.append((dm.end() + c.start(1), dm.end() + c.end()))
+    return spans
 
 
 def wired(js: str, tokens: set[str], tag: str) -> bool:
@@ -430,9 +452,14 @@ def wired(js: str, tokens: set[str], tag: str) -> bool:
             pats.append(rf"['\"` ](?:[a-z]+)?\[{name}[\]=]")
         else:
             pats += [rf"['\"`][^'\"`\n]*#{name}(?![\w-])", rf"getElementById\(\s*['\"]{name}['\"]\s*\)"]
+    calls = closest_alias_calls(js)
     for p in pats:
         for m in re.finditer(p, js):
             if CLICKISH.search(js[max(0, m.start() - 80):m.end() + 120]):
+                return True
+            # The selector is the argument of a click listener's own alias for
+            # e.target.closest: `at('[data-ibx-go]')` (#302).
+            if any(a <= m.start() < b for a, b in calls):
                 return True
     # const btn = document.getElementById('mode'); ... btn.onclick = ...
     for t in tokens:
@@ -455,6 +482,25 @@ def wired(js: str, tokens: set[str], tag: str) -> bool:
 
 
 class ClickableHasHandler(unittest.TestCase):
+    def test_a_closest_alias_wires_only_its_own_selectors(self):
+        # #312 review 1: the alias counts for the selector it is called with,
+        # inside its own click listener; not for an element named near a call.
+        # The padding keeps '.lonely' out of the older ±120-char window around
+        # a closest( call, so only the alias rule could wire it.
+        pad = "// " + "x" * 220 + "\n"
+        js = ("box.addEventListener('click', e => {\n"
+              "  const at = sel => e.target.closest && e.target.closest(sel);\n"
+              "  if (at('[data-go]')) go();\n"
+              "});\n" + pad +
+              "function paint() { at('[data-x]'); at2('[data-x]'); const s = '.lonely'; }\n" + pad +
+              "const at2 = sel => ev.target.closest(sel);\n"
+              "other.addEventListener('keydown', e => { const at = sel => e.target.closest(sel);\n" + pad +
+              "  at('[data-key]'); });\n")
+        self.assertTrue(wired(js, {"[data-go"}, "button"))
+        self.assertFalse(wired(js, {".lonely"}, "button"), "a selector near an alias call is not wired by it")
+        self.assertFalse(wired(js, {"[data-x"}, "button"), "an alias outside a click listener does not wire")
+        self.assertFalse(wired(js, {"[data-key"}, "button"), "a keydown listener's alias is not a click")
+
     def test_every_pointer_styled_element_is_wired(self):
         problems = []
         for page, src in PAGES.items():
@@ -554,7 +600,7 @@ class PoRoomFileBase(unittest.TestCase):
 
         room = {"id": "room-po1", "cwd": r"C:\code\Ensemble", "taskDir": "", "sharedCwd": "", "participants": []}
         projects = [{"id": "proj-1", "path": r"C:\code\Ensemble", "home": r"C:\home\Ensemble"}]
-        with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
+        with mock.patch.object(dashboard.chatroom, "get_room", lambda rid, **kw: dict(room) if rid == room["id"] else None), \
              mock.patch.object(dashboard, "load_projects", lambda: projects), \
              mock.patch.object(dashboard, "load_session_projects", lambda: {}),              mock.patch.object(dashboard, "_task_index", lambda: [
                  {"projectId": "proj-1", "taskDir": r"C:\home\Ensemble\t1", "createdAt": 1},
@@ -562,8 +608,11 @@ class PoRoomFileBase(unittest.TestCase):
             bases, search = dashboard._file_ref_places(room_id="room-po1", cwd=room["cwd"])
         # the order file_refs documents: the room's folders, the project home, its Documents; not
         # the other tasks' folders (the home holds them), neither tried nor walked
-        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents"])
-        self.assertEqual(search, bases)
+        self.assertEqual(search, [r"C:\code\Ensemble", r"C:\home\Ensemble", r"C:\home\Ensemble\Documents"])
+        # P261 (d353ba6): the folder holding the projects and the user's home come
+        # after them, tried for a path as written but never walked
+        self.assertEqual(bases[:len(search)], search)
+        self.assertEqual(bases[len(search):], [r"C:\home", str(Path.home())])
 
     def test_resolves_a_documents_path_under_the_project_home(self):
         import tempfile
@@ -578,7 +627,7 @@ class PoRoomFileBase(unittest.TestCase):
             code.mkdir()
             room = {"id": "room-po1", "cwd": str(code), "taskDir": "", "sharedCwd": "", "participants": []}
             projects = [{"id": "proj-1", "path": str(code), "home": str(home)}]
-            with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
+            with mock.patch.object(dashboard.chatroom, "get_room", lambda rid, **kw: dict(room) if rid == room["id"] else None), \
                  mock.patch.object(dashboard, "load_projects", lambda: projects), \
                  mock.patch.object(dashboard, "load_session_projects", lambda: {}):
                 fp = dashboard.resolve_file_ref("Documents/x.md", room_id="room-po1", cwd=room["cwd"])
@@ -697,8 +746,9 @@ const unsent = rv => (rv ? rv.store.list.filter(c => !c.sent).map(c => c.note) :
   const pend = chOpenDiff('b.py'); chPickRepo('/r1'); await tick(); freeR2(); await pend; await tick();
   out.lateDiff = diff.innerHTML.includes('x/r2');
   delete slow['/r1']; delete slow['/r2'];
-  // A send pending on the same review: Submit again sends nothing, and a
-  // comment added meanwhile stays unsent.
+  // A send pending on the same review: Submit again sends nothing while it
+  // is on its way; since #258 (466c364) it goes right after it, in a message
+  // of its own, with the comment added meanwhile.
   const r1 = CH_RV;
   out.r1Key = r1.key;
   put(r1, 'A2');
@@ -707,10 +757,14 @@ const unsent = rv => (rv ? rv.store.list.filter(c => !c.sent).map(c => c.note) :
   await drSubmit(r1);
   while (sent.length === n0) await tick();      // the first send is on its way
   put(r1, 'C');
-  answer(); await first; hold = null;
+  for (let i = 0; i < 5; i++) await tick();
   out.sendsWhilePending = sent.length - n0;
+  answer(); await first; hold = null;
+  for (let i = 0; i < 50 && (sent.length < n0 + 2 || unsent(r1).length); i++) await tick();
+  out.sendsAfter = sent.length - n0;
   out.afterPendingSend = unsent(r1);
   out.sentPending = sent[n0].text.includes('on r1') && sent[n0].text.includes('A2') && !sent[n0].text.includes('\n\nC');
+  out.sentAgain = !!sent[n0 + 1] && sent[n0 + 1].text.includes('C') && !sent[n0 + 1].text.includes('A2');
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -752,7 +806,9 @@ class ChangesComments(unittest.TestCase):
         # A send pending on the same review.
         self.assertEqual(r["r1Key"], "project:pA|/r1")
         self.assertEqual(r["sendsWhilePending"], 1, "a second send went out while the first was pending")
-        self.assertEqual(r["afterPendingSend"], ["C"], "a comment added during the send was lost")
+        self.assertEqual(r["sendsAfter"], 2, "the Submit pressed during the send did not go after it")
+        self.assertTrue(r["sentAgain"], "the second message is not the comment added during the send alone")
+        self.assertEqual(r["afterPendingSend"], [], "a comment added during the send was left unsent")
         self.assertTrue(r["sentPending"])
         self.assertEqual(r["aAfterMove"], 0, "the comments sent are the ones marked sent")
         self.assertEqual(r["cAfterMove"], ["fix C"], "C's new comment was dropped")
@@ -1093,13 +1149,16 @@ const pdSyncTitles = () => {};   // the panels' titles (#154) are not here
 const toast = () => {}, esc = s => String(s);
 const VIEW = { matches: () => false, innerHTML: '' };
 const $ = () => VIEW;
-globalThis.document = { hidden: false, getElementById: () => null };
+globalThis.document = { hidden: false, getElementById: () => null, body: { classList: { contains: () => false } } };
+const pdById = id => document.getElementById(id);   // the panels' lookup refresh() uses on a failed poll
 let ANSWER = false;
 // The task list: answers only once ANSWER is set; otherwise fails when aborted.
 const api = (url, opts) => new Promise((resolve, reject) => {
   if (ANSWER) return resolve([{ sessionId: 'new' }]);
   if (opts && opts.signal) opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
 });
+// refresh() reads the task list through its feed (the delta-aware list fetch); here the feed is the stub above.
+const SESS_FEED = { get: (url, opts) => api(url, opts) };
 %s
 // Node does not stay up for AbortSignal.timeout's timer alone; a browser tab does.
 setInterval(() => {}, 1000);

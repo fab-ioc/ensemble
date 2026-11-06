@@ -35,7 +35,13 @@ async function main() {
       await c.send('Emulation.setTouchEmulationEnabled',{enabled:touch,maxTouchPoints:5},s);
       const ev=async expression=>{const r=await c.send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},s);if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
       const until=async expression=>{for(let i=0;i<180;i++){try{if(await ev(expression))return;}catch{}await sleep(100);}throw Error('timeout '+expression);};
+      await c.send('Page.addScriptToEvaluateOnNewDocument',{source:'window.ensListDocked = true;'},s);   // the task list docked on a computer, as before #306 hid it
       await c.send('Page.navigate',{url:A.base+'/'},s);
+      await until(`typeof PROJECTS !== 'undefined' && !!PROJECTS && (PROJECTS.projects||[]).some(p=>p.id===${JSON.stringify(A.proj)})`);
+      if (touch) {   // on a phone the task list is a pane (#307): the project switcher's Task list
+        await ev(`document.getElementById('proj-switch').click(); 0`); await sleep(200);
+        await ev(`document.querySelector('#proj-menu [data-ph-list]').click(); 0`);
+      }
       await until(`!!document.querySelector('#sw-list .sw-row[data-po="${A.proj}"]')`);
       await ev(`document.querySelector('#sw-list .sw-row[data-po="${A.proj}"]').click(); 0`);
       const F = `document.querySelector('#po-panel iframe.po-session:not([hidden])')`;

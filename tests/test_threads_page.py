@@ -90,6 +90,8 @@ const FVIEW = fe(`(() => {
     mids: [...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid),
     headHidden: getComputedStyle(document.querySelector('body > header')).display === 'none',
     also: (e => !!e && !e.hidden && e.getBoundingClientRect().width > 0)(document.getElementById('thr-also-l')),
+    box: getComputedStyle(document.getElementById('compose')).display !== 'none',
+    reply: (e => !!e && !e.hidden && e.getBoundingClientRect().width > 0)(document.getElementById('thread-reply')),
     seen: Object.fromEntries([...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => [e.dataset.mid, seen(e.dataset.mid)])) };
 })()`);
 async function main() {
@@ -169,6 +171,18 @@ async function main() {
       o.side = await evalIn(VIEW);
       o.sideThread = await evalIn(FVIEW);
       await shot('2-side');
+      // Beside the chat the thread shares the channel's box (263f9e0): Reply in
+      // thread aims that box at it, with Also send to chat; the chip's x lets go.
+      if (o.sideThread.reply) {
+        await evalIn(fe('document.getElementById("thread-reply").click(); 0'));
+        await sleep(300);
+        o.sharedReply = await evalIn(`(() => { const chip = document.getElementById('compose-target'), shown = e => !!e && !e.hidden && e.getBoundingClientRect().width > 0;
+          return { chip: shown(chip) ? chip.querySelector('span').textContent : '', also: shown(document.getElementById('thr-also-l')),
+            focused: document.activeElement === document.getElementById('input') }; })()`);
+        await evalIn('document.querySelector("#compose-target button").click(); 0');
+        await sleep(200);
+        o.sharedLetGo = await evalIn('(e => !!e && !e.hidden)(document.getElementById("compose-target"))');
+      }
       // A reload keeps it open.
       await go('room=' + room);
       await until(FDRAWN, 20000);
@@ -622,13 +636,19 @@ class ThreadsPage(unittest.TestCase):
                     self.assertLessEqual(o["side"]["endGap"], 50, "a chat at its end stays there")
                 t = o["sideThread"]
                 self.assertEqual(t["mids"], [f"{sid}:1", f"{sid}:2", f"{sid}:3"])
-                self.assertTrue(t["side"] and t["headHidden"] and t["also"], t)
+                self.assertTrue(t["side"] and t["headHidden"], t)
                 if w in ("1728", "4096"):
+                    # Beside the chat: one box, the channel's (263f9e0).
+                    self.assertFalse(t["box"] or t["also"], t)
+                    self.assertTrue(t["reply"], "Reply in thread stands where its box was")
+                    self.assertEqual(o["sharedReply"], {"chip": "In thread: Make the speed chart wider", "also": True, "focused": True})
+                    self.assertFalse(o["sharedLetGo"], "the chip's x sends to the main chat again")
                     self.assertFalse(side["layer"])
                     self.assertEqual(side["width"], 520)
                     self.assertGreater(side["chatWidth"], 1000, "the chat is still in view")
                     self.assertAlmostEqual(side["left"], side["chatWidth"], delta=1)
                 else:
+                    self.assertTrue(t["box"] and t["also"] and not t["reply"], "over the chat it has its own box")
                     self.assertTrue(side["layer"], "narrow or touch: the thread over the chat, with Back")
                     self.assertEqual(side["width"], int(w))
                 self.assertLessEqual(o["side"]["scrollX"], 1)

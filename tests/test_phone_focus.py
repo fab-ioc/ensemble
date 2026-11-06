@@ -28,14 +28,36 @@ async function main() {
       const ev = async expression => {const r = await c.send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},s); if(r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value;};
       const until = async ex => {for(let i=0;i<300;i++){try{if(await ev(ex))return;}catch{} await sleep(100);}throw Error('timeout '+ex);};
       await c.send('Page.addScriptToEvaluateOnNewDocument',{source:"try { localStorage.setItem('cd-switcher-view', 'status'); } catch (e) {}"},s);   // the grouped list: its rows include a project's tasks (#189)
+      await c.send('Page.addScriptToEvaluateOnNewDocument',{source:'window.ensListDocked = true;'},s);   // the task list docked on a computer, as before #306 hid it
       await c.send('Page.navigate',{url:A.base+'/'},s);
       await until(`typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r=>r.roomId===${JSON.stringify(A.task)})`);
-      await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)}; document.querySelector('#sw-list .sw-row[data-room="${A.task}"]').click()`);
+      // A row of the task list. On a phone the list is a pane (#307): the project switcher's Task list.
+      const pick = async row => {
+        if(width<768 && !await ev(`!!document.querySelector('${row}') && PH_PANE==='list'`)) {
+          await ev(`document.getElementById('proj-switch').click()`); await sleep(200);
+          await ev(`document.querySelector('#proj-menu [data-ph-list]').click()`);
+          await until(`PH_PANE==='list' && !!document.querySelector('${row}')`); await sleep(200);
+        }
+        await until(`!!document.querySelector('${row}')`);
+        await ev(`document.querySelector('${row}').click()`);
+      };
+      await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+      await pick(`#sw-list .sw-row[data-room="${A.task}"]`);
       for (const kind of ['task','po','unassigned']) {
-        if(kind==='po') await ev(`document.getElementById('bar-back').click(); document.querySelector('#sw-list .sw-row[data-po="${A.proj}"]').click()`);
-        if(kind==='unassigned') await ev(`document.getElementById('bar-back').click(); document.querySelector('#sw-list .sw-row[data-room="${A.loose}"]').click()`);
+        if(kind==='po') { await ev(`document.getElementById('bar-back').click()`); await pick(`#sw-list .sw-row[data-po="${A.proj}"]`); }
+        if(kind==='unassigned') { await ev(`document.getElementById('bar-back').click()`); await pick(`#sw-list .sw-row[data-room="${A.loose}"]`); }
         const sel=kind!=='po'?'#detail-panel iframe.dp-session':'#po-panel iframe.po-session:not([hidden])';
+        // The message box: on a computer one shared box under the chats serves the
+        // chat on screen (f0a5f87), the chat's own box is hidden; on a phone, the chat's own.
+        const CF=`(()=>{const x=document.getElementById('workspace-compose-frame');return x&&x.getClientRects().length?x:document.querySelector('${sel}')})()`;
         await until(`document.querySelector('${sel}')?.contentWindow.document.getElementById('input')`);
+        // Freeze the chat's polling once its first read is in: a poll (or the
+        // missing-message watch's refresh) landing later redraws the room over
+        // the fixture below.
+        await until(`document.querySelector('${sel}').contentWindow.eval('!!ROOM_OBJ && !REFRESH_BUSY')`);
+        await ev(`document.querySelector('${sel}').contentWindow.eval('tick=()=>{}; refresh=async()=>{}')`);
+        await until(`!document.querySelector('${sel}').contentWindow.eval('REFRESH_BUSY')`);
+        await until(`${CF}.contentWindow.eval('ROOM')===document.querySelector('${sel}').contentWindow.eval('ROOM') && !!${CF}.contentDocument.getElementById('input')`);
         await sleep(600);
         await ev(`(() => {
           const f=document.querySelector('${sel}'), w=f.contentWindow;
@@ -71,7 +93,7 @@ async function main() {
           // A parent poll can replace its iframe after the first ready check.
           // Wait for the current frame before using its composer.
           await until(`document.querySelector('${sel}')?.contentDocument?.getElementById('input')`);
-          g.actions=await ev(`(() => {
+          g.actions=await ev(`(async () => {
             const f=document.querySelector('${sel}'),w=f.contentWindow,d=f.contentDocument;
             const box=d.getElementById('msgs'),ask=d.getElementById('ask-line');
             const hit=()=>{const r=box.getBoundingClientRect();return [...d.querySelectorAll('#msgs .msg')].some(b=>{const t=b.getBoundingClientRect();const y=Math.max(r.top,t.top)+1;return y<Math.min(r.bottom,t.bottom) && !b.contains(d.elementFromPoint(t.left+8,y));});};
@@ -81,27 +103,29 @@ async function main() {
             ask.querySelector('a').click();
             const jumped=marked.getBoundingClientRect().top>=box.getBoundingClientRect().top-1 && marked.getBoundingClientRect().top<box.getBoundingClientRect().bottom;
             overlaps.push(hit());
-            const input=d.getElementById('input'); input.value='Line one\\nLine two\\nLine three'; input.dispatchEvent(new Event('input',{bubbles:true})); input.focus();
-            const ring=w.getComputedStyle(d.getElementById('compose')).boxShadow;
-            const focusedBottom=d.getElementById('compose').getBoundingClientRect().bottom;
+            const cf=${CF},cw=cf.contentWindow,cd=cf.contentDocument;
+            const input=cd.getElementById('input'); input.value='Line one\\nLine two\\nLine three'; input.dispatchEvent(new Event('input',{bubbles:true})); input.focus();
+            if(cf!==f) await new Promise(r=>setTimeout(r,400));   // the shared box's frame fits its words through the page (wcFrameFit)
+            const ring=cw.getComputedStyle(cd.getElementById('compose')).boxShadow;
+            const focusedBottom=cd.getElementById('compose').getBoundingClientRect().bottom;
             const expanded=input.getBoundingClientRect().height; input.blur(); input.value=''; input.dispatchEvent(new Event('input',{bubbles:true}));
-            const tools=d.querySelector('.phone-compose-tools'); tools.open=true;
+            const tools=cd.querySelector('.phone-compose-tools'); tools.open=true;
             const menuTargets=[...tools.querySelectorAll('button:not([hidden])')].map(b=>[b.getBoundingClientRect().width,b.getBoundingClientRect().height]);
             tools.querySelector('[data-phone-action="team-all"]').click();
             const filter=w.eval('TEAM_ALL');
             w.eval('ROOM_OBJ.openAsk=null; showAskLine(LAST_ITEMS)');
-            return {highlighted,jumped,overlaps,ring,expanded,focusedBottom,frameHeight:f.clientHeight,menuTargets,filter,cleared:!marked.classList.contains('needs-answer'),placeholder:input.placeholder,taskActions:${kind!=='po'}?pdMenuItems({}).map(i=>i.id):[]};
+            return {highlighted,jumped,overlaps,ring,expanded,focusedBottom,frameHeight:cf.clientHeight,menuTargets,filter,cleared:!marked.classList.contains('needs-answer'),placeholder:input.placeholder,taskActions:${kind!=='po'}?pdMenuItems({}).map(i=>i.id):[]};
           })()`);
-          const menuSetup=`(() => { const d=document.querySelector('${sel}').contentDocument; const menu=d.querySelector('.phone-compose-tools'); menu.querySelector('summary').focus(); menu.open=true; })()`;
+          const menuSetup=`(() => { const d=${CF}.contentDocument; const menu=d.querySelector('.phone-compose-tools'); menu.querySelector('summary').focus(); menu.open=true; })()`;
           await ev(menuSetup);
           await c.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27},s);
           await c.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27},s);
-          g.menuDismiss=await ev(`(() => {const d=document.querySelector('${sel}').contentDocument,m=d.querySelector('.phone-compose-tools');return {escape:!m.open,focus:d.activeElement===m.querySelector('summary')};})()`);
+          g.menuDismiss=await ev(`(() => {const d=${CF}.contentDocument,m=d.querySelector('.phone-compose-tools');return {escape:!m.open,focus:d.activeElement===m.querySelector('summary')};})()`);
           await ev(menuSetup);
-          const point=await ev(`(() => {const f=document.querySelector('${sel}'),b=f.getBoundingClientRect(),i=f.contentDocument.getElementById('input').getBoundingClientRect();return {x:b.left+i.left+i.width/2,y:b.top+i.top+i.height/2};})()`);
+          const point=await ev(`(() => {const f=${CF},b=f.getBoundingClientRect(),i=f.contentDocument.getElementById('input').getBoundingClientRect();return {x:b.left+i.left+i.width/2,y:b.top+i.top+i.height/2};})()`);
           await c.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1},s);
           await c.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1},s);
-          Object.assign(g.menuDismiss, await ev(`(() => {const d=document.querySelector('${sel}').contentDocument,m=d.querySelector('.phone-compose-tools');const outside=!m.open;d.getElementById('input').blur();m.open=true;d.querySelector('.copy-link').focus();return {outside,focusOut:!m.open};})()`));
+          Object.assign(g.menuDismiss, await ev(`(() => {const d=${CF}.contentDocument,m=d.querySelector('.phone-compose-tools');const outside=!m.open;d.getElementById('input').blur();m.open=true;d.querySelector('.copy-link').focus();return {outside,focusOut:!m.open};})()`));
           if(kind!=='po') {
             await sleep(80);
             g.report=await ev(`(() => {

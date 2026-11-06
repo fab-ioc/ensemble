@@ -14288,6 +14288,22 @@ function wcPanelId(t) {
   if (t.kind === 'po') return 'po-chat';
   return PD.rt.has(pdChatId(t.room)) ? pdChatId(t.room) : 'po-chat';
 }
+// F6 in the box (#312): the box is the workspace's, outside the dock, where
+// F6 is the browser's; the dock hooks only the frames inside it. So F6 (and
+// Shift+F6) there goes on from the chat the box serves, as it did from that
+// chat's own composer before the box replaced it.
+function wcF6(e) {
+  if (e.key !== 'F6' || e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented || !PD.dock) return;
+  const id = wcPanelId(WC.target), tab = id && PD_ROOT.querySelector(`.dk-tab[data-dk-tab="${CSS.escape(id)}"]`);
+  if (!tab) return;
+  tab.focus({preventScroll:true});
+  const k = new KeyboardEvent('keydown', {key:'F6', shiftKey:e.shiftKey, bubbles:true, cancelable:true});
+  tab.dispatchEvent(k);
+  if (k.defaultPrevented) e.preventDefault();
+}
+document.getElementById('workspace-compose-frame').addEventListener('load', e => {
+  try { e.target.contentDocument.addEventListener('keydown', wcF6); } catch (x) {}
+});
 function wcFallback() {
   const chat = [...PD.rt.values()].find(e => e.kind === 'chat' && !PD.dock.popWindow(pdChatId(e.room)));
   const main = wcMainTarget();
@@ -14901,11 +14917,13 @@ function pdChatClicked(win, menu) {
   for (const d of [LD.dock, PD.dock]) if (d && !d.narrow() && d.flyOpen()) d.closeFly();
 }
 // The tool the breadcrumb names: the one slid out, else the first docked one
-// on screen.
+// on screen. Not the Inbox docked as its column (#302): that is the page's,
+// always there, not a tool you went to (#312: every PO screen and task read
+// "› Inbox").
 function pdToolShown() {
   const d = PD.dock;
   if (!d) return '';
-  return d.flyOpen() || PD_TOOLS.find(id => !d.isAuto(id) && pdToolOn(id)) || '';
+  return d.flyOpen() || PD_TOOLS.find(id => id !== 'inbox' && !d.isAuto(id) && pdToolOn(id)) || '';
 }
 // Whether a tool is on screen: slid out, or docked in front of its stack.
 function pdToolOn(id) {

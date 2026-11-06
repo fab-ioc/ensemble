@@ -499,9 +499,12 @@ async function main() {
       r.order = [...document.querySelectorAll('#po-dock .dk-main .dk-stack')].map(st => [...st.querySelectorAll('[data-dk-tab]')].map(t => t.dataset.dkTab).join(','));
       document.querySelector('.dk-tab[data-dk-tab="changes"]').focus();
       key('F6'); r.f6 = at(); key('F6', true); r.back = at();
-      // From the chat's composer, inside its frame: the frame's own key event reaches the dock.
-      const inp = pdChatFrame().contentDocument.getElementById('input'), fw = pdChatFrame().contentWindow;
-      inp.focus();
+      // From the chat's composer: on a computer that is the workspace's box (f0a5f87), aimed at the PO's
+      // chat, outside the dock; its frame's own key event goes on from the chat's stack.
+      const wf = document.getElementById('workspace-compose-frame');
+      for (let i = 0; i < 100 && !(wcPanelId(WC.target) === 'po-chat' && wf.contentDocument?.getElementById('input')?.getBoundingClientRect().width); i++) await sleep(100);
+      const inp = wf.contentDocument.getElementById('input'), fw = wf.contentWindow;
+      inp.focus(); r.frameFocus = wf.contentDocument.activeElement === inp && document.activeElement === wf;
       inp.dispatchEvent(new fw.KeyboardEvent('keydown', { key: 'F6', bubbles: true, cancelable: true })); r.frameF6 = at();
       inp.focus();
       inp.dispatchEvent(new fw.KeyboardEvent('keydown', { key: 'F6', shiftKey: true, bubbles: true, cancelable: true })); r.frameBack = at();
@@ -1000,8 +1003,9 @@ class InChrome(unittest.TestCase):
 
     def test_f6_works_from_inside_the_chat_composer(self):
         k = self.got["keys"]
-        self.assertEqual(k["frameF6"], "changes", "F6 in the composer's frame: the next stack")
-        self.assertEqual(k["frameBack"], "spec", "Shift+F6 there: the last stack")
+        self.assertTrue(k["frameFocus"], "the composer has the focus")
+        self.assertEqual(k["frameF6"], "changes", "F6 in the composer's frame: the stack after the chat's")
+        self.assertEqual(k["frameBack"], "inbox", "Shift+F6 there: the stack before the chat's, the Inbox column (#302)")
 
     def test_a_phone_width_turns_the_same_dock_narrow_and_back(self):
         n = self.got["toPhone"]

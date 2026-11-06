@@ -120,7 +120,8 @@ async function main() {
     // A desktop opens on the last conversation or the first Needs you entry
     // (#135): each of these pages starts on none, as its checks expect.
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
-    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensListDocked = true;' }, sessionId);   // the task list docked, as before #306 hid it on a computer
+    // A computer's task list starts hidden (#306): its width goes to the Inbox and the conversation, which
+    // is what these widths measure. The checks that click in the list bring it out first (listOut).
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
     await until('window.ensBooted === true', 30000);
@@ -136,6 +137,8 @@ async function main() {
     await sleep(400);
   };
   const tool = id => `#po-dock .dk-strip-btn[data-dk-auto="${id}"]`;
+  // The task list out (Panels ▾ › Tasks, #306) or put away again.
+  const listOut = async (p, on) => { await p.evalIn(`LD.dock.setVisible('list', ${!!on}); 0`); await p.until(`LD.dock.isVisible('list') === ${!!on} && (${!on} || document.getElementById('sw-list').getBoundingClientRect().width > 0)`, 5000); await sleep(300); };
   // Dock v0.5.0's title bar: ⋯, then a submenu (View Mode: 'mode', Move To: 'side'), then an item, with real clicks.
   const menuPick = async (p, head, sub, item) => {
     await p.click(`${head} [data-dk-act="menu"]`);
@@ -393,8 +396,10 @@ async function main() {
       // Opened by a click, then a click in the conversation or the task list.
       await open('spec'); await p.click(chat); await sleep(400);
       ah.chat = await fly();
+      await listOut(p, true);
       await open('board'); await p.click('#sw-list'); await sleep(400);
       ah.list = await fly();
+      await listOut(p, false);
       // A click on the tool's own text first (nothing in it has focus), then the conversation.
       await open('spec'); await p.click('#po-dock .dk-flyout.open .dk-body'); await sleep(300);
       ah.ownText = await fly();
@@ -425,6 +430,7 @@ async function main() {
       // Pinned (Dock Pinned): a click in the conversation or the task list leaves it.
       await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(500);
       await p.click(chat); await sleep(300);
+      await listOut(p, true);
       await p.click('#sw-list'); await sleep(400);
       ah.pinned = await p.evalIn(`({ mode: PD.dock.viewMode('board'), shown: PD.dock.isVisible('board') && PD.els.board.getBoundingClientRect().width > 0 })`);
       // An open task: a click in its conversation puts its Spec back.

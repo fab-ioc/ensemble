@@ -18,7 +18,9 @@ messages.
 
 And the boxes grow with the text (at 1728x1117 and 440x956): the message box
 and a card's comment for 1, 6 and 30 lines, capped near 40% of the visible
-height, then scrolling; Send stays where it was; one row again after Send.
+height (on a computer the message box is the shared one under the chats,
+f0a5f87, capped at 32% of the window, P226), then scrolling; Send stays where
+it was; one row again after Send.
 
 ENSEMBLE_IPHONE_BEFORE=1 records the measurements without assertions;
 ENSEMBLE_FOCUS_BASE_REF=<ref> serves that ref's pages (the before numbers).
@@ -112,26 +114,33 @@ const GROW = `(async () => {
   const who = g('ROOM_OBJ').participants.find(p => p.kind === 'agent').identity;
   const items = (g('LAST_ITEMS') || []).concat([{ id: 'grow-ask', from: who, to: 'user', text: 'Ask: Shall I go ahead?', asks: g('parseAsks')('Ask: Shall I go ahead?'), askAudience: 'user', ts: Date.now() / 1000 }]);
   w.__items = items; g('LAST_ITEMS = window.__items; renderBubbles(LAST_ITEMS)');
-  const out = { cap: Math.round(w.innerHeight * 0.4), frame: Math.round(w.innerHeight) };
+  // The message box: on a computer the shared one under the chats (f0a5f87),
+  // its words capped at 32% of the window (P226); on a phone the chat's own.
+  const wcf = document.getElementById('workspace-compose-frame'), shared = !!wcf && wcf.getClientRects().length > 0;
+  const bw = shared ? wcf.contentWindow : w, bd = shared ? wcf.contentDocument : d, bg = k => bw.eval(k);
+  const out = { cap: Math.round(w.innerHeight * 0.4), boxCap: shared ? Math.round(innerHeight * 0.32) : Math.round(w.innerHeight * 0.4), frame: Math.round(w.innerHeight), shared };
   const lines = n => Array.from({ length: n }, (_, i) => 'Line ' + (i + 1)).join('\\n');
-  for (const [key, el] of [['box', () => d.getElementById('input')], ['card', () => d.querySelector('.msg[data-mid="grow-ask"] .qa-cm textarea')]]) {
+  for (const [key, el, W] of [['box', () => bd.getElementById('input'), bw], ['card', () => d.querySelector('.msg[data-mid="grow-ask"] .qa-cm textarea'), w]]) {
     out[key] = {};
     for (const n of [1, 6, 30]) {
-      const ta = el(); ta.focus(); ta.value = lines(n); ta.dispatchEvent(new w.Event('input', { bubbles: true })); await pause();
+      const ta = el(); ta.focus(); ta.value = lines(n); ta.dispatchEvent(new W.Event('input', { bubbles: true })); await pause();
       out[key][n] = { h: Math.round(el().getBoundingClientRect().height), scrolls: el().scrollHeight > el().clientHeight + 1 };
     }
+    // The box emptied again: a shared box (on a computer) holding 30 lines is
+    // tall under the chats and leaves the chat, and its card, less room.
+    if (key === 'box') { const t = el(); t.value = ''; t.dispatchEvent(new W.Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400)); }
   }
   // Send stays put across a press, and the box is one row after Send.
-  const ta = d.getElementById('input'); ta.focus(); ta.value = lines(6); ta.dispatchEvent(new w.Event('input', { bubbles: true })); await pause();
-  const s0 = d.getElementById('send').getBoundingClientRect();
-  d.getElementById('send').dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true }));
+  const ta = bd.getElementById('input'); ta.focus(); ta.value = lines(6); ta.dispatchEvent(new bw.Event('input', { bubbles: true })); await pause();
+  const s0 = bd.getElementById('send').getBoundingClientRect();
+  bd.getElementById('send').dispatchEvent(new bw.PointerEvent('pointerdown', { bubbles: true }));
   ta.blur(); await pause();
-  const s1 = d.getElementById('send').getBoundingClientRect();
+  const s1 = bd.getElementById('send').getBoundingClientRect();
   out.sendMoved = Math.round(Math.abs(s1.top - s0.top) + Math.abs(s1.left - s0.left));
-  try { await g('sendNow()'); } catch (e) { out.sendError = String(e); }
-  await pause(); out.leftAfterSend = d.getElementById('input').value.length;
-  out.afterSend = Math.round(d.getElementById('input').getBoundingClientRect().height);
-  out.row = Math.round(parseFloat(w.getComputedStyle(ta).minHeight) || 0);
+  try { await bg('sendNow()'); } catch (e) { out.sendError = String(e); }
+  await pause(); out.leftAfterSend = bd.getElementById('input').value.length;
+  out.afterSend = Math.round(bd.getElementById('input').getBoundingClientRect().height);
+  out.row = Math.round(parseFloat(bw.getComputedStyle(ta).minHeight) || 0);
   return out;
 })()`;
 // The installed app, its window as tall as the screen until the keyboard: the
@@ -204,16 +213,22 @@ async function main() {
   const settled = p => p.until(`![...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].some(e => e.getBoundingClientRect().width > 0 && /PLAIN-NOTES/.test(e.textContent))`, 8000).catch(() => {});
   const inFrame = (p, js) => p.ev(`${FRAME}.contentWindow.eval(${JSON.stringify(js)})`);
   const chatReady = p => p.until(`!!${FRAME}?.contentWindow?.document.getElementById('input') && ${FRAME}.contentWindow.eval('typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && !!ROOM_OBJ.participants')`);
-  const openPo = async p => {
-    if (await p.ev(`document.body.classList.contains('detail-open') || !document.querySelector('#sw-list .sw-row[data-po="${A.proj}"]')`)) await p.ev(`document.getElementById('bar-back')?.click(); 0`);
+  // The task list on a phone is a pane (#307): the project switcher's Task list.
+  const toList = async (p, row) => {
+    if (await p.ev(`PH_PANE === 'list' && !!document.querySelector('${row}')`)) return;
+    await p.ev(`document.getElementById('proj-switch').click(); 0`); await sleep(200);
+    await p.ev(`document.querySelector('#proj-menu [data-ph-list]').click(); 0`);
+    await p.until(`PH_PANE === 'list' && !!document.querySelector('${row}')`);
     await sleep(200);
+  };
+  const openPo = async p => {
+    await toList(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
     await p.ev(`document.querySelector('#sw-list .sw-row[data-po="${A.proj}"]').click(); 0`);
     await p.until(`document.body.classList.contains('po-dock') && !document.body.classList.contains('detail-open') && !!document.querySelector('#po-panel iframe.po-session:not([hidden])')`);
     await chatReady(p); await sleep(700);
   };
   const openTask = async (p, room) => {
-    if (await p.ev(`!document.querySelector('#sw-list .sw-row[data-room="${room}"]')`)) await p.ev(`document.getElementById('bar-back')?.click(); 0`);
-    await sleep(200);
+    await toList(p, `#sw-list .sw-row[data-room="${room}"]`);
     await p.ev(`document.querySelector('#sw-list .sw-row[data-room="${room}"]').click(); 0`);
     await p.until(`document.body.classList.contains('detail-open') && !!document.querySelector('#detail-panel iframe.dp-session')`);
     await chatReady(p); await sleep(700);
@@ -415,8 +430,9 @@ class IphoneChat(unittest.TestCase):
                     self.assertLess(one['h'], 64, g)
                     self.assertGreater(six['h'], one['h'] + 60, g)
                     self.assertFalse(six['scrolls'], g)
-                    self.assertLessEqual(thirty['h'], g['cap'] + 2, g)
-                    self.assertGreaterEqual(thirty['h'], g['cap'] - 40, g)
+                    cap = g['boxCap'] if key == 'box' else g['cap']
+                    self.assertLessEqual(thirty['h'], cap + 2, g)
+                    self.assertGreaterEqual(thirty['h'], cap - 40, g)
                     self.assertTrue(thirty['scrolls'], g)
             with self.subTest(where=where, check='send'):
                 self.assertEqual(g['sendMoved'], 0, g)

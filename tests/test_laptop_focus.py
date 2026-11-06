@@ -10,13 +10,6 @@ class LaptopFocus(focus.PhoneFocus):
               .replace('if(!baseline && width<768)', 'if(!baseline)')
               .replace('length:6', 'length:20')
               .replace("id:'focus-ask',from:", "id:'focus-ask',answers:['P1'],from:")
-              # Freeze polling after the initial room request finishes: dock visibility
-              # notifications can otherwise replace the synthetic messages mid-assertion.
-              .replace('await sleep(600);', r"""
-        await ev(`document.querySelector('${sel}').contentWindow.eval('tick=()=>{}; refresh=async()=>{}')`);
-        await until(`!document.querySelector('${sel}').contentWindow.eval('REFRESH_BUSY')`);
-        await sleep(600);
-""")
               .replace("const highlighted=marked.classList", "if(!marked)throw Error('missing fixture '+location.href+' '+w.location.href+' '+w.eval('JSON.stringify(LAST_ITEMS)')); const highlighted=marked.classList")
               .replace("d.querySelector('.copy-link').focus()", "d.getElementById('input').focus()")
               .replace("document.getElementById('chatbar').hidden=false;", "document.getElementById('hint').textContent=''; document.getElementById('chatbar').hidden=false;")
@@ -26,7 +19,7 @@ class LaptopFocus(focus.PhoneFocus):
               .replace('          g.actions=await ev', r"""
           g.desktop=await ev(`(() => {
           const f=document.querySelector('${sel}'),d=f.contentDocument,w=f.contentWindow;
-          const b=e=>e.getBoundingClientRect(),m=d.getElementById('msgs'),input=d.getElementById('input'),send=d.getElementById('send');
+          const b=e=>e.getBoundingClientRect(),m=d.getElementById('msgs'),cd=${CF}.contentDocument,input=cd.getElementById('input'),send=cd.getElementById('send');
           const overlap=()=>[...d.querySelectorAll('#ask-line,#chatbar,#to-latest,.catchup')].some(e=>{
             if(!b(e).height || e.closest('#msgs')) return false;
             return [...d.querySelectorAll('#msgs .msg')].some(msg=>{const r=b(msg),q=b(e),v=b(m);return Math.max(r.top,v.top,q.top)<Math.min(r.bottom,v.bottom,q.bottom) && Math.max(r.left,q.left)<Math.min(r.right,q.right);});
@@ -34,8 +27,10 @@ class LaptopFocus(focus.PhoneFocus):
           const overlaps=[];m.scrollTop=0;overlaps.push(overlap());m.scrollTop=m.scrollHeight;overlaps.push(overlap());input.focus();overlaps.push(overlap());input.blur();
           const header=${kind!=='po'}?document.querySelector('#detail-panel .dp-top'):null;
           const fresh=document.querySelector('#detail-panel .dp-summary-phone summary');
-          const elements=header?[...header.querySelectorAll('h2,.dp-meta,.dp-actions')]:[...document.querySelectorAll('#po-panel .po-name,#po-panel .po-sub')];
-          return {overlaps,scrolls:m.scrollHeight>m.clientHeight,
+          // A docked task's header does not name it again: its tab above does (#261).
+          const elements=header?[...header.querySelectorAll('.dp-meta,.dp-actions')]:[...document.querySelectorAll('#po-panel .po-name,#po-panel .po-sub')];
+          const titleShown=!!header && !!header.querySelector('h2') && b(header.querySelector('h2')).width>0;
+          return {overlaps,titleShown,scrolls:m.scrollHeight>m.clientHeight,
             composerOneRow:Math.abs((b(input).top+b(input).bottom)/2-(b(send).top+b(send).bottom)/2)<1,
             header:elements.map(e=>({y:b(e).top,h:b(e).height,w:b(e).width})),
             rendered:!header || !!fresh.querySelector('strong'),
@@ -56,9 +51,10 @@ class LaptopFocus(focus.PhoneFocus):
             r.attention=state==='gone'?{state:'agent_gone'}:state==='you'?{state:'waiting_for_you'}:null;
             r.waitingOnPo=state==='po'?{kind:'question',since:1}:null;r.updatedAt=Date.now()/1000-age;
             top.innerHTML=detailHead(r,true)+detailMeta(r,r.isLive,true,Date.now()/1000)+detailActions(r,r.isLive)+detailSummary(r,true);
-            const nodes=[top.querySelector('h2'),...top.querySelector('.dp-meta').children,top.querySelector('.dp-actions')];
+            // Docked, the header does not name the task: its tab does (#261).
+            const nodes=[...top.querySelector('.dp-meta').children,top.querySelector('.dp-actions')].filter(e=>b(e).width>0);
             const rects=nodes.map(b), frame=b(top);
-            out.push({state,age,priority,titleWidth:rects[0].width,
+            out.push({state,age,priority,titleShown:b(top.querySelector('h2')).width>0,
               fits:rects.every(x=>x.left>=frame.left && x.right<=frame.right),
               overlap:rects.some((x,i)=>rects.slice(i+1).some(y=>Math.max(x.left,y.left)<Math.min(x.right,y.right)-.5 && Math.max(x.top,y.top)<Math.min(x.bottom,y.bottom)-.5)),
               oneLine:Math.max(...rects.map(x=>(x.top+x.bottom)/2))-Math.min(...rects.map(x=>(x.top+x.bottom)/2))<1});
@@ -83,7 +79,10 @@ class LaptopFocus(focus.PhoneFocus):
             return
         for g in self.got:
             with self.subTest(width=g['width'], theme=g['theme'], kind=g['kind']):
-                self.assertGreaterEqual(g['share'], .75 if g['width'] == 1728 else .60)
+                # The shared message box under the chats (f0a5f87) is taller than the
+                # chat's own box was (a "To:" line over an 80px-min frame), on purpose:
+                # the PO set the bars to that design (#312), 70% at 1728 and 55% at 768.
+                self.assertGreaterEqual(g['share'], .70 if g['width'] == 1728 else .55)
                 self.assertLessEqual(g['scrollW'], g['width'])
                 self.assertFalse(g['overlap'])
                 self.assertFalse(g['balloonOverflow'])
@@ -106,9 +105,10 @@ class LaptopFocus(focus.PhoneFocus):
                     centers = [e['y'] + e['h']/2 for e in desktop['header']]
                     self.assertLess(max(centers) - min(centers), 1)
                     self.assertTrue(all(e['w'] > 0 for e in desktop['header']))
+                self.assertFalse(desktop['titleShown'], 'the tab names a docked task, not its header (#261)')
                 if g['kind'] != 'po':
                     for case in g['headerStates']:
-                        self.assertGreaterEqual(case['titleWidth'], 64, case)
+                        self.assertFalse(case['titleShown'], case)
                         self.assertTrue(case['fits'] and case['oneLine'] and not case['overlap'], case)
                     # Desktop keeps End beside the metadata; phone puts it in the menu.
                     self.assertGreater(g['report']['after'], g['report']['before'])
