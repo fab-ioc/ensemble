@@ -3969,6 +3969,58 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-others { padding: 0; border: 0; background: none; font: inherit; color: var(--link); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; border-radius: var(--r-100); }
   @media (hover: none) { .ibx-others { min-height: var(--touch-min); } }
   @media (hover: none) { .ibx-scope button { height: var(--touch-min); } .ibx-more > summary { min-height: var(--touch-min); display: flex; align-items: center; } }
+  /* #310: Close, Close this and earlier, Done. On a computer they show on the row's hover or focus. */
+  .ibx-meta .ibx-task, .ibx-meta .ibx-state { white-space: nowrap; }
+  .ibx-acts { display: none; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
+  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts { display: flex; }
+  .ibx-btn { display: inline-flex; align-items: center; gap: var(--s-100); height: 24px; padding: 0 var(--s-200); border: 1px solid var(--border-strong);
+    border-radius: var(--r-200); background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-200); font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .ibx-btn:hover { background: var(--hover); }
+  .ibx-btn:active { background: var(--pressed); }
+  .ibx-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .ibx-btn:disabled { cursor: progress; color: var(--fg-disabled); }
+  .ibx-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .ibx-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .ibx-btn.subtle { border-color: transparent; background: transparent; color: var(--link); }
+  .ibx-btn.subtle:hover { background: var(--hover); }
+  .ibx-earlier:hover, .ibx-earlier:focus-visible, .ibx-earlier.on { background: var(--c-danger-bg); color: var(--c-danger-fg); border-color: var(--c-danger-bold); }
+  .ibx-cn { font-weight: 600; font-variant-numeric: tabular-nums; }
+  /* The rows Close this and earlier would close: a red ground and left bar, their words muted. */
+  .ibx-row.ibx-mark { background: var(--c-danger-bg); box-shadow: inset 3px 0 0 var(--c-danger-bold);
+    margin: 0 calc(-1 * var(--s-200)); padding-left: calc(var(--s-200) + 3px); padding-right: var(--s-200); }
+  .ibx-row.ibx-mark .ibx-link, .ibx-row.ibx-mark .ibx-line, .ibx-row.ibx-mark .ibx-reason, .ibx-row.ibx-mark .ibx-meta { color: var(--fg-muted); }
+  .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
+  .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--r-300); box-shadow: var(--e-200); }
+  .ibx-conf-q { display: block; font-size: var(--fs-300); line-height: var(--lh-300); color: var(--fg); }
+  .ibx-conf-p { margin: var(--s-050) 0 var(--s-200); color: var(--fg-subtle); }
+  .ibx-bt { display: flex; gap: var(--s-200); }
+  .ibx-conf .ibx-btn { height: 32px; padding: 0 var(--s-300); font-size: var(--fs-300); }
+  .ibx-gone { display: flex; align-items: center; gap: var(--s-200); color: var(--fg-subtle); }
+  .ibx-gone-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ibx-gone-t b { color: var(--fg); font-weight: 600; }
+  .ibx-undo { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--s-200); padding: var(--s-200) var(--s-300);
+    border-radius: var(--r-200); background: var(--fg); color: var(--surface); font-size: var(--fs-200); line-height: var(--lh-200); }
+  .ibx-undo .ibx-tm { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ibx-undo-btn { padding: 0 var(--s-100); border: 0; border-radius: var(--r-100); background: transparent; color: var(--surface); font: inherit;
+    font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .ibx-undo-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ibx-undo-btn:disabled { cursor: progress; }
+  /* A phone's confirm: a bar along the bottom of the screen. */
+  .ibx-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; margin: 0; border-radius: 0; border-width: 1px 0 0;
+    padding: var(--s-300) var(--s-400) calc(var(--s-400) + env(safe-area-inset-bottom, 0px)); }
+  .ibx-sheet .ibx-bt { flex-direction: row-reverse; }
+  .ibx-sheet .ibx-btn { flex: 1; justify-content: center; height: var(--touch-min); }
+  @media (hover: none) {
+    .ibx-acts { display: flex; }
+    .ibx-btn, .ibx-conf .ibx-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+    .ibx-undo { min-height: var(--touch-min); }
+    .ibx-undo-btn { min-height: var(--touch-min); min-width: var(--touch-min); }
+  }
+  #ph-inbox-body .ibx-acts { display: flex; }
+  #ph-inbox-body .ibx-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+  #ph-inbox-body .ibx-undo { position: fixed; left: var(--s-400); right: var(--s-400); bottom: var(--s-400); z-index: 29; min-height: var(--touch-min); }
+  #ph-inbox-body .ibx-undo-btn { min-height: var(--touch-min); min-width: var(--touch-min); }
   .dk-strip-btn.on .ti { --ti: currentColor; --ti-ink: var(--selected-bg); --ti-ring: var(--selected-bg); }
   .dk-menu .pd-mi { display: inline-flex; width: 16px; height: 16px; margin-right: var(--s-200); vertical-align: -3px; --ti-ring: var(--surface-overlay); }
   .dk-menu .pd-mi > svg { width: 100%; height: 100%; }
@@ -15542,19 +15594,32 @@ setInterval(() => { if (PD.dock && document.body.classList.contains('po-dock') &
 // poll; "This project" filters them here, "All" lists them with the project.
 // A row opens its message or card (openMsgLink), or its task when it names
 // no message. The bar's Inbox N counts every project.
-const IBX = { data: null, busy: false, sig: '', scope: 'project', soon: 0, open: new Set() };
+// #310: questions (Needs your answer, then the PO chats' Older questions) can
+// be closed one by one or "this and every one below it" (Close this and
+// earlier), with Undo; an answers-to-check row has Done. `hide`: rows closed
+// here, left out until the hub's list no longer has them; `gone`: a row just
+// closed or done, shown as "Closed · Undo" for a few seconds; `confirm`: the
+// row whose Close this and earlier is asking; `bulk`: its Undo bar.
+const IBX = { data: null, busy: false, again: false, sig: '', phSig: '', scope: 'project', soon: 0, open: new Set(),
+  hide: new Map(), gone: new Map(), confirm: '', busyClose: false, bulk: null, tick: 0 };
 try { if (localStorage.getItem('cd-inbox-scope') === 'all') IBX.scope = 'all'; } catch (e) {}
-const IBX_GROUPS = [['answer', 'Needs your answer'], ['check', 'Ready to check'], ['waiting', 'Waiting on you']];
+const IBX_ROW_UNDO_S = 10, IBX_BULK_UNDO_S = 30, IBX_CHUNK = 200, IBX_HIDE_S = 20;
+// Questions last, so "this and earlier" is every question below the row.
+const IBX_GROUPS = [['check', 'Ready to check'], ['waiting', 'Waiting on you'], ['answer', 'Needs your answer'], ['older', 'Older questions']];
+const IBX_STATE = { running: 'running', stopped: 'stopped', done: 'Done', gone: 'not on the board' };
 function ibxWhere(r, all) {
   const who = r.isPo ? 'PO' : [r.ref, r.task].filter(Boolean).join(' ');
   return all && r.project ? `${r.project} · ${who || 'a task'}` : (who || 'a task');
 }
-function ibxRows(d, scope, pid) {
-  const rows = (d && d.rows) || [];
-  return scope === 'all' || !pid ? rows : rows.filter(r => r.projectId === pid);
+function ibxScoped(list, scope, pid) {
+  return (list || []).filter(r => !IBX.hide.has(r.id) && (scope === 'all' || !pid || r.projectId === pid));
 }
+function ibxRows(d, scope, pid) { return ibxScoped(d && d.rows, scope, pid); }
+function ibxOlder(d, scope, pid) { return ibxScoped(d && d.older, scope, pid); }
+// A question the hub can close: an Ask card's (room, message, number).
+function ibxClosable(r) { return !!(r && r.roomId && r.mid && Number.isInteger(r.n) && (r.kind === 'answer')); }
 // Pure (tests/test_inbox_cdp.py reads it too): `d` the hub's answer, `pid` this screen's project.
-function ibxHtml(d, scope, pid, now) {
+function ibxHtml(d, scope, pid, now, phone) {
   const all = scope === 'all' || !pid;
   const sw = pid ? `<span class="ibx-scope" role="group" aria-label="Which projects">`
     + `<button type="button" data-ibx-scope="project" aria-pressed="${!all}">${esc(nounText('This {project}'))}</button>`
@@ -15562,18 +15627,56 @@ function ibxHtml(d, scope, pid, now) {
   const head = `<div class="ibx-head"><h2 class="ibx-title">Inbox</h2>${sw}</div>`;
   if (!d) return `<div class="ibx">${head}<p class="pdp-empty">Reading what waits on you…</p></div>`;
   const rows = ibxRows(d, scope, pid);
+  const older = ibxOlder(d, scope, pid);
+  // The questions top to bottom; each closable one's N: itself and every closable one below it.
+  const qs = rows.filter(r => r.kind === 'answer').concat(older);
+  const earlier = new Map();
+  let below = 0;
+  for (let i = qs.length - 1; i >= 0; i--) if (ibxClosable(qs[i]) && !IBX.gone.has(qs[i].id)) earlier.set(qs[i].id, ++below);
+  const conf = IBX.confirm && earlier.has(IBX.confirm) ? IBX.confirm : '';
+  const confN = conf ? earlier.get(conf) : 0;
+  const marked = new Set();
+  if (conf) { let on = false; for (const q of qs) { if (q.id === conf) on = true; if (on && earlier.has(q.id)) marked.add(q.id); } }
+  const confHtml = (cls) => {
+    const m = confN - 1;
+    return `<div class="${cls}" role="group" aria-label="Close this and earlier">`
+      + `<b class="ibx-conf-q">${esc(`Close this and the ${m} earlier question${m === 1 ? '' : 's'}?`)}</b>`
+      + `<p class="ibx-conf-p">They are marked in the list. Nobody is answered and the PO is not woken. Undo for ${IBX_BULK_UNDO_S} s.</p>`
+      + `<div class="ibx-bt"><button type="button" class="ibx-btn primary" data-ibx-go${IBX.busyClose ? ' disabled' : ''}>${esc(IBX.busyClose ? 'Closing…' : `Close ${confN}`)}</button>`
+      + `<button type="button" class="ibx-btn" data-ibx-cancel${IBX.busyClose ? ' disabled' : ''}>Cancel</button></div></div>`;
+  };
   const href = r => '/session?room=' + encodeURIComponent(r.roomId) + (r.mid ? '&msg=' + encodeURIComponent(r.mid).replace(/%3A/gi, ':') : '')
     + (r.part ? '&part=' + encodeURIComponent(r.part).replace(/%3A/gi, ':') : '');
   const row = r => {
     const line = String(r.line || r.reason || '').replace(/\*\*|__/g, '');
+    const g = IBX.gone.get(r.id);
+    if (g) {
+      return `<li class="ibx-row ibx-gone" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}" role="status">`
+        + `<span class="ibx-gone-t"><b>${esc(g.label)}:</b> ${esc(line)}</span>`
+        + `<button type="button" class="ibx-btn subtle" data-ibx-undo="${esc(r.id)}">Undo</button></li>`;
+    }
     const reason = r.reason && r.reason !== r.line ? r.reason : '';
-    return `<li class="ibx-row" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}">`
+    const n = earlier.get(r.id) || 0;
+    const task = r.isPo && r.taskRef ? r.taskRef : '';
+    const st = IBX_STATE[r.taskState] || '';
+    let acts = '';
+    if (n) {
+      acts = `<button type="button" class="ibx-btn" data-ibx-close="${esc(r.id)}" title="Close this question without an answer">Close</button>`
+        + (n > 1 ? `<button type="button" class="ibx-btn ibx-earlier${conf === r.id ? ' on' : ''}" data-ibx-earlier="${esc(r.id)}"`
+          + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it">Close this and earlier <span class="ibx-cn">${n}</span></button>` : '');
+    } else if (r.kind === 'check') {
+      acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
+    }
+    return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
       + `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
       + `<span class="ibx-line">${esc(line || 'Open it')}</span>${reason ? `<span class="ibx-reason">${esc(reason)}</span>` : ''}</a>`
       + `<div class="ibx-meta"><span class="ibx-where">${esc(ibxWhere(r, all))}</span>`
+      + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
-      + (r.items && r.items.length ? more(r) : '') + '</li>';
+      + (r.items && r.items.length ? more(r) : '')
+      + (acts ? `<div class="ibx-acts">${acts}</div>` : '')
+      + (conf === r.id && !phone ? confHtml('ibx-conf') : '') + '</li>';
   };
   // A PO chat's answers to check: one row, its answers listed under it, each opening its answer.
   const more = r => {
@@ -15588,22 +15691,28 @@ function ibxHtml(d, scope, pid, now) {
       + '</ul></details>';
   };
   const groups = IBX_GROUPS.map(([k, title]) => {
-    const got = rows.filter(r => r.kind === k);
-    return got.length ? `<li class="pdp-group" data-stage="${k}"><h3 class="pdp-head">${esc(title)} <span class="pdp-n">${got.length}</span></h3>`
+    const got = k === 'older' ? older : rows.filter(r => r.kind === k);
+    const live = got.filter(r => !IBX.gone.has(r.id)).length;
+    return got.length ? `<li class="pdp-group" data-stage="${k}"><h3 class="pdp-head">${esc(title)} <span class="pdp-n">${live}</span></h3>`
       + `<ul class="pdp-list">${got.map(row).join('')}</ul></li>` : '';
   }).join('');
   const note = d.pending ? '<p class="pdp-note">Reading a conversation’s question cards: more may come.</p>' : '';
   // This project has none but others do (the bar counts them all): say so, one tap to All (#307).
-  const others = !all && !groups ? ((d.rows || []).length - rows.length) : 0;
+  const others = !all && !groups ? (ibxRows(d, 'all', '').length + ibxOlder(d, 'all', '').length) : 0;
   const empty = others ? `<p class="pdp-empty">${esc(nounText('Nothing waits on you in this {project}.'))} `
       + `<button type="button" class="ibx-others" data-ibx-scope="all">${esc(`${others} in other ${noun(others === 1 ? 'one' : 'many')}`)}</button></p>`
     : '<p class="pdp-empty">Nothing waits on you.</p>';
-  return `<div class="ibx">${head}${groups ? `<ul class="pdp-groups">${groups}</ul>` : empty}${note}</div>`;
+  const b = IBX.bulk;
+  const bar = b ? `<div class="ibx-undo" role="status"><span>${esc(`Closed ${b.n} question${b.n === 1 ? '' : 's'}`)}</span>`
+    + `<span class="ibx-tm">${esc(`${Math.max(0, Math.ceil((b.until - Date.now()) / 1000))} s`)}</span>`
+    + `<button type="button" class="ibx-undo-btn" data-ibx-bulk-undo${b.busy ? ' disabled' : ''}>${b.busy ? 'Undoing…' : 'Undo'}</button></div>` : '';
+  const sheet = conf && phone ? confHtml('ibx-conf ibx-sheet') : '';
+  return `<div class="ibx">${head}${bar}${groups ? `<ul class="pdp-groups">${groups}</ul>` : empty}${note}${sheet}</div>`;
 }
 function ibxPaint() {
   const el = PD.els.inbox;
   const pid = PD.pid || '';
-  const all = IBX.data ? (IBX.data.rows || []).length : 0;
+  const all = IBX.data ? ibxRows(IBX.data, 'all', '').length : 0;
   const n = IBX.data ? ibxRows(IBX.data, IBX.scope, pid).length : 0;
   const btn = document.getElementById('inbox-btn');
   if (btn) {
@@ -15619,22 +15728,38 @@ function ibxPaint() {
   ibxPaintIn(el, pid, 'sig');
 }
 function ibxPaintIn(el, pid, key) {
-  const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000);
-  const sig = html.replace(/(<span class="pdp-age"[^>]*>)[^<]*/g, '$1');
+  const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, key === 'phSig');
+  const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
     return;
   }
+  // A repaint keeps the focus on the control it was on (Close, Undo…), where it still is.
+  const f = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;
+  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo']
+    .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
   el.innerHTML = html;
+  if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
+function ibxRepaint() { IBX.sig = IBX.phSig = ''; ibxPaint(); }
 function ibxPoll() {
-  if (IBX.busy || document.hidden) return;
+  if (document.hidden) return;
+  if (IBX.busy) { IBX.again = true; return; }
   IBX.busy = true;
   fetch('/api/inbox', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
-    .then(d => { if (d && Array.isArray(d.rows)) { IBX.data = d; ibxPaint(); } })
+    .then(d => {
+      if (!d || !Array.isArray(d.rows)) return;
+      // A row closed here stays out until the hub's list drops it too (or a while has passed).
+      const have = new Set(d.rows.concat(d.older || []).map(r => r.id));
+      const t = Date.now();
+      for (const [id, at] of IBX.hide) if (!have.has(id) || t - at > IBX_HIDE_S * 1000) IBX.hide.delete(id);
+      IBX.data = d;
+      ibxPaint();
+    })
     .catch(() => {}).finally(() => {
       IBX.busy = false;
+      if (IBX.again) { IBX.again = false; ibxPoll(); return; }
       // A chat's cards still being read: ask again soon, not in ten seconds.
       if (IBX.data && IBX.data.pending && !IBX.soon) IBX.soon = setTimeout(() => { IBX.soon = 0; ibxPoll(); }, 2500);
     });
@@ -15647,6 +15772,133 @@ function ibxOpenRoom(rid) {
   if (row) openDetail(row.sessionId);
   else window.open('/session?room=' + encodeURIComponent(rid), '_blank', 'noopener');
 }
+function ibxFind(id) {
+  const d = IBX.data || {};
+  return (d.rows || []).concat(d.older || []).find(r => r.id === id) || null;
+}
+async function ibxPost(url, body) {
+  const r = await (window.pageWrite ? pageWrite(url, body)
+    : fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok) { const e = new Error(j.message || j.error || ('HTTP ' + r.status)); e.status = r.status; throw e; }
+  return j;
+}
+// What a row's Close (a question) or Done (answers to check) sends.
+function ibxRowSend(r) {
+  if (r.kind === 'check') {
+    return /:points$/.test(r.id) && (r.points || []).length
+      ? ibxPost('/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack' })
+      : ibxPost('/api/attention/done', { roomId: r.roomId });
+  }
+  return ibxPost('/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }).catch(e => {
+    if (e.status === 409) return {};     // answered or closed meanwhile: gone either way
+    throw e;
+  });
+}
+// Close or Done on one row: "Closed · Undo" in its place for a few seconds,
+// and only then sent, so Undo tells nobody anything.
+function ibxRowAct(id, label) {
+  const r = ibxFind(id);
+  if (!r || IBX.gone.has(id)) return;
+  const fire = () => {
+    const g = IBX.gone.get(id);
+    if (!g) return;
+    IBX.gone.delete(id);
+    IBX.hide.set(id, Date.now());
+    ibxRepaint();
+    ibxRowSend(g.row).then(() => ibxPoll()).catch(e => {
+      IBX.hide.delete(id);
+      ibxRepaint();
+      toast(`Not ${label === 'Done' ? 'done' : 'closed'}: ${e.message}`, 5000, 'err');
+    });
+  };
+  IBX.gone.set(id, { label, row: r, fire, timer: setTimeout(fire, IBX_ROW_UNDO_S * 1000) });
+  if (IBX.confirm) IBX.confirm = '';
+  ibxRepaint();
+  const u = document.querySelector(`.ibx [data-ibx-undo="${CSS.escape(id)}"]`);
+  if (u) u.focus({ preventScroll: true });
+}
+function ibxRowUndo(id, box) {
+  const g = IBX.gone.get(id);
+  if (!g) return;
+  clearTimeout(g.timer);
+  IBX.gone.delete(id);
+  ibxRepaint();
+  const b = box && box.querySelector(`[data-ibx-close="${CSS.escape(id)}"], [data-ibx-done="${CSS.escape(id)}"]`);
+  if (b) b.focus({ preventScroll: true });
+}
+// Leaving the page sends what is waiting for its Undo to run out.
+window.addEventListener('pagehide', () => {
+  for (const [id, g] of IBX.gone) {
+    clearTimeout(g.timer);
+    const r = g.row;
+    const [url, body] = r.kind === 'check'
+      ? (/:points$/.test(r.id) && (r.points || []).length ? ['/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack' }]
+        : ['/api/attention/done', { roomId: r.roomId }])
+      : ['/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }];
+    try { fetch(url, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (e) {}
+    IBX.gone.delete(id);
+  }
+});
+// Close this and earlier: the rows marked in this box, in turns of at most
+// IBX_CHUNK, quietly (nobody is told or woken); then an Undo bar.
+async function ibxCloseMarked(box) {
+  if (IBX.busyClose || !IBX.confirm) return;
+  const ids = [...box.querySelectorAll('li.ibx-row.ibx-mark[data-ibx]')].map(li => li.dataset.ibx);
+  const rows = ids.map(ibxFind).filter(ibxClosable);
+  if (!rows.length) { IBX.confirm = ''; ibxRepaint(); return; }
+  IBX.busyClose = true;
+  ibxRepaint();
+  const batches = [];
+  let n = 0, err = null;
+  for (let i = 0; i < rows.length; i += IBX_CHUNK) {
+    const items = rows.slice(i, i + IBX_CHUNK).map(r => ({ roomId: r.roomId, mid: r.mid, n: r.n }));
+    try {
+      const j = await ibxPost('/api/room/ask/close-many', { items, quiet: true });
+      if ((j.closed || []).length) batches.push({ batch: j.batch, items: j.closed });
+      n += (j.closed || []).length;
+    } catch (e) { err = e; break; }
+  }
+  // Every one asked about leaves the list: closed now, or no longer open anyway.
+  const t = Date.now();
+  const done = new Set();
+  for (const b of batches) for (const it of b.items) done.add(`${it.roomId} ${it.mid} ${it.n}`);
+  for (const r of rows) if (!err || done.has(`${r.roomId} ${r.mid} ${r.n}`)) IBX.hide.set(r.id, t);
+  IBX.busyClose = false;
+  IBX.confirm = '';
+  if (IBX.bulk) clearTimeout(IBX.bulk.timer);
+  IBX.bulk = n ? { n, batches, until: t + IBX_BULK_UNDO_S * 1000, ids: rows.map(r => r.id), busy: false } : null;
+  if (IBX.bulk) IBX.bulk.timer = setTimeout(ibxBulkEnd, IBX_BULK_UNDO_S * 1000);
+  ibxRepaint();
+  if (err) toast(`Closed ${n} of ${rows.length}: ${err.message}`, 6000, 'err');
+  const u = document.querySelector('.ibx [data-ibx-bulk-undo]');
+  if (u && box.contains(u)) u.focus({ preventScroll: true });
+  ibxPoll();
+}
+function ibxBulkEnd() { IBX.bulk = null; ibxRepaint(); }
+async function ibxBulkUndo() {
+  const b = IBX.bulk;
+  if (!b || b.busy) return;
+  b.busy = true;
+  ibxRepaint();
+  let err = null;
+  for (const x of b.batches) {
+    try { await ibxPost('/api/room/ask/reopen-many', { batch: x.batch, items: x.items }); } catch (e) { err = e; }
+  }
+  clearTimeout(b.timer);
+  IBX.bulk = null;
+  for (const id of b.ids) IBX.hide.delete(id);
+  ibxRepaint();
+  if (err) toast('Not all reopened: ' + err.message, 6000, 'err');
+  ibxPoll();
+}
+// The Undo bar's seconds.
+setInterval(() => {
+  if (!IBX.bulk) return;
+  const t = `${Math.max(0, Math.ceil((IBX.bulk.until - Date.now()) / 1000))} s`;
+  document.querySelectorAll('.ibx-undo .ibx-tm').forEach(s => { if (s.textContent !== t) s.textContent = t; });
+}, 1000);
 // A row's answers stay open across repaints. The Inbox panel's handlers, and
 // a phone's Inbox pane's (#307).
 function ibxWire(box) {
@@ -15656,8 +15908,33 @@ function ibxWire(box) {
     if (d.open) IBX.open.add(d.dataset.ibxMore); else IBX.open.delete(d.dataset.ibxMore);
     IBX.sig = IBX.phSig = '';
   }, true);
+  // Pointing at (or tabbing to) Close this and earlier marks what it would close.
+  const markFrom = id => {
+    if (IBX.confirm) return;
+    let on = false;
+    box.querySelectorAll('li.ibx-row[data-ibx]').forEach(li => {
+      if (li.dataset.ibx === id) on = true;
+      li.classList.toggle('ibx-mark', !!id && on && li.dataset.q === '1');
+    });
+  };
+  box.addEventListener('mouseover', e => { const b = e.target.closest && e.target.closest('[data-ibx-earlier]'); if (b) markFrom(b.dataset.ibxEarlier); });
+  box.addEventListener('mouseout', e => {
+    const b = e.target.closest && e.target.closest('[data-ibx-earlier]');
+    if (b && !(e.relatedTarget && b.contains(e.relatedTarget)) && document.activeElement !== b) markFrom('');
+  });
+  box.addEventListener('focusin', e => { const b = e.target.closest && e.target.closest('[data-ibx-earlier]'); markFrom(b ? b.dataset.ibxEarlier : ''); });
+  box.addEventListener('keydown', e => { if (e.key === 'Escape' && IBX.confirm && !IBX.busyClose) { const id = IBX.confirm; IBX.confirm = ''; ibxRepaint(); const b = box.querySelector(`[data-ibx-earlier="${CSS.escape(id)}"]`); if (b) b.focus(); } });
   box.addEventListener('click', e => {
-    const sc = e.target.closest && e.target.closest('[data-ibx-scope]');
+    const at = sel => e.target.closest && e.target.closest(sel);
+    let b;
+    if ((b = at('[data-ibx-close]'))) { ibxRowAct(b.dataset.ibxClose, 'Closed'); return; }
+    if ((b = at('[data-ibx-done]'))) { ibxRowAct(b.dataset.ibxDone, 'Done'); return; }
+    if ((b = at('[data-ibx-undo]'))) { ibxRowUndo(b.dataset.ibxUndo, box); return; }
+    if ((b = at('[data-ibx-earlier]'))) { IBX.confirm = IBX.confirm === b.dataset.ibxEarlier ? '' : b.dataset.ibxEarlier; ibxRepaint(); if (!IBX.confirm) markFrom(''); else { const g = box.querySelector('[data-ibx-go]'); if (g) g.focus({ preventScroll: true }); } return; }
+    if ((b = at('[data-ibx-cancel]'))) { const id = IBX.confirm; IBX.confirm = ''; ibxRepaint(); const x = box.querySelector(`[data-ibx-earlier="${CSS.escape(id)}"]`); if (x) x.focus({ preventScroll: true }); return; }
+    if ((b = at('[data-ibx-go]'))) { ibxCloseMarked(box); return; }
+    if ((b = at('[data-ibx-bulk-undo]'))) { ibxBulkUndo(); return; }
+    const sc = at('[data-ibx-scope]');
     if (sc) {
       IBX.scope = sc.dataset.ibxScope === 'all' ? 'all' : 'project';
       try { localStorage.setItem('cd-inbox-scope', IBX.scope); } catch (err) {}
