@@ -3448,6 +3448,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   dialog .pr-items { list-style: none; margin: var(--s-100) 0 0; padding: 0; }
   dialog .pr-items .pr-im { margin-left: 0; }
   dialog .pr-items .pr-item + .pr-im { margin-left: var(--s-600); }
+  dialog .pr-old-act { margin: 0 0 var(--s-100) var(--s-600); min-height: 32px; max-width: 100%; }
   dialog .pr-total { margin: var(--s-300) 0 0; font-size: var(--fs-300); font-weight: 500; }
   dialog .pr-progress { margin: var(--s-400) 0; font-size: var(--fs-300); color: var(--fg-subtle); }
   dialog .pr-err { margin: var(--s-300) 0; color: var(--c-danger-fg); font-size: var(--fs-300); }
@@ -3457,6 +3458,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     dialog .pr-ghead, dialog .pr-item, dialog .pr-group summary, dialog .pr-kept summary { min-height: var(--touch-min); }
     dialog .pr-ghead input, dialog .pr-item input { width: 20px; height: 20px; }
     dialog .pr-acts .rm-btn { min-height: var(--touch-min); flex: 1 1 auto; }
+    dialog .pr-old-act { min-height: var(--touch-min); }
     dialog .pr-list { max-height: 48vh; }
   }
   dialog .im-field input:focus,
@@ -8649,12 +8651,13 @@ const PRUNE_GROUPS = {
   own: ['Your own conversations', 'Agent conversations you started yourself, outside Ensemble. Not ticked: tick only what you no longer need.'],
   orphans: ['Folders and worktrees no task names', 'Task folders whose task is gone, and worktrees git still lists whose folder is gone.'],
   housekeeping: ['Old logs, uploads and launch files', 'Rotated logs, the uploads, sends and records of tasks that are gone, old terminal spools, launch files older than a day.'],
+  threads: ['Old threads and topics', 'Threads and topics of the PO chats not updated in the days asked. Each is archived (back by itself on a new message) unless you pick Delete for it; transcripts and points are kept. Frees no space: it clears the lists.'],
 };
 const PRUNE_PART = { worktree: 'worktree', branch: 'branch', checkpoints: 'checkpoints', folder: 'folder', conversation: 'conversation',
   chat: 'chat', sends: 'sends', room: 'record', uploads: 'uploads', log: 'log', spool: 'spool', launch: 'launch file',
   'worktree-records': 'worktree records' };
 const PRUNE_SHOWN = 300;   // rows drawn per group; the rest follow the group's tick
-const PRUNE = { state: null, ticks: new Map(), at: null, timer: 0, dlg: null, key: '', open: new Set(), wired: false };
+const PRUNE = { state: null, ticks: new Map(), acts: new Map(), at: null, timer: 0, dlg: null, key: '', open: new Set(), wired: false };
 function pruneBytes(n) {
   n = Math.max(0, +n || 0);
   if (n < 1024) return `${n} B`;
@@ -8726,6 +8729,7 @@ async function pruneTick(again) {
   if (pv && pv.at !== PRUNE.at) {
     PRUNE.at = pv.at;
     PRUNE.ticks = new Map();
+    PRUNE.acts = new Map();
     for (const g of pv.groups) for (const it of g.items) PRUNE.ticks.set(it.id, !!it.ticked);
   }
   pruneStatus(s.running ? pruneProgressText(s)
@@ -8754,10 +8758,21 @@ function prunePartsText(it) {
     return x.bytes ? `${name} ${pruneBytes(x.bytes)}` : name;
   }).join(' · ');
 }
-function pruneItemHtml(it, busy) {
+function pruneAgeShort(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 3600) return Math.max(1, Math.floor(s / 60)) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  return d >= 30 || !h ? d + 'd' : d + 'd ' + h + 'h';
+}
+function pruneItemHtml(it, busy, group) {
+  const old = group === 'threads';
+  const act = PRUNE.acts.get(it.id) || 'archive';
   const meta = [it.project, prunePartsText(it)].filter(Boolean).join(' · ');
   return `<li><label class="pr-item"><input type="checkbox" data-id="${esc(it.id)}"${PRUNE.ticks.get(it.id) ? ' checked' : ''}${busy ? ' disabled' : ''}>`
-    + `<span class="pr-il">${esc(it.label || it.id)}</span><span class="pr-size">${pruneBytes(it.bytes)}</span></label>`
+    + `<span class="pr-il">${esc(it.label || it.id)}</span><span class="pr-size">${old ? esc(pruneAgeShort(it.at)) : pruneBytes(it.bytes)}</span></label>`
+    + (old ? `<select class="pr-old-act" data-act="${esc(it.id)}" aria-label="Action for ${esc(it.label || it.id)}"${busy ? ' disabled' : ''}><option value="archive"${act === 'archive' ? ' selected' : ''}>Archive</option><option value="delete"${act === 'delete' ? ' selected' : ''}>Delete</option></select>` : '')
     + `<div class="pr-im">${esc(meta)}${it.note ? ` · <b>${esc(it.note)}</b>` : ''}</div></li>`;
 }
 function pruneGroupHtml(g, busy) {
@@ -8770,7 +8785,7 @@ function pruneGroupHtml(g, busy) {
     + `<b>${esc(name)}</b><span class="pr-size">${pruneBytes(g.bytes)} · ${g.items.length.toLocaleString()}</span></label>`
     + `<p class="pr-gnote">${esc(note)}</p>`
     + `<details data-g="${esc(g.id)}"${PRUNE.open.has(g.id) ? ' open' : ''}><summary>${on === g.items.length ? 'All' : `${on.toLocaleString()} of`} ${prunePlural(g.items.length, 'item')} ticked: show them</summary>`
-    + `<ul class="pr-items">${shown.map(it => pruneItemHtml(it, busy)).join('')}</ul>`
+    + `<ul class="pr-items">${shown.map(it => pruneItemHtml(it, busy, g.id)).join('')}</ul>`
     + (more > 0 ? `<p class="pr-gnote">${prunePlural(more, 'more item')}, the smallest, not drawn: they follow the group’s tick.</p>` : '')
     + `</details></section>`;
 }
@@ -8784,7 +8799,9 @@ function pruneKeptHtml(kept) {
 }
 function pruneResultHtml(res) {
   const errs = res.done.filter(d => d.errors && d.errors.length);
-  return `<p class="pr-total">Freed ${pruneBytes(res.freed)}: ${prunePlural(res.done.length - errs.length, 'item')} deleted.</p>`
+  const old = res.done.filter(d => String(d.id || '').startsWith('th:')).length;
+  const normal = res.done.length - old - errs.length;
+  return `<p class="pr-total">Freed ${pruneBytes(res.freed)}: ${old ? `${prunePlural(old, 'old thread or topic')} archived or deleted${normal ? `; ${prunePlural(normal, 'item')} deleted` : ''}.` : `${prunePlural(normal, 'item')} deleted.`}</p>`
     + (errs.length ? `<p class="cfg-hint">${prunePlural(errs.length, 'item')} only partly:</p><ul class="pr-items">${errs.slice(0, 100).map(d => `<li class="pr-im"><b>${esc(d.label || d.id)}</b>: ${esc(d.errors.join('; '))}</li>`).join('')}</ul>` : '')
     + (res.skipped.length ? `<p class="cfg-hint">${prunePlural(res.skipped.length, 'item')} left, checked again before deleting:</p><ul class="pr-items">${res.skipped.slice(0, 100).map(d => `<li class="pr-im"><b>${esc(d.label || d.id)}</b>: ${esc(d.why)}</li>`).join('')}</ul>` : '')
     + `<p class="cfg-hint">Each deletion is a line in ~/.ensemble/logs/prune.log.</p>`;
@@ -8803,7 +8820,7 @@ function pruneDialogHtml(s) {
         : `<p class="pr-total">Nothing older than ${prunePlural(pv.days, 'day')} can go.</p>${pruneKeptHtml(pv.kept)}`)
       + `<p class="pr-total" id="pr-ticked">${t.n ? `Ticked: ${prunePlural(t.n, 'item')}, ${pruneBytes(t.bytes)}.` : 'Nothing ticked.'}</p>`;
     acts = `<button type="button" class="rm-btn" id="pr-close">Close</button>`
-      + `<button type="button" class="rm-btn danger" id="pr-go"${t.n ? '' : ' disabled'}>Delete ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})</button>`;
+      + `<button type="button" class="rm-btn danger" id="pr-go"${t.n ? '' : ' disabled'}>Apply to ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})</button>`;
   } else if (s.result) {
     body = pruneResultHtml(s.result);
     acts = `<button type="button" class="rm-btn" id="pr-again">Preview again</button><button type="button" class="rm-btn" id="pr-close">Close</button>`;
@@ -8841,6 +8858,7 @@ function prunePaint() {
     if (d.open) PRUNE.open.add(d.dataset.g); else PRUNE.open.delete(d.dataset.g);
   }));
   dlg.querySelectorAll('input[data-id]').forEach(b => b.onchange = () => { PRUNE.ticks.set(b.dataset.id, b.checked); pruneSync(); });
+  dlg.querySelectorAll('select[data-act]').forEach(x => x.onchange = () => PRUNE.acts.set(x.dataset.act, x.value));
   dlg.querySelectorAll('input[data-g]').forEach(b => b.onchange = () => {
     const g = s.preview.groups.find(x => x.id === b.dataset.g);
     // Ticking the group never takes an item with a note (uncommitted work):
@@ -8857,7 +8875,7 @@ function prunePaint() {
     q('#pr-go').disabled = true;
     try {
       PRUNE.state = await api('/api/prune/run', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                                  body: JSON.stringify({ ids }) });
+                                                  body: JSON.stringify({ ids, actions: Object.fromEntries(ids.filter(id => PRUNE.acts.get(id) === 'delete').map(id => [id, 'delete'])) }) });
     } catch (e) { toast('Nothing deleted: ' + pruneErr(e), 6000, 'err'); q('#pr-go').disabled = false; return; }
     pruneTick(true);
   };
@@ -8880,7 +8898,7 @@ function pruneSync() {
   const tl = dlg.querySelector('#pr-ticked');
   if (tl) tl.textContent = t.n ? `Ticked: ${prunePlural(t.n, 'item')}, ${pruneBytes(t.bytes)}.` : 'Nothing ticked.';
   const go = dlg.querySelector('#pr-go');
-  if (go) { go.disabled = !t.n; go.textContent = `Delete ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})`; }
+  if (go) { go.disabled = !t.n; go.textContent = `Apply to ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})`; }
 }
 let _backupWired = false;
 function wireBackupPrefs() {
