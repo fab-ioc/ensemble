@@ -1214,7 +1214,7 @@ def delete_room(room_id: str) -> bool:
 SLIM_KEEP = ("id", "title", "mode", "status", "createdAt", "updatedAt", "projectId", "noProjectId",
              "no", "previousNos", "workflow", "workflowAt", "mergedAt", "mergedHead", "priority",
              "spec", "lastReport", "lastRealReport", "taskDir", "cwd", "workspace", "stoppedAt",
-             "kind", "labels", "after", "onReady")
+             "kind", "labels", "after", "onReady", "goal", "goalSource", "goalAt", "stateNote")
 SLIM_PART_KEEP = ("identity", "kind", "agent", "model", "role")
 
 

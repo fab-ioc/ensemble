@@ -104,6 +104,10 @@ end the turn without reporting. One task sending six updates in forty minutes
 made its PO's chat unreadable (2026-09-16). At most one `update` between two
 real events, and none within an hour of the last unless something changed.
 
+**Add `state` to every report**: one or two sentences on where the task stands
+against its goal ("UI done, review 2 running; tests left"). Its board card shows it with
+your name and time. It costs no extra turn: never report only to update it.
+
 The report is posted in the PO's room and **wakes the PO**, except an `update`:
 that is posted at once but told to the PO with the next line the hub types it, or within 30
 minutes, so use `completed`, `blocked` or `question` when the PO has to act.
@@ -498,6 +502,9 @@ being asked.
   be sure which one you mean, especially when two agents share a kind
   (`claude`, `claude-2`). The `model` is part of the assignment: changing only
   the model of an agent that is staying is a valid edit.
+- **Write a `goal` on every task** (`ensemble_create_task`, `ensemble_update_task`):
+  what it is for, one or two short lines. Its board card shows it; a task without
+  one gets one written from its spec.
 - **Prefer drafts.** `ensemble_create_task` creates a draft by default. Start
   tasks only when the product owner asked you to (or the brief clearly says so).
 - **Prefer stop over delete.** Delete only drafts you created and no longer
