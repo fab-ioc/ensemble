@@ -940,15 +940,13 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
     todo = [it for g in preview.get("groups", []) for it in g.get("items", []) if it.get("id") in want]
     thread_valid = {}
     if any(it.get("group") == "threads" for it in todo):
-        for it in todo:
-            if it.get("group") == "threads":
-                thread_valid.setdefault(it.get("room"), set()).add((it.get("kind"), it.get("tid")))
-        for rid in list(thread_valid):
-            try:
-                thread_valid[rid] = {(x.get("kind"), x.get("id")) for x in hub.old_threads(cutoff)
-                                     if x.get("room") == rid}
-            except Exception:
-                thread_valid[rid] = set()
+        try:
+            checked_rows = hub.old_threads(cutoff)
+            thread_valid = {}
+            for x in checked_rows:
+                thread_valid.setdefault(x.get("room"), set()).add((x.get("kind"), x.get("id")))
+        except Exception:
+            thread_valid = {}
     for i, it in enumerate(todo):
         if stop and stop():
             skipped.append({"id": it["id"], "why": "stopped"})

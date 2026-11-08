@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 from unittest import mock
 
 import dashboard
+import chatroom
 import points
+import prune
 import threads
 from tests import test_points as tp
 from tests.test_threads import http_get
@@ -157,6 +160,47 @@ class OldThreads(tp._World):
         p1 = next(t for t in ch["threadList"] if t["id"] == "P1")
         open_ = {p["id"] for p in points.load(self.rid)["points"] if p["state"] in points.LIVE}
         self.assertEqual(set(p1["openPoints"]), open_ & {"P1"})
+
+    def test_cleanup_selects_old_topics_and_records_archive_delete_without_touching_memory(self):
+        project = {"id": "proj-abcdef99", "name": "PO", "poRoomId": self.rid}
+        cutoff = self.t0 + 250
+        state = Path(self.temp.name)
+        with mock.patch.object(dashboard, "load_projects", return_value=[project]):
+            rows = dashboard.old_threads(cutoff)
+            self.assertTrue(rows)
+            self.assertTrue(all(r["at"] < cutoff for r in rows))
+            self.assertTrue(any(r["kind"] == "topic" for r in rows))
+            self.assertTrue(all("openPoints" in r for r in rows))
+            row = next(r for r in rows if r["kind"] == "topic")
+            room = chatroom.get_room(self.rid, public=False)
+            transcript = [dict(t) for t in self.turns["sid-1"]]
+            ledger = points._path(self.rid).read_bytes()
+            hub = prune.Hub(
+                state_dir=state, claude_dir=state / "claude", codex_dir=state / "codex",
+                projects=lambda: [project], rooms=lambda: [room], live_rooms=lambda: set(),
+                live_sessions=lambda: set(), room_sessions=lambda r: [], current_sessions=lambda r: set(),
+                classify=lambda *a: ("own", ""), slim_room=lambda *a: True,
+                forget_checkpoints=lambda *a: 0, checkpoint_counts=lambda *a: {},
+                project_home=lambda p: str(state), documents_dir=lambda p: str(state / "Documents"),
+                old_threads=dashboard.old_threads, thread_act=dashboard.old_thread_act)
+            item = prune._old_threads(hub, cutoff)[0]
+            preview = {"days": 0, "groups": [{"id": "threads", "items": [item]}]}
+            archived = prune.run(hub, preview, [item["id"]])
+            self.assertEqual(archived["done"][0]["action"], "archive")
+            self.assertTrue(set(row["threads"]) <= set(threads.load_side(self.rid)["archived"]))
+            self.assertEqual(dashboard.old_thread_act({"kind": row["kind"], "room": self.rid, "id": row["id"]}, "delete", cutoff), "updated since, archived or gone")
+            dashboard.topic_act(project, room, "restore", [row["id"]])
+            threads.forget(); points.sync(self.rid, force=True); threads.build(self.rid)
+            item = prune._old_threads(hub, cutoff)[0]
+            deleted = prune.run(hub, {"days": 0, "groups": [{"id": "threads", "items": [item]}]},
+                                [item["id"]], actions={item["id"]: "delete"})
+            self.assertEqual(deleted["done"][0]["action"], "delete")
+            self.assertTrue(set(row["threads"]) <= set(threads.load_side(self.rid)["deleted"]))
+            self.assertEqual(self.turns["sid-1"], transcript)
+            self.assertEqual(points._path(self.rid).read_bytes(), ledger)
+            log = (state / "logs" / "prune.log").read_text(encoding="utf-8")
+            self.assertIn("archived", log)
+            self.assertIn("deleted", log)
 
 
 if __name__ == "__main__":
