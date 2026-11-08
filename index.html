@@ -1937,9 +1937,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .att-file .att-name { min-width: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .att-file:hover { border-color: var(--border-strong); }
   .att-file:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  .att-pick { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; background: transparent; border: none; border-radius: var(--r-200); color: var(--fg-subtle); }
+  .att-pick { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; background: transparent; border: none; border-radius: var(--r-200); color: var(--fg-subtle); position: relative; }
   .att-pick:hover { background: var(--hover); color: var(--fg); }
   .att-pick:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  @media (pointer: coarse) { .att-pick::after { content: ''; position: absolute; inset: -10px; } }
   .att-chip { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 0 0 var(--s-050);
     background: var(--surface-sunken); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-100); font-size: var(--fs-200); line-height: 16px; }
   .att-chip img { height: 24px; width: auto; max-width: 48px; object-fit: cover; border-radius: var(--r-100); }

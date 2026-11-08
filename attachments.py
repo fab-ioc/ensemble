@@ -76,7 +76,9 @@ def sniff(head: bytes) -> str:
 
 
 def _ext(name) -> str:
-    ext = os.path.splitext(str(name or ""))[1].lower()
+    base = str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    # A name that is only a dot and an extension (".png") is that type too.
+    ext = (base if base.startswith(".") and base.count(".") == 1 else os.path.splitext(base)[1]).lower()
     return _EXT_ALIASES.get(ext, ext)
 
 
@@ -95,7 +97,7 @@ def folder(room: dict, state_dir) -> Path:
 
 
 def _safe_stem(stem: str) -> str:
-    stem = _BAD.sub("_", stem).strip(" .")
+    stem = _BAD.sub("_", stem).strip(" ").rstrip(" .")   # a leading dot stays (".env")
     if stem.split(".")[0].lower() in _RESERVED:
         stem = "_" + stem
     return stem[:NAME_MAX].rstrip(" .")
@@ -123,7 +125,7 @@ def other_name(given: str, now: float | None = None) -> str:
     """The name a file that is not an image is stored under: its own name made
     safe (no folders, no characters a file system refuses, an extension only of
     letters, digits, ``_`` and ``-``), else ``<yyyy-mm-dd HH.MM.SS> file``."""
-    base = str(given or "").replace("\\", "/").rsplit("/", 1)[-1].strip(" .")
+    base = str(given or "").replace("\\", "/").rsplit("/", 1)[-1].strip(" ").rstrip(" .")
     stem, ext = os.path.splitext(base)
     ext = ext[1:]
     if ext and (len(ext) > EXT_MAX or _NOT_EXT.search(ext)):
@@ -211,7 +213,7 @@ def find(room: dict, state_dir, name) -> Path:
     """The stored attachment ``name`` of ``room``, confined to its folder:
     a plain file name, a regular file really inside."""
     name = str(name or "")
-    if not name or name != name.strip(" .") or _BAD.search(name) or len(name) > 255:
+    if not name or name != name.strip(" ").rstrip(" .") or _BAD.search(name) or len(name) > 255:
         raise Refused(400, "bad_name", "That is not the name of an attachment.")
     dest = folder(room, state_dir)
     path = dest / name

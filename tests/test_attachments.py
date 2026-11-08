@@ -566,7 +566,7 @@ class Attachments(unittest.TestCase):
     def test_a_files_name_is_made_safe_and_never_taken_twice(self):
         cases = [("../x", "x"), ("..\\..\\evil.pdf", "evil.pdf"), ("C:\\Users\\me\\plan.md", "plan.md"),
                  ("résumé – 2026.docx", "résumé – 2026.docx"), ("日本語.txt", "日本語.txt"),
-                 ("a<b>:c|d?.csv", "a_b__c_d_.csv"), ("con.txt", "_con.txt"), (".env", "env"),
+                 ("a<b>:c|d?.csv", "a_b__c_d_.csv"), ("con.txt", "_con.txt"), (".env", ".env"), (".gitignore", ".gitignore"),
                  ("trailing. ", "trailing"), ("x.not an ext", "x.not an ext")]
         for given, want in cases:
             status, r = self.upload(b"data", name=given)
@@ -608,6 +608,17 @@ class Attachments(unittest.TestCase):
         self.assertEqual((d["name"], d["size"]), ("data.csv", 8))
         status, _h, _p = self.call("GET", f"/api/room/attachment?{urlencode({'room': self.rid, 'name': '../x', 'info': '1'})}")
         self.assertEqual(status, 400)
+
+    def test_a_dotfile_keeps_its_dot_and_a_bare_image_extension_is_refused(self):
+        status, r = self.upload(b"KEY=1\n", name=".env")
+        self.assertEqual((status, r["name"], r["image"]), (200, ".env", False))
+        status, _h, payload = self.call("GET", f"/api/room/attachment?{urlencode({'room': self.rid, 'name': '.env', 'info': '1'})}")
+        self.assertEqual((status, json.loads(payload)["size"]), (200, 6))
+        for bad in ("..", "."):
+            status, _h, _p = self.call("GET", f"/api/room/attachment?{urlencode({'room': self.rid, 'name': bad, 'info': '1'})}")
+            self.assertEqual(status, 400, bad)
+        status, r = self.upload(b"not a picture", name=".png")
+        self.assertEqual((status, r["error"]), (415, "not_an_image"))
 
     def test_files_travel_as_file_lines_and_alone_get_their_point(self):
         _s, a = self.upload(b"%PDF-1.7 x", name="spec.pdf")

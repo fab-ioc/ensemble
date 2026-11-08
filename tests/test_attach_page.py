@@ -23,6 +23,7 @@ its use in index.html), run in Node; skipped without Node:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -266,6 +267,14 @@ class AttachPage(unittest.TestCase):
             self.assertIn('<script src="/static/attach.js"></script>', page)
         self.assertIn("attachments: images", INDEX)
         self.assertIn("keepBoth: true", INDEX)
+
+    def test_the_paperclip_is_a_44px_target_on_touch(self):
+        # 24px drawn + a 10px invisible ring each side = 44px on a touch screen.
+        for page in (INDEX, SESSION):
+            rule = re.search(r"\.att-pick \{[^}]*\}", page).group(0)
+            self.assertRegex(rule, r"width: ?24px")
+            self.assertRegex(rule, r"position: ?relative")
+            self.assertRegex(page, r"@media \(pointer: coarse\) \{ \.att-pick::after \{ content: ?''; position: ?absolute; inset: ?-10px; \} \}")
 
 
 if __name__ == "__main__":
