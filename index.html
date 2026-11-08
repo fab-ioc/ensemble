@@ -8745,6 +8745,11 @@ function pruneTicked() {
   if (pv) for (const g of pv.groups) for (const it of g.items) if (PRUNE.ticks.get(it.id)) { n++; bytes += it.bytes || 0; }
   return { n, bytes };
 }
+function pruneGoText(t) {
+  const pv = PRUNE.state && PRUNE.state.preview;
+  const old = !!(pv && pv.groups.some(g => g.id === 'threads' && g.items.some(it => PRUNE.ticks.get(it.id))));
+  return `${old ? 'Apply to' : 'Delete'} ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})`;
+}
 function prunePartsText(it) {
   const by = new Map();
   for (const p of it.parts || []) {
@@ -8820,7 +8825,7 @@ function pruneDialogHtml(s) {
         : `<p class="pr-total">Nothing older than ${prunePlural(pv.days, 'day')} can go.</p>${pruneKeptHtml(pv.kept)}`)
       + `<p class="pr-total" id="pr-ticked">${t.n ? `Ticked: ${prunePlural(t.n, 'item')}, ${pruneBytes(t.bytes)}.` : 'Nothing ticked.'}</p>`;
     acts = `<button type="button" class="rm-btn" id="pr-close">Close</button>`
-      + `<button type="button" class="rm-btn danger" id="pr-go"${t.n ? '' : ' disabled'}>Apply to ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})</button>`;
+      + `<button type="button" class="rm-btn danger" id="pr-go"${t.n ? '' : ' disabled'}>${pruneGoText(t)}</button>`;
   } else if (s.result) {
     body = pruneResultHtml(s.result);
     acts = `<button type="button" class="rm-btn" id="pr-again">Preview again</button><button type="button" class="rm-btn" id="pr-close">Close</button>`;
@@ -8898,7 +8903,7 @@ function pruneSync() {
   const tl = dlg.querySelector('#pr-ticked');
   if (tl) tl.textContent = t.n ? `Ticked: ${prunePlural(t.n, 'item')}, ${pruneBytes(t.bytes)}.` : 'Nothing ticked.';
   const go = dlg.querySelector('#pr-go');
-  if (go) { go.disabled = !t.n; go.textContent = `Apply to ${prunePlural(t.n, 'item')} (${pruneBytes(t.bytes)})`; }
+  if (go) { go.disabled = !t.n; go.textContent = pruneGoText(t); }
 }
 let _backupWired = false;
 function wireBackupPrefs() {
