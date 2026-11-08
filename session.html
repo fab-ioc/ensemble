@@ -901,8 +901,9 @@
   .tl-meta { max-width:100%; color:var(--fg-muted); font-size:var(--fs-200); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tl-age, .tp-age { color:var(--fg-muted); font-size:var(--fs-200); font-variant-numeric:tabular-nums; white-space:nowrap; }
   .tl-age { flex:0 0 auto; }
-  .tl-box { flex:0 0 auto; width:16px; height:16px; margin:0; accent-color:var(--focus-ring); cursor:pointer; }
-  #topics-pop .tp-row .tl-box { margin:var(--s-300) 0 0 var(--s-300); }
+  .tl-hit { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; cursor:pointer; }
+  .tl-box { width:16px; height:16px; margin:0; accent-color:var(--focus-ring); cursor:pointer; }
+  #topics-pop .tp-row .tl-hit { margin:var(--s-200) 0 0 var(--s-200); }
   #topics-pop .tp-row.sel { background:var(--selected-bg); }
   #topics-pop .tp-row.arch { align-items:center; }
   #topics-pop .tp-row.arch .tp-open { cursor:default; }
@@ -915,8 +916,9 @@
     .tl-btn, .tl-fold { min-height:var(--touch-min); }
     select.tl-btn { font-size:16px; }
     .tl-open { min-height:var(--touch-min); }
-    .tl-box { width:var(--touch-min); height:var(--touch-min); margin:0; }
-    #topics-pop .tp-row .tl-box { margin:0; }
+    .tl-hit { width:var(--touch-min); height:var(--touch-min); }
+    .tl-box { width:20px; height:20px; }
+    #topics-pop .tp-row .tl-hit { margin:0; }
   }
   #topic-note span { flex:1 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #topic-note button, #topic-suggestion button { min-height:var(--touch-min); padding:0 var(--s-200); border:0;
@@ -7418,7 +7420,7 @@ function selFoldHtml(kind, n) {
     + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> Archived (${n})</button>`;
 }
 const selBoxHtml = (kind, id, title) => LSEL[kind].on
-  ? `<input type="checkbox" class="tl-box" data-sel-kind="${kind}" data-sel-id="${esc(id)}"${LSEL[kind].sel.has(id) ? ' checked' : ''} aria-label="Select ${esc(title)}">` : '';
+  ? `<label class="tl-hit"><input type="checkbox" class="tl-box" data-sel-kind="${kind}" data-sel-id="${esc(id)}"${LSEL[kind].sel.has(id) ? ' checked' : ''} aria-label="Select ${esc(title)}"></label>` : '';
 function threadRowHtml(t, arch) {
   const s = LSEL.threads, picked = s.sel.has(t.id);
   const n = +t.replies || 0, unread = +t.unread || 0, title = t.title || 'Thread';
