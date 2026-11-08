@@ -20902,7 +20902,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "room": rid, **res, "url": attachment_url(rid, res["name"])})
 
     def _attachment_get(self, u) -> None:
-        """GET /api/room/attachment?room=<id>&name=<name>[&download=1]: one
+        """GET /api/room/attachment?room=<id>&name=<name>[&download=1|&info=1]: one
         stored file, from that room's attachments folder only. An image or a
         PDF is shown inline; anything else (a page, a drawing, a script among
         them) only ever downloads, never sniffed, sandboxed should a browser
@@ -20914,6 +20914,11 @@ class Handler(BaseHTTPRequestHandler):
             if room is None:
                 raise attachments.Refused(404, "no_such_room", "That chat is not on this hub.")
             path = attachments.find(room, DASHBOARD_DIR, (q.get("name") or [""])[0])
+            if (q.get("info") or [""])[0] == "1":
+                # What a balloon's file chip shows: the size, without the bytes.
+                self._send_json(200, {"ok": True, "name": path.name, "size": path.stat().st_size,
+                                      "type": attachments.content_type(path)})
+                return
             data = path.read_bytes()
         except attachments.Refused as e:
             self._send_json(e.status, e.payload())

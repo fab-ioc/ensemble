@@ -599,6 +599,16 @@ class Attachments(unittest.TestCase):
         _s, heads, _d = self.get(r["name"])
         self.assertEqual(heads["Content-Disposition"].split(";")[0], "inline")
 
+    def test_a_files_size_is_told_without_its_bytes(self):
+        _s, r = self.upload(b"a,b\n1,2\n", name="data.csv")
+        status, heads, payload = self.call("GET", f"/api/room/attachment?{urlencode({'room': self.rid, 'name': r['name'], 'info': '1'})}")
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", heads["Content-Type"])
+        d = json.loads(payload)
+        self.assertEqual((d["name"], d["size"]), ("data.csv", 8))
+        status, _h, _p = self.call("GET", f"/api/room/attachment?{urlencode({'room': self.rid, 'name': '../x', 'info': '1'})}")
+        self.assertEqual(status, 400)
+
     def test_files_travel_as_file_lines_and_alone_get_their_point(self):
         _s, a = self.upload(b"%PDF-1.7 x", name="spec.pdf")
         _s, b = self.upload(b"a,b", name="rows.csv")
