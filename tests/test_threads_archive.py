@@ -4,7 +4,8 @@ channel until a message comes to it) or deleted (gone from the lists and
 the channel for good, its transcripts and points kept as they are)."""
 from __future__ import annotations
 
-import time
+import io
+import json
 from unittest import mock
 
 import dashboard
@@ -100,6 +101,50 @@ class OldThreads(tp._World):
         th = http_get(f"/api/room/thread?id={self.rid}&t=P1")[1]
         self.assertEqual([i["mid"] for i in th["items"]], ["sid-1:5"])
         self.assertEqual(th["thread"]["root"], "sid-1:5")
+
+    def post(self, path, body):
+        raw = json.dumps(body).encode()
+        h = dashboard.Handler.__new__(dashboard.Handler)
+        h.path, h.command, h.request_version = path, "POST", "HTTP/1.1"
+        h.requestline = f"POST {path} HTTP/1.1"
+        h.headers = {"Host": "127.0.0.1", "Content-Type": "application/json", "Content-Length": str(len(raw))}
+        h.rfile, h.wfile = io.BytesIO(raw), io.BytesIO()
+        h.client_address = ("127.0.0.1", 50000)
+        h.log_message = lambda *a: None
+        h.do_POST()
+        head, _, payload = h.wfile.getvalue().partition(b"\r\n\r\n")
+        return int(head.split(b" ", 2)[1]), json.loads(payload or b"{}")
+
+    def test_the_threads_endpoint_archives_restores_and_deletes(self):
+        status, out = self.post("/api/room/threads", {"roomId": self.rid, "action": "archive", "threads": ["P2"]})
+        self.assertEqual((status, out["threads"]), (200, ["P2"]), out)
+        self.assertIn("P2", threads.load_side(self.rid)["archived"])
+        status, out = self.post("/api/room/threads", {"roomId": self.rid, "action": "restore", "threads": ["P2"]})
+        self.assertEqual(out["threads"], ["P2"])
+        status, out = self.post("/api/room/threads", {"roomId": self.rid, "action": "delete", "threads": ["P2", "P9"]})
+        self.assertEqual(out["threads"], ["P2"], "a thread the chat does not have is not deleted")
+        self.assertEqual(self.post("/api/room/threads", {"roomId": self.rid, "action": "burn", "threads": ["P1"]})[0], 400)
+        self.assertEqual(self.post("/api/room/threads", {"roomId": self.rid, "action": "archive", "threads": "P1"})[0], 400)
+        self.assertEqual(self.post("/api/room/threads", {"roomId": "room-0", "action": "archive", "threads": ["P1"]})[0], 404)
+
+    def test_a_topic_archived_or_deleted_takes_its_threads_with_it(self):
+        project = {"id": "proj-abcdef99", "poRoomId": self.rid}
+        dashboard.topics._CACHE.pop(project["id"], None)
+        dashboard.topics._STATE.pop(project["id"], None)
+        with mock.patch.object(dashboard, "load_projects", return_value=[project]):
+            grouping = dashboard.topics._build_view(project, threads.build(self.rid), dashboard.chatroom.ROOMS_DIR)
+            one = next(r["id"] for r in grouping["topics"] if "P1" in r["threads"])
+            status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "archive", "topics": [one]})
+            self.assertEqual(status, 200, out)
+            self.assertIn("P1", out["threads"])
+            self.assertIn("P1", threads.load_side(self.rid)["archived"])
+            status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "restore", "topics": [one]})
+            self.assertNotIn("P1", threads.load_side(self.rid)["archived"])
+            status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "delete", "topics": [one]})
+            self.assertEqual(status, 200, out)
+            self.assertIn("P1", threads.load_side(self.rid)["deleted"])
+            self.assertEqual(self.post("/api/room/topics", {"roomId": self.rid, "action": "archive",
+                                                            "topics": "x"})[0], 400)
 
     def test_open_points_are_named(self):
         ch = self.channel(threads=1)

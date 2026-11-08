@@ -12442,6 +12442,30 @@ _THREAD_VIEWS_MAX = 48
 _THREAD_VIEWS_LOCK = threading.Lock()
 
 
+def thread_act(rid: str, room: dict, action: str, tids: list) -> list:
+    """Archive, restore or delete threads of a PO chat (#319); the threads
+    it applied to."""
+    if action == "archive":
+        return threads.archive(rid, tids)
+    if action == "restore":
+        return threads.restore(rid, tids)
+    if action == "delete":
+        return threads.delete(rid, room, tids)
+    raise ValueError(f"not a thread action: {action!r}")
+
+
+def topic_threads(project: dict, room: dict, topic_ids: list) -> list:
+    """The threads of the topics ``topic_ids`` as the chat has them now
+    (listed or put away), worked out from the current threads (#319)."""
+    idx = threads.build(project.get("poRoomId") or "", room)
+    if idx is None:
+        return []
+    grouping = topics._build_view(project, idx, chatroom.ROOMS_DIR)
+    want = set(topic_ids)
+    return list(dict.fromkeys(t for row in grouping["topics"] + grouping["archived"]
+                              if row["id"] in want for t in row["threads"]))
+
+
 def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> dict:
     """A channel or thread view as sent: its ``sig`` names this very view
     (the index's and a digest of the rest). The view the page holds (``had``)
@@ -22231,15 +22255,51 @@ class Handler(BaseHTTPRequestHandler):
             if not room:
                 self._send_json(404, {"error": "no_such_po_chat"})
                 return
+            act = str(data.get("action") or "")
+            many = data.get("topics")
+            if many is not None and (not isinstance(many, list) or not all(isinstance(t, str) for t in many)):
+                self._send_json(400, {"error": "invalid_topic_change", "message": "topics is a list of topic ids"})
+                return
             try:
                 topics.view(project, room, chatroom.ROOMS_DIR)
-                topics.change(project, chatroom.ROOMS_DIR, str(data.get("action") or ""),
+                # #319: a topic archived, restored or deleted takes its threads with it.
+                tids = topic_threads(project, room, many if many is not None else [str(data.get("topic") or "")]) \
+                    if act in ("archive", "restore", "delete") else []
+                topics.change(project, chatroom.ROOMS_DIR, act,
                               topic=str(data.get("topic") or ""), other=str(data.get("other") or ""),
-                              thread=str(data.get("thread") or ""), name=str(data.get("name") or ""))
+                              thread=str(data.get("thread") or ""), name=str(data.get("name") or ""),
+                              topics=many)
+                if tids:
+                    thread_act(rid, room, act, tids)
             except (ValueError, OSError) as e:
                 self._send_json(400, {"error": "invalid_topic_change", "message": str(e)})
                 return
-            self._send_json(200, {"ok": True, **topics.view(project, room, chatroom.ROOMS_DIR)})
+            self._send_json(200, {"ok": True, "threads": tids, **topics.view(project, room, chatroom.ROOMS_DIR)})
+            return
+        if p == "/api/room/threads":
+            # Old threads (#319): {roomId, action: archive | restore | delete,
+            # threads: [ids]}. Archive puts them away until a message comes;
+            # delete takes them out of the lists and the chat for good. Only
+            # the threads record changes: transcripts and points stay.
+            if self._files_cross_site():
+                return
+            rid = str(data.get("roomId") or "").strip()
+            room = chatroom.get_room(rid, public=False) if _ROOM_ID.fullmatch(rid) else None
+            if room is None or not threads.is_threaded(rid):
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            tids, act = data.get("threads"), str(data.get("action") or "")
+            if act not in ("archive", "restore", "delete") or not isinstance(tids, list) or not tids \
+                    or not all(isinstance(t, str) for t in tids):
+                self._send_json(400, {"error": "bad_request",
+                                      "message": "action is archive, restore or delete; threads a list of ids"})
+                return
+            try:
+                done = thread_act(rid, room, act, tids)
+            except (ValueError, OSError) as e:
+                self._send_json(400, {"error": "not_saved", "message": str(e)})
+                return
+            self._send_json(200, {"ok": True, "action": act, "threads": done})
             return
         if p == "/api/room/thread/seen":
             # The person opened a thread of a PO chat: {roomId, thread, ts}

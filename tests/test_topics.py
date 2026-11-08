@@ -106,13 +106,46 @@ class TopicTest(unittest.TestCase):
         suggestion = before["suggestions"]["P2"]
         topics.change(self.project, self.rooms, "reject", thread="P2", topic=suggestion["topic"])
         self.assertNotIn("P2", self.view()["suggestions"])
-        topics.change(self.project, self.rooms, "archive", topic=suggestion["topic"])
+        # Archived after the fixture's messages (its clock is T0 on).
+        with mock.patch.object(topics.time, "time", return_value=T0 + 50):
+            topics.change(self.project, self.rooms, "archive", topic=suggestion["topic"])
         self.assertIn(suggestion["topic"], [t["id"] for t in self.view()["archived"]])
+        # #319: any new message brings it back, read or not.
         self.idx["by_mid"]["a:3"] = po("a:3", 100, "A new answer")
         self.idx["threads"]["P1"]["members"].append("a:3")
-        self.idx["threads"]["P1"]["unread"] = 1
         self.idx["sig"] = "new answer"
         self.assertIn(suggestion["topic"], [t["id"] for t in self.view()["topics"]])
+
+    def test_old_topics_stay_in_order_of_latest_message_and_delete_hides(self):
+        # #319: a topic grouped once stays listed however old; the list is
+        # in order of each topic's latest message; delete takes it out.
+        first = self.view()["topics"]
+        self.assertEqual([r["updatedAt"] for r in first], sorted((r["updatedAt"] for r in first), reverse=True))
+        ids = [r["id"] for r in first]
+        with mock.patch.object(threads, "ready", return_value=self.idx):
+            later = topics.view(self.project, {}, self.rooms, now=T0 + 90 * 86400)
+        self.assertEqual([r["id"] for r in later["topics"]], ids, "40+ days on, still listed")
+        with mock.patch.object(topics.time, "time", return_value=T0 + 50):
+            topics.change(self.project, self.rooms, "delete", topics=[ids[0]])
+        self.assertNotIn(ids[0], [r["id"] for r in self.view()["topics"]])
+        self.assertNotIn(ids[0], [r["id"] for r in self.view()["archived"]])
+        with mock.patch.object(topics.time, "time", return_value=T0 + 50):
+            topics.change(self.project, self.rooms, "archive", topics=ids[1:])
+        got = self.view()
+        self.assertEqual(got["topics"], [])
+        self.assertEqual({r["id"] for r in got["archived"]}, set(ids[1:]))
+        self.assertTrue(all(r["threadCount"] and r["updatedAt"] for r in got["archived"]))
+        topics.change(self.project, self.rooms, "restore", topics=ids[1:])
+        self.assertEqual({r["id"] for r in self.view()["topics"]}, set(ids[1:]))
+        with self.assertRaises(ValueError):
+            topics.change(self.project, self.rooms, "archive", topics=["subject:nope"])
+
+    def test_a_topic_whose_threads_are_all_put_away_is_archived(self):
+        for th in self.idx["threads"].values():
+            th["archived"] = T0 + 50
+        got = self.view()
+        self.assertEqual(got["topics"], [])
+        self.assertTrue(got["archived"])
 
     def test_cached_view_rebuilds_only_when_threads_or_topic_file_changes(self):
         def ready():

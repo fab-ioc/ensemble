@@ -49,7 +49,8 @@ def _load(path: Path) -> dict:
     return {"version": 2, "auto": dict(data.get("auto") or {}) if data.get("version") == 2 else {},
             "assign": dict(data.get("assign") or {}), "names": dict(data.get("names") or {}),
             "merged": dict(data.get("merged") or {}), "archive": dict(archive),
-            "declined": dict(data.get("declined") or {})}
+            "declined": dict(data.get("declined") or {}),
+            "deleted": {k: float(v or 0) for k, v in dict(data.get("deleted") or {}).items()}}
 
 
 def _save(path: Path, data: dict) -> None:
@@ -264,14 +265,22 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
         changed = False
         topics: dict[str, dict] = {}
         suggestions: dict[str, dict] = {}
-        eligible = []
+        eligible, updated = [], {}
         for tid in idx["order"]:
             th = idx["threads"][tid]
-            if tid == "team:activity" or (th.get("rootWho") != "you" and not th.get("openQuestions")) \
-                    or max((idx["by_mid"].get(mid) or {}).get("ts", 0)
-                           for mid in th["members"]) < now - _DAYS:
+            if tid == "team:activity" or (th.get("rootWho") != "you" and not th.get("openQuestions")):
+                continue
+            # Its latest message of any kind (#319: the lists' order).
+            at = max([(idx["by_mid"].get(mid) or {}).get("ts") or 0 for mid in th["members"]] + [0])
+            # A thread grouped once keeps its topic however old (#319); one
+            # never grouped is grouped while it is recent.
+            if at < now - _DAYS and tid not in data["auto"]:
                 continue
             eligible.append(tid)
+            updated[tid] = at
+        # Only recent threads are compared (old ones keep the topic they
+        # were given): a long chat's history is not scored pair by pair.
+        recent = [tid for tid in eligible if updated[tid] >= now - _DAYS or tid not in data["auto"]]
         # The last build's features and pairs: a thread change scores only
         # that thread's row again (and the rows a rarity change reaches).
         prev = _STATE.pop(project["id"], None)
@@ -280,28 +289,34 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
         keys, features = {}, {}
         for tid in eligible:
             keys[tid] = key = _feature_key(idx["threads"][tid], idx)
-            features[tid] = (prev["candidates"][tid] if prev and prev["keys"].get(tid) == key
+            features[tid] = (prev["features"][tid] if prev and prev["keys"].get(tid) == key
                              else _features(idx["threads"][tid], idx))
         heading_freq = Counter(t for feat in features.values() for t in feat["heading"])
-        rarity, rare_cutoff = _rarity(features)
-        pairs = _pairs(features, rarity, rare_cutoff, prev)
-        auto_keys, labels, pairs = _auto_groups(features, (rarity, pairs))
-        _STATE[project["id"]] = {"model": _MODEL, "keys": keys, "candidates": features,
-                                 "rarity": rarity, "pairs": pairs}
+        compared = {tid: features[tid] for tid in recent}
+        rarity, rare_cutoff = _rarity(compared)
+        pairs = _pairs(compared, rarity, rare_cutoff, prev)
+        auto_keys, labels, pairs = _auto_groups(compared, (rarity, pairs))
+        _STATE[project["id"]] = {"model": _MODEL, "keys": keys, "candidates": compared,
+                                 "features": features, "rarity": rarity, "pairs": pairs}
         for tid in eligible:
             th = idx["threads"][tid]
-            auto = auto_keys[tid]
             if tid not in data["auto"]:
-                data["auto"][tid] = auto
+                data["auto"][tid] = auto_keys[tid]
                 changed = True
             raw = data["assign"].get(tid) or data["auto"][tid]
             topic_id = _target(raw, data["merged"])
             if topic_id not in topics:
                 topics[topic_id] = {"id": topic_id, "name": data["names"].get(topic_id) or labels.get(topic_id) or features[tid]["title"],
                                     "threads": [], "latest": None, "unread": 0,
-                                    "decisions": 0, "task": "", "state": ""}
+                                    "decisions": 0, "task": "", "state": "",
+                                    "updatedAt": 0, "openPoints": [], "archivedThreads": 0, "archivedAt": 0}
             row = topics[topic_id]
             row["threads"].append(tid)
+            row["updatedAt"] = max(row["updatedAt"], updated[tid])
+            row["openPoints"] += [p for p in th.get("openPoints") or [] if p not in row["openPoints"]]
+            if th.get("archived"):
+                row["archivedThreads"] += 1
+                row["archivedAt"] = max(row["archivedAt"], th["archived"])
             row["unread"] += int(th.get("unread") or 0)
             row["decisions"] += int(th.get("openQuestions") or 0)
             if features[tid]["task"] and not row["task"]:
@@ -321,12 +336,12 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
         # Score against all topics only after all groups exist: a chip must
         # not depend on which thread happened to be visited first.
         position = {tid: i for i, tid in enumerate(eligible)}
-        for tid in eligible:
+        for tid in recent:
             own = _target(data["assign"].get(tid) or data["auto"][tid], data["merged"])
             if len(topics[own]["threads"]) != 1:
                 continue
             best = None
-            for other in sorted(pairs[tid], key=position.__getitem__):
+            for other in sorted(pairs.get(tid) or {}, key=position.__getitem__):
                 target = _target(data["assign"].get(other) or data["auto"][other], data["merged"])
                 if target == own or target in data["archive"] or target in data["declined"].get(tid, []):
                     continue
@@ -343,23 +358,32 @@ def _build_view(project: dict, idx: dict, rooms_dir: Path, *, now: float | None 
                 suggestions[tid] = {"topic": best[1], "name": topics[best[1]]["name"]}
         for topic_id, row in topics.items():
             archived_at = data["archive"].get(topic_id)
-            if archived_at is not None and row["unread"] and (row["latest"] or {}).get("ts", 0) > archived_at:
+            # Put away until a message comes to one of its threads (#319:
+            # any message, as a thread returns by itself).
+            if archived_at is not None and row["updatedAt"] > archived_at:
                 data["archive"].pop(topic_id)
                 changed = True
         if changed:
             _save(path, data)
-        rows = []
+        rows, put_away = [], []
         for row in topics.values():
-            if row["id"] in data["archive"]:
+            deleted_at = data["deleted"].get(row["id"])
+            if deleted_at is not None and row["updatedAt"] <= deleted_at:
                 continue
             row["threadCount"] = len(row["threads"])
             row["threadOptions"] = [{"id": tid, "title": (idx["threads"][tid].get("title") or tid)[:100]}
                                     for tid in row["threads"]]
-            rows.append(row)
-        rows.sort(key=lambda row: ((row["latest"] or {}).get("ts") or 0, row["name"]), reverse=True)
+            if row["id"] in data["archive"] or row["archivedThreads"] == row["threadCount"]:
+                # Archived itself, or every thread of it put away (#319).
+                row["archivedAt"] = max(row["archivedAt"], data["archive"].get(row["id"]) or 0)
+                put_away.append(row)
+            else:
+                rows.append(row)
+        order = lambda row: (row["updatedAt"] or 0, row["name"])        # noqa: E731
+        rows.sort(key=order, reverse=True)
+        put_away.sort(key=order, reverse=True)
         result = {"pending": False, "topics": rows, "suggestions": suggestions,
-                  "archived": [{"id": key, "name": data["names"].get(key) or topics.get(key, {}).get("name") or key}
-                               for key in data["archive"]], "sig": idx["sig"]}
+                  "archived": put_away, "sig": idx["sig"]}
         if cacheable:
             final_stamp = path.stat().st_mtime_ns if path.exists() else 0
             result["stamp"] = final_stamp
@@ -405,13 +429,33 @@ def view(project: dict, room: dict, rooms_dir: Path, *, now: float | None = None
     return {**hit[1], "building": True} if hit else {"pending": True, "topics": [], "suggestions": {}}
 
 
+MANY_MAX = 500                  # topics one archive / restore / delete names, at most
+
+
 def change(project: dict, rooms_dir: Path, action: str, *, topic: str = "", other: str = "",
-           thread: str = "", name: str = "") -> None:
-    """Apply one reversible correction; the endpoint validates room ownership."""
+           thread: str = "", name: str = "", topics: list | None = None) -> None:
+    """Apply one correction; the endpoint validates room ownership. Archive,
+    restore and delete (#319) take one ``topic`` or many (``topics``)."""
     path = _path(project["id"], rooms_dir)
     with _LOCK:
         data = _load(path)
         known = set(data["auto"].values()) | set(data["names"]) | set(data["merged"].values())
+        if topics is not None:
+            many = [t for t in dict.fromkeys(topics) if isinstance(t, str)]
+            if action not in ("archive", "restore", "delete") or not many or len(many) > MANY_MAX \
+                    or any(t not in known for t in many):
+                raise ValueError("invalid topic change")
+            now = time.time()
+            for t in many:
+                if action == "archive":
+                    data["archive"].setdefault(t, now)
+                elif action == "restore":
+                    data["archive"].pop(t, None)
+                else:
+                    data["deleted"][t] = now
+                    data["archive"].pop(t, None)
+            _save(path, data)
+            return
         if action == "rename" and topic in known and name.strip():
             data["names"][topic] = name.strip()[:80]
         elif action == "merge" and topic in known and other in known and topic != other:
@@ -427,8 +471,12 @@ def change(project: dict, rooms_dir: Path, action: str, *, topic: str = "", othe
         elif action == "archive" and topic in known:
             if topic not in data["archive"]:
                 data["archive"][topic] = time.time()
-        elif action == "restore" and topic in data["archive"]:
-            data["archive"].pop(topic)
+        elif action == "restore" and topic in known:
+            # Its threads may be what put it away (#319): the caller restores them.
+            data["archive"].pop(topic, None)
+        elif action == "delete" and topic in known:
+            data["deleted"][topic] = time.time()
+            data["archive"].pop(topic, None)
         elif action == "reject" and thread in data["auto"] and topic in known:
             data["declined"].setdefault(thread, [])
             if topic not in data["declined"][thread]:
