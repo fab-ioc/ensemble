@@ -172,7 +172,8 @@ def _path(room_id: str) -> Path:
 
 
 def _empty_side() -> dict:
-    return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": []}
+    return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
+            "archived": {}, "deleted": {}}
 
 
 def load_side(room_id: str) -> dict:
@@ -199,6 +200,14 @@ def load_side(room_id: str) -> dict:
             for k in ("seen", "anchors"):
                 if isinstance(d.get(k), dict):
                     side[k] = d[k]
+            # #319: threads put away ({tid: when}) and deleted ({tid: {at, mids}}).
+            if isinstance(d.get("archived"), dict):
+                side["archived"] = {t: _num(v) for t, v in d["archived"].items() if isinstance(t, str)}
+            if isinstance(d.get("deleted"), dict):
+                side["deleted"] = {t: {"at": _num(v.get("at")),
+                                       "mids": [m for m in v.get("mids") or [] if isinstance(m, str)]}
+                                   for t, v in d["deleted"].items()
+                                   if isinstance(t, str) and isinstance(v, dict)}
             for k in ("also", "sent"):
                 if isinstance(d.get(k), list):
                     side[k] = [x for x in d[k] if isinstance(x, dict)]
@@ -827,6 +836,64 @@ def _who(r: dict) -> str:
     return "hub"
 
 
+def _unhome(out: dict, tid: str, mid: str) -> None:
+    """The balloon ``mid`` is no longer in the thread ``tid``."""
+    for k in ("of", "parent"):
+        homes = out[k].get(mid)
+        if homes and tid in homes:
+            homes.remove(tid)
+            if not homes:
+                del out[k][mid]
+    if out["also"].get(mid) == tid:
+        del out["also"][mid]
+
+
+def _drop_deleted(out: dict, by_mid: dict, deleted: dict) -> set[str]:
+    """Threads the person deleted (#319), out of an index :func:`assign`
+    made: their balloons up to the delete go (those it held then, and any
+    older). A thread with nothing newer is gone; one a later message came
+    to starts again from that message. Returns the balloons that are in no
+    thread any more: the channel does not show them. The transcripts and
+    the points ledger are never touched; a build makes the same threads
+    again, and this drops them again."""
+    gone: set[str] = set()
+    for tid, rec in deleted.items():
+        th = out["threads"].get(tid)
+        if th is None or tid == "team:activity":
+            continue
+        at, mids = _num(rec.get("at")), set(rec.get("mids") or [])
+        keep, drop = [], []
+        for m in th["members"]:
+            r = by_mid.get(m)
+            ts = (r or {}).get("ts") or 0
+            (drop if m in mids or r is None or ts <= at else keep).append(m)
+        for m in drop:
+            _unhome(out, tid, m)
+            gone.add(m)
+        if not keep:
+            del out["threads"][tid]
+            out["order"].remove(tid)
+            continue
+        root = keep[0]
+        if out["also"].get(root) == tid:
+            del out["also"][root]
+        out["parent"].setdefault(root, []).append(tid)
+        r = by_mid[root]
+        th.update(members=keep, root=root, rootTs=r["ts"],
+                  title=_words(r["turn"].get("text") or "") or th.get("title") or "Thread")
+    return {m for m in gone if not out["of"].get(m)}
+
+
+def _archived_mids(out: dict) -> set[str]:
+    """The balloons of put-away threads (#319) that no other thread holds:
+    the channel does not show them while the thread is put away."""
+    put = {t for t, th in out["threads"].items() if th.get("archived")}
+    if not put:
+        return set()
+    return {m for t in put for m in out["threads"][t]["members"]
+            if all(h in put for h in out["of"].get(m) or [])}
+
+
 def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
           keep: bool = True) -> dict | None:
     """The chat's threads, worked out again only when one of its transcripts,
@@ -887,6 +954,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         except Exception as e:      # noqa: BLE001 — paired again by what they hold next time
             print(f"[threads] {room_id}: replies not kept with their balloons: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
+    hidden = _drop_deleted(out, by_mid, side.get("deleted") or {})
     try:
         waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
     except Exception:       # noqa: BLE001
@@ -895,6 +963,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     pts = {p["id"]: p for p in led.get("points") or []}
     since = float(side.get("since") or 0)
     seen = side.get("seen") or {}
+    archived = side.get("archived") or {}
     for tid, th in out["threads"].items():
         rs = [by_mid[m] for m in th["members"] if m in by_mid]
         work = out["work"]
@@ -923,9 +992,18 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             "lastPoMid": last_po["mid"] if last_po else "",
             "openQuestions": open_questions,
             "state": _state_of(th, pts, open_mids, task_of),
+            # #319: its latest message of any kind (a work-log entry too),
+            # the points of it still waiting on someone, and whether it is
+            # put away: only while nothing came after (it returns by itself).
+            "updatedAt": max([r["ts"] or 0 for r in rs] + [th.get("rootTs") or 0]),
+            "openPoints": [i for i in th["points"] if (pts.get(i) or {}).get("state") in points.LIVE],
         })
+        put = _num(archived.get(tid))
+        if put and tid != "team:activity" and th["updatedAt"] <= put:
+            th["archived"] = put
+    hidden |= _archived_mids(out)
     idx = {**out, "sig": sig, "builtAt": time.time(), "took": round(time.time() - t0, 3),
-           "by_mid": by_mid, "recs": recs,
+           "by_mid": by_mid, "recs": recs, "hidden": hidden,
            # The sends confirmed whose turns this index holds: a channel that
            # does not show one has it in a thread; one not held yet is a
            # turn the next build brings, its send drawn till then (#259).
@@ -962,6 +1040,8 @@ def _channel(idx: dict) -> list[str]:
 
 def _in_channel(idx: dict, mid: str) -> bool:
     """Whether the channel (_channel) holds the balloon ``mid``."""
+    if mid in idx.get("hidden", ()):
+        return False        # a deleted or put-away thread's (#319)
     parent, also = idx["parent"], idx["also"]
     if mid in parent and any(t != "team:activity" for t in parent[mid]) or mid in also:
         return True
@@ -1008,7 +1088,9 @@ def ready(room_id: str, room: dict) -> dict | None:
 
 def _meta(th: dict) -> dict:
     out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "workCount", "workLastMid", "rootWho", "who",
-                                   "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions")}
+                                   "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions",
+                                   "updatedAt", "openPoints")}
+    out["archived"] = th.get("archived") or 0
     if th["id"] == "team:activity":
         # Hub notes and reports do not ring the unread bell. A PO reply in
         # this shared thread still has a visible, message-specific signal.
@@ -1087,11 +1169,24 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
     return max(0, len(seq) - n), len(seq)
 
 
-def _replied(idx: dict) -> set[str]:
+def _replied(idx: dict, archived: bool = False) -> set[str]:
     """The threads with replies (#304: what the Threads filter shows and
-    counts): more than their first balloon, Team activity aside."""
+    counts): more than their first balloon, Team activity aside; a
+    put-away one (#319) only with ``archived``."""
     return {tid for tid, t in idx["threads"].items()
-            if tid != "team:activity" and len(t.get("members") or []) > 1}
+            if tid != "team:activity" and len(t.get("members") or []) > 1
+            and bool(t.get("archived")) == archived}
+
+
+def _listed(idx: dict, tids) -> list[dict]:
+    """Threads as the Threads list shows them (#319): latest message first."""
+    return sorted((_meta(idx["threads"][t]) for t in tids),
+                  key=lambda m: (m.get("updatedAt") or 0, m["id"]), reverse=True)
+
+
+def _unread(th: dict) -> bool:
+    """A thread with replies not seen that rings the bell (not a put-away one)."""
+    return th["id"] != "team:activity" and bool(th.get("unread")) and not th.get("archived")
 
 
 def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
@@ -1190,12 +1285,22 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
         return out      # a page above or below: the rest the reader holds already
     out["activity"] = _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None
     out["unreadThreads"] = sorted((_meta(t) for t in idx["threads"].values()
-                                   if t["id"] != "team:activity" and t.get("unread")
-                                   and (topic_tids is None or t["id"] in topic_tids)),
+                                   if _unread(t) and (topic_tids is None or t["id"] in topic_tids)),
                                   key=lambda t: t.get("lastAt") or 0, reverse=True)
     # The chat's filter pills (#304) count the whole chat, whatever it shows.
     out["threadCount"] = len(_replied(idx))
-    out["unreadCount"] = sum(1 for t in idx["threads"].values() if t["id"] != "team:activity" and t.get("unread"))
+    out["unreadCount"] = sum(1 for t in idx["threads"].values() if _unread(t))
+    if threads_only:
+        # #319: the Threads filter is a list, latest message first, with
+        # the put-away ones apart (a topic given: its threads only).
+        if filter_tag == ":threads":
+            live, put = _replied(idx), _replied(idx, archived=True)
+        else:
+            mine = [idx["threads"][t] for t in topic_tids if t in idx["threads"] and t != "team:activity"]
+            live = {th["id"] for th in mine if not th.get("archived")}
+            put = {th["id"] for th in mine if th.get("archived")}
+        out["threadList"] = _listed(idx, live)
+        out["archivedThreads"] = _listed(idx, put)
     return out
 
 
@@ -1223,8 +1328,13 @@ def _quick_channel(room_id: str, room: dict, n: int) -> dict:
             per.append((next((_d._turn_epoch(t.get("timestamp")) for _m, t in entries
                                if t.get("timestamp")), 0.0), entries))
             held += sum(1 for _m, t in entries if t.get("role") != "user" or _told(t)[1] == "human")
+    # A deleted thread's balloons (#319) stay out while the threads are read.
+    try:
+        gone = {m for rec in load_side(room_id)["deleted"].values() for m in rec.get("mids") or []}
+    except ValueError:
+        gone = set()
     shown = [(mid, t) for _f, entries in sorted(per, key=lambda x: x[0]) for mid, t in entries
-             if t.get("role") != "user" or _told(t)[1] == "human"]
+             if (t.get("role") != "user" or _told(t)[1] == "human") and mid not in gone]
     items, size = [], 0
     for mid, t in reversed(shown[-n:] if n else []):
         item = {**t, "mid": mid}
@@ -1285,8 +1395,7 @@ def unread_threads(room_id: str, room: dict) -> list[dict] | None:
     idx = ready(room_id, room)
     if idx is None:
         return None
-    out = [_meta(th) for th in idx["threads"].values()
-           if th["id"] != "team:activity" and th.get("unread")]
+    out = [_meta(th) for th in idx["threads"].values() if _unread(th)]
     out.sort(key=lambda t: (t["lastAt"] or 0, t["id"]), reverse=True)
     return out
 
@@ -1307,7 +1416,7 @@ def search_balloons(room_id: str, room: dict, groups: list[list[str]], limit: in
     tids = set()
     direct_answers = []
     for r in idx["recs"]:
-        if _who(r) not in ("you", "po"):
+        if _who(r) not in ("you", "po") or r["mid"] in idx.get("hidden", ()):
             continue
         line = r["turn"].get("text") or ""
         if not text_matches(line, groups):
@@ -1363,6 +1472,69 @@ def mark_seen(room_id: str, tid: str, ts: float | None = None) -> bool:
         side["seen"][tid] = ts
         _save_side(room_id, side)
     return True
+
+
+MANY_MAX = 2000                 # threads one archive / restore / delete names, at most
+
+
+def _tids(tids) -> list[str]:
+    out = [t for t in dict.fromkeys(tids or []) if isinstance(t, str) and 0 < len(t) <= 300
+           and t != "team:activity"]
+    if len(out) > MANY_MAX:
+        raise ValueError(f"at most {MANY_MAX} threads at once")
+    return out
+
+
+def archive(room_id: str, tids, now: float | None = None) -> list[str]:
+    """Put threads away (#319): out of the lists and the channel until a
+    message comes to one (it is then back by itself). Returns those put
+    away now."""
+    tids, now = _tids(tids), time.time() if now is None else now
+    with _LOCK:
+        side = load_side(room_id)
+        done = [t for t in tids if _num(side["archived"].get(t)) < now]
+        for t in done:
+            side["archived"][t] = now
+        if done:
+            _save_side(room_id, side)
+    return done
+
+
+def restore(room_id: str, tids) -> list[str]:
+    """Back from put away (#319, Restore and Undo)."""
+    tids = _tids(tids)
+    with _LOCK:
+        side = load_side(room_id)
+        done = [t for t in tids if side["archived"].pop(t, None) is not None]
+        if done:
+            _save_side(room_id, side)
+    return done
+
+
+def delete(room_id: str, room: dict | None, tids, now: float | None = None) -> list[str]:
+    """Delete threads (#319): their balloons up to now leave the lists and
+    the channel for good. The transcripts and the points ledger are kept
+    as they are: only the record says what is gone. Returns those the chat
+    has (and so deleted)."""
+    tids, now = _tids(tids), time.time() if now is None else now
+    idx = build(room_id, room) if tids else None
+    if idx is None:
+        return []
+    with _LOCK:
+        side = load_side(room_id)
+        done = []
+        for t in tids:
+            th = idx["threads"].get(t)
+            if th is None:
+                continue
+            old = side["deleted"].get(t) or {}
+            side["deleted"][t] = {"at": max(now, _num(old.get("at"))),
+                                  "mids": list(dict.fromkeys((old.get("mids") or []) + th["members"]))}
+            side["archived"].pop(t, None)
+            done.append(t)
+        if done:
+            _save_side(room_id, side)
+    return done
 
 
 def thread_points(room_id: str, room: dict, tid: str) -> list[str]:

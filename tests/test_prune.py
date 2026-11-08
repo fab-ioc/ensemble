@@ -545,6 +545,26 @@ class PruneTests(unittest.TestCase):
         lines = (self.state / "logs" / "prune.log").read_text(encoding="utf-8")
         self.assertIn('"how": "auto"', lines)
 
+    def test_old_threads_preview_defaults_to_archive_and_accepts_delete(self):
+        hub = self.hub()
+        rows = [{"kind": "thread", "room": "po-1", "id": "t-1", "name": "Old", "chat": "PO",
+                 "at": OLD, "threads": []},
+                {"kind": "thread", "room": "po-1", "id": "t-2", "name": "Older", "chat": "PO",
+                 "at": OLD - DAY, "threads": []}]
+        calls = []
+        reads = []
+        hub.old_threads = lambda cutoff: reads.append(cutoff) or rows
+        hub.thread_act = lambda row, action, cutoff: calls.append((row, action)) or ""
+        preview_items = prune._old_threads(hub, time.time() - 30 * DAY)
+        self.assertEqual(preview_items[0]["id"], "th:thread:po-1:t-1")
+        self.assertEqual(preview_items[0]["action"], "archive")
+        preview = {"days": 30, "groups": [{"id": "threads", "items": preview_items}]}
+        prune.run(hub, preview, [preview_items[0]["id"]])
+        self.assertEqual(calls[-1][1], "archive")
+        prune.run(hub, preview, [preview_items[0]["id"]], actions={preview_items[0]["id"]: "delete"})
+        self.assertEqual(calls[-1][1], "delete")
+        self.assertEqual(len(reads), 3, "preview read plus one validation read per run")
+
     @unittest.skipUnless(os.name == "nt", "Windows' 260-character limit")
     def test_long_path_removal(self):
         deep = self.tmp / "long"

@@ -11,6 +11,7 @@ Screenshots go to $ENSEMBLE_SHOTS when set. Skipped without Node and Chrome.
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -74,6 +75,17 @@ const VIEW = `(() => {
     rowRight: Math.round(r.right),
     pop: { open: !pop.hidden, left: Math.round(pr.left), right: Math.round(pr.right), rows: [...pop.querySelectorAll('[data-tp-open]')].map(b => b.dataset.tpOpen) },
     note: { shown: !!note && !note.hidden, text: words(note) },
+    tl: [...document.querySelectorAll('#msgs .tl-row')].map(e => { const b = e.querySelector('.tl-hit'), r = e.getBoundingClientRect();
+      return { id: e.querySelector('.tl-open').dataset.thr, title: words(e.querySelector('.tl-title')), meta: words(e.querySelector('.tl-meta')),
+        age: words(e.querySelector('.tl-age')), arch: e.classList.contains('arch'), sel: e.classList.contains('sel'), right: Math.round(r.right),
+        box: b ? Math.round(b.getBoundingClientRect().height) : 0 }; }),
+    bar: (() => { const b = document.querySelector('#msgs .tl-bar'); if (!b) return null; const r = b.getBoundingClientRect();
+      return { text: words(b), on: b.classList.contains('on'), confirm: b.classList.contains('confirm'), right: Math.round(r.right),
+        btnH: Math.min(...[...b.querySelectorAll('button, select')].map(x => Math.round(x.getBoundingClientRect().height))),
+        focus: document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.selAct || '' : '' }; })(),
+    undo: words(document.querySelector('#msgs .tl-undo')),
+    fold: words(document.querySelector('#msgs .tl-fold')),
+    popBar: words(pop.querySelector('.tl-bar')),
     stored: (() => { try { return localStorage.getItem('ens-chat-filter:' + ROOM); } catch (e) { return null; } })(),
     scrollX: document.documentElement.scrollWidth - innerWidth,
     width: innerWidth,
@@ -106,13 +118,55 @@ async function main() {
       // Threads: only the balloons of a thread.
       await evalIn(pill('threads') + '.click(); 0');
       await until(pill('threads') + '.getAttribute("aria-pressed") === "true"', 5000); await settled();
+      await until('document.querySelectorAll("#msgs .tl-row").length === 2', 10000);
       o.threads = await evalIn(VIEW);
       await shot('2-threads');
+      // Select mode: tick the first, archive it; the undo line, the fold.
+      const act = a => `document.querySelector('#msgs [data-sel-act="${a}"]')`;
+      await evalIn(act('on') + '.click(); 0');
+      await until('!!document.querySelector("#msgs .tl-box")', 5000);
+      o.selOn = await evalIn(VIEW);
+      await evalIn('document.querySelector("#msgs .tl-box").click(); 0');
+      await until('document.querySelector("#msgs .tl-row.sel")', 5000);
+      o.picked = await evalIn(VIEW);
+      await shot('2b-picked');
+      await evalIn(act('archive') + '.click(); 0');
+      await until('document.querySelectorAll("#msgs .tl-row").length === 1 && !!document.querySelector("#msgs .tl-undo")', 10000);
+      o.archived = await evalIn(VIEW);
+      await evalIn('document.querySelector("#msgs .tl-fold").click(); 0');
+      await until('!!document.querySelector("#msgs .tl-row.arch")', 5000);
+      o.folded = await evalIn(VIEW);
+      await shot('2c-archived');
+      await evalIn(act('undo') + '.click(); 0');
+      await until('document.querySelectorAll("#msgs .tl-row:not(.arch)").length === 2 && !document.querySelector("#msgs .tl-fold")', 10000);
+      o.undone = await evalIn(VIEW);
+      // Delete asks once; Escape cancels it.
+      await evalIn('document.querySelector("#msgs .tl-box").click(); 0');
+      await until('document.querySelector("#msgs .tl-row.sel")', 5000);
+      await evalIn(act('delete') + '.click(); 0');
+      await until('!!document.querySelector("#msgs .tl-bar.confirm")', 5000);
+      o.confirm = await evalIn(VIEW);
+      await shot('2d-confirm');
+      await evalIn('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true})); 0');
+      await until('!document.querySelector("#msgs .tl-bar.confirm")', 5000);
+      o.cancelled = await evalIn(VIEW);
+      await evalIn(act('off') + '.click(); 0');
+      await until('!document.querySelector("#msgs .tl-box")', 5000);
       // Topics: the list, one picked, the chat shows that topic only.
       await evalIn(pill('topics') + '.click(); 0');
       await until('!document.getElementById("topics-pop").hidden && !!document.querySelector("#topics-pop [data-tp-open]")', 10000);
       o.popOpen = await evalIn(VIEW);
       await shot('3-topics');
+      // The topic's Delete… asks once; Escape cancels it and keeps the list open.
+      await evalIn('document.querySelector("#topics-pop [data-tp-action=delete]").click(); 0');
+      await until('!!document.querySelector("#topics-pop .tl-bar.confirm")', 5000);
+      o.popConfirm = await evalIn(VIEW);
+      await shot('3b-topic-delete');
+      await evalIn('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true})); 0');
+      await until('!document.querySelector("#topics-pop .tl-bar.confirm")', 5000);
+      o.popCancelled = await evalIn(VIEW);
+      await evalIn('document.querySelector("#topics-pop [data-sel-act=off]").click(); 0');
+      await until('!document.querySelector("#topics-pop .tl-box")', 5000);
       await evalIn('document.querySelector("#topics-pop [data-tp-open]").click(); 0');
       await until(pill('topics') + '.getAttribute("aria-pressed") === "true"', 5000); await settled();
       o.topic = await evalIn(VIEW);
@@ -267,15 +321,56 @@ class ChatFilters(unittest.TestCase):
                 if w != "1728":
                     self.assertTrue(all(p["h"] >= 44 for p in a["pills"]), "a finger's size on a phone")
 
-    def test_threads_shows_only_the_balloons_of_a_thread(self):
+    def test_threads_shows_a_list_latest_update_first(self):
         for w, o in self._each():
             with self.subTest(width=w):
-                sid = f"cf{w}"
                 t = o["threads"]
-                self.assertEqual(t["mids"], [f"{sid}:1", f"{sid}:6"], "each thread's first message; the PO's note and Team activity hidden")
-                self.assertEqual(sorted(t["lines"]), ["P1", "P2"])
+                self.assertEqual(t["mids"], [], "a list of threads, not balloons (#319)")
+                self.assertEqual([r["id"] for r in t["tl"]], ["P2", "P1"], "latest update first")
+                self.assertTrue(all(re.fullmatch(r"\d+[mhd]( \d+h)?", r["age"]) for r in t["tl"]), t["tl"])
+                self.assertIn("2 threads", t["bar"]["text"])
+                self.assertIn("1 reply", t["tl"][0]["meta"])
                 self.assertTrue(t["note"]["shown"] and t["note"]["text"].startswith("Showing threads only"), t["note"])
                 self.assertEqual(json.loads(t["stored"]), {"kind": "threads"})
+
+    def test_threads_select_archive_undo_and_delete_confirm(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                self.assertTrue(o["selOn"]["bar"]["on"])
+                self.assertIn("0 selected", o["selOn"]["bar"]["text"])
+                self.assertEqual(o["selOn"]["bar"]["focus"], "all", "focus moves into the bar")
+                self.assertIn("1 selected", o["picked"]["bar"]["text"])
+                self.assertIn("Archive 1", o["picked"]["bar"]["text"])
+                a = o["archived"]
+                self.assertEqual([r["id"] for r in a["tl"]], ["P1"])
+                self.assertIn("A new message brings it back", a["undo"])
+                self.assertEqual(a["fold"], "▸ Archived (1)")
+                f = o["folded"]
+                self.assertEqual([(r["id"], r["arch"]) for r in f["tl"]], [("P1", False), ("P2", True)])
+                self.assertEqual([r["id"] for r in o["undone"]["tl"]], ["P2", "P1"])
+                c = o["confirm"]["bar"]
+                self.assertTrue(c["confirm"])
+                self.assertIn("Delete 1 thread?", c["text"])
+                self.assertIn("Transcripts and your points are kept", c["text"])
+                self.assertIn("Open points in it: P2", c["text"])
+                self.assertFalse(o["cancelled"]["bar"]["confirm"])
+                self.assertIn("1 selected", o["cancelled"]["bar"]["text"], "cancel keeps the selection")
+                for step in ("selOn", "picked", "folded", "confirm"):
+                    v = o[step]
+                    self.assertLessEqual(v["scrollX"], 0, step)
+                    self.assertLessEqual(v["bar"]["right"], v["width"], step)
+                    self.assertTrue(all(r["right"] <= v["width"] for r in v["tl"]), step)
+                    if w != "1728":
+                        self.assertGreaterEqual(v["bar"]["btnH"], 44, step)
+                        self.assertTrue(all(r["box"] >= 44 for r in v["tl"] if r["box"]), step)
+
+    def test_a_topic_delete_asks_once_and_escape_cancels(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                self.assertIn("Delete 1 topic?", o["popConfirm"]["popBar"])
+                self.assertIn("the topic and its threads are removed", o["popConfirm"]["popBar"])
+                self.assertTrue(o["popCancelled"]["pop"]["open"], "Escape cancelled the delete, not the list")
+                self.assertNotIn("Delete 1 topic?", o["popCancelled"]["popBar"])
 
     def test_a_topic_picked_shows_that_topic_only_and_show_all_restores(self):
         for w, o in self._each():
@@ -313,7 +408,7 @@ class ChatFilters(unittest.TestCase):
     def test_no_sideways_scroll_and_no_page_errors(self):
         for w, o in self._each():
             with self.subTest(width=w):
-                for step in ("all", "threads", "popOpen", "topic", "unread", "linked"):
+                for step in ("all", "threads", "selOn", "confirm", "popOpen", "popConfirm", "topic", "unread", "linked"):
                     v = o[step]
                     self.assertLessEqual(v["scrollX"], 0, step)
                     self.assertLessEqual(v["rowRight"], v["width"], step)
