@@ -145,6 +145,12 @@ class OldThreads(tp._World):
             self.assertIn("P1", threads.load_side(self.rid)["deleted"])
             self.assertEqual(self.post("/api/room/topics", {"roomId": self.rid, "action": "archive",
                                                             "topics": "x"})[0], 400)
+        # The handler starts a background topics rebuild; let it finish before
+        # the temp directory goes away.
+        import threading as _th
+        for t in _th.enumerate():
+            if t.name.startswith("topics-"):
+                t.join(10)
 
     def test_open_points_are_named(self):
         ch = self.channel(threads=1)
