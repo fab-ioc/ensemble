@@ -974,6 +974,21 @@
   .att-chip .att-x:hover { background:var(--hover); color:var(--fg); }
   .att-chip .att-x:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .cmt-composer .att-chips { margin-top:var(--s-200); }
+  /* A file that is not an image: its kind as a small tile, its name, its size. */
+  .att-ico { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:24px; padding:0 var(--s-050); box-sizing:border-box;
+    border-radius:var(--r-100); background:var(--surface); border:1px solid var(--border); color:var(--fg-muted); font-size:10px; font-weight:600; line-height:1; letter-spacing:.02em; }
+  .att-chip .att-size, .att-file .att-size { flex:0 0 auto; color:var(--fg-muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .att-chip.file .att-x { margin-left:calc(-1 * var(--s-050)); }
+  .att-file { display:inline-flex; align-items:center; gap:var(--s-100); max-width:100%; box-sizing:border-box; height:32px; padding:0 var(--s-200) 0 var(--s-050);
+    background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border); border-radius:var(--r-200); font-size:var(--fs-200); line-height:16px; text-decoration:none; }
+  .att-file .att-name { min-width:0; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .att-file:hover { border-color:var(--border-strong); }
+  .att-file:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .att-pick { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; background:transparent; border:none; border-radius:var(--r-200); color:var(--fg-subtle); position:relative; }
+  .att-pick:hover { background:var(--hover); color:var(--fg); }
+  .att-pick:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  @media (pointer: coarse) { .att-pick::after { content:''; position:absolute; inset:-10px; } }
+  .cmt-composer .cmt-actions .grow { flex:1 1 auto; }
   .cmt-att-hint { margin-top:var(--s-200); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
   .cmt-att-hint[hidden] { display:none; }
   .cmt-att-hint.err { color:var(--c-danger-fg); }
@@ -1708,16 +1723,16 @@
       </div>
       <div class="ed-row">
         <details class="phone-compose-tools"><summary aria-label="Attach, add an ask, or chat filter">+</summary><div class="phone-tools-menu">
-          <button type="button" data-phone-action="attach">Attach image</button>
+          <button type="button" data-phone-action="attach">Attach a file</button>
           <button type="button" data-phone-action="add-point">Add an ask</button>
           <button type="button" data-phone-action="team-all">Team activity</button>
           <button type="button" data-phone-action="threads-view" hidden>Threads</button>
           <button type="button" data-phone-action="earlier-threads" hidden>Earlier messages</button>
         </div></details>
         <button type="button" id="add-point" title="Add a numbered ask (Ctrl+Shift+Enter)">+ Add an ask</button>
-        <!-- Pasting or dropping a screenshot still works; this is the way you can see. -->
-        <button type="button" id="attach" title="Attach screenshots or images (you can also paste or drop them)">Attach</button>
-        <input type="file" id="attach-input" accept="image/*" multiple hidden>
+        <!-- Pasting or dropping a file still works; this is the way you can see (and the only one on a phone). -->
+        <button type="button" id="attach" title="Attach files or screenshots (you can also paste or drop them)">Attach</button>
+        <input type="file" id="attach-input" multiple hidden>
         <span class="grow"></span>
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
@@ -2345,7 +2360,7 @@ function stripRefBlocks(t) {
     return head === it.head && items.every((x, i) => x === it.items[i]) ? t : joinItems(it.title, head, items);
   }
   const att = attSplit(t);
-  if (att.paths.length) return (stripRefBlocks(att.words) + '\n\n' + att.paths.map(x => ATT_PREFIX + x).join('\n')).replace(/^\n+/, '');
+  if (att.paths.length) return (stripRefBlocks(att.words) + '\n\n' + att.paths.map(x => attLinePrefix(x) + x).join('\n')).replace(/^\n+/, '');
   t = String(t || '');
   for (let m; (m = TASK_BLOCK_RE.exec(t) || REF_BLOCK_RE.exec(t)) && t.slice(0, m.index).includes(m[1]);) t = t.slice(0, m.index);
   return t;
@@ -2621,9 +2636,10 @@ function mdToHtml(src) {
   // A message of numbered points: its head, then one list item per point.
   const it = pointItems(src);
   if (it) return itemsHtml(it, null, mdToHtml);
-  // The images a message ends with ("[image] <path>" lines) as thumbnails.
+  // The files a message ends with ("[image] <path>" / "[file] <path>" lines):
+  // images as thumbnails, other files as chips.
   const att = attSplit(src);
-  if (att.paths.length && att.paths.every(p => attOwn(ROOM, p))) return (att.words ? mdToHtml(att.words) : '') + attThumbsHtml(ROOM, att.paths, esc);
+  if (att.paths.length && att.paths.every(p => attOwn(ROOM, p))) return (att.words ? mdToHtml(att.words) : '') + attThumbsHtml(ROOM, att.paths, esc, p => fileHref(p));
   const codes = [];
   let s = (src ?? '').replace(/\r\n/g, '\n');
   // Fenced code blocks ```lang\n...\n```
@@ -2673,18 +2689,18 @@ function mdToHtml(src) {
   const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
   const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
   const unesc = t => t.replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
-  const imgLine = l => { const m = l.match(/^\[image\] (\S.*)$/); const p = m && unesc(m[1].trim()); return p && attOwn(ROOM, p) ? p : ''; };
+  const imgLine = l => { const m = l.match(/^\[(?:image|file)\] (\S.*)$/); const p = m && unesc(m[1].trim()); return p && attOwn(ROOM, p) ? p : ''; };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^ B\d+ $/.test(line.trim())) { closeList(); out.push(line.trim()); continue; }
     let m;
-    // An image inside a point ("[image] <path>", this chat's): a thumbnail where it is.
+    // A file inside a point ("[image] <path>" or "[file] <path>", this chat's): a thumbnail or a chip where it is.
     if (imgLine(line)) {
       closeList();
       const paths = [];
       while (i < lines.length && imgLine(lines[i])) paths.push(imgLine(lines[i++]));
       i--;
-      out.push(attThumbsHtml(ROOM, paths, esc));
+      out.push(attThumbsHtml(ROOM, paths, esc, p => fileHref(p)));
       continue;
     }
     if (line.includes('|') && i + 1 < lines.length && tableSep(lines[i + 1])) {
@@ -2949,7 +2965,7 @@ function mountTerm(el, ptyId) {
 // tests/test_session_editor.py runs this block in Node.
 const ITEMS_HEAD_RE = /^## (?:Review comments|Points) \(\d+\)/;
 const ITEM_START_RE = /^\*\*\d+\.\*\*/;
-const ITEM_TAIL_RE = /^(?:\[image\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$/;
+const ITEM_TAIL_RE = /^(?:\[(?:image|file)\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$/;
 function pointItems(text) {
   const t = String(text || '').replace(/\r\n/g, '\n');
   if (!ITEMS_HEAD_RE.test(t)) return null;
@@ -2965,7 +2981,7 @@ function pointItems(text) {
     items: starts.map((a, k) => lines.slice(a, k + 1 < starts.length ? starts[k + 1] : lines.length).join('\n').trim()) };
 }
 const joinItems = (title, head, items) => [title, head, ...items].filter(Boolean).join('\n\n');
-// An item as [its body, its tail]: the tail is the run of "[image]" and
+// An item as [its body, its tail]: the tail is the run of "[image]", "[file]" and
 // "[point Pn]" lines it ends with.
 function itemTail(item) {
   const lines = String(item || '').replace(/\s+$/, '').split('\n');
@@ -3045,7 +3061,7 @@ function foldLine(text) {
   const it = pointItems(text);
   if (it) { const first = foldLine(it.head || itemBody(it.items[0])); return `${it.items.length} ask${it.items.length > 1 ? 's' : ''}` + (first ? ' · ' + first : ''); }
   const att = attSplit(text);
-  const raw = String(att.paths.length && !att.words ? (att.paths.length > 1 ? att.paths.length + ' images' : 'Image') : att.words).replace(/\r/g, '');
+  const raw = String(att.paths.length && !att.words ? (att.paths.every(x => ATT_IMAGE_EXT.test(x)) ? (att.paths.length > 1 ? att.paths.length + ' images' : 'Image') : att.paths.length > 1 ? att.paths.length + ' files' : attBase(att.paths[0])) : att.words).replace(/\r/g, '');
   const line = raw.replace(/```[\s\S]*?(?:```|$)/g, '\n').split('\n')
     .map(l => l.replace(/^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, '')
       .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1').replace(/\*\*|__|`/g, '').trim())
@@ -4518,7 +4534,7 @@ function ptOwn(m, P) {
 // A person's balloon of numbered points: each item with its own point's chip
 // under it (words above the list are a point too, the first, with their chip
 // under them), else (the hub read it differently) the one bar under the text.
-const headWords = head => String(head || '').split('\n').filter(l => !l.startsWith(ATT_PREFIX)).join('\n').trim();
+const headWords = head => String(head || '').split('\n').filter(l => !l.startsWith(ATT_PREFIX) && !l.startsWith(ATT_FILE_PREFIX)).join('\n').trim();
 function pointItemsHtml(m, it, P, href, md) {
   const own = ptOwn(m, P);
   const withHead = own.length === it.items.length + 1 && !!headWords(it.head);
@@ -7482,6 +7498,7 @@ async function refresh() {
   finally {
     REFRESH_BUSY = false;
     FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
+    attFillSizes(document);   // a balloon's file chips: their sizes, asked once each
     if (REFRESH_AGAIN) { REFRESH_AGAIN = false; refresh(); }
   }
 }
@@ -8864,10 +8881,10 @@ if (SEND_SIZE_FALLBACK && window.ResizeObserver) {
     if (entry.contentRect.width !== width) { width = entry.contentRect.width; fitSendInput(); }
   }).observe($('#editor'));
 }
-// Images pasted or dropped into the box: uploaded at once, sent with the message.
-const ATT_WAIT = 'Wait for the images to finish uploading, then send.';
+// Files pasted, dropped or picked into the box: uploaded at once, sent with the message.
+const ATT_WAIT = 'Wait for the files to finish uploading, then send.';
 const ATT = attBox(() => ROOM, box => {
-  SEND_KEY = '';             // a different set of images, so a new message
+  SEND_KEY = '';             // a different set of files, so a new message
   const el = $('#att-chips'), html = box.html(esc);
   if (el._html !== html) { el._html = html; el.innerHTML = html; }
   el.hidden = !box.list.length;
@@ -9114,7 +9131,7 @@ async function sendNow(urgent = false) {
   const atts = sendAttachments();
   if (!atts) return;
   if (!t && !atts.length) {
-    SEND_ERR = 'Write a message or attach an image before sending.';
+    SEND_ERR = 'Write a message or attach a file before sending.';
     setText($('#hint'), SEND_ERR);
     return;
   }
@@ -9271,7 +9288,7 @@ function edSerialize(m) {
   const head = String(m.head || '').replace(/\r\n/g, '\n').trim();
   const pts = m.points.filter(edUsed);
   if (!pts.length) return head;
-  const named = imgs => (imgs || []).map(x => ATT_PREFIX + x.name);
+  const named = imgs => (imgs || []).map(x => attLinePrefix(x.name) + x.name);
   const items = pts.map((p, i) => {
     const t = String(p.text || '').replace(/\r\n/g, '\n').trim();
     const own = /^(?:```|~~~|#{1,6}[ \t]|>|[-*+][ \t]|\d+[.)][ \t]|\|)/.test(t.split('\n')[0]) ? '\n\n' : ' ';
@@ -9366,7 +9383,7 @@ function edBox(p) {
   let box = ED_BOX.get(p.id);
   if (box) return box;
   box = attBox(() => ROOM, b => {
-    SEND_KEY = '';             // a different set of images, so a new message
+    SEND_KEY = '';             // a different set of files, so a new message
     p.images = b.stored();
     const li = edLi(p.id);
     if (li) { const el = li.querySelector('.att-chips'); setHtml(el, b.html(esc)); el.hidden = !b.list.length; }
@@ -9402,7 +9419,7 @@ function edRender(focus) {
   const ol = $('#ed-points');
   const n = ED.points.length;
   ol.innerHTML = ED.points.map((p, i) => `<li class="ed-pt" data-pt="${esc(p.id)}"><span class="ed-n" aria-hidden="true">${i + 1}.</span>`
-    + `<textarea class="ed-text" rows="1" aria-label="Ask ${i + 1}" placeholder="Ask ${i + 1} — Enter for a new line, Tab for the next ask, Backspace on an empty ask removes it. Paste or drop a screenshot, or a link, to attach it to this ask."></textarea>`
+    + `<textarea class="ed-text" rows="1" aria-label="Ask ${i + 1}" placeholder="Ask ${i + 1} — Enter for a new line, Tab for the next ask, Backspace on an empty ask removes it. Paste or drop a file, a screenshot or a link to attach it to this ask."></textarea>`
     + `<div class="ed-more"><div class="att-chips" hidden></div><div class="ed-refs" hidden></div></div>`
     + `<div class="ed-ctl"><button type="button" class="ed-btn" data-ed="up" title="Move this ask up" aria-label="Move ask ${i + 1} up"${i ? '' : ' disabled'}>▲</button>`
     + `<button type="button" class="ed-btn" data-ed="down" title="Move this ask down" aria-label="Move ask ${i + 1} down"${i < n - 1 ? '' : ' disabled'}>▼</button>`
@@ -10150,10 +10167,10 @@ function openComposer(data) {
   const pop = document.createElement('div');
   pop.className = 'cmt-composer';
   pop.innerHTML = `<div class="cmt-quote"></div>
-    <textarea class="cmt-note" rows="3" placeholder="Your comment on this passage… Paste or drop a screenshot to attach it."></textarea>
+    <textarea class="cmt-note" rows="3" placeholder="Your comment on this passage… Paste or drop a file to attach it."></textarea>
     <div class="att-chips" hidden></div>
     <div class="cmt-att-hint" role="status" hidden></div>
-    <div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
+    <div class="cmt-actions"><button type="button" class="att-pick" title="Attach a file" aria-label="Attach a file"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10.5 4.5 5.8 9.2a1.2 1.2 0 0 0 1.7 1.7l5-5a2.6 2.6 0 0 0-3.7-3.7l-5 5a4 4 0 0 0 5.7 5.7l4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span class="grow"></span><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
   pop.querySelector('.cmt-quote').textContent = '“' + q + '”';
   document.body.appendChild(pop);
   const ta = pop.querySelector('.cmt-note'); ta.focus();
@@ -10166,6 +10183,7 @@ function openComposer(data) {
     else if (!box.busy()) say('');
   });
   attWire(ta, pop, att);
+  pop.querySelector('.att-pick').onclick = () => attPick(att);
   chips.addEventListener('click', e => { const x = e.target.closest && e.target.closest('[data-att-x]'); if (x) att.remove(x.dataset.attX); });
   const close = () => { pop.remove(); _cmtComposerOpen = false; att.clear(); setTimeout(flushHeldDraw, 0); };
   pop.querySelector('.cmt-cancel').onclick = close;

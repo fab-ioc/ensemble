@@ -1928,6 +1928,19 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
   .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-bottom: var(--s-200); }
   .att-chips[hidden] { display: none; }
+  /* A file that is not an image: its kind as a small tile, its name, its size. */
+  .att-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 var(--s-050); box-sizing: border-box;
+    border-radius: var(--r-100); background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted); font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: .02em; }
+  .att-chip .att-size, .att-file .att-size { flex: 0 0 auto; color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .att-file { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 var(--s-200) 0 var(--s-050);
+    background: var(--surface-sunken); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-200); font-size: var(--fs-200); line-height: 16px; text-decoration: none; }
+  .att-file .att-name { min-width: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .att-file:hover { border-color: var(--border-strong); }
+  .att-file:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .att-pick { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; background: transparent; border: none; border-radius: var(--r-200); color: var(--fg-subtle); position: relative; }
+  .att-pick:hover { background: var(--hover); color: var(--fg); }
+  .att-pick:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  @media (pointer: coarse) { .att-pick::after { content: ''; position: absolute; inset: -10px; } }
   .att-chip { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 0 0 var(--s-050);
     background: var(--surface-sunken); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-100); font-size: var(--fs-200); line-height: 16px; }
   .att-chip img { height: 24px; width: auto; max-width: 48px; object-fit: cover; border-radius: var(--r-100); }
@@ -12082,10 +12095,10 @@ function drShow(rv, box, root, file, text, keep) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); drSave(v); }
     else if (e.key === 'Escape') { e.preventDefault(); v.draft = null; drPaint(v); }
   };
-  // An image pasted into the comment box, or dropped on it, goes with the comment.
+  // A file pasted into the comment box, or dropped on it, goes with the comment.
   box.onpaste = e => {
     if (!v.draft || !e.target.matches('.dcx textarea')) return;
-    const files = attImages(e.clipboardData);
+    const files = attFiles(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
     drAtt(v, v.draft).add(files, true);
@@ -12095,7 +12108,7 @@ function drShow(rv, box, root, file, text, keep) {
   box.ondrop = e => {
     if (!onDcx(e)) return;
     e.preventDefault();
-    const files = attImages(e.dataTransfer);
+    const files = attFiles(e.dataTransfer);
     if (files.length) drAtt(v, v.draft).add(files, false);
   };
   drPaint(v);
@@ -12160,6 +12173,7 @@ function drClick(v, e) {
   if (t.closest('.dcx')) {
     const x = t.closest('[data-att-x]');
     if (x && v.draft && v.draft.att) { v.draft.att.remove(x.dataset.attX); v.draft.focus = true; drPaint(v); }
+    else if (t.closest('.att-pick') && v.draft) { v.draft.focus = true; attPick(drAtt(v, v.draft)); }
     else if (t.closest('.dcx-cancel')) { v.draft = null; drPaint(v); }
     else if (t.closest('.dcx-add')) drSave(v);
     else if (t.closest('.dcx-open') && v.draft) rv.open(v.root, v.file, drLineOf(v.rows, v.draft.a, v.draft.b));
@@ -12197,7 +12211,7 @@ function drAttPaint(v, box) {
   hint.textContent = bad.length ? `Not uploaded: ${bad[bad.length - 1].err}. Remove it to add the comment.` : drHint(d);
   hint.classList.toggle('err', !!bad.length);
 }
-const drHint = d => d.cid ? '' : (drCoarse() ? 'Tap another line to cover a range.' : 'Shift-click another line number to cover a range.') + ' Paste or drop an image to attach it.';
+const drHint = d => d.cid ? '' : (drCoarse() ? 'Tap another line to cover a range.' : 'Shift-click another line number to cover a range.') + ' Paste or drop a file to attach it.';
 function drSave(v) {
   const { rv } = v, d = v.draft;
   if (!d) return;
@@ -12236,11 +12250,15 @@ function drCardHtml(rv, c) {
     + `</div>${c.note ? `<div class="dc-note">${esc(c.note)}</div>` : ''}`
     + (drImages(c).length ? drThumbsHtml(drImages(c)) : '') + '</div>';
 }
-// A comment's images as thumbnails; each opens full size.
+// A comment's files: an image as a thumbnail that opens full size, a PDF as a
+// chip that opens it, any other file as a chip that downloads it.
 function drThumbsHtml(imgs) {
   return '<div class="att-thumbs">' + imgs.map(x => {
     const u = attUrl(x.room, x.name);
-    return `<a class="att-thumb" href="${esc(u)}" target="_blank" rel="noopener" title="${esc(x.name)}"><img src="${esc(u)}" alt="${esc(x.name)}" loading="lazy"></a>`;
+    if (ATT_IMAGE_EXT.test(x.name)) return `<a class="att-thumb" href="${esc(u)}" target="_blank" rel="noopener" title="${esc(x.name)}"><img src="${esc(u)}" alt="${esc(x.name)}" loading="lazy"></a>`;
+    const pdf = /\.pdf$/i.test(x.name);
+    return `<a class="att-file" href="${esc(pdf ? u : u + '&download=1')}"${pdf ? ' target="_blank" rel="noopener"' : ` download="${esc(x.name)}"`} title="${esc((pdf ? 'Open ' : 'Download ') + x.name)}">`
+      + attIcon(x.name, esc) + `<span class="att-name">${esc(x.name)}</span><span class="att-size" data-att-size="${esc(u)}"></span></a>`;
   }).join('') + '</div>';
 }
 function drComposer(v, d) {
@@ -12252,7 +12270,7 @@ function drComposer(v, d) {
     + (v.rv.open && line ? `<button type="button" class="rm-btn subtle dcx-open">Open at line ${line}</button>` : '') + '</div>'
     + `<textarea rows="3" aria-label="Your comment on ${esc(loc)}" placeholder="Your comment on ${esc(loc)}…"></textarea>`
     + '<div class="att-chips" hidden></div>'
-    + `<div class="dcx-foot"><span class="dcx-hint">${esc(drHint(d))}`
+    + `<div class="dcx-foot"><button type="button" class="att-pick" title="Attach a file" aria-label="Attach a file"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10.5 4.5 5.8 9.2a1.2 1.2 0 0 0 1.7 1.7l5-5a2.6 2.6 0 0 0-3.7-3.7l-5 5a4 4 0 0 0 5.7 5.7l4.3-4.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span class="dcx-hint">${esc(drHint(d))}`
     + '</span><span class="grow"></span><button type="button" class="rm-btn dcx-cancel">Cancel</button>'
     + `<button type="button" class="rm-btn primary dcx-add">${d.cid ? 'Save' : 'Add comment'}</button></div>`;
   el.querySelector('textarea').value = d.note || '';
@@ -12437,8 +12455,8 @@ async function drSend(rv, pick) {
       // not running (or stopped since the row was drawn) is resumed for the
       // comments and they are typed in once its owner is up; the key makes
       // the same batch sent again (a lost reply) count once.
-      // Their images: the hub ends the message with one "[image] <path>" line
-      // each, copying any stored for another chat into this one's folder.
+      // Their files: the hub ends the message with one "[image] <path>" or
+      // "[file] <path>" line each, copying any stored for another chat into this one's folder.
       const images = batch.flatMap(drImages);
       // Given up after 20 s (sendJson): the tray's Sending… always ends.
       const r = await sendJson('/api/room/resume', { roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch), ...(images.length ? { attachments: images } : {}) });
@@ -17444,12 +17462,14 @@ function docsDocListen() {
     const a = sec.ownerDocument.activeElement, inSec = !!(a && sec.contains(a));
     if (!inSec && !sec.matches(':hover')) return;
     if (a && (a.isContentEditable || /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'file')) return;   // typing somewhere: its own paste
-    const files = attImages(ev.clipboardData), t = files.length && docsTarget(ctx.v);
+    const files = attFiles(ev.clipboardData), t = files.length && docsTarget(ctx.v);
     if (!t) return;
     ev.preventDefault();
     const now = new Date();
     docsUpload(ctx.el, ctx.pid, t, files.map(f => {
-      const name = attStampName(now, f.type);
+      // A pasted image (the browser calls it image.png) is dated; a copied
+      // file keeps its own name. A name already taken gets "-2".
+      const name = attIsImage(f) && !attGivenName(f, true) ? attStampName(now, f.type) : (attGivenName(f, false) || attStampName(now, f.type));
       return { file: new File([f], name, { type: f.type }), rel: name, keepBoth: true };
     }));
   });
@@ -18598,6 +18618,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     if (showListProgress) globalThis.EnsembleProgress?.clear('task-list');
     _refreshInFlight = false;
     FileLinks.recheck();   // a file link that was missing, asked again (its own guard and pace)
+    attFillSizes(document);   // a balloon's file chips: their sizes, asked once each
   }
 }
 // A hidden tab stops polling; bring it up to date the moment it is looked at.

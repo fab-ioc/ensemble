@@ -1,8 +1,13 @@
 """Images pasted or dropped into a chat box, on the page (static/attach.js and
 its use in index.html), run in Node; skipped without Node:
 
-* only PNG, JPEG, GIF and WebP files are taken from a paste or a drop, and a
-  paste of text is left to the browser (no preventDefault);
+* every file is taken from a paste or a drop (attFiles), attImages keeps only
+  PNG, JPEG, GIF and WebP for the feedback form, and a paste of text is left
+  to the browser (no preventDefault);
+* a file that is not an image keeps its own name even when pasted, shows as a
+  chip with its kind, name and size, and is named by a "[file] <path>" line;
+  a balloon shows it as a chip that opens in the file view when it can show
+  it, else downloads;
 * a pasted image is "yyyy-mm-dd HH.MM.SS screenshot.png" (.jpg, .gif, .webp);
 * a box of images: a chip each while uploading, stored or refused, Remove,
   what a message carries ({room, name} of the stored ones), busy and failed;
@@ -18,6 +23,7 @@ its use in index.html), run in Node; skipped without Node:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -82,11 +88,16 @@ const run = src => vm.runInContext(src, ctx);
     handlers.paste(imgPaste);
     out.paste = { textPrevented: textPaste.prevented, imgPrevented: imgPaste.prevented, added };
   `);
+  out.files = run('attFiles(dt).map(f => f.name)');
+  out.filesDt2 = run('attFiles(dt2).map(f => f.name)');
 
   // ---- names
   out.stamp = run(`[attStampName(new Date(2026, 8, 6, 7, 5, 3), 'image/png'), attStampName(new Date(2026, 11, 31, 23, 59, 59), 'image/jpeg'),
                    attStampName(new Date(2026, 0, 1, 0, 0, 0), 'image/gif'), attStampName(new Date(2026, 0, 1, 0, 0, 0), 'image/webp')]`);
-  out.given = run(`[attGivenName({ name: 'image.png' }, false), attGivenName({ name: 'plan.png' }, false), attGivenName({ name: 'plan.png' }, true)]`);
+  out.given = run(`[attGivenName({ name: 'image.png' }, false), attGivenName({ name: 'plan.png' }, false), attGivenName({ name: 'plan.png', type: 'image/png' }, true),
+                     attGivenName({ name: 'report.pdf', type: 'application/pdf' }, true), attGivenName({ name: 'data.csv', type: 'text/csv' }, false)]`);
+  out.sizes = run(`[attSize(0), attSize(900), attSize(2048), attSize(1536 * 1024), attSize(15 * 1048576)]`);
+  out.prefix = run(`[attLinePrefix('a.PNG'), attLinePrefix('a.pdf'), attLinePrefix('Makefile')]`);
 
   // ---- the box
   let changes = 0;
@@ -116,12 +127,20 @@ const run = src => vm.runInContext(src, ctx);
   run(`noRoom.add([{ type: 'image/png', name: 'x.png', size: 1 }], true)`);
   await new Promise(r => setTimeout(r, 10));
   out.noRoom = run(`noRoom.failed().map(x => x.err)`);
+  reply = () => ({ ok: true, status: 200, json: async () => ({ ok: true, name: 'report.pdf', path: 'C:\\t\\attachments\\report.pdf', url: '/u/report.pdf', size: 2048, image: false }) });
+  const fbefore = fetches.length;
+  run(`var fbox = attBox(() => 'room-1', () => {}); fbox.add([{ type: 'application/pdf', name: 'report.pdf', size: 2048 }], true)`);
+  await new Promise(r => setTimeout(r, 10));
+  out.fileChip = run(`({ stored: fbox.stored(), html: fbox.html(esc), image: fbox.list[0].image })`);
+  out.fileFetch = fetches[fbefore];
 
   // ---- a message's image lines
   out.split = run(`[attSplit('hi\\n\\n[image] C:\\\\a b\\\\x.png\\n[image] /t/y.png\\n'), attSplit('[image] x.png\\nwords'), attSplit('plain'), attSplit('[image] only.png')]`);
   out.own = run(`[attOwn('room-1', 'C:\\\\P\\\\t\\\\attachments\\\\a.png'), attOwn('room-1', '/s/attachments/room-1/a.png'),
                   attOwn('room-1', '/s/attachments/room-2/a.png'), attOwn('room-1', '/home/me/pics/a.png'), attOwn('', '/t/attachments/a.png')]`);
   out.thumbs = run(`attThumbsHtml('room-1', ['C:\\\\t\\\\attachments\\\\a "b".png'], esc)`);
+  out.splitFiles = run(`attSplit('see\\n[image] /t/attachments/a.png\\n[file] /t/attachments/r.pdf\\n[file] /t/attachments/z.zip')`);
+  out.fileThumbs = run(`attThumbsHtml('room-1', ['/t/attachments/a.png', '/t/attachments/r.pdf', '/t/attachments/z.zip'], esc, p => '/fileview?path=' + encodeURIComponent(p))`);
 
   // ---- diff comments
   run(`var c1 = { cid: 'c1', root: 'R', file: 'a.py', rows: [{ k: 'add', n: 3, t: 'x = 1' }], span: 1, note: 'look', images: [{ room: 'room-1', name: 'shot.png' }, { room: 'room-1', name: 'b.png' }] };
@@ -152,21 +171,44 @@ class AttachPage(unittest.TestCase):
             raise AssertionError(out.stderr)
         cls.r = json.loads(out.stdout)
 
-    def test_only_images_are_taken(self):
+    def test_any_file_is_taken_and_images_only_where_asked(self):
         self.assertEqual(self.r["images"], ["image.png", "w.webp"])
         self.assertEqual(self.r["filesOnly"], ["g.gif"])
         self.assertEqual(self.r["none"], 0)
+        self.assertEqual(self.r["files"], ["image.png", "a.pdf", "w.webp", "s.svg"])
+        self.assertEqual(self.r["filesDt2"], ["g.gif", "t.txt"])
 
     def test_a_text_paste_is_left_alone(self):
         p = self.r["paste"]
         self.assertFalse(p["textPrevented"])
         self.assertTrue(p["imgPrevented"])
-        self.assertEqual(p["added"], [[["image.png", "w.webp"], True]])
+        self.assertEqual(p["added"], [[["image.png", "a.pdf", "w.webp", "s.svg"], True]])
 
     def test_names(self):
         self.assertEqual(self.r["stamp"], ["2026-09-06 07.05.03 screenshot.png", "2026-12-31 23.59.59 screenshot.jpg",
                                            "2026-01-01 00.00.00 screenshot.gif", "2026-01-01 00.00.00 screenshot.webp"])
-        self.assertEqual(self.r["given"], ["", "plan.png", ""])
+        self.assertEqual(self.r["given"], ["", "plan.png", "", "report.pdf", "data.csv"])
+        self.assertEqual(self.r["sizes"], ["0 B", "900 B", "2 KB", "1.5 MB", "15 MB"])
+        self.assertEqual(self.r["prefix"], ["[image] ", "[file] ", "[file] "])
+
+    def test_a_file_shows_as_a_chip_and_opens_or_downloads(self):
+        c = self.r["fileChip"]
+        self.assertEqual(c["stored"], [{"room": "room-1", "name": "report.pdf"}])
+        self.assertFalse(c["image"])
+        self.assertIn("att-chip file", c["html"])
+        self.assertIn(">PDF<", c["html"])
+        self.assertIn('<span class="att-size">2 KB</span>', c["html"])
+        self.assertIn('aria-label="Remove report.pdf"', c["html"])
+        self.assertNotIn("<img", c["html"])
+        url, headers, _name = self.r["fileFetch"]
+        self.assertEqual(url, "/api/room/attachment?room=room-1&name=report.pdf")
+        self.assertEqual(headers["Content-Type"], "application/pdf")
+        self.assertEqual(self.r["splitFiles"], {"words": "see", "paths": ["/t/attachments/a.png", "/t/attachments/r.pdf", "/t/attachments/z.zip"]})
+        h = self.r["fileThumbs"]
+        self.assertIn('class="att-thumb"', h)
+        self.assertIn('href="/fileview?path=%2Ft%2Fattachments%2Fr.pdf"', h)
+        self.assertIn('href="/api/room/attachment?room=room-1&amp;name=z.zip&amp;download=1" download="z.zip"', h)
+        self.assertIn('data-att-size="/api/room/attachment?room=room-1&amp;name=z.zip"', h)
 
     def test_the_box_uploads_and_shows_a_chip(self):
         up, done = self.r["whileUp"], self.r["afterUp"]
@@ -188,7 +230,7 @@ class AttachPage(unittest.TestCase):
         self.assertIn("att-chip err", f["html"])
         self.assertIn("Not uploaded", f["html"])
         self.assertEqual(self.r["huge"]["requests"], 0)
-        self.assertIn("at most 20 MB", self.r["huge"]["err"])
+        self.assertEqual(self.r["huge"]["err"], "the file is 21.0 MB; a file can be at most 20 MB")
         self.assertEqual(self.r["afterRemove"], {"n": 1, "failed": 0})
         self.assertEqual(self.r["cleared"], 0)
         self.assertGreaterEqual(self.r["changes"], 6)
@@ -225,6 +267,14 @@ class AttachPage(unittest.TestCase):
             self.assertIn('<script src="/static/attach.js"></script>', page)
         self.assertIn("attachments: images", INDEX)
         self.assertIn("keepBoth: true", INDEX)
+
+    def test_the_paperclip_is_a_44px_target_on_touch(self):
+        # 24px drawn + a 10px invisible ring each side = 44px on a touch screen.
+        for page in (INDEX, SESSION):
+            rule = re.search(r"\.att-pick \{[^}]*\}", page).group(0)
+            self.assertRegex(rule, r"width: ?24px")
+            self.assertRegex(rule, r"position: ?relative")
+            self.assertRegex(page, r"@media \(pointer: coarse\) \{ \.att-pick::after \{ content: ?''; position: ?absolute; inset: ?-10px; \} \}")
 
 
 if __name__ == "__main__":
