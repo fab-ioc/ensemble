@@ -64,6 +64,9 @@ WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "waiting", "inreview", "done"
 _TASK_ID_DOC = ("The task: its number (#18 or 18 in your project, ED-18 in any) "
                 "or its id (room-1a2b3c4d).")
 _TASK_ID_SPEC = {"type": "string", "description": _TASK_ID_DOC}
+_GOAL_SPEC = {"type": "string",
+              "description": "What the task is for, 1-2 short lines (<=250 chars), shown on its "
+                             "board card. Always write one."}
 
 _PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowest\" "
                  "(a number 1-5 also works, 1 = highest).")
@@ -177,6 +180,10 @@ _ALL_TOOLS = [
                 "kind": {"type": "string", "enum": list(REPORT_KINDS),
                          "description": "completed | blocked | question | update."},
                 "text": {"type": "string", "description": "The report, Markdown."},
+                "state": {"type": "string",
+                          "description": "Where the task stands against its goal, 1-2 short "
+                                         "sentences (<=250 chars), shown on its board card. "
+                                         "Include it in every report; omitted keeps the last."},
                 "clears": {"type": "boolean",
                            "description": "With kind update: your open blocked / question "
                                           "is over (resolved without an answer in chat). "
@@ -420,8 +427,8 @@ _ALL_TOOLS = [
         "description": (
             "Create a new task in a project: a title, a full specification (this "
             "becomes the agent's first prompt, so write it as a complete brief in "
-            "Markdown — goal, context, acceptance criteria, constraints), and the "
-            "preferred agent line-up. By default the task is created as a DRAFT "
+            "Markdown — goal, context, acceptance criteria, constraints), a short "
+            "goal for its board card (always), and the preferred agent line-up. By default the task is created as a DRAFT "
             "(not launched) so the product owner can review it in the dashboard; "
             "set start=true to launch it immediately. On that first launch the hub "
             "checks the latest cached plan allowance and may swap owner/reviewer "
@@ -435,6 +442,7 @@ _ALL_TOOLS = [
             "properties": {
                 "title": {"type": "string", "description": "Short task title (≤120 chars)."},
                 "spec": {"type": "string", "description": "The full task specification, Markdown."},
+                "goal": _GOAL_SPEC,
                 "projectId": {"type": "string",
                               "description": "Project to create the task in (default: your own project)."},
                 "agents": {"type": "array", "items": _AGENT_SPEC,
@@ -489,6 +497,7 @@ _ALL_TOOLS = [
                 "taskId": _TASK_ID_SPEC,
                 "title": {"type": "string", "description": "New title (omit to keep)."},
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
+                "goal": _GOAL_SPEC,
                 "priority": _priority_spec("Omit to keep the current one."),
                 **_GATE_FIELDS,
                 "workflow": {"type": "string",
@@ -1214,6 +1223,9 @@ def _report(ctx, args, handler, *, structured_asks=None):
         raise ToolError("text is required — write the report itself")
     room, me = ctx["room"], ctx["identity"]
     title = _title(room)
+    state, state_cut = _brief_text(args, "state")
+    if state:
+        _d.task_brief.set_state(room["id"], state, me)
     po = _project_po(_projects().get(ctx["projectId"]))
     if po and (po.get("missing") or po["roomId"] == room["id"] or not po.get("identity")):
         po = None                   # no PO to route to: the report goes to the user
@@ -1245,6 +1257,7 @@ def _report(ctx, args, handler, *, structured_asks=None):
             print(f"finished task not moved to In review: {e!r}", flush=True)
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
+                **({"stateNote": _GOAL_CUT_NOTE} if state_cut else {}),
                 "note": "recorded on your task; the board shows it to the user"}
     body = (f"**{what}**{' (its open ask is over)' if clears else ''} — "
             f"report from {_d.task_named(room, title)} "
@@ -1275,6 +1288,7 @@ def _report(ctx, args, handler, *, structured_asks=None):
                             "title": po["title"]},
             **({"messageId": res["message"]["id"]} if res and structured_asks is not None else {}),
             "poWoken": bool(rung),
+            **({"stateNote": _GOAL_CUT_NOTE} if state_cut else {}),
             "note": ("delivered to the PO's chat without waking it: an update is told with "
                      "the PO's next wake, or within 30 minutes. Use completed, blocked or "
                      "question when the PO has to act" if quiet else
@@ -1660,6 +1674,21 @@ def _get_task(ctx, args, handler):
     return row
 
 
+_GOAL_CUT_NOTE = "cut to 2 lines of at most 250 characters"
+
+
+def _brief_text(args, key):
+    """(text, was_cut) of an optional goal / state argument; ("", False) when
+    it is not given. Cut to task_brief's two lines and 250 characters."""
+    v = args.get(key)
+    if v is None:
+        return "", False
+    try:
+        return _d.task_brief.clean(v)
+    except ValueError:
+        raise ToolError(f"{key} must be text") from None
+
+
 def _create_task(ctx, args, handler):
     title = (args.get("title") or "").strip()
     spec = (args.get("spec") or "").strip()
@@ -1672,6 +1701,7 @@ def _create_task(ctx, args, handler):
     if pid and pid not in _projects():
         raise ToolError(f"no such project: {pid}")
     _check_write_scope(ctx, pid, "create_task")
+    goal, goal_cut = _brief_text(args, "goal")
     agent_list = args.get("agents") or []
     if not isinstance(agent_list, list):
         raise ToolError("agents must be a list")
@@ -1692,6 +1722,8 @@ def _create_task(ctx, args, handler):
     if args.get("keepAgents") is True:
         _d.set_keep_agents(room_full["id"], True)
         room_full["keepAgents"] = True
+    if goal and _d.task_brief.set_goal(room_full, goal):
+        room_full.update(goal=goal, goalSource="po")
     room_full.update(after=gates, onReady=args.get("onReady", "start"), gateConfiguredAt=time.time())
     _d.chatroom.patch_room(room_full["id"], after=gates, onReady=room_full["onReady"],
                            gateConfiguredAt=room_full["gateConfiguredAt"])
@@ -1714,6 +1746,7 @@ def _create_task(ctx, args, handler):
             "agents": _agents_view(room_full),
             **({"allocation": allocation} if allocation else {}),
             **({"held": True} if held else {}),
+            **({"goalNote": _GOAL_CUT_NOTE} if goal_cut else {}),
             "note": (_d.pacing.note_text(held) if held else
                      (allocation or {}).get("reason", "launched") if started else
                      "created as a draft — the product owner can start it from the "
@@ -1725,8 +1758,10 @@ def _update_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "update_task")
     if not is_admin_caller(ctx["room"], ctx["identity"]):
         changes_other_than_workflow = any(args.get(k) is not None
-                                          for k in ("title", "spec", "priority", "agents", "after", "onReady",
-                                                    "keepAgents", "reviewLimit"))
+                                          for k in ("title", "spec", "goal", "priority", "agents", "after",
+                                                    "onReady", "keepAgents", "reviewLimit"))
+        # goal: null clears a goal (below), so an owner may not pass the key at all.
+        changes_other_than_workflow = changes_other_than_workflow or "goal" in args
         if (room["id"] != ctx["room"]["id"] or changes_other_than_workflow
                 or _d.normalize_workflow(args.get("workflow")) != "inreview"):
             raise ToolError(
@@ -1747,10 +1782,11 @@ def _update_task(ctx, args, handler):
             raise ToolError("reviewLimit must be a whole number (0 = no limit)")
         if not " ".join(str(args.get("reviewLimitReason") or "").split()):
             raise ToolError("say why with reviewLimitReason — it is shown in the task's chat")
+    goal, goal_cut = _brief_text(args, "goal")
     if (title is None and spec is None and priority is None and keep is None
             and workflow is None and agent_list is None and review_limit is None
-            and "after" not in args and "onReady" not in args):
-        raise ToolError("give a new title, spec, priority, workflow, agents, keepAgents "
+            and "goal" not in args and "after" not in args and "onReady" not in args):
+        raise ToolError("give a new title, spec, goal, priority, workflow, agents, keepAgents "
                         "and/or reviewLimit")
     gate_fields = {}
     if "after" in args or "onReady" in args:
@@ -1809,6 +1845,9 @@ def _update_task(ctx, args, handler):
         notes.append(_set_review_limit(ctx, handler, room2, review_limit,
                                        " ".join(str(args["reviewLimitReason"]).split())[:300]))
         room2 = _d.chatroom.get_room(room["id"]) or room2
+    if "goal" in args:
+        room2 = _d.task_brief.set_goal(room2, goal) or room2
+        notes.append(("goal set" + (f" ({_GOAL_CUT_NOTE})" if goal_cut else "")) if goal else "goal cleared")
     return {"ok": True, "taskId": room2["id"], "title": _title(room2),
             **_d.board.view(room2),
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room2)],

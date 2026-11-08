@@ -63,6 +63,8 @@ const ATTENTION_BY_ROOM = new Map(), ATTN_LABEL = {}, SELECTED_PROJECT = '', DET
 const prioIcon = () => '<i class="prio-ico"></i>', prioOf = () => 3, taskStateChip = () => '<span class="run">Idle</span>';
 const cardAgents = () => '', fmtAgo = () => '1m', taskNoHtml = () => '<span class="tno">#7</span>';
 const prioCell = () => '<td></td>', agentBadges = () => '';
+const boardOpenSet = () => new Set(), cardKey = r => r.roomId || r.sessionId || '';
+const cexpHtml = () => '', cardBriefHtml = () => '', paceHoldHtml = () => '';
 log.card = cardHtml({ roomId: 'room-a', sessionId: 's1', label: 'Task', updatedAt: 0, cost: 2.5, costTokens: null,
                       newsAt: 1100, changes: { add: 512, del: 4, files: 7 } }, 60);
 log.cardQuiet = cardHtml({ roomId: 'room-b', sessionId: 's2', label: 'Task', updatedAt: 0, cost: 0, costTokens: null,

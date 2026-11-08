@@ -143,6 +143,8 @@ import task_tool_hook
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
 import board_brief
+# An open board card's goal, where the task stands, and its facts (#316).
+import task_brief
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
 # background so no request path ever waits on the network.
 import usage
@@ -192,6 +194,7 @@ ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
+task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
@@ -1550,6 +1553,7 @@ def room_news_at(room: dict, msg_news: float | None = None) -> float:
 # few small reads, no git process), so a poll costs no git; a key not counted
 # yet is counted by one background thread and shows on a later poll.
 _BRANCH_CHANGES: dict[str, tuple[tuple, dict | None]] = {}   # root -> (key, {add, del, files} | None)
+_BRANCH_COMMITS: dict[str, tuple[tuple, dict | None]] = {}   # root -> (key, {ahead, times} | None)
 _BRANCH_WANT: dict[str, tuple] = {}                           # root -> key waiting to be counted
 _BRANCH_LOCK = threading.Lock()
 _BRANCH_WAKE = threading.Event()
@@ -1660,6 +1664,25 @@ def _count_branch(root: str, key: tuple) -> dict | None:
     return {"add": int(m.group(2) or 0), "del": int(m.group(3) or 0), "files": int(m.group(1))}
 
 
+BRANCH_COMMIT_TIMES = 20       # the newest commits' times a card is told (task_brief)
+
+
+def _count_commits(root: str, key: tuple) -> dict | None:
+    """``{ahead, times}``: how many commits the branch has that main has not,
+    and the commit times of the newest BRANCH_COMMIT_TIMES of them, newest
+    first (a card's "before the last 3 commits"). None when git fails."""
+    try:
+        out = _run(["git", "-C", root, "log", "--format=%at", f"{key[1]}..{key[0]}"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    # Author time: a rebase rewrites the commit time of every commit it moves.
+    times = sorted((int(t) for t in (out.stdout or "").split() if t.isdigit()), reverse=True)
+    return {"ahead": len(times), "times": times[:BRANCH_COMMIT_TIMES]}
+
+
 def _branch_worker() -> None:
     while True:
         _BRANCH_WAKE.wait()
@@ -1672,12 +1695,54 @@ def _branch_worker() -> None:
             got = _count_branch(root, key)
         except Exception:                   # the thread is never restarted: never let it die
             got = None
+        try:
+            commits = _count_commits(root, key)
+        except Exception:
+            commits = None
         with _BRANCH_LOCK:
             _BRANCH_CHANGES[root] = (key, got)
+            _BRANCH_COMMITS[root] = (key, commits)
             if _BRANCH_WANT.get(root) == key:
                 del _BRANCH_WANT[root]
         if got is not None:
             filefacts.put("branch", root, None, {"k": list(key), "r": got})
+        if commits is not None:
+            filefacts.put("commits", root, None, {"k": list(key), "r": commits})
+
+
+def _branch_queue(root: str, key: tuple) -> None:
+    """Hand a pair of heads to the background counter."""
+    global _BRANCH_THREAD
+    with _BRANCH_LOCK:
+        _BRANCH_WANT[root] = key
+        if _BRANCH_THREAD is None:
+            _BRANCH_THREAD = threading.Thread(target=_branch_worker, name="branch-changes", daemon=True)
+            _BRANCH_THREAD.start()
+    _BRANCH_WAKE.set()
+
+
+def branch_commits(root: str, background: bool = True) -> dict | None:
+    """A worktree checkout's ``{ahead, times}`` against main (see
+    _count_commits), or None until it is counted for its current heads; as
+    branch_changes, and counted by the same background thread."""
+    if not root:
+        return None
+    key = branch_heads_cached(root) if background else branch_heads(root)
+    if key is None:
+        return None
+    hit = _BRANCH_COMMITS.get(root)
+    if hit and hit[0] == key:
+        return hit[1]
+    kept = filefacts.get("commits", root, None)
+    if isinstance(kept, dict) and kept.get("k") == list(key) and isinstance(kept.get("r"), dict):
+        _BRANCH_COMMITS[root] = (key, kept["r"])
+        return kept["r"]
+    if not background:
+        got = _count_commits(root, key)
+        _BRANCH_COMMITS[root] = (key, got)
+        return got
+    _branch_queue(root, key)
+    return None
 
 
 def branch_changes(root: str, background: bool = True) -> dict | None:
@@ -1704,13 +1769,7 @@ def branch_changes(root: str, background: bool = True) -> dict | None:
         got = _count_branch(root, key)
         _BRANCH_CHANGES[root] = (key, got)
         return got
-    global _BRANCH_THREAD
-    with _BRANCH_LOCK:
-        _BRANCH_WANT[root] = key
-        if _BRANCH_THREAD is None:
-            _BRANCH_THREAD = threading.Thread(target=_branch_worker, name="branch-changes", daemon=True)
-            _BRANCH_THREAD.start()
-    _BRANCH_WAKE.set()
+    _branch_queue(root, key)
     return None
 # ---- A worktree task's change count against main: end ----------------------
 
@@ -13069,7 +13128,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             if hit and hit[0] == cold_key:
                 row = dict(hit[1])
                 pend = pending_input(rid)
-                row.update(board.view(rm), waitingOnPo=po_waits.get(rid), reported=reported.get(rid),
+                row.update(board.view(rm), brief=task_brief.row_brief(rm, cold=True),
+                           waitingOnPo=po_waits.get(rid), reported=reported.get(rid),
                            resuming=bool(pend) and pend.get("state") != "failed",
                            waitMark=rm.get("waitMark") or None,
                            idleSince=(idling.get(rid) or {}).get("since") or None)
@@ -13160,6 +13220,12 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "newsAt": room_news_at(rm, facts.get("newsMsgAt")),
                 "changes": (branch_changes(rm.get("cwd", ""))
                             if not cold and (rm.get("workspace") or {}).get("mode") == "worktree" else None),
+                # Its branch's commits ahead of main and their times (#316).
+                "commits": (branch_commits(rm.get("cwd", ""))
+                            if not cold and (rm.get("workspace") or {}).get("mode") == "worktree" else None),
+                # What the card shows when opened: goal, where it stands, the
+                # latest report and review round (task_brief.row_brief).
+                "brief": task_brief.row_brief(rm, cold=cold),
                 "currentTheme": "",
                 "first": first_txt, "last": last_txt,
                 "lastAgent": last_agent_txt, "transcriptPath": "",
@@ -23135,6 +23201,9 @@ def main():
 
     # The PO's rotation: a fresh session from its handover when it gets long.
     rotation.start_scheduler()
+
+    # Goals for the tasks that have none, written once from their specs (#316).
+    task_brief.start_backfill()
 
     # A message typed into an agent that never took it in: typed again once
     # it is idle, then shown as not delivered (sends.py).
