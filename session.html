@@ -867,6 +867,57 @@
     #topics-pop .tp-act, #topics-pop .tp-open { min-height:var(--touch-min); }
     #topics-pop .tp-picker input, #topics-pop .tp-picker select { font-size:16px; min-height:var(--touch-min); }
   }
+  /* Old threads and topics (#319): the Threads filter as a list, latest update
+     first, each row with its age; a bar with Select, and in select mode the
+     count, Older than…, Select all, Archive, Restore, Delete, Done; the delete's
+     one confirmation in the bar's place; the archived ones under a fold. */
+  .tl-bar, .tl-undo { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-100); padding:var(--s-100) var(--s-300);
+    color:var(--fg-muted); font-size:var(--fs-200); }
+  .tl-bar.on { background:var(--surface-sunken); border-bottom:1px solid var(--border); }
+  .tl-bar.confirm { flex-direction:column; align-items:stretch; background:var(--c-danger-bg); color:var(--c-danger-fg); border-radius:var(--r-200); margin:var(--s-100) var(--s-300); }
+  .tl-q { margin:0; color:inherit; }
+  .tl-acts { display:flex; flex-wrap:wrap; gap:var(--s-100); }
+  .tl-n { flex:1 1 auto; min-width:0; }
+  .tl-bar.on .tl-n { flex:0 0 auto; color:var(--fg); font-weight:600; font-variant-numeric:tabular-nums; }
+  .tl-undo { background:var(--c-neutral-bg); color:var(--c-neutral-fg); }
+  .tl-undo span { flex:1 1 auto; min-width:0; }
+  .tl-btn { min-height:28px; padding:0 var(--s-200); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface);
+    color:var(--fg); font:inherit; font-size:var(--fs-200); cursor:pointer; }
+  .tl-btn:hover:not(:disabled) { background:var(--hover); }
+  .tl-btn:disabled { opacity:.5; cursor:default; }
+  .tl-btn.danger { border-color:transparent; background:transparent; color:var(--c-danger-fg); }
+  .tl-btn.danger:hover:not(:disabled) { background:var(--c-danger-bg); }
+  .tl-bar.confirm .tl-btn.danger { border-color:var(--c-danger-fg); background:var(--surface); font-weight:600; }
+  .tl-fold { display:flex; align-items:center; gap:var(--s-100); width:100%; min-height:32px; padding:var(--s-100) var(--s-300); border:0;
+    border-top:1px solid var(--border); background:transparent; color:var(--fg-muted); font:inherit; font-size:var(--fs-200); text-align:left; cursor:pointer; }
+  .tl-fold:hover { background:var(--hover); color:var(--fg); }
+  .tl-row { display:flex; align-items:center; gap:var(--s-200); padding:0 var(--s-300); border-bottom:1px solid var(--border); }
+  .tl-row.sel { background:var(--selected-bg); }
+  .tl-row.arch .tl-title { color:var(--fg-muted); }
+  .tl-open { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:var(--s-200) 0;
+    border:0; background:transparent; color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+  .tl-open:hover .tl-title { text-decoration:underline; }
+  .tl-title { max-width:100%; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl-meta { max-width:100%; color:var(--fg-muted); font-size:var(--fs-200); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl-age, .tp-age { color:var(--fg-muted); font-size:var(--fs-200); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .tl-age { flex:0 0 auto; }
+  .tl-box { flex:0 0 auto; width:16px; height:16px; margin:0; accent-color:var(--focus-ring); cursor:pointer; }
+  #topics-pop .tp-row .tl-box { margin:var(--s-300) 0 0 var(--s-300); }
+  #topics-pop .tp-row.sel { background:var(--selected-bg); }
+  #topics-pop .tp-row.arch { align-items:center; }
+  #topics-pop .tp-row.arch .tp-open { cursor:default; }
+  #topics-pop .tp-row.arch .tp-open:hover { background:transparent; }
+  #topics-pop .tp-act.danger { color:var(--c-danger-fg); }
+  #topics-pop .tl-bar.on { position:sticky; top:calc(-1 * var(--s-100)); z-index:1; background:var(--surface); }
+  .tl-btn:focus-visible, .tl-fold:focus-visible, .tl-open:focus-visible, .tl-box:focus-visible {
+    outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  @media (pointer: coarse) {
+    .tl-btn, .tl-fold { min-height:var(--touch-min); }
+    select.tl-btn { font-size:16px; }
+    .tl-open { min-height:var(--touch-min); }
+    .tl-box { width:var(--touch-min); height:var(--touch-min); margin:0; }
+    #topics-pop .tp-row .tl-box { margin:0; }
+  }
   #topic-note span { flex:1 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   #topic-note button, #topic-suggestion button { min-height:var(--touch-min); padding:0 var(--s-200); border:0;
     border-radius:var(--r-200); background:transparent; color:inherit; font:inherit; cursor:pointer; }
@@ -6540,8 +6591,8 @@ let THR_UNREAD = [], THR_ACTIVITY = null, THR_LIST = false;
 // and the archived ones; the select mode of that list and of the Topics list.
 let THR_TLIST = null, THR_TARCH = [];
 const selNew = () => ({ on: false, sel: new Set(), last: '', confirm: false, undo: null, fold: false, order: [] });
-const SEL = { threads: selNew(), topics: selNew() };
-function selReset(kind) { clearTimeout(SEL[kind].undo?.timer); SEL[kind] = selNew(); }
+const LSEL = { threads: selNew(), topics: selNew() };
+function selReset(kind) { clearTimeout(LSEL[kind].undo?.timer); LSEL[kind] = selNew(); }
 let THR_META = {};         // thread id → its line's facts, as the hub sent them
 let THR_ASKED = '';         // the link's balloon the channel was last asked to reach (&upto=)
 let THR_SIG = '', THR_FETCHING = false, THR_AGAIN = false, THR_BEFORE = 0, THR_N = 40, THR_WAIT = 0;   // the latest 40 entries first (#228, #234, #247)
@@ -6673,7 +6724,7 @@ function topicsPaint() {
   const selected = TOPIC_FILTER?.id || '';
   const recent = Date.now() / 1000 - 48 * 3600;
   const tAt = t => +t.updatedAt || +(t.latest && t.latest.ts) || 0;
-  const s = SEL.topics, arch = data && !data.pending ? data.archived || [] : [];
+  const s = LSEL.topics, arch = data && !data.pending ? data.archived || [] : [];
   const list = CF_TOPICS.expanded ? all
     : all.filter(t => t.threadCount > 1 || t.unread || t.decisions || tAt(t) > recent || t.id === selected || s.sel.has(t.id));
   const known = new Set(all.concat(arch).map(t => t.id));
@@ -6684,7 +6735,7 @@ function topicsPaint() {
     + (all.length > list.length || CF_TOPICS.expanded ? `<button type="button" class="tp-act" data-tp-all>${CF_TOPICS.expanded ? 'Show fewer' : 'Show all ' + all.length}</button>` : '')
     + (data && !data.pending && (all.length || arch.length) && !s.on ? `<button type="button" class="tp-act" data-sel-kind="topics" data-sel-act="on">Select</button>` : '')
     + '</div>'
-    + (s.on || s.undo || s.confirm ? selBarHtml('topics', all, arch).filter(h => s.on || !h.startsWith('<div class="sel-bar"')).join('') : '');
+    + (s.on || s.undo || s.confirm ? selBarHtml('topics', all, arch).filter(h => s.on || !h.startsWith('<div class="tl-bar"')).join('') : '');
   const rows = !data || data.pending ? '<div class="tp-empty">Reading topics…</div>'
     : !list.length ? `<div class="tp-empty">${all.length ? 'No active topics. Show all to browse.' : arch.length ? 'Every topic is archived' : 'No topics yet'}</div>`
     : list.map(t => {
@@ -6701,9 +6752,19 @@ function topicsPaint() {
         + `<button type="button" class="tp-act" data-tp-action="move" data-topic="${esc(t.id)}">Move a thread…</button>`
         + `<button type="button" class="tp-act" data-tp-action="out" data-topic="${esc(t.id)}">Move thread out…</button>`
         + `<button type="button" class="tp-act" data-tp-action="archive" data-topic="${esc(t.id)}">Archive</button>`
+        + `<button type="button" class="tp-act danger" data-tp-action="delete" data-topic="${esc(t.id)}">Delete…</button>`
         + '</div><div class="tp-picker" hidden></div></details></div>';
     }).join('');
-  box.innerHTML = head + rows;
+  // The archived ones under a fold at the foot, each with its age and Restore.
+  const foot = !arch.length ? '' : selFoldHtml('topics', arch.length) + (!s.fold ? '' : arch.map(t => {
+    const title = t.name || 'Topic';
+    return `<div class="tp-row arch${s.sel.has(t.id) ? ' sel' : ''}">${selBoxHtml('topics', t.id, title)}`
+      + `<span class="tp-open"><span class="tp-name">${esc(title)}</span>`
+      + `<span class="tp-meta">${selAgeHtml(tAt(t), 'tp-age')}${(t.openPoints || []).length ? ' · open ' + esc(t.openPoints.join(' ')) : ''}</span></span>`
+      + `<button type="button" class="tl-btn" data-sel-kind="topics" data-sel-act="restore-one" data-sel-id="${esc(t.id)}" aria-label="Restore ${esc(title)}">Restore</button></div>`;
+  }).join(''));
+  box.innerHTML = head + rows + foot;
+  ageTick(box);
 }
 function topicsPopOpen() {
   const box = $('#topics-pop'), btn = $('#chat-filters [data-filter="topics"]');
@@ -6751,11 +6812,6 @@ $('#topics-pop').addEventListener('click', e => {
     return;
   }
   if (e.target.closest('[data-tp-all]')) { CF_TOPICS.expanded = !CF_TOPICS.expanded; topicsPaint(); return; }
-  if (e.target.closest('[data-tp-restore]')) {
-    const topic = $('#topics-pop [data-tp-restore-id]')?.value;
-    if (topic) topicChange('restore', { topic });
-    return;
-  }
   const save = e.target.closest('[data-tp-save]');
   if (save) {
     const picker = save.closest('.tp-picker'), action = picker.dataset.action, topic = picker.dataset.topic;
@@ -6780,6 +6836,13 @@ $('#topics-pop').addEventListener('click', e => {
   const action = btn.dataset.tpAction, row = all.find(t => t.id === btn.dataset.topic);
   if (!row) return;
   if (action === 'archive') { topicChange('archive', { topic: row.id }); return; }
+  if (action === 'delete') {
+    // The same one confirmation as a selection of one.
+    const s = LSEL.topics;
+    s.on = true; s.sel = new Set([row.id]); s.last = row.id; s.confirm = true;
+    selPaint('topics', '[data-sel-kind="topics"][data-sel-act="delete-no"]');
+    return;
+  }
   const menu = btn.closest('.tp-menu'), picker = menu.querySelector('.tp-picker');
   const choices = row.threadOptions || row.threads.map(id => ({ id, title: id }));
   const destinations = all.filter(t => t.id !== row.id);
@@ -6795,7 +6858,12 @@ $('#topics-pop').addEventListener('click', e => {
   picker.querySelector('input, select')?.focus();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && topicsPopClose(true)) { e.preventDefault(); e.stopImmediatePropagation(); }
+  if (e.key !== 'Escape') return;
+  // Escape cancels a delete being confirmed before it closes the list.
+  const kind = LSEL.topics.confirm && !$('#topics-pop').hidden ? 'topics'
+    : LSEL.threads.confirm && THREADS_ONLY && !THREAD_MODE ? 'threads' : '';
+  if (kind) { e.preventDefault(); e.stopImmediatePropagation(); selAct(kind, 'delete-no'); return; }
+  if (topicsPopClose(true)) { e.preventDefault(); e.stopImmediatePropagation(); }
 }, true);
 document.addEventListener('pointerdown', e => {
   if (!e.target.closest?.('#topics-pop, #chat-filters [data-filter="topics"]')) topicsPopClose();
@@ -7314,25 +7382,25 @@ const selAgeHtml = (at, cls) => `<span class="${cls}" data-tl-age="${+at || 0}" 
 // Older than…, Select all, Archive, Restore, Delete, Done; the delete's one
 // confirmation in its place; the undo of an archive for 10 s under it.
 function selBarHtml(kind, live, arch) {
-  const s = SEL[kind], k = s.sel.size, noun = SEL_NOUN[kind];
+  const s = LSEL[kind], k = s.sel.size, noun = SEL_NOUN[kind];
   const a = (act, label, extra = '') => `<button type="button" class="tl-btn${extra}" data-sel-kind="${kind}" data-sel-act="${act}">${label}</button>`;
   const rows = [];
   if (s.confirm && k) {
     const picked = live.concat(arch).filter(x => s.sel.has(x.id));
     const pts = [...new Set(picked.flatMap(x => x.openPoints || []))];
     const what = kind === 'topics' ? (k === 1 ? 'the topic and its threads are' : 'the topics and their threads are') : (k === 1 ? 'the thread is' : 'the threads are');
-    rows.push(`<div class="sel-bar confirm" role="group" aria-label="Delete ${selNouns(kind, k)}" data-key="sel:${kind}:confirm:${k}:${esc(pts.join(','))}">`
-      + `<p class="sel-q"><strong>Delete ${selNouns(kind, k)}?</strong> Transcripts and your points are kept; only ${what} removed from the lists and chat.</p>`
-      + (pts.length ? `<p class="sel-q">Open points in ${k === 1 ? 'it' : 'them'}: ${esc(pts.join(', '))}</p>` : '')
-      + `<div class="sel-acts">${a('delete-yes', 'Delete ' + selNouns(kind, k), ' danger')}${a('delete-no', 'Cancel')}</div></div>`);
+    rows.push(`<div class="tl-bar confirm" role="group" aria-label="Delete ${selNouns(kind, k)}" data-key="sel:${kind}:confirm:${k}:${esc(pts.join(','))}">`
+      + `<p class="tl-q"><strong>Delete ${selNouns(kind, k)}?</strong> Transcripts and your points are kept; only ${what} removed from the lists and chat.</p>`
+      + (pts.length ? `<p class="tl-q">Open points in ${k === 1 ? 'it' : 'them'}: ${esc(pts.join(', '))}</p>` : '')
+      + `<div class="tl-acts">${a('delete-yes', 'Delete ' + selNouns(kind, k), ' danger')}${a('delete-no', 'Cancel')}</div></div>`);
   } else if (!s.on) {
     const n = live.length;
-    rows.push(`<div class="sel-bar" data-key="sel:${kind}:${n}"><span class="sel-n">${kind === 'threads' ? selNouns(kind, n) + ' · latest update first' : 'Topics'}</span>`
+    rows.push(`<div class="tl-bar" data-key="sel:${kind}:${n}"><span class="tl-n">${kind === 'threads' ? selNouns(kind, n) + ' · latest update first' : 'Topics'}</span>`
       + (n || arch.length ? a('on', 'Select') : '') + '</div>');
   } else {
     const liveK = live.filter(x => s.sel.has(x.id)).length, archK = k - liveK;
-    rows.push(`<div class="sel-bar on" data-key="sel:${kind}:on:${k}:${liveK}">`
-      + `<span class="sel-n" role="status">${k} selected</span>`
+    rows.push(`<div class="tl-bar on" data-key="sel:${kind}:on:${k}:${liveK}">`
+      + `<span class="tl-n" role="status">${k} selected</span>`
       + `<select class="tl-btn" data-sel-kind="${kind}" data-sel-older aria-label="Select the ${noun}s older than"><option value="">Older than…</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select>`
       + a('all', 'Select all')
       + `<button type="button" class="tl-btn" data-sel-kind="${kind}" data-sel-act="archive"${liveK ? '' : ' disabled'}>Archive${liveK ? ' ' + liveK : ''}</button>`
@@ -7340,19 +7408,19 @@ function selBarHtml(kind, live, arch) {
       + `<button type="button" class="tl-btn danger" data-sel-kind="${kind}" data-sel-act="delete"${k ? '' : ' disabled'}>Delete${k ? ' ' + k : ''}</button>`
       + a('off', 'Done') + '</div>');
   }
-  if (s.undo) rows.push(`<div class="sel-undo" role="status" data-key="sel:${kind}:undo:${s.undo.ids.length}">`
+  if (s.undo) rows.push(`<div class="tl-undo" role="status" data-key="sel:${kind}:undo:${s.undo.ids.length}">`
     + `<span>Archived ${selNouns(kind, s.undo.ids.length)}. A new message brings ${s.undo.ids.length === 1 ? 'it' : 'them'} back.</span>${a('undo', 'Undo')}</div>`);
   return rows;
 }
 function selFoldHtml(kind, n) {
-  const open = SEL[kind].fold;
+  const open = LSEL[kind].fold;
   return `<button type="button" class="tl-fold" data-sel-kind="${kind}" data-sel-act="fold" aria-expanded="${open}" data-key="sel:${kind}:fold:${n}:${open ? 1 : 0}">`
     + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> Archived (${n})</button>`;
 }
-const selBoxHtml = (kind, id, title) => SEL[kind].on
-  ? `<input type="checkbox" class="sel-box" data-sel-kind="${kind}" data-sel-id="${esc(id)}"${SEL[kind].sel.has(id) ? ' checked' : ''} aria-label="Select ${esc(title)}">` : '';
+const selBoxHtml = (kind, id, title) => LSEL[kind].on
+  ? `<input type="checkbox" class="tl-box" data-sel-kind="${kind}" data-sel-id="${esc(id)}"${LSEL[kind].sel.has(id) ? ' checked' : ''} aria-label="Select ${esc(title)}">` : '';
 function threadRowHtml(t, arch) {
-  const s = SEL.threads, picked = s.sel.has(t.id);
+  const s = LSEL.threads, picked = s.sel.has(t.id);
   const n = +t.replies || 0, unread = +t.unread || 0, title = t.title || 'Thread';
   const who = [...new Set([t.rootWho, ...(t.who || [])].filter(Boolean))].map(w => THR_WHO[w] || w).join(', ');
   const pts = t.openPoints || [];
@@ -7369,7 +7437,7 @@ function threadRowHtml(t, arch) {
 }
 // What the Threads filter draws in place of the balloons.
 function threadListRows() {
-  const s = SEL.threads, live = THR_TLIST || [], arch = THR_TARCH || [];
+  const s = LSEL.threads, live = THR_TLIST || [], arch = THR_TARCH || [];
   const known = new Set(live.concat(arch).map(t => t.id));
   [...s.sel].forEach(id => { if (!known.has(id)) s.sel.delete(id); });
   s.order = live.map(t => t.id).concat(s.fold ? arch.map(t => t.id) : []);
@@ -7393,7 +7461,7 @@ function selPaint(kind, focus) {
   else if (!$('#topics-pop').hidden) topicsPaint();
   if (!focus) return;
   const root = kind === 'threads' ? $('#msgs') : $('#topics-pop');
-  const el = root && (root.querySelector(focus) || root.querySelector(`[data-sel-kind="${kind}"][data-sel-act="${SEL[kind].on ? 'off' : 'on'}"]`));
+  const el = root && (root.querySelector(focus) || root.querySelector(`[data-sel-kind="${kind}"][data-sel-act="${LSEL[kind].on ? 'off' : 'on'}"]`));
   el?.focus({ preventScroll: true });
 }
 async function selRun(kind, action, ids, undo = true) {
@@ -7405,13 +7473,13 @@ async function selRun(kind, action, ids, undo = true) {
       body: JSON.stringify(threadsKind ? { roomId: ROOM, action, threads: ids } : { roomId: ROOM, action, topics: ids }) });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) { fail(out); return false; }
-    const s = SEL[kind];
+    const s = LSEL[kind];
     ids.forEach(id => s.sel.delete(id));
     s.confirm = false;
     clearTimeout(s.undo?.timer); s.undo = null;
     if (action === 'archive' && undo) {
       const u = { ids, timer: 0 };
-      u.timer = setTimeout(() => { if (SEL[kind].undo === u) { SEL[kind].undo = null; selPaint(kind); } }, 10000);
+      u.timer = setTimeout(() => { if (LSEL[kind].undo === u) { LSEL[kind].undo = null; selPaint(kind); } }, 10000);
       s.undo = u;
     }
     if (!threadsKind && Array.isArray(out.topics)) { CF_TOPICS.data = out; CF_TOPICS.at = Date.now(); }
@@ -7424,7 +7492,7 @@ async function selRun(kind, action, ids, undo = true) {
   } catch (e) { fail(null); return false; }
 }
 function selAct(kind, act, el) {
-  const s = SEL[kind], { live, arch } = selItems(kind);
+  const s = LSEL[kind], { live, arch } = selItems(kind);
   const isLive = new Set(live.map(x => x.id));
   const back = sel => selPaint(kind, sel || `[data-sel-kind="${kind}"][data-sel-act="${act}"]`);
   if (act === 'on') { s.on = true; s.confirm = false; return back(`[data-sel-kind="${kind}"][data-sel-act="all"]`); }
@@ -7445,16 +7513,16 @@ function selAct(kind, act, el) {
   if (act === 'delete-yes') return selRun(kind, 'delete', [...s.sel]);
 }
 document.addEventListener('click', e => {
-  const box = e.target.closest?.('.sel-box');
+  const box = e.target.closest?.('.tl-box');
   if (box) {
-    const kind = box.dataset.selKind, s = SEL[kind], id = box.dataset.selId, on = box.checked;
+    const kind = box.dataset.selKind, s = LSEL[kind], id = box.dataset.selId, on = box.checked;
     // Shift-click: every row from the last one ticked or unticked to this one.
     const a = s.order.indexOf(s.last), b = s.order.indexOf(id);
     const ids = e.shiftKey && a >= 0 && b >= 0 ? s.order.slice(Math.min(a, b), Math.max(a, b) + 1) : [id];
     ids.forEach(x => on ? s.sel.add(x) : s.sel.delete(x));
     s.last = id;
     s.confirm = false;
-    selPaint(kind, `.sel-box[data-sel-id="${CSS.escape(id)}"]`);
+    selPaint(kind, `.tl-box[data-sel-id="${CSS.escape(id)}"]`);
     return;
   }
   const b = e.target.closest?.('[data-sel-act]');
@@ -7465,7 +7533,7 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const sel = e.target.closest?.('[data-sel-older]');
   if (!sel || !sel.value) return;
-  const kind = sel.dataset.selKind, s = SEL[kind], days = +sel.value;
+  const kind = sel.dataset.selKind, s = LSEL[kind], days = +sel.value;
   const cut = Date.now() / 1000 - days * 86400;
   const at = x => +x.updatedAt || +x.lastAt || +(x.latest && x.latest.ts) || 0;
   if (kind === 'topics') CF_TOPICS.expanded = true;
