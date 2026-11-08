@@ -284,7 +284,7 @@ def _head_words(head: str) -> str:
     added points under them; the editor now makes them point 1 itself, this
     keeps an older page's send whole)."""
     lines = (head or "").split("\n")[1:]
-    return "\n".join(ln for ln in lines if not ln.startswith(message_refs.IMAGE_PREFIX)).strip()
+    return "\n".join(ln for ln in lines if not ln.startswith(message_refs.PREFIXES)).strip()
 
 
 def _point_texts(split: tuple[str, list[str]]) -> list[str]:

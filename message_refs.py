@@ -6,10 +6,12 @@ written out under it, so the agent reads what was pointed at without a tool
 call. The stored chat message keeps the sender's words; only what is typed into
 the agent's terminal (or read through chat_read) carries the expansion.
 
-An image pasted into the chat box travels as one line per image at the very
-end of the message, ``[image] <absolute path on the hub>`` (:func:`image_line`),
-so Claude (Read) or Codex (view_image) can open it; the hub adds the lines, the
-room and the transcript keep them, and the balloon shows them as thumbnails.
+A file pasted, dropped or picked into the chat box travels as one line per
+file at the very end of the message, ``[image] <absolute path on the hub>`` for
+an image and ``[file] <absolute path on the hub>`` for any other file
+(:func:`image_line`), so Claude (Read) or Codex (view_image) can open it; the
+hub adds the lines, the room and the transcript keep them, and the balloon
+shows them as thumbnails and file chips. "Image" below means either kind.
 A message written as numbered points (``## Points (N)``, one ``**N.**`` item
 each, as the chat's editor writes it; ``## Review comments (N)`` is the same
 shape) keeps each image with its point: the page writes ``[image] <name>``
@@ -54,13 +56,16 @@ _TASK_BLOCK = re.compile(r"\n\n\[ref ((?:(?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-
 
 
 IMAGE_PREFIX = "[image] "
+FILE_PREFIX = "[file] "
+PREFIXES = (IMAGE_PREFIX, FILE_PREFIX)
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".jpe", ".gif", ".webp")
 # A message of numbered items (points.py reads the same head): its head line,
 # and where each item starts, outside code fences.
 ITEMS_HEAD = re.compile(r"^## (?:Review comments|Points) \(\d+\)")
 _ITEM_START = re.compile(r"^\*\*\d+\.\*\*")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 # What ends an item and stays at its end: its images and its point line.
-_TAIL_LINE = re.compile(r"^(?:\[image\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$")
+_TAIL_LINE = re.compile(r"^(?:\[(?:image|file)\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$")
 
 
 _FENCE_RUN = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
@@ -148,9 +153,19 @@ def _per_item(text: str, fn) -> str:
     return _join_items(new_head, out) if changed else text
 
 
+def line_path(line: str) -> str:
+    """The path of an ``[image] <path>`` or ``[file] <path>`` line, else ''."""
+    for pre in PREFIXES:
+        if line.startswith(pre):
+            return line[len(pre):].strip()
+    return ""
+
+
 def image_line(path: str) -> str:
-    """The line an attached image adds under a message: ``[image] <path>``."""
-    return IMAGE_PREFIX + str(path)
+    """The line an attached file adds under a message: ``[image] <path>`` for
+    an image, ``[file] <path>`` for any other file."""
+    path = str(path)
+    return (IMAGE_PREFIX if path.lower().endswith(_IMAGE_EXTS) else FILE_PREFIX) + path
 
 
 def with_images(text: str, paths, names=None) -> str:
@@ -165,7 +180,7 @@ def with_images(text: str, paths, names=None) -> str:
         p = str(p or "").strip()
         if not p:
             continue
-        want = {IMAGE_PREFIX + n for n in (names[i] if i < len(names) else "", _basename(p)) if n}
+        want = {pre + n for n in (names[i] if i < len(names) else "", _basename(p)) if n for pre in PREFIXES}
         at = next((k for k, ln in enumerate(lines) if ln.rstrip() in want), None)
         if at is None:
             rest.append(image_line(p))
@@ -183,22 +198,21 @@ def _basename(path: str) -> str:
 
 
 def all_images(text: str) -> list[str]:
-    """Every ``[image] <path>`` line's path, wherever it is in the text (a
-    point's images sit inside their point), in order."""
-    return [ln[len(IMAGE_PREFIX):].strip() for ln in (text or "").replace("\r\n", "\n").split("\n")
-            if ln.startswith(IMAGE_PREFIX) and ln[len(IMAGE_PREFIX):].strip()]
+    """Every ``[image]`` / ``[file]`` line's path, wherever it is in the text
+    (a point's images sit inside their point), in order."""
+    return [x for x in (line_path(ln) for ln in (text or "").replace("\r\n", "\n").split("\n")) if x]
 
 
 def split_images(text: str) -> tuple[str, list[str]]:
-    """``(words, paths)``: a text without the ``[image]`` lines it ends with,
-    and their paths in order."""
+    """``(words, paths)``: a text without the ``[image]`` / ``[file]`` lines
+    it ends with, and their paths in order."""
     lines = (text or "").replace("\r\n", "\n").rstrip().split("\n")
     n = len(lines)
-    while n and lines[n - 1].startswith(IMAGE_PREFIX) and lines[n - 1][len(IMAGE_PREFIX):].strip():
+    while n and line_path(lines[n - 1]):
         n -= 1
     if n == len(lines):
         return text or "", []
-    return "\n".join(lines[:n]).rstrip(), [ln[len(IMAGE_PREFIX):].strip() for ln in lines[n:]]
+    return "\n".join(lines[:n]).rstrip(), [line_path(ln) for ln in lines[n:]]
 
 
 def find_message_refs(text: str) -> list[tuple[str, str, str]]:

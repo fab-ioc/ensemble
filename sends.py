@@ -299,7 +299,7 @@ def typed_confirms(text: str) -> bool:
 # Finding a send in the conversation
 # ---------------------------------------------------------------------------
 
-_IMAGE_LINE = re.compile(r"^\s*\[image\][^\n]*$", re.M | re.I)
+_IMAGE_LINE = re.compile(r"^\s*\[(?:image|file)\][^\n]*$", re.M | re.I)
 _IMAGE_TOKEN = re.compile(r"\[Image(?: #\d+|: source: [^\]]*)\]")
 _POINT_LINE = re.compile(r"\[point (P\d{1,5}[a-z]?)\]")
 
@@ -313,7 +313,7 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
-_IMAGE_PATH = re.compile(r"^\s*\[image\][ \t]+(\S[^\n]*?)\s*$", re.M | re.I)
+_IMAGE_PATH = re.compile(r"^\s*\[(?:image|file)\][ \t]+(\S[^\n]*?)\s*$", re.M | re.I)
 
 
 def _image_paths(text: str) -> list[str]:

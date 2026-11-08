@@ -5243,7 +5243,7 @@ def ref_project(item: dict | None) -> str:
 
 
 def attachment_paths(room: dict, given) -> list[str]:
-    """The absolute paths of the images a message from the page carries:
+    """The absolute paths of the files a message from the page carries:
     ``given`` is a list of stored names of this room's attachments, or of
     ``{room, name}`` for another room's (copied into this room's folder, so
     the chat that shows the message can show them). attachments.Refused when
@@ -5260,19 +5260,20 @@ def attachment_paths(room: dict, given) -> list[str]:
             src_id, name = room.get("id") or "", it
         src_room = room if src_id == room.get("id") else chatroom.get_room(src_id, public=False)
         if src_room is None:
-            raise attachments.Refused(404, "no_such_attachment", "An attached image is not on this hub any more.")
+            raise attachments.Refused(404, "no_such_attachment", "An attached file is not on this hub any more.")
         try:
             path = attachments.find(src_room, DASHBOARD_DIR, name)
         except attachments.Refused as e:
             raise attachments.Refused(e.status, "no_such_attachment",
-                                      f"An attached image is not on this hub any more: {e.message}")
+                                      f"An attached file is not on this hub any more: {e.message}")
         out.append(str(attachments.bring(room, DASHBOARD_DIR, path)))
     return out
 
 
 def attachment_names(given) -> list[str]:
-    """The names the page gave its images, in the order of attachment_paths:
-    what a ``[image] <name>`` line written inside a point names."""
+    """The names the page gave its files, in the order of attachment_paths:
+    what an ``[image] <name>`` or ``[file] <name>`` line written inside a
+    point names."""
     if not isinstance(given, list):
         return []
     return [str((it.get("name") if isinstance(it, dict) else it) or "") for it in given]
@@ -20874,9 +20875,9 @@ class Handler(BaseHTTPRequestHandler):
                     pass
 
     def _attachment_upload(self, u) -> None:
-        """POST /api/room/attachment?room=<id>[&name=<dropped file's name>], the
-        image as the body: stored in the room's attachments folder,
-        ``{ok, room, name, path, url, size, type}``."""
+        """POST /api/room/attachment?room=<id>[&name=<the file's own name>], the
+        file as the body: stored in the room's attachments folder,
+        ``{ok, room, name, path, url, size, type, image}``."""
         if self._files_cross_site():
             return
         q = parse_qs(u.query, keep_blank_values=True)
@@ -20901,8 +20902,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "room": rid, **res, "url": attachment_url(rid, res["name"])})
 
     def _attachment_get(self, u) -> None:
-        """GET /api/room/attachment?room=<id>&name=<name>: one stored image,
-        from that room's attachments folder only."""
+        """GET /api/room/attachment?room=<id>&name=<name>[&download=1]: one
+        stored file, from that room's attachments folder only. An image or a
+        PDF is shown inline; anything else (a page, a drawing, a script among
+        them) only ever downloads, never sniffed, sandboxed should a browser
+        open it anyway."""
         q = parse_qs(u.query, keep_blank_values=True)
         try:
             rid = (q.get("room") or [""])[0].strip()
@@ -20917,12 +20921,15 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self._send_json(404, {"error": "not_found", "message": "There is no such attachment."})
             return
+        how = attachments.disposition(path, download=(q.get("download") or [""])[0] == "1")
         self.send_response(200)
         self.send_header("Content-Type", attachments.content_type(path))
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "private, max-age=86400")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Disposition", "inline; filename*=UTF-8''" + quote(path.name))
+        if how == "attachment":
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("Content-Disposition", how + "; filename*=UTF-8''" + quote(path.name))
         self.end_headers()
         self.wfile.write(data)
 

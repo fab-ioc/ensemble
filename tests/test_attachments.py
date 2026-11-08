@@ -176,10 +176,16 @@ class Attachments(unittest.TestCase):
         self.assertEqual(status, 200, r)
         self.assertEqual(os.path.getsize(r["path"]), 20 * MB)
 
-    def test_what_is_not_an_image_is_refused_whatever_the_header_says(self):
-        status, r = self.upload(b"<html><script>alert(1)</script></html>", headers={"Content-Type": "image/png"})
+    def test_a_file_named_like_an_image_that_is_not_one_is_refused(self):
+        status, r = self.upload(b"<html><script>alert(1)</script></html>", name="shot.png", headers={"Content-Type": "image/png"})
         self.assertEqual((status, r["error"]), (415, "not_an_image"))
+        self.assertIn("shot.png", r["message"])
         self.assertFalse(self.folder().exists() and os.listdir(self.folder()))
+        # Unnamed, the same bytes are a file of their own (never an image).
+        status, r = self.upload(b"<html><script>alert(1)</script></html>", headers={"Content-Type": "image/png"})
+        self.assertEqual(status, 200, r)
+        self.assertRegex(r["name"], r"^\d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d file$")
+        self.assertEqual((r["image"], r["type"]), (False, "application/octet-stream"))
 
     def test_no_length_an_empty_body_a_short_body_are_refused(self):
         status, r = self.upload(PNG, length=False)
@@ -214,7 +220,7 @@ class Attachments(unittest.TestCase):
         _s, o = self.upload(PNG, room=other, name="theirs.png")
         (self.folder() / "notes.txt").write_text("secret", encoding="utf-8")
         (self.task_dir / "outside.png").write_bytes(PNG)
-        for name in ["../outside.png", "..\\outside.png", "sub/x.png", "notes.txt", "..", "", " x.png",
+        for name in ["../outside.png", "..\\outside.png", "sub/x.png", "../notes.txt", "..", "", " x.png",
                      "../../other/attachments/theirs.png"]:
             status, _h, payload = self.get(name)
             self.assertIn(status, (400, 404), name)
@@ -529,6 +535,97 @@ class Attachments(unittest.TestCase):
         self.assertTrue(out.endswith("\n[image] /t/a.png"), out)
         self.assertEqual(message_refs.split_images(out)[1], ["/t/a.png"])
         self.assertEqual(message_refs.split_images(message_refs.strip_message_refs(text))[1], ["/t/a.png"])
+
+
+    # ---- any file (#318) ----
+
+    def test_any_kind_of_file_is_stored_under_its_own_name(self):
+        kinds = {"report.pdf": b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj",
+                 "data.csv": b"a,b\n1,2\n",
+                 "sheet.xlsx": b"PK\x03\x04" + b"\x00" * 40,
+                 "letter.docx": b"PK\x03\x04" + b"\x01" * 40,
+                 "bundle.zip": b"PK\x03\x04" + b"\x02" * 40,
+                 "notes.txt": "hello wörld\n".encode("utf-8"),
+                 "Makefile": b"all:\n\techo hi\n"}
+        for name, data in kinds.items():
+            status, r = self.upload(data, name=name)
+            self.assertEqual(status, 200, (name, r))
+            self.assertEqual((r["name"], r["size"], r["image"]), (name, len(data), False))
+            self.assertEqual(Path(r["path"]), self.folder() / name)
+            self.assertEqual(Path(r["path"]).read_bytes(), data)
+        self.assertEqual(sorted(os.listdir(self.folder())), sorted(kinds))
+
+    def test_a_file_over_20_mb_is_refused_naming_the_limit(self):
+        status, r = self.upload(Body(20 * MB + 1, head=b"%PDF-1.7"), name="big.pdf")
+        self.assertEqual((status, r["error"]), (413, "too_large"))
+        self.assertIn("at most 20 MB", r["message"])
+        self.assertFalse(self.folder().exists())
+        status, r = self.upload(Body(20 * MB, head=b"%PDF-1.7"), name="ok.pdf")
+        self.assertEqual((status, r["name"]), (200, "ok.pdf"))
+
+    def test_a_files_name_is_made_safe_and_never_taken_twice(self):
+        cases = [("../x", "x"), ("..\\..\\evil.pdf", "evil.pdf"), ("C:\\Users\\me\\plan.md", "plan.md"),
+                 ("résumé – 2026.docx", "résumé – 2026.docx"), ("日本語.txt", "日本語.txt"),
+                 ("a<b>:c|d?.csv", "a_b__c_d_.csv"), ("con.txt", "_con.txt"), (".env", "env"),
+                 ("trailing. ", "trailing"), ("x.not an ext", "x.not an ext")]
+        for given, want in cases:
+            status, r = self.upload(b"data", name=given)
+            self.assertEqual((status, r["name"]), (200, want), given)
+            self.assertEqual(Path(r["path"]).parent, self.folder(), given)
+        _s, a = self.upload(b"one", name="dup.csv")
+        _s, b = self.upload(b"two", name="dup.csv")
+        _s, c = self.upload(b"three", name="sub/dup.csv")
+        self.assertEqual((a["name"], b["name"], c["name"]), ("dup.csv", "dup-2.csv", "dup-3.csv"))
+        self.assertEqual((self.folder() / "dup.csv").read_bytes(), b"one")
+
+    def test_pages_drawings_and_scripts_only_ever_download(self):
+        for name, data in [("page.html", b"<script>alert(1)</script>"), ("pic.svg", b"<svg onload='alert(1)'/>"),
+                           ("run.js", b"alert(1)"), ("data.csv", b"a,b"), ("sheet.xlsx", b"PK\x03\x04xx")]:
+            _s, r = self.upload(data, name=name)
+            status, heads, got = self.get(r["name"])
+            self.assertEqual((status, got), (200, data), name)
+            self.assertTrue(heads["Content-Disposition"].startswith("attachment;"), (name, heads))
+            self.assertEqual(heads["X-Content-Type-Options"], "nosniff")
+            for active in ("html", "svg", "javascript"):
+                self.assertNotIn(active, heads["Content-Type"], name)
+            self.assertIn("sandbox", heads.get("Content-Security-Policy", ""), name)
+        # An image and a PDF show inline; asked to, they download too.
+        _s, r = self.upload(b"%PDF-1.7 x", name="r.pdf")
+        _s, heads, _d = self.get(r["name"])
+        self.assertEqual((heads["Content-Type"], heads["Content-Disposition"].split(";")[0]), ("application/pdf", "inline"))
+        _s, heads, _d = self.call("GET", f"/api/room/attachment?{urlencode({'room': self.rid, 'name': r['name'], 'download': '1'})}")
+        self.assertEqual(heads["Content-Disposition"].split(";")[0], "attachment")
+        _s, r = self.upload(PNG)
+        _s, heads, _d = self.get(r["name"])
+        self.assertEqual(heads["Content-Disposition"].split(";")[0], "inline")
+
+    def test_files_travel_as_file_lines_and_alone_get_their_point(self):
+        _s, a = self.upload(b"%PDF-1.7 x", name="spec.pdf")
+        _s, b = self.upload(b"a,b", name="rows.csv")
+        _s, c = self.upload(PNG)
+        got = []
+        with mock.patch.object(dashboard.Handler, "_resume_room",
+                               lambda h, room, text="", to="", key="": got.append(text)
+                               or dashboard.sends.mark(room["id"], [key], "delivered") or {"ok": True, "queued": 1}):
+            status, r = self.json_post("/api/room/resume", {"roomId": self.rid, "text": "", "key": "k1",
+                                                            "attachments": [a["name"], b["name"]]})
+            self.assertEqual(status, 200, r)
+            status, r = self.json_post("/api/room/resume", {"roomId": self.rid, "text": "and these", "key": "k2",
+                                                            "attachments": [c["name"], a["name"]]})
+            self.assertEqual(status, 200, r)
+        self.assertEqual(got[0], f"[file] {a['path']}\n[file] {b['path']}\n\n[point P1]")
+        self.assertEqual(got[1], f"and these\n\n[point P2]\n\n[image] {c['path']}\n[file] {a['path']}")
+        self.assertEqual(message_refs.split_images(got[1]), ("and these\n\n[point P2]", [c["path"], a["path"]]))
+
+    def test_a_file_named_inside_a_point_takes_its_place(self):
+        text = "## Points (2)\n\n**1.** read this\n[file] spec.pdf\n\n**2.** and this\n[image] s.png"
+        out = message_refs.with_images(text, ["/t/attachments/spec.pdf", "/t/attachments/s.png"])
+        self.assertEqual(out, "## Points (2)\n\n**1.** read this\n[file] /t/attachments/spec.pdf\n\n"
+                              "**2.** and this\n[image] /t/attachments/s.png")
+        self.assertEqual(message_refs.all_images(out), ["/t/attachments/spec.pdf", "/t/attachments/s.png"])
+        self.assertEqual(message_refs.image_line("C:/a/b.JPEG"), "[image] C:/a/b.JPEG")
+        self.assertEqual(message_refs.image_line("C:/a/b.pdf"), "[file] C:/a/b.pdf")
+        self.assertEqual(message_refs.image_line("C:/a/noext"), "[file] C:/a/noext")
 
 
 if __name__ == "__main__":
