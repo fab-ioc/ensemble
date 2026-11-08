@@ -8774,10 +8774,12 @@ function pruneAgeShort(ts) {
 function pruneItemHtml(it, busy, group) {
   const old = group === 'threads';
   const act = PRUNE.acts.get(it.id) || 'archive';
+  const warning = old && it.openPoints && it.openPoints.length ? it.openPoints.map(esc).join(', ') : '';
   const meta = [it.project, prunePartsText(it)].filter(Boolean).join(' · ');
   return `<li><label class="pr-item"><input type="checkbox" data-id="${esc(it.id)}"${PRUNE.ticks.get(it.id) ? ' checked' : ''}${busy ? ' disabled' : ''}>`
     + `<span class="pr-il">${esc(it.label || it.id)}</span><span class="pr-size">${old ? esc(pruneAgeShort(it.at)) : pruneBytes(it.bytes)}</span></label>`
     + (old ? `<select class="pr-old-act" data-act="${esc(it.id)}" aria-label="Action for ${esc(it.label || it.id)}"${busy ? ' disabled' : ''}><option value="archive"${act === 'archive' ? ' selected' : ''}>Archive</option><option value="delete"${act === 'delete' ? ' selected' : ''}>Delete</option></select>` : '')
+    + (warning ? `<div class="pr-im"><b>Open points: ${warning}</b></div>` : '')
     + `<div class="pr-im">${esc(meta)}${it.note ? ` · <b>${esc(it.note)}</b>` : ''}</div></li>`;
 }
 function pruneGroupHtml(g, busy) {
@@ -8804,9 +8806,12 @@ function pruneKeptHtml(kept) {
 }
 function pruneResultHtml(res) {
   const errs = res.done.filter(d => d.errors && d.errors.length);
-  const old = res.done.filter(d => String(d.id || '').startsWith('th:')).length;
-  const normal = res.done.length - old - errs.length;
-  return `<p class="pr-total">Freed ${pruneBytes(res.freed)}: ${old ? `${prunePlural(old, 'old thread or topic')} archived or deleted${normal ? `; ${prunePlural(normal, 'item')} deleted` : ''}.` : `${prunePlural(normal, 'item')} deleted.`}</p>`
+  const oldDone = res.done.filter(d => String(d.id || '').startsWith('th:') && !(d.errors || []).length);
+  const archived = oldDone.filter(d => d.action === 'archive').length;
+  const removed = oldDone.filter(d => d.action === 'delete').length;
+  const normal = res.done.length - oldDone.length - errs.length;
+  const oldText = [archived && `${prunePlural(archived, 'old thread or topic')} archived`, removed && `${prunePlural(removed, 'old thread or topic')} deleted`].filter(Boolean).join(', ');
+  return `<p class="pr-total">Freed ${pruneBytes(res.freed)}: ${[oldText, normal && `${prunePlural(normal, 'item')} deleted`].filter(Boolean).join('; ') || 'nothing changed'}.</p>`
     + (errs.length ? `<p class="cfg-hint">${prunePlural(errs.length, 'item')} only partly:</p><ul class="pr-items">${errs.slice(0, 100).map(d => `<li class="pr-im"><b>${esc(d.label || d.id)}</b>: ${esc(d.errors.join('; '))}</li>`).join('')}</ul>` : '')
     + (res.skipped.length ? `<p class="cfg-hint">${prunePlural(res.skipped.length, 'item')} left, checked again before deleting:</p><ul class="pr-items">${res.skipped.slice(0, 100).map(d => `<li class="pr-im"><b>${esc(d.label || d.id)}</b>: ${esc(d.why)}</li>`).join('')}</ul>` : '')
     + `<p class="cfg-hint">Each deletion is a line in ~/.ensemble/logs/prune.log.</p>`;

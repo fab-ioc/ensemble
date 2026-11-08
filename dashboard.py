@@ -12483,18 +12483,22 @@ def old_threads(cutoff: float, room_id: str = "") -> list:
         chat = p.get("name") or rid
         grouping = topics._build_view(p, idx, chatroom.ROOMS_DIR)
         in_topic = set()
-        for row in grouping["topics"]:
+        for row in grouping["topics"] + grouping.get("archived", []):
             in_topic |= set(row["threads"])
             at = float(row.get("updatedAt") or 0)
+            if row in grouping.get("archived", []):
+                continue
             if 0 < at < cutoff:
                 rows.append({"kind": "topic", "room": rid, "id": row["id"], "name": row.get("name") or "Topic",
-                             "chat": chat, "at": at, "threads": list(row["threads"])})
+                             "chat": chat, "at": at, "threads": list(row["threads"]),
+                             "openPoints": list(row.get("openPoints") or [])})
         for tid in threads._replied(idx) - in_topic:
             th = idx["threads"][tid]
             at = float(th.get("updatedAt") or 0)
             if 0 < at < cutoff:
                 rows.append({"kind": "thread", "room": rid, "id": tid, "name": th.get("title") or tid,
-                             "chat": chat, "at": at, "threads": [tid]})
+                             "chat": chat, "at": at, "threads": [tid],
+                             "openPoints": list(th.get("openPoints") or [])})
     return rows
 
 
@@ -12514,7 +12518,8 @@ def old_thread_act(row: dict, action: str, cutoff: float) -> str:
     if action not in ("archive", "delete"):
         return f"not an action here: {action!r}"
     rid = row.get("room") or ""
-    now = next((x for x in old_threads(cutoff, rid) if x["kind"] == row.get("kind") and x["id"] == row.get("id")), None)
+    now = ({"kind": row.get("kind"), "id": row.get("id")} if row.get("_validated") else
+           next((x for x in old_threads(cutoff, rid) if x["kind"] == row.get("kind") and x["id"] == row.get("id")), None))
     if now is None:
         return "updated since, archived or gone"
     room = chatroom.get_room(rid, public=False)

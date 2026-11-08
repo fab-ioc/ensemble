@@ -898,6 +898,7 @@ def _old_threads(hub: Hub, cutoff: float) -> list[dict]:
         items.append(_item("threads", f"th:{r.get('kind')}:{r.get('room')}:{r.get('id')}", label, [],
                            kind=r.get("kind"), room=r.get("room"), tid=r.get("id"), name=r.get("name"),
                            chat=r.get("chat"), at=r.get("at"), threads=list(r.get("threads") or []),
+                           openPoints=list(r.get("openPoints") or []),
                            action="archive"))
     return items
 
@@ -937,6 +938,17 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
     cutoff = hub.now() - int(preview.get("days", DEFAULT_DAYS)) * DAY
     done, skipped, freed = [], [], 0
     todo = [it for g in preview.get("groups", []) for it in g.get("items", []) if it.get("id") in want]
+    thread_valid = {}
+    if any(it.get("group") == "threads" for it in todo):
+        for it in todo:
+            if it.get("group") == "threads":
+                thread_valid.setdefault(it.get("room"), set()).add((it.get("kind"), it.get("tid")))
+        for rid in list(thread_valid):
+            try:
+                thread_valid[rid] = {(x.get("kind"), x.get("id")) for x in hub.old_threads(cutoff)
+                                     if x.get("room") == rid}
+            except Exception:
+                thread_valid[rid] = set()
     for i, it in enumerate(todo):
         if stop and stop():
             skipped.append({"id": it["id"], "why": "stopped"})
@@ -965,17 +977,27 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
                 n, errs = _prune_task(hub, r, by_pid, projects, it, live_sids | others, how)
             elif it["group"] == "threads":
                 action = "delete" if actions.get(it["id"]) == "delete" else "archive"
-                why = _old_thread_run(hub, it, action, cutoff, how)
+                key = (it.get("kind"), it.get("tid"))
+                if key not in thread_valid.get(it.get("room"), set()):
+                    why = "updated since, archived or gone"
+                else:
+                    checked = dict(it)
+                    checked["_validated"] = True
+                    why = _old_thread_run(hub, checked, action, cutoff, how)
                 if why:
                     skipped.append({"id": it["id"], "label": it.get("label"), "why": why})
                     continue
                 n, errs = 0, []
+                action_done = action
             else:
                 n, errs = _prune_parts(hub, it, current, projects, how, set(rooms))
         except Exception as e:                      # noqa: BLE001
             n, errs = 0, [f"{type(e).__name__}: {e}"]
         freed += n
-        done.append({"id": it["id"], "label": it.get("label"), "bytes": n, "errors": errs})
+        result = {"id": it["id"], "label": it.get("label"), "bytes": n, "errors": errs}
+        if it.get("group") == "threads" and not errs:
+            result["action"] = action_done
+        done.append(result)
     hub.progress("", 0, 0)
     return {"freed": freed, "done": done, "skipped": skipped}
 
