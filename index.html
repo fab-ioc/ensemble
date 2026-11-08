@@ -7423,7 +7423,12 @@ function swGroups(rows, items, projects, opts) {
     }
   }
   for (const p of projs) {
-    if (!p.poRoomId) continue;
+    // A project with no PO is a row too (#317): it opens the project, so every
+    // registered project is reachable from the list, quiet or not.
+    if (!p.poRoomId) {
+      g.projects.push({ key: 'proj:' + p.id, row: null, it: null, proj: true, pid: p.id, project: p.name || '', at: 0 });
+      continue;
+    }
     const r = byRoom.get(p.poRoomId) || null;
     g.projects.push({ key: p.poRoomId, row: r, it: itemOf.get(p.poRoomId) || null, po: true,
                       pid: p.id, project: p.name || '', at: r ? lastNews(r) : 0 });
@@ -7515,7 +7520,7 @@ function swRecent(rows, items, projects, opts) {
     else s.done++;
     if (k === 'needs') s.at = Math.max(s.at, swActivity(e.row, e.it));
   }
-  const out = [];
+  const out = [], quiet = [];
   for (const p of projs) {
     const s = sigs.get(p.id) || sig(p.id);
     if (p.poRoomId) {
@@ -7527,6 +7532,10 @@ function swRecent(rows, items, projects, opts) {
     } else if (s.needs.length || s.review.length || s.running) {
       out.push({ key: 'proj:' + p.id, row: null, it: null, proj: true, grp: 'project', pid: p.id,
                  project: p.name || '', sig: s, at: s.at });
+    } else {
+      // Nothing recent (#317): it waits in Other projects, folded at the foot.
+      quiet.push({ key: 'proj:' + p.id, row: null, it: null, proj: true, grp: 'project', pid: p.id,
+                   project: p.name || '', sig: s, at: s.at });
     }
   }
   // Tasks in no project: Unassigned's that are tasks, and an ask from one the
@@ -7542,7 +7551,8 @@ function swRecent(rows, items, projects, opts) {
   }
   for (const e of g.needs) if (!e.po && !e.pid && !seen.has(e.key)) out.push({ ...e, grp: 'needs', at: swActivity(e.row, e.it) });
   out.sort((a, b) => (b.at - a.at) || a.project.localeCompare(b.project) || String(a.key).localeCompare(String(b.key)));
-  return { recent: out, unassigned: g.unassigned.filter(e => !e.row.headless) };
+  quiet.sort((a, b) => a.project.localeCompare(b.project) || String(a.key).localeCompare(String(b.key)));
+  return { recent: out, quiet, unassigned: g.unassigned.filter(e => !e.row.headless) };
 }
 // Nothing moves under the pointer: while it is over the list, every entry
 // keeps the group and place it had (`shown`: group -> keys), its content
@@ -7629,8 +7639,8 @@ function swRowHtml(e, group, selected) {
   const no = e.po || e.proj ? '' : e.row ? taskNoText(r, true) : (it && it.ref) || '';
   const bits = [], words = [];
   if (needs) bits.push(`<span class="loz ${swTone(it.state)}" title="${esc(it.reason || '')}">${esc(ATTN_LABEL[it.state] || it.state)}</span>`);
-  if (group === 'projects') words.push(swPoLine(e));
-  else if (group === 'project') words.push(nounText('{Project} with no PO'));
+  if (group === 'projects' && !e.proj) words.push(swPoLine(e));
+  else if (group === 'project' || group === 'quiet' || e.proj) words.push(nounText('{Project} with no PO'));
   else if (group === 'unassigned') {
     // Where it ran (the dot says whether it runs); a past one opens read only.
     const folder = String(r.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
@@ -7837,7 +7847,7 @@ function swByProject(g) {
     const grp = out.get(pid), id = (e.po ? 'p|' : 't|') + e.key;
     if (grp.keys.has(id)) return;
     grp.keys.add(id);
-    if (e.po) grp.list.unshift([e, k]); else grp.list.push([e, k]);
+    if (e.po || e.proj) grp.list.unshift([e, k]); else grp.list.push([e, k]);
   };
   for (const e of g.needs || []) add(e, 'needs');
   for (const e of g.projects || []) add(e, 'projects');
@@ -7867,6 +7877,15 @@ function swListHtml(g, sel, doneOpen, un, by, clear) {
     return `<details class="sw-group${list.length ? '' : ' empty'}" data-group="done"${doneOpen ? ' open' : ''}>
       <summary class="sw-ghead">${head('Done today', list.length)}</summary>${list.map(e => swRowHtml(e, 'done', on(e, 'done'))).join('')}</details>`;
   };
+  // Other projects (#317): the projects with no PO and nothing recent, folded
+  // at the foot, so a quiet one is still a row. Its fold is kept per browser.
+  const quiet = () => {
+    const list = g.quiet || [];
+    if (!list.length) return '';
+    return `<details class="sw-group" data-group="quiet"${u.quiet ? ' open' : ''}>
+      <summary class="sw-ghead" title="${esc(nounText('{Projects} with no PO and nothing recent'))}">${head(nounText('Other {projects}'), list.length)}</summary>`
+      + `${list.map(e => swRowHtml(e, 'quiet', false)).join('')}</details>`;
+  };
   const unassigned = () => {
     if (!g.unassigned) return '';
     const list = g.unassigned;
@@ -7886,11 +7905,11 @@ function swListHtml(g, sel, doneOpen, un, by, clear) {
     const onR = e => e.po ? (!!s.po && e.pid === s.po) : (!e.proj && !!s.sid && !!e.row && e.row.sessionId === s.sid);
     return caHead() + `<section class="sw-group${list.length ? '' : ' empty'}" data-group="recent" aria-label="Recent activity">
       <h3 class="sw-ghead">${head('Recent activity', list.length)}</h3>${list.map(e => swRowHtml(e, e.grp, onR(e))).join('')}</section>`
-      + unassigned();
+      + quiet() + unassigned();
   }
   if (proj) {
     return caHead() + swByProject(g).filter(p => p.pid || !g.unassigned).map(p => `<section class="sw-group" data-group="project" data-proj="${esc(p.pid)}" aria-label="${esc(p.name)}">
-      <h3 class="sw-ghead">${head(p.name, p.list.filter(([e]) => !e.po).length)}</h3>${p.list.map(([e, k]) => swRowHtml(e, k, on(e, k))).join('')}</section>`).join('')
+      <h3 class="sw-ghead">${head(p.name, p.list.filter(([e]) => !e.po && !e.proj).length)}</h3>${p.list.map(([e, k]) => swRowHtml(e, k, on(e, k))).join('')}</section>`).join('')
       + unassigned() + done();
   }
   return SW_GROUPS.map(([k, name]) => {
@@ -19387,6 +19406,9 @@ var SW_SHOWN = null, SW_DONE_OPEN = false;   // var: renderRows may run before t
 // The list's element, wherever it is: its column, its dock panel, its window.
 var SW_EL = document.getElementById('switcher');
 var SW_UN = { open: false, all: false };      // Unassigned: unfolded, and showing all
+// Other projects (#317), unfolded: kept per browser.
+var SW_QUIET_KEY = 'cd-switcher-quiet';
+try { SW_UN.quiet = localStorage.getItem(SW_QUIET_KEY) === '1'; } catch (e) { SW_UN.quiet = false; }
 var SW_FILTER = '';                           // the list's filter box (#161); not kept across a reload
 // A phone: the project cards page, reached from the list's foot and the
 // project menu's All projects; and where the list was when it was left (its
@@ -19613,6 +19635,10 @@ $('#sw-list').addEventListener('toggle', (ev) => {
   if (SW_FILTER.trim()) return;   // a filter opens them for itself; what you chose stays for after it
   if (ev.target.matches('details[data-group="done"]')) SW_DONE_OPEN = ev.target.open;
   if (ev.target.matches('details[data-group="unassigned"]')) SW_UN.open = ev.target.open;
+  if (ev.target.matches('details[data-group="quiet"]') && SW_UN.quiet !== ev.target.open) {
+    SW_UN.quiet = ev.target.open;
+    try { localStorage.setItem(SW_QUIET_KEY, SW_UN.quiet ? '1' : '0'); } catch (e) {}
+  }
 }, true);
 // The list's filter narrows its rows as you type; a new filter is never
 // frozen under the pointer (the box is in the list, under it as you type).
