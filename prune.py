@@ -27,6 +27,11 @@ The groups of a preview:
   worktrees git still lists whose folder is gone.
 * ``housekeeping``: rotated logs, uploads, sends and terminal spools of tasks
   that are gone, launch files older than a day.
+* ``threads`` (#319): old threads and topics of the PO chats, not updated in
+  N days and not archived. An item is archived by default (it comes back by
+  itself on a new message) or deleted when the person picks Delete for it
+  (only the threads record changes: transcripts and points are kept). It
+  frees no bytes: it clears the lists.
 
 Never touched, whatever is ticked: a task that is not Done, a task with a live
 terminal, a PO's room and its current conversation, a project's Documents
@@ -59,9 +64,9 @@ RECENT_S = 3600                 # a conversation written this recently is never 
 LOG_NAME = "prune.log"
 # A task's copy of a project with no git: what it changed may be in no other place.
 COPY_NOTE = "its repo/ is a copy with no git: its work may exist nowhere else"
-GROUPS = ("done", "po", "hub", "own", "orphans", "housekeeping")
+GROUPS = ("done", "po", "hub", "own", "orphans", "housekeeping", "threads")
 # Ticked by itself in a preview: everything but the person's own conversations.
-TICKED = {"done": True, "po": True, "hub": True, "own": False, "orphans": True, "housekeeping": True}
+TICKED = {"done": True, "po": True, "hub": True, "own": False, "orphans": True, "housekeeping": True, "threads": True}
 # Names a task folder holds that say it is one (and never a project's own).
 _KEEP_NAMES = {"documents", *protected_paths.LOWER_NAMES, ".history", ".git"}
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -93,6 +98,10 @@ class Hub:
     documents_dir: Callable[[dict], str]
     scratch_root: Callable[[str], str] = lambda cwd: ""
     pty_ids: Callable[[], set] = lambda: set()  # every terminal the hub lists, live or kept
+    # #319: cutoff -> old threads and topics of the PO chats (rows: kind,
+    # room, id, name, chat, at, threads); (row, action, cutoff) -> "" or why not.
+    old_threads: Callable[[float], list] = lambda cutoff: []
+    thread_act: Callable[[dict, str, float], str] = lambda row, action, cutoff: "not available"
     progress: Callable[..., None] = lambda *a, **k: None
     now: Callable[[], float] = time.time
     # (agent, sid, file) -> whether the conversation's text is kept by the hub
@@ -642,10 +651,14 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
         items += _orphans(hub, projects, rooms, cutoff, kept, unread_folders, stop)
     if "housekeeping" in groups and not (stop and stop()):
         items += _housekeeping(hub, room_ids | unread_ids, live, cutoff)
+    if "threads" in groups and not (stop and stop()):
+        hub.progress("Reading old threads and topics")
+        items += _old_threads(hub, cutoff)
 
     out_groups = []
     for g in GROUPS:
-        its = sorted((x for x in items if x["group"] == g), key=lambda x: -x["bytes"])
+        its = sorted((x for x in items if x["group"] == g),
+                     key=(lambda x: x.get("at") or 0) if g == "threads" else (lambda x: -x["bytes"]))
         if g in groups:
             out_groups.append({"id": g, "items": its, "bytes": sum(x["bytes"] for x in its),
                                "ticked": TICKED[g]})
@@ -869,16 +882,50 @@ def _housekeeping(hub: Hub, room_ids: set, live: set, cutoff: float) -> list[dic
     return items
 
 
+def _old_threads(hub: Hub, cutoff: float) -> list[dict]:
+    """One item per old thread or topic, oldest first: archive by default."""
+    try:
+        rows = hub.old_threads(cutoff) or []
+    except Exception as e:                          # noqa: BLE001
+        print(f"[prune] old threads not read: {e!r}", flush=True)
+        return []
+    items = []
+    for r in rows:
+        noun = "Topic" if r.get("kind") == "topic" else "Thread"
+        n = len(r.get("threads") or [])
+        label = (f"{r.get('chat') or ''} · {noun}: {r.get('name') or r.get('id')}"
+                 + (f" ({n} thread{'' if n == 1 else 's'})" if noun == "Topic" else ""))
+        items.append(_item("threads", f"th:{r.get('kind')}:{r.get('room')}:{r.get('id')}", label, [],
+                           kind=r.get("kind"), room=r.get("room"), tid=r.get("id"), name=r.get("name"),
+                           chat=r.get("chat"), at=r.get("at"), threads=list(r.get("threads") or []),
+                           action="archive"))
+    return items
+
+
+def _old_thread_run(hub: Hub, it: dict, action: str, cutoff: float, how: str) -> str:
+    """Archive or delete one old thread or topic, its age checked again by
+    the hub; logged. "" when done, else why not."""
+    row = {"kind": it.get("kind"), "room": it.get("room"), "id": it.get("tid")}
+    why = hub.thread_act(row, action, cutoff)
+    if not why:
+        log(hub, f"{it.get('label')}: {'deleted' if action == 'delete' else 'archived'}", "", 0, how=how)
+    return why
+
+
 # ---------------------------------------------------------------------------
 # Deleting
 # ---------------------------------------------------------------------------
 
-def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[], bool] | None = None) -> dict:
+def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[], bool] | None = None,
+        actions: dict | None = None) -> dict:
     """Delete the items of ``preview`` whose id is in ``ids``. Each is checked
     again first against the state now (a task still Done and not running, a
     PO's conversation still past, a folder still safe); what fails a check, or
-    cannot be deleted, is reported and left. Returns what went and what not."""
+    cannot be deleted, is reported and left. Returns what went and what not.
+    ``actions`` (#319): {id: "delete"} for an old thread or topic to delete
+    rather than archive."""
     want = set(ids or [])
+    actions = actions if isinstance(actions, dict) else {}
     projects = [p for p in hub.projects() if isinstance(p, dict)]
     by_pid = {p.get("id"): p for p in projects}
     rooms = {r["id"]: r for r in hub.rooms() if isinstance(r, dict) and r.get("id")}
@@ -916,6 +963,13 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
                     continue
                 others = set().union(*(seats for k, seats in seats_of.items() if k != rid))
                 n, errs = _prune_task(hub, r, by_pid, projects, it, live_sids | others, how)
+            elif it["group"] == "threads":
+                action = "delete" if actions.get(it["id"]) == "delete" else "archive"
+                why = _old_thread_run(hub, it, action, cutoff, how)
+                if why:
+                    skipped.append({"id": it["id"], "label": it.get("label"), "why": why})
+                    continue
+                n, errs = 0, []
             else:
                 n, errs = _prune_parts(hub, it, current, projects, how, set(rooms))
         except Exception as e:                      # noqa: BLE001

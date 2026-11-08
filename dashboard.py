@@ -12466,6 +12466,68 @@ def topic_threads(project: dict, room: dict, topic_ids: list) -> list:
                               if row["id"] in want for t in row["threads"]))
 
 
+def old_threads(cutoff: float, room_id: str = "") -> list:
+    """Free disk space's "Old threads and topics" (#319): in every PO chat
+    (or ``room_id``'s), the topics not updated since ``cutoff`` and the
+    threads in no listed topic not updated since, none of them archived.
+    Rows: {kind thread | topic, room, id, name, chat, at, threads}."""
+    rows = []
+    for p in load_projects():
+        rid = (p.get("poRoomId") or "").strip() if isinstance(p, dict) else ""
+        if not rid or (room_id and rid != room_id) or not threads.is_threaded(rid):
+            continue
+        room = chatroom.get_room(rid, public=False)
+        idx = threads.build(rid, room, show_progress=False) if room else None
+        if idx is None:
+            continue
+        chat = p.get("name") or rid
+        grouping = topics._build_view(p, idx, chatroom.ROOMS_DIR)
+        in_topic = set()
+        for row in grouping["topics"]:
+            in_topic |= set(row["threads"])
+            at = float(row.get("updatedAt") or 0)
+            if 0 < at < cutoff:
+                rows.append({"kind": "topic", "room": rid, "id": row["id"], "name": row.get("name") or "Topic",
+                             "chat": chat, "at": at, "threads": list(row["threads"])})
+        for tid in threads._replied(idx) - in_topic:
+            th = idx["threads"][tid]
+            at = float(th.get("updatedAt") or 0)
+            if 0 < at < cutoff:
+                rows.append({"kind": "thread", "room": rid, "id": tid, "name": th.get("title") or tid,
+                             "chat": chat, "at": at, "threads": [tid]})
+    return rows
+
+
+def topic_act(project: dict, room: dict, action: str, topic_ids: list) -> list:
+    """Archive, restore or delete topics (#319), each with its threads; the
+    threads it applied to."""
+    rid = project.get("poRoomId") or ""
+    topics.view(project, room, chatroom.ROOMS_DIR)
+    tids = topic_threads(project, room, topic_ids)
+    topics.change(project, chatroom.ROOMS_DIR, action, topics=list(topic_ids))
+    return thread_act(rid, room, action, tids) if tids else []
+
+
+def old_thread_act(row: dict, action: str, cutoff: float) -> str:
+    """Archive or delete one row of old_threads, checked again first: still
+    there, still not updated since ``cutoff``. "" when done, else why not."""
+    if action not in ("archive", "delete"):
+        return f"not an action here: {action!r}"
+    rid = row.get("room") or ""
+    now = next((x for x in old_threads(cutoff, rid) if x["kind"] == row.get("kind") and x["id"] == row.get("id")), None)
+    if now is None:
+        return "updated since, archived or gone"
+    room = chatroom.get_room(rid, public=False)
+    if row["kind"] == "thread":
+        thread_act(rid, room, action, [row["id"]])
+        return ""
+    project = next((p for p in load_projects() if isinstance(p, dict) and (p.get("poRoomId") or "") == rid), None)
+    if project is None:
+        return "its project is gone"
+    topic_act(project, room, action, [row["id"]])
+    return ""
+
+
 def thread_view_answer(rid: str, out: dict, had: str, *, keep: bool = True) -> dict:
     """A channel or thread view as sent: its ``sig`` names this very view
     (the index's and a digest of the rest). The view the page holds (``had``)
@@ -14167,7 +14229,8 @@ def _prune_hub() -> prune.Hub:
         documents_dir=lambda p: project_documents_dir(p, persist=False),
         scratch_root=lambda cwd: str(_scratch_root_for(cwd) or ""),
         progress=PRUNE_JOB.progress, keep_text=keep_conversation_text,
-        pty_ids=lambda: {x.get("id") for x in ptyrun.list_sessions() if x.get("id")})
+        pty_ids=lambda: {x.get("id") for x in ptyrun.list_sessions() if x.get("id")},
+        old_threads=old_threads, thread_act=old_thread_act)
 
 
 def keep_conversation_text(agent: str, sid: str, path: str) -> bool:
@@ -14228,7 +14291,7 @@ def prune_scan_start(days: int, groups=None) -> bool:
     return PRUNE_JOB.start("scan", go, replace=True)
 
 
-def prune_run_start(ids: list) -> tuple[bool, str]:
+def prune_run_start(ids: list, actions: dict | None = None) -> tuple[bool, str]:
     preview = PRUNE_JOB.snapshot().get("preview")
     if not preview:
         return False, "Make a preview first."
@@ -14238,7 +14301,7 @@ def prune_run_start(ids: list) -> tuple[bool, str]:
         return False, "Nothing ticked."
 
     def go(stop):
-        res = prune.run(_prune_hub(), preview, ids, stop=stop)
+        res = prune.run(_prune_hub(), preview, ids, stop=stop, actions=actions)
         PRUNE_JOB._set(result=res, preview=None)
         print(f"[prune] freed {res['freed']} bytes: {len(res['done'])} items, {len(res['skipped'])} skipped",
               flush=True)
@@ -22039,7 +22102,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
                 self._send_json(400, {"error": "bad_ids", "message": "Tick what should go."})
                 return
-            ok, msg = prune_run_start(ids)
+            # #319: {id: "delete"} for an old thread or topic to delete, not archive.
+            actions = data.get("actions") if isinstance(data.get("actions"), dict) else {}
+            actions = {k: v for k, v in actions.items() if isinstance(k, str) and v == "delete"}
+            ok, msg = prune_run_start(ids, actions)
             if not ok:
                 self._send_json(409 if not msg else 400, {"error": "not_started",
                                                           "message": msg or "A preview or a deletion is already running."})
