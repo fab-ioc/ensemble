@@ -1760,6 +1760,8 @@ def _update_task(ctx, args, handler):
         changes_other_than_workflow = any(args.get(k) is not None
                                           for k in ("title", "spec", "goal", "priority", "agents", "after",
                                                     "onReady", "keepAgents", "reviewLimit"))
+        # goal: null clears a goal (below), so an owner may not pass the key at all.
+        changes_other_than_workflow = changes_other_than_workflow or "goal" in args
         if (room["id"] != ctx["room"]["id"] or changes_other_than_workflow
                 or _d.normalize_workflow(args.get("workflow")) != "inreview"):
             raise ToolError(

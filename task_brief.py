@@ -15,6 +15,7 @@ stands, and facts the hub has without a model call.
 - **The row's brief** (``row["brief"]``, :func:`row_brief`): the two above,
   the latest report (to link to it) and the reviewer's round.
 """
+import hashlib
 import json
 import re
 import subprocess
@@ -31,6 +32,7 @@ BACKFILL_BATCH = 6              # tasks per model call
 BACKFILL_SPEC_CHARS = 2000      # of each spec the model reads
 BACKFILL_GAP_S = 2.0
 BACKFILL_MAX_FAILS = 3          # in a row: the model is not there; stop this pass
+BACKFILL_MAX_TASKS = 60         # per hub start; the rest wait for the next
 DONE_RECENT_S = 14 * 86400      # a Done task older than this is not backfilled
 
 _STARTED = False
@@ -68,7 +70,7 @@ def set_goal(room: dict, goal: str, source: str = "po") -> dict | None:
     fields = {"goal": goal, "goalSource": source if goal else "", "goalAt": time.time() if goal else 0}
     out = _d.chatroom.patch_room(room["id"], **fields)
     if out is not None:
-        _d._patch_task_json(room.get("taskDir", ""), goal=goal, goalSource=fields["goalSource"])
+        _d._patch_task_json(room.get("taskDir", ""), **fields)
     return out
 
 
@@ -78,12 +80,26 @@ def set_auto_goal(room: dict, goal: str) -> bool:
     goal, _ = clean(goal)
     if not goal:
         return False
+    at = time.time()
     out = _d.chatroom.patch_room_if(room["id"], lambda r: not (r.get("goal") or "").strip(),
-                                    goal=goal, goalSource="auto", goalAt=time.time())
+                                    goal=goal, goalSource="auto", goalAt=at)
     if out is None:
         return False
-    _d._patch_task_json(room.get("taskDir", ""), goal=goal, goalSource="auto")
+    _d._patch_task_json(room.get("taskDir", ""), goal=goal, goalSource="auto", goalAt=at)
     return True
+
+
+def spec_key(spec: str) -> str:
+    """A short hash of the spec, to tell whether it changed since the backfill
+    last asked about it."""
+    return hashlib.sha1((spec or "").strip().encode("utf-8")).hexdigest()[:16]
+
+
+def mark_tried(room: dict) -> None:
+    """The model answered the batch but gave this task no goal: remember the
+    spec it saw, so later hub starts skip it until the spec changes."""
+    _d.chatroom.patch_room_if(room["id"], lambda r: not (r.get("goal") or "").strip(),
+                              goalTried={"spec": spec_key(room.get("spec") or ""), "at": time.time()})
 
 
 def set_state(room_id: str, text: str, by: str, at: float | None = None) -> dict | None:
@@ -182,10 +198,14 @@ def _po_rooms() -> set:
 
 def needs_goal(room: dict, po_rooms: set, now: float) -> bool:
     """A task the backfill writes a goal for: a numbered task with a spec and
-    no goal, not a PO's room, not Done for longer than DONE_RECENT_S."""
+    no goal, not a PO's room, not Done for longer than DONE_RECENT_S, and not
+    one the model already passed over with the same spec (mark_tried)."""
     if (room.get("goal") or "").strip() or not room.get("no") or room.get("id") in po_rooms:
         return False
     if not (room.get("spec") or "").strip():
+        return False
+    tried = room.get("goalTried")
+    if isinstance(tried, dict) and tried.get("spec") == spec_key(room.get("spec") or ""):
         return False
     if (room.get("workflow") or "").lower() == "done" and (room.get("updatedAt") or 0) < now - DONE_RECENT_S:
         return False
@@ -198,7 +218,7 @@ def backfill_candidates() -> list[dict]:
     rooms = [r for r in _d.chatroom.list_rooms(copy_rooms=False) if needs_goal(r, po, now)]
     # The ones on the board's working columns first, newest first.
     rooms.sort(key=lambda r: ((r.get("workflow") or "").lower() == "done", -(r.get("updatedAt") or 0)))
-    return rooms
+    return rooms[:BACKFILL_MAX_TASKS]
 
 
 def ask_model(batch: list[dict]) -> dict[str, str] | None:
@@ -260,6 +280,8 @@ def backfill(ask=None, sleep=time.sleep) -> dict:
             for r in batch:
                 if r["id"] in got and set_auto_goal(r, got[r["id"]]):
                     written += 1
+                elif r["id"] not in got or not clean(got[r["id"]])[0]:
+                    mark_tried(r)
         if i + BACKFILL_BATCH < len(todo):
             sleep(BACKFILL_GAP_S)
     return {"written": written, "failed": failed, "stopped": False}

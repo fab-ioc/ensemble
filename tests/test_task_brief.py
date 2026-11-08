@@ -127,6 +127,20 @@ class Goal(_Rooms):
             ensemble_tools._update_task(self.ctx(), {"taskId": self.rid, "goal": "Mine."}, self.handler)
         self.assertFalse(self.room().get("goal"))
 
+    def test_an_owner_cannot_clear_the_goal_with_null(self):
+        task_brief.set_goal(self.room(), "The PO's goal.")
+        with self.assertRaises(ensemble_tools.ToolError):
+            ensemble_tools._update_task(self.ctx(), {"taskId": self.rid, "goal": None,
+                                                     "workflow": "inreview"}, self.handler)
+        self.assertEqual(self.room()["goal"], "The PO's goal.")
+
+    def test_task_json_gets_goal_at(self):
+        task_brief.set_goal(self.room(), "The PO's goal.")
+        self.assertGreater(self.task_json()["goalAt"], 0)
+        task_brief.set_goal(self.room(), "")
+        self.assertTrue(task_brief.set_auto_goal(self.room(), "A model's goal."))
+        self.assertEqual(self.task_json()["goalAt"], self.room()["goalAt"])
+
     def test_the_auto_goal_never_replaces_one(self):
         task_brief.set_goal(self.room(), "The PO's goal.")
         self.assertFalse(task_brief.set_auto_goal(self.room(), "A model's goal."))
@@ -218,6 +232,33 @@ class Backfill(_Rooms):
         self.assertEqual(len(calls), task_brief.BACKFILL_MAX_FAILS)
         self.assertFalse(self.room().get("goal"))
 
+    def test_a_task_the_model_passed_over_is_not_asked_again_until_its_spec_changes(self):
+        asked = []
+
+        def ask(batch):
+            asked.append([r["id"] for r in batch])
+            return {self.rid: "Goal of the motors."}      # nothing for self.other
+        task_brief.backfill(ask=ask, sleep=lambda s: None)
+        self.assertEqual(self.room(self.other)["goalTried"]["spec"], task_brief.spec_key("Sort the gears."))
+        self.assertIn("goalTried", chatroom.SLIM_KEEP)
+        self.assertEqual([r["id"] for r in task_brief.backfill_candidates()], [])
+        chatroom.patch_room(self.other, spec="Sort the gears by size.")
+        self.assertEqual([r["id"] for r in task_brief.backfill_candidates()], [self.other])
+
+    def test_an_empty_answer_counts_as_passed_over(self):
+        task_brief.backfill(ask=lambda b: {r["id"]: "  " for r in b} | {"x": "y"}, sleep=lambda s: None)
+        self.assertEqual(task_brief.backfill_candidates(), [])
+
+    def test_a_failed_call_does_not_mark_anything(self):
+        task_brief.backfill(ask=lambda b: None, sleep=lambda s: None)
+        self.assertEqual(len(task_brief.backfill_candidates()), 2)
+
+    def test_one_start_asks_about_at_most_the_cap(self):
+        for i in range(task_brief.BACKFILL_MAX_TASKS + 5):
+            rid = chatroom.create_room(f"T{i}", [{"identity": "claude", "agent": "claude"}])["id"]
+            chatroom.patch_room(rid, no=100 + i, spec="Do it.")
+        self.assertEqual(len(task_brief.backfill_candidates()), task_brief.BACKFILL_MAX_TASKS)
+
     def test_the_answer_must_be_the_json_asked_for(self):
         batch = {"t1": {"id": "room-a"}, "t2": {"id": "room-b"}}
         self.assertEqual(task_brief.parse_answer('x {"t1": "Goal A.", "t3": "?"} y', batch),
@@ -241,12 +282,46 @@ class Commits(unittest.TestCase):
         self.git("config", "user.name", "t")
         self.git("commit", "-q", "--allow-empty", "-m", "base")
         self.git("checkout", "-q", "-b", "feat")
+        # A rebase gives every commit the same new committer time; the
+        # author times are the ones a card compares with.
         for i, when in enumerate(("1700000000", "1700000100", "1700000200")):
             self.git("commit", "-q", "--allow-empty", "-m", f"c{i}",
-                     GIT_COMMITTER_DATE=f"@{when} +0000", GIT_AUTHOR_DATE=f"@{when} +0000")
+                     GIT_COMMITTER_DATE="@1800000000 +0000", GIT_AUTHOR_DATE=f"@{when} +0000")
         got = dashboard.branch_commits(str(self.repo), background=False)
         self.assertEqual(got["ahead"], 3, got)
         self.assertEqual(got["times"], [1700000200, 1700000100, 1700000000])
+
+
+NODE = __import__("shutil").which("node")
+BRIEF_JS = r"""
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+const agoSpan = () => '1m', WORKFLOW_COLS = [], workflowOf = () => '', REVIEW_WORDS = {};
+const changesChipHtml = () => '', msgLinkHtml = () => '';
+%s
+const st = { text: 'Half', by: 'claude', at: 100 };
+const card = (ahead, times) => cardBriefHtml({ brief: { goal: 'G', state: st }, commits: { ahead, times } });
+const t20 = Array.from({ length: 20 }, (_, i) => 200 + i);
+console.log(JSON.stringify({ exact: card(20, t20), more: card(25, t20), some: card(25, [300, 50]) }));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class StaleMark(unittest.TestCase):
+    """'before the last 20+ commits' only when there are more than 20."""
+
+    def test_plus_only_past_the_times_sent(self):
+        index = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+        i = index.index("function cardBriefHtml(")
+        src = index[i:index.index("\n}\n", i) + 3]
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "brief.cjs"
+            script.write_text(BRIEF_JS % src, encoding="utf-8")
+            out = subprocess.run([NODE, str(script)], capture_output=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        got = json.loads(out.stdout)
+        self.assertIn("before the last 20 commits", got["exact"])
+        self.assertIn("before the last 20+ commits", got["more"])
+        self.assertIn("before the last 1 commit<", got["some"])
 
 
 if __name__ == "__main__":

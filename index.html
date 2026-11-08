@@ -7237,7 +7237,10 @@ function cardBriefHtml(r) {
   if (st && st.text) {
     const times = (r.commits && Array.isArray(r.commits.times)) ? r.commits.times : [];
     const newer = times.filter(t => Number(t) > Number(st.at || 0)).length;
-    const stale = newer ? ` · <span class="cb-stale">before the last ${newer}${newer >= 20 && times.length >= 20 ? '+' : ''} commit${newer === 1 ? '' : 's'}</span>` : '';
+    // "20+" only when every time the hub sent is newer and the branch has more
+    // commits than it sent times for.
+    const more = newer === times.length && Number(r.commits && r.commits.ahead) > times.length;
+    const stale = newer ? ` · <span class="cb-stale">before the last ${newer}${more ? '+' : ''} commit${newer === 1 ? '' : 's'}</span>` : '';
     const by = st.by ? esc(st.by) + ', ' : '';
     lines.push(`<div class="cb-state" data-k="state"><div class="cb-txt"><span class="cb-lbl">Where we are:</span> ${esc(st.text)}</div>`
       + `<div class="cb-meta">${by}${agoSpan(st.at)} ago${stale}</div></div>`);

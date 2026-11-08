@@ -1672,13 +1672,14 @@ def _count_commits(root: str, key: tuple) -> dict | None:
     and the commit times of the newest BRANCH_COMMIT_TIMES of them, newest
     first (a card's "before the last 3 commits"). None when git fails."""
     try:
-        out = _run(["git", "-C", root, "log", "--format=%ct", f"{key[1]}..{key[0]}"],
+        out = _run(["git", "-C", root, "log", "--format=%at", f"{key[1]}..{key[0]}"],
                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
         return None
-    times = [int(t) for t in (out.stdout or "").split() if t.isdigit()]
+    # Author time: a rebase rewrites the commit time of every commit it moves.
+    times = sorted((int(t) for t in (out.stdout or "").split() if t.isdigit()), reverse=True)
     return {"ahead": len(times), "times": times[:BRANCH_COMMIT_TIMES]}
 
 
