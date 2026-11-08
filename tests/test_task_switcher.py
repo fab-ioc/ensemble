@@ -130,6 +130,11 @@ log.recentUn = rc.unassigned.map(e => e.key);
 log.recentSig = Object.fromEntries(rc.recent.filter(e => e.sig).map(e => [e.key, {
   needs: e.sig.needs.map(t => t.key), review: e.sig.review.map(t => t.key), running: e.sig.running, working: e.sig.working, done: e.sig.done }]));
 log.recentHtml = swListHtml(rc, { po: 'p2' }, false, { open: false });
+// Other projects (#317): a project with no PO and nothing recent, folded at the foot.
+log.quiet = rc.quiet.map(e => e.key);
+log.quietOpen = swListHtml(rc, {}, false, { open: false, quiet: true });
+// The list's filter finds it by name, as a row that opens the project.
+log.found = swListHtml(swFilterGroups(swGroups(rows, items, P, { ...opts, other: true }), 'plain'), {}, true, { open: true, all: true });
 log.recentSel = swListHtml(rc, { sid: 'rx' }, false, {});
 // A terminal session filed in a project (by its folder) is not one of its tasks: it does not move the PO.
 const PT = P.map(p => p.id === 'p2' ? { ...p, sessions: [...p.sessions, { roomId: 'term-2' }] } : p);
@@ -235,6 +240,9 @@ class TaskSwitcher(unittest.TestCase):
             fn(INDEX, "function actionState("), fn(INDEX, "function actionEnv("), fn(INDEX, "function actionsCell("),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function rowTitle("), fn(INDEX, "function detailTitle("),
             fn(INDEX, "function attnDot("), fn(INDEX, "function runChip("), fn(INDEX, "function swFocusNote("), fn(INDEX, "function swFocusBack("),
+            # The list's filter (#317: it finds a project with no PO).
+            fn(INDEX, "function parseSearchQuery("), fn(INDEX, "function haystackMatches("), fn(INDEX, "function rowHaystack("),
+            fn(INDEX, "function swHay("), fn(INDEX, "function swFilterGroups("),
             # The Task numbers block reads task mentions with static/taskcard.js (#202).
             (ROOT / "static" / "taskcard.js").read_text(encoding="utf-8"),
             block("Cost chip"), block("Task numbers"), block("Task switcher")])
@@ -257,8 +265,8 @@ class TaskSwitcher(unittest.TestCase):
             # oldest first: reported (by askKind, or by the reason), paused, in
             # review; not Done, not a todo that never ran (r15)
             "review": ["r6", "r11", "r13", "r3"],
-            # latest first; not a project without a PO, nor an unregistered one
-            "projects": ["po-1", "po-2"],
+            # latest first, then a project without a PO (#317); not an unregistered one
+            "projects": ["po-1", "po-2", "proj:p3"],
             # newest first; not archived, not a draft, not one past the rows
             "unassigned": ["rx", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12"],
             "done": ["r4"],                          # not yesterday's r12
@@ -386,7 +394,11 @@ class TaskSwitcher(unittest.TestCase):
 
     def test_the_list_can_group_by_project(self):
         h = self.r["byProject"]
-        self.assertEqual(re.findall(r'data-group="project" data-proj="(\w*)"', h), ["p1", "p2"])   # by name
+        self.assertEqual(re.findall(r'data-group="project" data-proj="(\w*)"', h), ["p1", "p2", "p3"])   # by name
+        plain = h[h.index('data-group="project" data-proj="p3"'):h.index('data-group="unassigned"')]
+        # A project with no PO (#317): its own row, opening it; no tasks counted.
+        self.assertIn('<span class="sw-gname">Plain</span><span class="sw-n">0</span>', plain)
+        self.assertIn('data-proj="p3" data-room="proj:p3"', plain)
         motors = h[h.index('data-proj="p2"'):h.index('data-group="unassigned"')]
         # Its PO first (selected: it is on screen), then Needs you, Running, Ready.
         self.assertEqual(re.findall(r'class="sw-row[^"]*" data-(?:po|sid)="[^"]*" data-room="([\w-]+)"', motors), ["po-2", "r-old", "r9", "r5", "r6"])
@@ -402,18 +414,35 @@ class TaskSwitcher(unittest.TestCase):
     def test_the_recent_list_is_pos_and_tasks_in_no_project(self):
         # Latest activity first: po-1's news (+500), po-2's ask (+400), rx (-50).
         # No project task is listed; the Plain project (no PO, nothing to say)
-        # and the unregistered one have no row.
+        # waits in Other projects (#317), the unregistered one has no row.
         self.assertEqual(self.r["recent"], [["po-1", "projects", 500], ["po-2", "needs", 400], ["rx", "idle", -50]])
         # Unassigned keeps your own sessions; its tasks are in the list above.
         self.assertEqual(self.r["recentUn"], ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12"])
         h = self.r["recentHtml"]
-        self.assertEqual(re.findall(r'data-group="(\w+)"', h), ["recent", "unassigned"])
-        top = h[:h.index('data-group="unassigned"')]
+        self.assertEqual(re.findall(r'data-group="(\w+)"', h), ["recent", "quiet", "unassigned"])
+        top = h[:h.index('data-group="quiet"')]
         # A project's task is named on its PO's row at most, never a row of its own.
         self.assertEqual(re.findall(r'<button type="button" class="sw-row', top).__len__(), 3)
         self.assertEqual(re.findall(r'class="sw-row[^"]*" data-(?:po|sid)="[^"]*" data-room="([\w-]+)"', top), ["po-1", "po-2", "rx"])
         self.assertIn('<span class="sw-gname">Recent activity</span><span class="sw-n">3</span>', top)
         self.assertIn("Your own sessions in no project", h)
+
+    def test_a_quiet_project_with_no_po_is_in_other_projects(self):
+        # #317: every registered project has a row, PO or not, quiet or not.
+        self.assertEqual(self.r["quiet"], ["proj:p3"])
+        h = self.r["recentHtml"]
+        q = h[h.index('data-group="quiet"'):h.index('data-group="unassigned"')]
+        self.assertTrue(q.startswith('data-group="quiet">'), "folded by default")
+        self.assertIn('<span class="sw-gname">Other projects</span><span class="sw-n">1</span>', q)
+        self.assertIn('class="sw-row" data-proj="p3" data-room="proj:p3"', q)
+        self.assertIn("Project with no PO", q)
+        self.assertNotIn("Unregistered", h)
+        self.assertIn('data-group="quiet" open>', self.r["quietOpen"])
+        # Its fold is remembered per browser.
+        self.assertIn("SW_QUIET_KEY = 'cd-switcher-quiet'", INDEX)
+        self.assertIn("localStorage.setItem(SW_QUIET_KEY", INDEX)
+        # Filter text finds it.
+        self.assertIn('data-proj="p3" data-room="proj:p3"', self.r["found"])
 
     def test_focus_goes_back_to_the_same_task_number_after_a_redraw(self):
         f = self.r["focus"]
@@ -497,7 +526,7 @@ class TaskSwitcher(unittest.TestCase):
         # Frozen: r2 keeps its place in Running, its content fresh, and r1 its
         # place in Needs you.
         self.assertEqual(self.r["frozen"], {"needs": ["r-old", "r1", "r9", "po-2"], "running": ["r2", "r14", "r5"],
-                                            "review": ["r6", "r11", "r13", "r3"], "projects": ["po-1", "po-2"],
+                                            "review": ["r6", "r11", "r13", "r3"], "projects": ["po-1", "po-2", "proj:p3"],
                                             "unassigned": self.r["groups"]["unassigned"], "done": ["r4"]})
         self.assertIn("idle", self.r["frozenRun"][0])
         self.assertEqual(self.r["noFreeze"], self.r["thawed"])

@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Callable
 
 import fslinks
+import protected_paths
 
 DAY = 86400
 DEFAULT_DAYS = 30
@@ -62,8 +63,7 @@ GROUPS = ("done", "po", "hub", "own", "orphans", "housekeeping")
 # Ticked by itself in a preview: everything but the person's own conversations.
 TICKED = {"done": True, "po": True, "hub": True, "own": False, "orphans": True, "housekeeping": True}
 # Names a task folder holds that say it is one (and never a project's own).
-_KEEP_NAMES = {"documents", "roadmap.md", "po-handover.md", "po-handover-archive.md", "project.json",
-               ".history", ".git"}
+_KEEP_NAMES = {"documents", *protected_paths.LOWER_NAMES, ".history", ".git"}
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ROTATED_LOG = re.compile(r"\.log\.\d+$")
 _SID_TAIL = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
@@ -451,6 +451,11 @@ def _project_of(room: dict, projects: dict) -> dict | None:
     return projects.get(room.get("projectId") or room.get("noProjectId") or "")
 
 
+def _places(hub: Hub, projects: list) -> list[tuple[str, str]]:
+    """(home, Documents folder) of each project, for protected_paths."""
+    return [(hub.project_home(p) or "", hub.documents_dir(p) or "") for p in projects if hub.project_home(p)]
+
+
 def _protected(hub: Hub, projects: list) -> list[str]:
     """Folders nothing in a task folder may contain or be."""
     out = []
@@ -482,6 +487,8 @@ def task_folder_ok(hub: Hub, folder: str, project: dict | None, projects: list) 
         return f"unreadable: {e}"
     if names & _KEEP_NAMES:
         return "holds a project's own files"
+    if protected_paths.refusal(folder, _places(hub, projects)):
+        return "holds a project's PO documents"
     return ""
 
 
@@ -1038,6 +1045,9 @@ def _allowed_path(hub: Hub, path: str, projects: list) -> bool:
     roots = [str(hub.state_dir), str(hub.claude_dir), str(hub.codex_dir)]
     homes = [hub.project_home(p) for p in projects if hub.project_home(p)]
     if not any(within(path, x) and _norm(path) != _norm(x) for x in roots + homes):
+        return False
+    # A project's PO documents (#317): never one of them, never a folder holding one.
+    if protected_paths.refusal(path, _places(hub, projects)):
         return False
     for p in projects:
         for f in (p.get("path") or "", hub.project_home(p) or "", hub.documents_dir(p) or ""):

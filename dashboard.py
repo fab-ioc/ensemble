@@ -114,6 +114,7 @@ import ensemble_tools
 import history as file_history
 import checkpoints
 import prune
+import protected_paths
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
 # Moving from claude-dashboard (the predecessor): its state is copied in at startup.
@@ -7842,6 +7843,28 @@ def _files_remove(full: str) -> None:
     fslinks.remove_tree(full)
 
 
+def protected_places() -> list[tuple[str, str]]:
+    """(home, Documents folder) of every registered project: what
+    protected_paths keeps from any deletion (#317)."""
+    out = []
+    for p in load_projects():
+        try:
+            home = project_home(p, create=False)
+            if home:
+                out.append((home, project_documents_dir(p, persist=False)))
+        except Exception:                       # noqa: BLE001 - one bad entry never opens the others
+            continue
+    return out
+
+
+def _files_protected(rel: str, full: str) -> None:
+    """A Files-panel delete, move or replace aimed at a project's PO
+    documents (ROADMAP.md, PO-HANDOVER.md, its Documents folder...) is refused."""
+    why = protected_paths.refusal(full, protected_places())
+    if why:
+        raise FileOpRefused(403, "protected", why)
+
+
 def _files_exists_refusal(rel: str, full: str) -> FileOpRefused:
     what = "A folder" if os.path.isdir(full) else "A file"
     return FileOpRefused(409, "exists", f"{what} named “{rel.rsplit('/', 1)[-1]}” is already there.")
@@ -7912,6 +7935,7 @@ def files_move(proj: dict, home: str, src, dst, overwrite: bool = False) -> dict
         trel, tfull = files_path(home, dst)
         if not os.path.lexists(ffull):
             raise FileOpRefused(404, "not_found", f"“{frel}” is not there any more.")
+        _files_protected(frel, ffull)            # moved away, the PO would not find it
         is_dir = os.path.isdir(ffull) and not os.path.islink(ffull)
         fl, tl = frel.lower().split("/"), trel.lower().split("/")
         try:
@@ -7934,6 +7958,7 @@ def files_move(proj: dict, home: str, src, dst, overwrite: bool = False) -> dict
                 raise _files_exists_refusal(trel, tfull)
             if fl[:len(tl)] == tl:
                 raise FileOpRefused(409, "exists", f"“{frel}” cannot replace the folder “{trel}” it is in.")
+            _files_protected(trel, tfull)
         _files_snapshot(proj, home, "move", before=True)
         try:
             os.makedirs(os.path.dirname(tfull), exist_ok=True)
@@ -7950,6 +7975,7 @@ def files_delete(proj: dict, home: str, path) -> dict:
         rel, full = files_path(home, path)
         if not os.path.lexists(full):
             raise FileOpRefused(404, "not_found", f"“{rel}” is not there any more.")
+        _files_protected(rel, full)
         _files_snapshot(proj, home, "delete", before=True)
         try:
             _files_remove(full)
@@ -11365,6 +11391,9 @@ def _delete_scratch_root(cwd: str) -> str | None:
     failed. Never touches a real project folder."""
     root = _scratch_root_for(cwd)
     if not root:
+        return None
+    if protected_paths.refusal(str(root), protected_places()):
+        print(f"[delete] {root} kept: it holds a project's PO documents", flush=True)
         return None
     try:
         shutil.rmtree(root)
