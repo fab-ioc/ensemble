@@ -1,32 +1,35 @@
-"""Tasks and the Inbox share one left strip (#322). On a computer both are
-panels of the list dock, its left strip holding Tasks then Inbox, as the
-tools sit on the PO dock's right one, on every screen. In headless Chrome over
-CDP, against a hub in a thread serving the pages.
+"""Inbox and Projects on one left strip; the Tasks panel goes (#322, P289).
+On a computer the left strip holds two buttons, Inbox and Projects, one panel
+open at a time as the tools on the PO dock's right strip. In headless Chrome
+over CDP, against a hub in a thread serving the pages.
 
 Three projects: Motors (a PO with an answer to check, so one Inbox row),
-Wheels (a PO) and Alpha (none), and a task in no project. Checked:
+Wheels (a PO) and Alpha (none), a task and a session in no project. Checked:
 
-* at 1440x900 and 1728x1117 a fresh browser shows Tasks then Inbox on the left
-  strip; the Inbox pinned open at the left of the page, the list closed on its
-  strip; the PO dock has no Inbox; the bar's Inbox button gives way; the strip
-  button carries the count;
-* the Tasks button slides the list out, a click elsewhere or Esc puts it back;
-  a list row opens its conversation;
-* the Inbox on another project's PO screen: All shows Motors' row, and a click
-  opens Motors' PO;
-* the Inbox pinned, on its strip, floating and in its window; on the other
-  side and first on the strip;
-* Panels ▾ › Tasks and › Inbox; a reload keeps the layout; Reset layout puts
-  the default back;
-* a layout saved before #322 (the list hidden, the Inbox in the PO dock,
-  docked or on its strip) opens with both on the left strip, the Inbox as the
-  person kept it;
+* at 1440x900 and 1728x1117 a fresh browser shows Inbox then Projects on the
+  left strip, both pinned, the Inbox in front at x 52, 260 wide; the PO dock
+  has no Inbox; the bar's Inbox button gives way; the strip button carries the
+  count;
+* the Projects button puts the Projects panel in the Inbox's place: All, every
+  project with its count, the task in no project as its own row; the Inbox
+  button brings the Inbox back;
+* a project row: with a PO opens it, without one opens its page (the Board);
+  the Board out on the right follows the project picked; All shows every
+  project's Inbox; a task in no project opens its conversation; Make PO from
+  the row's dots and from a right click;
+* the Inbox pinned, on its strip, floating and in its window, back pinned in
+  Projects' column; on the other side;
+* Panels ▾ › Inbox; a reload keeps the layout; Reset layout puts the default
+  back;
+* a layout saved before (the Inbox in the PO dock, or with the Tasks panel)
+  opens with Inbox and Projects on the left strip, the Inbox as the person
+  kept it, nothing slid out;
 * 800x600 overflows nothing; a phone (390x844) has no list dock and keeps the
   Inbox as a tab of the PO dock;
 * the page threw nothing meanwhile.
 
-Measures go to $ENSEMBLE_SHOTS/left-strip.json and screenshots there too when
-it is set. Skipped without Node or Chrome.
+Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or
+Chrome.
 """
 from __future__ import annotations
 
@@ -118,12 +121,15 @@ const GEOM = `(() => {
     badge: ((sb('inbox') || document).querySelector('.dk-strip-badge') || { textContent: '' }).textContent.trim(),
     rows: document.querySelectorAll('#ld-inbox a.ibx-link[data-room]').length,
     po: document.body.classList.contains('po-dock'), pid: (PD && PD.pid) || '', narrow: !!PD.dock && PD.dock.narrow(),
-    chat: R(PD.els['po-chat']), a5: get('cd-list-dock-a5'), stored: get('cd-list-dock'), pdStored: get('cd-tool-strip') };
+    chat: R(PD.els['po-chat']), a5: get('cd-list-dock-a5'), a6: get('cd-list-dock-a6'),
+    projMode: d ? d.viewMode('projects') : '', ldProjects: R(document.getElementById('ld-projects')),
+    projTitle: ((document.querySelector('#ld-projects .ldp-title') || {}).textContent || '').trim(),
+    strip: R(document.querySelector('#list-dock .dk-strip-left')), stored: get('cd-list-dock'), pdStored: get('cd-tool-strip') };
 })()`;
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
-  const out = {};
+  const out = {}; global.OUT = out;
   // A page; seed: localStorage keys set (a string) or removed (null) before the page's first script, once.
   const page = async (w, h, mobile, seed) => {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
@@ -141,7 +147,7 @@ async function main() {
     };
     const key = async (k) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: k === 'Escape' ? 27 : 0 }, sessionId); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
-    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
+    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-list-dock-a6': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false; try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); const s = ' + JSON.stringify(s) + '; for (const k in s) s[k] === null ? localStorage.removeItem(k) : localStorage.setItem(k, s[k]); } } catch (e) {}' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 2 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.po) + ')', 30000);
@@ -156,6 +162,9 @@ async function main() {
   const G = p => p.evalIn(GEOM);
   const P = A.ids;
   const LBTN = id => `document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="${id}"]')`;
+  const SHOWN = id => `(() => { const e = document.getElementById('${id}'); const r = e && e.getBoundingClientRect(); return !!r && r.width > 0 && getComputedStyle(e).visibility !== 'hidden'; })()`;
+  // A strip button, when its panel is not in front already (a click on the one in front minimises it).
+  const front = async (p, id) => { if (!(await p.evalIn(SHOWN('ld-' + id)))) { await p.click(LBTN(id)); await p.until(SHOWN('ld-' + id), 5000).catch(() => null); await sleep(300); } };
   try {
     // ---- the default, at each width, a fresh browser
     out.widths = {};
@@ -176,6 +185,9 @@ async function main() {
       await sleep(500);
       await q.shot('left-strip-1140x1000');
       out.w1140 = await G(q);
+      await front(q, 'projects'); await sleep(300);
+      await q.shot('left-strip-1140x1000-projects');
+      out.w1140p = await G(q);
       await q.close();
     }
     const p = await page(1440, 900, false);
@@ -184,12 +196,18 @@ async function main() {
     out.fresh = await G(p);
     // ---- the project list on top of the Inbox (#322, P287)
     const LDP = sel => `document.querySelector('#ld-projs ${sel}')`;
+    // ---- Projects: its strip button brings it in front of the Inbox, one at a time (P289)
+    await p.click(LBTN('projects')); await p.until(SHOWN('ld-projects'), 5000).catch(() => null); await sleep(400);
+    out.projOpen = await G(p);
     await p.shot('left-strip-1440x900-projects');
+    await p.click(LBTN('inbox')); await p.until(SHOWN('ld-inbox'), 5000).catch(() => null); await sleep(400);
+    out.inboxBack = await G(p);
     // a project with no PO: its page (the Board), the Inbox scoped to it
-    await p.click(LDP(`[data-ldp-proj="${P.Alpha}"]`)); await sleep(700);
+    await front(p, 'projects');
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Alpha}"]`)); await sleep(700);
     out.alpha = await G(p);
     // a task in no project: its conversation, the Inbox its own
-    await p.click(LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)); await sleep(900);
+    await front(p, 'projects'); await p.click(LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)); await sleep(900);
     out.loose = await G(p);
     // its ⋯ and its right click: Open and Make PO
     const MENU = `(() => { const m = document.querySelector('body > .dcm'); return m ? { items: [...m.querySelectorAll('.dcm-item')].map(b => ({ t: b.textContent.trim(), makepo: b.classList.contains('makepo-btn'), room: b.dataset.room || '', disabled: b.disabled })), expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]') } : null; })()`;
@@ -220,7 +238,7 @@ async function main() {
       return { un: !!un, row: t, opened: seen };
     })()`);
     // back to Motors' PO from its row
-    await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Motors) + ' && document.body.classList.contains("po-dock")', 15000).catch(() => null);
     await sleep(500);
     out.motors = await G(p);
@@ -229,23 +247,25 @@ async function main() {
     await p.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`);
     await p.until('PD.dock.flyOpen() === "board"', 5000).catch(() => null); await sleep(600);
     out.boardMotors = await p.evalIn(BOARD);
-    await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Wheels), 15000).catch(() => null); await sleep(800);
     out.boardWheels = await p.evalIn(BOARD);
     await p.evalIn('PD.dock.closeFly(); 0'); await sleep(300);
-    await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null); await sleep(500);
     // ---- the Inbox on Wheels' PO: All has Motors' row, its click opens Motors
-    await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Wheels), 15000).catch(() => null); await sleep(500);
     out.wheels = await G(p);
-    await p.click(LDP('[data-ldp="all"]')); await sleep(500);
+    await front(p, 'projects'); await p.click(LDP('[data-ldp="all"]')); await sleep(500);
     out.wheelsAll = await G(p);
+    await front(p, 'inbox');
+    out.preIbx = await G(p);
     await p.click(`document.querySelector('#ld-inbox a.ibx-link[data-room]')`);
     await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null);
     await sleep(500);
     out.ibxOpened = await G(p);
-    await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`)); await sleep(500);
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`)); await sleep(500);
     // ---- the modes
     const L = 'LD.dock';
     await p.evalIn(`${L}.setViewMode('inbox', 'unpinned'); 0`); await sleep(400);
@@ -349,7 +369,7 @@ async function main() {
   if (A.shots) fs.writeFileSync(path.join(A.shots, 'left-strip.json'), JSON.stringify(out, null, 1));
   console.log(JSON.stringify(out));
 }
-main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+main().catch(e => { console.error(e && e.stack || e); try { if (process.env.ENSEMBLE_LS_PARTIAL) fs.writeFileSync(process.env.ENSEMBLE_LS_PARTIAL, JSON.stringify(global.OUT || {}, null, 1)); } catch (x) {} process.exit(1); });
 """
 
 
@@ -379,6 +399,9 @@ class LeftStripInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+            # the Inbox row stays for every page: a page in front for a second marks
+            # its answer seen, and the 1140 screenshots page lingers that long
+            mock.patch.object(points, "mark_seen", lambda *a, **k: []),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
         ]
         for p in cls.patches:
@@ -441,17 +464,19 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertLessEqual(g["scrollW"], g["W"])
         self.assertEqual(g["wide"], 0, g["wideWhat"])
 
-    def test_the_default_the_inbox_alone_on_the_left_strip(self):
+    def test_the_default_inbox_and_projects_on_the_left_strip(self):
         for w, _ in WIDTHS:
             g = self.got["widths"][str(w)]
             with self.subTest(w=w):
-                self.assertEqual(g["left"], ["inbox"], "no Tasks on a computer (#322, P287)")
+                self.assertEqual(g["left"], ["inbox", "projects"], "Inbox then Projects (#322, P289)")
                 self.assertEqual(g["right"], [])
                 self.assertEqual(g["ghost"], 0)
                 self.assertIsNone(g["list"], "no task list")
                 self.assertEqual(g["inboxMode"], "pinned")
+                self.assertEqual(g["projMode"], "pinned")
                 self.assertEqual(g["ldInbox"]["x"], 52, "docked right of the strip")
                 self.assertEqual(g["ldInbox"]["w"], 260)
+                self.assertIsNone(g["ldProjects"], "one panel open at a time: the Inbox")
                 self.assertFalse(g["pdInbox"], "the PO dock has no Inbox on a computer")
                 self.assertIsNone(g["pdInboxEl"])
                 self.assertFalse(g["pdInboxTab"])
@@ -462,15 +487,20 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertLessEqual(g["chat"]["x"] - g["ldInbox"]["r"], 8)
                 self.assertNoOverflow(g)
 
-    def test_the_project_list_on_top_of_the_inbox(self):
-        g = self.got["fresh"]
-        self.assertIsNotNone(g["ldpBox"])
-        self.assertLess(g["ldpBox"]["y"], g["ldInbox"]["y"] + 40, "on top of the panel")
+    def test_the_projects_button_swaps_the_panel(self):
+        g, b = self.g("projOpen"), self.g("inboxBack")
+        self.assertIsNone(g["ldInbox"], "the Inbox gives way")
+        self.assertEqual((g["ldProjects"]["x"], g["ldProjects"]["w"]), (52, 260), "in the Inbox's place")
+        self.assertEqual(g["ldProjects"]["h"], self.g("fresh")["ldInbox"]["h"], "full height")
+        self.assertEqual(g["projTitle"], "Projects")
+        box, pr = g["ldpBox"], g["ldProjects"]
+        self.assertTrue(pr["x"] <= box["x"] and box["r"] <= pr["r"], "the list inside the panel")
+        self.assertEqual(g["chat"]["x"], self.g("fresh")["chat"]["x"], "the conversation stays put")
         rows = g["ldp"]
         self.assertTrue(rows[0]["all"])
         self.assertEqual(rows[0]["t"], "All1")
         projs = [r["proj"] for r in rows if r["proj"]]
-        self.assertEqual(sorted(projs), sorted(self.ids.values()), "every project, by name")
+        self.assertEqual(sorted(projs), sorted(self.ids.values()), "every project")
         motors = next(r for r in rows if r["proj"] == self.ids["Motors"])
         self.assertTrue(motors["cur"], "the PO screen's project is selected")
         self.assertEqual(motors["t"], "Motors1", "with its Inbox count")
@@ -479,7 +509,9 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(len(loose), 1, "the task in no project, a row of its own")
         self.assertIn("task", loose[0]["t"])
         self.assertFalse(g["scopeSw"], "the list chooses: no This/All switch")
-        self.assertTrue(g["ibxTitle"].startswith("Inbox · Motors"), g["ibxTitle"])
+        self.assertEqual((b["ldInbox"]["x"], b["ldInbox"]["w"]), (52, 260), "the Inbox button brings it back")
+        self.assertIsNone(b["ldProjects"])
+        self.assertTrue(b["ibxTitle"].startswith("Inbox · Motors"), b["ibxTitle"])
 
     def test_a_project_row_without_a_po_opens_its_page(self):
         a = self.g("alpha")
@@ -487,7 +519,8 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(a["sel"], self.ids["Alpha"])
         self.assertTrue(next(r for r in a["ldp"] if r["proj"] == self.ids["Alpha"])["cur"])
         self.assertEqual(a["rows"], 0)
-        self.assertEqual(a["left"], ["inbox"])
+        self.assertEqual(a["left"], ["inbox", "projects"])
+        self.assertTrue(a["ibxTitle"].startswith("Inbox · Alpha"), a["ibxTitle"])
 
     def test_a_task_in_no_project_opens_its_conversation(self):
         o = self.g("loose")
@@ -547,20 +580,24 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertTrue(o["po"])
 
     def test_the_modes(self):
+        both = ["inbox", "projects"]
         u = self.g("unpinned")
         self.assertEqual(u["inboxMode"], "unpinned")
-        self.assertEqual(u["left"], ["inbox"])
+        self.assertEqual(u["left"], both)
         f = self.g("inboxFly")
         self.assertIsNone(f["ldInbox"], "back on its strip")
-        self.assertEqual(f["chat"]["x"], 52, "the conversation from the strip")
+        self.assertEqual(f["ldProjects"]["x"], 52, "Projects keeps the pinned column")
+        self.assertEqual(f["chat"]["x"], self.g("fresh")["chat"]["x"])
         self.assertIsNone(f["bar"], "the strip still has it")
         fl = self.g("float")
         self.assertEqual(fl["inboxMode"], "float")
         self.assertIsNotNone(fl["ldInbox"])
-        self.assertEqual(fl["chat"]["x"], 52)
+        self.assertEqual(fl["ldProjects"]["x"], 52)
         pi = self.g("pinned")
         self.assertEqual(pi["inboxMode"], "pinned")
         self.assertEqual(pi["ldInbox"]["x"], 52)
+        self.assertIsNone(pi["ldProjects"], "pinned again: back in Projects' column, not a second one")
+        self.assertEqual(pi["chat"]["x"], self.g("fresh")["chat"]["x"])
         wn = self.g("window")
         self.assertEqual(wn["inboxMode"], "window")
         self.assertTrue(wn["inboxOut"])
@@ -568,19 +605,19 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertIsNotNone(wn["bar"], "in its window: the bar's Inbox is back")
         self.assertEqual(self.g("popIn")["inboxMode"], "pinned")
         r = self.g("right")
-        self.assertEqual((r["left"], r["right"]), ([], ["inbox"]))
+        self.assertEqual((r["left"], r["right"]), (["projects"], ["inbox"]))
         self.assertGreater(r["ldInbox"]["x"], r["chat"]["x"])
-        self.assertEqual(self.g("first")["left"], ["inbox"])
+        self.assertEqual(self.g("first")["left"], both)
         for k in ("unpinned", "inboxFly", "float", "pinned", "window", "popIn", "right", "first"):
             with self.subTest(k=k):
                 self.assertNoOverflow(self.g(k))
 
     def test_a_reload_keeps_the_layout(self):
         r = self.g("reloaded")
-        self.assertEqual(r["left"], ["inbox"])
+        self.assertEqual(r["left"], ["inbox", "projects"])
         self.assertEqual(r["inboxMode"], "unpinned")
         self.assertIsNone(r["ldInbox"])
-        self.assertEqual(r["chat"]["x"], 52)
+        self.assertEqual(r["ldProjects"]["x"], 52)
 
     def test_the_panels_menu(self):
         self.assertEqual([(m["id"], m["text"], m["checked"]) for m in self.g("menu1")],
@@ -591,11 +628,12 @@ class LeftStripInChrome(unittest.TestCase):
 
     def test_reset_layout(self):
         b = self.g("beforeReset")
-        self.assertEqual((b["left"], b["inboxMode"]), (["inbox"], "float"))
+        self.assertEqual((b["left"], b["inboxMode"]), (["inbox", "projects"], "float"))
         r = self.g("reset")
-        self.assertEqual(r["left"], ["inbox"])
-        self.assertEqual(r["inboxMode"], "pinned")
+        self.assertEqual(r["left"], ["inbox", "projects"])
+        self.assertEqual((r["inboxMode"], r["projMode"]), ("pinned", "pinned"))
         self.assertEqual(r["ldInbox"]["x"], 52)
+        self.assertIsNone(r["ldProjects"], "the Inbox in front")
         self.assertEqual(r["chat"]["x"], self.got["fresh"]["chat"]["x"])
 
     def test_a_layout_saved_before_moves_onto_the_strip(self):
@@ -603,20 +641,23 @@ class LeftStripInChrome(unittest.TestCase):
         for was, mode in want.items():
             g = self.got["migr"][was]
             with self.subTest(was=was):
-                self.assertEqual(g["left"], ["inbox"])
+                self.assertEqual(g["left"], ["inbox", "projects"])
+                self.assertIsNone(g["fly"], "nothing slides out by itself")
                 self.assertEqual(g["ghost"], 0)
                 self.assertEqual(g["inboxMode"], mode, "the Inbox as the PO dock kept it")
                 self.assertFalse(g["pdInbox"])
-                self.assertEqual(g["a5"], "1")
+                self.assertEqual((g["a5"], g["a6"]), ("1", "1"))
                 self.assertNoOverflow(g)
+        self.assertIsNone(self.got["migr"]["pinned"]["ldProjects"], "the Inbox in front")
 
     def test_a_layout_with_the_tasks_panel_drops_it(self):
-        for k, mode in (("stripList", "pinned"), ("dockedList", "float")):
+        for k, mode, left in (("stripList", "pinned", ["projects"]), ("dockedList", "float", ["inbox", "projects"])):
             g = self.got["migr"][k]
             with self.subTest(k=k):
                 self.assertEqual(g["ghost"], 0, "no Tasks anywhere")
                 self.assertIsNone(g["list"])
-                self.assertEqual(g["left"], ["inbox"] if mode == "float" else [], g["left"])
+                self.assertEqual(g["left"], left, g["left"])
+                self.assertIsNone(g["fly"])
                 self.assertEqual(g["inboxMode"], mode, "the Inbox as the person kept it")
                 self.assertIsNotNone(g["ldInbox"])
                 self.assertLessEqual(g["chat"]["x"], 52 + 280 + 8, "nothing takes the list's place")
@@ -626,14 +667,14 @@ class LeftStripInChrome(unittest.TestCase):
         g = self.got
         wide, phone, back = g["rzWide"], g["rzPhone"], g["rzBack"]
         self.assertFalse(wide["pdInbox"])
-        self.assertEqual(wide["left"], ["inbox"])
+        self.assertEqual(wide["left"], ["inbox", "projects"])
         self.assertTrue(phone["narrow"])
         self.assertIn("inbox", phone["tabs"], "a phone's PO dock has the Inbox as a tab")
         self.assertEqual(phone["tabs"][0], "po-chat")
         self.assertFalse(back["narrow"])
         self.assertFalse(back["pdInbox"])
         self.assertNotIn("inbox", back["tabs"])
-        self.assertEqual(back["left"], ["inbox"])
+        self.assertEqual(back["left"], ["inbox", "projects"])
         self.assertEqual(json.loads(back["lay"]), json.loads(wide["lay"]), "the wide layout as it was")
         self.assertNotIn('"inbox"', g["rzStoredWide"] or "", "the wide layout saved has no Inbox")
         p2w = g["phoneToWide"]
@@ -641,11 +682,11 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertFalse(p2w["pdInbox"])
         self.assertNotIn("inbox", p2w["tabs"])
         self.assertNotIn('"inbox"', p2w["lay"])
-        self.assertEqual(p2w["left"], ["inbox"])
+        self.assertEqual(p2w["left"], ["inbox", "projects"])
 
     def test_800_wide(self):
         g = self.g("small")
-        self.assertEqual(g["left"], ["inbox"])
+        self.assertEqual(g["left"], ["inbox", "projects"])
         self.assertGreaterEqual(g["chat"]["w"], 360)
         self.assertNoOverflow(g)
 

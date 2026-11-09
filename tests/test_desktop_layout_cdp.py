@@ -176,48 +176,8 @@ async function main() {
     out.needsHash = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: ldOnScreen("inbox"), hash: location.hash })');
     // Panels ▾ › Tasks: the list, docked at the left.
     await p.click('document.querySelector("#bar-here .pd-panels")'); await sleep(250);
-    out.panelsItem = await p.evalIn(`(() => { const b = document.querySelector('[data-pd-list]'); return b ? { checked: !!(b.checked || b.getAttribute('aria-checked') === 'true'), text: (b.closest('label') || b).textContent.trim() } : null; })()`);
-    await p.click('document.querySelector("[data-pd-list]")'); await sleep(600);
-    out.listShown = await p.evalIn(GEOM);
-    await p.shot('desktop-1440x900-list-shown');
-    // Docked (pinned) from there: the layout the next pages start from.
-    await p.evalIn('LD.dock.pin("list"); 0'); await sleep(400);
-    out.listPinned = await p.evalIn(GEOM);
-    const docked = out.listPinned.stored;
-    // Popped out into a window.
-    await p.evalIn('LD.dock.popOut("list"); 0');
-    await p.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document', 15000).catch(() => null);
-    await sleep(500);
-    out.popped = await p.evalIn(GEOM);
-    const poppedLayout = out.popped.stored;
-    await p.evalIn('LD.dock.popIn("list"); 0'); await sleep(400);
+    out.panelsItem = await p.evalIn(`!!document.querySelector('[data-pd-list]')`);
     await p.close();
-    // ---- a docked list saved before #306 (no flags): onto the strip, once
-    const o = await page(1440, 900, false, { 'cd-list-dock': docked });
-    await toPo(o, P.Motors);
-    out.oldLayout = await o.evalIn(GEOM);
-    // Docked again and reloaded: it stays as the person leaves it.
-    await o.evalIn('LD.dock.pin("list"); 0'); await sleep(300);
-    await o.evalIn('location.reload(); 0'); await sleep(1500);
-    await o.until('window.ensBooted === true && !!LD.dock', 30000);
-    await toPo(o, P.Motors);
-    out.oldReloaded = await o.evalIn(GEOM);
-    await o.close();
-    // ---- the same layout saved after #322 (both flags): the list stays docked
-    const n = await page(1440, 900, false, { 'cd-list-dock': docked, 'cd-list-dock-a4': '1', 'cd-list-dock-a5': '1' });
-    await toPo(n, P.Motors);
-    out.newLayout = await n.evalIn(GEOM);
-    await n.close();
-    // ---- the list popped out, before and after this step
-    for (const [k, flag] of [['outOld', null], ['outNew', '1']]) {
-      const q = await page(1440, 900, false, { 'cd-list-dock': poppedLayout, 'cd-list-dock-a4': flag, 'cd-list-dock-a5': flag });
-      await toPo(q, P.Motors);
-      await q.until('LD.dock.viewMode("list") === "window" && (!!LD.dock.popWindow("list") || LD.dock.isOut("list"))', 15000).catch(() => null);
-      await sleep(600);
-      out[k] = await q.evalIn(GEOM);
-      await q.evalIn('try { const w = LD.dock.popWindow("list"); if (w) LD.dock.popIn("list"); } catch (e) {} 0'); await sleep(300);
-      await q.close();
-    }
     // ---- a phone: no list dock, no list on screen (#307)
     const ph = await page(390, 844, true);
     await sleep(800);
@@ -308,17 +268,16 @@ class DesktopLayoutInChrome(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def test_the_list_on_its_strip_by_default_at_every_computer_width(self):
+    def test_projects_and_inbox_replace_the_list_at_every_computer_width(self):
         for w, _ in WIDTHS:
             g = self.got["widths"][str(w)]
             with self.subTest(w=w):
                 self.assertTrue(g["ld"], "the list dock is there")
                 self.assertFalse(g["listOn"], g)
-                self.assertTrue(g["listVis"], "on its strip, not hidden")
-                self.assertEqual(g["listMode"], "unpinned")
+                self.assertFalse(g["listVis"], g)
                 self.assertTrue(g["listSeen"] is None or not g["listSeen"]["hit"], g["listSeen"])
-                self.assertEqual([b["id"] for b in g["leftStrip"]], ["list", "inbox"], "Tasks first")
-                self.assertTrue(all(b["x"] < 44 for b in g["leftStrip"]), g["leftStrip"])
+                self.assertEqual([b["id"] for b in g["leftStrip"]], ["inbox", "projects"])
+                self.assertTrue(all(b["x"] < 52 for b in g["leftStrip"]), g["leftStrip"])
 
     def test_the_inbox_is_the_list_docks(self):
         for w, _ in WIDTHS:
@@ -340,7 +299,7 @@ class DesktopLayoutInChrome(unittest.TestCase):
                 self.assertLessEqual(g["scrollW"], g["W"])
                 self.assertEqual(g["wide"], 0, "nothing wider than the screen")
                 # the conversation starts right of the Inbox column (or of the strip), not a list's width in
-                left = g["inbox"]["r"] if g["inbox"] else 44
+                left = g["inbox"]["r"] if g["inbox"] else 52
                 self.assertLessEqual(g["chat"]["x"] - left, 50, g)
                 if g["inbox"]:
                     self.assertLessEqual(g["inbox"]["r"], g["chat"]["x"] + 1, "covering nothing")
@@ -349,7 +308,7 @@ class DesktopLayoutInChrome(unittest.TestCase):
         t = self.got["empty"]["text"]
         if t:   # the page opened nothing yet
             self.assertNotIn("in the list", t)
-            self.assertIn("Inbox", t)
+            self.assertIn("Projects", t)
 
     def test_the_inbox_is_on_screen_before_any_project(self):
         g = self.got["start"]
@@ -379,47 +338,8 @@ class DesktopLayoutInChrome(unittest.TestCase):
         self.assertTrue(self.got["needsHash"]["po"] and self.got["needsHash"]["inbox"], self.got["needsHash"])
         self.assertFalse(self.got["home"]["listOn"])
 
-    def test_panels_can_open_the_list(self):
-        self.assertIsNotNone(self.got["panelsItem"])
-        self.assertFalse(self.got["panelsItem"]["checked"])
-        g = self.got["listShown"]
-        self.assertTrue(g["listOn"] and g["listFly"], g)
-        self.assertEqual(g["listMode"], "unpinned")
-        self.assertIsNotNone(g["list"])
-        self.assertLessEqual(g["list"]["x"], 50, "beside the strip")
-        self.assertGreaterEqual(g["chat"]["w"], 360)
-        self.assertLessEqual(g["scrollW"], g["W"])
-        k = self.got["listPinned"]
-        self.assertTrue(k["listOn"] and k["listMode"] == "pinned", k)
-        self.assertGreaterEqual(int(k["listW"].rstrip("px")), 220)
-        self.assertGreaterEqual(k["chat"]["w"], 360)
-        p = self.got["popped"]
-        self.assertTrue(p["listOut"] and p["listMode"] == "window", p)
-
-    def test_a_docked_list_saved_before_306_goes_onto_the_strip_once(self):
-        g = self.got["oldLayout"]
-        self.assertFalse(g["listOn"], g)
-        self.assertEqual(g["listMode"], "unpinned")
-        self.assertEqual(g["flag"], "1")
-        r = self.got["oldReloaded"]
-        self.assertTrue(r["listOn"], "once: docked again, it stays")
-        self.assertEqual(r["listMode"], "pinned")
-
-    def test_a_layout_saved_after_keeps_the_list(self):
-        g = self.got["newLayout"]
-        self.assertTrue(g["listOn"])
-        self.assertEqual(g["listMode"], "pinned")
-        self.assertIsNotNone(g["list"])
-        self.assertGreaterEqual(g["chat"]["w"], 360)
-
-    def test_a_popped_out_list_opens_in_its_window(self):
-        for k in ("outOld", "outNew"):
-            g = self.got[k]
-            with self.subTest(k=k):
-                self.assertEqual(g["listMode"], "window", g)
-                self.assertIsNone(g["list"], "not on the page")
-                self.assertGreaterEqual(g["chat"]["w"], 360)
-                self.assertLessEqual(g["scrollW"], g["W"])
+    def test_panels_has_no_tasks_item(self):
+        self.assertFalse(self.got["panelsItem"])
 
     def test_a_phone_has_no_list_by_default(self):
         g = self.got["phone"]

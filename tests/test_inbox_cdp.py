@@ -118,10 +118,12 @@ async function main() {
     out.deskFits = await p.evalIn(fits);
     await p.shot('inbox-1728x1117');
     // All projects, then this project again.
-    await p.click('LD_INBOX.querySelector(\'[data-ibx-scope="all"]\')'); await sleep(200);
+    await p.click('document.querySelector(\'#list-dock .dk-strip-btn[data-dk-auto="projects"]\')'); await sleep(200);
+    await p.click('document.querySelector(\'#ld-projs [data-ldp="all"]\')'); await sleep(200);
     out.all = await p.evalIn(`({ rows: [...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx),
       where: [...LD_INBOX.querySelectorAll('.ibx-where')].map(e => e.textContent), saved: localStorage.getItem('cd-inbox-scope') })`);
-    await p.click('LD_INBOX.querySelector(\'[data-ibx-scope="project"]\')'); await sleep(200);
+    await p.click('document.querySelector(\'#ld-projs [data-ldp-proj="' + A.proj + '"]\')'); await sleep(200);
+    await p.click('document.querySelector(\'#list-dock .dk-strip-btn[data-dk-auto="inbox"]\')'); await sleep(200);
     out.back = await p.evalIn(`[...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx)`);
     // A row opens its message: the chat lands on that balloon.
     await p.until('(() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
@@ -278,7 +280,7 @@ class InboxInChrome(unittest.TestCase):
         self.assertTrue(all(w == "PO" for w in d["where"]), d["where"])
         self.assertTrue(all(a for a in d["ages"]), d["ages"])
         self.assertTrue(any(x.startswith("Motors PO: ") for x in d["lines"]), d["lines"])
-        self.assertEqual(d["scope"], ["project:true", "all:false"])
+        self.assertEqual(d["scope"], [], "the Projects panel owns the All/project choice")
         self.assertTrue(d["tool"], "the Inbox's icon in its colour")
 
     def test_the_bar_counts_every_project(self):
