@@ -1842,7 +1842,7 @@ def _open_points(room: dict) -> str:
 
 def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
                       kinds: tuple[str, str] | None = None, forced: bool = False,
-                      written: bool = False, gone: str = "") -> str:
+                      written: bool = False, gone: str = "", context: str = "") -> str:
     """A rotated owner's first prompt. It never carries the spec: a fresh
     session handed its spec as an instruction does the task again (seen
     2026-09-10). The handover is its state; the spec is only a reference.
@@ -1873,6 +1873,24 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
         parts[0] += ("a command it was running was cut off, and its last changes may be "
                      "uncommitted. Compare the handover with git status and git log before "
                      "you rely on it, and remove a stale .git/index.lock if one is left.")
+    if gone and context:
+        # Gone with no handover written (a seat killed before it ever wrote
+        # one): the spec as context, the branch and the last chat lines, and
+        # a report of where things stand rather than a carry-on (PO #321).
+        parts += [
+            f"There is no handover to start from ({hp} was never written). What the hub "
+            f"has instead is below: the task's spec as context only (it is not an "
+            f"instruction to start over: the branch may already hold much of it), the "
+            f"branch as it is, and the last lines of the chat.",
+            context,
+            "Do not redo anything the branch or the chat shows as done. Check the branch "
+            "(git log, git status, git diff) and REVIEW-LOG.md, then report where the task "
+            "stands with ensemble_report (kind update) and wait for an answer before you "
+            "carry on.",
+        ]
+        if not solo:
+            parts.append("Read any messages that arrived meanwhile with chat_read first.")
+        return "\n\n".join(parts)
     parts += [
         f"Your state is {hp}: the handover your previous session wrote "
         f"{'when it last handed over' if gone else 'just before it stopped'}: the goal and how far it got, decisions and why, branch and commits, "
@@ -2385,11 +2403,14 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             # collaboration briefing around it, a solo one how to report. Its kind
             # is chosen from the allowance; a kind that fails to start falls back.
             choice = choose_owner_kind(room_full, fpart)
+            context = (_d.lost_sessions.task_context(room_full, fpart, old_sid, cwd or "")
+                       if gone and not handover_written(hp) else "")
 
             def text_for(kind: str) -> str:
                 return task_first_prompt(room_full, old_sid, tokens, hp, solo,
                                          kinds=(old_kind, kind) if kind != old_kind else None,
-                                         forced=forced, written=answered, gone=gone)
+                                         forced=forced, written=answered, gone=gone,
+                                         context=context)
 
             info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
                                                cwd, choice)

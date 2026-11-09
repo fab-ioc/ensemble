@@ -155,6 +155,47 @@ class Retention(unittest.TestCase):
             self.assertEqual((r["days"], r["atRisk"], r["warn"]), (400, int(warn), warn), age)
 
 
+class ClaudeConfigDir(unittest.TestCase):
+    """PO finding 2: CLAUDE_CONFIG_DIR moves Claude's conversations and its
+    settings; both the gone check and Keep follow it."""
+
+    def test_follows_the_variable(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        conf = Path(tmp.name) / "claude-conf"
+        (conf / "projects" / "C--work").mkdir(parents=True)
+        (conf / "projects" / "C--work" / f"{UUID}.jsonl").write_text("{}", encoding="utf-8")
+        with mock.patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": str(conf)}), \
+                mock.patch.object(dashboard, "find_transcript", return_value=None):
+            self.assertEqual(lost_sessions.claude_settings_path(), conf / "settings.json")
+            self.assertFalse(lost_sessions.conversation_gone({"agent": "claude", "sessionId": UUID}))
+            other = "11111111-2222-3333-4444-555555555555"
+            self.assertTrue(lost_sessions.conversation_gone({"agent": "claude", "sessionId": other}))
+            res = lost_sessions.keep_for_a_year()
+        self.assertTrue(res["ok"])
+        self.assertEqual(json.loads((conf / "settings.json").read_text(encoding="utf-8")),
+                         {"cleanupPeriodDays": 365})
+        with mock.patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": ""}):
+            self.assertEqual(lost_sessions.claude_settings_path(),
+                             Path.home() / ".claude" / "settings.json")
+
+
+class WhereItIs(unittest.TestCase):
+    """PO finding 5: the hub log and the doctor name the page's real place."""
+
+    def test_one_name_for_the_place(self):
+        root = Path(dashboard.__file__).resolve().parent
+        self.assertIn("Settings > Preferences > Conversations",
+                      (root / "ensemble.ps1").read_text(encoding="utf-8"))
+        self.assertEqual(lost_sessions.WHERE, "Settings > Preferences > Conversations")
+        src = (root / "dashboard.py").read_text(encoding="utf-8")
+        self.assertIn("{lost_sessions.WHERE} offers", src)
+        self.assertNotIn("Settings › Agents offers the fix", src)
+        page = (root / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="pref-retention-days"', page)
+        self.assertIn(">Conversations<", page)
+
+
 class KeepEndpoint(unittest.TestCase):
     """POST /api/claude-retention/keep: page-only; 200 only when it wrote."""
 
@@ -225,11 +266,39 @@ class OnDeath(_Base):
         self.room_ = self.room()
         self.rid = self.room_["id"]
 
-    def rec(self, tail, sid="old-sid", killed=False):
+    def rec(self, tail, sid="old-sid", killed=False, lived=3.0):
+        now = time.time()
         return {"meta": {"room": self.rid, "identity": "claude", "resumeOf": sid},
-                "tail": tail, "killed": killed}
+                "tail": tail, "killed": killed, "startedAt": now - lived, "endedAt": now}
+
+    def setUp_disk(self, on_disk):
+        p = mock.patch.object(lost_sessions, "_claude_transcript",
+                              return_value=Path("x.jsonl") if on_disk else None)
+        p.start()
+        self.patches.append(p)
+
+    def test_a_long_run_or_a_conversation_on_disk_is_not_marked(self):
+        """PO finding 1: a resumed session that worked for a while and printed
+        the words, or whose transcript is on disk, is never marked gone."""
+        line = "No conversation found with session ID: old-sid"
+        with mock.patch.object(lost_sessions, "_retry") as retry:
+            with mock.patch.object(lost_sessions, "_claude_transcript", return_value=None):
+                self.assertFalse(lost_sessions.on_death(self.rec(line, lived=3 * 3600),
+                                                        background=False))
+                bad = self.rec(line)
+                bad.pop("startedAt")
+                self.assertFalse(lost_sessions.on_death(bad, background=False))
+            with mock.patch.object(lost_sessions, "_claude_transcript",
+                                   return_value=Path("x.jsonl")):
+                self.assertFalse(lost_sessions.on_death(self.rec(line), background=False))
+        retry.assert_not_called()
+        part = chatroom.participant(chatroom.get_room(self.rid, public=False), "claude")
+        self.assertNotIn("conversationGone", part)
+        # The broad "Session … not found" is no longer read as the CLI's line.
+        self.assertFalse(lost_sessions.screen_says_gone("Session abc not found in cache"))
 
     def test_marks_the_seat_and_retries_once(self):
+        self.setUp_disk(False)
         with mock.patch.object(lost_sessions, "_retry") as retry:
             self.assertTrue(lost_sessions.on_death(
                 self.rec("No conversation found with session ID: old-sid"), background=False))
@@ -241,6 +310,7 @@ class OnDeath(_Base):
         self.assertTrue(lost_sessions.conversation_gone(part))
 
     def test_leaves_other_deaths_alone(self):
+        self.setUp_disk(False)
         with mock.patch.object(lost_sessions, "_retry") as retry:
             self.assertFalse(lost_sessions.on_death(self.rec("Usage limit reached"),
                                                     background=False))
@@ -308,6 +378,23 @@ class BeforeAResume(_Base):
             self.h._rotate_lost_seats(self.room_, {"claude": "stopped", "codex": "stopped"})
         rg.assert_not_called()
 
+    def test_a_rotation_that_raises_leaves_the_other_seats(self):
+        """PO finding 3: one seat's failed rotation never stops the room."""
+        calls = []
+
+        def rg(rid, ident, project=None):
+            calls.append(ident)
+            if ident == "claude":
+                raise RuntimeError("boom")
+            return {"result": "ok", "rotation": {"toSessionId": "n"}}
+        with mock.patch.object(lost_sessions, "conversation_gone", return_value=True), \
+                mock.patch.object(dashboard, "_pty_alive", return_value=False), \
+                mock.patch.object(chatroom, "is_on_mention", return_value=False), \
+                mock.patch.object(rotation, "rotate_gone", side_effect=rg):
+            briefs = self.h._rotate_lost_seats(self.room_, None)
+        self.assertEqual(briefs, {})
+        self.assertEqual(sorted(calls), ["claude", "codex"])
+
     def test_a_seat_no_rotation_takes_gets_a_brief(self):
         gone = lambda part, cwd="": part["identity"] == "claude"
         with mock.patch.object(lost_sessions, "conversation_gone", side_effect=gone), \
@@ -371,6 +458,27 @@ class RotateGone(_Base):
                  if "was removed from disk" in (m.get("text") or "")]
         self.assertEqual(len(notes), 1)
         self.assertIn("the branch and the task's chat", notes[0]["text"])
+        # PO finding 4: with no handover it is given the spec as context and
+        # the chat, and asked to report where things stand.
+        text = self.launcher.launched[0]["text"]
+        self.assertIn("There is no handover", text)
+        self.assertIn("The task's spec (context only)", text)
+        self.assertIn("The chat's last lines", text)
+        self.assertIn("ensemble_report", text)
+        self.assertNotIn("carry on with the next action", text)
+
+    def test_task_context_carries_spec_branch_and_chat(self):
+        room = {"spec": "Build the widget.", "messages": [
+            {"from": "claude", "text": "half done"}]}
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with mock.patch.object(dashboard, "_git_out",
+                               side_effect=lambda cwd, *a, **k: "abc123 step one" if a[0] == "log"
+                               else ""):
+            ctx = lost_sessions.task_context(room, {"identity": "claude"}, "old", tmp.name)
+        self.assertIn("Build the widget.", ctx)
+        self.assertIn("abc123 step one", ctx)
+        self.assertIn("claude: half done", ctx)
 
     def test_a_running_seat_is_not_rotated(self):
         room = self.owner_room(handover=True)

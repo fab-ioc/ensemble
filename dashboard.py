@@ -19933,7 +19933,12 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             print(f"[lost] {rid}/{ident}: conversation {old_sid or '(none)'} is not on "
                   f"disk — rotating", flush=True)
-            res = rotation.rotate_gone(rid, ident, project=proj if ident == po_ident else None)
+            try:
+                res = rotation.rotate_gone(rid, ident, project=proj if ident == po_ident else None)
+            except Exception as e:      # noqa: BLE001 — one seat never stops the others
+                print(f"[lost] {rid}/{ident}: rotation failed: {str(e)[:200]} — resumed "
+                      f"as before", flush=True)
+                continue
             if res.get("rotation"):
                 continue
             print(f"[lost] {rid}/{ident}: not rotated ({res.get('result')}) — a fresh "
@@ -23407,13 +23412,14 @@ def main():
     def _warn_retention():
         # Claude Code deletes conversations older than cleanupPeriodDays; the
         # hub resumes older ones (GitHub issue 33). Said once in the log;
-        # Settings › Agents offers the fix.
+        # Settings › Preferences › Conversations offers the fix.
         try:
             r = lost_sessions.retention()
             if r.get("warn"):
                 print(f"[lost] Claude Code keeps conversations {r['days']} days; "
                       f"{r['atRisk']} seat(s) older than that, {r['gone']} already gone. "
-                      f"Settings offers 'Keep conversations for a year'.", flush=True)
+                      f"{lost_sessions.WHERE} offers 'Keep conversations for a year'.",
+                      flush=True)
         except Exception as e:      # noqa: BLE001
             print(f"[lost] retention not checked: {str(e)[:200]}", flush=True)
     threading.Thread(target=_warn_retention, daemon=True, name="retention-warn").start()

@@ -273,7 +273,8 @@ function Invoke-Doctor {
   # unset); a seat idle for longer then starts over from its handover (#321).
   if ($claude) {
     $days = 30
-    $cs = Join-Path $env:USERPROFILE '.claude\settings.json'
+    $conf = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+    $cs = Join-Path $conf 'settings.json'
     try {
       $j = Get-Content -Raw -Encoding UTF8 $cs -ErrorAction Stop | ConvertFrom-Json
       if ($null -ne $j.cleanupPeriodDays) { $days = [int]$j.cleanupPeriodDays }

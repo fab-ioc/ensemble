@@ -43,6 +43,9 @@ def bind(dashboard_module) -> None:
 
 DEFAULT_CLEANUP_DAYS = 30           # Claude Code's own default when the key is unset
 KEEP_DAYS = 365                     # what "Keep conversations for a year" sets
+# Where the page shows it (index.html's Preferences tab, "Conversations"),
+# as the hub log and `ensemble.ps1 doctor` name it.
+WHERE = "Settings > Preferences > Conversations"
 CHAT_LINES = 12                     # how many of the hub's chat lines a brief shows
 _LINE_MAX = 600                     # one line's text in a brief, at most
 
@@ -50,8 +53,11 @@ _LINE_MAX = 600                     # one line's text in a brief, at most
 GONE_RE = re.compile(
     r"No conversation found with session ID"     # Claude Code 2.x
     r"|no rollout found for thread id"           # Codex 0.16x (exec and TUI)
-    r"|No saved session found"                   # older Codex
-    r"|Session .{0,80} not found", re.I)
+    r"|No saved session found", re.I)            # older Codex
+
+# A resume that fails for a missing conversation dies at once; a terminal that
+# ran longer than this was working, whatever its last screen shows.
+SHORT_LIFE_S = 30.0
 
 
 def screen_says_gone(tail: str) -> bool:
@@ -69,12 +75,26 @@ def on_death(rec: dict, wait: float = _RETRY_WAIT, background: bool = True) -> b
     terminal that died saying its conversation does not exist. The seat is
     marked (``conversationGone``), so the next start rotates it, and the room
     is started again once per conversation id, once the failed resume has
-    settled (what it held comes along). Returns whether a retry was set off."""
+    settled (what it held comes along). Returns whether a retry was set off.
+
+    Only a terminal that died within ``SHORT_LIFE_S`` of starting, whose
+    conversation is really not on disk: a session that worked for hours and
+    printed the words (a test of this very feature, a grep) is left alone."""
     meta = rec.get("meta") or {}
     rid, ident, sid = meta.get("room", ""), meta.get("identity", ""), meta.get("resumeOf", "")
     if not (rid and ident and sid) or rec.get("killed"):
         return False
+    try:
+        lived = float(rec.get("endedAt") or time.time()) - float(rec.get("startedAt"))
+    except (TypeError, ValueError):
+        return False            # how long it ran is not known: not marked
+    if lived > SHORT_LIFE_S:
+        return False
     if not screen_says_gone(rec.get("tail") or ""):
+        return False
+    room = _d.chatroom.get_room(rid, public=False) or {}
+    part = _d.chatroom.participant(room, ident) or {}
+    if not _missing_on_disk(part.get("agent") or meta.get("agent") or "claude", sid):
         return False
     if not _d.chatroom.mark_conversation_gone(rid, ident, sid):
         return False
@@ -146,9 +166,37 @@ def conversation_gone(part: dict, cwd: str = "") -> bool:
         # Both CLIs name a conversation by a UUID; any other id was not
         # minted by them and is resumed as before.
         return False
-    if part.get("agent") == "codex":
+    return _missing_on_disk(part.get("agent") or "", sid)
+
+
+def _missing_on_disk(agent: str, sid: str) -> bool:
+    """Whether no file of this conversation is on disk now."""
+    if agent == "codex":
         return not _codex_rollouts(sid)
-    return _d.find_transcript(sid) is None
+    return _claude_transcript(sid) is None
+
+
+def claude_config_dir() -> Path:
+    """Claude Code's own folder: ``CLAUDE_CONFIG_DIR`` when set (as the
+    launch's login check reads it, agent_launch._login_file), else ~/.claude."""
+    env = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
+    return Path(os.path.expanduser(env)) if env else Path(os.path.expanduser("~")) / ".claude"
+
+
+def _claude_transcript(sid: str, immediate: bool = True):
+    """The hub's lookup, then ``<CLAUDE_CONFIG_DIR>/projects`` when Claude
+    keeps its conversations somewhere other than the folder the hub reads."""
+    hit = _d.find_transcript(sid, immediate=immediate)
+    if hit is not None:
+        return hit
+    projects = claude_config_dir() / "projects"
+    try:
+        if projects.resolve() == Path(_d.PROJ_DIR).resolve() or not projects.is_dir():
+            return None
+        hits = [p for p in projects.glob(f"*/{sid}.jsonl")] if re.fullmatch(r"[\w-]+", sid) else []
+    except OSError:
+        return None
+    return hits[0] if hits else None
 
 
 _SID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -253,6 +301,31 @@ def session_brief(room: dict, part: dict, old_sid: str) -> str:
     return "\n\n".join(parts)
 
 
+_SPEC_MAX = 8000                    # the spec's characters a no-handover brief carries
+
+
+def task_context(room: dict, part: dict, old_sid: str, cwd: str = "") -> str:
+    """What a task owner whose conversation is gone and who never wrote a
+    handover is given instead: the spec as context, the branch as it is, and
+    the chat's last lines (the spec of GitHub issue 33, step 2)."""
+    spec = (room.get("spec") or "").strip()
+    if len(spec) > _SPEC_MAX:
+        spec = spec[:_SPEC_MAX] + "\n…(cut; the whole spec is on the task)"
+    out = ["**The task's spec (context only):**\n\n" + (spec or "(the task has no spec)")]
+    if cwd and os.path.isdir(cwd):
+        base = ((room.get("workspace") or {}).get("base") or "main").strip() or "main"
+        log = (_d._git_out(cwd, "log", "--oneline", "-20", f"{base}..HEAD")
+               or _d._git_out(cwd, "log", "--oneline", "-5"))
+        status = _d._git_out(cwd, "status", "--short")
+        branch = _d._git_out(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+        out.append(f"**The branch** (`{branch or '?'}` in `{cwd}`):\n\n"
+                   f"Commits:\n```\n{log or '(none beyond ' + base + ')'}\n```\n"
+                   f"Uncommitted:\n```\n{status or '(nothing)'}\n```")
+    chat = chat_lines(room, part, old_sid)
+    out.append("**The chat's last lines:**\n\n" + (chat or "(the hub has none)"))
+    return "\n\n".join(out)
+
+
 def notice(kind: str, part: dict, ident: str, handover: bool = True) -> str:
     """The one chat line said when a fresh session takes over. ``kind`` is
     po | owner | session; ``handover`` False when there was none to start from."""
@@ -273,7 +346,7 @@ def notice(kind: str, part: dict, ident: str, handover: bool = True) -> str:
 # ---------------------------------------------------------------------------
 
 def claude_settings_path() -> Path:
-    return Path(os.path.expanduser("~")) / ".claude" / "settings.json"
+    return claude_config_dir() / "settings.json"
 
 
 def _read_settings(path: Path) -> tuple[dict | None, str]:
@@ -344,7 +417,7 @@ def retention(rooms: list[dict] | None = None, now: float | None = None,
             sid = (p.get("sessionId") or "").strip()
             if not sid:
                 continue
-            t = _d.find_transcript(sid, immediate=False)
+            t = _claude_transcript(sid, immediate=False)
             if t is None:
                 gone += 1
                 continue
