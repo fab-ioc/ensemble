@@ -433,6 +433,34 @@ def _session_ids(room: dict) -> list[str]:
     return out
 
 
+def _ended_before(room: dict, since: float) -> set[str]:
+    """Sessions whose last recorded rotation away predates every pending send.
+
+    The current session and any session entered again after that rotation
+    still need to be read. A file's mtime cannot establish either fact.
+    """
+    ended: dict[str, float] = {}
+    entered: dict[str, float] = {}
+    current: set[str] = set()
+    for part in room.get("participants", []):
+        if part.get("kind") != "agent":
+            continue
+        if part.get("sessionId"):
+            current.add(part["sessionId"])
+        for rotation in part.get("rotations") or []:
+            if not isinstance(rotation, dict):
+                continue
+            at = rotation.get("at")
+            if not isinstance(at, (int, float)) or isinstance(at, bool) or at <= 0:
+                continue
+            for field, times in (("fromSessionId", ended), ("toSessionId", entered)):
+                sid = rotation.get(field)
+                if sid:
+                    times[sid] = max(times.get(sid, 0), at)
+    return {sid for sid, at in ended.items()
+            if sid not in current and at < since and at > entered.get(sid, 0)}
+
+
 def _solo(room: dict) -> bool:
     agents = [p for p in room.get("participants", []) if p.get("kind") == "agent"]
     return room.get("mode") == "solo" or len(agents) < 2
@@ -563,7 +591,10 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
     since = min(float(s["at"]) for s in waiting) - SLACK_S
     turns: list[tuple[str, dict]] = []
     hidden = any(unseen(s["text"]) for s in waiting)
+    ended = _ended_before(room, since)
     for sid in _session_ids(room):
+        if sid in ended:
+            continue
         turns += _user_turns(room_id, sid, since, now, hidden)
     live = _d._room_is_live(room) or _coming_back(room_id, now)
     # What of each turn the sends it confirmed already have not claimed:

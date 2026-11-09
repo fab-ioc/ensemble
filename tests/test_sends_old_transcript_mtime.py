@@ -42,6 +42,8 @@ class OldTranscriptMtime(Harness):
         room = chatroom.get_room(rid, public=False)
         part = next(p for p in room["participants"] if p.get("kind") == "agent")
         part["sessionId"] = SID
+        part["rotations"] = [{"fromSessionId": "01a1059e-5bf5-7642-a5ad-dad989437ed4",
+                              "toSessionId": SID, "at": epoch("2026-10-30T09:00:10.312Z")}]
         chatroom.update_room(room)
         root = Path(self.temp.name)
         if agent == "codex":

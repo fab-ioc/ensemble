@@ -514,6 +514,37 @@ class Receipts(unittest.TestCase):
             sends.sync(rid, room=room, force=True, now=now + 5 + sends.RESCAN_UNKNOWN_S + 1)
             self.assertEqual(len(reads), 5)
 
+    def test_a_session_rotated_away_before_the_send_is_not_read(self):
+        rid = self.room()
+        now = time.time()
+        old = "019a0000-0000-7000-8000-000000000002"
+        room = chatroom.get_room(rid, public=False)
+        part = next(p for p in room["participants"] if p.get("kind") == "agent")
+        part["rotations"] = [{"fromSessionId": old, "toSessionId": SID, "at": now - 300}]
+        chatroom.update_room(room)
+        sends.accept(rid, "send:new", "a new message", now=now)
+        sends.mark(rid, ["send:new"], "delivered", now=now)
+        reads = []
+        with mock.patch.object(dashboard, "read_session_turns",
+                               lambda sid: reads.append(sid) or self.turns.get(sid)):
+            sends.sync(rid, room=room, force=True, now=now + 1)
+        self.assertEqual(reads, [SID])
+
+    def test_a_session_rotated_away_after_the_send_can_confirm_it(self):
+        rid = self.room()
+        now = time.time()
+        old = "019a0000-0000-7000-8000-000000000003"
+        room = chatroom.get_room(rid, public=False)
+        part = next(p for p in room["participants"] if p.get("kind") == "agent")
+        part["rotations"] = [{"fromSessionId": old, "toSessionId": SID, "at": now + 10}]
+        chatroom.update_room(room)
+        sent = "a message read during rotation\n\n[point P8]"
+        sends.accept(rid, "send:old", sent, now=now)
+        sends.mark(rid, ["send:old"], "delivered", now=now)
+        self.turns[old] = [{"role": "user", "timestamp": iso(now + 2), "text": sent}]
+        sends.sync(rid, room=room, force=True, now=now + 11)
+        self.assertEqual(sends.get(rid, "send:old")["state"], "confirmed")
+
     def test_a_send_the_chat_does_not_draw_is_read_from_the_raw_transcript(self):
         # Its turn is skipped by the chat reader ("<", "Caveat:"): looked for
         # in the transcript itself, so it is confirmed (no balloon to point
