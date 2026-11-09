@@ -3262,7 +3262,7 @@ READER_AGENT_MD = """---
 name: reader
 description: Cheap read-only explorer on Haiku. Use it for "where is X / how does Y work" sweeps over several files. Not for the lines you will edit, not for reviews.
 model: haiku
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob
 ---
 You are a read-only code reader. Answer the question you are given by searching and reading the repository. Never change a file and never run a command that changes anything. Reply with short bullets only: each names file:line and says in one line what is there. No file bodies and no long quotes. Say so when you are not sure of something.
 """

@@ -2,7 +2,7 @@
 
 * ``readerForTasks`` is off by default and saved as a bool;
 * with it on, a hub task's owner gets the reader: Claude a ``--plugin-dir``
-  whose agent runs on Haiku with read-only tools, plus the brief that names
+  whose agent runs on Haiku with Read, Grep and Glob only, plus the brief that names
   it; Codex the brief with the headless ``claude -p --model haiku`` line (only
   when ``claude`` is on PATH);
 * a reviewer, a PO room, an adopted session, and every launch with the
@@ -70,7 +70,8 @@ class Reader(unittest.TestCase):
         agent = (plugin / "agents" / "reader.md").read_text(encoding="utf-8")
         self.assertIn("\nname: reader\n", agent)
         self.assertIn("\nmodel: haiku\n", agent)
-        self.assertIn("\ntools: Read, Grep, Glob, Bash\n", agent)
+        self.assertIn("\ntools: Read, Grep, Glob\n", agent)
+        self.assertNotIn("Bash", agent.split("---")[1])   # no shell: read-only by its tools
         self.assertNotIn("Edit", agent.split("---")[1])
         self.assertEqual(env, {})
         self.assertEqual(brief, dashboard.READER_BRIEF["claude"])
