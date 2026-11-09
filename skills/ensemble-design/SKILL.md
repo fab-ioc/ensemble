@@ -1381,8 +1381,11 @@ self-contained component, so a later layout can host it elsewhere.
   on a computer** (`pdEnsure` builds it without one); a phone is unchanged: no list dock, the list
   is a pane and the PO dock keeps its Inbox tab (#311). Panels ▾ has no Tasks row (only under the
   test hook `window.ensListDocked`, which keeps #137's docked list for the older list tests). The
-  list views and filter live on the Board and its search; the bar's switcher (#303) keeps the
-  find box, project settings and New project. A layout stored before #322 (`ldMigrate`, flag
+  old Tasks-list text filter and Recent / Grouped by status / Grouped by project views retire with
+  that desktop panel. The bar's Find a task searches across tasks; Projects' All and project rows
+  select scope; the Board has List / Board, its own filter, workflow columns and Done (including
+  older tasks). The bar's switcher (#303) also keeps project settings and New project. A layout
+  stored before #322 (`ldMigrate`, flag
   `cd-list-dock-a5`) moves once: a saved `list` panel is parked by the dock, the Inbox goes onto
   the strip at place 0, pinned, on its strip or floating as the PO dock kept it (`pdIbxWasNote()`
   reads `cd-tool-strip`). A layout stored before Projects (flag `cd-list-dock-a6`,
