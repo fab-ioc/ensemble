@@ -3139,6 +3139,25 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel .pref-label {
     font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
   }
+  #settings-panel .pref-value { font-size: var(--fs-300); color: var(--fg); }
+  /* Claude Code's retention shorter than the conversations the hub resumes
+     (GitHub issue 33): needs the person eventually, so the warning wash. */
+  #settings-panel .ret-warn {
+    margin: var(--s-200) 0 0; padding: var(--s-200) var(--s-300); border-radius: var(--r-200);
+    background: var(--c-warning-bg); color: var(--c-warning-fg);
+    font-size: var(--fs-200); line-height: 16px;
+  }
+  #settings-panel .ret-warn[hidden] { display: none; }
+  #settings-panel #pref-retention-keep {
+    align-self: flex-start; min-height: 32px; padding: 0 var(--s-300);
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong);
+    border-radius: var(--r-200); font-size: var(--fs-300); font-weight: 500; cursor: pointer;
+  }
+  #settings-panel #pref-retention-keep:hover { background: var(--hover); }
+  #settings-panel #pref-retention-keep:focus-visible {
+    outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
+  }
+  #settings-panel #pref-retention-keep[hidden] { display: none; }
   #settings-panel .pref-seg { width: 100%; }
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
   #settings-panel #pref-nickname,
@@ -3741,6 +3760,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       min-height: var(--touch-min);
     }
     #settings-panel .sp-pages button { min-width: var(--touch-min); }
+    #settings-panel #pref-retention-keep { min-height: var(--touch-min); font-size: var(--fs-400); }
     #settings-panel .sp-pages a[href] {
       display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min);
     }
@@ -4756,6 +4776,18 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span>
     </div>
     <p class="cfg-hint">A restart or an update first asks every working agent to reach a safe point and waits for all of them, at most this long.</p>
+    <!-- GitHub issue 33: Claude Code deletes conversations older than its
+         cleanupPeriodDays (lost_sessions.retention, /api/claude-retention). -->
+    <h5 class="sp-sub">Conversations</h5>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Claude Code keeps conversations</span>
+      <span id="pref-retention-days" class="pref-value">…</span>
+    </div>
+    <p class="ret-warn" id="pref-retention-warn" role="status" hidden></p>
+    <div class="pref-row" style="margin-top: 10px;">
+      <button type="button" id="pref-retention-keep" class="secondary" hidden>Keep conversations for a year</button>
+    </div>
+    <p class="cfg-hint">Claude Code deletes a conversation once it is older than this (its <code>cleanupPeriodDays</code> setting, 30 days unless set). A PO or task resumed after that starts a fresh session from its handover. The button sets that one key in <code>~/.claude/settings.json</code> to 365 days and leaves every other key as it is.</p>
     <h5 class="sp-sub">Command output</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">RTK for task agents</span>
@@ -8653,6 +8685,47 @@ function renderPrefs() {
   wireBackupPrefs();
   refreshBackupStatus();
   renderPrunePrefs();
+  refreshRetention();
+}
+// ---- Claude Code's retention (GitHub issue 33) --------------------------------
+// How long Claude Code keeps conversations against the ones the hub resumes,
+// and the one click that raises it (/api/claude-retention, .../keep).
+let RETENTION_IN_FLIGHT = false;
+function renderRetention(r) {
+  const days = document.getElementById('pref-retention-days');
+  const warn = document.getElementById('pref-retention-warn');
+  const keep = document.getElementById('pref-retention-keep');
+  if (!days || !warn || !keep || !r) return;
+  days.textContent = `${r.days} days${r.set ? '' : ' (Claude Code’s default)'}`;
+  const bits = [];
+  if (r.gone) bits.push(`${r.gone} ${r.gone === 1 ? 'session’s conversation is' : 'sessions’ conversations are'} already gone`);
+  if (r.atRisk) bits.push(`${r.atRisk} ${r.atRisk === 1 ? 'session is' : 'sessions are'} older than that`);
+  warn.hidden = !r.warn;
+  warn.textContent = r.warn
+    ? `⚠ ${bits.join('; ')}. A session whose conversation is gone starts afresh from its handover on its next resume.` : '';
+  if (r.readError) { warn.hidden = false; warn.textContent = `⚠ ${r.readError}`; }
+  keep.hidden = r.days >= r.keepDays || !!r.readError;
+}
+async function refreshRetention() {
+  if (RETENTION_IN_FLIGHT || !document.getElementById('pref-retention-days')) return;
+  RETENTION_IN_FLIGHT = true;
+  try {
+    const res = await fetch('/api/claude-retention', { cache: 'no-store' });
+    if (res.ok) renderRetention(await res.json());
+  } catch (_) { /* the row keeps what it showed */ }
+  finally { RETENTION_IN_FLIGHT = false; }
+}
+async function keepRetentionYear(btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/claude-retention/keep', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.ok) { toast(d.message || d.error || 'Not changed.'); return; }
+    renderRetention(d.retention);
+    toast('Claude Code now keeps conversations for a year.');
+  } catch (e) { toast(`Not changed: ${e.message || e}`); }
+  finally { btn.disabled = false; }
 }
 // ---- Freeing disk space (#260) ----------------------------------------------
 // Settings' Disk space: a preview of what can go, made in the background on the
@@ -23255,6 +23328,9 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-reader-tasks')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('readerForTasks', b.dataset.val === 'on');
+  });
+  document.getElementById('pref-retention-keep')?.addEventListener('click', (ev) => {
+    keepRetentionYear(ev.currentTarget);
   });
   // Which agent kind the hub prefers (P205): the usage chip marks it.
   document.getElementById('pref-prefer')?.addEventListener('click', async (ev) => {

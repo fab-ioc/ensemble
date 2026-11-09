@@ -1043,6 +1043,25 @@ def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:
         return True                  # a death is not activity on the task.
 
 
+def mark_conversation_gone(room_id: str, identity: str, sid: str) -> bool:
+    """Note on a seat that the CLI could not open its conversation ``sid``
+    (GitHub issue 33), so the next start rotates it instead of resuming the
+    same id again. Narrow, under the room lock, as :func:`record_exit`; only
+    while ``sid`` is still the seat's session."""
+    with _LOCK:
+        room = _load(room_id)
+        if room is None:
+            return False
+        hit = False
+        for p in room.get("participants", []):
+            if p.get("identity") == identity and sid and p.get("sessionId") == sid:
+                p["conversationGone"] = sid
+                hit = True
+        if hit:
+            _write(room)
+        return hit
+
+
 def patch_room(room_id: str, **fields) -> dict | None:
     """Set a few fields on a room — read-modify-write under the room lock, for
     the same reason as :func:`record_exit`. No ``updatedAt`` bump: the hub

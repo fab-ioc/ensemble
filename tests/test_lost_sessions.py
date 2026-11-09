@@ -1,0 +1,303 @@
+"""A seat whose conversation file is gone (GitHub issue 33, #321): it is
+found before a resume (or read off the CLI's dying screen), rotated as at
+the token limit from its handover, said once in the chat; Settings reads
+and raises Claude Code's cleanupPeriodDays."""
+from __future__ import annotations
+
+import json
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import chatroom
+import dashboard
+import lost_sessions
+import rotation
+from test_rotation_kind import _Base, _FakeLauncher, _FakePty, _snap
+
+UUID = "7d49c2f0-b609-4c3b-b066-d2ee572504fe"
+
+
+class Detection(unittest.TestCase):
+    def test_no_session_id_is_not_gone(self):
+        self.assertFalse(lost_sessions.conversation_gone({"agent": "claude"}))
+
+    def test_a_non_uuid_id_is_resumed_as_before(self):
+        with mock.patch.object(dashboard, "find_transcript", return_value=None):
+            self.assertFalse(lost_sessions.conversation_gone(
+                {"agent": "claude", "sessionId": "sess-claude"}))
+
+    def test_claude_with_no_transcript_is_gone(self):
+        with mock.patch.object(dashboard, "find_transcript", return_value=None):
+            self.assertTrue(lost_sessions.conversation_gone(
+                {"agent": "claude", "sessionId": UUID}))
+        with mock.patch.object(dashboard, "find_transcript", return_value=Path("x.jsonl")):
+            self.assertFalse(lost_sessions.conversation_gone(
+                {"agent": "claude", "sessionId": UUID}))
+
+    def test_codex_with_no_rollout_is_gone(self):
+        with mock.patch.object(lost_sessions, "_codex_rollouts", return_value=[]):
+            self.assertTrue(lost_sessions.conversation_gone(
+                {"agent": "codex", "sessionId": UUID}))
+        with mock.patch.object(lost_sessions, "_codex_rollouts", return_value=["r.jsonl"]):
+            self.assertFalse(lost_sessions.conversation_gone(
+                {"agent": "codex", "sessionId": UUID}))
+
+    def test_marked_gone_on_screen_wins_over_the_disk(self):
+        with mock.patch.object(dashboard, "find_transcript", return_value=Path("x.jsonl")):
+            self.assertTrue(lost_sessions.conversation_gone(
+                {"agent": "claude", "sessionId": "sess-x", "conversationGone": "sess-x"}))
+            # A mark for an earlier id does not count.
+            self.assertFalse(lost_sessions.conversation_gone(
+                {"agent": "claude", "sessionId": UUID, "conversationGone": "older"}))
+
+    def test_the_screen_line_of_each_cli(self):
+        self.assertTrue(lost_sessions.screen_says_gone(
+            f"\x1b[31mNo conversation found with session ID: {UUID}\x1b[0m\r\n"))
+        self.assertTrue(lost_sessions.screen_says_gone(
+            f"Error: no rollout found for thread id {UUID}"))
+        self.assertFalse(lost_sessions.screen_says_gone("Welcome back! > "))
+        self.assertFalse(lost_sessions.screen_says_gone(""))
+
+
+class Notice(unittest.TestCase):
+    def test_says_why_and_from_what(self):
+        with mock.patch.object(lost_sessions, "cleanup_days", return_value=30):
+            po = lost_sessions.notice("po", {"agent": "claude"}, "claude")
+            owner = lost_sessions.notice("owner", {"agent": "codex"}, "codex", handover=False)
+        self.assertIn("this PO", po)
+        self.assertIn("after 30 days", po)
+        self.assertIn("`PO-HANDOVER.md`", po)
+        self.assertIn("codex", owner)
+        self.assertIn("Codex rollout", owner)
+        self.assertIn("the branch and the task's chat", owner)
+
+
+class Retention(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / ".claude" / "settings.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_keep_for_a_year_merges_and_keeps_other_keys(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps({"model": "opus", "cleanupPeriodDays": 30}),
+                             encoding="utf-8")
+        res = lost_sessions.keep_for_a_year(self.path)
+        self.assertEqual((res["ok"], res["days"], res["changed"]), (True, 365, True))
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(data, {"model": "opus", "cleanupPeriodDays": 365})
+        again = lost_sessions.keep_for_a_year(self.path)
+        self.assertEqual((again["ok"], again["changed"]), (True, False))
+
+    def test_keep_for_a_year_writes_a_missing_file(self):
+        res = lost_sessions.keep_for_a_year(self.path)
+        self.assertTrue(res["ok"])
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
+                         {"cleanupPeriodDays": 365})
+
+    def test_keep_for_a_year_refuses_a_file_it_cannot_read(self):
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text("{not json", encoding="utf-8")
+        res = lost_sessions.keep_for_a_year(self.path)
+        self.assertFalse(res["ok"])
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "{not json")
+
+    def test_retention_counts_old_and_gone_seats(self):
+        old = Path(self.tmp.name) / "old.jsonl"
+        old.write_text("{}", encoding="utf-8")
+        now = time.time()
+        rooms = [
+            {"participants": [{"kind": "agent", "agent": "claude", "sessionId": "a"},
+                              {"kind": "agent", "agent": "claude", "sessionId": "b"},
+                              {"kind": "agent", "agent": "codex", "sessionId": "c"}]},
+            {"archived": True, "participants": [
+                {"kind": "agent", "agent": "claude", "sessionId": "d"}]},
+        ]
+        found = {"a": old, "b": None, "d": None}
+        with mock.patch.object(dashboard, "find_transcript",
+                               side_effect=lambda sid, immediate=True: found[sid]), \
+                mock.patch.object(lost_sessions, "_born", return_value=now - 40 * 86400):
+            r = lost_sessions.retention(rooms, now=now, path=self.path)
+        self.assertEqual((r["days"], r["set"], r["atRisk"], r["gone"], r["warn"]),
+                         (30, False, 1, 1, True))
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps({"cleanupPeriodDays": 365}), encoding="utf-8")
+        with mock.patch.object(dashboard, "find_transcript",
+                               side_effect=lambda sid, immediate=True: found[sid]):
+            r = lost_sessions.retention(rooms, now=now, path=self.path)
+        self.assertEqual((r["days"], r["set"], r["warn"]), (365, True, False))
+
+
+class OnDeath(_Base):
+    """The fallback: a resumed terminal dies saying the conversation does not
+    exist; the seat is marked and the room started again, once."""
+
+    def setUp(self):
+        super().setUp()
+        lost_sessions._RETRIED.clear()
+        self.room_ = self.room()
+        self.rid = self.room_["id"]
+
+    def rec(self, tail, sid="old-sid", killed=False):
+        return {"meta": {"room": self.rid, "identity": "claude", "resumeOf": sid},
+                "tail": tail, "killed": killed}
+
+    def test_marks_the_seat_and_retries_once(self):
+        with mock.patch.object(lost_sessions, "_retry") as retry:
+            self.assertTrue(lost_sessions.on_death(
+                self.rec("No conversation found with session ID: old-sid"), background=False))
+            self.assertFalse(lost_sessions.on_death(
+                self.rec("No conversation found with session ID: old-sid"), background=False))
+        retry.assert_called_once()
+        part = chatroom.participant(chatroom.get_room(self.rid, public=False), "claude")
+        self.assertEqual(part["conversationGone"], "old-sid")
+        self.assertTrue(lost_sessions.conversation_gone(part))
+
+    def test_leaves_other_deaths_alone(self):
+        with mock.patch.object(lost_sessions, "_retry") as retry:
+            self.assertFalse(lost_sessions.on_death(self.rec("Usage limit reached"),
+                                                    background=False))
+            self.assertFalse(lost_sessions.on_death(
+                self.rec("No conversation found with session ID", killed=True),
+                background=False))
+            # A seat that has moved on to another session is not marked.
+            self.assertFalse(lost_sessions.on_death(
+                self.rec("No conversation found with session ID", sid="other"),
+                background=False))
+        retry.assert_not_called()
+        part = chatroom.participant(chatroom.get_room(self.rid, public=False), "claude")
+        self.assertNotIn("conversationGone", part)
+
+    def test_the_retry_resumes_a_stopped_room(self):
+        launcher = mock.Mock()
+        with mock.patch.object(dashboard, "hub_launcher", return_value=launcher), \
+                mock.patch.object(dashboard, "_room_is_live", return_value=False):
+            lost_sessions._retry(self.rid, wait=0)
+        launcher._resume_room.assert_called_once()
+        self.assertTrue(launcher._resume_room.call_args.kwargs.get("quiet"))
+
+    def test_the_retry_starts_dead_seats_of_a_live_team(self):
+        launcher = mock.Mock()
+        with mock.patch.object(dashboard, "hub_launcher", return_value=launcher), \
+                mock.patch.object(dashboard, "_room_is_live", return_value=True):
+            lost_sessions._retry(self.rid, wait=0)
+        launcher._start_or_resume_room.assert_called_once()
+        launcher._resume_room.assert_not_called()
+
+
+class BeforeAResume(_Base):
+    """Every start or resume of a room checks its seats first
+    (Handler._rotate_lost_seats, called by _start_or_resume_room)."""
+
+    def setUp(self):
+        super().setUp()
+        self.h = object.__new__(dashboard.Handler)
+        self.room_ = self.room()
+        p = mock.patch.object(dashboard, "load_projects", return_value=[])
+        p.start()
+        self.patches.append(p)
+
+    def test_a_gone_seat_is_rotated_and_a_kept_one_left(self):
+        gone = lambda part, cwd="": part["identity"] == "claude"
+        with mock.patch.object(lost_sessions, "conversation_gone", side_effect=gone), \
+                mock.patch.object(dashboard, "_pty_alive", return_value=False), \
+                mock.patch.object(rotation, "rotate_gone",
+                                  return_value={"result": "ok",
+                                                "rotation": {"toSessionId": "n"}}) as rg:
+            briefs = self.h._rotate_lost_seats(self.room_, None)
+        self.assertEqual(briefs, {})
+        rg.assert_called_once_with(self.room_["id"], "claude", project=None)
+
+    def test_a_running_or_stopped_seat_is_not_checked(self):
+        with mock.patch.object(lost_sessions, "conversation_gone", return_value=True) as cg, \
+                mock.patch.object(dashboard, "_pty_alive", return_value=True), \
+                mock.patch.object(rotation, "rotate_gone") as rg:
+            self.h._rotate_lost_seats(self.room_, None)
+        cg.assert_not_called()
+        rg.assert_not_called()
+        with mock.patch.object(lost_sessions, "conversation_gone", return_value=True), \
+                mock.patch.object(dashboard, "_pty_alive", return_value=False), \
+                mock.patch.object(rotation, "rotate_gone") as rg:
+            self.h._rotate_lost_seats(self.room_, {"claude": "stopped", "codex": "stopped"})
+        rg.assert_not_called()
+
+    def test_a_seat_no_rotation_takes_gets_a_brief(self):
+        gone = lambda part, cwd="": part["identity"] == "claude"
+        with mock.patch.object(lost_sessions, "conversation_gone", side_effect=gone), \
+                mock.patch.object(dashboard, "_pty_alive", return_value=False), \
+                mock.patch.object(rotation, "rotate_gone",
+                                  return_value={"result": "no owner"}), \
+                mock.patch.object(lost_sessions, "cleanup_days", return_value=30):
+            briefs = self.h._rotate_lost_seats(self.room_, None)
+        self.assertEqual(list(briefs), ["claude"])
+        self.assertTrue(briefs["claude"].startswith("[recovery] "))
+        self.assertIn("old-sid", briefs["claude"])
+
+
+class RotateGone(_Base):
+    """The seat is rotated on the token-limit path, from its handover."""
+
+    def setUp(self):
+        super().setUp()
+        self.launcher = _FakeLauncher()
+        for p in [
+            mock.patch.object(dashboard, "hub_launcher", side_effect=lambda: self.launcher),
+            mock.patch.object(dashboard.ptyrun, "kill"),
+            mock.patch.object(dashboard.ptyrun, "get", return_value=None),
+            mock.patch.object(rotation, "_await_death"),
+            mock.patch.object(rotation, "_spawn", side_effect=lambda fn, *a: fn(*a)),
+            mock.patch.object(dashboard.usage, "snapshot", return_value=_snap(40, 10)),
+            mock.patch.object(lost_sessions, "cleanup_days", return_value=30),
+        ]:
+            p.start()
+            self.patches.append(p)
+
+    def owner_room(self, handover: bool):
+        room = self.room()
+        if handover:
+            (Path(self.temp.name) / rotation.TASK_HANDOVER_NAME).write_text(
+                "# handover\nNext: finish it.\n", encoding="utf-8")
+        return room
+
+    def test_an_owner_is_rotated_with_the_one_chat_line(self):
+        room = self.owner_room(handover=True)
+        res = rotation.rotate_gone(room["id"], "claude")
+        self.assertIn("rotation", res, res)
+        self.assertEqual(len(self.launcher.launched), 1)
+        launched = self.launcher.launched[0]
+        self.assertEqual(launched["identity"], "claude")
+        after = chatroom.get_room(room["id"], public=False)
+        part = chatroom.participant(after, "claude")
+        self.assertNotEqual(part.get("sessionId"), "old-sid")
+        notes = [m for m in after["messages"]
+                 if "was removed from disk" in (m.get("text") or "")]
+        self.assertEqual(len(notes), 1, [m.get("text") for m in after["messages"]])
+        self.assertIn("`TASK-HANDOVER.md`", notes[0]["text"])
+        self.assertIn("TASK-HANDOVER.md", launched["text"])
+
+    def test_an_owner_with_no_handover_starts_from_the_branch(self):
+        room = self.owner_room(handover=False)
+        res = rotation.rotate_gone(room["id"], "claude")
+        self.assertIn("rotation", res, res)
+        after = chatroom.get_room(room["id"], public=False)
+        notes = [m for m in after["messages"]
+                 if "was removed from disk" in (m.get("text") or "")]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("the branch and the task's chat", notes[0]["text"])
+
+    def test_a_running_seat_is_not_rotated(self):
+        room = self.owner_room(handover=True)
+        with mock.patch.object(dashboard.ptyrun, "get", return_value=_FakePty(True)):
+            res = rotation.rotate_gone(room["id"], "claude")
+        self.assertNotIn("rotation", res)
+        self.assertIn("running", res["result"])
+        self.assertEqual(self.launcher.launched, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

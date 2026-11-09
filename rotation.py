@@ -437,8 +437,10 @@ def task_owners(room: dict) -> list[dict]:
             and cr._ENGINEER.search(cr._role_head(p.get("role", "")))]
 
 
-def _owner(room_id: str, identity: str = "") -> tuple[dict | None, dict | None, str]:
-    """(room, participant, why-not) for a task's owner."""
+def _owner(room_id: str, identity: str = "",
+           paused_ok: bool = False) -> tuple[dict | None, dict | None, str]:
+    """(room, participant, why-not) for a task's owner. ``paused_ok``: a
+    paused task counts (rotate_gone, as it is being resumed)."""
     if room_id in _po_room_ids():
         return None, None, "this is a project's PO task — it rotates as the PO"
     room = _d.chatroom.get_room(room_id)
@@ -446,7 +448,7 @@ def _owner(room_id: str, identity: str = "") -> tuple[dict | None, dict | None, 
         return None, None, f"the task {room_id} no longer exists"
     if not room.get("launched", True):
         return None, None, "the task is a draft"
-    if room.get("status") == "paused":
+    if room.get("status") == "paused" and not paused_ok:
         return None, None, "the task is paused"
     _d._backfill_codex_session_ids(room)
     owners = task_owners(room)
@@ -593,8 +595,8 @@ def _po_subject(project: dict) -> dict:
             "ids": {"projectId": project["id"]}}
 
 
-def _owner_subject(room_id: str, identity: str = "") -> dict:
-    room, part, why = _owner(room_id, identity)
+def _owner_subject(room_id: str, identity: str = "", paused_ok: bool = False) -> dict:
+    room, part, why = _owner(room_id, identity, paused_ok)
     ident = part["identity"] if part else identity
     # Named by its number first (P166); the room id only for a room that is gone.
     title = " ".join(x for x in (_d.task_label(room) if room else "", (room or {}).get("title", ""))
@@ -1727,11 +1729,23 @@ def _record_allocation(rid: str, ident: str, rec: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def first_prompt(project: dict, room: dict, old_sid: str, tokens,
-                 cause: str = "", kinds: tuple[str, str] = ("", "")) -> str:
+                 cause: str = "", kinds: tuple[str, str] = ("", ""),
+                 gone: str = "", chat: str = "") -> str:
+    """A fresh PO session's first prompt. ``cause`` "gone": the previous
+    conversation is no longer on disk (``gone`` says why, lost_sessions.py);
+    with no handover file the fresh PO builds its state from the Board now,
+    the roadmap and ``chat``, the last lines of its chat."""
     name = project.get("name", project["id"])
     hp = handover_path(project)
     rp = _d.roadmap_path(project)
-    if cause == "manual":
+    has_handover = handover_written(hp)
+    if cause == "gone":
+        opening = (f"[recovery] You are the product owner (PO) of the project '{name}', "
+                   f"taking over in the same room from the previous PO session. Its "
+                   f"conversation (session {old_sid or 'unknown'}) is no longer on disk: "
+                   f"{gone or 'it was deleted'}. It cannot be resumed or loaded, so the "
+                   f"hub started you fresh. Continue the existing work; do not restart it.")
+    elif cause == "manual":
         old, new = (_d._agent_kind_name(k) if k else "another agent" for k in kinds)
         opening = (f"[rotation] You are the product owner (PO) of the project '{name}', "
                    f"taking over in the same room from the previous PO session ({old}) "
@@ -1770,10 +1784,14 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         _d.OWNER_OUTPUT_NOTE,
         _d.ASK_NOTE,
         _d.TASK_NAME_NOTE,
-        f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
-        f"They give context for the hub's Board now: priorities, decisions and "
-        f"why, what is in flight, what has been promised to {_d.operator_name()}, and "
-        f"under '{DUE_HEADING}' what is due at a time.",
+        (f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
+         f"They give context for the hub's Board now: priorities, decisions and "
+         f"why, what is in flight, what has been promised to {_d.operator_name()}, and "
+         f"under '{DUE_HEADING}' what is due at a time." if has_handover or cause != "gone"
+         else f"There is no {HANDOVER_NAME} to start from. Build your state from the "
+              f"hub's Board now above, {rp} (the roadmap) if it exists, and the last lines "
+              f"of this chat below; then write {hp} with what you found, so the next fresh "
+              f"session has a handover."),
         # The summary is not the end of the turn: a fresh PO that summarised and
         # waited left a promised test undone for four hours (2026-09-18).
         # One line, not a status summary: a takeover is not news (#244 measured 41
@@ -1786,6 +1804,8 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"say which decision that is. A '{DUE_HEADING}' item whose time is still to come "
         f"is typed to you by the hub as a [due] line when it comes, if you are idle then.",
     ]
+    if chat and cause == "gone":
+        parts.append("The last lines of this chat, as the hub keeps them:\n\n" + chat)
     pts = _open_points(room)
     if pts:
         parts.append(pts)
@@ -1822,7 +1842,7 @@ def _open_points(room: dict) -> str:
 
 def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
                       kinds: tuple[str, str] | None = None, forced: bool = False,
-                      written: bool = False) -> str:
+                      written: bool = False, gone: str = "") -> str:
     """A rotated owner's first prompt. It never carries the spec: a fresh
     session handed its spec as an instruction does the task again (seen
     2026-09-10). The handover is its state; the spec is only a reference.
@@ -1832,6 +1852,10 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
     rid = room["id"]
     title = room.get("title") or rid
     parts = [
+        f"[recovery] You are taking over {_d.task_named(room, title)} from your previous "
+        f"session on it. Its conversation (session {old_sid or 'unknown'}) is no longer "
+        f"on disk: {gone}. It cannot be resumed or loaded, so the hub started you fresh."
+        if gone else
         f"[rotation] You are taking over {_d.task_named(room, title)} from your previous "
         f"session on it. Its conversation had grown to {_k(tokens)} tokens, and every "
         f"model call re-sends the whole conversation, so the hub started you fresh. The "
@@ -1850,8 +1874,8 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
                      "uncommitted. Compare the handover with git status and git log before "
                      "you rely on it, and remove a stale .git/index.lock if one is left.")
     parts += [
-        f"Your state is {hp}: the handover your previous session wrote just before it "
-        f"stopped: the goal and how far it got, decisions and why, branch and commits, "
+        f"Your state is {hp}: the handover your previous session wrote "
+        f"{'when it last handed over' if gone else 'just before it stopped'}: the goal and how far it got, decisions and why, branch and commits, "
         f"changed files, tests and results, open review findings, blockers, and the "
         f"exact next action. Read it first.",
         f"Do not start the task over and do not redo finished work: what the handover "
@@ -1926,7 +1950,10 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
     if not po_ident:
         return False
     title = room.get("title") or room["id"]
-    line = (f"{ident} was handed to {_kind_note(rec)} at {_k(rec['tokens'])} tokens "
+    line = (f"{ident} was handed to {_kind_note(rec)} {how} (session "
+            f"{rec['fromSessionId']}); it continues from {TASK_HANDOVER_NAME}."
+            if rec.get("lost") else
+            f"{ident} was handed to {_kind_note(rec)} at {_k(rec['tokens'])} tokens "
             f"(limit {_k(rec['threshold'])}) {how}; it continues from "
             f"{TASK_HANDOVER_NAME}. The old conversation is kept (session "
             f"{rec['fromSessionId']}).")
@@ -1980,6 +2007,50 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
         return _rotate_marked(s, tr, done, answered, asked, key, flags)
     finally:
         _release(key)
+
+
+def rotate_gone(room_id: str, identity: str = "", project: dict | None = None) -> dict:
+    """A seat that is not running and whose conversation file is gone
+    (lost_sessions.py, GitHub issue 33): hand it to a fresh session the way
+    the token limit does — the PO from PO-HANDOVER.md, a task owner from
+    TASK-HANDOVER.md — with no handover asked for, since the old session
+    cannot be woken to write one. A PO with no handover is still rotated: its
+    fresh session builds its state from the board, the roadmap and the last
+    chat lines, and writes the file. ``project`` names the PO's project; with
+    none, ``room_id``/``identity`` is a task's owner. Returns {result, ...};
+    ``rotation`` in it when a fresh session started."""
+    with _LOCK:
+        s = (_po_subject(project) if project
+             else _owner_subject(room_id, identity, paused_ok=True))
+        st = s["state"]
+
+        def done(result: str, quiet: bool = False, **extra) -> dict:
+            st["lastResult"] = result
+            if not quiet:
+                _log(f"{s['name']}: {result}")
+            return {**s["ids"], "result": result, "phase": st.get("phase"), **extra}
+
+        room, part = s["room"], s["part"]
+        if room is None:
+            return done(f"conversation gone, not rotated — {s['why']}")
+        if switching(room["id"]):
+            return done(f"{s['who']} is being switched to the other agent — not rotated")
+        if _pty(part) is not None:
+            return done(f"{s['who']} is running — its conversation is not gone")
+        key = (room["id"], part["identity"])
+        flags = {"stopped": False}
+        with GATE:
+            if key in _ROTATING:
+                return done(f"{s['who']} is already being rotated")
+            _ROTATING[key] = flags
+        st["phase"] = "watching"
+        s["forced"] = False
+        s["gone"] = _d.lost_sessions.why_gone(part.get("agent", ""))
+        tr = {"tokens": 0, "size": 0, "turnOver": True, "promptSince": False}
+        try:
+            return _rotate_marked(s, tr, done, False, False, key, flags)
+        finally:
+            _release(key)
 
 
 def _release(key: tuple) -> None:
@@ -2257,6 +2328,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     updated = _mtime(hp) > float(st.get("handoverAtAsk") or 0) if asked else False
     owner = s["kind"] == "owner"
     forced = bool(s.get("forced"))
+    gone = s.get("gone") or ""      # rotate_gone: why its conversation is not on disk
 
     # Under the room's launch lock from the last look at the seat to the
     # write, as every start: a live terminal of this seat that no one records
@@ -2273,7 +2345,8 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             st.update(phase="watching", lastAttempt=time.time())
             return done(f"{s['who']} has a running terminal that its record does not "
                         f"name ({', '.join(stray)}) — not rotated; stop the task to end it")
-        if old_pty:
+        # A gone seat is not running: there is no terminal to end or wait for.
+        if old_pty and not (gone and _pty(part) is None):
             _d.ptyrun.kill(old_pty)
             _await_death(old_pty)
         room_full = _d.chatroom.get_room(rid, public=False)
@@ -2297,7 +2370,10 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         started = time.time()
         used, old_kind = fpart, fpart.get("agent", "")
         if not owner:
-            prompt = first_prompt(s["project"], room_full, old_sid, tokens)
+            prompt = (first_prompt(s["project"], room_full, old_sid, tokens, cause="gone",
+                                   gone=gone,
+                                   chat=_d.lost_sessions.chat_lines(room_full, fpart, old_sid))
+                      if gone else first_prompt(s["project"], room_full, old_sid, tokens))
             if solo:
                 info = launcher._launch_room_agent_pty(room_full, fpart, "", collab=False,
                                                        prompt=prompt, cwd=cwd)
@@ -2313,7 +2389,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             def text_for(kind: str) -> str:
                 return task_first_prompt(room_full, old_sid, tokens, hp, solo,
                                          kinds=(old_kind, kind) if kind != old_kind else None,
-                                         forced=forced, written=answered)
+                                         forced=forced, written=answered, gone=gone)
 
             info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
                                                cwd, choice)
@@ -2324,6 +2400,8 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
                "tokens": tokens, "threshold": limit, "handover": str(hp),
                "handoverUpdated": updated, "asked": asked, "answered": answered,
                "tokensAtEnd": tr["tokens"] or tokens, "forced": forced}
+        if gone:
+            rec["lost"] = True
         fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
                   "cwd": info["cwd"], "pid": None}
         drop = ("lastExit", "fresh", "nextCwd")
@@ -2393,7 +2471,9 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             _WATCHING.pop(key, None)
         st["phase"] = "watching"
         return done(f"{s['whose']} task was deleted as it rotated — nothing posted")
-    if forced:
+    if gone:
+        how = "because its conversation is no longer on disk"
+    elif forced:
         how = (f"in mid-turn: {who} had gone on to {_k(rec['tokensAtEnd'])} "
                + (f"after writing {hname}" if answered else "without handing over"))
     elif not asked:
@@ -2404,18 +2484,22 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         how = f"after {who} brought {hname} up to date"
     else:
         how = f"after {who} confirmed {hname} was current"
-    if not owner:
+    if gone:
+        # The one chat line (lost_sessions.notice), in place of the token one.
+        text = _d.lost_sessions.notice("owner" if owner else "po", fpart, ident,
+                                       handover=handover_written(hp))
+    elif not owner:
         text = (f"**New PO session** — the conversation had reached {_k(tokens)} tokens "
                 f"(limit {_k(limit)}), so the hub started a fresh session {how}. It "
                 f"picks up from `{HANDOVER_NAME}` and `ROADMAP.md`. The previous conversation "
                 f"is kept (session `{old_sid}`).")
-        _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
     else:
         text = (f"**New session for {ident}** — its conversation had reached {_k(tokens)} "
                 f"tokens (limit {_k(limit)}), so the hub started {_kind_note(rec)} {how}. "
                 f"It continues from `{TASK_HANDOVER_NAME}`. The previous conversation is "
                 f"kept (session `{old_sid}`).")
-        _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
+    _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
+    if owner:
         try:
             _record_allocation(rid, ident, rec)
         except Exception as e:          # the rotation itself has happened
@@ -2438,7 +2522,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     st.pop("firstTokens", None)
     for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk", "askSubmit"):
         st.pop(k, None)
-    return done(f"rotated at {_k(tokens)} tokens {how} — new session "
+    return done(f"rotated {how if gone else f'at {_k(tokens)} tokens {how}'} — new session "
                 f"{info['sessionId'] or '(not known yet)'} (pty {info['ptyId']})",
                 rotation=rec)
 

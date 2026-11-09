@@ -1958,6 +1958,12 @@ def on_pty_death(rec: dict) -> None:
         })
     except Exception:
         pass
+    try:
+        # A resume the CLI refused because the conversation is not on disk
+        # (GitHub issue 33): the seat is rotated and the room resumed once.
+        _d.lost_sessions.on_death(rec)
+    except Exception:
+        pass
 
 
 def install() -> None:

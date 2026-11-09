@@ -143,6 +143,7 @@ import task_numbers
 import task_tool_hook
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
+import lost_sessions
 import board_brief
 # An open board card's goal, where the task stands, and its facts (#316).
 import task_brief
@@ -207,6 +208,7 @@ permission_mode.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 quiet_reports.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
+lost_sessions.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
 restore_problems.bind(sys.modules[__name__])
@@ -5401,6 +5403,7 @@ HUB_INPUT_KINDS = (
     ("[hub restart] ", "drain"),        # restart_drain.DRAIN_LINE: reach a safe point
     ("[handover] ", "handover"),        # rotation.py: write your handover now
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
+    ("[recovery] ", "rotation"),        # lost_sessions.py: one whose conversation was gone
     ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
     ("[from the restart helper, not ", "helper"),   # the note after a hub restart
     ("[points] ", "points"),            # points.py: the person's points still open
@@ -6293,6 +6296,7 @@ def room_past_sessions(room: dict) -> list[dict]:
 # on a retire it simply dropped out of the room. The hub's own first words say
 # which ones they are.
 _PO_BRIEF_HEADS = ("[rotation] You are the product owner (PO)", "[product owner] ",
+                   "[recovery] You are the product owner (PO)",
                    "You are the product owner (PO) of the project")
 
 
@@ -18790,6 +18794,11 @@ class Handler(BaseHTTPRequestHandler):
             refresh = parse_qs(u.query).get("refresh", [""])[0] == "1"
             self._send_json(200, app_setup.agents_check(refresh=refresh))
             return
+        if p == "/api/claude-retention":
+            # How long Claude Code keeps conversations against how old the
+            # ones the hub resumes are (GitHub issue 33; Settings warns).
+            self._send_json(200, lost_sessions.retention())
+            return
         if p == "/api/app/autostart":
             self._send_json(200, app_setup.autostart_status(app_version.app_executable())
                             if app_version.packaged() else {"enabled": False, "supported": False,
@@ -19775,6 +19784,7 @@ class Handler(BaseHTTPRequestHandler):
                 if hasattr(ag, "latest_session_id_for_cwd") else "")
             if codex_sid:
                 argv += ["resume", codex_sid]   # subcommand goes last
+                meta["resumeOf"] = codex_sid    # lost_sessions.on_death reads it
             first = po_hub_prompt(room_full, seed) if seed and not codex_sid else ""
             cmd = BACKEND.headless_launch(cwd, argv, first)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
@@ -19785,6 +19795,8 @@ class Handler(BaseHTTPRequestHandler):
         # claude
         sid = part.get("sessionId", "")
         resume = ["--resume", sid] if sid else []
+        if sid:
+            meta["resumeOf"] = sid              # lost_sessions.on_death reads it
         argv = claude_cmd_args(*resume, *claude_mcp, *rtk_args)
         if model:
             argv += ["--model", model]
@@ -19884,9 +19896,50 @@ class Handler(BaseHTTPRequestHandler):
     def _start_or_resume_room(self, room_full: dict, restart: dict | None = None,
                               keep_state: bool = False, notes: dict | None = None) -> list[dict]:
         """``_start_or_resume_room_now`` under the room's launch lock, from the
-        room's seats as they are on disk (``_launch_guarded``)."""
+        room's seats as they are on disk (``_launch_guarded``). A seat whose
+        conversation file is gone is first handed to a fresh session by the
+        rotation (``_rotate_lost_seats``), so it is running by then."""
+        self._gone_briefs = self._rotate_lost_seats(room_full, restart)
         return self._launch_guarded(room_full, self._start_or_resume_room_now, room_full,
                                     restart=restart, keep_state=keep_state, notes=notes)
+
+    def _rotate_lost_seats(self, room_full: dict, restart: dict | None) -> dict[str, str]:
+        """Each seat that would be resumed but whose conversation is no longer
+        on disk (lost_sessions.py, GitHub issue 33: Claude Code deletes old
+        ones) is rotated as at the token limit: a PO from its handover, a task
+        owner from TASK-HANDOVER.md, with the one chat line. Returns identity
+        -> a fresh first prompt for a gone seat the rotation does not take (no
+        task owner behind it); ``_start_or_resume_room_now`` launches those."""
+        rid = room_full["id"]
+        if not room_full.get("launched", True) or room_full.get("pruned"):
+            return {}
+        room = chatroom.get_room(rid, public=False) or room_full
+        proj = next((p for p in load_projects() if (p.get("poRoomId") or "") == rid), None)
+        po_ident = chatroom.po_identity(room) if proj else ""
+        briefs: dict[str, str] = {}
+        for part in chatroom.agent_participants(room):
+            ident = part["identity"]
+            if (_pty_alive(part.get("ptyId")) or part.get("fresh")
+                    or chatroom.is_on_mention(room, part)
+                    or (restart is not None and restart.get(ident) == "stopped")):
+                continue
+            old_sid = (part.get("sessionId") or "").strip()
+            try:
+                gone = lost_sessions.conversation_gone(part, part.get("cwd") or "")
+            except Exception as e:      # noqa: BLE001 — unknown: resumed as before
+                print(f"[lost] {rid}/{ident}: not checked: {str(e)[:200]}", flush=True)
+                gone = False
+            if not gone:
+                continue
+            print(f"[lost] {rid}/{ident}: conversation {old_sid or '(none)'} is not on "
+                  f"disk — rotating", flush=True)
+            res = rotation.rotate_gone(rid, ident, project=proj if ident == po_ident else None)
+            if res.get("rotation"):
+                continue
+            print(f"[lost] {rid}/{ident}: not rotated ({res.get('result')}) — a fresh "
+                  f"session from the chat record", flush=True)
+            briefs[ident] = lost_sessions.session_brief(room, part, old_sid)
+        return briefs
 
     def _start_or_resume_room_now(self, room_full: dict, restart: dict | None = None,
                                   keep_state: bool = False, notes: dict | None = None) -> list[dict]:
@@ -19924,6 +19977,10 @@ class Handler(BaseHTTPRequestHandler):
         # Who a quiet return still told of an amended spec (the restore's log).
         spec_told = self._spec_told = []
         resumed = []
+        # Seats whose conversation is gone that no rotation took (_rotate_lost_seats).
+        gone_briefs = getattr(self, "_gone_briefs", None) or {}
+        self._gone_briefs = {}
+        lost_notices: list[str] = []
         # An agent still running (a partner died, a retry after a failed
         # delivery) is never launched a second time: it stays as it is, and
         # what is held for it is typed once its screen is settled.
@@ -19943,6 +20000,24 @@ class Handler(BaseHTTPRequestHandler):
                 part.pop("stoppedState", None)
                 continue
             fresh = part.pop("fresh", False)
+            brief = gone_briefs.get(part["identity"])
+            if brief:
+                # Its conversation is gone and no rotation takes it: a fresh
+                # session told so, with the hub's record of its last lines.
+                info = (self._launch_room_agent_pty(room_full, part, brief, collab=True)
+                        if not solo else
+                        self._launch_room_agent_pty(room_full, part, "", collab=False,
+                                                    prompt=brief))
+                part["sessionId"] = info["sessionId"]
+                part["hubStarted"] = True
+                part.pop("conversationGone", None)
+                lost_notices.append(lost_sessions.notice("session", part, part["identity"]))
+                part.pop("stoppedState", None)
+                part["ptyId"] = info["ptyId"]
+                part["cwd"] = info["cwd"]
+                part.pop("lastExit", None)
+                resumed.append({"identity": part["identity"], "ptyId": info["ptyId"]})
+                continue
             # Codex's id is found asynchronously after launch. A seat that
             # already ran can still have an empty sessionId; its resume path
             # can recover the id from the rollout in its cwd.
@@ -20023,6 +20098,8 @@ class Handler(BaseHTTPRequestHandler):
             if resumed:
                 room_full["launchedAt"] = time.time()
             chatroom.update_room(room_full)
+        for line in lost_notices:       # only after the room is written (post_notice rewrites it)
+            chatroom.post_notice(room_full["id"], rotation.SENDER, line, {"noticeKind": "rotation"})
         self._told = sorted(r["identity"] for r in resumed if notify.get(r["identity"]))
         self._deliver_after_resume(
             room_full["id"],
@@ -21551,6 +21628,18 @@ class Handler(BaseHTTPRequestHandler):
             sess = ptyrun.create(cmd, cwd=cwd, rows=rows, cols=cols,
                                  label=(data.get("label") or "").strip())
             self._send_json(200, {"id": sess.id, "info": sess.info()})
+            return
+        if p == "/api/claude-retention/keep":
+            # "Keep conversations for a year" (GitHub issue 33): the one key
+            # Ensemble writes to Claude Code's settings, on the person's click.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            res = lost_sessions.keep_for_a_year()
+            self._send_json(200 if res.get("ok") else 409,
+                            {**res, "retention": lost_sessions.retention()} if res.get("ok")
+                            else {"error": "not_written", **res})
             return
         if p == "/api/room/interrupt":
             # Only the person's dashboard page may interrupt an agent. Agent
@@ -23306,6 +23395,20 @@ def main():
             except OSError as e:
                 print(f"remote bind {remote_host}:{port} failed ({e}); "
                       f"serving loopback, retrying in background", flush=True)
+
+    def _warn_retention():
+        # Claude Code deletes conversations older than cleanupPeriodDays; the
+        # hub resumes older ones (GitHub issue 33). Said once in the log;
+        # Settings › Agents offers the fix.
+        try:
+            r = lost_sessions.retention()
+            if r.get("warn"):
+                print(f"[lost] Claude Code keeps conversations {r['days']} days; "
+                      f"{r['atRisk']} seat(s) older than that, {r['gone']} already gone. "
+                      f"Settings offers 'Keep conversations for a year'.", flush=True)
+        except Exception as e:      # noqa: BLE001
+            print(f"[lost] retention not checked: {str(e)[:200]}", flush=True)
+    threading.Thread(target=_warn_retention, daemon=True, name="retention-warn").start()
 
     # Tailnet requested but its listener isn't up yet (never resolved, or bind
     # failed above): keep retrying in the background, without ever blocking startup.
