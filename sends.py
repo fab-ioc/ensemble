@@ -492,12 +492,14 @@ def _user_turns(room_id: str, sid: str, since: float, now: float,
                 hidden: bool = False) -> list[tuple[str, dict]]:
     """A session's user turns from ``since`` on, read again only when its
     transcript changed (a PO's is megabytes, and the page polls every two
-    seconds); one whose stat cannot be had, every RESCAN_UNKNOWN_S. A session
-    not written since ``since`` holds none. ``hidden``: with the turns the
-    chat does not draw (_hidden_turns)."""
+    seconds); one whose stat cannot be had, every RESCAN_UNKNOWN_S.
+    ``hidden``: with the turns the chat does not draw (_hidden_turns).
+
+    A file's mtime cannot rule out recent turns: resumed Codex rollouts can
+    contain new November turns while their file still reports an October
+    mtime. Read once, then use the size/mtime pair to cache unchanged files.
+    """
     st = _d.points._session_stat(sid)
-    if st is not None and float(st[1]) < since:
-        return []
     seen = _SCANNED.get((room_id, sid, hidden))
     if seen is not None and seen[1] <= since and (
             seen[0] == st if st is not None else seen[0] is None and now - seen[3] < RESCAN_UNKNOWN_S):
