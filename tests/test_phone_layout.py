@@ -426,7 +426,8 @@ class ThePhone(unittest.TestCase):
 class TheWiring(unittest.TestCase):
     def test_a_phone_opens_a_task_in_the_dock(self):
         self.assertIn("function pdTask() { return pdTaskWanted() && !!PD.dock; }", INDEX)
-        self.assertIn("function swOn() { try { return !isPhone() || phList(); }", INDEX)
+        self.assertIn("function swOn() {", INDEX)
+        self.assertIn("return isPhone() ? phList()", INDEX)
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
 
     def test_a_task_closing_by_itself_goes_back_to_the_list(self):

@@ -50,7 +50,7 @@ async function main() {
     await until('window.ensBooted === true', 30000);
     return { evalIn, until, move, clickAt, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const D = 'PD.els.inbox';
+  const D = 'LD_INBOX';
   // Every row's top and height, and the row under (x, y) with its actions.
   const read = (x, y) => `(() => { const rows = [...${D}.querySelectorAll('li.ibx-row[data-ibx]')];
     const r = rows.map(li => { const b = li.getBoundingClientRect(); return [Math.round(b.top * 10) / 10, Math.round(b.height * 10) / 10]; });

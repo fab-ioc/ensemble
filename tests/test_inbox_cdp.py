@@ -92,10 +92,10 @@ async function main() {
     return { evalIn, until, click, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const toPo = (p, pid = A.proj) => p.evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(pid)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
-  const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && !!PD.els.inbox.querySelector(".ibx-row")', 30000);
+  const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && !!LD_INBOX.querySelector(".ibx-row")', 30000);
   const R = 'const R = el => { const b = el.getBoundingClientRect(); return { x: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height) }; };';
   const fits = `(() => { const W = document.documentElement.clientWidth;
-    const wide = [...document.querySelectorAll('#po-dock .ibx, #po-dock .ibx *')].filter(e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > W + 1; }).map(e => e.className || e.tagName);
+    const wide = [...document.querySelectorAll('#po-dock .ibx, #po-dock .ibx *, #list-dock .ibx, #list-dock .ibx *')].filter(e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > W + 1; }).map(e => e.className || e.tagName);
     return { W, scroll: document.documentElement.scrollWidth, body: document.body.scrollWidth, wide: wide.slice(0, 5) }; })()`;
   try {
     // ---- 1728 x 1117: the column beside the conversation
@@ -103,53 +103,54 @@ async function main() {
     await toPo(p); await ready(p); await sleep(400);
     out.desk = await p.evalIn(`(async () => { ${R}
       const api = await (await fetch('/api/inbox', { cache: 'no-store' })).json();
-      const rows = [...PD.els.inbox.querySelectorAll('.ibx-row')];
-      return { col: R(PD.els.inbox), chat: R(PD.els['po-chat']), shown: PD.dock.isShown('inbox') && PD.dock.frontOf('inbox') === 'inbox',
-        auto: PD.dock.isAuto('inbox'),
+      const rows = [...LD_INBOX.querySelectorAll('.ibx-row')];
+      return { col: R(LD_INBOX), chat: R(PD.els['po-chat']), shown: ldOnScreen('inbox') && LD.dock.frontOf('inbox') === 'inbox',
+        auto: LD.dock.isAuto('inbox'), inPd: !!PD.dock && PD.dock.isVisible('inbox'),
         rows: rows.map(r => r.dataset.ibx), apiRows: api.rows.filter(r => r.projectId === ${JSON.stringify(A.proj)}).map(r => r.id),
         apiAll: api.rows.length, counts: api.counts || null,
-        heads: [...PD.els.inbox.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()),
+        heads: [...LD_INBOX.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()), stages: rows.map(r => r.dataset.stage || ''),
         where: rows.map(r => r.querySelector('.ibx-where').textContent), ages: rows.map(r => r.querySelector('.pdp-age').textContent),
         lines: rows.map(r => r.querySelector('.ibx-line').textContent),
-        scope: [...PD.els.inbox.querySelectorAll('[data-ibx-scope]')].map(b => b.dataset.ibxScope + ':' + b.getAttribute('aria-pressed')),
+        scope: [...LD_INBOX.querySelectorAll('[data-ibx-scope]')].map(b => b.dataset.ibxScope + ':' + b.getAttribute('aria-pressed')),
         btn: document.getElementById('inbox-btn').textContent.trim(), btnShown: document.getElementById('inbox-btn').getBoundingClientRect().width > 0,
         tool: toolIcon('inbox').includes('ti-inbox') && getComputedStyle(document.body).getPropertyValue('--tool-inbox').trim() !== '' };
     })()`);
     out.deskFits = await p.evalIn(fits);
     await p.shot('inbox-1728x1117');
     // All projects, then this project again.
-    await p.click('PD.els.inbox.querySelector(\'[data-ibx-scope="all"]\')'); await sleep(200);
-    out.all = await p.evalIn(`({ rows: [...PD.els.inbox.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx),
-      where: [...PD.els.inbox.querySelectorAll('.ibx-where')].map(e => e.textContent), saved: localStorage.getItem('cd-inbox-scope') })`);
-    await p.click('PD.els.inbox.querySelector(\'[data-ibx-scope="project"]\')'); await sleep(200);
-    out.back = await p.evalIn(`[...PD.els.inbox.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx)`);
+    await p.click('document.querySelector(\'#list-dock .dk-strip-btn[data-dk-auto="projects"]\')'); await sleep(200);
+    await p.click('document.querySelector(\'#ld-projs [data-ldp="all"]\')'); await sleep(200);
+    out.all = await p.evalIn(`({ rows: [...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx),
+      where: [...LD_INBOX.querySelectorAll('.ibx-where')].map(e => e.textContent), saved: localStorage.getItem('cd-inbox-scope') })`);
+    await p.click('document.querySelector(\'#ld-projs [data-ldp-proj="' + A.proj + '"]\')'); await sleep(200);
+    await p.click('document.querySelector(\'#list-dock .dk-strip-btn[data-dk-auto="inbox"]\')'); await sleep(200);
+    out.back = await p.evalIn(`[...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx)`);
     // A row opens its message: the chat lands on that balloon.
     await p.until('(() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
-    const mid = await p.evalIn('PD.els.inbox.querySelector(".ibx-row a.ibx-link[data-mid]").dataset.mid');
+    const mid = await p.evalIn('LD_INBOX.querySelector(".ibx-row a.ibx-link[data-mid]").dataset.mid');
     await p.evalIn('(() => { const b = pdChatFrame().contentDocument.getElementById("msgs"); b.scrollTop = 0; })(); 0');
-    await p.click('PD.els.inbox.querySelector(".ibx-row a.ibx-link[data-mid]")');
+    await p.click('LD_INBOX.querySelector(".ibx-row a.ibx-link[data-mid]")');
     await p.until(`(() => { const d = pdChatFrame().contentDocument, l = d.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(mid)}; })()`, 10000).catch(() => null);
     out.open = await p.evalIn(`(() => { const d = pdChatFrame().contentDocument, box = d.getElementById('msgs'), l = d.querySelector('.landed');
       const m = l && (l.closest('.msg[data-mid]') || l), el = [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(mid)});
       const er = el && el.getBoundingClientRect(), br = box.getBoundingClientRect();
       return { mid: ${JSON.stringify(mid)}, landed: m ? m.dataset.mid : '', inView: !!el && er.bottom > br.top && er.top < br.bottom, here: location.pathname }; })()`);
     // The row's answers, listed under it: the second one opens its own answer.
-    await p.click('PD.els.inbox.querySelector(".ibx-more > summary")'); await sleep(200);
-    out.more = await p.evalIn(`(() => { const d = PD.els.inbox.querySelector('.ibx-more');
+    await p.click('LD_INBOX.querySelector(".ibx-more > summary")'); await sleep(200);
+    out.more = await p.evalIn(`(() => { const d = LD_INBOX.querySelector('.ibx-more');
       return { open: d.open, line: d.closest('.ibx-row').querySelector('.ibx-line').textContent, summary: d.querySelector('summary').textContent,
         items: [...d.querySelectorAll('.ibx-item a.ibx-link')].map(a => a.dataset.mid) }; })()`);
     await p.evalIn('(() => { IBX.sig = ""; ibxPaint(); return 0; })()');
-    out.moreKept = await p.evalIn('PD.els.inbox.querySelector(".ibx-more").open');
-    await p.click('PD.els.inbox.querySelectorAll(".ibx-item a.ibx-link")[1]');
+    out.moreKept = await p.evalIn('LD_INBOX.querySelector(".ibx-more").open');
+    await p.click('LD_INBOX.querySelectorAll(".ibx-item a.ibx-link")[1]');
     await p.until(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(A.mid2)}; })()`, 10000).catch(() => null);
     out.moreOpen = await p.evalIn(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return m ? m.dataset.mid : ''; })()`);
-    // The bar's Inbox from the task list: the PO screen with its Inbox.
+    // #322: off the PO screen the Inbox stays on the left strip, now for the project the bar names.
     await p.evalIn(`(() => { midLeave(); VIEW_MODE = 'board'; SELECTED_PROJECT = ''; renderRows(); return 0; })()`);
     await p.until('!document.body.classList.contains("po-dock")', 10000).catch(() => null);
-    out.offPo = await p.evalIn('document.body.classList.contains("po-dock")');
-    await p.click('document.getElementById("inbox-btn")');
-    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.isVisible("inbox")', 15000).catch(() => null);
-    out.fromBar = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: !!PD.dock && PD.dock.isVisible("inbox"), pid: PD.pid })');
+    await sleep(300);
+    out.offPo = await p.evalIn(`({ po: document.body.classList.contains("po-dock"), inbox: ldOnScreen("inbox"), pid: IBX.ldPid, here: projHere() || '',
+      rows: [...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx), want: ibxRows(IBX.data, IBX.scope, projHere() || '').map(r => r.id) })`);
     await p.close();
     // ---- phones: the PO screen's Inbox tab, beside Chat (#311)
     out.phone = {};
@@ -267,21 +268,25 @@ class InboxInChrome(unittest.TestCase):
     def test_the_column_is_left_of_the_conversation_with_the_hubs_rows(self):
         d = self.got["desk"]
         self.assertTrue(d["shown"] and not d["auto"], d)
+        self.assertFalse(d["inPd"], "#322: not in the PO dock on a computer")
         self.assertLessEqual(d["col"]["r"], d["chat"]["x"] + 1, "left of the conversation, covering nothing")
         self.assertTrue(240 <= d["col"]["w"] <= 320, d["col"])
         self.assertGreaterEqual(d["chat"]["w"], 360)
         self.assertTrue(d["rows"], d)
         self.assertEqual(d["rows"], d["apiRows"], "the hub's rows for this project, in its order")
-        self.assertEqual(d["heads"], [f"Ready to check {len(d['rows'])}"], d["heads"])
+        # #322 (P287 drawing): cards, no group headings; each card carries its stage
+        self.assertEqual(d["heads"], [], d["heads"])
+        self.assertEqual(d["stages"], ["check"] * len(d["rows"]), d["stages"])
         self.assertTrue(all(w == "PO" for w in d["where"]), d["where"])
         self.assertTrue(all(a for a in d["ages"]), d["ages"])
         self.assertTrue(any(x.startswith("Motors PO: ") for x in d["lines"]), d["lines"])
-        self.assertEqual(d["scope"], ["project:true", "all:false"])
+        self.assertEqual(d["scope"], [], "the Projects panel owns the All/project choice")
         self.assertTrue(d["tool"], "the Inbox's icon in its colour")
 
     def test_the_bar_counts_every_project(self):
+        # #322: the bar's Inbox gives way to the strip's on a computer; it still keeps the count.
         d = self.got["desk"]
-        self.assertTrue(d["btnShown"])
+        self.assertFalse(d["btnShown"])
         self.assertGreater(d["apiAll"], len(d["rows"]), "the other project's rows too")
         self.assertEqual(d["btn"], f"Inbox {d['apiAll']}")
 
@@ -310,11 +315,12 @@ class InboxInChrome(unittest.TestCase):
         self.assertTrue(self.got["moreKept"], "stays open when the inbox paints again")
         self.assertEqual(self.got["moreOpen"], self.mid2, "an answer opens its own message")
 
-    def test_the_bar_button_opens_the_po_screen_with_the_inbox(self):
-        self.assertFalse(self.got["offPo"], "left the PO screen first")
-        f = self.got["fromBar"]
-        self.assertEqual((f["po"], f["inbox"]), (True, True), f)
-        self.assertIn(f["pid"], (self.proj, self.other, *self.phones.values()), "no project selected: the first one with a row")
+    def test_off_the_po_screen_the_inbox_stays_for_the_project_the_bar_names(self):
+        o = self.got["offPo"]
+        self.assertFalse(o["po"], "left the PO screen first")
+        self.assertTrue(o["inbox"], o)
+        self.assertEqual(o["pid"], o["here"])
+        self.assertEqual(o["rows"], o["want"])
 
     def test_nothing_is_wider_than_the_screen(self):
         f = self.got["deskFits"]

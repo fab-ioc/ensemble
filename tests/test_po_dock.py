@@ -77,8 +77,10 @@ const out = {};
 %(fns)s
 (async () => {
   const L = await import(%(layout)s);
+  // #322: a computer's dock has no Inbox (the list dock has it), as pdEnsure.
+  const idsOf = phone => PD_IDS.filter(id => id !== 'inbox' || phone);
   const lay = (w, phone) => {
-    const cfg = L.makeConfig({ ids: PD_IDS, fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, { ...ctx, phone }) });
+    const cfg = L.makeConfig({ ids: idsOf(phone), fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, { ...ctx, phone }) });
     const l = L.normalizeLayout(null, { cfg, viewportPx: w });
     const docked = L.panelsUnder(l.root);
     const front = [];
@@ -93,7 +95,7 @@ const out = {};
   out.phone = lay(390, true);
   // A pinned tool goes beside the conversation.
   {
-    const cfg = L.makeConfig({ ids: PD_IDS, fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
+    const cfg = L.makeConfig({ ids: idsOf(false), fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
     const l = L.normalizeLayout(null, { cfg, viewportPx: 1440 });
     L.pinPanel(l, 'board', { cfg, viewportPx: 1440 });
     out.pinned = L.panelsUnder(l.root);
@@ -105,7 +107,7 @@ const out = {};
       root: L.split('row', [L.stack(['po-chat', 'documents'], { active: 'documents' }), L.stack(['points'], { size: 340 })]),
       auto: ['board', 'workspace', 'changes'].map(id => ({ id, edge: 'right', size: 900 })) }) });
     const saved = JSON.parse(JSON.stringify(L.normalizeLayout(null, { cfg: oldCfg, viewportPx: 1440 })));
-    const cfg = L.makeConfig({ ids: PD_IDS, fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
+    const cfg = L.makeConfig({ ids: idsOf(false), fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
     const n = L.normalizeLayout(JSON.parse(JSON.stringify(saved)), { cfg, viewportPx: 1440 });
     const all = [...L.panelsUnder(n.root), ...n.auto.map(a => a.id), ...n.floats.flatMap(f => L.panelsUnder(f.stack)), ...n.hidden.map(h => h.id)];
     const front = [];
@@ -119,7 +121,7 @@ const out = {};
       root: L.split('row', [L.stack(['inbox'], { size: 280 }), L.stack(['po-chat']), L.stack(['topics'], { size: 340 })]),
       auto: ['points', 'changes', 'workspace', 'board', 'spec'].map(id => ({ id, edge: 'right', size: 900 })) }) });
     const saved = JSON.parse(JSON.stringify(L.normalizeLayout(null, { cfg: oldCfg, viewportPx: 1440 })));
-    const cfg = L.makeConfig({ ids: PD_IDS, fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
+    const cfg = L.makeConfig({ ids: idsOf(false), fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
     const n = L.normalizeLayout(JSON.parse(JSON.stringify(saved)), { cfg, viewportPx: 1440 });
     const all = [...L.panelsUnder(n.root), ...n.auto.map(a => a.id), ...n.floats.flatMap(f => L.panelsUnder(f.stack)), ...n.hidden.map(h => h.id)];
     out.oldTopics = { had: L.panelsUnder(saved.root), docked: L.panelsUnder(n.root), all: all.sort() };
@@ -145,13 +147,13 @@ class ThePanels(unittest.TestCase):
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
 
     def test_a_desktop_is_the_conversation_and_the_tool_strip(self):
-        # The Inbox (#302) left of the conversation, the other tools stay on the strip.
+        # The conversation, the tools on the strip; the Inbox is the list dock's on a computer (#322).
         for key in ("at1440", "at1366", "at1920"):
             a = self.o[key]
-            self.assertEqual(a["docked"], ["inbox", "po-chat"], key)
+            self.assertEqual(a["docked"], ["po-chat"], key)
             self.assertEqual(a["auto"], [["changes", "right"], ["workspace", "right"],
                                          ["board", "right"], ["spec", "right"]], "Changes, Files, Board, Spec (Needs you is gone, #311)")
-            self.assertEqual((a["floats"], a["hidden"], a["sizes"]), (0, 0, [280, None]))
+            self.assertEqual((a["floats"], a["hidden"], a["sizes"]), (0, 0, None))
 
     def test_a_phone_is_one_column_of_tabs(self):
         a = self.o["phone"]
@@ -161,14 +163,14 @@ class ThePanels(unittest.TestCase):
         self.assertEqual((a["auto"], a["floats"], a["hidden"]), ([], 0, 0), "nothing on a strip, nothing floating, nothing hidden: the spec is a tab too (#129)")
 
     def test_a_tool_pinned_goes_beside_the_conversation(self):
-        self.assertEqual(self.o["pinned"], ["inbox", "po-chat", "board"])
+        self.assertEqual(self.o["pinned"], ["po-chat", "board"])
 
     def test_a_layout_saved_with_a_topics_panel_loads_without_it(self):
         # #304: Topics became a filter on the conversation; a stored layout that docked it opens without it.
         o = self.o["oldTopics"]
         self.assertEqual(o["had"], ["inbox", "po-chat", "topics"])
-        self.assertEqual(o["docked"], ["inbox", "po-chat"])
-        self.assertEqual(o["all"], sorted(["po-chat", "inbox", "board", "workspace", "changes", "spec"]))
+        self.assertEqual(o["docked"], ["po-chat"], "and the Inbox is the list dock's now (#322)")
+        self.assertEqual(o["all"], sorted(["po-chat", "board", "workspace", "changes", "spec"]))
         self.assertNotIn("topics", INDEX[INDEX.index("const PD_IDS"):INDEX.index("const PD_KEYS")])
         self.assertNotIn('data-panel="topics"', INDEX)
 
@@ -176,8 +178,8 @@ class ThePanels(unittest.TestCase):
         o = self.o["oldSaved"]
         self.assertEqual(o["had"], ["po-chat", "documents", "points"], "the old layout had it docked")
         self.assertNotIn("points", o["docked"], "Needs you (points) is gone since #311: a layout that docked it opens without it")
-        self.assertEqual(o["all"], sorted(["po-chat", "inbox", "board", "workspace", "changes", "spec"]), "every panel once, no Documents")
-        self.assertEqual(o["front"][:2], ["inbox", "po-chat"], "the stack it was in front of shows the chat; the Inbox (#302) joins on its left")
+        self.assertEqual(o["all"], sorted(["po-chat", "board", "workspace", "changes", "spec"]), "every panel once, no Documents (the Inbox is the list dock's, #322)")
+        self.assertEqual(o["front"][0], "po-chat", "the stack it was in front of shows the chat")
         self.assertNotIn("documents", INDEX[INDEX.index("const PD_IDS"):INDEX.index("const PD_KEYS")])
         self.assertNotIn('data-panel="documents"', INDEX)
 
@@ -232,7 +234,7 @@ class ThePanels(unittest.TestCase):
         self.assertEqual(dock.count("new ResizeObserver"), 1)
         self.assertIn("pdToolsFit(); }).observe(PD_ROOT)", dock)
         # #101: the served page, not a blob: one, which an installed app shows under Chrome's address strip.
-        for used in ("popUrl: '/static/dock/src/popout.html',", "narrow: pdNarrow()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(pdNarrow())",
+        for used in ("popUrl: '/static/dock/src/popout.html',", "narrow,", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(true)", "PD.dock.setNarrow(false)",
                      "PD.dock.onPopIn(", "parent.moveBefore(el"):
             self.assertIn(used, dock, used)
         css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
@@ -318,7 +320,7 @@ async function main() {
       return {draggable:a.draggable, kind:a.dataset.fileDrag, types:[...dt.types], uri:dt.getData('text/uri-list')}; })()`);
     out.first = await p.evalIn(`(() => { ${rect}
       const f = pdChatFrame(), d = f.contentDocument;
-      return { onScreen: PD_IDS.filter(id => { const w = PD.dock.frontOf(id); return w === id; }), strip: [...document.querySelectorAll('.dk-strip-btn')].map(b => b.dataset.dkAuto),
+      return { onScreen: PD_IDS.filter(id => { const w = PD.dock.frontOf(id); return w === id; }), strip: [...document.querySelectorAll('#po-dock .dk-strip-btn')].map(b => b.dataset.dkAuto),
         fly: PD.dock.flyOpen(), chat: R(PD.els['po-chat']), po: R(PO_PANEL), poOff: PO_PANEL.classList.contains('pd-off'), inPanel: PO_PANEL.parentNode === PD.els['po-chat'],
         tabs: !!document.querySelector('.ptabs'), panels: !!document.querySelector('.pd-panels'),
         logo: (document.querySelector('header h1 img.logo') || {}).src || '' };
@@ -930,8 +932,8 @@ class InChrome(unittest.TestCase):
 
     def test_the_default_at_1440_is_the_chat_and_the_tool_strip(self):
         f = self.got["first"]
-        self.assertEqual(f["onScreen"], ["po-chat", "inbox"])
-        self.assertEqual(f["strip"], ["changes", "workspace", "board", "spec"], "Needs you is gone (#311); the Inbox is the left column")
+        self.assertEqual(f["onScreen"], ["po-chat"], "the Inbox is the list dock's on a computer (#322)")
+        self.assertEqual(f["strip"], ["changes", "workspace", "board", "spec"], "Needs you is gone (#311); the Inbox is on the list dock's strip (#322)")
         self.assertIsNone(f["fly"], "nothing slid out")
         self.assertEqual(f["po"], f["chat"], "the chat fills its panel")
         self.assertTrue(f["inPanel"], "the chat is in its panel, not laid over it")
@@ -996,7 +998,7 @@ class InChrome(unittest.TestCase):
 
     def test_f6_and_the_arrows_move_along_the_panels(self):
         k = self.got["keys"]
-        self.assertEqual(k["order"], ["inbox", "po-chat", "changes", "spec"], "the Inbox remains beside the conversation")
+        self.assertEqual(k["order"], ["po-chat", "changes", "spec"], "no Inbox here on a computer (#322)")
         self.assertEqual((k["f6"], k["back"]), ("spec", "changes"), "F6 to the next stack, Shift+F6 back")
         self.assertEqual((k["right"], k["front"]), ("board", "board"), "Right: the next tab, brought to the front")
         self.assertEqual(k["roving"][-3:], ["po-chat", "changes", "board"], "one tab of each pinned stack in the Tab order")
@@ -1005,7 +1007,7 @@ class InChrome(unittest.TestCase):
         k = self.got["keys"]
         self.assertTrue(k["frameFocus"], "the composer has the focus")
         self.assertEqual(k["frameF6"], "changes", "F6 in the composer's frame: the stack after the chat's")
-        self.assertEqual(k["frameBack"], "inbox", "Shift+F6 there: the stack before the chat's, the Inbox column (#302)")
+        self.assertEqual(k["frameBack"], "spec", "Shift+F6 there: the stack before the chat's, round to the last (the Inbox is the list dock's, #322)")
 
     def test_a_phone_width_turns_the_same_dock_narrow_and_back(self):
         n = self.got["toPhone"]
@@ -1050,8 +1052,8 @@ class InChrome(unittest.TestCase):
 
     def test_a_layout_saved_before_the_tool_strip_is_not_read(self):
         o = self.got["oldLayout"]
-        self.assertEqual(o["docked"], ["inbox", "po-chat"], "the tool strip's own default: its key is new (cd-tool-strip)")
-        self.assertEqual(sorted(o["docked"] + o["auto"] + o["hidden"]), sorted(["po-chat", "inbox", "board", "workspace", "changes", "spec"]))
+        self.assertEqual(o["docked"], ["po-chat"], "the tool strip's own default: its key is new (cd-tool-strip)")
+        self.assertEqual(sorted(o["docked"] + o["auto"] + o["hidden"]), sorted(["po-chat", "board", "workspace", "changes", "spec"]))
         self.assertIn("po-chat", o["front"])
         self.assertNotIn("documents", o["tabs"])
         self.assertTrue(o["wsShown"], "an old Documents tab asked for brings the Workspace forward")
@@ -1087,7 +1089,7 @@ class InChrome(unittest.TestCase):
 
     def test_reset_layout_brings_the_default_back(self):
         self.assertEqual(self.got["hidden"], {"spec": False, "saved": True}, "Spec pinned: the layout is remembered")
-        self.assertEqual(self.got["reset"], {"spec": True, "front": ["po-chat", "inbox"], "auto": ["changes", "workspace", "board", "spec"],
+        self.assertEqual(self.got["reset"], {"spec": True, "front": ["po-chat"], "auto": ["changes", "workspace", "board", "spec"],
                                              "menu": False})
 
     def test_a_popped_out_board_stays_live_and_comes_back(self):
@@ -1151,8 +1153,8 @@ class InChrome(unittest.TestCase):
             self.assertEqual(v["po"], v["chat"], k)
             self.assertNotEqual(v["bg"], v["fg"], k)
         for t in ("light", "dark", "contrast"):
-            self.assertEqual(s[f"1400/{t}"]["shown"], ["po-chat", "inbox"])
-            self.assertEqual(s[f"1800/{t}"]["shown"], ["po-chat", "inbox"])
+            self.assertEqual(s[f"1400/{t}"]["shown"], ["po-chat"])
+            self.assertEqual(s[f"1800/{t}"]["shown"], ["po-chat"])
             p = s[f"390/{t}"]
             self.assertTrue(p["phone"])
             self.assertEqual(p["tabs"], ["po-chat", "inbox", "changes", "workspace", "board", "spec"], "one column of tabs")

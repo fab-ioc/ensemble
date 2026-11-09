@@ -1,22 +1,26 @@
-"""Layout A step 4 (#306): on a computer the left task list is not shown by
-default; its width goes to the conversation and the Inbox. In headless Chrome
-over CDP, against a hub in a thread serving the pages.
+"""Layout A step 4 (#306), as #322 changed it: on a computer the task list
+and the Inbox are on the list dock's left strip (Tasks first), as the tools are
+on the right one. The list is closed on its strip by default, the Inbox pinned
+open beside the page. In headless Chrome over CDP, against a hub in a thread
+serving the pages.
 
 Three projects: Motors (a PO with an answer to check, so one Inbox row),
 Wheels (a PO) and Alpha (none), and a task in no project. Checked:
 
 * at 1728x1117, 1440x900, 1280x800, 1024x768 and 800x600 a fresh browser
-  shows no list (the list dock holds it hidden, --list-w is 0), the
-  conversation is at least 360px wide, the Inbox is a column or folded to its
-  strip, and nothing is wider than the screen;
-* routes: the Inbox button, the wordmark and #needs open the Inbox on a PO
-  screen; the switcher opens another project's PO; Unassigned (the tasks in no
-  project) is in the switcher and its page lists that task; the empty middle
-  points at the bar and the Inbox, not at a list that is not there;
-* the list is still a tool: Panels ▾ › Tasks shows it, docked at the left;
-* a layout saved before this step (the list docked) opens once in the new
-  default; the same layout saved after it keeps the list; a list popped out
-  into its window opens again in its window;
+  shows the list only as its strip button (no list on the screen), the Inbox
+  on the list dock (open, or on its strip where there is no room) and none in
+  the PO dock, the conversation at least 360px wide right of them, and
+  nothing wider than the screen;
+* routes: the bar's Inbox gives way to the strip's; ibxOpen, the wordmark and
+  #needs open a PO screen with the Inbox on screen; the switcher opens another
+  project's PO; Unassigned (the tasks in no project) is in the switcher and its
+  page lists that task; the empty middle points at the Inbox, not at a list
+  that is not there;
+* Panels > Tasks slides the list out from its strip;
+* a docked list saved before #306 goes onto the strip once; one saved after
+  #322 stays docked; a list popped out into its window opens again in it
+  (test_left_strip_cdp covers the other layouts saved before #322);
 * a phone (390x844) has no list dock and no list on screen by default (its
   list is a pane, #307: tests/test_phone_home_cdp.py);
 * the page threw nothing meanwhile.
@@ -79,12 +83,15 @@ const GEOM = `(() => {
   const d = LD.dock;
   const wide = [...document.querySelectorAll('body *')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > document.documentElement.clientWidth + 1 && getComputedStyle(e).position !== 'fixed' && !e.closest('[hidden], .dk-off'); }).length;
   return { W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, wide,
-    ld: !!d, listOn: !!d && d.isVisible('list'), listMode: d ? d.viewMode('list') : '', list: R(SW_EL), listOut: SW_EL.ownerDocument !== document,
+    ld: !!d, listOn: !!d && ldOnScreen('list'), listVis: !!d && d.isVisible('list'), listMode: d ? d.viewMode('list') : '', list: R(SW_EL), listOut: SW_EL.ownerDocument !== document,
+    listFly: !!d && d.flyOpen() === 'list', listSeen: (() => { const r = SW_EL.getBoundingClientRect(); if (!r.width || SW_EL.ownerDocument !== document) return null;
+      const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { hit: !!e && SW_EL.contains(e), what: e ? e.tagName + '#' + e.id + '.' + String(e.className).slice(0, 60) : '', vis: getComputedStyle(SW_EL).visibility, cls: String(SW_EL.className).slice(0, 80), parent: String(SW_EL.parentNode.className).slice(0, 80) }; })(), leftStrip: [...document.querySelectorAll('#list-dock .dk-strip-btn')].map(b => ({ id: b.dataset.dkAuto, x: Math.round(b.getBoundingClientRect().left) })),
     listW: getComputedStyle(document.body).getPropertyValue('--list-w').trim(),
     po: document.body.classList.contains('po-dock'), pid: (PD && PD.pid) || '', proj: SELECTED_PROJECT,
-    chat: R(PD.els['po-chat']), inbox: R(PD.els.inbox), inboxMode: PD.dock ? PD.dock.viewMode('inbox') : '',
-    inboxStrip: !!document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="inbox"]'),
-    flag: (() => { try { return localStorage.getItem('cd-list-dock-a4'); } catch (e) { return 'x'; } })(),
+    chat: R(PD.els['po-chat']), inbox: R(LD_INBOX), inboxOn: !!d && ldOnScreen('inbox'), inboxMode: d ? d.viewMode('inbox') : '',
+    inboxStrip: !!document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="inbox"]'), inboxInPd: !!PD.dock && PD.dock.isVisible('inbox'),
+    btn: R(document.getElementById('inbox-btn')),
+    flag: (() => { try { return localStorage.getItem('cd-list-dock-a5'); } catch (e) { return 'x'; } })(),
     stored: (() => { try { return localStorage.getItem('cd-list-dock'); } catch (e) { return null; } })(),
     phoneList: R(document.getElementById('switcher')) };
 })()`;
@@ -107,7 +114,7 @@ async function main() {
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, sessionId);
     };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
-    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
+    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false; try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); const s = ' + JSON.stringify(s) + '; for (const k in s) s[k] === null ? localStorage.removeItem(k) : localStorage.setItem(k, s[k]); } } catch (e) {}' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 2 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.po) + ')', 30000);
@@ -135,13 +142,14 @@ async function main() {
     await p.until('!!LD.dock', 30000);
     await sleep(300);
     out.empty = await p.evalIn(`({ text: (document.querySelector('.home-empty .empty') || { textContent: '' }).textContent, po: document.body.classList.contains('po-dock') })`);
-    await p.click('document.getElementById("inbox-btn")');
-    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.isShown("inbox")', 15000).catch(() => null);
+    out.start = await p.evalIn(GEOM);
+    // What the bar's Inbox did (it gives way to the strip's on a computer, #322): a PO screen with the Inbox.
+    await p.evalIn('ibxOpen(); 0');
+    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && ldOnScreen("inbox")', 15000).catch(() => null);
     await sleep(400);
     out.inboxBtn = await p.evalIn(GEOM);
-    out.inboxShown = await p.evalIn('!!PD.dock && PD.dock.isShown("inbox")');
-    // An Inbox row opens its conversation (Motors' PO, the answer).
-    out.inboxRows = await p.evalIn(`PD.els.inbox.querySelectorAll('[data-ibx-key], .ibx-row').length`);
+    out.inboxShown = await p.evalIn('ldOnScreen("inbox")');
+    out.inboxRows = await p.evalIn(`LD_INBOX.querySelectorAll('[data-ibx-key], .ibx-row').length`);
     // The switcher: another project's PO.
     await p.click('document.getElementById("proj-switch")'); await sleep(200);
     await p.click(`document.querySelector('#proj-menu .pm-any[data-proj="${P.Wheels}"]')`);
@@ -158,56 +166,18 @@ async function main() {
     // The wordmark: home is the Inbox.
     await p.evalIn('midLeave(); SELECTED_PROJECT = null; renderRows(); 0'); await sleep(300);
     await p.click('document.getElementById("bar-home")');
-    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.isShown("inbox")', 15000).catch(() => null);
+    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && ldOnScreen("inbox")', 15000).catch(() => null);
     await sleep(300);
     out.home = await p.evalIn(GEOM);
-    out.homeInbox = await p.evalIn('!!PD.dock && PD.dock.isShown("inbox")');
+    out.homeInbox = await p.evalIn('ldOnScreen("inbox")');
     // #needs: the Inbox too.
     await p.evalIn('midLeave(); SELECTED_PROJECT = null; renderRows(); location.hash = "#needs"; 0');
-    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && PD.dock.isShown("inbox")', 15000).catch(() => null);
-    out.needsHash = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: !!PD.dock && PD.dock.isShown("inbox"), hash: location.hash })');
+    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && ldOnScreen("inbox")', 15000).catch(() => null);
+    out.needsHash = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: ldOnScreen("inbox"), hash: location.hash })');
     // Panels ▾ › Tasks: the list, docked at the left.
     await p.click('document.querySelector("#bar-here .pd-panels")'); await sleep(250);
-    out.panelsItem = await p.evalIn(`(() => { const b = document.querySelector('[data-pd-list]'); return b ? { checked: !!(b.checked || b.getAttribute('aria-checked') === 'true'), text: (b.closest('label') || b).textContent.trim() } : null; })()`);
-    await p.click('document.querySelector("[data-pd-list]")'); await sleep(600);
-    out.listShown = await p.evalIn(GEOM);
-    await p.evalIn('document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 0');
-    await p.shot('desktop-1440x900-list-shown');
-    const docked = out.listShown.stored;
-    // Popped out into a window.
-    await p.evalIn('LD.dock.popOut("list"); 0');
-    await p.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document', 15000).catch(() => null);
-    await sleep(500);
-    out.popped = await p.evalIn(GEOM);
-    const poppedLayout = out.popped.stored;
-    await p.evalIn('LD.dock.popIn("list"); 0'); await sleep(400);
+    out.panelsItem = await p.evalIn(`!!document.querySelector('[data-pd-list]')`);
     await p.close();
-    // ---- a layout saved before this step: the list docked, no flag
-    const o = await page(1440, 900, false, { 'cd-list-dock': docked });
-    await toPo(o, P.Motors);
-    out.oldLayout = await o.evalIn(GEOM);
-    // Reloaded: it stays as the person leaves it (hidden), the flag kept.
-    await o.evalIn('LD.dock.setVisible("list", true); 0'); await sleep(300);
-    await o.evalIn('location.reload(); 0'); await sleep(1500);
-    await o.until('window.ensBooted === true && !!LD.dock', 30000);
-    await toPo(o, P.Motors);
-    out.oldReloaded = await o.evalIn(GEOM);
-    await o.close();
-    // ---- the same layout saved after it (the flag set): the list stays
-    const n = await page(1440, 900, false, { 'cd-list-dock': docked, 'cd-list-dock-a4': '1' });
-    await toPo(n, P.Motors);
-    out.newLayout = await n.evalIn(GEOM);
-    await n.close();
-    // ---- the list popped out, before and after this step
-    for (const [k, flag] of [['outOld', null], ['outNew', '1']]) {
-      const q = await page(1440, 900, false, { 'cd-list-dock': poppedLayout, 'cd-list-dock-a4': flag });
-      await toPo(q, P.Motors);
-      await q.until('LD.dock.viewMode("list") === "window" && (!!LD.dock.popWindow("list") || LD.dock.isOut("list"))', 15000).catch(() => null);
-      await sleep(600);
-      out[k] = await q.evalIn(GEOM);
-      await q.evalIn('try { const w = LD.dock.popWindow("list"); if (w) LD.dock.popIn("list"); } catch (e) {} 0'); await sleep(300);
-      await q.close();
-    }
     // ---- a phone: no list dock, no list on screen (#307)
     const ph = await page(390, 844, true);
     await sleep(800);
@@ -298,15 +268,26 @@ class DesktopLayoutInChrome(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def test_no_list_by_default_at_every_computer_width(self):
+    def test_projects_and_inbox_replace_the_list_at_every_computer_width(self):
         for w, _ in WIDTHS:
             g = self.got["widths"][str(w)]
             with self.subTest(w=w):
                 self.assertTrue(g["ld"], "the list dock is there")
                 self.assertFalse(g["listOn"], g)
-                self.assertEqual(g["listMode"], "hidden")
-                self.assertIsNone(g["list"], "nothing of the list on the screen")
-                self.assertEqual(g["listW"], "0px")
+                self.assertFalse(g["listVis"], g)
+                self.assertTrue(g["listSeen"] is None or not g["listSeen"]["hit"], g["listSeen"])
+                self.assertEqual([b["id"] for b in g["leftStrip"]], ["inbox", "projects"])
+                self.assertTrue(all(b["x"] < 52 for b in g["leftStrip"]), g["leftStrip"])
+
+    def test_the_inbox_is_the_list_docks(self):
+        for w, _ in WIDTHS:
+            g = self.got["widths"][str(w)]
+            with self.subTest(w=w):
+                self.assertFalse(g["inboxInPd"], "none in the PO dock on a computer")
+                self.assertTrue(g["inboxStrip"], g)
+                self.assertIsNone(g["btn"], "the bar's Inbox gives way to the strip's")
+                if w >= 1024:
+                    self.assertTrue(g["inboxOn"] and g["inboxMode"] == "pinned", g)
 
     def test_the_conversation_takes_the_width(self):
         for w, _ in WIDTHS:
@@ -315,25 +296,31 @@ class DesktopLayoutInChrome(unittest.TestCase):
                 self.assertTrue(g["po"])
                 self.assertIsNotNone(g["chat"], g)
                 self.assertGreaterEqual(g["chat"]["w"], 360)
-                # the Inbox: a column or folded to its strip
-                self.assertTrue(g["inbox"] is not None or g["inboxStrip"], g)
                 self.assertLessEqual(g["scrollW"], g["W"])
                 self.assertEqual(g["wide"], 0, "nothing wider than the screen")
-                # the conversation starts at the left edge or right of the Inbox column, not 300px in
-                left = g["inbox"]["r"] if g["inbox"] else 0
+                # the conversation starts right of the Inbox column (or of the strip), not a list's width in
+                left = g["inbox"]["r"] if g["inbox"] else 52
                 self.assertLessEqual(g["chat"]["x"] - left, 50, g)
+                if g["inbox"]:
+                    self.assertLessEqual(g["inbox"]["r"], g["chat"]["x"] + 1, "covering nothing")
 
     def test_the_empty_middle_points_at_the_bar_and_the_inbox(self):
         t = self.got["empty"]["text"]
         if t:   # the page opened nothing yet
             self.assertNotIn("in the list", t)
-            self.assertIn("Inbox", t)
+            self.assertIn("Projects", t)
 
-    def test_the_inbox_button_opens_the_inbox(self):
+    def test_the_inbox_is_on_screen_before_any_project(self):
+        g = self.got["start"]
+        self.assertTrue(g["inboxOn"], g)
+        self.assertIsNone(g["btn"], g)
+
+    def test_the_inbox_route_opens_a_po_screen(self):
         g = self.got["inboxBtn"]
         self.assertTrue(g["po"])
         self.assertEqual(g["pid"], self.ids["Motors"], "the project whose PO has something waiting")
         self.assertTrue(self.got["inboxShown"])
+        self.assertGreaterEqual(self.got["inboxRows"], 1)
 
     def test_the_switcher_opens_another_po(self):
         g = self.got["switchPo"]
@@ -351,45 +338,8 @@ class DesktopLayoutInChrome(unittest.TestCase):
         self.assertTrue(self.got["needsHash"]["po"] and self.got["needsHash"]["inbox"], self.got["needsHash"])
         self.assertFalse(self.got["home"]["listOn"])
 
-    def test_panels_can_open_the_list(self):
-        self.assertIsNotNone(self.got["panelsItem"])
-        self.assertFalse(self.got["panelsItem"]["checked"])
-        g = self.got["listShown"]
-        self.assertTrue(g["listOn"])
-        self.assertEqual(g["listMode"], "pinned")
-        self.assertIsNotNone(g["list"])
-        self.assertLessEqual(g["list"]["x"], 1)
-        self.assertGreaterEqual(int(g["listW"].rstrip("px")), 220)
-        self.assertGreaterEqual(g["chat"]["w"], 360)
-        self.assertLessEqual(g["scrollW"], g["W"])
-        p = self.got["popped"]
-        self.assertTrue(p["listOut"] and p["listMode"] == "window", p)
-        self.assertEqual(p["listW"], "0px")
-
-    def test_a_layout_saved_before_opens_in_the_new_default_once(self):
-        g = self.got["oldLayout"]
-        self.assertFalse(g["listOn"], g)
-        self.assertEqual(g["flag"], "1")
-        self.assertEqual(g["listW"], "0px")
-        r = self.got["oldReloaded"]
-        self.assertTrue(r["listOn"], "once: shown again, it stays")
-        self.assertEqual(r["listMode"], "pinned")
-
-    def test_a_layout_saved_after_keeps_the_list(self):
-        g = self.got["newLayout"]
-        self.assertTrue(g["listOn"])
-        self.assertEqual(g["listMode"], "pinned")
-        self.assertIsNotNone(g["list"])
-        self.assertGreaterEqual(g["chat"]["w"], 360)
-
-    def test_a_popped_out_list_opens_in_its_window(self):
-        for k in ("outOld", "outNew"):
-            g = self.got[k]
-            with self.subTest(k=k):
-                self.assertEqual(g["listMode"], "window", g)
-                self.assertIsNone(g["list"], "not on the page")
-                self.assertGreaterEqual(g["chat"]["w"], 360)
-                self.assertLessEqual(g["scrollW"], g["W"])
+    def test_panels_has_no_tasks_item(self):
+        self.assertFalse(self.got["panelsItem"])
 
     def test_a_phone_has_no_list_by_default(self):
         g = self.got["phone"]

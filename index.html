@@ -2478,6 +2478,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-stack:not(:has(> .dk-body > #ld-page)), #list-dock .dk-bar, #list-dock .dk-strip, #list-dock .dk-flyout,
   #list-dock .dk-float, #list-dock .dk-note, #list-dock .dk-empty { pointer-events: auto; }
   #list-dock .dk-stack:has(> .dk-body > #ld-page) > .dk-head { display: none; }
+  /* Inbox and Projects share one Dock stack, but their strip buttons switch
+     panels. The head names only the panel in front, like a right-strip tool. */
+  #list-dock .dk-head:has([data-dk-tab="inbox"]):has([data-dk-tab="projects"]) .dk-tab-wrap:not(.on) { display: none; }
   #ld-page { background: transparent; }
   /* The middle keeps its 360px: a list slid out beside it gives way. */
   #list-dock .dk-main { min-width: 360px; }
@@ -3510,6 +3513,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-muted); font-size: 11px; display: block; margin-bottom: 6px;
     font-family: -apple-system, sans-serif; letter-spacing: 0.02em;
   }
+  /* #322: a computer's Inbox is on the list dock's left strip, on every screen:
+     while it is there (docked, slid out or on its strip) the bar needs no button. */
+  body.ld-ibx #inbox-btn { display: none; }
   /* ================= Phone layout (one screen at a time) =================
      On narrow screens the list is full-width and the detail becomes a
      full-screen overlay you close to return to it. */
@@ -3605,7 +3611,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        has no Inbox there. */
     #inbox-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-200); margin-left: auto; border-color: transparent; }
     #inbox-btn[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
-    body.po-dock:not(.dp-docked) #inbox-btn { display: none; }
+    body.po-dock:not(.dp-docked):not(.ld-on) #inbox-btn { display: none; }
     .me-item.me-phone { display: flex; }
     #bar-back, #search-open, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
@@ -3924,6 +3930,39 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #ens-upd button::after { content: ''; position: absolute; left: -8px; right: -8px; top: -14px; bottom: -14px; }
   #ens-upd button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* #322 (P289 drawing): a computer's left strip has two panels, the Inbox (full height) and
+     Projects: PROJECTS, All, each project with its swatch and Inbox count, newest first, a line,
+     then each task and session in no project. Values are the drawing's (.panel .ph .proj .cnt .sw). Kept out of the PO screen's section: these panels are the list dock's. */
+  .pd-inbox.ld-inbox { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+  .pd-inbox.ld-inbox #ld-ibx-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .ld-projects { height: 100%; min-height: 0; overflow-y: auto; padding: 8px; background: var(--surface); font-family: var(--ldp-font, inherit); }
+  .ldp-title { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .ldp { display: flex; flex-direction: column; padding: 0 0 6px; margin: 0 0 6px; border-bottom: 1px solid var(--border); }
+  .ldp:empty { display: none; }
+  .ldp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 4px 6px;
+    border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg); font: inherit; font-size: 12px; line-height: 1.4;
+    text-align: left; cursor: pointer; }
+  .ldp-row:hover { background: var(--hover); }
+  .ldp-row:focus-visible, .ldp-more:focus-visible, .ldp-dots:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .ldp-row[aria-current="true"] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
+  .ldp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ldp-item .ldp-name { flex: 0 1 auto; }
+  .ldp-sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: var(--ldp-c, var(--border-strong)); }
+  .ldp-kind { flex: none; margin-left: auto; font-size: 10px; color: var(--fg-muted); font-weight: 400; }
+  .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    font-size: 10px; text-align: center; font-weight: 400; }
+  .ldp-row[aria-current="true"] .ldp-n { background: var(--surface); }
+  .ldp-item { position: relative; display: flex; align-items: center; }
+  .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
+  .ldp-item:hover .ldp-dots, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"] { opacity: 1; }
+  .ldp-dots:hover { background: var(--hover); color: var(--fg); }
+  .ldp-more { display: block; width: 100%; padding: 4px 6px; border: 0; border-radius: var(--r-200); background: transparent;
+    color: var(--fg-muted); font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; text-align: left; }
+  .ldp-more:hover { color: var(--fg); text-decoration: underline; }
+  .ldp-sep { height: 0; border-top: 1px solid var(--border); margin: 6px 2px; }
+  .ibx-title.ibx-title-listed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: var(--fs-100); line-height: var(--lh-100); color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
   /* ---- The PO screen as panels ---------------------------------------------
      A project with a PO: its Overview is a Dock (static/dock, a vendored copy
      of the Dock library) of five panels: PO chat, Points, Board, Workspace and
@@ -4004,7 +4043,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      open tool's in the button's one colour, --selected-fg, as before. */
   .ti { --ti: currentColor; --ti-ink: var(--tool-ink); --ti-ring: var(--surface); color: var(--ti); }
   .ti-points { --ti: var(--tool-points); } .ti-changes { --ti: var(--tool-changes); } .ti-workspace { --ti: var(--tool-workspace); }
-  .ti-board { --ti: var(--tool-board); } .ti-spec { --ti: var(--tool-spec); } .ti-list { --ti: var(--tool-list); } .ti-topics { --ti: var(--tool-topics); } .ti-inbox { --ti: var(--tool-inbox); }
+  .ti-board { --ti: var(--tool-board); } .ti-spec { --ti: var(--tool-spec); } .ti-list { --ti: var(--tool-list); } .ti-projects { --ti: var(--tool-list); } .ti-topics { --ti: var(--tool-topics); } .ti-inbox { --ti: var(--tool-inbox); }
   .ti-s-dot { color: inherit; }
   /* The inbox (#302): one row per thing that waits on you, in every project. */
   .pd-inbox { height: 100%; min-height: 0; overflow-y: auto; background: var(--surface); }
@@ -4068,6 +4107,20 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-row.ibx-mark { background: var(--c-danger-bg); box-shadow: inset 3px 0 0 var(--c-danger-bold);
     margin: 0 calc(-1 * var(--s-200)) 0 calc(-1 * (var(--s-200) + 3px)); padding-left: calc(var(--s-200) + 3px); padding-right: var(--s-200); }
   .ibx-row.ibx-mark .ibx-link, .ibx-row.ibx-mark .ibx-line, .ibx-row.ibx-mark .ibx-reason, .ibx-row.ibx-mark .ibx-meta { color: var(--fg-muted); }
+  /* #322 P287 drawing: under the project list the rows are cards (.row: 7px 8px, 1px border, radius 6, 5px apart,
+     12px, bold title, small muted line), a 3px left bar: amber asks/waits, green checks. */
+  .ibx.ibx-listed { gap: 0; padding: 8px; font-family: var(--ldp-font, inherit); }
+  .ibx-listed .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
+  .ibx-cards { list-style: none; margin: 0; padding: 0; }
+  .ibx-listed .ibx-row, .ibx-listed .ibx-row:last-child { padding: 7px 8px; margin: 5px 0; border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--surface); font-size: 12px; line-height: 1.4; }
+  .ibx-listed .ibx-row[data-stage="answer"], .ibx-listed .ibx-row[data-stage="waiting"], .ibx-listed .ibx-row[data-stage="older"] { border-left: 3px solid var(--c-warning-bold); }
+  .ibx-listed .ibx-row[data-stage="check"] { border-left: 3px solid var(--c-success-fg); }
+  .ibx-listed .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
+  .ibx-listed .ibx-reason, .ibx-listed .ibx-meta { font-size: 11px; line-height: 1.4; margin-top: 0; }
+  .ibx-listed .ibx-meta { color: var(--fg-muted); }
+  .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
+  @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px; } }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
   .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
     border-radius: var(--r-300); box-shadow: var(--e-200); }
@@ -4110,6 +4163,24 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      right edge, a count in an icon's corner; the open one lies beside the
      conversation, which narrows. */
   #po-dock { --dk-strip-badge-bg: var(--surface); --dk-strip-badge-fs: 10px; }
+  /* The list dock's left strip (#322, the P287 drawing): 52px, the Inbox's icon in a 32x30 box with its
+     name under it, a red count on the icon's corner; the font is the drawing's. */
+  #list-dock { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #list-dock .dk-strip-left { padding: 8px 0; gap: 8px; align-items: center; }
+  #list-dock .dk-strip-btn.dk-strip-icon-btn { aspect-ratio: auto; width: auto; flex-direction: column; gap: 1px; padding: 0; border: 0; border-radius: 0;
+    background: transparent; color: var(--fg-muted); font: 9px/1.4 var(--ldp-font); }
+  #list-dock .dk-strip-icon-btn .dk-strip-icon { width: 32px; height: 30px; padding: 4px 5px; box-sizing: border-box; border-radius: var(--r-200); }
+  #list-dock .dk-strip-icon-btn::after { content: attr(aria-label); }
+  #list-dock .dk-strip-icon-btn:hover .dk-strip-icon { background: var(--hover); }
+  #list-dock .dk-strip-icon-btn.on .dk-strip-icon { background: var(--selected-bg); }
+  #list-dock .dk-strip-icon-btn.on::after { color: var(--selected-fg); font-weight: 600; }
+  #list-dock .dk-strip-btn.on .ti { --ti-ink: var(--tool-ink); --ti-ring: var(--selected-bg); } #list-dock .dk-strip-btn.on .ti-inbox { --ti: var(--tool-inbox); } #list-dock .dk-strip-btn.on .ti-projects { --ti: var(--tool-list); }
+  #list-dock .dk-strip-icon-btn .dk-strip-badge { top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--c-danger-fg); color: #fff; font: 400 10px/16px var(--ldp-font); text-align: center; }
+  /* on the strip at the window's right edge it stays inside the window */
+  #list-dock .dk-strip-right .dk-strip-icon-btn .dk-strip-badge { right: 0; }
+  #list-dock .dk-strip-icon-btn:focus-visible { outline: none; }
+  #list-dock .dk-strip-icon-btn:focus-visible .dk-strip-icon { box-shadow: 0 0 0 2px var(--focus-ring); }
   .dk-strip-icon-btn .dk-strip-badge { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; border-radius: var(--r-100); }
   .dk-strip-btn.on .dk-strip-badge { background: var(--surface); }
   .dk-flyout.dk-fly-beside { border-top: 0; border-bottom: 0; }
@@ -4551,7 +4622,7 @@ window.DOC_LISTENERS_PAUSED = false;
   <div id="ph-inbox-body"></div>
 </section>
 <div id="list-dock" hidden></div>
-<div id="list-dock-panels" hidden><div id="ld-page" aria-hidden="true"></div></div>
+<div id="list-dock-panels" hidden><div id="ld-page" aria-hidden="true"></div><div id="ld-inbox" class="pd-inbox pd-pane ld-inbox"><div id="ld-ibx-body"></div></div><div id="ld-projects" class="ld-projects"><h2 class="ldp-title">Projects</h2><nav id="ld-projs" class="ldp" aria-label="Projects"></nav></div></div>
 <div id="search-help-pop" hidden>
   <div class="shp-title">Search syntax</div>
   <dl>
@@ -7753,12 +7824,13 @@ async function swClearPost(url, body) {
   if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
   return j;
 }
-function swClearEnd() { clearTimeout(SW_CLEAR_TIMER); SW_CLEAR = null; swRender(); }
+function swClearPaint() { swRender(); if (window.LD && LD.dock) ibxRepaint(); }
+function swClearEnd() { clearTimeout(SW_CLEAR_TIMER); SW_CLEAR = null; swClearPaint(); }
 async function swClearAll() {
   const keys = SW_CLEAR_KEYS.slice();
   if (!keys.length) { swClearEnd(); return; }
   SW_CLEAR = { phase: 'busy' };
-  swRender();
+  swClearPaint();
   try {
     const j = await swClearPost('/api/attention/done', { roomIds: keys });
     const gone = new Set(j.done || []);
@@ -7766,6 +7838,8 @@ async function swClearAll() {
     ATTENTION = { ...ATTENTION, items: (ATTENTION.items || []).filter(x => !gone.has(x.roomId)) };
     SW_CLEAR = { phase: 'undo', n: gone.size, prev: j.prev || {} };
     renderAttention();
+    ibxRepaint();
+    ibxPoll();
     clearTimeout(SW_CLEAR_TIMER);
     SW_CLEAR_TIMER = setTimeout(swClearEnd, SW_CLEAR_UNDO_MS);
   } catch (e) {
@@ -7786,6 +7860,8 @@ async function swClearUndo() {
   SW_CLEAR = null;
   _attnSig = '';   // the rows come back: redraw the list
   updateRoomsBadge();
+  swClearPaint();
+  ibxPoll();
 }
 function swClearHtml(keys) {
   const c = SW_CLEAR, n = (keys || []).length;
@@ -7884,6 +7960,7 @@ async function swDone(btn) {
     ATTENTION_BY_ROOM.delete(rid);
     renderAttention();
     updateRoomsBadge();
+    ibxPoll();
   } catch (e) {
     btn.disabled = false;
     toast('Not done: ' + e.message, 5000, 'err');
@@ -9519,7 +9596,9 @@ function projectsLandingHtml() {
 }
 // A desktop's middle with nothing open (#135): the list at the left is home.
 function homeEmptyHtml() {
-  const say = ldListShown() ? 'Pick a task or a PO in the list.' : nounText('Pick {a project} in the bar above, or open the Inbox.');
+  const say = ldListShown() ? 'Pick a task or a PO in the list.'
+    : LD && LD.dock && !window.ensListDocked ? nounText('Pick {a project} in Projects on the left strip.')
+    : nounText('Pick {a project} in the bar above, or open the Inbox.');
   return `<div class="home-empty"><p class="empty">${esc(say)}</p>`
     + `<button class="newproj-btn" title="${esc(nounText('Register a folder as {a project} (any folder — a repo, or just notes)'))}">${esc(nounText('+ New {project}'))}</button></div>`;
 }
@@ -13825,6 +13904,8 @@ function renderPo() {
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-dock', (dock || pdTaskWanted()) && !!PD.lib);
   document.body.classList.toggle('po-peek', !split && !!pj);
+  // #322: the list dock's Inbox follows a PO screen opened or left (barPaint may have run before).
+  if (window.LD && LD.dock && IBX.ldPid !== ibxLdPid()) ibxPaint();
   // Where it is: in the PO chat panel, or at home as the drawer.
   if (PD.lib) pdPlaceChat();
   // While the panels load there is no panel yet for the PO to be in.
@@ -13983,6 +14064,9 @@ const TOOL_GLYPH = {
   list: { t: '<rect x="1.5" y="9" width="21" height="6" rx="2"/>',
           s: '<circle cx="5" cy="5.5" r="2.2"/><circle cx="5" cy="18.5" r="2.2"/>',
           o: '<circle cx="5" cy="12" r="1.8"/><path d="M10 5.5h10M10 12h8M10 18.5h10"/>' },
+  // Projects (#322, P289 drawing): four tiles, two of them tinted.
+  projects: { t: '<rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/>',
+              o: '<rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/>' },
 };
 // One tool's icon as an SVG string, in `style` (TOOL_ICON_STYLE). `o.color`
 // and `o.ink` paint it with given colours instead of the tokens (a window's
@@ -14022,10 +14106,14 @@ function pdToolSize(id, vw) {
 // column, the conversation first and the tools in the strip's order (#129).
 // `L` is the library's layout model (stack, split).
 function pdDefaultLayout(L, ctx) {
-  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS], { active: 'po-chat' }) };
-  // The inbox (#302) is a column left of the conversation, as in Layout A's mockup.
+  // A computer's dock turning narrow (a resize) has no Inbox yet: the resize
+  // handler adds it after the narrow layout loads, so the default leaves it
+  // out (a stack naming a panel the dock lacks cannot be drawn).
+  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS.filter(id => id !== 'inbox' || typeof PD === 'undefined' || !PD.dock || PD.dock.title('inbox') != null)], { active: 'po-chat' }) };
+  // The inbox (#302) is a panel of the list dock on a computer (#322), on the
+  // left strip beside Tasks: this dock has no inbox there (pdEnsure).
   // Topics are a filter on the conversation itself (#304), not a column.
-  return { root: L.split('row', [L.stack(['inbox'], {size:280}), L.stack(['po-chat'])]),
+  return { root: L.stack(['po-chat']),
            auto: PD_TOOLS.filter(id => id !== 'inbox').map(id => ({ id, edge: 'right', home: { peers: [], near: 'po-chat', side: 'right' } })) };
 }
 // A row's age in the Inbox: "now", "5m", "3h", "2d".
@@ -14372,14 +14460,17 @@ function pdEnsure() {
   if (PD.dock) return PD.dock;
   const L = PD.lib;
   const vw = innerWidth;
+  // #322: a computer's Inbox is the list dock's (on its left strip); before this
+  // dock forgets its old place there, the list dock learns how it was kept.
+  const narrow = pdNarrow();
+  if (!narrow) pdIbxWasNote();
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try { PD.dock = L.createDock({
     root: PD_ROOT,
-    panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw) : undefined,
-                                menuItems: id === 'po-chat' ? (pid, ctx) => pdMenuItems(ctx) : undefined })),
+    panels: PD_IDS.filter(id => id !== 'inbox' || narrow).map(id => pdPanelDef(id, vw)),
     storageKey: PD_KEYS.desk,
     defaultLayout: ctx => pdDefaultLayout(L, ctx),
-    narrow: pdNarrow(),
+    narrow,
     narrowKey: PD_KEYS.phone,
     narrowLayout: ctx => pdDefaultLayout(L, { ...ctx, phone: true }),
     fill: 'po-chat',
@@ -14436,7 +14527,7 @@ function pdEnsure() {
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
-  try { PD.dock.forget('documents'); PD.dock.forget('points'); } catch (e) {}
+  try { PD.dock.forget('documents'); PD.dock.forget('points'); if (!narrow) PD.dock.forget('inbox'); } catch (e) {}
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); });
   pdOnAdopt('pd', PD_ROOT);
   pdToolsFit();
@@ -14465,6 +14556,25 @@ function pdEnsure() {
   // The files and chats that were panels before the reload, each in its kept place.
   pdRuntimeRestore();
   return PD.dock;
+}
+// A panel of this dock as createDock and addPanel take it.
+function pdPanelDef(id, vw) {
+  return { id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw || innerWidth) : undefined,
+           menuItems: id === 'po-chat' ? (pid, ctx) => pdMenuItems(ctx) : undefined };
+}
+// #322: how a layout saved before the Inbox moved to the list dock kept it
+// ('pinned', 'unpinned', 'float', or '' for the default), read once, before
+// this dock drops its place; the list dock's migration (ldMigrate) uses it.
+function pdIbxWasNote() {
+  if (PD.ibxWas !== undefined) return PD.ibxWas;
+  let raw = null;
+  try { raw = JSON.parse(localStorage.getItem(PD_KEYS.desk) || 'null'); } catch (e) {}
+  const has = n => JSON.stringify(n || null).includes('"inbox"');
+  PD.ibxWas = !raw || typeof raw !== 'object' ? ''
+    : (raw.auto || []).some(a => a && a.id === 'inbox') ? 'unpinned'
+    : (raw.floats || []).some(f => f && has(f.stack)) ? 'float'
+    : has(raw.root) ? 'pinned' : '';
+  return PD.ibxWas;
 }
 // The least a panel takes: a tool's or the conversation's own; a chat panel
 // the conversation's; a file panel a reading width.
@@ -15254,6 +15364,20 @@ function pdToolsFit() {
   PD_ROOT.style.setProperty('--pd-main-min', need + 'px');
   const avail = PD_ROOT.clientWidth - 44;
   PD_ROOT.classList.toggle('pd-fly-over', avail > 0 && avail - need < PD_FLY_MIN);
+  // The list dock beside it (#322) gives it that room first.
+  const pm = ldPageMin();
+  if (window.LD && LD.dock && pm !== LD.pageMin) { LD.pageMin = pm; LD.dock.render(); }
+}
+// The least the list dock leaves its page (#322): on a computer's PO screen,
+// what the PO dock's middle needs and its strip, and room for a tool to open
+// beside it when the Inbox or list at their minimum still leave that much
+// (as before the list dock took its strip, LD_STRIP); else 360.
+function ldPageMin() {
+  const d = PD.dock;
+  if (!d || d.narrow() || !document.body.classList.contains('po-dock')) return 360;
+  const need = Math.max(PD_MIN['po-chat'].w, pdNeedW(d.layout().root)) + 44;
+  const room = (document.getElementById('list-dock') || document.documentElement).clientWidth - LD_STRIP - 5 - 240;
+  return Math.max(360, room >= need + PD_FLY_MIN ? need + PD_FLY_MIN : need);
 }
 // The narrowest a tool opens beside the middle.
 const PD_FLY_MIN = 300;
@@ -15519,7 +15643,15 @@ function pdPopChat(out) {
   window.addEventListener('resize', () => {
     if (PD.dock && !PD.dock.narrow()) pdToolsFit();
     if (!PD.dock || PD.dock.narrow() === pdNarrow()) return;
-    PD.dock.setNarrow(pdNarrow());
+    // #322: the Inbox is a tab of a phone's dock, the list dock's on a computer.
+    if (pdNarrow()) {
+      PD.dock.setNarrow(true);
+      const front = PD.dock.frontOf('po-chat');   // the tab it had: addPanel brings the Inbox to the front
+      PD.dock.addPanel(pdPanelDef('inbox'));
+      if (front && front !== 'inbox') PD.dock.activate(front);
+    }
+    else { PD.dock.removePanel('inbox'); PD.dock.setNarrow(false); PD.dock.forget('inbox'); }
+    ibxRepaint();
     pdSyncTitles();   // a phone's conversation tab is "Chat", a computer's the conversation's name
     pdToolsFit();
     pdToolRestore();
@@ -15551,22 +15683,48 @@ function ibxWhere(r, all) {
   const who = r.isPo ? 'PO' : [r.ref, r.task].filter(Boolean).join(' ');
   return all && r.project ? `${r.project} · ${who || 'a task'}` : (who || 'a task');
 }
+// `pid`: a project's id, or 'room:<id>' for a task or session in no project (#322).
 function ibxScoped(list, scope, pid) {
-  return (list || []).filter(r => !IBX.hide.has(r.id) && (scope === 'all' || !pid || r.projectId === pid));
+  const room = String(pid || '').startsWith('room:') ? pid.slice(5) : '';
+  return (list || []).filter(r => !IBX.hide.has(r.id)
+    && (scope === 'all' || !pid || (room ? r.roomId === room : r.projectId === pid)));
 }
 function ibxRows(d, scope, pid) { return ibxScoped(d && d.rows, scope, pid); }
 function ibxOlder(d, scope, pid) { return ibxScoped(d && d.older, scope, pid); }
+// The desktop Inbox replaces the Tasks list's Needs you head. Clear only the
+// dismissible rooms shown in its current scope, using the old Needs you rules.
+function ibxClearKeys(d, scope, pid) {
+  if (!d) return [];
+  const rooms = new Set(ibxRows(d, scope, pid).concat(ibxOlder(d, scope, pid)).map(r => r.roomId));
+  return swClearable(swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs.filter(e => rooms.has(e.key)));
+}
 // A question the hub can close: an Ask card's (room, message, number).
 function ibxClosable(r) { return !!(r && r.roomId && r.mid && Number.isInteger(r.n) && (r.kind === 'answer')); }
+// A task's or session's name in no project, for the Inbox's head (#322).
+function ibxLooseName(key) {
+  const r = (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).find(x => x && (x.roomId === key || (!x.roomId && x.sessionId === key)));
+  if (!r) return '';
+  const no = r.headless ? taskNoText(r, true) : '';
+  return (no ? no + ' ' : '') + (r.headless ? rowTitle(r) : detailTitle(r));
+}
 // Pure (tests/test_inbox_cdp.py reads it too): `d` the hub's answer, `pid` this screen's project.
-function ibxHtml(d, scope, pid, now, phone) {
+// opts.listed (#322): the project list above it chooses, so no This/All switch.
+function ibxHtml(d, scope, pid, now, phone, opts) {
   const all = scope === 'all' || !pid;
-  const sw = pid ? `<span class="ibx-scope" role="group" aria-label="Which projects">`
+  const listed = !!(opts && opts.listed);
+  const dismissible = new Set((opts && opts.dismissible) || []);
+  const loose = String(pid || '').startsWith('room:');
+  const sw = pid && !listed ? `<span class="ibx-scope" role="group" aria-label="Which projects">`
     + `<button type="button" data-ibx-scope="project" aria-pressed="${!all}">${esc(nounText('This {project}'))}</button>`
     + `<button type="button" data-ibx-scope="all" aria-pressed="${all}">All</button></span>` : '';
-  const head = `<div class="ibx-head"><h2 class="ibx-title">Inbox</h2>${sw}</div>`;
-  if (!d) return `<div class="ibx">${head}<p class="pdp-empty">Reading what waits on you…</p></div>`;
+  // Under the project list (#322, P287 drawing): "Inbox · its name · N", small.
+  const where = !listed ? '' : all ? 'All' : loose ? ibxLooseName(pid.slice(5)) : ((projectById(pid) || {}).name || '');
+  const headOf = n => listed
+    ? `<div class="ibx-head"><h2 class="ibx-title ibx-title-listed">${esc(['Inbox', where, n == null ? '' : String(n)].filter(Boolean).join(' · '))}</h2>${(opts && opts.clearHtml) || ''}</div>`
+    : `<div class="ibx-head"><h2 class="ibx-title">Inbox</h2>${sw}</div>`;
+  if (!d) return `<div class="ibx">${headOf(null)}<p class="pdp-empty">Reading what waits on you…</p></div>`;
   const rows = ibxRows(d, scope, pid);
+  const head = headOf(rows.length);
   const older = ibxOlder(d, scope, pid);
   // The questions top to bottom; each closable one's N: itself and every closable one below it.
   const qs = rows.filter(r => r.kind === 'answer').concat(older);
@@ -15607,6 +15765,9 @@ function ibxHtml(d, scope, pid, now, phone) {
     } else if (r.kind === 'check') {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
     }
+    if (listed && dismissible.has(r.roomId) && r.kind !== 'check') {
+      acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back">Done with this</button>`;
+    }
     return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
       + `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
@@ -15630,7 +15791,11 @@ function ibxHtml(d, scope, pid, now, phone) {
         + `<div class="ibx-meta"><span class="pdp-age" data-at="${esc(String(i.since || 0))}">${esc(pdPtAge(i.since, now))}</span></div></li>`).join('')
       + '</ul></details>';
   };
-  const groups = IBX_GROUPS.map(([k, title]) => {
+  // Under the project list (P287 drawing) the rows are cards in one flat list, no group headings:
+  // the card's left bar says which (amber: answer or waiting, green: check).
+  const groups = listed
+    ? IBX_GROUPS.map(([k]) => (k === 'older' ? older : rows.filter(r => r.kind === k)).map(r => row(r).replace('<li class="ibx-row', `<li data-stage="${k}" class="ibx-row`)).join('')).join('')
+    : IBX_GROUPS.map(([k, title]) => {
     const got = k === 'older' ? older : rows.filter(r => r.kind === k);
     const live = got.filter(r => !IBX.gone.has(r.id)).length;
     return got.length ? `<li class="pdp-group" data-stage="${k}"><h3 class="pdp-head">${esc(title)} <span class="pdp-n">${live}</span></h3>`
@@ -15639,7 +15804,7 @@ function ibxHtml(d, scope, pid, now, phone) {
   const note = d.pending ? '<p class="pdp-note">Reading a conversation’s question cards: more may come.</p>' : '';
   // This project has none but others do (the bar counts them all): say so, one tap to All (#307).
   const others = !all && !groups ? (ibxRows(d, 'all', '').length + ibxOlder(d, 'all', '').length) : 0;
-  const empty = others ? `<p class="pdp-empty">${esc(nounText('Nothing waits on you in this {project}.'))} `
+  const empty = others ? `<p class="pdp-empty">${esc(loose ? 'Nothing waits on you here.' : nounText('Nothing waits on you in this {project}.'))} `
       + `<button type="button" class="ibx-others" data-ibx-scope="all">${esc(`${others} in other ${noun(others === 1 ? 'one' : 'many')}`)}</button></p>`
     : '<p class="pdp-empty">Nothing waits on you.</p>';
   const b = IBX.bulk;
@@ -15647,7 +15812,7 @@ function ibxHtml(d, scope, pid, now, phone) {
     + `<span class="ibx-tm">${esc(`${Math.max(0, Math.ceil((b.until - Date.now()) / 1000))} s`)}</span>`
     + `<button type="button" class="ibx-undo-btn" data-ibx-bulk-undo${b.busy ? ' disabled' : ''}>${b.busy ? 'Undoing…' : 'Undo'}</button></div>` : '';
   const sheet = conf && phone ? confHtml('ibx-conf ibx-sheet') : '';
-  return `<div class="ibx">${head}${bar}${groups ? `<ul class="pdp-groups">${groups}</ul>` : empty}${note}${sheet}</div>`;
+  return `<div class="ibx${listed ? ' ibx-listed' : ''}">${head}${bar}${groups ? `<ul class="${listed ? 'ibx-cards' : 'pdp-groups'}">${groups}</ul>` : empty}${note}${sheet}</div>`;
 }
 function ibxPaint() {
   const el = PD.els.inbox;
@@ -15668,6 +15833,18 @@ function ibxPaint() {
   // A phone's Inbox pane (#307), while it is open: the project the bar names.
   const ph = document.getElementById('ph-inbox');
   if (ph && !ph.hidden) ibxPaintIn(document.getElementById('ph-inbox-body'), projHere() || '', 'phSig');
+  // #322: a computer's, on the list dock's left strip on every screen: a PO
+  // screen's project, else the one the bar names.
+  if (window.LD && LD.dock) {
+    const lp = ibxLdPid();
+    IBX.ldPid = lp;
+    const ln = IBX.data ? ibxRows(IBX.data, IBX.scope, lp).length : 0;
+    LD.dock.setBadge('inbox', ln ? String(ln) : null, ln ? `${ln} waiting on you` : null);
+    const box = document.getElementById('ld-inbox');
+    box.classList.remove('ibx-phone');
+    ibxPaintIn(document.getElementById('ld-ibx-body'), lp, 'ldSig', false, { listed: !window.ensListDocked });
+    ldpPaint();
+  }
   ibxStrip();
   if (!el) return;
   // #311: on a phone the dock's Inbox is a full tab, drawn with the phone's touch sizes.
@@ -15694,8 +15871,13 @@ function ibxStrip() {
     if (f.getAttribute('data-inbox-wait') !== v) f.setAttribute('data-inbox-wait', v);
   });
 }
-function ibxPaintIn(el, pid, key, phone) {
-  const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone);
+function ibxPaintIn(el, pid, key, phone, opts) {
+  if (key === 'ldSig' && opts && opts.listed) {
+    SW_CLEAR_KEYS = ibxClearKeys(IBX.data, IBX.scope, pid);
+    if (SW_CLEAR && SW_CLEAR.phase === 'confirm' && !SW_CLEAR_KEYS.length) SW_CLEAR = null;
+    opts = { ...opts, clearHtml: swClearHtml(SW_CLEAR_KEYS), dismissible: SW_CLEAR_KEYS };
+  }
+  const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone, opts);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
@@ -15703,13 +15885,23 @@ function ibxPaintIn(el, pid, key, phone) {
   }
   // A repaint keeps the focus on the control it was on (Close, Undo…), where it still is.
   const f = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;
-  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo']
+  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
     .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
   el.innerHTML = html;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
-function ibxRepaint() { IBX.sig = IBX.phSig = ''; ibxPaint(); }
+function ibxRepaint() { IBX.sig = IBX.phSig = IBX.ldSig = ''; ibxPaint(); }
+// The project the list dock's Inbox is for (#322): the PO screen's, else the bar's.
+// A task or session in no project open in the middle is its own (#322, P287):
+// 'room:<its room>', so the Inbox shows its rows.
+function ibxLdPid() {
+  // A task in no project open in the middle wins, also over a PO screen behind it.
+  const lo = ldpLooseOpen();
+  if (lo) return 'room:' + lo;
+  if (document.body.classList.contains('po-dock') && PD.pid) return PD.pid;
+  return projHere() || '';
+}
 function ibxPoll() {
   if (document.hidden) return;
   if (IBX.busy) { IBX.again = true; return; }
@@ -15873,7 +16065,7 @@ function ibxWire(box) {
     const d = e.target;
     if (!d.dataset || !d.dataset.ibxMore) return;
     if (d.open) IBX.open.add(d.dataset.ibxMore); else IBX.open.delete(d.dataset.ibxMore);
-    IBX.sig = IBX.phSig = '';
+    IBX.sig = IBX.phSig = IBX.ldSig = '';
   }, true);
   // Pointing at (or tabbing to) Close this and earlier marks what it would close.
   const markFrom = id => {
@@ -15894,6 +16086,14 @@ function ibxWire(box) {
   box.addEventListener('click', e => {
     const at = sel => e.target.closest && e.target.closest(sel);
     let b;
+    if ((b = at('[data-clear]'))) {
+      if (b.dataset.clear === 'ask') { SW_CLEAR = { phase: 'confirm' }; swClearPaint(); box.querySelector('[data-clear="go"]')?.focus(); }
+      else if (b.dataset.clear === 'cancel') swClearEnd();
+      else if (b.dataset.clear === 'go') swClearAll();
+      else if (b.dataset.clear === 'undo') swClearUndo();
+      return;
+    }
+    if ((b = at('[data-ibx-dismiss]'))) { swDone(b); return; }
     if ((b = at('[data-ibx-close]'))) { ibxRowAct(b.dataset.ibxClose, 'Closed'); return; }
     if ((b = at('[data-ibx-done]'))) { ibxRowAct(b.dataset.ibxDone, 'Done'); return; }
     if ((b = at('[data-ibx-undo]'))) { ibxRowUndo(b.dataset.ibxUndo, box); return; }
@@ -15921,9 +16121,14 @@ ibxWire(document.getElementById('ph-inbox-body'));
 // the PO of this project (else of the first row's project) first. A phone's
 // opens (or closes) its Inbox pane over the conversation (#307).
 function ibxOpen() {
+  const B = document.body.classList;
+  // #322: a computer's is on the list dock's left strip, on every screen; a
+  // middle with nothing in it still gets the PO's conversation.
+  const ld = !phoneNow() && window.LD && LD.dock;
+  if (ld) { ld.reveal('inbox'); if (B.contains('po-dock') || B.contains('detail-open')) return; }
   // #311: a phone with the PO's dock up has the Inbox as a tab beside Chat.
-  if (document.body.classList.contains('po-dock') && PD.dock && !pdTask()) { pdReveal('inbox'); return; }
-  if (phoneNow()) { phPane(PH_PANE === 'inbox' ? '' : 'inbox'); return; }
+  else if (B.contains('po-dock') && PD.dock && !pdTask()) { pdReveal('inbox'); return; }
+  else if (phoneNow()) { phPane(PH_PANE === 'inbox' ? '' : 'inbox'); return; }
   const rows = (IBX.data && IBX.data.rows) || [];
   const here = projectById(SELECTED_PROJECT);
   const pj = (here && poRowOf(here)) ? here
@@ -15932,10 +16137,251 @@ function ibxOpen() {
   midLeave();
   openPoOf(pj);
   let tries = 0;
-  const go = () => { if (PD.dock && document.body.classList.contains('po-dock')) { pdReveal('inbox'); return; } if (++tries < 30) setTimeout(go, 150); };
+  const go = () => { if (PD.dock && document.body.classList.contains('po-dock')) { if (ld) ld.reveal('inbox'); else pdReveal('inbox'); return; } if (++tries < 30) setTimeout(go, 150); };
   go();
 }
 document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
+// ---- The Projects panel of a computer's left strip (#322, P289): begin -------
+// It takes the Tasks panel's place, beside the Inbox on the strip (one open at
+// a time): All, each project (newest first, its PO or its Board one click
+// away) with its Inbox count, then each task and session in no project, the
+// folded Unassigned group of the old list. Picking a row scopes the Inbox and
+// opens it in the middle. Make PO of a new
+// project is on a loose row's ⋯ and on its right click.
+var LDP = { more: false, moreLoose: false, sig: '' };
+var LDP_N = 9, LDP_LOOSE_N = 5;
+// The task or session in no project open in the middle: its room (or session) id.
+function ldpLooseOpen() {
+  const r = crumbTask();
+  if (!r) return '';
+  const pj = crumbProject(r);
+  if (pj && pj.id !== UNASSIGNED_ID) return '';
+  return r.roomId || r.sessionId || '';
+}
+function ldpModel() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const un = projectById(UNASSIGNED_ID);
+  let rec = { recent: [], quiet: [], unassigned: [] };
+  try {
+    rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
+      { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
+  } catch (e) {}
+  const opened = projOpened();
+  const seenP = new Set(), projs = [];
+  for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
+    if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
+    seenP.add(e.pid);
+    projs.push({ pid: e.pid, name: e.project || e.pid, at: Math.max(e.at || 0, (Number(opened[e.pid]) || 0) / 1000) });
+  }
+  projs.sort((a, b) => (b.at - a.at) || a.name.localeCompare(b.name));
+  const seenL = new Set(), loose = [];
+  const add = (e, kind, at) => {
+    if (!e || !e.key || seenL.has(e.key)) return;
+    seenL.add(e.key);
+    loose.push({ key: e.key, row: e.row || null, it: e.it || null, kind, at: at || 0 });
+  };
+  for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, 'task', e.at);
+  for (const e of rec.unassigned) add(e, 'session', swActivity(e.row));
+  loose.sort((a, b) => b.at - a.at);
+  return { projs, loose };
+}
+// A project's swatch (P289 drawing): a project has no colour of its own, so a
+// stable pick from the status tokens' bold shades by its id.
+const LDP_COLOURS = ['var(--c-progress-bold)', 'var(--c-success-bold)', 'var(--c-warning-bold)', 'var(--c-discovery-bold)'];
+function ldpColour(pid) {
+  let h = 0;
+  for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return LDP_COLOURS[h % LDP_COLOURS.length];
+}
+function ldpHtml(m) {
+  const d = IBX.data;
+  const cnt = pid => d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+  const pill = n => n ? `<span class="ldp-n" title="${n} waiting on you">${n}</span>` : '';
+  const lp = ibxLdPid();
+  const selAll = IBX.scope === 'all' || !lp;
+  const cur = on => on ? ' aria-current="true"' : '';
+  let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)}><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
+  const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
+  for (const p of ps) {
+    h += `<button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
+      + `<span class="ldp-name"><i class="ldp-sw" style="--ldp-c: ${ldpColour(p.pid)}" aria-hidden="true"></i>${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`;
+  }
+  if (m.projs.length > LDP_N) {
+    const rest = m.projs.length - LDP_N;
+    h += `<button type="button" class="ldp-more" data-ldp-more="proj" aria-expanded="${LDP.more}">${esc(LDP.more ? 'Fewer' : `${rest} more ${noun(rest === 1 ? 'one' : 'many')}`)}</button>`;
+  }
+  if (m.loose.length) {
+    h += '<div class="ldp-sep" role="separator"></div>';
+    const ls = LDP.moreLoose ? m.loose : m.loose.slice(0, LDP_LOOSE_N);
+    for (const e of ls) {
+      const r = e.row;
+      const no = r && e.kind === 'task' ? taskNoText(r, true) : '';
+      const title = r ? (e.kind === 'task' ? rowTitle(r) : detailTitle(r)) : ((e.it && (e.it.title || e.it.ref)) || e.key);
+      const room = r ? (r.roomId || '') : e.key;
+      const sid = r ? (r.sessionId || '') : '';
+      const n = cnt('room:' + (r ? (r.roomId || r.sessionId) : e.key));
+      const on = !selAll && lp === 'room:' + (room || sid);
+      const ref = `data-ldp-room="${esc(room)}" data-ldp-sid="${esc(sid)}"`;
+      h += `<div class="ldp-item"><button type="button" class="ldp-row" ${ref}${cur(on)} title="${esc((no ? no + ' ' : '') + title)}">`
+        + `<span class="ldp-name">${no ? `${esc(no)} ` : ''}${esc(title)}</span>`
+        + `<span class="ldp-kind">${e.kind}</span>${pill(n)}</button>`
+        + (r ? `<button type="button" class="ldp-dots" data-ldp-menu ${ref} aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + title)}" title="More">⋯</button>` : '')
+        + '</div>';
+    }
+    if (m.loose.length > LDP_LOOSE_N) {
+      const rest = m.loose.slice(LDP_LOOSE_N);
+      const t = rest.filter(e => e.kind === 'task').length, s = rest.length - t;
+      const words = [t ? `${t} more task${t === 1 ? '' : 's'}` : '', s ? `${s}${t ? '' : ' more'} session${s === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+      h += `<button type="button" class="ldp-more" data-ldp-more="loose" aria-expanded="${LDP.moreLoose}">${esc(LDP.moreLoose ? 'Fewer' : `${words} in no ${noun('one')}`)}</button>`;
+    }
+  }
+  return h;
+}
+function ldpPaint() {
+  if (typeof LDP === 'undefined') return;
+  const el = document.getElementById('ld-projs');
+  if (!el) return;
+  const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
+  if (html === LDP.sig) return;
+  LDP.sig = html;
+  // Keep focus on the same control across the repaint.
+  const a = document.activeElement, keep = a && el.contains(a)
+    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
+      + (a.hasAttribute('data-ldp-menu') ? '[data-ldp-menu]' : (a.classList.contains('ldp-row') ? '.ldp-row' : ''))
+    : '';
+  el.innerHTML = html;
+  if (keep) { const b = el.querySelector(keep); if (b) b.focus(); }
+}
+function ldpRow(b) {
+  const room = b.getAttribute('data-ldp-room') || '', sid = b.getAttribute('data-ldp-sid') || '';
+  return ALL_ROWS.find(x => room ? x.roomId === room : (!x.roomId && x.sessionId === sid)) || null;
+}
+function ldpScope(s) {
+  IBX.scope = s;
+  try { localStorage.setItem('cd-inbox-scope', s); } catch (err) {}
+}
+var LDP_MENU = null;
+function ldpMenuClose() {
+  const m = LDP_MENU;
+  if (!m) return;
+  LDP_MENU = null;
+  m.off();
+  m.el.remove();
+  if (m.btn) m.btn.setAttribute('aria-expanded', 'false');
+}
+function ldpMenu(b, r, rect) {
+  ldpMenuClose();
+  const el = document.createElement('div');
+  el.className = 'dcm'; el.setAttribute('role', 'menu');
+  const title = rowTitle(r);
+  el.setAttribute('aria-label', 'Actions for ' + title);
+  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
+  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
+  el.innerHTML = `<div class="dcm-head">${esc(title)}</div>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`;
+  document.body.appendChild(el);
+  docsMenuPlace(el, rect);
+  const dots = b.matches('[data-ldp-menu]') ? b : (b.closest('.ldp-item') || b).querySelector('[data-ldp-menu]');
+  if (dots) dots.setAttribute('aria-expanded', 'true');
+  const away = e => { if (!(e.target && e.target.nodeType === 1 && el.contains(e.target))) ldpMenuClose(); };
+  const key = e => { if (e.key === 'Escape') { e.preventDefault(); const f = dots; ldpMenuClose(); if (f) f.focus(); } };
+  document.addEventListener('pointerdown', away, true);
+  document.addEventListener('scroll', away, { capture: true, passive: true });
+  document.addEventListener('keydown', key, true);
+  window.addEventListener('resize', ldpMenuClose);
+  window.addEventListener('blur', ldpMenuClose);
+  LDP_MENU = { el, btn: dots, off: () => {
+    document.removeEventListener('pointerdown', away, true);
+    document.removeEventListener('scroll', away, { capture: true });
+    document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', ldpMenuClose);
+    window.removeEventListener('blur', ldpMenuClose);
+  } };
+  el.onkeydown = (e) => {
+    const items = [...el.querySelectorAll('.dcm-item:not([disabled])')], i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
+    else if (e.key === 'Tab') { ldpMenuClose(); }
+  };
+  // Make PO: the page's own .makepo-btn handler (on document) does the work.
+  el.addEventListener('click', (e) => {
+    const it = e.target.closest('.dcm-item');
+    if (!it || it.disabled) return;
+    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return; }
+    setTimeout(ldpMenuClose, 0);
+  });
+  const first = el.querySelector('.dcm-item');
+  if (first) first.focus();
+}
+function ldpOpenLoose(b) {
+  const r = ldpRow(b), room = b.getAttribute('data-ldp-room') || '';
+  ldpScope('project');
+  if (r && rowBySid(r.sessionId)) openDetail(r.sessionId);
+  else swOpenRoomTab(room);
+  ibxRepaint();
+}
+(function () {
+  const box = document.getElementById('ld-projs');
+  if (!box) return;
+  // The PO screen's tool out on the right closes on a press outside it, so a press
+  // in the left strip (its button, then a project row) would lose it: note it at the
+  // first press there, before the dock closes it, and forget it on a press elsewhere.
+  let keptFly = null;
+  window.addEventListener('pointerdown', (e) => {
+    const inLeft = e.target.closest && e.target.closest('#list-dock, #list-dock-panels, #ld-inbox, #ld-projects');
+    const open = document.body.classList.contains('po-dock') && PD.dock && !PD.dock.narrow() ? PD.dock.flyOpen() : null;
+    if (open) keptFly = inLeft ? open : null;
+    else keptFly = null;
+  }, true);
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || !box.contains(b)) return;
+    const more = b.getAttribute('data-ldp-more');
+    if (more) {
+      if (more === 'proj') LDP.more = !LDP.more; else LDP.moreLoose = !LDP.moreLoose;
+      ldpPaint();
+      return;
+    }
+    if (b.hasAttribute('data-ldp-menu')) {
+      const r = ldpRow(b);
+      if (!r) return;
+      if (LDP_MENU && LDP_MENU.btn === b) { ldpMenuClose(); return; }
+      ldpMenu(b, r, b.getBoundingClientRect());
+      return;
+    }
+    if (b.getAttribute('data-ldp') === 'all') { ldpScope('all'); ibxRepaint(); return; }
+    const pid = b.getAttribute('data-ldp-proj');
+    // A tool out on the right (the Board, P287) stays out and shows the project picked.
+    if (pid) {
+      const fly = (document.body.classList.contains('po-dock') && PD.dock && !PD.dock.narrow() ? PD.dock.flyOpen() : null) || keptFly;
+      keptFly = null;
+      ldpScope('project'); projPick(pid); ibxRepaint();
+      // The PO screen switches to the new project's after this click: slide the
+      // tool back out once it shows that project.
+      if (fly) {
+        let n = 0;
+        const back = () => {
+          const on = document.body.classList.contains('po-dock') && PD.dock && PD.pid === pid && !PD.dock.narrow();
+          if (on && PD.dock.flyOpen() === fly) return;
+          if (on && PD.dock.isVisible(fly)) pdReveal(fly);
+          if (++n < 40) setTimeout(back, 100);
+        };
+        setTimeout(back, 0);
+      }
+      return;
+    }
+    if (b.hasAttribute('data-ldp-room')) ldpOpenLoose(b);
+  });
+  box.addEventListener('contextmenu', (e) => {
+    const b = e.target.closest('.ldp-item .ldp-row');
+    if (!b) return;
+    const r = ldpRow(b);
+    if (!r) return;
+    e.preventDefault();
+    ldpMenu(b, r, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
+  });
+})();
+// ---- The Projects panel of a computer's left strip: end ----------------------
 ibxPaint();
 ibxPoll();
 setInterval(ibxPoll, 10000);
@@ -15975,9 +16421,18 @@ function pdMenuHtml() {
   const closed = pdOutClosed().map(c => `<div class="dk-menu-sub pd-out-row" role="group" aria-label="${esc(c.title)}: its own window is closed">`
     + `<button type="button" role="menuitem" data-pd-pop="open" data-pd-dock="${c.key}" data-pd-id="${esc(c.id)}" title="Open its window again">${pdMenuIcon(c.id)}${esc(c.title)} <span class="pd-out-tag">window closed</span></button>`
     + `<button type="button" role="menuitem" data-pd-pop="back" data-pd-dock="${c.key}" data-pd-id="${esc(c.id)}" title="Put it back in this window">Bring back here</button></div>`).join('');
-  const ids = PD.dock && document.body.classList.contains('po-dock') ? PD_IDS : [];
+  // (A computer's PO dock has no Inbox: it is the list dock's, #322.)
+  const ids = PD.dock && document.body.classList.contains('po-dock') ? PD_IDS.filter(id => PD.dock.title(id) != null) : [];
   const on = ids.filter(id => PD.dock.isVisible(id));
-  const list = LD.dock ? `<button type="button" role="menuitemcheckbox" data-pd-list aria-checked="${LD.dock.isVisible('list')}"${LD.dock.isVisible('list') ? ' class="on"' : ''}${LD.dock.isVisible('list') && !LD.dock.can('list', 'hide') ? ' disabled title="This panel stays on screen"' : ''}>${pdMenuIcon('list')}Tasks</button>` : '';
+  // The list dock's two (#322): checked while on screen (docked, slid out,
+  // floating or in its window); a click opens one, or puts it away.
+  const ldRow = (id, name) => {
+    const vis = ldOnScreen(id), kept = vis && !LD.dock.isAuto(id) && !LD.dock.can(id, 'hide');
+    return `<button type="button" role="menuitemcheckbox" data-pd-ld="${id}"${id === 'list' ? ' data-pd-list' : ''} aria-checked="${vis}"${vis ? ' class="on"' : ''}`
+      + `${kept ? ' disabled title="This panel stays on screen"' : ''}>${pdMenuIcon(id)}${name}</button>`;
+  };
+  // #322 (P287): no Tasks on a computer (a test page's ensListDocked keeps it).
+  const list = LD.dock ? (window.ensListDocked ? ldRow('list', 'Tasks') : '') + ldRow('inbox', 'Inbox') : '';
   return (closed ? closed + '<div class="dk-menu-sep" role="separator"></div>' : '') + list + ids.map(id => {
     const vis = on.includes(id), last = vis && on.length === 1;
     const kept = vis && !last && !PD.dock.can(id, 'hide');
@@ -16012,10 +16467,16 @@ function pdMenu(btn) {
       pdOutMarks();
       return;
     }
-    if (e.target.closest('[data-pd-list]:not([disabled])')) {
-      LD.dock.setVisible('list', !LD.dock.isVisible('list'));
+    const ldb = e.target.closest('[data-pd-ld]:not([disabled])');
+    if (ldb && LD.dock) {
+      const d = LD.dock, id = ldb.dataset.pdLd;
+      if (d.flyOpen() === id) d.closeFly();
+      else if (ldOnScreen(id) && d.can(id, 'hide')) d.setVisible(id, false);
+      else d.reveal(id);
+      // A tool slid out stays out while the menu is closed by this click.
+      if (d.flyOpen() === id) { pdMenuClose(false); return; }
       menu.innerHTML = pdMenuHtml();
-      menu.querySelector('[data-pd-list]')?.focus();
+      menu.querySelector(`[data-pd-ld="${id}"]`)?.focus();
       return;
     }
     const t = e.target.closest('[data-pd-toggle]');
@@ -16027,7 +16488,7 @@ function pdMenu(btn) {
       if (again) again.focus();
       return;
     }
-    if (e.target.closest('[data-pd-reset]')) { pdMenuClose(true); LD.dock?.reset(); PD.dock?.reset(); }
+    if (e.target.closest('[data-pd-reset]')) { pdMenuClose(true); if (LD.dock) { LD.dock.reset(); ldDefaults(); } PD.dock?.reset(); }
   });
   menu.addEventListener('keydown', e => {
     const items = [...menu.querySelectorAll('button:not([disabled])')];
@@ -19593,7 +20054,12 @@ function phOpenHome() {
   if (pj) { openPoConv(pj); return true; }
   return false;
 }
-function swOn() { try { return !isPhone() || phList(); } catch (e) { return false; } }
+// #322 (P287, P289): a computer has no Tasks panel; the Projects panel on the
+// left strip took its place. The list stays the fixed column only where the dock
+// failed to load, and docked under a test page's window.ensListDocked.
+function swOn() {
+  try { return isPhone() ? phList() : (!!window.ensListDocked || (typeof PD !== 'undefined' && !!PD.failed)); } catch (e) { return false; }
+}
 function swProject() {
   let id = '';
   try { id = localStorage.getItem(SW_KEY + '-project') || ''; } catch (e) {}
@@ -19635,7 +20101,7 @@ const SW_ROW_EXPAND = {
   copyClass: 'sw-expanded', focusClass: 'sw-expand-focus',
   opensLeft: (row, rect, win) => {
     const doc = row.ownerDocument;
-    return (doc === document && LD.dock && LD.dock.side('list') === 'right'
+    return (doc === document && LD.dock && window.ensListDocked && LD.dock.side('list') === 'right'
       && !['float', 'window', 'hidden'].includes(LD.dock.viewMode('list'))) || rect.left > win.innerWidth / 2;
   },
 };
@@ -19660,6 +20126,7 @@ function swRender() {
   const el = SW_EL;
   if (!el) return;
   ldSync();
+  ldpPaint();
   const on = swOn();
   const phone = phoneNow(), back = on && el.hidden;
   if (phone && !on && !el.hidden) {
@@ -19670,6 +20137,9 @@ function swRender() {
   el.hidden = !on;
   document.body.classList.toggle('sw-on', on);
   document.body.classList.toggle('ph-list', on && phone);
+  // The desktop still remembers its open conversation even though the Tasks
+  // list no longer paints a row for it.
+  if (!phone) rememberConv(swSelection());
   if (!on) { swExpandHide(); SW_SHOWN = null; TaskCard.refresh(el.ownerDocument); return; }
   const box = $('#sw-list'), pick = $('#sw-proj');
   const projects = registeredProjects(), chosen = swProject(), view = swView();
@@ -19700,7 +20170,6 @@ function swRender() {
   const key = focusKeyIn(box), had = key && swFocusNote(act);
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
-  if (!phone) rememberConv(sel);
   // Clear all (#279): every row Needs you shows that Done with this settles;
   // the recent list's are its groups', a project's tasks on their PO's row.
   const needs = recent ? swGroups(ALL_ROWS, attentionItems(), projects, gOpts).needs : (fg.needs || []);
@@ -19882,53 +20351,117 @@ function openPoConv(pj) {
 }
 
 // ---- The list as a dock panel (#137): begin ---------------------------------
-// On a desktop the list (#switcher) is a panel of a dock of its own, made with
-// the same library as the PO screen's (Dock): #list-dock, laid over the area
-// under the bar, holds it and #ld-page, an empty stand-in for the page (the
-// middle, its fill). Docked at the left and kept open by default, today's column;
-// its ⋯ and − do what they do for the tools: unpin it to a strip on its side
-// (it slides out beside the page and back on a click elsewhere), float it, pop
-// it into a window of its own, move it to another side, minimise it. The page
-// follows where the stand-in is (ldInsets), so it takes the room the list
-// leaves. The layout is kept per browser (LD_KEY). Closing its window hides
-// it in Window mode; Panels reopens it, including after a reload.
-// The list's element moves (into the dock, into its window) with its listeners;
-// its code stays in this page, so a row clicked in its window opens the task
-// here. Before the library loads, when it could not, and on a phone (where the
-// list is home, #129) there is no list dock: the list is the fixed column.
+// #322: this outer Dock holds the Inbox and Projects on one left strip. The
+// page fills the rest; ldInsets keeps its content clear of pinned or slid-out
+// panels. A phone uses its original panes and does not create this Dock.
+// window.ensListDocked retains the old list panel only for its Dock regression
+// test, while production desktops have no Tasks panel.
 const LD_KEY = 'cd-list-dock';
 const LD_W = 300;   // --sw-w: the column's width until it is resized
 const LD_H = 240;   // its height at the top or the bottom, until it is resized
 const LD_ROOT = document.getElementById('list-dock');
 const LD_PAGE = document.getElementById('ld-page');
+const LD_INBOX = document.getElementById('ld-inbox');   // #322: the Inbox panel on a computer
+const LD_PROJECTS = document.getElementById('ld-projects');   // #322 (P289): the Projects panel beside it
 // The list's place outside the dock, to go back to.
 const LD_HOME = { parent: SW_EL.parentNode, next: SW_EL.nextElementSibling };
 const LD_ICON = toolIcon('list');
 var LD = { dock: null, insets: '', ro: null };   // var: swRender may run before this line
 function ldWanted() { return !!PD.lib && !PD.failed && !isPhone(); }
-// Layout A (#306): on a computer the list is hidden by default; the page takes
-// the whole width (the conversation and the Inbox). Its home, where Panels ▾ ›
-// Tasks puts it back, is still the 300px column at the left. A test page that
-// drives the list itself sets window.ensListDocked: the list docked, as before.
+// Layout A (#306): on a computer the list was hidden by default; since #322 it
+// is not a panel of this dock at all (the Projects panel replaces it), and #switcher stays in its home for a phone's pane. A test page that
+// drives the list itself sets window.ensListDocked: the list docked, as before,
+// and the Inbox hidden (it shows from the bar's Inbox), so the list's geometry
+// is #137's (test_left_strip_cdp drives the Inbox here).
+// #322 (P285, amended by P287, P289): the Inbox and Projects (#ld-projects) are
+// this dock's, on its left strip as the tools are on the right one, on every
+// screen of a computer. The Tasks panel is gone on a computer (only a test
+// page's ensListDocked keeps it). By default both are pinned as one stack left
+// of the page, the Inbox in front (ldDefaults pins them: a default layout keeps
+// no strip place for a docked panel).
+const LD_IBX_W = 260;   // P287 drawing: the panel 260px
+const LD_STRIP = 52;    // P287 drawing: the strip 52px, the Inbox's icon over its name
+const LD_HOME_AT = { peers: ['projects'], index: 0, near: 'page', side: 'left' };
 function ldDefaultLayout(L, ctx) {
-  if ((ctx && ctx.purpose === 'home') || window.ensListDocked) return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]) };
-  return { root: L.stack(['page']), hidden: [{ id: 'list', was: { kind: 'dock', home: null } }] };
+  if (window.ensListDocked) {
+    if (ctx && ctx.purpose === 'home') return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['inbox'], { size: LD_IBX_W }), L.stack(['page'])]) };
+    return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]),
+             hidden: [{ id: 'inbox', was: { kind: 'dock', home: null } },
+                      { id: 'projects', was: { kind: 'dock', home: null } }] };
+  }
+  // P289: Inbox and Projects, one open at a time: pinned, they share one stack
+  // (Projects' home is beside the Inbox), so a strip button brings its own to the front.
+  if (ctx && ctx.purpose === 'home') return { root: L.split('row', [L.stack(['inbox', 'projects'], { size: LD_IBX_W, active: 'inbox' }), L.stack(['page'])]) };
+  return { root: L.stack(['page']), auto: [{ id: 'inbox', edge: 'left', size: LD_IBX_W, home: LD_HOME_AT },
+                                           { id: 'projects', edge: 'left', size: LD_IBX_W, home: LD_PROJ_HOME }] };
+}
+const LD_PROJ_HOME = { peers: ['inbox'], index: 1, near: 'page', side: 'left' };
+// The default's last step, after a fresh start and Reset layout: the Inbox
+// and Projects pinned from their strip places (so they keep their buttons
+// there), the Inbox in front.
+function ldDefaults() {
+  const d = LD.dock;
+  if (!d || window.ensListDocked) return;
+  if (d.isAuto('inbox')) d.pin('inbox');
+  if (d.isAuto('projects')) d.pin('projects');
+  d.activate('inbox');
 }
 // A layout saved before #306 had the list docked because that was forced on:
-// it opens in the new default once (the list hidden). A list the person put
-// on a strip, floated or popped out is their choice and stays.
+// it opened in the #306 default once (the list hidden). A layout saved before
+// #322 has no Inbox here: once, the Inbox goes onto the left strip, as the PO
+// dock kept it (pinned, on its strip, floating). A saved list panel is not one
+// any more: the dock parks the unknown id.
 const LD_A4_KEY = 'cd-list-dock-a4';
-function ldMigrate() {
-  let done = false;
-  try { done = localStorage.getItem(LD_A4_KEY) === '1'; } catch (e) {}
-  if (done || window.ensListDocked) return;
-  try { localStorage.setItem(LD_A4_KEY, '1'); } catch (e) {}
+const LD_A5_KEY = 'cd-list-dock-a5';
+const LD_A6_KEY = 'cd-list-dock-a6';
+function ldMigrate(fresh) {
+  let done = false, done6 = false;
+  try { done = localStorage.getItem(LD_A5_KEY) === '1'; done6 = localStorage.getItem(LD_A6_KEY) === '1'; } catch (e) {}
   const d = LD.dock;
-  if (d && d.viewMode('list') === 'pinned') d.setVisible('list', false);
+  if (!d || (done && done6 && !fresh)) return;
+  try { localStorage.setItem(LD_A5_KEY, '1'); localStorage.setItem(LD_A4_KEY, '1'); localStorage.setItem(LD_A6_KEY, '1'); } catch (e) {}
+  if (fresh) { ldDefaults(); return; }
+  if (window.ensListDocked) return;
+  if (!done) ldMigrateInbox(d);
+  ldMigrateProjects(d);
+}
+// P289: a layout saved before Projects: it goes onto the left strip after the
+// Inbox; where the Inbox is pinned, Projects is pinned with it (a tab of its
+// stack, the Inbox in front), else it waits on the strip.
+function ldMigrateProjects(d) {
+  if (!d.isAuto('projects')) d.setViewMode('projects', 'unpinned');
+  if (d.side('projects') !== 'left') d.moveSide('projects', 'left');
+  const btn = [...LD_ROOT.querySelectorAll('.dk-strip-left .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto).filter(id => id !== 'projects');
+  d.moveStrip('projects', btn.indexOf('inbox') + 1, 'left');
+  if (d.viewMode('inbox') === 'pinned' && !d.isAuto('inbox')) { d.pin('projects'); d.activate('inbox'); }
+  if (d.flyOpen() === 'projects') d.closeFly();
+}
+function ldMigrateInbox(d) {
+  const was = pdIbxWasNote();
+  // A saved list is not a panel any more (#322, P287): the dock parks it.
+  // The Inbox: on the left strip, then as it was kept.
+  if (!d.isAuto('inbox')) d.setViewMode('inbox', 'unpinned');
+  if (d.side('inbox') !== 'left') d.moveSide('inbox', 'left');
+  d.moveStrip('inbox', 0, 'left');
+  if (was === 'float') d.setViewMode('inbox', 'float');
+  else if (was !== 'unpinned') d.pin('inbox');
+}
+// Whether a panel of this dock is on screen: shown, and slid out if it is on its strip.
+function ldOnScreen(id) {
+  const d = LD && LD.dock;
+  return !!d && d.isVisible(id) && (!d.isAuto(id) || d.flyOpen() === id);
 }
 // Whether the list is on screen (a desktop with the dock and the list shown, or
 // the fixed column where there is no dock).
-function ldListShown() { return !LD || !LD.dock || LD.dock.isVisible('list'); }
+// #322: a computer's dock has no list (only a test page's ensListDocked keeps it).
+function ldListShown() {
+  if (!LD || !LD.dock) return phoneNow() || swOn();
+  return !!window.ensListDocked && ldOnScreen('list');
+}
+// The bar's Inbox gives way while the Inbox has its place here (#322).
+function ldInboxMark() {
+  document.body.classList.toggle('ld-ibx', !!(LD.dock && LD.dock.isVisible('inbox') && LD.dock.viewMode('inbox') !== 'window'));
+}
 function ldSync() {
   if (!LD) return;   // before this block has run
   const want = ldWanted();
@@ -19941,29 +20474,37 @@ function ldMake() {
   // Its size on each axis is the layout's own since Dock v0.9.0 (layout.depth):
   // the page's copy of it (#137, 'cd-list-dock-axis') is not read any more.
   try { localStorage.removeItem('cd-list-dock-axis'); } catch (e) {}
+  let fresh = false;
+  try { fresh = localStorage.getItem(LD_KEY) == null; } catch (e) {}
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try {
     LD.dock = L.createDock({
       root: LD_ROOT,
-      panels: [{ id: 'list', title: 'Tasks', el: SW_EL, icon: LD_ICON, unpinSize: LD_W, menuItems: () => swMenuItems() },
-               { id: 'page', title: 'Page', el: LD_PAGE }],
+      // #322 (P287): the Tasks panel only on a test page that drives the list
+      // (window.ensListDocked); a layout saved with it parks it (Dock's normalizeLayout).
+      panels: (window.ensListDocked ? [{ id: 'list', title: 'Tasks', el: SW_EL, icon: LD_ICON, unpinSize: LD_W, menuItems: () => swMenuItems() }] : [])
+        .concat([{ id: 'inbox', title: 'Inbox', el: LD_INBOX, icon: toolIcon('inbox'), unpinSize: LD_IBX_W },
+                 { id: 'projects', title: 'Projects', el: LD_PROJECTS, icon: toolIcon('projects'), unpinSize: LD_IBX_W },
+                 { id: 'page', title: 'Page', el: LD_PAGE }]),
       storageKey: LD_KEY,
       defaultLayout: (ctx) => ldDefaultLayout(L, ctx),
       fill: 'page',
-      minSize: { list: { w: 220, h: 120 }, page: { w: 360, h: 200 } },
-      sizes: { head: 32, strip: 44 },
+      // The page's minimum is what the PO dock in it needs (ldPageMin): the
+      // list or the Inbox beside it gives way first (Dock's fitAll).
+      minSize: id => (id === 'list' ? { w: 220, h: 120 } : id === 'inbox' || id === 'projects' ? { w: 240, h: 160 } : { w: ldPageMin(), h: 200 }),
+      sizes: { head: 32, strip: LD_STRIP },
       // Its depth the first time on an axis (Dock v0.10.0 keeps each axis's
-      // size in the layout after that): a 300px column, a 240px band.
-      defaultSize: (ids, dir) => (dir === 'col' ? LD_H : LD_W),
+      // size in the layout after that): a 300px column (the Inbox's 280px),
+      // a 240px band.
+      defaultSize: (ids, dir) => (dir === 'col' ? LD_H : ids && ids.length && ids.every(i => i === 'inbox' || i === 'projects') ? LD_IBX_W : LD_W),
       // As the tools: a click on its strip button opens it beside the page,
       // a click elsewhere puts it back.
       stripHover: false,
       stripOpen: 'beside',
-      // The page stays where it is. The list can be hidden (#306: it is by
-      // default); Panels ▾ › Tasks reopens it.
-      can: (id) => id === 'list',
+      // Inbox and Projects hide only from their own windows.
+      can: (id, a) => id === 'list' || ((id === 'inbox' || id === 'projects') && (a !== 'hide' || LD.dock?.viewMode(id) === 'window')),
       popName: 'ensemble-list-',
-      popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
+      popTitle: () => nounText('Inbox and {projects}') + ' · Ensemble',
       // No bodyAttrs: the page's body classes are copied into the PO dock's windows only (#154);
       // nothing in the list's window is keyed on them (ldInsets sets ld-own-head there).
       // Its window outlives a reload too (#204).
@@ -19976,9 +20517,11 @@ function ldMake() {
     });
   } finally { window.DOC_LISTENERS_PAUSED = false; }
   document.body.classList.add('ld-on');
-  LD.dock.onChange(() => { ldKeepPage(); ldInsets(); pdOutMarks(); });
+  LD.dock.onChange(() => { ldKeepPage(); ldInsets(); pdOutMarks(); ldInboxMark(); });
   pdOnAdopt('ld', LD_ROOT);
-  ldMigrate();
+  ldMigrate(fresh);
+  ldInboxMark();
+  ibxRepaint();
   // A splitter's resize tells no onChange: the page's ResizeObserver notes it.
   if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
   ldKeepPage();
@@ -19999,20 +20542,29 @@ function ldDrop() {
   SW_EL.classList.remove('dk-panel', 'dk-off', 'ld-own-head');
   ['role', 'aria-labelledby', 'aria-hidden', 'data-dk-role', 'style'].forEach(a => SW_EL.removeAttribute(a));
   document.getElementById('list-dock-panels').appendChild(LD_PAGE);
+  // The Inbox and Projects wait there too (a phone's Inbox is the PO dock's tab and its pane).
+  for (const el of [LD_INBOX, LD_PROJECTS]) {
+    el.classList.remove('dk-panel', 'dk-off');
+    ['role', 'aria-labelledby', 'aria-hidden', 'data-dk-role', 'style'].forEach(a => el.removeAttribute(a));
+    document.getElementById('list-dock-panels').appendChild(el);
+  }
   LD_ROOT.hidden = true;
-  document.body.classList.remove('ld-on');
+  document.body.classList.remove('ld-on', 'ld-ibx');
   ['--list-w', '--list-r', '--list-t', '--list-b'].forEach(v => document.body.style.removeProperty(v));
   LD.insets = '';
   barPaint();
 }
-// The page is the middle alone: the list dropped into its stack (a drag onto
-// its tab row) goes to the left of it.
+// The page is the middle alone: the list or the Inbox dropped into its stack
+// (a drag onto its tab row) goes to the left of it.
 function ldKeepPage() {
   const d = LD.dock;
   const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes('page') ? n : null) : (n.kids || []).map(find).find(Boolean) || null;
   const st = d && find(d.layout().root);
-  if (st && st.panels.includes('list')) { d.dockEdge('list', 'left'); d.activate('page'); }
+  const extra = st ? st.panels.filter(id => id !== 'page') : [];
+  extra.forEach(id => d.dockEdge(id, 'left'));
+  if (extra.length) d.activate('page');
 }
+ibxWire(LD_INBOX);
 // The page's insets: where the stand-in is inside the dock. Docked at the left
 // that is the list's width and its splitter; on a strip, the strip (and the
 // list slid out beside the page, as big as the page's CSS lets it be: Dock
@@ -20622,6 +21174,8 @@ function barPaint() {
   const tabs = poDockProject() || pdTaskWanted();
   if (here) writeSlot(here, LD?.dock || (inProj && tabs && panels) ? pdCtlHtml() : '');
   barCrumbs();
+  // #322: the list dock's Inbox is for the project the bar names, on every screen.
+  if (window.LD && LD.dock && IBX.ldPid !== ibxLdPid()) ibxPaint();
   // #311: a phone's second row only when there is somewhere to go back to or
   // a place to name (an open task, a pane); a PO's conversation has one row,
   // the project's name (the switcher) in it beside the wordmark.
@@ -20697,7 +21251,12 @@ function openDefaultConv() {
   if (openConv(lastConv())) return;
   swRender();
   const first = document.querySelector('#sw-list .sw-row.needs, #sw-list .sw-row.needs-in');
-  if (first) first.click();
+  if (first) { first.click(); return; }
+  // On a computer the Tasks list is gone, so its first Needs you row has no
+  // DOM button. Keep the same oldest-first choice from the list's model.
+  const need = swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs[0];
+  if (need && need.po) { const pj = projectById(need.pid); if (pj) openPoConv(pj); }
+  else if (need) openDetail((need.row && need.row.sessionId) || need.key);
 }
 window.addEventListener('hashchange', () => {
   if (location.hash !== '#needs') return;

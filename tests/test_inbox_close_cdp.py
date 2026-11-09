@@ -91,7 +91,7 @@ async function main() {
   const state = box => `(() => { const el = ${box};
     const qs = [...el.querySelectorAll('li.ibx-row[data-q]')];
     return { qs: qs.map(r => r.dataset.ibx), marked: [...el.querySelectorAll('li.ibx-row.ibx-mark')].map(r => r.dataset.ibx),
-      heads: [...el.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()),
+      heads: [...el.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()), stages: [...el.querySelectorAll('li.ibx-row')].map(r => r.dataset.stage || ''),
       earlier: qs.map(r => { const b = r.querySelector('[data-ibx-earlier] .ibx-cn'); return b ? +b.textContent : 0; }),
       close: qs.map(r => !!r.querySelector('[data-ibx-close]')),
       meta: qs.map(r => r.querySelector('.ibx-meta').textContent),
@@ -108,8 +108,8 @@ async function main() {
     // ---- 1440 x 900: the Inbox column
     const p = await page(1440, 900);
     await toPo(p);
-    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && PD.els.inbox.querySelectorAll("li.ibx-row[data-q]").length >= 8', 30000);
-    const D = 'PD.els.inbox';
+    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && LD_INBOX.querySelectorAll("li.ibx-row[data-q]").length >= 8', 30000);
+    const D = 'LD_INBOX';
     out.before = await p.evalIn(state(D));
     out.apiBefore = await p.evalIn(api);
     out.restHidden = out.before.acts;
@@ -155,7 +155,7 @@ async function main() {
     await p.until(`(async () => !(await ${api}).includes(${JSON.stringify(first)}))()`, 15000).catch(() => null);
     out.apiRowClosed = await p.evalIn(api);
     out.rowClosed = await p.evalIn(state(D));
-    out.deskFits = await p.evalIn(fits('#po-dock .ibx'));
+    out.deskFits = await p.evalIn(fits('#list-dock .ibx'));
     await p.close();
     // ---- 390 x 844: a phone's Inbox tab, beside Chat (#311)
     const q = await page(390, 844, true);
@@ -268,7 +268,9 @@ class CloseInChrome(unittest.TestCase):
     def test_questions_newest_first_then_older_each_with_close(self):
         b = self.got["before"]
         self.assertEqual(self.cards, 8)
-        self.assertEqual(b["heads"], ["Needs your answer 2", "Older questions 6"], b["heads"])
+        # #322 (P287 drawing): cards in one flat list under the project list, no group headings; the stage is on each card
+        self.assertEqual(b["heads"], [], b["heads"])
+        self.assertEqual(b["stages"], ["answer"] * 2 + ["older"] * 6, b["stages"])
         self.assertEqual(len(b["qs"]), 8)
         self.assertEqual(b["qs"], self.got["apiBefore"], "the hub's questions, in its order")
         self.assertTrue(all(b["close"]), b)

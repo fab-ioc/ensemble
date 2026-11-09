@@ -332,9 +332,10 @@ async function main() {
       else { await main.click(`document.getElementById('inbox-btn')`); await main.until(`PH_PANE === 'inbox'`); }
     };
     if (MOB) await phoneInbox();
-    else { await main.click(`document.getElementById('inbox-btn')`); await main.until(`!!PD.dock && PD.dock.isShown('inbox')`); }
+    // #322: a computer's Inbox is on the list dock's left strip, pinned open on every screen.
+    else await main.until(`ldOnScreen('inbox')`);
     await sleep(500);
-    const box = MOB ? `(PH_PANE === 'inbox' ? document.getElementById('ph-inbox-body') : PD.els.inbox)` : `PD.els.inbox`;
+    const box = MOB ? `(PH_PANE === 'inbox' ? document.getElementById('ph-inbox-body') : PD.els.inbox)` : `LD_INBOX`;
     // All projects' rows (Alpha's beside Motors'): its own control.
     // (No project open yet, as on a phone at first: no control, every row shown.)
     if (await main.ev(`!!${box}.querySelector('[data-ibx-scope="all"]')`)) {
@@ -375,7 +376,7 @@ async function main() {
     await py(`out = report(ids["A4"], "completed", "The saddle is at 74 cm.", ids["Alpha"])`);
     S.reported = await inboxUntil(main, ids => has(ids, I.A4, 'check'));
     if (MOB) { if (await main.ev(`PH_PANE !== 'inbox' && !(${IN_TAB} && PD.dock.isShown('inbox'))`)) await phoneInbox(); }
-    else await main.ev(`pdReveal('inbox'); 0`);
+    else await main.ev(`LD.dock.reveal('inbox'); 0`);
     // On a phone the open project now scopes the Inbox: back to All.
     if (await main.ev(`IBX.scope !== 'all' && !!${box}.querySelector('[data-ibx-scope="all"]')`)) {
       await main.click(`${box}.querySelector('[data-ibx-scope="all"]')`);
@@ -447,7 +448,7 @@ async function main() {
     p = await app(b.c, '/#needs', true);
     o.links.needs = await p.until(MOB ? `PH_PANE === 'inbox' && !document.getElementById('ph-inbox').hidden ? { pane: PH_PANE }
         : document.body.classList.contains('po-dock') && PD.dock && PD.dock.isShown('inbox') ? { tab: 'inbox' } : null`
-      : `document.body.classList.contains('po-dock') && PD.dock && PD.dock.isShown('inbox') ? { po: PD.pid } : null`, 20000).catch(async e => ({ fail: e.message, body: await p.ev(`document.body.className`) }));
+      : `document.body.classList.contains('po-dock') && ldOnScreen('inbox') ? { po: PD.pid } : null`, 20000).catch(async e => ({ fail: e.message, body: await p.ev(`document.body.className`) }));
     o.links.needsOver = await p.ev(OVER);
     await p.close();
     p = await tab(b.c, `/session?room=${I.po}&msg=${I.answer}`);
