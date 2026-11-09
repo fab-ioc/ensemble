@@ -91,7 +91,7 @@ async function main() {
   const state = box => `(() => { const el = ${box};
     const qs = [...el.querySelectorAll('li.ibx-row[data-q]')];
     return { qs: qs.map(r => r.dataset.ibx), marked: [...el.querySelectorAll('li.ibx-row.ibx-mark')].map(r => r.dataset.ibx),
-      heads: [...el.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()),
+      heads: [...el.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()), stages: [...el.querySelectorAll('li.ibx-row')].map(r => r.dataset.stage || ''),
       earlier: qs.map(r => { const b = r.querySelector('[data-ibx-earlier] .ibx-cn'); return b ? +b.textContent : 0; }),
       close: qs.map(r => !!r.querySelector('[data-ibx-close]')),
       meta: qs.map(r => r.querySelector('.ibx-meta').textContent),
@@ -268,7 +268,9 @@ class CloseInChrome(unittest.TestCase):
     def test_questions_newest_first_then_older_each_with_close(self):
         b = self.got["before"]
         self.assertEqual(self.cards, 8)
-        self.assertEqual(b["heads"], ["Needs your answer 2", "Older questions 6"], b["heads"])
+        # #322 (P287 drawing): cards in one flat list under the project list, no group headings; the stage is on each card
+        self.assertEqual(b["heads"], [], b["heads"])
+        self.assertEqual(b["stages"], ["answer"] * 2 + ["older"] * 6, b["stages"])
         self.assertEqual(len(b["qs"]), 8)
         self.assertEqual(b["qs"], self.got["apiBefore"], "the hub's questions, in its order")
         self.assertTrue(all(b["close"]), b)

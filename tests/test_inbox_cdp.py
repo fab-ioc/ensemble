@@ -108,7 +108,7 @@ async function main() {
         auto: LD.dock.isAuto('inbox'), inPd: !!PD.dock && PD.dock.isVisible('inbox'),
         rows: rows.map(r => r.dataset.ibx), apiRows: api.rows.filter(r => r.projectId === ${JSON.stringify(A.proj)}).map(r => r.id),
         apiAll: api.rows.length, counts: api.counts || null,
-        heads: [...LD_INBOX.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()),
+        heads: [...LD_INBOX.querySelectorAll('.pdp-head')].map(h => h.textContent.trim()), stages: rows.map(r => r.dataset.stage || ''),
         where: rows.map(r => r.querySelector('.ibx-where').textContent), ages: rows.map(r => r.querySelector('.pdp-age').textContent),
         lines: rows.map(r => r.querySelector('.ibx-line').textContent),
         scope: [...LD_INBOX.querySelectorAll('[data-ibx-scope]')].map(b => b.dataset.ibxScope + ':' + b.getAttribute('aria-pressed')),
@@ -272,7 +272,9 @@ class InboxInChrome(unittest.TestCase):
         self.assertGreaterEqual(d["chat"]["w"], 360)
         self.assertTrue(d["rows"], d)
         self.assertEqual(d["rows"], d["apiRows"], "the hub's rows for this project, in its order")
-        self.assertEqual(d["heads"], [f"Ready to check {len(d['rows'])}"], d["heads"])
+        # #322 (P287 drawing): cards, no group headings; each card carries its stage
+        self.assertEqual(d["heads"], [], d["heads"])
+        self.assertEqual(d["stages"], ["check"] * len(d["rows"]), d["stages"])
         self.assertTrue(all(w == "PO" for w in d["where"]), d["where"])
         self.assertTrue(all(a for a in d["ages"]), d["ages"])
         self.assertTrue(any(x.startswith("Motors PO: ") for x in d["lines"]), d["lines"])
