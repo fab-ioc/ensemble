@@ -4765,6 +4765,14 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <p class="cfg-hint">Compresses command output for task owners and reviewers on their next launch. PO rooms, adopted sessions and your own terminals are never changed.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Cheap reader for task owners</span>
+      <div class="seg pref-seg" id="pref-reader-tasks">
+        <button type="button" data-val="on">On</button>
+        <button type="button" data-val="off">Off</button>
+      </div>
+    </div>
+    <p class="cfg-hint">Task owners can hand "where is X, how does Y work" reading to a helper on Haiku, which costs about a fortieth of Opus per token. It uses fewer tokens, but a search takes longer. Applies from their next launch; reviewers never get it.</p>
     <h5 class="sp-sub">Words</h5>
     <!-- The word for a board (static/noun.js), one per hub: projectNoun. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -8625,6 +8633,13 @@ function renderPrefs() {
   if (rtkSeg) {
     const value = PREFS.rtkForTasks === false ? 'off' : 'on';
     rtkSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+    });
+  }
+  const readerSeg = document.getElementById('pref-reader-tasks');
+  if (readerSeg) {
+    const value = PREFS.readerForTasks === true ? 'on' : 'off';
+    readerSeg.querySelectorAll('button').forEach(b => {
       b.classList.toggle('active', b.dataset.val === value);
     });
   }
@@ -23236,6 +23251,10 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-rtk-tasks')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('rtkForTasks', b.dataset.val === 'on');
+  });
+  document.getElementById('pref-reader-tasks')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (b) setPref('readerForTasks', b.dataset.val === 'on');
   });
   // Which agent kind the hub prefers (P205): the usage chip marks it.
   document.getElementById('pref-prefer')?.addEventListener('click', async (ev) => {
