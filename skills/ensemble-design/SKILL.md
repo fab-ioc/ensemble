@@ -1357,7 +1357,8 @@ self-contained component, so a later layout can host it elsewhere.
   minimises it). Both keep their strip buttons; the Inbox's carries its count
   (`LD.dock.setBadge('inbox')`). Dock's `defaultLayout` keeps no strip place for a pinned panel, so
   `ldDefaults()` pins both from the strip after a fresh start and after Reset layout. The stack's
-  head (tabs Inbox | Projects, ⋯, −) shows over the panel: Dock has no headless stack.
+  head shows only its active title (Inbox or Projects) with ⋯ and −: the left strip switches
+  panels, and Dock has no headless stack.
   The Projects panel: a PROJECTS heading (`.ldp-title`, as `.ph`), then `nav#ld-projs.ldp`
   (`ldpModel` / `ldpHtml` / `ldpPaint`): **All**, then every project newest first (`LDP_N` = 9, then
   "N more projects"), each with an 8px swatch (`.ldp-sw`; projects have no colour of their own, so
@@ -1370,8 +1371,11 @@ self-contained component, so a later layout can host it elsewhere.
   a tool slid out on the right (the Board) slides back out for the new project. A loose row opens
   its conversation and scopes the Inbox to it (`'room:<id>'`). The Inbox panel is the Inbox only:
   its head small uppercase muted "INBOX · <where> · N" (`.ibx-title-listed`, no This project / All
-  switch), its rows flat cards (`ul.ibx-cards`, `data-stage`). Which scope: a loose task open in
-  the middle, else the PO screen's project, else the one the bar names (`ibxLdPid()`). While the
+  switch), its rows flat cards (`ul.ibx-cards`, `data-stage`). Its head's **Clear all** acts on
+  dismissible rows in the visible scope, with the old confirm and Undo; a dismissible row also
+  has **Done with this**. A check row retains **Done**, and answer cards retain **Close**.
+  Which scope: a loose task open in the middle, else the PO screen's project, else the one the
+  bar names (`ibxLdPid()`). While the
   Inbox is on screen or on its strip the bar's **Inbox N** gives way (`body.ld-ibx`); in its own
   window it comes back. The Inbox hides only from its window (`can`). The PO dock has **no Inbox
   on a computer** (`pdEnsure` builds it without one); a phone is unchanged: no list dock, the list

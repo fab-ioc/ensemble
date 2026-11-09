@@ -2478,6 +2478,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-stack:not(:has(> .dk-body > #ld-page)), #list-dock .dk-bar, #list-dock .dk-strip, #list-dock .dk-flyout,
   #list-dock .dk-float, #list-dock .dk-note, #list-dock .dk-empty { pointer-events: auto; }
   #list-dock .dk-stack:has(> .dk-body > #ld-page) > .dk-head { display: none; }
+  /* Inbox and Projects share one Dock stack, but their strip buttons switch
+     panels. The head names only the panel in front, like a right-strip tool. */
+  #list-dock .dk-head:has([data-dk-tab="inbox"]):has([data-dk-tab="projects"]) .dk-tab-wrap:not(.on) { display: none; }
   #ld-page { background: transparent; }
   /* The middle keeps its 360px: a list slid out beside it gives way. */
   #list-dock .dk-main { min-width: 360px; }
@@ -7821,12 +7824,13 @@ async function swClearPost(url, body) {
   if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
   return j;
 }
-function swClearEnd() { clearTimeout(SW_CLEAR_TIMER); SW_CLEAR = null; swRender(); }
+function swClearPaint() { swRender(); if (window.LD && LD.dock) ibxRepaint(); }
+function swClearEnd() { clearTimeout(SW_CLEAR_TIMER); SW_CLEAR = null; swClearPaint(); }
 async function swClearAll() {
   const keys = SW_CLEAR_KEYS.slice();
   if (!keys.length) { swClearEnd(); return; }
   SW_CLEAR = { phase: 'busy' };
-  swRender();
+  swClearPaint();
   try {
     const j = await swClearPost('/api/attention/done', { roomIds: keys });
     const gone = new Set(j.done || []);
@@ -7834,6 +7838,8 @@ async function swClearAll() {
     ATTENTION = { ...ATTENTION, items: (ATTENTION.items || []).filter(x => !gone.has(x.roomId)) };
     SW_CLEAR = { phase: 'undo', n: gone.size, prev: j.prev || {} };
     renderAttention();
+    ibxRepaint();
+    ibxPoll();
     clearTimeout(SW_CLEAR_TIMER);
     SW_CLEAR_TIMER = setTimeout(swClearEnd, SW_CLEAR_UNDO_MS);
   } catch (e) {
@@ -7854,6 +7860,8 @@ async function swClearUndo() {
   SW_CLEAR = null;
   _attnSig = '';   // the rows come back: redraw the list
   updateRoomsBadge();
+  swClearPaint();
+  ibxPoll();
 }
 function swClearHtml(keys) {
   const c = SW_CLEAR, n = (keys || []).length;
@@ -7952,6 +7960,7 @@ async function swDone(btn) {
     ATTENTION_BY_ROOM.delete(rid);
     renderAttention();
     updateRoomsBadge();
+    ibxPoll();
   } catch (e) {
     btn.disabled = false;
     toast('Not done: ' + e.message, 5000, 'err');
@@ -15682,6 +15691,13 @@ function ibxScoped(list, scope, pid) {
 }
 function ibxRows(d, scope, pid) { return ibxScoped(d && d.rows, scope, pid); }
 function ibxOlder(d, scope, pid) { return ibxScoped(d && d.older, scope, pid); }
+// The desktop Inbox replaces the Tasks list's Needs you head. Clear only the
+// dismissible rooms shown in its current scope, using the old Needs you rules.
+function ibxClearKeys(d, scope, pid) {
+  if (!d) return [];
+  const rooms = new Set(ibxRows(d, scope, pid).concat(ibxOlder(d, scope, pid)).map(r => r.roomId));
+  return swClearable(swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs.filter(e => rooms.has(e.key)));
+}
 // A question the hub can close: an Ask card's (room, message, number).
 function ibxClosable(r) { return !!(r && r.roomId && r.mid && Number.isInteger(r.n) && (r.kind === 'answer')); }
 // A task's or session's name in no project, for the Inbox's head (#322).
@@ -15696,6 +15712,7 @@ function ibxLooseName(key) {
 function ibxHtml(d, scope, pid, now, phone, opts) {
   const all = scope === 'all' || !pid;
   const listed = !!(opts && opts.listed);
+  const dismissible = new Set((opts && opts.dismissible) || []);
   const loose = String(pid || '').startsWith('room:');
   const sw = pid && !listed ? `<span class="ibx-scope" role="group" aria-label="Which projects">`
     + `<button type="button" data-ibx-scope="project" aria-pressed="${!all}">${esc(nounText('This {project}'))}</button>`
@@ -15703,7 +15720,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
   // Under the project list (#322, P287 drawing): "Inbox · its name · N", small.
   const where = !listed ? '' : all ? 'All' : loose ? ibxLooseName(pid.slice(5)) : ((projectById(pid) || {}).name || '');
   const headOf = n => listed
-    ? `<div class="ibx-head"><h2 class="ibx-title ibx-title-listed">${esc(['Inbox', where, n == null ? '' : String(n)].filter(Boolean).join(' · '))}</h2></div>`
+    ? `<div class="ibx-head"><h2 class="ibx-title ibx-title-listed">${esc(['Inbox', where, n == null ? '' : String(n)].filter(Boolean).join(' · '))}</h2>${(opts && opts.clearHtml) || ''}</div>`
     : `<div class="ibx-head"><h2 class="ibx-title">Inbox</h2>${sw}</div>`;
   if (!d) return `<div class="ibx">${headOf(null)}<p class="pdp-empty">Reading what waits on you…</p></div>`;
   const rows = ibxRows(d, scope, pid);
@@ -15747,6 +15764,9 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
           + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it">Close this and earlier <span class="ibx-cn">${n}</span></button>` : '');
     } else if (r.kind === 'check') {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
+    }
+    if (listed && dismissible.has(r.roomId) && r.kind !== 'check') {
+      acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back">Done with this</button>`;
     }
     return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
       + `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
@@ -15852,6 +15872,11 @@ function ibxStrip() {
   });
 }
 function ibxPaintIn(el, pid, key, phone, opts) {
+  if (key === 'ldSig' && opts && opts.listed) {
+    SW_CLEAR_KEYS = ibxClearKeys(IBX.data, IBX.scope, pid);
+    if (SW_CLEAR && SW_CLEAR.phase === 'confirm' && !SW_CLEAR_KEYS.length) SW_CLEAR = null;
+    opts = { ...opts, clearHtml: swClearHtml(SW_CLEAR_KEYS), dismissible: SW_CLEAR_KEYS };
+  }
   const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone, opts);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
@@ -15860,7 +15885,7 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   }
   // A repaint keeps the focus on the control it was on (Close, Undo…), where it still is.
   const f = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;
-  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo']
+  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
     .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
   el.innerHTML = html;
@@ -16061,6 +16086,14 @@ function ibxWire(box) {
   box.addEventListener('click', e => {
     const at = sel => e.target.closest && e.target.closest(sel);
     let b;
+    if ((b = at('[data-clear]'))) {
+      if (b.dataset.clear === 'ask') { SW_CLEAR = { phase: 'confirm' }; swClearPaint(); box.querySelector('[data-clear="go"]')?.focus(); }
+      else if (b.dataset.clear === 'cancel') swClearEnd();
+      else if (b.dataset.clear === 'go') swClearAll();
+      else if (b.dataset.clear === 'undo') swClearUndo();
+      return;
+    }
+    if ((b = at('[data-ibx-dismiss]'))) { swDone(b); return; }
     if ((b = at('[data-ibx-close]'))) { ibxRowAct(b.dataset.ibxClose, 'Closed'); return; }
     if ((b = at('[data-ibx-done]'))) { ibxRowAct(b.dataset.ibxDone, 'Done'); return; }
     if ((b = at('[data-ibx-undo]'))) { ibxRowUndo(b.dataset.ibxUndo, box); return; }
@@ -16298,7 +16331,7 @@ function ldpOpenLoose(b) {
     const inLeft = e.target.closest && e.target.closest('#list-dock, #list-dock-panels, #ld-inbox, #ld-projects');
     const open = document.body.classList.contains('po-dock') && PD.dock && !PD.dock.narrow() ? PD.dock.flyOpen() : null;
     if (open) keptFly = inLeft ? open : null;
-    else if (!inLeft) keptFly = null;
+    else keptFly = null;
   }, true);
   box.addEventListener('click', (e) => {
     const b = e.target.closest('button');

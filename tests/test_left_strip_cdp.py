@@ -103,11 +103,14 @@ const GEOM = `(() => {
   const d = window.LD && LD.dock;
   const strip = s => [...document.querySelectorAll('#list-dock .dk-strip-' + s + ' .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto);
   const sb = id => document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="' + id + '"]');
+  const leftHead = document.querySelector('#list-dock .dk-head:has([data-dk-tab="inbox"]):has([data-dk-tab="projects"])');
   const wideEls = [...document.querySelectorAll('body *')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > document.documentElement.clientWidth + 1 && getComputedStyle(e).position !== 'fixed' && !e.closest('[hidden], .dk-off') && !(e.closest('#detail-panel') && !document.body.classList.contains('detail-open')); });
   const wide = wideEls.length, wideWhat = wideEls.slice(0, 4).map(e => e.tagName + '#' + e.id + '.' + String(e.className).slice(0, 40) + '@' + Math.round(e.getBoundingClientRect().right));
   const get = k => { try { return localStorage.getItem(k); } catch (e) { return 'x'; } };
   return { W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, wide, wideWhat,
     ld: !!d, left: d ? strip('left') : [], right: d ? strip('right') : [],
+    leftHeadTabs: leftHead ? [...leftHead.querySelectorAll('[data-dk-tab]')].filter(b => b.getBoundingClientRect().width > 0).map(b => b.dataset.dkTab) : [],
+    leftHeadMenu: !!leftHead && !!leftHead.querySelector('[data-dk-act="menu"]'),
     inboxMode: d ? d.viewMode('inbox') : '', fly: d ? d.flyOpen() : null, inboxOn: d ? ldOnScreen('inbox') : false,
     ghost: document.querySelectorAll('#list-dock [data-dk-tab="list"], #list-dock [data-dk-auto="list"], #list-dock [data-dk-panel="list"]').length,
     ldp: [...document.querySelectorAll('#ld-projs .ldp-row')].map(b => ({ t: b.textContent.trim(), cur: b.getAttribute('aria-current') === 'true', all: b.dataset.ldp === 'all', proj: b.dataset.ldpProj || '', room: b.dataset.ldpRoom || '', sid: b.dataset.ldpSid || '' })),
@@ -194,6 +197,26 @@ async function main() {
     await toPo(p, P.Motors);
     await p.until('document.querySelectorAll("#ld-inbox a.ibx-link[data-room]").length > 0', 15000).catch(() => null);
     out.fresh = await G(p);
+    // Clear all from the desktop Inbox keeps the old Needs you confirmation.
+    out.clearReady = await p.evalIn(`(() => {
+      const r = IBX.data.rows.find(r => r.projectId === ${JSON.stringify(P.Motors)});
+      window._clear322 = ATTENTION;
+      window._inbox322 = IBX.data;
+      ATTENTION = { ...ATTENTION, items: [{ roomId: r.roomId, state: 'waiting_for_you', canDismiss: true }] };
+      IBX.data = { ...IBX.data, rows: IBX.data.rows.map(x => x.id === r.id ? { ...x, kind: 'waiting' } : x) };
+      ibxRepaint();
+      return { keys: SW_CLEAR_KEYS.slice(), button: !!document.querySelector('#ld-inbox [data-clear="ask"]'),
+        doneWithThis: !!document.querySelector('#ld-inbox [data-ibx-dismiss]') };
+    })()`);
+    await p.click('document.querySelector("#ld-inbox [data-clear=ask]")');
+    out.clearConfirm = await p.evalIn(`({ confirm: !!document.querySelector('#ld-inbox [data-clear="go"]'), keys: SW_CLEAR_KEYS.slice() })`);
+    await p.click('document.querySelector("#ld-inbox [data-clear=cancel]")');
+    out.clearCancelled = await p.evalIn(`(() => {
+      const back = !!document.querySelector('#ld-inbox [data-clear="ask"]') && !SW_CLEAR;
+      ATTENTION = window._clear322; IBX.data = window._inbox322;
+      delete window._clear322; delete window._inbox322; ibxRepaint();
+      return back;
+    })()`);
     // ---- the project list on top of the Inbox (#322, P287)
     const LDP = sel => `document.querySelector('#ld-projs ${sel}')`;
     // ---- Projects: its strip button brings it in front of the Inbox, one at a time (P289)
@@ -250,6 +273,13 @@ async function main() {
     await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Wheels), 15000).catch(() => null); await sleep(800);
     out.boardWheels = await p.evalIn(BOARD);
+    // Once the left Inbox button has closed the Board, a later project pick
+    // must not reopen it through a stale saved flyout.
+    await p.click(LBTN('inbox')); await sleep(350);
+    out.boardClosedByInbox = await p.evalIn(BOARD);
+    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
+    await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null); await sleep(600);
+    out.boardAfterClosedPick = await p.evalIn(BOARD);
     await p.evalIn('PD.dock.closeFly(); 0'); await sleep(300);
     await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null); await sleep(500);
@@ -489,6 +519,10 @@ class LeftStripInChrome(unittest.TestCase):
 
     def test_the_projects_button_swaps_the_panel(self):
         g, b = self.g("projOpen"), self.g("inboxBack")
+        self.assertEqual(self.g("fresh")["leftHeadTabs"], ["inbox"])
+        self.assertEqual(g["leftHeadTabs"], ["projects"])
+        self.assertEqual(b["leftHeadTabs"], ["inbox"])
+        self.assertTrue(g["leftHeadMenu"], "the open panel keeps its Dock menu")
         self.assertIsNone(g["ldInbox"], "the Inbox gives way")
         self.assertEqual((g["ldProjects"]["x"], g["ldProjects"]["w"]), (52, 260), "in the Inbox's place")
         self.assertEqual(g["ldProjects"]["h"], self.g("fresh")["ldInbox"]["h"], "full height")
@@ -566,6 +600,21 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(w["sel"], self.ids["Wheels"])
         self.assertFalse(w["gear"], "Wheels' Board, not Motors'")
         self.assertGreater(w["w"], 0)
+
+    def test_a_closed_board_does_not_reopen_on_a_later_project_pick(self):
+        self.assertIsNone(self.g("boardClosedByInbox")["fly"])
+        later = self.g("boardAfterClosedPick")
+        self.assertEqual(later["pid"], self.ids["Motors"])
+        self.assertIsNone(later["fly"], later)
+
+    def test_clear_all_is_reachable_from_the_desktop_inbox(self):
+        ready = self.g("clearReady")
+        self.assertTrue(ready["button"])
+        self.assertTrue(ready["doneWithThis"])
+        self.assertEqual(len(ready["keys"]), 1)
+        self.assertTrue(self.g("clearConfirm")["confirm"])
+        self.assertEqual(self.g("clearConfirm")["keys"], ready["keys"])
+        self.assertTrue(self.g("clearCancelled"))
 
     def test_the_inbox_on_another_projects_po(self):
         w = self.g("wheels")
