@@ -14025,7 +14025,10 @@ function pdToolSize(id, vw) {
 // column, the conversation first and the tools in the strip's order (#129).
 // `L` is the library's layout model (stack, split).
 function pdDefaultLayout(L, ctx) {
-  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS], { active: 'po-chat' }) };
+  // A computer's dock turning narrow (a resize) has no Inbox yet: the resize
+  // handler adds it after the narrow layout loads, so the default leaves it
+  // out (a stack naming a panel the dock lacks cannot be drawn).
+  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS.filter(id => id !== 'inbox' || !PD.dock || PD.dock.title('inbox') != null)], { active: 'po-chat' }) };
   // The inbox (#302) is a panel of the list dock on a computer (#322), on the
   // left strip beside Tasks: this dock has no inbox there (pdEnsure).
   // Topics are a filter on the conversation itself (#304), not a column.

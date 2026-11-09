@@ -257,7 +257,25 @@ async function main() {
     await sleep(600);
     out.phone = await ph.evalIn(`(() => ({ ld: !!LD.dock, narrow: !!PD.dock && PD.dock.narrow(), pdInbox: !!PD.dock && PD.dock.title('inbox') != null, W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth }))()`);
     await ph.shot('left-strip-phone');
+    // ---- the same page made a computer's: the Inbox leaves the PO dock, onto the list dock's strip
+    const RS = `({ tabs: [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab), narrow: PD.dock.narrow(), pdInbox: PD.dock.title('inbox') != null, lay: JSON.stringify(PD.dock.layout()), left: LD.dock ? [...document.querySelectorAll('#list-dock .dk-strip-left .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto) : [] })`;
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, ph.sessionId);
+    await c.send('Emulation.setTouchEmulationEnabled', { enabled: false }, ph.sessionId);
+    await ph.until('!PD.dock.narrow() && !!LD.dock', 10000); await sleep(600);
+    out.phoneToWide = await ph.evalIn(RS);
     await ph.close();
+    // ---- a computer's PO screen made a phone's and back: the Inbox is a tab there, the wide layout as it was
+    const rz = await page(1440, 900, false);
+    await toPo(rz, P.Motors);
+    out.rzWide = await rz.evalIn(RS);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, rz.sessionId);
+    await rz.until('PD.dock.narrow()', 10000); await sleep(600);
+    out.rzPhone = await rz.evalIn(RS);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, rz.sessionId);
+    await rz.until('!PD.dock.narrow()', 10000); await sleep(600);
+    out.rzBack = await rz.evalIn(RS);
+    out.rzStoredWide = await rz.evalIn(`localStorage.getItem('cd-tool-strip')`);
+    await rz.close();
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -474,6 +492,27 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertFalse(g["pdInbox"])
                 self.assertEqual(g["a5"], "1")
                 self.assertNoOverflow(g)
+
+    def test_a_resize_moves_the_inbox_between_the_docks(self):
+        g = self.got
+        wide, phone, back = g["rzWide"], g["rzPhone"], g["rzBack"]
+        self.assertFalse(wide["pdInbox"])
+        self.assertEqual(wide["left"], ["list", "inbox"])
+        self.assertTrue(phone["narrow"])
+        self.assertIn("inbox", phone["tabs"], "a phone's PO dock has the Inbox as a tab")
+        self.assertEqual(phone["tabs"][0], "po-chat")
+        self.assertFalse(back["narrow"])
+        self.assertFalse(back["pdInbox"])
+        self.assertNotIn("inbox", back["tabs"])
+        self.assertEqual(back["left"], ["list", "inbox"])
+        self.assertEqual(json.loads(back["lay"]), json.loads(wide["lay"]), "the wide layout as it was")
+        self.assertNotIn('"inbox"', g["rzStoredWide"] or "", "the wide layout saved has no Inbox")
+        p2w = g["phoneToWide"]
+        self.assertFalse(p2w["narrow"])
+        self.assertFalse(p2w["pdInbox"])
+        self.assertNotIn("inbox", p2w["tabs"])
+        self.assertNotIn('"inbox"', p2w["lay"])
+        self.assertEqual(p2w["left"], ["list", "inbox"])
 
     def test_800_wide(self):
         g = self.g("small")
