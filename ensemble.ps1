@@ -269,6 +269,20 @@ function Invoke-Doctor {
     Check "server responds" $responds "$Url/api/platform"
   }
 
+  # Claude Code deletes conversations older than cleanupPeriodDays (30 when
+  # unset); a seat idle for longer then starts over from its handover (#321).
+  if ($claude) {
+    $days = 30
+    $conf = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+    $cs = Join-Path $conf 'settings.json'
+    try {
+      $j = Get-Content -Raw -Encoding UTF8 $cs -ErrorAction Stop | ConvertFrom-Json
+      if ($null -ne $j.cleanupPeriodDays) { $days = [int]$j.cleanupPeriodDays }
+    } catch {}
+    $note = if ($days -lt 365) { "Claude keeps conversations $days days - Settings > Preferences > Conversations can keep them a year" } else { "Claude keeps conversations $days days" }
+    Write-Host ("  [info] conversation retention  {0}" -f $note)
+  }
+
   $task = Get-ScheduledTask -TaskName 'Ensemble' -ErrorAction SilentlyContinue
   Write-Host ("  [info] autostart task (optional)  {0}" -f $(if ($task) { "Ensemble ($($task.State))" } else { "not installed - install-task.ps1 starts the hub at logon" }))
 

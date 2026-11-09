@@ -231,6 +231,9 @@ Two skills teach the agents the board. At every start the hub copies both into `
 - The PO and task-owner handover limits (tokens; 0 = never).
 - RTK for task agents (compresses command output).
 - The backup remote, interval and on/off.
+- **Conversations** (under Preferences): how long Claude keeps its conversation files. Claude deletes them after `cleanupPeriodDays` (default 30) in `~/.claude/settings.json`. A seat whose conversation is gone cannot resume, so the page warns when a live seat's conversation is already gone or older than the period, and (while the period is under a year) offers **Keep conversations for a year**, which sets it to 365 and leaves the rest of that file as it is.
+
+When a seat's conversation file is gone (Claude says "No conversation found", Codex "no rollout found"), the hub does not fail the resume. It rolls the seat over to a fresh session the way the token-limit handover does: a task owner starts from its `TASK-HANDOVER.md`, a PO from its PO handover. The room gets one chat line saying so, and the PO gets a report.
 
 Settings are saved in `~/.ensemble/settings.json` and shared by every browser that opens the hub. Two settings are not in the page:
 
