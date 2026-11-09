@@ -3510,6 +3510,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-muted); font-size: 11px; display: block; margin-bottom: 6px;
     font-family: -apple-system, sans-serif; letter-spacing: 0.02em;
   }
+  /* #322: a computer's Inbox is on the list dock's left strip, on every screen:
+     while it is there (docked, slid out or on its strip) the bar needs no button. */
+  body.ld-ibx #inbox-btn { display: none; }
   /* ================= Phone layout (one screen at a time) =================
      On narrow screens the list is full-width and the detail becomes a
      full-screen overlay you close to return to it. */
@@ -3606,9 +3609,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #inbox-btn { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-200); margin-left: auto; border-color: transparent; }
     #inbox-btn[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
     body.po-dock:not(.dp-docked):not(.ld-on) #inbox-btn { display: none; }
-/* #322: a computer's Inbox is on the list dock's left strip, on every screen:
-   while it is there (docked, slid out or on its strip) the bar needs no button. */
-body.ld-ibx #inbox-btn { display: none; }
     .me-item.me-phone { display: flex; }
     #bar-back, #search-open, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
