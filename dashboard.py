@@ -2000,6 +2000,10 @@ _SETTINGS_DEFAULTS = {
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
+    # A cheap Haiku reader for task owners (#320): a "reader" agent for Claude
+    # and a headless `claude -p --model haiku` line for Codex, with a brief that
+    # says when to use it. Off by default: in the trial a sweep took longer.
+    "readerForTasks": False,
     # A restart at a safe point (restart_drain.py): how long the hub waits for
     # every working agent to reach one before it restarts anyway.
     "restartDrainMinutes": restart_drain.DEFAULT_DEADLINE_MIN,
@@ -2779,7 +2783,7 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440, v))
-        if k in ("backupEnabled", "rtkForTasks", "paceWeek"):
+        if k in ("backupEnabled", "rtkForTasks", "readerForTasks", "paceWeek"):
             v = bool(v)
         if k == "preferAgent" and v not in PREFER_CHOICES:
             continue
@@ -3089,7 +3093,11 @@ def _claude_status_line() -> dict:
 
 
 def _write_settings_file(path: Path, settings: dict) -> Path:
-    text = json.dumps(settings, indent=2) + "\n"
+    return _write_launch_file(path, json.dumps(settings, indent=2) + "\n")
+
+
+def _write_launch_file(path: Path, text: str) -> Path:
+    """Write a file an agent launch reads, atomically and only when it changed."""
     with _RTK_SETTINGS_LOCK:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -3238,7 +3246,65 @@ def _usage_claude_settings() -> Path:
     })
 
 
-def _rtk_task_wiring(room: dict, agent_key: str) -> tuple[list[str], dict, str]:
+# The cheap reader (#320). Claude gets it as a plugin loaded for that launch
+# only (--plugin-dir; an --agents JSON argument would not survive PowerShell
+# 5.1's quoting of native arguments), so nothing is written to the user's
+# ~/.claude or to the task's worktree. Codex has no subagents: it is told to
+# run the same model headless, with read-only tools.
+READER_PLUGIN_DIR = DASHBOARD_DIR / "reader" / "ensemble-reader"
+READER_AGENT = "ensemble-reader:reader"
+READER_PLUGIN_JSON = {
+    "name": "ensemble-reader",
+    "version": "1.0.0",
+    "description": "A cheap read-only reader for Ensemble task agents.",
+}
+READER_AGENT_MD = """---
+name: reader
+description: Cheap read-only explorer on Haiku. Use it for "where is X / how does Y work" sweeps over several files. Not for the lines you will edit, not for reviews.
+model: haiku
+tools: Read, Grep, Glob
+---
+You are a read-only code reader. Answer the question you are given by searching and reading the repository. Never change a file and never run a command that changes anything. Reply with short bullets only: each names file:line and says in one line what is there. No file bodies and no long quotes. Say so when you are not sure of something.
+"""
+READER_BRIEF = {
+    "claude": (
+        f"A cheap reader is available: the Agent tool with subagent_type `{READER_AGENT}` "
+        "runs on Haiku and answers with file:line bullets. Use it for \"where is X / how "
+        "does Y work\" sweeps over several files instead of reading and searching them "
+        "yourself. Read the lines you will edit yourself, and check a bullet before a "
+        "change relies on it. Never use it for a review."
+    ),
+    "codex": (
+        "A cheap reader is available for \"where is X / how does Y work\" sweeps over "
+        "several files: `echo \"<question>\" | claude -p --model haiku --tools "
+        "Read,Grep,Glob --strict-mcp-config --no-session-persistence` (run it in the "
+        "repository; it reads, never edits, and answers with file:line bullets). Use it "
+        "instead of dumping and searching many files yourself. Read the lines you will "
+        "edit yourself, and check a bullet before a change relies on it. Never use it "
+        "for a review."
+    ),
+}
+
+
+def _reader_task(room: dict, role: str) -> bool:
+    """Whether this launch gets the cheap reader: the setting is on and it is
+    a hub task's owner (not a reviewer, a PO room or an adopted session)."""
+    if not load_settings().get("readerForTasks", False):
+        return False
+    if str(role or "").lower().startswith("reviewer"):
+        return False
+    return _hub_task_room(room)
+
+
+def _reader_plugin() -> Path:
+    _write_launch_file(READER_PLUGIN_DIR / ".claude-plugin" / "plugin.json",
+                       json.dumps(READER_PLUGIN_JSON, indent=2) + "\n")
+    _write_launch_file(READER_PLUGIN_DIR / "agents" / "reader.md", READER_AGENT_MD)
+    return READER_PLUGIN_DIR
+
+
+def _rtk_task_wiring(room: dict, agent_key: str,
+                     role: str = "") -> tuple[list[str], dict, str]:
     """Return (agent argv, environment, brief) for a task launch.
 
     The argv is Claude's one ``--settings`` file, which every hub-launched
@@ -3248,7 +3314,9 @@ def _rtk_task_wiring(room: dict, agent_key: str) -> tuple[list[str], dict, str]:
     environment is RTK's, for covered tasks only. The brief is what the agent
     is told at launch: RTK's line when covered, and for Codex how to get at
     shell output its cap cut (a brief is the first prompt's business, so a
-    resumed conversation is not told again).
+    resumed conversation is not told again). With ``readerForTasks`` on, a
+    task owner (``role`` not a reviewer's) also gets the cheap reader: Claude
+    the plugin that defines it, and both the line that says when to use it.
     """
     rtk = _rtk_task_room(room)
     task = rtk or _hub_task_room(room)
@@ -3265,10 +3333,15 @@ def _rtk_task_wiring(room: dict, agent_key: str) -> tuple[list[str], dict, str]:
         tokens = _codex_cap_tokens(room)
         if tokens:
             briefs.append(CODEX_CAP_BRIEF.format(tokens=tokens))
+    reader = _reader_task(room, role) and (agent_key != "codex" or bool(shutil.which("claude")))
+    if reader:
+        briefs.append(READER_BRIEF.get(agent_key, READER_BRIEF["codex"]))
     args: list[str] = []
     if agent_key == "claude":
         settings = _task_claude_settings(rtk) if task else _usage_claude_settings()
         args = ["--settings", str(settings)]
+        if reader:
+            args += ["--plugin-dir", str(_reader_plugin())]
     return args, env, "\n\n".join(briefs)
 
 # The line typed into a task's owner when the task is started again. A resumed
@@ -19456,7 +19529,7 @@ class Handler(BaseHTTPRequestHandler):
         teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                      for p in room_full["participants"]
                      if p.get("kind") == "agent" and p["identity"] != ident]
-        rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key)
+        rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         briefing = collab_briefing(ident, part.get("role", ""), teammates, task)
         if rtk_brief:
             briefing += "\n\n" + rtk_brief
@@ -19583,7 +19656,7 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(cwd, exist_ok=True)
         except OSError:
             pass
-        rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key)
+        rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         if prompt is not None:
             briefing = prompt
         elif collab:
@@ -19689,7 +19762,7 @@ class Handler(BaseHTTPRequestHandler):
         codex_mcp, claude_mcp, env = self._mcp_wiring(
             token, collab, human=human, tools=tools, cwd=cwd,
             codex=agent_key == "codex")
-        rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
+        rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         env.update(rtk_env)
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
