@@ -130,7 +130,89 @@ class Retention(unittest.TestCase):
         with mock.patch.object(dashboard, "find_transcript",
                                side_effect=lambda sid, immediate=True: found[sid]):
             r = lost_sessions.retention(rooms, now=now, path=self.path)
-        self.assertEqual((r["days"], r["set"], r["warn"]), (365, True, False))
+        # A year kept, but one seat's conversation is already gone: still said.
+        self.assertEqual((r["days"], r["set"], r["atRisk"], r["gone"], r["warn"]),
+                         (365, True, 0, 1, True))
+        found["b"] = old
+        with mock.patch.object(dashboard, "find_transcript",
+                               side_effect=lambda sid, immediate=True: found[sid]):
+            r = lost_sessions.retention(rooms, now=now, path=self.path)
+        self.assertFalse(r["warn"])
+
+    def test_a_long_period_still_warns_for_an_older_transcript(self):
+        """Review 1: the warning is about the period being shorter than a live
+        transcript's age, whatever the period."""
+        old = Path(self.tmp.name) / "old.jsonl"
+        old.write_text("{}", encoding="utf-8")
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps({"cleanupPeriodDays": 400}), encoding="utf-8")
+        rooms = [{"participants": [{"kind": "agent", "agent": "claude", "sessionId": "a"}]}]
+        now = time.time()
+        for age, warn in ((500, True), (300, False)):
+            with mock.patch.object(dashboard, "find_transcript", return_value=old), \
+                    mock.patch.object(lost_sessions, "_born", return_value=now - age * 86400):
+                r = lost_sessions.retention(rooms, now=now, path=self.path)
+            self.assertEqual((r["days"], r["atRisk"], r["warn"]), (400, int(warn), warn), age)
+
+
+class KeepEndpoint(unittest.TestCase):
+    """POST /api/claude-retention/keep: page-only; 200 only when it wrote."""
+
+    def setUp(self):
+        from test_points import http
+        self.http = http
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / ".claude" / "settings.json"
+        for p in (mock.patch.object(lost_sessions, "claude_settings_path", return_value=self.path),
+                  mock.patch.object(lost_sessions, "retention", return_value={"days": 365})):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_refused_off_the_page(self):
+        with mock.patch.object(dashboard.Handler, "_page_refusal", return_value="page only"):
+            status, r = self.http("/api/claude-retention/keep", {})
+        self.assertEqual((status, r["error"]), (403, "page_only"))
+        self.assertFalse(self.path.exists())
+
+    def test_writes_once_then_409(self):
+        with mock.patch.object(dashboard.Handler, "_page_refusal", return_value=""):
+            status, r = self.http("/api/claude-retention/keep", {})
+            self.assertEqual((status, r["changed"]), (200, True))
+            status, r = self.http("/api/claude-retention/keep", {})
+            self.assertEqual((status, r["error"]), (409, "not_written"))
+            self.assertIn("retention", r)
+            self.path.write_text(json.dumps({"cleanupPeriodDays": 500}), encoding="utf-8")
+            status, _ = self.http("/api/claude-retention/keep", {})
+            self.assertEqual(status, 409)
+            self.path.write_text("{bad", encoding="utf-8")
+            status, r = self.http("/api/claude-retention/keep", {})
+            self.assertEqual((status, r["ok"]), (409, False))
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "{bad")
+
+
+class CodexCache(unittest.TestCase):
+    """Review 1: a rollout deleted after the hub's 30 s lookup cache took it
+    still counts as gone."""
+
+    def test_a_cached_but_deleted_rollout_is_gone(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "sessions"
+        day = root / "2026" / "11" / "09"
+        day.mkdir(parents=True)
+        f = day / f"rollout-2026-11-09T00-00-00-{UUID}.jsonl"
+        f.write_text("{}", encoding="utf-8")
+        cx = mock.Mock()
+        cx.sessions_dir.return_value = root
+        cx.rollouts_for_session.return_value = [f]
+        self.addCleanup(dashboard._CODEX_ROLLOUT_PATHS.pop, UUID, None)
+        dashboard._CODEX_ROLLOUT_PATHS[UUID] = (time.time(), [f])
+        part = {"agent": "codex", "sessionId": UUID}
+        with mock.patch.object(dashboard.agents, "get_agent", return_value=cx):
+            self.assertFalse(lost_sessions.conversation_gone(part))
+            f.unlink()
+            self.assertTrue(lost_sessions.conversation_gone(part))
 
 
 class OnDeath(_Base):

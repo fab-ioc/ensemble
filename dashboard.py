@@ -21637,9 +21637,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "page_only", "message": why})
                 return
             res = lost_sessions.keep_for_a_year()
-            self._send_json(200 if res.get("ok") else 409,
-                            {**res, "retention": lost_sessions.retention()} if res.get("ok")
-                            else {"error": "not_written", **res})
+            if res.get("ok") and res.get("changed"):
+                self._send_json(200, {**res, "retention": lost_sessions.retention()})
+            elif res.get("ok"):
+                # Already a year or more: nothing written (a stale page, a
+                # second click). The page shows the setting as it is.
+                self._send_json(409, {**res, "error": "not_written",
+                                      "message": f"Not changed: Claude Code already keeps "
+                                                 f"conversations for {res.get('days')} days.",
+                                      "retention": lost_sessions.retention()})
+            else:
+                self._send_json(409, {"error": "not_written", **res})
             return
         if p == "/api/room/interrupt":
             # Only the person's dashboard page may interrupt an agent. Agent

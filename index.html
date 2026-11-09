@@ -8721,6 +8721,7 @@ async function keepRetentionYear(btn) {
     const res = await fetch('/api/claude-retention/keep', { method: 'POST',
       headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const d = await res.json().catch(() => ({}));
+    if (d.retention) renderRetention(d.retention);
     if (!res.ok || !d.ok) { toast(d.message || d.error || 'Not changed.'); return; }
     renderRetention(d.retention);
     toast('Claude Code now keeps conversations for a year.');

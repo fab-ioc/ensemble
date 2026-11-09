@@ -154,18 +154,40 @@ def conversation_gone(part: dict, cwd: str = "") -> bool:
 _SID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
+def _existing(paths) -> list:
+    out = []
+    for p in paths or []:
+        try:
+            if Path(p).exists():
+                out.append(p)
+        except OSError:
+            pass
+    return out
+
+
 def _codex_rollouts(sid: str) -> list:
-    try:
-        hits = _d._codex_rollouts(sid)
-    except Exception:       # noqa: BLE001
-        hits = []
-    if hits:
-        return hits
+    """The rollouts of a Codex session that are on disk NOW. The hub's lookup
+    remembers its answer for a while (a board poll asks for every Codex
+    conversation), so a rollout deleted since is filtered out here and the
+    lookup is made afresh before the session counts as gone."""
+    hits: list = []
+    for attempt in range(2):
+        try:
+            hits = _existing(_d._codex_rollouts(sid))
+        except Exception:       # noqa: BLE001
+            hits = []
+        if hits:
+            return hits
+        if attempt == 0:
+            try:
+                _d._CODEX_ROLLOUT_PATHS.pop(sid, None)
+            except Exception:   # noqa: BLE001
+                break
     cx = _d.agents.get_agent("codex")
     if cx is None or not hasattr(cx, "rollouts_for_session"):
         return []
     try:
-        return cx.rollouts_for_session(sid)
+        return _existing(cx.rollouts_for_session(sid))
     except Exception:       # noqa: BLE001
         return []
 
@@ -332,7 +354,7 @@ def retention(rooms: list[dict] | None = None, now: float | None = None,
                 at_risk += 1
     return {"days": days, "set": raw is not None and days == raw, "default": DEFAULT_CLEANUP_DAYS,
             "keepDays": KEEP_DAYS, "oldestDays": round(oldest, 1), "atRisk": at_risk,
-            "gone": gone, "warn": bool(at_risk or gone) and days < KEEP_DAYS,
+            "gone": gone, "warn": bool(at_risk or gone),
             "settingsPath": str(path), "readError": err}
 
 
