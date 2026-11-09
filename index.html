@@ -13828,6 +13828,8 @@ function renderPo() {
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-dock', (dock || pdTaskWanted()) && !!PD.lib);
   document.body.classList.toggle('po-peek', !split && !!pj);
+  // #322: the list dock's Inbox follows a PO screen opened or left (barPaint may have run before).
+  if (window.LD && LD.dock && IBX.ldPid !== ibxLdPid()) ibxPaint();
   // Where it is: in the PO chat panel, or at home as the drawer.
   if (PD.lib) pdPlaceChat();
   // While the panels load there is no panel yet for the PO to be in.
@@ -14028,7 +14030,7 @@ function pdDefaultLayout(L, ctx) {
   // A computer's dock turning narrow (a resize) has no Inbox yet: the resize
   // handler adds it after the narrow layout loads, so the default leaves it
   // out (a stack naming a panel the dock lacks cannot be drawn).
-  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS.filter(id => id !== 'inbox' || !PD.dock || PD.dock.title('inbox') != null)], { active: 'po-chat' }) };
+  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS.filter(id => id !== 'inbox' || typeof PD === 'undefined' || !PD.dock || PD.dock.title('inbox') != null)], { active: 'po-chat' }) };
   // The inbox (#302) is a panel of the list dock on a computer (#322), on the
   // left strip beside Tasks: this dock has no inbox there (pdEnsure).
   // Topics are a filter on the conversation itself (#304), not a column.
@@ -15283,6 +15285,20 @@ function pdToolsFit() {
   PD_ROOT.style.setProperty('--pd-main-min', need + 'px');
   const avail = PD_ROOT.clientWidth - 44;
   PD_ROOT.classList.toggle('pd-fly-over', avail > 0 && avail - need < PD_FLY_MIN);
+  // The list dock beside it (#322) gives it that room first.
+  const pm = ldPageMin();
+  if (window.LD && LD.dock && pm !== LD.pageMin) { LD.pageMin = pm; LD.dock.render(); }
+}
+// The least the list dock leaves its page (#322): on a computer's PO screen,
+// what the PO dock's middle needs and its strip, and room for a tool to open
+// beside it when the Inbox or list at their minimum still leave that much
+// (as before the list dock took its 44px strip); else 360.
+function ldPageMin() {
+  const d = PD.dock;
+  if (!d || d.narrow() || !document.body.classList.contains('po-dock')) return 360;
+  const need = Math.max(PD_MIN['po-chat'].w, pdNeedW(d.layout().root)) + 44;
+  const room = (document.getElementById('list-dock') || document.documentElement).clientWidth - 44 - 5 - 240;
+  return Math.max(360, room >= need + PD_FLY_MIN ? need + PD_FLY_MIN : need);
 }
 // The narrowest a tool opens beside the middle.
 const PD_FLY_MIN = 300;
@@ -19981,7 +19997,9 @@ function ldWanted() { return !!PD.lib && !PD.failed && !isPhone(); }
 // Layout A (#306): on a computer the list is hidden by default; the page takes
 // the whole width (the conversation and the Inbox). Its home, where Panels ▾ ›
 // Tasks puts it back, is still the 300px column at the left. A test page that
-// drives the list itself sets window.ensListDocked: the list docked, as before.
+// drives the list itself sets window.ensListDocked: the list docked, as before,
+// and the Inbox hidden (it shows from the bar's Inbox), so the list's geometry
+// is #137's (test_left_strip_cdp drives the Inbox here).
 // #322: the Inbox is this dock's too, beside the list: both on the left strip
 // (Tasks first), as the tools are on the right one, on every screen of a
 // computer. By default the Inbox is pinned open (docked left of the page, as
@@ -19992,7 +20010,7 @@ const LD_HOME_AT = { peers: [], near: 'page', side: 'left' };
 function ldDefaultLayout(L, ctx) {
   if (ctx && ctx.purpose === 'home') return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['inbox'], { size: LD_IBX_W }), L.stack(['page'])]) };
   if (window.ensListDocked) return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]),
-                                     auto: [{ id: 'inbox', edge: 'left', size: LD_IBX_W, home: LD_HOME_AT }] };
+                                     hidden: [{ id: 'inbox', was: { kind: 'dock', home: null } }] };
   return { root: L.stack(['page']),
            auto: [{ id: 'list', edge: 'left', size: LD_W, home: LD_HOME_AT }, { id: 'inbox', edge: 'left', size: LD_IBX_W, home: LD_HOME_AT }] };
 }
@@ -20000,7 +20018,7 @@ function ldDefaultLayout(L, ctx) {
 // pinned from its strip place (so it keeps its button there), Tasks first.
 function ldDefaults() {
   const d = LD.dock;
-  if (!d) return;
+  if (!d || window.ensListDocked) return;
   if (d.isAuto('inbox')) d.pin('inbox');
   d.moveStrip('list', 0, 'left');
 }
@@ -20071,7 +20089,9 @@ function ldMake() {
       storageKey: LD_KEY,
       defaultLayout: (ctx) => ldDefaultLayout(L, ctx),
       fill: 'page',
-      minSize: { list: { w: 220, h: 120 }, inbox: { w: 240, h: 160 }, page: { w: 360, h: 200 } },
+      // The page's minimum is what the PO dock in it needs (ldPageMin): the
+      // list or the Inbox beside it gives way first (Dock's fitAll).
+      minSize: id => (id === 'list' ? { w: 220, h: 120 } : id === 'inbox' ? { w: 240, h: 160 } : { w: ldPageMin(), h: 200 }),
       sizes: { head: 32, strip: 44 },
       // Its depth the first time on an axis (Dock v0.10.0 keeps each axis's
       // size in the layout after that): a 300px column (the Inbox's 280px),

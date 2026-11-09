@@ -86,7 +86,8 @@ const GEOM = `(() => {
     phone: !!PD.dock && PD.dock.narrow(), header: R(document.querySelector('header')), bar: Object.fromEntries(bar),
     tabs: [...document.querySelectorAll('#po-dock .dk-tab')].filter(t => t.offsetWidth).map(t => (t.querySelector('.dk-tab-t, .dk-title') || t).textContent.trim()),
     tabIds: [...document.querySelectorAll('#po-dock .dk-tab')].filter(t => t.offsetWidth).map(t => t.dataset.dkTab),
-    ids: PD_IDS.slice(), toolStrip: [...document.querySelectorAll('.dk-strip-btn')].map(b => b.dataset.dkAuto),
+    ids: PD_IDS.slice(), toolStrip: [...document.querySelectorAll('#po-dock .dk-strip-btn')].map(b => b.dataset.dkAuto),
+    leftStrip: [...document.querySelectorAll('#list-dock .dk-strip-btn')].map(b => b.dataset.dkAuto),
     msgs: inF(d.getElementById('msgs')),
     gone: ['open-questions', 'points-line', 'thread-catchup'].filter(id => !!d.getElementById(id)),
     chatbar: shown(d.getElementById('chatbar')), strip: shown(strip), stripText: strip ? strip.textContent.replace(/\s+/g, ' ').trim() : '',
@@ -238,7 +239,9 @@ class InboxOnlyChatInChrome(unittest.TestCase):
         g = self.got["desktop"]["1440"]
         self.assertNotIn("points", g["ids"])
         self.assertEqual(g["toolStrip"], ["changes", "workspace", "board", "spec"])
-        self.assertEqual(g["front"], ["po-chat", "inbox"], "the Inbox column beside the chat")
+        # #322: on a computer the Inbox is the list dock's, beside Tasks on the left strip.
+        self.assertEqual(g["leftStrip"], ["list", "inbox"])
+        self.assertEqual(g["front"], ["po-chat"], "the PO dock has no Inbox on a computer")
         self.assertFalse(g["strip"], "the Inbox strip is a phone's")
 
     def test_the_messages_get_the_height_on_a_computer(self):

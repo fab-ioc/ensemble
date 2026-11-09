@@ -108,8 +108,8 @@ async function main() {
     // ---- 1440 x 900: the Inbox column
     const p = await page(1440, 900);
     await toPo(p);
-    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && PD.els.inbox.querySelectorAll("li.ibx-row[data-q]").length >= 8', 30000);
-    const D = 'PD.els.inbox';
+    await p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data && LD_INBOX.querySelectorAll("li.ibx-row[data-q]").length >= 8', 30000);
+    const D = 'LD_INBOX';
     out.before = await p.evalIn(state(D));
     out.apiBefore = await p.evalIn(api);
     out.restHidden = out.before.acts;
@@ -155,7 +155,7 @@ async function main() {
     await p.until(`(async () => !(await ${api}).includes(${JSON.stringify(first)}))()`, 15000).catch(() => null);
     out.apiRowClosed = await p.evalIn(api);
     out.rowClosed = await p.evalIn(state(D));
-    out.deskFits = await p.evalIn(fits('#po-dock .ibx'));
+    out.deskFits = await p.evalIn(fits('#list-dock .ibx'));
     await p.close();
     // ---- 390 x 844: a phone's Inbox tab, beside Chat (#311)
     const q = await page(390, 844, true);

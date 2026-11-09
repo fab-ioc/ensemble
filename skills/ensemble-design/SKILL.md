@@ -1348,16 +1348,30 @@ bottom. It is how the person gets around; the board stays the planning view. `in
 `swGroups` / `swListHtml` (the "Task switcher" block) are the reference, and `#switcher` is one
 self-contained component, so a later layout can host it elsewhere.
 
-- **Hidden by default on a computer** (#306, Layout A step 4): the list dock's default layout holds
-  `list` hidden (`was` its 300px column at the left, the `home` layout), so the page, the
-  conversation and the Inbox column, takes the whole width and `--list-w` is 0. Projects are
-  reached from the bar's switcher, what waits from the Inbox: the wordmark, `#needs` and the bell's
-  Show all open the Inbox while the list is hidden (`ldListShown()`), and the empty middle says
-  "Pick a project in the bar above, or open the Inbox." The list is an optional tool: Panels ▾ ›
-  Tasks shows it, its ⋯ and − can hide it again in any view mode. A layout stored before #306 with
-  the list docked opens hidden once (`ldMigrate`, flag `cd-list-dock-a4`); one with the list on a
-  strip, floating or in its window keeps it. A phone (≤ 640px) has a conversation as its home and
-  the list as one of its panes (#307, below).
+- **On the left strip with the Inbox, on a computer** (#322, after #306 hid it): the list dock
+  holds two panels beside the page, `list` (Tasks) and `inbox` (`#ld-inbox`), and its 44px left
+  strip shows **Tasks then Inbox**, as the PO dock's right strip shows the tools, on every desktop
+  screen (not only a PO's). By default the list is on the strip, closed (a click slides it out
+  beside the page, a click elsewhere or Esc puts it back) and the Inbox is **pinned open** at the
+  left of the page (280px, `LD_IBX_W`), keeping its strip button and its count badge
+  (`LD.dock.setBadge('inbox')`). Dock's `defaultLayout` keeps no strip place for a pinned panel, so
+  `ldDefaults()` pins the Inbox from the strip after a fresh start and after Reset layout. The
+  Inbox shows the PO screen's project, else the one the bar names (`ibxLdPid()`), with This
+  project / All. While it is on screen or on its strip the bar's **Inbox N** gives way
+  (`body.ld-ibx`); in its own window the bar's button comes back. The Inbox hides only from its
+  window (`can`); the list can be hidden from its ⋯ or − in any view mode. The PO dock has **no
+  Inbox on a computer** (`pdEnsure` builds it without one); a phone has no list dock and keeps the
+  Inbox tab of the PO dock (#311). Panels ▾ › Tasks and › Inbox are the list dock's rows: checked
+  while on screen, a click slides a strip panel out (and closes the menu) or puts it away.
+  Projects are also reached from the bar's switcher; the wordmark, `#needs` and the bell's Show all
+  reveal the Inbox. A layout stored before #322 (`ldMigrate`, flag `cd-list-dock-a5`) moves once:
+  the list from hidden (#306) or docked onto the strip, the Inbox onto it after Tasks, pinned,
+  on its strip or floating as the PO dock kept it (`pdIbxWasNote()` reads `cd-tool-strip`).
+  On a PO screen the page's minimum is what the PO dock needs (`ldPageMin()`: its middle, its
+  strip, and room for a tool beside it while the Inbox at 240px still fits), so the Inbox or list
+  gives way first, not the conversation. A resize to a phone's width adds the Inbox to the PO
+  dock after its narrow layout loads; back on a computer it is taken out and forgotten there.
+  A phone (≤ 640px) has a conversation as its home and the list as one of its panes (#307, below).
   Do not add a route that only the list offers.
 
 - **A Dock panel of its own** (#137, "The list as a dock panel"): on a desktop `#switcher` is the
@@ -1524,9 +1538,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    desktop this is the breadcrumb, see
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
    a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group:
-   **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; it opens the
-   Inbox column beside the PO's conversation; on a phone, in row one, it opens the Inbox pane, #307,
-   and the narrow dock has no Inbox tab), search,
+   **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; on a computer it
+   gives way while the list dock's left strip has the Inbox (#322) and comes back while the Inbox is
+   in its own window, where it reveals it; on a phone, in row one, it opens the Inbox pane, #307), search,
    the plan chip, the avatar and **Create ▾** (a menu, see *Create's menu* in §4). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
