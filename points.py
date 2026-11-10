@@ -1403,13 +1403,14 @@ ACTIONS = ("ack", "drop", "reopen")
 
 
 def act(room_id: str, pid: str, action: str, now: float | None = None,
-        answer_mid: str | None = None) -> dict | None:
+        answer: str | None = None) -> dict | None:
     """Ack (delivered or open → acked: never a planned one, whose work is not
     live yet), Drop (open, planned or delivered → dropped), or Reopen (acked
     or dropped → open). Types nothing into anyone. Returns the point, or None
-    when there is no such point or the move does not apply. ``answer_mid``
-    (an ack only): the answer the person opened; a point whose current answer
-    is another one (a newer answer came) is left as it is (#325)."""
+    when there is no such point or the move does not apply. ``answer`` (an
+    ack only): the answer the person opened (:func:`current_answer_key`); a
+    point whose current answer is another one (a newer answer came, from a
+    message or a tool) is left as it is (#325)."""
     now = time.time() if now is None else now
     if action not in ACTIONS:
         return None
@@ -1419,7 +1420,7 @@ def act(room_id: str, pid: str, action: str, now: float | None = None,
         if p is None:
             return None
         st = p["state"]
-        if answer_mid is not None and action == "ack" and current_answer_mid(p) != answer_mid:
+        if answer is not None and action == "ack" and current_answer_key(p) != answer:
             return None
         if action == "ack" and st in ("open", "delivered", "followed"):
             _set_state(p, "acked", now)
@@ -1617,13 +1618,11 @@ def last_answer(p: dict) -> dict | None:
     return got[-1] if got else None
 
 
-def current_answer_mid(p: dict) -> str:
-    """The message an Inbox answers card names for a point (inbox.py: an
-    item's ``mid``): its current answer's, else its newest balloon's, else the
-    point's own."""
-    a = last_answer(p) or {}
-    bal = answer_balloon(p) or {}
-    return str(a.get("mid") or bal.get("mid") or p.get("mid") or "")
+def current_answer_key(p: dict) -> str:
+    """A point's current answer, by its own identity (its message, else its
+    key: an answer given by a tool has no message): the Inbox item's
+    ``answer``. '' when it has none."""
+    return _answer_key(last_answer(p))
 
 
 def answer_balloon(p: dict) -> dict | None:

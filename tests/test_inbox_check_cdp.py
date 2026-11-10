@@ -144,7 +144,7 @@ async function main() {
       const key = ${JSON.stringify(out.deskKey)}, card = ibxFind(key.split('#')[0]);
       IBX.hide.set(key, Date.now());    // as it is for a while after its ack
       const hidden = IBX.hide.has(key);
-      card.items.push({ ...card.items[0], mid: 'm-newer', points: key.split('#').pop().split(',') });
+      card.items.push({ ...card.items[0], mid: 'm-newer', answer: 'm-newer', points: key.split('#').pop().split(',') });
       ibxRepaint();
       const s = ${state(D)};
       return { hidden, items: s.items }; })()`);
@@ -160,7 +160,7 @@ async function main() {
     out.deskStale = await p.evalIn(`(() => {
       const [key, g] = [...IBX.gone].find(([k]) => k.includes('#'));
       const card = ibxFind(g.row.rowId), it = card.items.find(x => ibxItemKey(card, x) === key);
-      it.mid = 'm-newer';
+      it.answer = 'm-newer';
       ibxRepaint();
       const s = ${state(D)};
       clearTimeout(g.timer); g.fire();
@@ -170,7 +170,7 @@ async function main() {
     await p.evalIn('ibxPoll()'); await sleep(400);
     // The same race at the hub, before any poll: the answer opened here is no
     // longer the point's current one there. Its timer runs out: nothing acked, it shows again.
-    const opened = mid => `(() => { const [k, g] = [...IBX.gone].find(([k]) => k.includes('#')); g.row.mid = ${JSON.stringify(mid)}; return k; })()`;
+    const opened = ans => `(() => { const [k, g] = [...IBX.gone].find(([k]) => k.includes('#')); g.row.answer = ${JSON.stringify(ans)}; return k; })()`;
     await p.click(`${D}.querySelector('li.ibx-item:not(.ibx-gone) a.ibx-link')`); await sleep(300);
     const srvKey = await p.evalIn(opened('m-older'));
     await p.evalIn(fire(srvKey));

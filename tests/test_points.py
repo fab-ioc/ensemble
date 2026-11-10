@@ -344,6 +344,24 @@ class Ledger(_World):
         self.assertEqual(len(ids), 5)
         self.assertEqual(ids[:3], ["P10", "P9", "P8"])
 
+    def test_an_ack_of_an_opened_answer_never_takes_a_newer_one(self):
+        # #325: the Inbox acks the answer it opened by that answer's own key.
+        # A newer answer given by a tool has no message, so it must not pass
+        # for the balloon before it.
+        rid = self.solo_room()
+        a, _ = self.send(rid, "One?", at=self.t0)
+        self.add("sid-1", turn("user", a, self.t0 + 1), turn("assistant", "one", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        cur = lambda: points.current_answer_key(points._find(points.load(rid), "P1"))
+        opened = cur()
+        self.assertTrue(opened)
+        points.answer_by_tool(rid, "P1", "it is live", "claude")
+        newer = cur()
+        self.assertNotEqual(newer, opened)
+        self.assertIsNone(points.act(rid, "P1", "ack", answer=opened), "the newer answer was not opened")
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        self.assertEqual(points.act(rid, "P1", "ack", answer=newer)["state"], "acked")
+
     def test_ack_drop_reopen_and_a_bare_thanks(self):
         rid = self.solo_room()
         a, _ = self.send(rid, "One?", at=self.t0)

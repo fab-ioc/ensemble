@@ -443,7 +443,11 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                     continue
                 said = a.get("said") or a.get("summary") or ""
                 asked = pts_mod._first_words(p.get("text") or "", 120)
-                it = {"mid": amid or p.get("mid") or "", "points": [p["id"]], "try": k == "try",
+                # `answer`: the answer itself (a tool's has no message of its
+                # own), what an ack of this one opened item names (#325):
+                # points.current_answer_key's rule.
+                it = {"mid": amid or p.get("mid") or "", "answer": str(a.get("mid") or a.get("key") or ""),
+                      "points": [p["id"]], "try": k == "try",
                       "line": _line(f"{p['id']}: {asked}" if asked else p["id"]),
                       "reason": _line(("The answer asks you to try something" if k == "try" else "A new answer to read")
                                       + (f": {said}" if said else ""), 240),
