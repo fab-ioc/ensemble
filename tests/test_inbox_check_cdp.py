@@ -168,11 +168,24 @@ async function main() {
     await sleep(800);
     out.deskStaleApi = await p.evalIn(api(A.po));
     await p.evalIn('ibxPoll()'); await sleep(400);
+    // The same race at the hub, before any poll: the answer opened here is no
+    // longer the point's current one there. Its timer runs out: nothing acked, it shows again.
+    const opened = mid => `(() => { const [k, g] = [...IBX.gone].find(([k]) => k.includes('#')); g.row.mid = ${JSON.stringify(mid)}; return k; })()`;
+    await p.click(`${D}.querySelector('li.ibx-item:not(.ibx-gone) a.ibx-link')`); await sleep(300);
+    const srvKey = await p.evalIn(opened('m-older'));
+    await p.evalIn(fire(srvKey));
+    await sleep(1000);
+    out.deskSrvTimerApi = await p.evalIn(api(A.po));
+    out.deskSrvTimer = await p.evalIn(`(() => ({ s: ${state(D)}, hidden: IBX.hide.has(${JSON.stringify(srvKey)}) }))()`);
+    // ... and when the page is left while it waits.
+    await p.click(`${D}.querySelector('li.ibx-item:not(.ibx-gone) a.ibx-link')`); await sleep(300);
+    await p.evalIn(opened('m-older'));
     // The reload keeps the checked one off.
     await p.load();
     await toPo(p, A.proj);
     await p.until(`document.body.classList.contains("po-dock") && !!IBX.data && !!${D}.querySelector('li.ibx-row[data-kind="check"]')`, 30000);
     out.deskReload = await p.evalIn(state(D));
+    out.deskSrvLeaveApi = await p.evalIn(api(A.po));
     // Done: Done · Undo, Undo keeps it; again and let it run: the card goes.
     await p.click(`${D}.querySelector('li.ibx-row[data-kind="check"] .ibx-hd [data-ibx-done]')`); await sleep(250);
     out.deskDoneGone = await p.evalIn(state(D));
@@ -345,6 +358,14 @@ class CheckInChrome(unittest.TestCase):
         self.assertFalse(s["pending"])
         self.assertFalse(s["hidden"])
         self.assertEqual(len(self.got["deskStaleApi"]["card"]), 3, "nothing was acked")
+
+    def test_the_hub_never_acks_an_answer_replaced_before_a_poll(self):
+        self.assertEqual(len(self.got["deskSrvTimerApi"]["card"]), 3, "timer: nothing was acked")
+        t = self.got["deskSrvTimer"]
+        self.assertFalse(t["hidden"], t)
+        self.assertEqual(len(t["s"]["items"]), 3, t)
+        self.assertFalse(any(x.startswith("gone:") for x in t["s"]["items"]), t)
+        self.assertEqual(len(self.got["deskSrvLeaveApi"]["card"]), 3, "page left: nothing was acked")
 
     def test_desktop_reload_keeps_it_checked(self):
         r = self.got["deskReload"]

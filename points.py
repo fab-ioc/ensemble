@@ -1402,11 +1402,14 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
 ACTIONS = ("ack", "drop", "reopen")
 
 
-def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict | None:
+def act(room_id: str, pid: str, action: str, now: float | None = None,
+        answer_mid: str | None = None) -> dict | None:
     """Ack (delivered or open → acked: never a planned one, whose work is not
     live yet), Drop (open, planned or delivered → dropped), or Reopen (acked
     or dropped → open). Types nothing into anyone. Returns the point, or None
-    when there is no such point or the move does not apply."""
+    when there is no such point or the move does not apply. ``answer_mid``
+    (an ack only): the answer the person opened; a point whose current answer
+    is another one (a newer answer came) is left as it is (#325)."""
     now = time.time() if now is None else now
     if action not in ACTIONS:
         return None
@@ -1416,6 +1419,8 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
         if p is None:
             return None
         st = p["state"]
+        if answer_mid is not None and action == "ack" and current_answer_mid(p) != answer_mid:
+            return None
         if action == "ack" and st in ("open", "delivered", "followed"):
             _set_state(p, "acked", now)
             p["ackedBy"] = "click"
@@ -1610,6 +1615,15 @@ def last_answer(p: dict) -> dict | None:
     to see; the page's curAnswer)."""
     got = [a for a in p.get("answers") or [] if a.get("kind") != "plan"]
     return got[-1] if got else None
+
+
+def current_answer_mid(p: dict) -> str:
+    """The message an Inbox answers card names for a point (inbox.py: an
+    item's ``mid``): its current answer's, else its newest balloon's, else the
+    point's own."""
+    a = last_answer(p) or {}
+    bal = answer_balloon(p) or {}
+    return str(a.get("mid") or bal.get("mid") or p.get("mid") or "")
 
 
 def answer_balloon(p: dict) -> dict | None:

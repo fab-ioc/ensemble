@@ -15988,7 +15988,7 @@ async function ibxPost(url, body) {
 function ibxRowReq(r) {
   if (r.kind === 'check') {
     return (r.item || /:points$/.test(r.id)) && (r.points || []).length
-      ? ['/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack' }]
+      ? ['/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack', ...(r.item && r.mid ? { mid: r.mid } : {}) }]
       : ['/api/attention/done', { roomId: r.roomId }];
   }
   return ['/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }];
@@ -16007,7 +16007,7 @@ function ibxItemAct(rowId, key) {
   const r = ibxFind(rowId);
   const i = r && (r.items || []).find(x => ibxItemKey(r, x) === key);
   if (!i || !(i.points || []).length || IBX.gone.has(key) || IBX.gone.has(rowId)) return;
-  ibxRowAct(key, 'Checked', { kind: 'check', item: true, id: key, rowId, roomId: r.roomId, points: i.points.slice() });
+  ibxRowAct(key, 'Checked', { kind: 'check', item: true, id: key, rowId, mid: i.mid || '', roomId: r.roomId, points: i.points.slice() });
 }
 // A checked answer whose point got a newer answer meanwhile: its ack would take
 // the newer one off unopened, so it is not sent.
@@ -16037,7 +16037,11 @@ function ibxRowAct(id, label, item) {
     if (ibxItemStale(g.row)) { ibxRepaint(); return; }
     IBX.hide.set(id, Date.now());
     ibxRepaint();
-    ibxRowSend(g.row).then(() => ibxPoll()).catch(e => {
+    ibxRowSend(g.row).then(j => {
+      // The hub took nothing off: a newer answer came to that point (#325). It shows again.
+      if (g.row.item && j && Array.isArray(j.acked) && !j.acked.length) { IBX.hide.delete(id); ibxRepaint(); }
+      return ibxPoll();
+    }).catch(e => {
       IBX.hide.delete(id);
       ibxRepaint();
       toast(`Not ${label === 'Closed' ? 'closed' : label === 'Checked' ? 'checked' : 'done'}: ${e.message}`, 5000, 'err');
