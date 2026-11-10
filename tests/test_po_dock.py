@@ -408,15 +408,17 @@ async function main() {
     out.reset = await p.evalIn('({ spec: PD.dock.isVisible("spec"), front: PD_IDS.filter(id => PD.dock.frontOf(id) === id), auto: PD.dock.layout().auto.map(a => a.id), menu: !!document.querySelector(".pd-menu") })');
 
     // A click on a minimised panel's title bar brings it back; a double click on it maximises it.
+    // (#326: the page's − puts a pinned tool away to its strip button, so these
+    // minimise the library's way, _toggleMin, to check its title bar still works.)
     {
       const tab = 'PD.els.spec.closest(".dk-stack").querySelector(\'[data-dk-tab="spec"]\')';
       const isMin = 'PD.els.spec.closest(".dk-stack").classList.contains("dk-min")';
       await p.evalIn('PD.dock.pin("spec"); 0'); await sleep(300);
-      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
       const was = await p.evalIn(isMin);
       await p.click(tab); await sleep(700);
       const back = !(await p.evalIn(isMin));
-      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
       const again = await p.evalIn(isMin);
       const [x, y] = await p.evalIn(`(() => { const r = (${tab}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
       for (const n of [1, 2]) for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: n }, p.sessionId);
@@ -425,17 +427,17 @@ async function main() {
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
       out.minClick = { was, back, again, maxed, minMaxed, min: await p.evalIn(isMin) };
       // A slow double click (the second press 450 ms after the first) still maximises it.
-      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
       await sleep(450);
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
       await sleep(700);
       out.slowDbl = { maxed: await p.evalIn('!!PD.els.spec.closest(".dk-max")'), min: await p.evalIn(isMin) };
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
-      if (await p.evalIn(isMin)) { await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(200); }
+      if (await p.evalIn(isMin)) { await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(200); }
       // A drag on a minimised floating panel's title bar: it moves, and stays minimised.
       await p.evalIn('PD.dock.float("spec"); 0'); await sleep(300);
-      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
       const fl = 'PD.els.spec.closest(".dk-float")';
       const at = async () => p.evalIn(`(() => { const b = (${fl}).getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top)]; })()`);
       const [hx, hy] = await p.evalIn(`(() => { const h = (${fl}).querySelector('.dk-head'), b = h.getBoundingClientRect(); const t = h.querySelector('[data-dk-tab]').getBoundingClientRect(); return [Math.round(t.right + (b.right - t.right) / 4), Math.round(b.top + b.height / 2)]; })()`);
@@ -446,7 +448,7 @@ async function main() {
       await sleep(700);
       const to = await at();
       out.minDrag = { wasMin, moved: to[0] !== from[0] || to[1] !== from[1], min: await p.evalIn(`(${fl}).classList.contains('dk-min')`) };
-      await p.evalIn('PD.dock.toggleMin("spec"); PD.dock.dockBack("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock._toggleMin("spec"); PD.dock.dockBack("spec"); 0'); await sleep(300);
       await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
     }
     // #213: a double click on a minimised side panel's tab, with a count (Changes) and without (Board, Files):
@@ -455,7 +457,7 @@ async function main() {
     for (const id of ['board', 'workspace', 'changes']) {
       const st = `PD.els[${JSON.stringify(id)}].closest(".dk-stack")`;
       // The Inbox column (#302) on the strip: the geometry #213 was measured in.
-      await p.evalIn(`PD.dock.unpin('inbox'); PD.dock.pin(${JSON.stringify(id)}); PD.dock.toggleMin(${JSON.stringify(id)}); 0`); await sleep(400);
+      await p.evalIn(`PD.dock.unpin('inbox'); PD.dock.pin(${JSON.stringify(id)}); PD.dock._toggleMin(${JSON.stringify(id)}); 0`); await sleep(400);
       const [x, y, badge] = await p.evalIn(`(() => { const t = ${st}.querySelector('.dk-head [data-dk-tab=${JSON.stringify(id)}]'), r = t.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, !!t.querySelector('.dk-badge')]; })()`);
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
       await sleep(100);
