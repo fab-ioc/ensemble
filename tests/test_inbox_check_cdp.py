@@ -139,6 +139,35 @@ async function main() {
     await p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!IBX.data', 30000);
     const D = 'LD_INBOX';
     await run(p, D, A.po, 'desk', async () => {});
+    // A newer answer to the point just checked (still hidden here) is a new item, shown.
+    out.deskNewer = await p.evalIn(`(() => {
+      const key = ${JSON.stringify(out.deskKey)}, card = ibxFind(key.split('#')[0]);
+      IBX.hide.set(key, Date.now());    // as it is for a while after its ack
+      const hidden = IBX.hide.has(key);
+      card.items.push({ ...card.items[0], mid: 'm-newer', points: key.split('#').pop().split(',') });
+      ibxRepaint();
+      const s = ${state(D)};
+      return { hidden, items: s.items }; })()`);
+    await p.evalIn('ibxPoll()'); await sleep(400);
+    // Middle click (a new tab) checks it too.
+    out.deskMiddle = await p.evalIn(`(() => {
+      const a = ${D}.querySelector('li.ibx-item:not(.ibx-gone) a.ibx-link[data-ibx-check]');
+      a.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true }));
+      return ${state(D)}; })()`);
+    await p.click(`${D}.querySelector('li.ibx-item.ibx-gone [data-ibx-undo]')`); await sleep(250);
+    // Checked, then a newer answer to that point arrives before Undo runs out: nothing is acked.
+    await p.click(`${D}.querySelector('li.ibx-item:not(.ibx-gone) a.ibx-link')`); await sleep(300);
+    out.deskStale = await p.evalIn(`(() => {
+      const [key, g] = [...IBX.gone].find(([k]) => k.includes('#'));
+      const card = ibxFind(g.row.rowId), it = card.items.find(x => ibxItemKey(card, x) === key);
+      it.mid = 'm-newer';
+      ibxRepaint();
+      const s = ${state(D)};
+      clearTimeout(g.timer); g.fire();
+      return { s, pending: IBX.gone.has(key), hidden: IBX.hide.has(key) }; })()`);
+    await sleep(800);
+    out.deskStaleApi = await p.evalIn(api(A.po));
+    await p.evalIn('ibxPoll()'); await sleep(400);
     // The reload keeps the checked one off.
     await p.load();
     await toPo(p, A.proj);
@@ -286,7 +315,7 @@ class CheckInChrome(unittest.TestCase):
         self.assertFalse(any(x.startswith("gone:") for x in u["items"]), u)
         self.assertEqual(u["done"]["text"], "Done · all 4")
         self.assertEqual(len(a["card"]), 3, a)
-        self.assertNotIn(key.split("#", 1)[1], a["card"], "the hub acked the opened answer's point")
+        self.assertNotIn(key.split("#")[-1], a["card"], "the hub acked the opened answer's point")
         self.assertEqual(a["qs"], 1, "the question is untouched")
         self.assertEqual(len(f["items"]), 3, f)
         self.assertEqual(f["done"]["text"], "Done · all 3")
@@ -297,6 +326,25 @@ class CheckInChrome(unittest.TestCase):
 
     def test_desktop_opening_an_answer_checks_it(self):
         self._check("desk")
+
+    def test_a_newer_answer_to_a_checked_point_shows(self):
+        n = self.got["deskNewer"]
+        self.assertTrue(n["hidden"])
+        self.assertEqual(len(n["items"]), 4, "the hidden old answer's key does not hide the newer one")
+        self.assertFalse(any(x.startswith("gone:") for x in n["items"]), n)
+
+    def test_middle_click_checks_it(self):
+        m = self.got["deskMiddle"]
+        self.assertEqual(len([x for x in m["items"] if x.startswith("gone:Checked:")]), 1, m)
+        self.assertEqual(m["done"]["text"], "Done · all 2")
+
+    def test_a_pending_check_never_acks_a_newer_answer(self):
+        s = self.got["deskStale"]
+        self.assertFalse(any(x.startswith("gone:") for x in s["s"]["items"]), "the newer answer is not shown as Checked")
+        self.assertEqual(s["s"]["done"]["text"], "Done · all 3")
+        self.assertFalse(s["pending"])
+        self.assertFalse(s["hidden"])
+        self.assertEqual(len(self.got["deskStaleApi"]["card"]), 3, "nothing was acked")
 
     def test_desktop_reload_keeps_it_checked(self):
         r = self.got["deskReload"]

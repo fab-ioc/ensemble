@@ -15694,8 +15694,9 @@ function ibxScoped(list, scope, pid) {
     && (scope === 'all' || !pid || (room ? r.roomId === room : r.projectId === pid)));
 }
 // #325: one answer of an answers card, opened from it, is checked by itself.
-// Its key in IBX.gone / IBX.hide: the card's id and the answer's points.
-function ibxItemKey(r, i) { return r.id + '#' + (i.points || []).join(','); }
+// Its key in IBX.gone / IBX.hide: the card's id, the answer message and its
+// points, so a newer answer to the same point is a new item, never "Checked".
+function ibxItemKey(r, i) { return r.id + '#' + (i.mid || '') + '#' + (i.points || []).join(','); }
 // The card's answers not yet taken off here (one checked a moment ago, its Undo showing, included).
 function ibxItemsLeft(r) { return (r.items || []).filter(i => !IBX.hide.has(ibxItemKey(r, i))); }
 // The card's answers still to check: not taken off, not waiting on their Undo.
@@ -16006,7 +16007,16 @@ function ibxItemAct(rowId, key) {
   const r = ibxFind(rowId);
   const i = r && (r.items || []).find(x => ibxItemKey(r, x) === key);
   if (!i || !(i.points || []).length || IBX.gone.has(key) || IBX.gone.has(rowId)) return;
-  ibxRowAct(key, 'Checked', { kind: 'check', item: true, id: key, roomId: r.roomId, points: i.points.slice() });
+  ibxRowAct(key, 'Checked', { kind: 'check', item: true, id: key, rowId, roomId: r.roomId, points: i.points.slice() });
+}
+// A checked answer whose point got a newer answer meanwhile: its ack would take
+// the newer one off unopened, so it is not sent.
+function ibxItemStale(row) {
+  if (!row || !row.item) return false;
+  const r = ibxFind(row.rowId);
+  if (!r || !r.items) return false;
+  const pts = new Set(row.points);
+  return r.items.some(x => (x.points || []).some(p => pts.has(p)) && ibxItemKey(r, x) !== row.id);
 }
 // Close or Done on one row: "Closed · Undo" in its place for a few seconds,
 // and only then sent, so Undo tells nobody anything.
@@ -16024,6 +16034,7 @@ function ibxRowAct(id, label, item) {
     const g = IBX.gone.get(id);
     if (!g) return;
     IBX.gone.delete(id);
+    if (ibxItemStale(g.row)) { ibxRepaint(); return; }
     IBX.hide.set(id, Date.now());
     ibxRepaint();
     ibxRowSend(g.row).then(() => ibxPoll()).catch(e => {
@@ -16052,6 +16063,7 @@ function ibxRowUndo(id, box) {
 window.addEventListener('pagehide', () => {
   for (const [id, g] of IBX.gone) {
     clearTimeout(g.timer);
+    if (ibxItemStale(g.row)) { IBX.gone.delete(id); continue; }
     const [url, body] = ibxRowReq(g.row);
     try { fetch(url, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (e) {}
     IBX.gone.delete(id);
@@ -16174,6 +16186,13 @@ function ibxWire(box) {
     if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, a.dataset.part || '');
     else ibxOpenRoom(a.dataset.room);
     if (ck) ck();
+  });
+  // A middle click opens the answer in a new tab: checked as well.
+  box.addEventListener('auxclick', e => {
+    if (e.button !== 1) return;
+    const a = e.target.closest && e.target.closest('a.ibx-link[data-room][data-ibx-check]');
+    const li = a && a.closest('li.ibx-row[data-ibx]');
+    if (li) ibxItemAct(li.dataset.ibx, a.dataset.ibxCheck);
   });
 }
 ibxWire(PD.els.inbox);
