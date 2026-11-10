@@ -22582,13 +22582,19 @@ class Handler(BaseHTTPRequestHandler):
             if "ids" in data:
                 # {ids: [...], action: ack}: the Inbox's Done on a PO chat's
                 # answers to check (#310), every one of them in one request.
+                # With {answer}: one answer opened from that card (#325, the
+                # Inbox item's `answer`), acked only while it is still those
+                # points' current answer.
                 ids = data.get("ids")
+                ans = data.get("answer")
                 if action != "ack" or not isinstance(ids, list) or not ids or len(ids) > CLOSE_MANY_MAX \
-                        or not all(isinstance(i, str) and i for i in ids):
+                        or not all(isinstance(i, str) and i for i in ids) \
+                        or (ans is not None and not (isinstance(ans, str) and ans)):
                     self._send_json(400, {"error": "bad_ids", "message": "ids: a list of points to ack"})
                     return
                 try:
-                    acked = [pt["id"] for pt in (points.act(rid, i, "ack") for i in ids) if pt is not None]
+                    acked = [pt["id"] for pt in (points.act(rid, i, "ack", answer=ans) for i in ids)
+                             if pt is not None]
                 except Exception as e:  # noqa: BLE001
                     print(f"[points] {rid}: ack not saved: {e!r}", flush=True)
                     self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})

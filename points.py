@@ -1402,11 +1402,15 @@ def sync(room_id: str, force: bool = False, room: dict | None = None, *, shared:
 ACTIONS = ("ack", "drop", "reopen")
 
 
-def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict | None:
+def act(room_id: str, pid: str, action: str, now: float | None = None,
+        answer: str | None = None) -> dict | None:
     """Ack (delivered or open → acked: never a planned one, whose work is not
     live yet), Drop (open, planned or delivered → dropped), or Reopen (acked
     or dropped → open). Types nothing into anyone. Returns the point, or None
-    when there is no such point or the move does not apply."""
+    when there is no such point or the move does not apply. ``answer`` (an
+    ack only): the answer the person opened (:func:`current_answer_key`); a
+    point whose current answer is another one (a newer answer came, from a
+    message or a tool) is left as it is (#325)."""
     now = time.time() if now is None else now
     if action not in ACTIONS:
         return None
@@ -1416,6 +1420,8 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
         if p is None:
             return None
         st = p["state"]
+        if answer is not None and action == "ack" and current_answer_key(p) != answer:
+            return None
         if action == "ack" and st in ("open", "delivered", "followed"):
             _set_state(p, "acked", now)
             p["ackedBy"] = "click"
@@ -1610,6 +1616,13 @@ def last_answer(p: dict) -> dict | None:
     to see; the page's curAnswer)."""
     got = [a for a in p.get("answers") or [] if a.get("kind") != "plan"]
     return got[-1] if got else None
+
+
+def current_answer_key(p: dict) -> str:
+    """A point's current answer, by its own identity (its message, else its
+    key: an answer given by a tool has no message): the Inbox item's
+    ``answer``. '' when it has none."""
+    return _answer_key(last_answer(p))
 
 
 def answer_balloon(p: dict) -> dict | None:
