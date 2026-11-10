@@ -240,7 +240,7 @@ class InboxOnlyChatInChrome(unittest.TestCase):
         self.assertNotIn("points", g["ids"])
         self.assertEqual(g["toolStrip"], ["changes", "workspace", "board", "spec"])
         # #322: on a computer the Inbox is the list dock's, beside Tasks on the left strip.
-        self.assertEqual(g["leftStrip"], ["inbox", "projects"])
+        self.assertEqual(g["leftStrip"], ["inbox"])
         self.assertEqual(g["front"], ["po-chat"], "the PO dock has no Inbox on a computer")
         self.assertFalse(g["strip"], "the Inbox strip is a phone's")
 

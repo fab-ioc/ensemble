@@ -230,8 +230,10 @@ class ThePanels(unittest.TestCase):
         for gone in ("<base href", "POP_HTML", "pdSyncChat", "pdSchedule", "pdOpenWindow", "document.write", "phoneOnly", "unscroll", "PD.phone",
                      "pd-phone", "popHtml"):
             self.assertNotIn(gone, dock, gone)
-        # #125: the one ResizeObserver left refits the tool strip; no phone or scroll workaround
-        self.assertEqual(dock.count("new ResizeObserver"), 1)
+        # #125: one ResizeObserver refits the tool strip; no phone or scroll workaround.
+        # #328: the other keeps the left panel's divider in bounds.
+        self.assertEqual(dock.count("new ResizeObserver"), 2)
+        self.assertIn("new ResizeObserver(() => ldSplitApply())", dock)
         self.assertIn("pdToolsFit(); }).observe(PD_ROOT)", dock)
         # #101: the served page, not a blob: one, which an installed app shows under Chrome's address strip.
         for used in ("popUrl: '/static/dock/src/popout.html',", "narrow,", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(true)", "PD.dock.setNarrow(false)",

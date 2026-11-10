@@ -15891,9 +15891,9 @@ function ibxPaint() {
     const box = document.getElementById('ld-inbox');
     box.classList.remove('ibx-phone');
     box.classList.toggle('ld-docked-list', !!window.ensListDocked);
-    ldSplitApply();
     ibxPaintIn(document.getElementById('ld-ibx-body'), lp, 'ldSig', false, { listed: !window.ensListDocked });
     ldpPaint();
+    ldSplitApply();
   }
   ibxStrip();
   if (!el) return;
@@ -16310,9 +16310,14 @@ function ldpModel() {
   return { projs, loose };
 }
 // A project's swatch (P289 drawing): a project has no colour of its own, so a
-// stable pick from the status tokens' bold shades by its id.
+// stable pick from the status tokens' bold shades. #328: by its place among the
+// registered projects, so the first four never share a colour (a hash of the id
+// gave two of three the same); by its id when it is not in that list.
 const LDP_COLOURS = ['var(--c-progress-bold)', 'var(--c-success-bold)', 'var(--c-warning-bold)', 'var(--c-discovery-bold)'];
 function ldpColour(pid) {
+  let i = -1;
+  try { i = registeredProjects().findIndex(p => p.id === pid); } catch (e) {}
+  if (i >= 0) return LDP_COLOURS[i % LDP_COLOURS.length];
   let h = 0;
   for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return LDP_COLOURS[h % LDP_COLOURS.length];
@@ -16579,7 +16584,8 @@ function ldSplitSet(px) {
     ldSplitSet(list.getBoundingClientRect().height + (e.key === 'ArrowDown' ? LD_SPLIT_STEP : -LD_SPLIT_STEP));
   });
   // The panel resized (a window, the dock's splitter): the list still leaves the Inbox its room.
-  if (window.ResizeObserver) new ResizeObserver(() => { if (ldSplitStored()) ldSplitApply(); }).observe(document.getElementById('ld-inbox'));
+  // The list's rows changed: aria-valuenow follows its height.
+  if (window.ResizeObserver) { const ro = new ResizeObserver(() => ldSplitApply()); ro.observe(document.getElementById('ld-inbox')); ro.observe(list); }
 })();
 // ---- The Projects panel of a computer's left strip: end ----------------------
 ibxPaint();
@@ -20326,7 +20332,8 @@ function swRender() {
   const el = SW_EL;
   if (!el) return;
   ldSync();
-  ldpPaint();
+  // #328: the Inbox under the list names the pick, which may only now be known (the projects loaded).
+  if (window.LD && LD.dock) ibxPaint(); else ldpPaint();
   const on = swOn();
   const phone = phoneNow(), back = on && el.hidden;
   if (phone && !on && !el.hidden) {
@@ -20622,6 +20629,8 @@ function ldMigrate(fresh, pm) {
   if (window.ensListDocked) return;
   if (!done) ldMigrateInbox(d);
   if (!done7) ldMigrateOne(d, pm);
+  // A panel put on its strip by a migration waits there: nothing slides out by itself.
+  if (d.flyOpen()) d.closeFly();
 }
 // #328 (P294): a layout saved with the Projects panel: its list is on top of the
 // Inbox now. Where Projects showed and the Inbox only waited on its strip, the
