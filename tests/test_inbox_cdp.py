@@ -118,12 +118,10 @@ async function main() {
     out.deskFits = await p.evalIn(fits);
     await p.shot('inbox-1728x1117');
     // All projects, then this project again.
-    await p.click('document.querySelector(\'#list-dock .dk-strip-btn[data-dk-auto="projects"]\')'); await sleep(200);
     await p.click('document.querySelector(\'#ld-projs [data-ldp="all"]\')'); await sleep(200);
     out.all = await p.evalIn(`({ rows: [...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx),
       where: [...LD_INBOX.querySelectorAll('.ibx-where')].map(e => e.textContent), saved: localStorage.getItem('cd-inbox-scope') })`);
     await p.click('document.querySelector(\'#ld-projs [data-ldp-proj="' + A.proj + '"]\')'); await sleep(200);
-    await p.click('document.querySelector(\'#list-dock .dk-strip-btn[data-dk-auto="inbox"]\')'); await sleep(200);
     out.back = await p.evalIn(`[...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx)`);
     // A row opens its message: the chat lands on that balloon.
     await p.until('(() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
@@ -145,12 +143,13 @@ async function main() {
     await p.click('LD_INBOX.querySelectorAll(".ibx-item a.ibx-link")[1]');
     await p.until(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(A.mid2)}; })()`, 10000).catch(() => null);
     out.moreOpen = await p.evalIn(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return m ? m.dataset.mid : ''; })()`);
-    // #322: off the PO screen the Inbox stays on the left strip, now for the project the bar names.
+    // #322: off the PO screen the Inbox stays on the left strip; #328: with nothing open it keeps the last pick.
+    out.prePid = await p.evalIn('IBX.ldPid');
     await p.evalIn(`(() => { midLeave(); VIEW_MODE = 'board'; SELECTED_PROJECT = ''; renderRows(); return 0; })()`);
     await p.until('!document.body.classList.contains("po-dock")', 10000).catch(() => null);
     await sleep(300);
     out.offPo = await p.evalIn(`({ po: document.body.classList.contains("po-dock"), inbox: ldOnScreen("inbox"), pid: IBX.ldPid, here: projHere() || '',
-      rows: [...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx), want: ibxRows(IBX.data, IBX.scope, projHere() || '').map(r => r.id) })`);
+      rows: [...LD_INBOX.querySelectorAll('.ibx-row')].map(r => r.dataset.ibx), want: ibxRows(IBX.data, IBX.scope, IBX.ldPid).map(r => r.id) })`);
     await p.close();
     // ---- phones: the PO screen's Inbox tab, beside Chat (#311)
     out.phone = {};
@@ -315,11 +314,12 @@ class InboxInChrome(unittest.TestCase):
         self.assertTrue(self.got["moreKept"], "stays open when the inbox paints again")
         self.assertEqual(self.got["moreOpen"], self.mid2, "an answer opens its own message")
 
-    def test_off_the_po_screen_the_inbox_stays_for_the_project_the_bar_names(self):
+    def test_off_the_po_screen_the_inbox_keeps_the_pick(self):
         o = self.got["offPo"]
         self.assertFalse(o["po"], "left the PO screen first")
         self.assertTrue(o["inbox"], o)
-        self.assertEqual(o["pid"], o["here"])
+        self.assertEqual(o["here"], "", "nothing open")
+        self.assertEqual(o["pid"], self.got["prePid"], "the pick stays (#328)")
         self.assertEqual(o["rows"], o["want"])
 
     def test_nothing_is_wider_than_the_screen(self):

@@ -243,6 +243,8 @@ class TaskSwitcher(unittest.TestCase):
             # The list's filter (#317: it finds a project with no PO).
             fn(INDEX, "function parseSearchQuery("), fn(INDEX, "function haystackMatches("), fn(INDEX, "function rowHaystack("),
             fn(INDEX, "function swHay("), fn(INDEX, "function swFilterGroups("),
+            # #328: a task or session in no project wears its kind icon.
+            fn(INDEX, "function ldpKindIcon("),
             # The Task numbers block reads task mentions with static/taskcard.js (#202).
             (ROOT / "static" / "taskcard.js").read_text(encoding="utf-8"),
             block("Cost chip"), block("Task numbers"), block("Task switcher")])
@@ -557,12 +559,13 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn('<span class="sw-n">3</span>', few)
         # A row: its name (or first words), where it ran, whether it runs (the dot, #126).
         live = row_of(h, 'data-sid="u1"')
-        self.assertIn('>Question number 1</span>', live)
+        self.assertIn('</svg> Question number 1</span>', live)
+        self.assertIn('class="sw-kind-ico" viewBox="0 0 12 12" role="img" aria-label="session"', live, "#328: its kind icon")
         self.assertIn('<span class="sw-sub">work1</span>', live)
         self.assertIn('<span class="sw-st working" role="img" aria-label="working" title="working"></span>', live)
         self.assertIn('title="Question number 1 · D:\\code\\work1"', live)
         self.assertIn('<span class="sw-sub">work2 · past session</span>', row_of(h, 'data-sid="u2"'))
-        self.assertIn('>Named one</span>', row_of(h, 'data-sid="u3"'))
+        self.assertIn('</svg> Named one</span>', row_of(h, 'data-sid="u3"'))
         task = row_of(h, 'data-sid="rx"')
         self.assertIn('<span class="tno">#3</span> No project task', task)
         self.assertIn('<span class="sw-sub">task, not running</span>', task)

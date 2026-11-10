@@ -276,7 +276,7 @@ class DesktopLayoutInChrome(unittest.TestCase):
                 self.assertFalse(g["listOn"], g)
                 self.assertFalse(g["listVis"], g)
                 self.assertTrue(g["listSeen"] is None or not g["listSeen"]["hit"], g["listSeen"])
-                self.assertEqual([b["id"] for b in g["leftStrip"]], ["inbox", "projects"])
+                self.assertEqual([b["id"] for b in g["leftStrip"]], ["inbox"])
                 self.assertTrue(all(b["x"] < 52 for b in g["leftStrip"]), g["leftStrip"])
 
     def test_the_inbox_is_the_list_docks(self):
@@ -308,7 +308,7 @@ class DesktopLayoutInChrome(unittest.TestCase):
         t = self.got["empty"]["text"]
         if t:   # the page opened nothing yet
             self.assertNotIn("in the list", t)
-            self.assertIn("Projects", t)
+            self.assertIn("on the left", t)   # #328: the list above the Inbox
 
     def test_the_inbox_is_on_screen_before_any_project(self):
         g = self.got["start"]

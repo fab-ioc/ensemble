@@ -435,7 +435,7 @@ class TheWiring(unittest.TestCase):
     def test_the_list_is_a_panel_of_a_dock_of_its_own(self):
         block = INDEX[INDEX.index("// ---- The list as a dock panel (#137): begin"):INDEX.index("// ---- The list as a dock panel: end")]
         for used in ("el: SW_EL", "fill: 'page'", "stripHover: false", "stripOpen: 'beside'", "strip: LD_STRIP",
-                     "can: (id, a) => id === 'list' || ((id === 'inbox' || id === 'projects')",
+                     "can: (id, a) => id === 'list' || (id === 'inbox' && (a !== 'hide'",
                      "storageKey: LD_KEY",
                      "L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])])"):
             self.assertIn(used, block, used)

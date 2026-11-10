@@ -74,6 +74,25 @@ WITH_LIST = {
  "dockedList": "{\"v\":1,\"root\":{\"t\":\"split\",\"dir\":\"row\",\"kids\":[{\"t\":\"stack\",\"panels\":[\"list\"],\"active\":\"list\",\"size\":300},{\"t\":\"stack\",\"panels\":[\"page\"],\"active\":\"page\"}]},\"floats\":[{\"stack\":{\"t\":\"stack\",\"panels\":[\"inbox\"],\"active\":\"inbox\"},\"x\":460,\"y\":107,\"w\":420,\"h\":420,\"home\":{\"peers\":[],\"index\":0,\"near\":\"page\",\"side\":\"left\",\"size\":280},\"strip\":{\"id\":\"inbox\",\"edge\":\"left\",\"size\":280,\"peers\":[],\"index\":1}}],\"auto\":[],\"hidden\":[],\"out\":{}}",
 }
 
+# Layouts holding the Projects panel (#322, P289; #328, P294 puts its list on
+# top of the Inbox): Projects pinned and the Inbox on the strip; Projects
+# floating; Projects in its window; both pinned as one stack (the #322 default).
+_IN_AUTO = {"id": "inbox", "edge": "left", "size": 260, "home": {"peers": ["projects"], "index": 0, "near": "page", "side": "left"}}
+_PR_AUTO = {"id": "projects", "edge": "left", "size": 260, "home": {"peers": ["inbox"], "index": 1, "near": "page", "side": "left"}}
+_PAGE = {"t": "stack", "panels": ["page"], "active": "page"}
+# a pinned panel's strip place (Dock's layout.pinned)
+_PIN = lambda a: {k: a[k] for k in ("id", "edge", "size")} | {"peers": [p for p in ("inbox", "projects") if p != a["id"]], "index": a["home"]["index"], "home": a["home"]}
+WITH_PROJECTS = {k: json.dumps({"v": 1, "floats": [], "hidden": [], **v}) for k, v in {
+    "projPinned": {"root": {"t": "split", "dir": "row", "kids": [{"t": "stack", "panels": ["projects"], "active": "projects", "size": 260}, _PAGE]},
+                   "auto": [_IN_AUTO], "out": {}, "pinned": {"projects": _PIN(_PR_AUTO)}},
+    "projFloat": {"root": _PAGE, "auto": [_IN_AUTO], "out": {},
+                  "floats": [{"stack": {"t": "stack", "panels": ["projects"], "active": "projects"}, "x": 460, "y": 107, "w": 300, "h": 420,
+                              "home": _PR_AUTO["home"], "strip": {"id": "projects", "edge": "left", "size": 260, "peers": ["inbox"], "index": 1}}]},
+    "projWindow": {"root": _PAGE, "auto": [_IN_AUTO], "out": {"projects": {"was": {"kind": "auto", "entry": _PR_AUTO}}}},
+    "bothPinned": {"root": {"t": "split", "dir": "row", "kids": [{"t": "stack", "panels": ["inbox"], "active": "projects", "size": 260}, _PAGE]},
+                   "auto": [], "out": {}, "pinned": {"inbox": _PIN(_IN_AUTO), "projects": _PIN(_PR_AUTO)}},
+}.items()}
+
 CDP_JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
@@ -103,7 +122,10 @@ const GEOM = `(() => {
   const d = window.LD && LD.dock;
   const strip = s => [...document.querySelectorAll('#list-dock .dk-strip-' + s + ' .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto);
   const sb = id => document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="' + id + '"]');
-  const leftHead = document.querySelector('#list-dock .dk-head:has([data-dk-tab="inbox"]):has([data-dk-tab="projects"])');
+  const leftHead = document.querySelector('#list-dock .dk-head:has([data-dk-tab="inbox"])');
+  const ico = b => { const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill }; };
+  const tb = document.querySelector('#list-dock .dk-tab[data-dk-tab="inbox"] .dk-badge');
+  const sp = document.getElementById('ld-split');
   const wideEls = [...document.querySelectorAll('body *')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > document.documentElement.clientWidth + 1 && getComputedStyle(e).position !== 'fixed' && !e.closest('[hidden], .dk-off') && !(e.closest('#detail-panel') && !document.body.classList.contains('detail-open')); });
   const wide = wideEls.length, wideWhat = wideEls.slice(0, 4).map(e => e.tagName + '#' + e.id + '.' + String(e.className).slice(0, 40) + '@' + Math.round(e.getBoundingClientRect().right));
   const get = k => { try { return localStorage.getItem(k); } catch (e) { return 'x'; } };
@@ -113,7 +135,7 @@ const GEOM = `(() => {
     leftHeadMenu: !!leftHead && !!leftHead.querySelector('[data-dk-act="menu"]'),
     inboxMode: d ? d.viewMode('inbox') : '', fly: d ? d.flyOpen() : null, inboxOn: d ? ldOnScreen('inbox') : false,
     ghost: document.querySelectorAll('#list-dock [data-dk-tab="list"], #list-dock [data-dk-auto="list"], #list-dock [data-dk-panel="list"]').length,
-    ldp: [...document.querySelectorAll('#ld-projs .ldp-row')].map(b => ({ t: b.textContent.trim(), cur: b.getAttribute('aria-current') === 'true', all: b.dataset.ldp === 'all', proj: b.dataset.ldpProj || '', room: b.dataset.ldpRoom || '', sid: b.dataset.ldpSid || '' })),
+    ldp: [...document.querySelectorAll('#ld-projs .ldp-row')].map(b => ({ t: b.textContent.trim(), name: ((b.querySelector('.ldp-name') || {}).textContent || '').trim(), ico: ico(b), cur: b.getAttribute('aria-current') === 'true', all: b.dataset.ldp === 'all', proj: b.dataset.ldpProj || '', room: b.dataset.ldpRoom || '', sid: b.dataset.ldpSid || '' })),
     ldpBox: R(document.getElementById('ld-projs')), ibxTitle: ((document.querySelector('#ld-ibx-body .ibx-title') || {}).textContent || '').trim(),
     scopeSw: !!document.querySelector('#ld-inbox .ibx-scope'), detail: document.body.classList.contains('detail-open'), sel: SELECTED_PROJECT || '',
     frames: [...document.querySelectorAll('iframe')].filter(f => f.getBoundingClientRect().width > 0).map(f => f.dataset.room || f.src.slice(-60)),
@@ -125,8 +147,15 @@ const GEOM = `(() => {
     rows: document.querySelectorAll('#ld-inbox a.ibx-link[data-room]').length,
     po: document.body.classList.contains('po-dock'), pid: (PD && PD.pid) || '', narrow: !!PD.dock && PD.dock.narrow(),
     chat: R(PD.els['po-chat']), a5: get('cd-list-dock-a5'), a6: get('cd-list-dock-a6'),
-    projMode: d ? d.viewMode('projects') : '', ldProjects: R(document.getElementById('ld-projects')),
-    projTitle: ((document.querySelector('#ld-projects .ldp-title') || {}).textContent || '').trim(),
+    a7: get('cd-list-dock-a7'), ldList: R(document.getElementById('ld-list')), split: R(sp), ibxBody: R(document.getElementById('ld-ibx-body')),
+    splitAria: sp ? { now: +sp.getAttribute('aria-valuenow'), min: +sp.getAttribute('aria-valuemin'), max: +sp.getAttribute('aria-valuemax'), role: sp.getAttribute('role') } : null,
+    projTitle: ((document.querySelector('#ld-list .ldp-title') || {}).textContent || '').trim(),
+    tabBadge: !!tb && tb.getBoundingClientRect().width > 0, ldSel: typeof ibxLdPid === 'function' ? ibxLdPid() : '', selStored: get('cd-ld-sel'), splitStored: get('cd-ld-split'),
+    // the Inbox's rows against what the list picked: the scope's rows in IBX.data
+    ibxRooms: [...new Set([...document.querySelectorAll('#ld-ibx-body a.ibx-link[data-room]')].map(a => a.dataset.room))].sort(),
+    wantRooms: (() => { try { const lp = ibxLdPid(); return [...new Set(ibxRows(IBX.data, IBX.scope === 'all' || !lp ? 'all' : 'project', lp).map(r => r.roomId))].sort(); } catch (e) { return ['x:' + e.message]; } })(),
+    scope: (typeof IBX !== 'undefined' && IBX.scope) || '',
+    panelText: ((document.getElementById('ld-inbox') || {}).innerText || '') + '|' + ((document.querySelector('#list-dock .dk-strip-left') || {}).innerText || ''),
     strip: R(document.querySelector('#list-dock .dk-strip-left')), stored: get('cd-list-dock'), pdStored: get('cd-tool-strip') };
 })()`;
 async function main() {
@@ -150,7 +179,7 @@ async function main() {
     };
     const key = async (k) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: k === 'Escape' ? 27 : 0 }, sessionId); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
-    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-list-dock-a6': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
+    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-list-dock-a6': null, 'cd-list-dock-a7': null, 'cd-ld-sel': null, 'cd-ld-split': null, 'cd-noun': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false; try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); const s = ' + JSON.stringify(s) + '; for (const k in s) s[k] === null ? localStorage.removeItem(k) : localStorage.setItem(k, s[k]); } } catch (e) {}' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 2 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.po) + ')', 30000);
@@ -179,18 +208,14 @@ async function main() {
       await p.shot(`left-strip-${w}x${h}`);
       await p.close();
     }
-    // ---- 1140x1000 at 2x, beside the P287 drawing (2280x2000)
-    if (A.shots) {
+    // ---- 1140x1000 (at 2x with screenshots, beside the P294 drawing)
+    {
       const q = await page(1140, 1000, false);
       await toPo(q, P.Motors);
       await q.until('document.querySelectorAll("#ld-inbox a.ibx-link[data-room]").length > 0', 15000).catch(() => null);
-      await c.send('Emulation.setDeviceMetricsOverride', { width: 1140, height: 1000, deviceScaleFactor: 2, mobile: false }, q.sessionId);
-      await sleep(500);
-      await q.shot('left-strip-1140x1000');
+      if (A.shots) { await c.send('Emulation.setDeviceMetricsOverride', { width: 1140, height: 1000, deviceScaleFactor: 2, mobile: false }, q.sessionId); await sleep(500); }
+      await q.shot('left-panel-1140x1000');
       out.w1140 = await G(q);
-      await front(q, 'projects'); await sleep(300);
-      await q.shot('left-strip-1140x1000-projects');
-      out.w1140p = await G(q);
       await q.close();
     }
     const p = await page(1440, 900, false);
@@ -219,18 +244,42 @@ async function main() {
     })()`);
     // ---- the project list on top of the Inbox (#322, P287)
     const LDP = sel => `document.querySelector('#ld-projs ${sel}')`;
-    // ---- Projects: its strip button brings it in front of the Inbox, one at a time (P289)
-    await p.click(LBTN('projects')); await p.until(SHOWN('ld-projects'), 5000).catch(() => null); await sleep(400);
-    out.projOpen = await G(p);
-    await p.shot('left-strip-1440x900-projects');
-    await p.click(LBTN('inbox')); await p.until(SHOWN('ld-inbox'), 5000).catch(() => null); await sleep(400);
-    out.inboxBack = await G(p);
+    // ---- #328 (P294): the divider between the list and the Inbox
+    {
+      const SP = `document.getElementById('ld-split')`;
+      const drag = async (dy) => {
+        const [sx, sy] = await p.evalIn(`(() => { const r = ${SP}.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+        await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sx, y: sy, button: 'left', clickCount: 1 }, p.sessionId);
+        for (let i = 1; i <= 5; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sx, y: sy + dy * i / 5, button: 'left', buttons: 1 }, p.sessionId);
+        await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sx, y: sy + dy, button: 'left', clickCount: 1 }, p.sessionId);
+        await sleep(300);
+      };
+      out.split0 = await G(p);
+      await drag(100);
+      out.split1 = await G(p);
+      await p.evalIn(`${SP}.focus(); 0`);
+      await c.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 }, p.sessionId);
+      await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 }, p.sessionId);
+      await sleep(250);
+      out.split2 = await G(p);
+      await drag(-2000);
+      out.splitMin = await G(p);
+      await drag(4000);
+      out.splitMax = await G(p);
+      await p.evalIn(`localStorage.removeItem('cd-ld-split'); ldSplitApply(); 0`); await sleep(200);
+      out.splitNone = await G(p);
+      await p.evalIn(`ldSplitSet(200); 0`); await sleep(200);
+    }
     // a project with no PO: its page (the Board), the Inbox scoped to it
-    await front(p, 'projects');
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Alpha}"]`)); await sleep(700);
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Alpha}"]`)); await sleep(700);
     out.alpha = await G(p);
+    // ---- the pick and the divider survive a reload
+    await p.evalIn('location.reload(); 0'); await sleep(1500);
+    await p.until('window.ensBooted === true && !!LD.dock', 30000);
+    await sleep(1500);
+    out.alphaReloaded = await G(p);
     // a task in no project: its conversation, the Inbox its own
-    await front(p, 'projects'); await p.click(LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)); await sleep(900);
+    await front(p, 'inbox'); await p.click(LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)); await sleep(900);
     out.loose = await G(p);
     // its ⋯ and its right click: Open and Make PO
     const MENU = `(() => { const m = document.querySelector('body > .dcm'); return m ? { items: [...m.querySelectorAll('.dcm-item')].map(b => ({ t: b.textContent.trim(), makepo: b.classList.contains('makepo-btn'), room: b.dataset.room || '', disabled: b.disabled })), expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]') } : null; })()`;
@@ -261,7 +310,7 @@ async function main() {
       return { un: !!un, row: t, opened: seen };
     })()`);
     // back to Motors' PO from its row
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Motors) + ' && document.body.classList.contains("po-dock")', 15000).catch(() => null);
     await sleep(500);
     out.motors = await G(p);
@@ -270,24 +319,24 @@ async function main() {
     await p.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`);
     await p.until('PD.dock.flyOpen() === "board"', 5000).catch(() => null); await sleep(600);
     out.boardMotors = await p.evalIn(BOARD);
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Wheels), 15000).catch(() => null); await sleep(800);
     out.boardWheels = await p.evalIn(BOARD);
-    // Once the left Inbox button has closed the Board, a later project pick
-    // must not reopen it through a stale saved flyout.
-    await p.click(LBTN('inbox')); await sleep(350);
+    // Once a click in the left panel (not on a project) has closed the Board, a
+    // later project pick must not reopen it through a stale saved flyout.
+    await p.click(`document.querySelector('#ld-ibx-body .ibx-title') || document.getElementById('ld-ibx-body')`); await sleep(350);
     out.boardClosedByInbox = await p.evalIn(BOARD);
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null); await sleep(600);
     out.boardAfterClosedPick = await p.evalIn(BOARD);
     await p.evalIn('PD.dock.closeFly(); 0'); await sleep(300);
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null); await sleep(500);
     // ---- the Inbox on Wheels' PO: All has Motors' row, its click opens Motors
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Wheels}"]`));
     await p.until('PD.pid === ' + JSON.stringify(P.Wheels), 15000).catch(() => null); await sleep(500);
     out.wheels = await G(p);
-    await front(p, 'projects'); await p.click(LDP('[data-ldp="all"]')); await sleep(500);
+    await front(p, 'inbox'); await p.click(LDP('[data-ldp="all"]')); await sleep(500);
     out.wheelsAll = await G(p);
     await front(p, 'inbox');
     out.preIbx = await G(p);
@@ -295,7 +344,7 @@ async function main() {
     await p.until('PD.pid === ' + JSON.stringify(P.Motors), 15000).catch(() => null);
     await sleep(500);
     out.ibxOpened = await G(p);
-    await front(p, 'projects'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`)); await sleep(500);
+    await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`)); await sleep(500);
     // ---- the modes
     const L = 'LD.dock';
     await p.evalIn(`${L}.setViewMode('inbox', 'unpinned'); 0`); await sleep(400);
@@ -361,6 +410,51 @@ async function main() {
       await m.shot(`left-strip-migrated-${k}`);
       await m.close();
     }
+    // ---- #328 (P294): a layout saved with the Projects panel (#322, P289): the Inbox takes its place
+    out.a7 = {};
+    for (const [k, ld] of Object.entries(A.withProjects)) {
+      const m = await page(1440, 900, false, { 'cd-list-dock': ld, 'cd-list-dock-a4': '1', 'cd-list-dock-a5': '1', 'cd-list-dock-a6': '1' });
+      await toPo(m, P.Motors);
+      out.a7[k] = await G(m);
+      await m.shot(`left-panel-migrated-${k}`);
+      await m.close();
+    }
+    // ---- a pick remembered from before: a task in no project, nothing open in the middle
+    {
+      const m = await page(1440, 900, false, { 'cd-ld-sel': 'room:' + A.loose });
+      await sleep(1500);
+      out.selSeeded = await G(m);
+      await m.close();
+    }
+    // ---- #328 review 1: a remembered pick that is gone falls back to All, and is forgotten
+    out.selGone = {};
+    for (const [k, v] of [['proj', 'proj-gone000'], ['room', 'room:room-gone000']]) {
+      const m = await page(1440, 900, false, { 'cd-ld-sel': v });
+      await sleep(1500);
+      out.selGone[k] = await G(m);
+      await m.close();
+    }
+    // ---- #328 review 3: a past conversation opened from its list is a pick that stays
+    {
+      const m = await page(1440, 900, false, {});
+      await sleep(1500);
+      out.selPast = await m.evalIn(`(() => {
+        PAST_ROWS.set('sid-past000', { sessionId: 'sid-past000', roomId: 'room-past000', headless: true });
+        ldSelSet('room:room-past000');
+        return { gone: ldSelGone('room:room-past000'), lp: ibxLdPid(), sel: LD_SEL.sel || '' };
+      })()`);
+      await m.close();
+    }
+    // ---- #328 review 1: All, then a project opened from the bar: the list and the Inbox follow it
+    {
+      const m = await page(1440, 900, false, {});
+      await toPo(m, P.Motors);
+      await m.click(`document.querySelector('#ld-projs [data-ldp="all"]')`); await sleep(400);
+      out.allPicked = await G(m);
+      await m.evalIn(`projPick(${JSON.stringify(P.Wheels)}); 0`); await sleep(1200);
+      out.allThenBar = await G(m);
+      await m.close();
+    }
     // ---- #326 (P292): − on a pinned strip panel puts it away to its strip button
     const AWAY = `(() => {
       const R = e => { if (!e) return null; const r = e.getBoundingClientRect(); return r.width > 0 ? { x: Math.round(r.left), r: Math.round(r.right), w: Math.round(r.width) } : null; };
@@ -368,8 +462,8 @@ async function main() {
       const pressed = (dk, id) => { const b = sb(dk, id); return b ? b.getAttribute('aria-pressed') === 'true' : null; };
       return { chat: R(PD.els['po-chat']), ls: R(document.querySelector('#list-dock .dk-strip-left')), rs: R(document.querySelector('#po-dock .dk-strip-right')),
         mins: document.querySelectorAll('#list-dock .dk-stack.dk-min, #po-dock .dk-stack.dk-min').length,
-        inbox: LD.dock.viewMode('inbox'), projects: LD.dock.viewMode('projects'), board: PD.dock.viewMode('board'),
-        inboxP: pressed('#list-dock', 'inbox'), projectsP: pressed('#list-dock', 'projects'), boardP: pressed('#po-dock', 'board'),
+        inbox: LD.dock.viewMode('inbox'), board: PD.dock.viewMode('board'),
+        inboxP: pressed('#list-dock', 'inbox'), boardP: pressed('#po-dock', 'board'),
         left: [...document.querySelectorAll('#list-dock .dk-strip-left .dk-strip-btn')].map(b => b.dataset.dkAuto),
         right: [...document.querySelectorAll('#po-dock .dk-strip-right .dk-strip-btn')].map(b => b.dataset.dkAuto),
         fly: LD.dock.flyOpen() || PD.dock.flyOpen(), ldIbx: document.body.classList.contains('ld-ibx'),
@@ -387,13 +481,7 @@ async function main() {
       await a.shot('away-1440-inbox-away');
       await a.click(LBTN('inbox')); await sleep(500);
       out.away.inboxBack = await a.evalIn(AWAY);
-      await a.click(LBTN('projects')); await sleep(400);
-      await a.click(HIDE('#list-dock', 'projects')); await sleep(500);
-      out.away.projAway = await a.evalIn(AWAY);
-      await a.click(LBTN('projects')); await sleep(500);
-      out.away.projBack = await a.evalIn(AWAY);
       // a right tool pinned: Board
-      await a.click(LBTN('inbox')); await sleep(300);
       await a.click(HIDE('#list-dock', 'inbox')); await sleep(400);
       await a.evalIn(`PD.dock.pin('board'); 0`); await sleep(500);
       out.away.boardPinned = await a.evalIn(AWAY);
@@ -465,6 +553,12 @@ async function main() {
     await toPo(sm, P.Motors);
     out.small = await G(sm);
     await sm.shot('left-strip-800x600');
+    // ---- the board word (Settings › the word for a board): the list's title and every name follow it
+    await sm.evalIn(`(() => { setNoun({ one: 'Initiative', many: 'Initiatives' }); window.dispatchEvent(new CustomEvent('cd-noun')); ibxRepaint(); return 0; })()`);
+    await sleep(500);
+    out.noun = await G(sm);
+    out.nounAll = await sm.evalIn(`(document.querySelector('#ld-projs [data-ldp="all"]') || {}).title || ''`);
+    await sm.evalIn(`(() => { setNoun(null); window.dispatchEvent(new CustomEvent('cd-noun')); return 0; })()`);
     await sm.close();
     // ---- a phone: no list dock, the PO dock keeps its Inbox tab
     const ph = await page(390, 844, true);
@@ -571,7 +665,7 @@ class LeftStripInChrome(unittest.TestCase):
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "ids": cls.ids, "po": cls.po, "widths": WIDTHS, "shots": shots, "old": OLD,
-                "loose": cls.loose, "withList": WITH_LIST}
+                "loose": cls.loose, "withList": WITH_LIST, "withProjects": WITH_PROJECTS}
         script = base / "left_strip_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=480)
@@ -593,45 +687,63 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertLessEqual(g["scrollW"], g["W"])
         self.assertEqual(g["wide"], 0, g["wideWhat"])
 
-    def test_the_default_inbox_and_projects_on_the_left_strip(self):
+    def assertOnePanel(self, g, x=52):
+        """The list on top, the divider, the Inbox under it, all in the one panel."""
+        ib, li, sp, bo = g["ldInbox"], g["ldList"], g["split"], g["ibxBody"]
+        self.assertEqual(li["x"], ib["x"])
+        self.assertEqual(li["y"], ib["y"], "the list at the top")
+        self.assertEqual(sp["y"], li["y"] + li["h"], "the divider under the list")
+        self.assertEqual(bo["y"], sp["y"] + sp["h"], "the Inbox under the divider")
+        self.assertEqual(bo["y"] + bo["h"], ib["y"] + ib["h"], "the Inbox to the bottom")
+        self.assertEqual(ib["x"], x)
+
+    def assertRowsMatch(self, g):
+        self.assertEqual(g["ibxRooms"], g["wantRooms"], "the Inbox shows what the list picked")
+
+    def test_the_default_one_inbox_panel_on_the_left_strip(self):
         for w, _ in WIDTHS:
             g = self.got["widths"][str(w)]
             with self.subTest(w=w):
-                self.assertEqual(g["left"], ["inbox", "projects"], "Inbox then Projects (#322, P289)")
+                self.assertEqual(g["left"], ["inbox"], "one button: Inbox (#328, P294)")
                 self.assertEqual(g["right"], [])
                 self.assertEqual(g["ghost"], 0)
                 self.assertIsNone(g["list"], "no task list")
                 self.assertEqual(g["inboxMode"], "pinned")
-                self.assertEqual(g["projMode"], "pinned")
                 self.assertEqual(g["ldInbox"]["x"], 52, "docked right of the strip")
                 self.assertEqual(g["ldInbox"]["w"], 260)
-                self.assertIsNone(g["ldProjects"], "one panel open at a time: the Inbox")
+                self.assertOnePanel(g)
                 self.assertFalse(g["pdInbox"], "the PO dock has no Inbox on a computer")
                 self.assertIsNone(g["pdInboxEl"])
                 self.assertFalse(g["pdInboxTab"])
                 self.assertIsNone(g["bar"], "the bar's Inbox gives way")
                 self.assertEqual(g["badge"], "1", "the strip button carries the count")
+                self.assertFalse(g["tabBadge"], "the panel's head says only Inbox")
                 self.assertGreater(g["rows"], 0)
                 self.assertGreaterEqual(g["chat"]["x"], g["ldInbox"]["r"])
                 self.assertLessEqual(g["chat"]["x"] - g["ldInbox"]["r"], 8)
+                self.assertEqual(g["a7"], "1")
                 self.assertNoOverflow(g)
 
-    def test_the_projects_button_swaps_the_panel(self):
-        g, b = self.g("projOpen"), self.g("inboxBack")
-        self.assertEqual(self.g("fresh")["leftHeadTabs"], ["inbox"])
-        self.assertEqual(g["leftHeadTabs"], ["projects"])
-        self.assertEqual(b["leftHeadTabs"], ["inbox"])
-        self.assertTrue(g["leftHeadMenu"], "the open panel keeps its Dock menu")
-        self.assertIsNone(g["ldInbox"], "the Inbox gives way")
-        self.assertEqual((g["ldProjects"]["x"], g["ldProjects"]["w"]), (52, 260), "in the Inbox's place")
-        self.assertEqual(g["ldProjects"]["h"], self.g("fresh")["ldInbox"]["h"], "full height")
+    def test_1140_wide(self):
+        g = self.g("w1140")
+        self.assertEqual(g["left"], ["inbox"])
+        self.assertOnePanel(g)
+        self.assertGreaterEqual(g["chat"]["w"], 360)
+        self.assertNoOverflow(g)
+
+    def test_the_list_above_the_inbox(self):
+        g = self.g("fresh")
+        self.assertEqual(g["leftHeadTabs"], ["inbox"])
+        self.assertTrue(g["leftHeadMenu"], "the panel keeps its Dock menu")
+        self.assertOnePanel(g)
         self.assertEqual(g["projTitle"], "Projects")
-        box, pr = g["ldpBox"], g["ldProjects"]
-        self.assertTrue(pr["x"] <= box["x"] and box["r"] <= pr["r"], "the list inside the panel")
-        self.assertEqual(g["chat"]["x"], self.g("fresh")["chat"]["x"], "the conversation stays put")
+        box, li = g["ldpBox"], g["ldList"]
+        self.assertTrue(li["x"] <= box["x"] and box["r"] <= li["r"], "the rows inside the list")
+        self.assertLessEqual(li["h"], g["ldInbox"]["h"] / 2 + 1, "as tall as its rows, up to half the panel")
         rows = g["ldp"]
         self.assertTrue(rows[0]["all"])
         self.assertEqual(rows[0]["t"], "All1")
+        self.assertIsNone(rows[0]["ico"], "All has no icon")
         projs = [r["proj"] for r in rows if r["proj"]]
         self.assertEqual(sorted(projs), sorted(self.ids.values()), "every project")
         motors = next(r for r in rows if r["proj"] == self.ids["Motors"])
@@ -640,11 +752,92 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(sum(r["cur"] for r in rows), 1)
         loose = [r for r in rows if r["room"] == self.loose]
         self.assertEqual(len(loose), 1, "the task in no project, a row of its own")
-        self.assertIn("task", loose[0]["t"])
+        self.assertEqual(loose[0]["name"], "Loose carriage inspection", "no 'task' word in its name")
         self.assertFalse(g["scopeSw"], "the list chooses: no This/All switch")
-        self.assertEqual((b["ldInbox"]["x"], b["ldInbox"]["w"]), (52, 260), "the Inbox button brings it back")
-        self.assertIsNone(b["ldProjects"])
-        self.assertTrue(b["ibxTitle"].startswith("Inbox · Motors"), b["ibxTitle"])
+        self.assertTrue(g["ibxTitle"].startswith("Inbox · Motors"), g["ibxTitle"])
+        self.assertRowsMatch(g)
+
+    def test_the_icons(self):
+        rows = self.g("fresh")["ldp"]
+        for r in rows[1:]:
+            with self.subTest(r=r["name"]):
+                self.assertEqual((r["ico"]["w"], r["ico"]["h"]), (12, 12), "every icon the size of the swatch")
+        self.assertEqual({r["ico"]["k"] for r in rows if r["proj"]}, {"swatch"})
+        fills = [r["ico"]["fill"] for r in rows if r["proj"]]
+        self.assertEqual(len(set(fills)), len(fills), "three projects, three colours: %s" % fills)
+        self.assertEqual(next(r for r in rows if r["room"] == self.loose)["ico"]["k"], "task")
+
+    def test_the_divider(self):
+        g = self.got
+        a, b, c = g["split0"], g["split1"], g["split2"]
+        self.assertEqual(a["splitAria"]["role"], "separator")
+        self.assertIsNone(a["splitStored"])
+        self.assertEqual(b["ldList"]["h"], a["ldList"]["h"] + 100, "dragged 100px down")
+        self.assertEqual(b["splitStored"], str(b["ldList"]["h"]), "kept")
+        self.assertEqual(b["splitAria"]["now"], b["ldList"]["h"])
+        self.assertEqual(c["ldList"]["h"], b["ldList"]["h"] - 24, "ArrowUp: 24px")
+        self.assertEqual(g["splitMin"]["ldList"]["h"], 60, "no shorter than 60px")
+        mx = g["splitMax"]
+        self.assertEqual(mx["ldList"]["h"], mx["ldInbox"]["h"] - 120, "the Inbox keeps 120px")
+        self.assertEqual(mx["splitAria"]["max"], mx["ldInbox"]["h"] - 120)
+        self.assertEqual(g["splitNone"]["ldList"]["h"], a["ldList"]["h"], "forgotten: as tall as its rows")
+        for k in ("split1", "split2", "splitMin", "splitMax"):
+            with self.subTest(k=k):
+                self.assertOnePanel(g[k])
+                self.assertEqual(g[k]["ldInbox"]["h"], a["ldInbox"]["h"], "the panel stays as tall")
+
+    def test_the_pick_and_the_divider_survive_a_reload(self):
+        r = self.g("alphaReloaded")
+        self.assertEqual(r["ldSel"], self.ids["Alpha"])
+        self.assertTrue(next(x for x in r["ldp"] if x["proj"] == self.ids["Alpha"])["cur"])
+        self.assertTrue(r["ibxTitle"].startswith("Inbox · Alpha"), r["ibxTitle"])
+        self.assertEqual(r["ldList"]["h"], 200)
+        self.assertEqual(r["splitAria"]["now"], 200)
+        s = self.g("selSeeded")
+        self.assertEqual(s["ldSel"], "room:" + self.loose, "a pick from before, nothing open")
+        self.assertTrue(next(x for x in s["ldp"] if x["room"] == self.loose)["cur"])
+        self.assertIn("Loose carriage inspection", s["ibxTitle"])
+        self.assertEqual(s["splitAria"]["now"], s["ldList"]["h"])
+        self.assertRowsMatch(s)
+
+    def test_a_remembered_pick_that_is_gone_falls_back_to_all(self):
+        for k in ("proj", "room"):
+            g = self.got["selGone"][k]
+            with self.subTest(k=k):
+                # a fresh page opens on the PO screen, which picks it; or nothing: All
+                self.assertNotIn("gone000", g["ldSel"] or "")
+                self.assertNotIn("gone000", g["selStored"] or "")
+                self.assertEqual(sum(r["cur"] for r in g["ldp"]), 1, "one row picked")
+                self.assertRowsMatch(g)
+
+    def test_a_past_conversation_pick_is_not_gone(self):
+        s = self.got["selPast"]
+        self.assertFalse(s["gone"])
+        self.assertEqual(s["sel"], "room:room-past000")
+
+    def test_all_gives_way_to_a_project_opened_from_the_bar(self):
+        a, b = self.g("allPicked"), self.g("allThenBar")
+        self.assertEqual(a["scope"], "all")
+        self.assertTrue(a["ldp"][0]["cur"])
+        self.assertEqual(b["scope"], "project")
+        self.assertEqual(b["ldSel"], self.ids["Wheels"])
+        self.assertTrue(next(r for r in b["ldp"] if r["proj"] == self.ids["Wheels"])["cur"])
+        self.assertFalse(b["ldp"][0]["cur"], "All gave way")
+        self.assertRowsMatch(b)
+
+    def test_the_inbox_follows_the_pick(self):
+        for k in ("fresh", "alpha", "loose", "motors", "wheels", "wheelsAll"):
+            with self.subTest(k=k):
+                self.assertRowsMatch(self.g(k))
+        self.assertEqual(self.g("alpha")["ldSel"], self.ids["Alpha"])
+        self.assertEqual(self.g("loose")["ldSel"], "room:" + self.loose)
+        self.assertEqual(self.g("wheels")["selStored"], self.ids["Wheels"])
+
+    def test_the_board_word(self):
+        n = self.g("noun")
+        self.assertEqual(n["projTitle"], "Initiatives")
+        self.assertNotIn("project", n["panelText"].lower())
+        self.assertEqual(self.g("nounAll"), "Every initiative's Inbox")
 
     def test_a_project_row_without_a_po_opens_its_page(self):
         a = self.g("alpha")
@@ -652,8 +845,19 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(a["sel"], self.ids["Alpha"])
         self.assertTrue(next(r for r in a["ldp"] if r["proj"] == self.ids["Alpha"])["cur"])
         self.assertEqual(a["rows"], 0)
-        self.assertEqual(a["left"], ["inbox", "projects"])
+        self.assertEqual(a["left"], ["inbox"])
         self.assertTrue(a["ibxTitle"].startswith("Inbox · Alpha"), a["ibxTitle"])
+
+    def test_a_saved_projects_panel_folds_into_the_one_panel(self):
+        for k, mode in (("projPinned", "pinned"), ("projFloat", "float"), ("projWindow", "pinned"), ("bothPinned", "pinned")):
+            g = self.got["a7"][k]
+            with self.subTest(k=k):
+                self.assertEqual(g["left"], ["inbox"], "no Projects panel left over")
+                self.assertEqual(g["inboxMode"], mode)
+                self.assertIsNotNone(g["ldInbox"])
+                if mode == "pinned":
+                    self.assertEqual(g["ldInbox"]["x"], 52)
+                self.assertNoOverflow(g)
 
     def test_a_task_in_no_project_opens_its_conversation(self):
         o = self.g("loose")
@@ -728,23 +932,20 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertTrue(o["po"])
 
     def test_the_modes(self):
-        both = ["inbox", "projects"]
+        both = ["inbox"]
         u = self.g("unpinned")
         self.assertEqual(u["inboxMode"], "unpinned")
         self.assertEqual(u["left"], both)
         f = self.g("inboxFly")
         self.assertIsNone(f["ldInbox"], "back on its strip")
-        self.assertEqual(f["ldProjects"]["x"], 52, "Projects keeps the pinned column")
-        self.assertEqual(f["chat"]["x"], self.g("fresh")["chat"]["x"])
+        self.assertEqual(f["chat"]["x"], 52, "the conversation takes the column")
         self.assertIsNone(f["bar"], "the strip still has it")
         fl = self.g("float")
         self.assertEqual(fl["inboxMode"], "float")
         self.assertIsNotNone(fl["ldInbox"])
-        self.assertEqual(fl["ldProjects"]["x"], 52)
         pi = self.g("pinned")
         self.assertEqual(pi["inboxMode"], "pinned")
         self.assertEqual(pi["ldInbox"]["x"], 52)
-        self.assertIsNone(pi["ldProjects"], "pinned again: back in Projects' column, not a second one")
         self.assertEqual(pi["chat"]["x"], self.g("fresh")["chat"]["x"])
         wn = self.g("window")
         self.assertEqual(wn["inboxMode"], "window")
@@ -753,7 +954,7 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertIsNotNone(wn["bar"], "in its window: the bar's Inbox is back")
         self.assertEqual(self.g("popIn")["inboxMode"], "pinned")
         r = self.g("right")
-        self.assertEqual((r["left"], r["right"]), (["projects"], ["inbox"]))
+        self.assertEqual((r["left"], r["right"]), ([], ["inbox"]))
         self.assertGreater(r["ldInbox"]["x"], r["chat"]["x"])
         self.assertEqual(self.g("first")["left"], both)
         for k in ("unpinned", "inboxFly", "float", "pinned", "window", "popIn", "right", "first"):
@@ -767,7 +968,7 @@ class LeftStripInChrome(unittest.TestCase):
             self.assertEqual(g["chat"]["x"], g["ls"]["r"])   # the conversation starts at the strip
         if right:
             self.assertEqual(g["chat"]["r"], g["rs"]["x"])
-        self.assertEqual(g["left"], ["inbox", "projects"])
+        self.assertEqual(g["left"], ["inbox"])
         self.assertEqual(g["right"], ["changes", "workspace", "board", "spec"])
         self.assertTrue(g["ldIbx"])   # the bar's Inbox still gives way to the strip's
 
@@ -775,7 +976,7 @@ class LeftStripInChrome(unittest.TestCase):
         a = self.g("away")
         self.assertEqual((a["open"]["inbox"], a["open"]["inboxP"]), ("pinned", True))
         self.assertGreater(a["open"]["chat"]["x"], a["open"]["ls"]["r"] + 200)
-        for k, closed in (("inboxAway", ("inbox", "projects")), ("projAway", ("inbox", "projects"))):
+        for k, closed in (("inboxAway", ("inbox",)),):
             with self.subTest(k=k):
                 g = a[k]
                 self.assertAway(g)
@@ -783,8 +984,6 @@ class LeftStripInChrome(unittest.TestCase):
                     self.assertEqual((g[id], g[id + "P"]), ("hidden", False))
         self.assertEqual((a["inboxBack"]["inbox"], a["inboxBack"]["inboxP"]), ("pinned", True))
         self.assertEqual(a["inboxBack"]["chat"]["x"], a["open"]["chat"]["x"])
-        self.assertEqual((a["projBack"]["projects"], a["projBack"]["projectsP"]), ("pinned", True))
-        self.assertEqual(a["projBack"]["chat"]["x"], a["open"]["chat"]["x"])
 
     def test_minimising_a_pinned_right_tool_puts_it_away(self):
         a = self.g("away")
@@ -814,7 +1013,7 @@ class LeftStripInChrome(unittest.TestCase):
     def test_a_saved_minimised_pinned_stack_opens_put_away(self):
         a = self.g("away")
         self.assertAway(a["migrated"])
-        self.assertEqual((a["migrated"]["inbox"], a["migrated"]["projects"]), ("hidden", "hidden"))
+        self.assertEqual(a["migrated"]["inbox"], "hidden")
         self.assertEqual((a["migratedBack"]["inbox"], a["migratedBack"]["inboxP"]), ("pinned", True))
         self.assertEqual(a["migratedBack"]["mins"], 0)
 
@@ -829,10 +1028,10 @@ class LeftStripInChrome(unittest.TestCase):
 
     def test_a_reload_keeps_the_layout(self):
         r = self.g("reloaded")
-        self.assertEqual(r["left"], ["inbox", "projects"])
+        self.assertEqual(r["left"], ["inbox"])
         self.assertEqual(r["inboxMode"], "unpinned")
         self.assertIsNone(r["ldInbox"])
-        self.assertEqual(r["ldProjects"]["x"], 52)
+        self.assertEqual(r["chat"]["x"], 52)
 
     def test_the_panels_menu(self):
         self.assertEqual([(m["id"], m["text"], m["checked"]) for m in self.g("menu1")],
@@ -843,12 +1042,11 @@ class LeftStripInChrome(unittest.TestCase):
 
     def test_reset_layout(self):
         b = self.g("beforeReset")
-        self.assertEqual((b["left"], b["inboxMode"]), (["inbox", "projects"], "float"))
+        self.assertEqual((b["left"], b["inboxMode"]), (["inbox"], "float"))
         r = self.g("reset")
-        self.assertEqual(r["left"], ["inbox", "projects"])
-        self.assertEqual((r["inboxMode"], r["projMode"]), ("pinned", "pinned"))
+        self.assertEqual(r["left"], ["inbox"])
+        self.assertEqual(r["inboxMode"], "pinned")
         self.assertEqual(r["ldInbox"]["x"], 52)
-        self.assertIsNone(r["ldProjects"], "the Inbox in front")
         self.assertEqual(r["chat"]["x"], self.got["fresh"]["chat"]["x"])
 
     def test_a_layout_saved_before_moves_onto_the_strip(self):
@@ -856,17 +1054,16 @@ class LeftStripInChrome(unittest.TestCase):
         for was, mode in want.items():
             g = self.got["migr"][was]
             with self.subTest(was=was):
-                self.assertEqual(g["left"], ["inbox", "projects"])
+                self.assertEqual(g["left"], ["inbox"])
                 self.assertIsNone(g["fly"], "nothing slides out by itself")
                 self.assertEqual(g["ghost"], 0)
                 self.assertEqual(g["inboxMode"], mode, "the Inbox as the PO dock kept it")
                 self.assertFalse(g["pdInbox"])
                 self.assertEqual((g["a5"], g["a6"]), ("1", "1"))
                 self.assertNoOverflow(g)
-        self.assertIsNone(self.got["migr"]["pinned"]["ldProjects"], "the Inbox in front")
 
     def test_a_layout_with_the_tasks_panel_drops_it(self):
-        for k, mode, left in (("stripList", "pinned", ["projects"]), ("dockedList", "float", ["inbox", "projects"])):
+        for k, mode, left in (("stripList", "pinned", []), ("dockedList", "float", ["inbox"])):
             g = self.got["migr"][k]
             with self.subTest(k=k):
                 self.assertEqual(g["ghost"], 0, "no Tasks anywhere")
@@ -882,14 +1079,14 @@ class LeftStripInChrome(unittest.TestCase):
         g = self.got
         wide, phone, back = g["rzWide"], g["rzPhone"], g["rzBack"]
         self.assertFalse(wide["pdInbox"])
-        self.assertEqual(wide["left"], ["inbox", "projects"])
+        self.assertEqual(wide["left"], ["inbox"])
         self.assertTrue(phone["narrow"])
         self.assertIn("inbox", phone["tabs"], "a phone's PO dock has the Inbox as a tab")
         self.assertEqual(phone["tabs"][0], "po-chat")
         self.assertFalse(back["narrow"])
         self.assertFalse(back["pdInbox"])
         self.assertNotIn("inbox", back["tabs"])
-        self.assertEqual(back["left"], ["inbox", "projects"])
+        self.assertEqual(back["left"], ["inbox"])
         self.assertEqual(json.loads(back["lay"]), json.loads(wide["lay"]), "the wide layout as it was")
         self.assertNotIn('"inbox"', g["rzStoredWide"] or "", "the wide layout saved has no Inbox")
         p2w = g["phoneToWide"]
@@ -897,11 +1094,11 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertFalse(p2w["pdInbox"])
         self.assertNotIn("inbox", p2w["tabs"])
         self.assertNotIn('"inbox"', p2w["lay"])
-        self.assertEqual(p2w["left"], ["inbox", "projects"])
+        self.assertEqual(p2w["left"], ["inbox"])
 
     def test_800_wide(self):
         g = self.g("small")
-        self.assertEqual(g["left"], ["inbox", "projects"])
+        self.assertEqual(g["left"], ["inbox"])
         self.assertGreaterEqual(g["chat"]["w"], 360)
         self.assertNoOverflow(g)
 
