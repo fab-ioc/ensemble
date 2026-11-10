@@ -4128,6 +4128,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-conf-p { margin: var(--s-050) 0 var(--s-200); color: var(--fg-subtle); }
   .ibx-bt { display: flex; gap: var(--s-200); }
   .ibx-conf .ibx-btn { height: 32px; padding: 0 var(--s-300); font-size: var(--fs-300); }
+  /* #325: an answers card's head line: its link, and Done for all of them, always shown. */
+  .ibx-hd { display: flex; align-items: flex-start; gap: var(--s-200); min-width: 0; }
+  .ibx-hd > .ibx-link { flex: 1 1 auto; }
+  .ibx-hd > .ibx-done-all { flex: none; }
   .ibx-gone { display: flex; align-items: center; gap: var(--s-200); color: var(--fg-subtle); }
   .ibx-gone-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ibx-gone-t b { color: var(--fg); font-weight: 600; }
@@ -15686,9 +15690,16 @@ function ibxWhere(r, all) {
 // `pid`: a project's id, or 'room:<id>' for a task or session in no project (#322).
 function ibxScoped(list, scope, pid) {
   const room = String(pid || '').startsWith('room:') ? pid.slice(5) : '';
-  return (list || []).filter(r => !IBX.hide.has(r.id)
+  return (list || []).filter(r => !IBX.hide.has(r.id) && !(r.items && r.items.length && !ibxItemsLeft(r).length)
     && (scope === 'all' || !pid || (room ? r.roomId === room : r.projectId === pid)));
 }
+// #325: one answer of an answers card, opened from it, is checked by itself.
+// Its key in IBX.gone / IBX.hide: the card's id and the answer's points.
+function ibxItemKey(r, i) { return r.id + '#' + (i.points || []).join(','); }
+// The card's answers not yet taken off here (one checked a moment ago, its Undo showing, included).
+function ibxItemsLeft(r) { return (r.items || []).filter(i => !IBX.hide.has(ibxItemKey(r, i))); }
+// The card's answers still to check: not taken off, not waiting on their Undo.
+function ibxItemsLive(r) { return ibxItemsLeft(r).filter(i => !IBX.gone.has(ibxItemKey(r, i))); }
 function ibxRows(d, scope, pid) { return ibxScoped(d && d.rows, scope, pid); }
 function ibxOlder(d, scope, pid) { return ibxScoped(d && d.older, scope, pid); }
 // The desktop Inbox replaces the Tasks list's Needs you head. Clear only the
@@ -15753,25 +15764,42 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
         + `<span class="ibx-gone-t"><b>${esc(g.label)}:</b> ${esc(line)}</span>`
         + `<button type="button" class="ibx-btn subtle" data-ibx-undo="${esc(r.id)}">Undo</button></li>`;
     }
-    const reason = r.reason && r.reason !== r.line ? r.reason : '';
+    let reason = r.reason && r.reason !== r.line ? r.reason : '';
     const n = earlier.get(r.id) || 0;
     const task = r.isPo && r.taskRef ? r.taskRef : '';
     const st = IBX_STATE[r.taskState] || '';
+    // #325: an answers card's Done sits on its head line, always shown, and says it takes them all;
+    // its counts are of the answers still on it.
+    const cardLive = r.kind === 'check' && r.items && r.items.length ? ibxItemsLive(r) : null;
+    const cardN = cardLive ? cardLive.length : -1;
+    let lineN = line, doneAll = '', hint = '';
+    if (cardLive) {
+      lineN = line.replace(/\d+ answers? to check$/, `${cardN} answer${cardN === 1 ? '' : 's'} to check`);
+      const tries = cardLive.filter(i => i.try).length;
+      reason = reason.replace(/^\d+ asks? you to try something/, tries ? `${tries} ask${tries === 1 ? 's' : ''} you to try something` : '');
+      hint = cardN > 1 ? 'Open one to check it, or Done for all' : cardN === 1 ? 'Open it to check it, or Done' : '';
+      if (cardN) {
+        doneAll = `<button type="button" class="ibx-btn ibx-done-all" data-ibx-done="${esc(r.id)}"`
+          + ` title="${esc(cardN > 1 ? `Checked: take all ${cardN} answers off the list` : 'Checked: take it off the list')}">${esc(cardN > 1 ? `Done · all ${cardN}` : 'Done')}</button>`;
+      }
+    }
     let acts = '';
     if (n) {
       acts = `<button type="button" class="ibx-btn" data-ibx-close="${esc(r.id)}" title="Close this question without an answer">Close</button>`
         + (n > 1 ? `<button type="button" class="ibx-btn ibx-earlier${conf === r.id ? ' on' : ''}" data-ibx-earlier="${esc(r.id)}"`
           + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it">Close this and earlier <span class="ibx-cn">${n}</span></button>` : '');
-    } else if (r.kind === 'check') {
+    } else if (r.kind === 'check' && cardN < 0) {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
     }
     if (listed && dismissible.has(r.roomId) && r.kind !== 'check') {
       acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back">Done with this</button>`;
     }
-    return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
-      + `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
+    const link = `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
-      + `<span class="ibx-line">${esc(line || 'Open it')}</span>${reason ? `<span class="ibx-reason">${esc(reason)}</span>` : ''}</a>`
+      + `<span class="ibx-line">${esc(lineN || 'Open it')}</span>${reason ? `<span class="ibx-reason">${esc(reason)}</span>` : ''}`
+      + `${hint ? `<span class="ibx-reason ibx-hint">${esc(hint)}</span>` : ''}</a>`;
+    return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
+      + (doneAll ? `<div class="ibx-hd">${link}${doneAll}</div>` : link)
       + `<div class="ibx-meta"><span class="ibx-where">${esc(ibxWhere(r, all))}</span>`
       + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
@@ -15780,15 +15808,26 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + (conf === r.id && !phone ? confHtml('ibx-conf') : '') + '</li>';
   };
   // A PO chat's answers to check: one row, its answers listed under it, each opening its answer.
+  // #325: opening one checks it: "Checked · Undo" in its place for a few seconds, then it is acked.
   const more = r => {
-    const n = r.items.length;
+    const left = ibxItemsLeft(r);
+    const n = ibxItemsLive(r).length;
     return `<details class="ibx-more" data-ibx-more="${esc(r.id)}"${IBX.open.has(r.id) ? ' open' : ''}>`
       + `<summary>${esc(`${n} answer${n === 1 ? '' : 's'}`)}</summary><ul class="ibx-items">`
-      + r.items.map(i => `<li class="ibx-item"><a class="ibx-link" href="${esc(href({ roomId: r.roomId, mid: i.mid }))}"`
-        + ` data-room="${esc(r.roomId)}" data-mid="${esc(i.mid || '')}" data-part="" title="Open the answer in its conversation">`
-        + `<span class="ibx-line">${esc(String(i.line || '').replace(/\*\*|__/g, ''))}</span>`
-        + (i.reason ? `<span class="ibx-reason">${esc(i.reason)}</span>` : '') + '</a>'
-        + `<div class="ibx-meta"><span class="pdp-age" data-at="${esc(String(i.since || 0))}">${esc(pdPtAge(i.since, now))}</span></div></li>`).join('')
+      + left.map(i => {
+        const k = ibxItemKey(r, i);
+        const t = String(i.line || '').replace(/\*\*|__/g, '');
+        const g = IBX.gone.get(k);
+        if (g) {
+          return `<li class="ibx-item ibx-gone" data-ibx-item="${esc(k)}" role="status"><span class="ibx-gone-t"><b>${esc(g.label)}:</b> ${esc(t)}</span>`
+            + `<button type="button" class="ibx-btn subtle" data-ibx-undo="${esc(k)}">Undo</button></li>`;
+        }
+        return `<li class="ibx-item" data-ibx-item="${esc(k)}"><a class="ibx-link" href="${esc(href({ roomId: r.roomId, mid: i.mid }))}"`
+          + ` data-room="${esc(r.roomId)}" data-mid="${esc(i.mid || '')}" data-part="" data-ibx-check="${esc(k)}" title="Open the answer in its conversation: that checks it">`
+          + `<span class="ibx-line">${esc(t)}</span>`
+          + (i.reason ? `<span class="ibx-reason">${esc(i.reason)}</span>` : '') + '</a>'
+          + `<div class="ibx-meta"><span class="pdp-age" data-at="${esc(String(i.since || 0))}">${esc(pdPtAge(i.since, now))}</span></div></li>`;
+      }).join('')
       + '</ul></details>';
   };
   // Under the project list (P287 drawing) the rows are cards in one flat list, no group headings:
@@ -15910,7 +15949,7 @@ function ibxPoll() {
     .then(d => {
       if (!d || !Array.isArray(d.rows)) return;
       // A row closed here stays out until the hub's list drops it too (or a while has passed).
-      const have = new Set(d.rows.concat(d.older || []).map(r => r.id));
+      const have = new Set(d.rows.concat(d.older || []).flatMap(r => [r.id, ...(r.items || []).map(i => ibxItemKey(r, i))]));
       const t = Date.now();
       for (const [id, at] of IBX.hide) if (!have.has(id) || t - at > IBX_HIDE_S * 1000) IBX.hide.delete(id);
       IBX.data = d;
@@ -15944,22 +15983,43 @@ async function ibxPost(url, body) {
   return j;
 }
 // What a row's Close (a question) or Done (answers to check) sends.
-function ibxRowSend(r) {
+// The request a row's Close or Done (or an answer's Checked, #325) sends: [url, body].
+function ibxRowReq(r) {
   if (r.kind === 'check') {
-    return /:points$/.test(r.id) && (r.points || []).length
-      ? ibxPost('/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack' })
-      : ibxPost('/api/attention/done', { roomId: r.roomId });
+    return (r.item || /:points$/.test(r.id)) && (r.points || []).length
+      ? ['/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack' }]
+      : ['/api/attention/done', { roomId: r.roomId }];
   }
-  return ibxPost('/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }).catch(e => {
+  return ['/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }];
+}
+function ibxRowSend(r) {
+  const [url, body] = ibxRowReq(r);
+  if (r.kind === 'check') return ibxPost(url, body);
+  return ibxPost(url, body).catch(e => {
     if (e.status === 409) return {};     // answered or closed meanwhile: gone either way
     throw e;
   });
 }
+// #325: an answer opened from its card is checked: "Checked · Undo" in its
+// place for a few seconds, then acked, as a row's Done is.
+function ibxItemAct(rowId, key) {
+  const r = ibxFind(rowId);
+  const i = r && (r.items || []).find(x => ibxItemKey(r, x) === key);
+  if (!i || !(i.points || []).length || IBX.gone.has(key) || IBX.gone.has(rowId)) return;
+  ibxRowAct(key, 'Checked', { kind: 'check', item: true, id: key, roomId: r.roomId, points: i.points.slice() });
+}
 // Close or Done on one row: "Closed · Undo" in its place for a few seconds,
 // and only then sent, so Undo tells nobody anything.
-function ibxRowAct(id, label) {
-  const r = ibxFind(id);
+function ibxRowAct(id, label, item) {
+  let r = item || ibxFind(id);
   if (!r || IBX.gone.has(id)) return;
+  if (!item && r.kind === 'check' && r.items && r.items.length) {
+    // An answers card's Done: every answer still on it. One opened a moment ago is sent now, by itself.
+    for (const x of r.items) { const g = IBX.gone.get(ibxItemKey(r, x)); if (g) { clearTimeout(g.timer); g.fire(); } }
+    const pts = ibxItemsLive(r).flatMap(x => x.points || []);
+    if (!pts.length) return;
+    r = { ...r, points: pts };
+  }
   const fire = () => {
     const g = IBX.gone.get(id);
     if (!g) return;
@@ -15969,13 +16029,14 @@ function ibxRowAct(id, label) {
     ibxRowSend(g.row).then(() => ibxPoll()).catch(e => {
       IBX.hide.delete(id);
       ibxRepaint();
-      toast(`Not ${label === 'Done' ? 'done' : 'closed'}: ${e.message}`, 5000, 'err');
+      toast(`Not ${label === 'Closed' ? 'closed' : label === 'Checked' ? 'checked' : 'done'}: ${e.message}`, 5000, 'err');
     });
   };
   IBX.gone.set(id, { label, row: r, fire, timer: setTimeout(fire, IBX_ROW_UNDO_S * 1000) });
   if (IBX.confirm) IBX.confirm = '';
   ibxRepaint();
-  const u = document.querySelector(`.ibx [data-ibx-undo="${CSS.escape(id)}"]`);
+  // An answer just opened keeps the focus where it went (its conversation).
+  const u = !item && document.querySelector(`.ibx [data-ibx-undo="${CSS.escape(id)}"]`);
   if (u) u.focus({ preventScroll: true });
 }
 function ibxRowUndo(id, box) {
@@ -15984,18 +16045,14 @@ function ibxRowUndo(id, box) {
   clearTimeout(g.timer);
   IBX.gone.delete(id);
   ibxRepaint();
-  const b = box && box.querySelector(`[data-ibx-close="${CSS.escape(id)}"], [data-ibx-done="${CSS.escape(id)}"]`);
+  const b = box && box.querySelector(`[data-ibx-close="${CSS.escape(id)}"], [data-ibx-done="${CSS.escape(id)}"], [data-ibx-check="${CSS.escape(id)}"]`);
   if (b) b.focus({ preventScroll: true });
 }
 // Leaving the page sends what is waiting for its Undo to run out.
 window.addEventListener('pagehide', () => {
   for (const [id, g] of IBX.gone) {
     clearTimeout(g.timer);
-    const r = g.row;
-    const [url, body] = r.kind === 'check'
-      ? (/:points$/.test(r.id) && (r.points || []).length ? ['/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack' }]
-        : ['/api/attention/done', { roomId: r.roomId }])
-      : ['/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }];
+    const [url, body] = ibxRowReq(g.row);
     try { fetch(url, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (e) {}
     IBX.gone.delete(id);
   }
@@ -16109,10 +16166,14 @@ function ibxWire(box) {
       return;
     }
     const a = e.target.closest && e.target.closest('a.ibx-link[data-room]');
-    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button) return;
+    if (!a || e.button) return;
+    // #325: an answer opened from its card (here or in a new tab) is checked.
+    const ck = a.dataset.ibxCheck ? () => { const li = a.closest('li.ibx-row[data-ibx]'); if (li) ibxItemAct(li.dataset.ibx, a.dataset.ibxCheck); } : null;
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) { if (ck) ck(); return; }
     e.preventDefault();
     if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, a.dataset.part || '');
     else ibxOpenRoom(a.dataset.room);
+    if (ck) ck();
   });
 }
 ibxWire(PD.els.inbox);
