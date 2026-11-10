@@ -402,6 +402,17 @@ async function main() {
       await a.shot('away-1440-all-away');
       await a.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`); await sleep(500);
       out.away.boardBack = await a.evalIn(AWAY);
+      // a layout saved (before #326) with pinned Board as a tab beside the
+      // conversation, that stack minimised: Board goes to its button
+      out.away.mixedSeed = await a.evalIn(`(() => {
+        const l = JSON.parse(JSON.stringify(PD.dock.layout()));
+        const drop = n => { if (n.t === 'stack') { n.panels = n.panels.filter(p => p !== 'board'); if (n.active === 'board') n.active = n.panels[0]; return n.panels.length ? n : null; }
+          n.kids = n.kids.map(drop).filter(Boolean); return n.kids.length > 1 ? n : n.kids[0] || null; };
+        l.root = drop(l.root);
+        const put = n => { if (n.t === 'stack') { if (n.panels.includes('po-chat')) { n.panels.unshift('board'); n.active = 'board'; n.min = true; } } else n.kids.forEach(put); };
+        put(l.root); l.hidden = (l.hidden || []).filter(p => (p.id || p) !== 'board');
+        return JSON.stringify(l);
+      })()`);
       // the strip button of a focused pinned panel puts it away too (it minimised before)
       await a.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`); await sleep(500);
       out.away.boardByButton = await a.evalIn(AWAY);
@@ -438,6 +449,16 @@ async function main() {
       await m.click(LBTN('inbox')); await sleep(500);
       out.away.migratedBack = await m.evalIn(AWAY);
       await m.close();
+      seed['cd-tool-strip'] = out.away.mixedSeed;
+      const mx = await page(1440, 900, false, seed);
+      await toPo(mx, P.Motors);
+      const MX = `(() => { const tabs = s => [...document.querySelectorAll('#po-dock .dk-stack' + s + ' [data-dk-tab]')].map(t => t.dataset.dkTab);
+        return { board: PD.dock.viewMode('board'), boardP: (document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]') || {}).getAttribute?.('aria-pressed'),
+          minTabs: tabs('.dk-min'), right: [...document.querySelectorAll('#po-dock .dk-strip-right .dk-strip-btn')].map(b => b.dataset.dkAuto) }; })()`;
+      out.away.mixed = await mx.evalIn(MX);
+      await mx.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`); await sleep(500);
+      out.away.mixedBack = await mx.evalIn(MX);
+      await mx.close();
     }
     // ---- 800x600: nothing wider than the screen
     const sm = await page(800, 600, false);
@@ -796,6 +817,15 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual((a["migrated"]["inbox"], a["migrated"]["projects"]), ("hidden", "hidden"))
         self.assertEqual((a["migratedBack"]["inbox"], a["migratedBack"]["inboxP"]), ("pinned", True))
         self.assertEqual(a["migratedBack"]["mins"], 0)
+
+    def test_a_saved_minimised_mixed_stack_puts_its_strip_panel_away(self):
+        a = self.g("away")
+        self.assertIn('"board"', a["mixedSeed"])
+        m = a["mixed"]
+        self.assertEqual((m["board"], m["boardP"]), ("hidden", "false"))
+        self.assertNotIn("board", m["minTabs"])   # no minimised Board stub beside the strip
+        self.assertEqual(m["right"], ["changes", "workspace", "board", "spec"])
+        self.assertEqual(a["mixedBack"]["board"], "pinned")
 
     def test_a_reload_keeps_the_layout(self):
         r = self.g("reloaded")

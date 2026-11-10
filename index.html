@@ -20497,13 +20497,22 @@ function dockPutAway(d) {
     else min(id);
   };
   if (d.narrow()) return;
+  // A saved minimised stack holding strip panels: they go away to their
+  // buttons; the others in it (the conversation, say) stay minimised.
   const stacks = [];
   (function walk(n) {
     if (!n) return;
-    if (n.t === 'stack') { if (n.min && n.panels.length && n.panels.every(id => dockOnStrip(d, id))) stacks.push(n.active); }
+    if (n.t === 'stack') { if (n.min && n.panels.some(id => dockOnStrip(d, id))) stacks.push({ active: n.active, panels: n.panels.slice() }); }
     else (n.kids || []).forEach(walk);
   })(d.layout().root);
-  for (const id of stacks) { min(id); const s = stackOf(d.layout().root, id); if (s) away(s, id); }
+  for (const st of stacks) {
+    const rest = st.panels.filter(p => !dockOnStrip(d, p));
+    min(st.active);   // restored first: a hidden panel leaves no minimised stub
+    if (!rest.length) { const s = stackOf(d.layout().root, st.active); if (s) away(s, st.active); continue; }
+    st.panels.filter(p => dockOnStrip(d, p)).forEach(p => d.setVisible(p, false));
+    const s = stackOf(d.layout().root, rest[0]);
+    if (s && !s.min) min(s.active);
+  }
 }
 function ldSync() {
   if (!LD) return;   // before this block has run
