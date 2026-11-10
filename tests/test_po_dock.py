@@ -222,7 +222,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.22\.2 5f6550d[0-9a-f]{33}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.24\.0 b52af63[0-9a-f]{33}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -274,17 +274,30 @@ async function launch() {
 class Cdp {
   constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); }
   open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
-    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
+    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } else if (m.method) (this.events || []).forEach(f => f(m)); }; }); }
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
   const out = {};
-  const page = async (w, h, mobile) => {
+  // stub: this page's Dock keeps v0.23.0's minimised title bar (its own option,
+  // pinnedMin: 'stub'), served by the test only; Ensemble never sets it.
+  const page = async (w, h, mobile, stub) => {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
+    if (stub) {
+      const src = fs.readFileSync(path.join(A.root, 'static', 'dock', 'src', 'dock.js'), 'utf8');
+      if (!src.includes("pinnedMin = 'strip'")) throw new Error("dock.js: no pinnedMin = 'strip' default");
+      const body = Buffer.from(src.replace("pinnedMin = 'strip'", "pinnedMin = 'stub'"), 'utf8').toString('base64');
+      (c.events = c.events || []).push(m => {
+        if (m.method !== 'Fetch.requestPaused' || m.sessionId !== sessionId) return;
+        c.send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200, body,
+          responseHeaders: [{ name: 'Content-Type', value: 'text/javascript; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }] }, sessionId);
+      });
+      await c.send('Fetch.enable', { patterns: [{ urlPattern: '*/static/dock/src/dock.js*' }] }, sessionId);
+    }
     await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: !!mobile }, sessionId);
     const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
@@ -408,17 +421,21 @@ async function main() {
     out.reset = await p.evalIn('({ spec: PD.dock.isVisible("spec"), front: PD_IDS.filter(id => PD.dock.frontOf(id) === id), auto: PD.dock.layout().auto.map(a => a.id), menu: !!document.querySelector(".pd-menu") })');
 
     // A click on a minimised panel's title bar brings it back; a double click on it maximises it.
-    // (#326: the page's − puts a pinned tool away to its strip button, so these
-    // minimise the library's way, _toggleMin, to check its title bar still works.)
+    // (Dock v0.24.0: − puts a pinned strip panel away to its button, so these run
+    // on a page whose Dock has pinnedMin: 'stub', to check its title bar still works.)
     {
+      const p = await page(1440, 900, false, true);
+      await go(p); await ready(p); await sleep(600);
+      out.stubDock = await p.evalIn('(() => { PD.dock.pin("spec"); PD.dock.toggleMin("spec"); const s = PD.els.spec.closest(".dk-stack"); const r = { min: !!s && s.classList.contains("dk-min") }; PD.dock.reset(); return r; })()');
+      await sleep(400);
       const tab = 'PD.els.spec.closest(".dk-stack").querySelector(\'[data-dk-tab="spec"]\')';
       const isMin = 'PD.els.spec.closest(".dk-stack").classList.contains("dk-min")';
       await p.evalIn('PD.dock.pin("spec"); 0'); await sleep(300);
-      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
       const was = await p.evalIn(isMin);
       await p.click(tab); await sleep(700);
       const back = !(await p.evalIn(isMin));
-      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
       const again = await p.evalIn(isMin);
       const [x, y] = await p.evalIn(`(() => { const r = (${tab}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
       for (const n of [1, 2]) for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: n }, p.sessionId);
@@ -427,17 +444,17 @@ async function main() {
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
       out.minClick = { was, back, again, maxed, minMaxed, min: await p.evalIn(isMin) };
       // A slow double click (the second press 450 ms after the first) still maximises it.
-      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
       await sleep(450);
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
       await sleep(700);
       out.slowDbl = { maxed: await p.evalIn('!!PD.els.spec.closest(".dk-max")'), min: await p.evalIn(isMin) };
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
-      if (await p.evalIn(isMin)) { await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(200); }
+      if (await p.evalIn(isMin)) { await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(200); }
       // A drag on a minimised floating panel's title bar: it moves, and stays minimised.
       await p.evalIn('PD.dock.float("spec"); 0'); await sleep(300);
-      await p.evalIn('PD.dock._toggleMin("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("spec"); 0'); await sleep(300);
       const fl = 'PD.els.spec.closest(".dk-float")';
       const at = async () => p.evalIn(`(() => { const b = (${fl}).getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top)]; })()`);
       const [hx, hy] = await p.evalIn(`(() => { const h = (${fl}).querySelector('.dk-head'), b = h.getBoundingClientRect(); const t = h.querySelector('[data-dk-tab]').getBoundingClientRect(); return [Math.round(t.right + (b.right - t.right) / 4), Math.round(b.top + b.height / 2)]; })()`);
@@ -448,25 +465,33 @@ async function main() {
       await sleep(700);
       const to = await at();
       out.minDrag = { wasMin, moved: to[0] !== from[0] || to[1] !== from[1], min: await p.evalIn(`(${fl}).classList.contains('dk-min')`) };
-      await p.evalIn('PD.dock._toggleMin("spec"); PD.dock.dockBack("spec"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("spec"); PD.dock.dockBack("spec"); 0'); await sleep(300);
       await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
+      // #213: a double click on a minimised side panel's tab, with a count (Changes) and without (Board, Files):
+      // the first click restores it, the second (on its own minimise control, without a count) does not minimise it again.
+      out.minDbl = {};
+      for (const id of ['board', 'workspace', 'changes']) {
+        const st = `PD.els[${JSON.stringify(id)}].closest(".dk-stack")`;
+        // The Inbox column (#302) on the strip: the geometry #213 was measured in.
+        await p.evalIn(`PD.dock.unpin('inbox'); PD.dock.pin(${JSON.stringify(id)}); PD.dock.toggleMin(${JSON.stringify(id)}); 0`); await sleep(400);
+        const [x, y, badge] = await p.evalIn(`(() => { const t = ${st}.querySelector('.dk-head [data-dk-tab=${JSON.stringify(id)}]'), r = t.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, !!t.querySelector('.dk-badge')]; })()`);
+        for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
+        await sleep(100);
+        const under = await p.evalIn(`(() => { const e = document.elementFromPoint(${x}, ${y}), c = e && e.closest('[data-dk-act]'); return c && c.closest('.dk-stack') === ${st} ? c.dataset.dkAct : ''; })()`);
+        for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
+        await sleep(700);
+        out.minDbl[id] = { badge, under, min: await p.evalIn(`${st}.classList.contains("dk-min")`), maxed: await p.evalIn(`!!PD.els[${JSON.stringify(id)}].closest(".dk-max")`) };
+        await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
+      }
+      await p.close();
     }
-    // #213: a double click on a minimised side panel's tab, with a count (Changes) and without (Board, Files):
-    // the first click restores it, the second (on its own minimise control, without a count) does not minimise it again.
-    out.minDbl = {};
-    for (const id of ['board', 'workspace', 'changes']) {
-      const st = `PD.els[${JSON.stringify(id)}].closest(".dk-stack")`;
-      // The Inbox column (#302) on the strip: the geometry #213 was measured in.
-      await p.evalIn(`PD.dock.unpin('inbox'); PD.dock.pin(${JSON.stringify(id)}); PD.dock._toggleMin(${JSON.stringify(id)}); 0`); await sleep(400);
-      const [x, y, badge] = await p.evalIn(`(() => { const t = ${st}.querySelector('.dk-head [data-dk-tab=${JSON.stringify(id)}]'), r = t.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, !!t.querySelector('.dk-badge')]; })()`);
-      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
-      await sleep(100);
-      const under = await p.evalIn(`(() => { const e = document.elementFromPoint(${x}, ${y}), c = e && e.closest('[data-dk-act]'); return c && c.closest('.dk-stack') === ${st} ? c.dataset.dkAct : ''; })()`);
-      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
-      await sleep(700);
-      out.minDbl[id] = { badge, under, min: await p.evalIn(`${st}.classList.contains("dk-min")`), maxed: await p.evalIn(`!!PD.els[${JSON.stringify(id)}].closest(".dk-max")`) };
-      await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
-    }
+    // The plain library (Dock v0.24.0, P292): − on a pinned strip panel puts it
+    // away to its button, no minimised title bar; the button reopens it pinned.
+    const specBtn = `document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="spec"]')`;
+    out.putAway = await p.evalIn(`(() => { PD.dock.pin("spec"); PD.dock.toggleMin("spec"); return { shown: PD.dock.isVisible("spec"), min: !!document.querySelector("#po-dock .dk-stack.dk-min"), btn: !!${specBtn} }; })()`);
+    await p.click(specBtn); await sleep(400);
+    out.putAway.back = await p.evalIn('({ shown: PD.dock.isVisible("spec"), mode: PD.dock.viewMode("spec") })');
+    await p.evalIn('PD.dock.reset(); 0'); await sleep(400);
 
     // Layout changes keep every iframe's page: the PO chat's and an open file's.
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
@@ -918,7 +943,7 @@ class InChrome(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.port}", "proj": cls.proj,
-                "po": cls.po, "task": cls.task, "notes": cls.notes, "shots": shots}
+                "po": cls.po, "task": cls.task, "notes": cls.notes, "shots": shots, "root": str(ROOT)}
         # From a file: the script is longer than a Windows command line may be (32767 characters).
         script = base / "po_dock_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
@@ -1066,6 +1091,11 @@ class InChrome(unittest.TestCase):
         self.assertTrue(move["draggable"] and move["moving"])
         self.assertIn("application/x-ensemble-file", move["types"])
         self.assertTrue(move["plain"].startswith("# Plan"))
+
+    def test_a_pinned_strip_panel_minimised_goes_to_its_button(self):
+        # Dock v0.24.0 does this itself (P292); the test page's stub Dock is the old title bar.
+        self.assertEqual(self.got["putAway"], {"shown": False, "min": False, "btn": True, "back": {"shown": True, "mode": "pinned"}})
+        self.assertEqual(self.got["stubDock"], {"min": True}, "the minimised title bar cases below run on pinnedMin: 'stub'")
 
     def test_a_dragged_minimised_panel_stays_minimised(self):
         self.assertEqual(self.got["minDrag"], {"wasMin": True, "moved": True, "min": True},

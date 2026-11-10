@@ -474,8 +474,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_22_2(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.22\.2 5f6550d")
+    def test_the_vendored_library_is_v0_24_0(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.24\.0 b52af63")
         self.assertNotIn("stripKeepsButton", INDEX, "keep v0.14.0's retained strip-button default")
 
     def test_the_title_bar_is_dock_s_default(self):

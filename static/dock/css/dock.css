@@ -315,6 +315,12 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dk-menu [role="menuitemcheckbox"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-menu-check, var(--dk-accent)); }
 .dk-menu button[aria-disabled="true"] { color: var(--dk-menu-disabled-fg, var(--dk-fg3)); cursor: not-allowed; }
 .dk-menu button[aria-disabled="true"]:hover { background: none; }
+/* the zoom row (zoomMenu: 'row'): −, the %, + and reset, as tall as an item; its buttons draw in the text colour */
+.dk-menu .dk-zoom-row { display: flex; align-items: stretch; gap: 2px; padding-left: 2px; }
+.dk-menu .dk-zoom-btn { display: flex; align-items: center; justify-content: center; padding: 0 6px; }
+.dk-zoom-btn > svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+.dk-zoom-pct { min-width: 5ch; padding: 4px 0; text-align: center; font-variant-numeric: tabular-nums; }
+.dk-menu .dk-zoom-btn[data-dk-menu="zoom-reset"] { margin-left: auto; }
 /* help (help.js): a circled ? beside a tab, and its popover */
 .dk-help-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; padding: 0;
   border: 1px solid var(--dk-help-q-fg, var(--dk-fg3)); border-radius: var(--dk-help-q-radius, 50%); background: transparent;
