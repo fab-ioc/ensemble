@@ -14528,6 +14528,7 @@ function pdEnsure() {
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); PD.dock.forget('points'); if (!narrow) PD.dock.forget('inbox'); } catch (e) {}
+  dockPutAway(PD.dock);
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); });
   pdOnAdopt('pd', PD_ROOT);
   pdToolsFit();
@@ -20460,7 +20461,58 @@ function ldListShown() {
 }
 // The bar's Inbox gives way while the Inbox has its place here (#322).
 function ldInboxMark() {
-  document.body.classList.toggle('ld-ibx', !!(LD.dock && LD.dock.isVisible('inbox') && LD.dock.viewMode('inbox') !== 'window'));
+  const d = LD.dock;
+  document.body.classList.toggle('ld-ibx', !!(d && (d.isVisible('inbox') || dockOnStrip(d, 'inbox')) && d.viewMode('inbox') !== 'window'));
+}
+// A panel with a strip button (Dock keeps one for a pinned panel too, by default).
+function dockOnStrip(d, id) {
+  const l = d.layout();
+  return !!(l.pinned && l.pinned[id]) || l.auto.some(a => a.id === id);
+}
+// #326 (P292): pinned and unpinned look the same when put away. − (and ⋯ ›
+// Hide, and the strip button of a focused pinned panel: all Dock's toggleMin)
+// on a pinned panel that has a strip button hides it to that button, as an
+// unpinned one slides back in: no minimised title bar beside the strip. Its
+// button reopens it pinned (Dock's showHidden keeps its place). The rest
+// (the conversation, a panel with no strip button, restoring) minimises as
+// before. A saved layout's minimised stack of strip panels is put away too.
+function dockPutAway(d) {
+  if (!d || d._putAway) return;
+  const min = d.toggleMin;
+  const stackOf = (n, id) => !n ? null : n.t === 'stack' ? (n.panels.includes(id) ? n : null)
+    : (n.kids || []).reduce((f, k) => f || stackOf(k, id), null);
+  d._putAway = true;
+  d._toggleMin = min;   // the library's own, for tests of a minimised title bar
+  // A stack of strip panels only (the Inbox and Projects pinned share one)
+  // goes as minimising took it, whole; a strip panel that is a tab beside the
+  // conversation goes alone. The one in front goes last, so it comes back there.
+  const away = (s, id) => {
+    const all = s.panels.every(p => dockOnStrip(d, p));
+    const ids = all ? s.panels.filter(p => p !== s.active).concat(s.active) : [id];
+    ids.forEach(p => d.setVisible(p, false));
+  };
+  d.toggleMin = id => {
+    const s = stackOf(d.layout().root, id);
+    if (!d.narrow() && s && !s.min && d.viewMode(id) === 'pinned' && dockOnStrip(d, id)) away(s, id);
+    else min(id);
+  };
+  if (d.narrow()) return;
+  // A saved minimised stack holding strip panels: they go away to their
+  // buttons; the others in it (the conversation, say) stay minimised.
+  const stacks = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.t === 'stack') { if (n.min && n.panels.some(id => dockOnStrip(d, id))) stacks.push({ active: n.active, panels: n.panels.slice() }); }
+    else (n.kids || []).forEach(walk);
+  })(d.layout().root);
+  for (const st of stacks) {
+    const rest = st.panels.filter(p => !dockOnStrip(d, p));
+    min(st.active);   // restored first: a hidden panel leaves no minimised stub
+    if (!rest.length) { const s = stackOf(d.layout().root, st.active); if (s) away(s, st.active); continue; }
+    st.panels.filter(p => dockOnStrip(d, p)).forEach(p => d.setVisible(p, false));
+    const s = stackOf(d.layout().root, rest[0]);
+    if (s && !s.min) min(s.active);
+  }
 }
 function ldSync() {
   if (!LD) return;   // before this block has run
@@ -20520,6 +20572,7 @@ function ldMake() {
   LD.dock.onChange(() => { ldKeepPage(); ldInsets(); pdOutMarks(); ldInboxMark(); });
   pdOnAdopt('ld', LD_ROOT);
   ldMigrate(fresh);
+  dockPutAway(LD.dock);
   ldInboxMark();
   ibxRepaint();
   // A splitter's resize tells no onChange: the page's ResizeObserver notes it.

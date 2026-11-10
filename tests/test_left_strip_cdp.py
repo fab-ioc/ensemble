@@ -361,6 +361,105 @@ async function main() {
       await m.shot(`left-strip-migrated-${k}`);
       await m.close();
     }
+    // ---- #326 (P292): − on a pinned strip panel puts it away to its strip button
+    const AWAY = `(() => {
+      const R = e => { if (!e) return null; const r = e.getBoundingClientRect(); return r.width > 0 ? { x: Math.round(r.left), r: Math.round(r.right), w: Math.round(r.width) } : null; };
+      const sb = (dk, id) => document.querySelector(dk + ' .dk-strip-btn[data-dk-auto="' + id + '"]');
+      const pressed = (dk, id) => { const b = sb(dk, id); return b ? b.getAttribute('aria-pressed') === 'true' : null; };
+      return { chat: R(PD.els['po-chat']), ls: R(document.querySelector('#list-dock .dk-strip-left')), rs: R(document.querySelector('#po-dock .dk-strip-right')),
+        mins: document.querySelectorAll('#list-dock .dk-stack.dk-min, #po-dock .dk-stack.dk-min').length,
+        inbox: LD.dock.viewMode('inbox'), projects: LD.dock.viewMode('projects'), board: PD.dock.viewMode('board'),
+        inboxP: pressed('#list-dock', 'inbox'), projectsP: pressed('#list-dock', 'projects'), boardP: pressed('#po-dock', 'board'),
+        left: [...document.querySelectorAll('#list-dock .dk-strip-left .dk-strip-btn')].map(b => b.dataset.dkAuto),
+        right: [...document.querySelectorAll('#po-dock .dk-strip-right .dk-strip-btn')].map(b => b.dataset.dkAuto),
+        fly: LD.dock.flyOpen() || PD.dock.flyOpen(), ldIbx: document.body.classList.contains('ld-ibx'),
+        stored: localStorage.getItem('cd-list-dock') };
+    })()`;
+    const HIDE = (dk, id) => `document.querySelector('${dk} .dk-stack:has([data-dk-tab="${id}"]) .dk-head [data-dk-act="hide"]')`;
+    out.away = {};
+    {
+      const a = await page(1440, 900, false);
+      await toPo(a, P.Motors);
+      out.away.open = await a.evalIn(AWAY);
+      await a.shot('away-1440-before');
+      await a.click(HIDE('#list-dock', 'inbox')); await sleep(500);
+      out.away.inboxAway = await a.evalIn(AWAY);
+      await a.shot('away-1440-inbox-away');
+      await a.click(LBTN('inbox')); await sleep(500);
+      out.away.inboxBack = await a.evalIn(AWAY);
+      await a.click(LBTN('projects')); await sleep(400);
+      await a.click(HIDE('#list-dock', 'projects')); await sleep(500);
+      out.away.projAway = await a.evalIn(AWAY);
+      await a.click(LBTN('projects')); await sleep(500);
+      out.away.projBack = await a.evalIn(AWAY);
+      // a right tool pinned: Board
+      await a.click(LBTN('inbox')); await sleep(300);
+      await a.click(HIDE('#list-dock', 'inbox')); await sleep(400);
+      await a.evalIn(`PD.dock.pin('board'); 0`); await sleep(500);
+      out.away.boardPinned = await a.evalIn(AWAY);
+      await a.click(HIDE('#po-dock', 'board')); await sleep(500);
+      out.away.boardAway = await a.evalIn(AWAY);
+      await a.shot('away-1440-all-away');
+      await a.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`); await sleep(500);
+      out.away.boardBack = await a.evalIn(AWAY);
+      // a layout saved (before #326) with pinned Board as a tab beside the
+      // conversation, that stack minimised: Board goes to its button
+      out.away.mixedSeed = await a.evalIn(`(() => {
+        const l = JSON.parse(JSON.stringify(PD.dock.layout()));
+        const drop = n => { if (n.t === 'stack') { n.panels = n.panels.filter(p => p !== 'board'); if (n.active === 'board') n.active = n.panels[0]; return n.panels.length ? n : null; }
+          n.kids = n.kids.map(drop).filter(Boolean); return n.kids.length > 1 ? n : n.kids[0] || null; };
+        l.root = drop(l.root);
+        const put = n => { if (n.t === 'stack') { if (n.panels.includes('po-chat')) { n.panels.unshift('board'); n.active = 'board'; n.min = true; } } else n.kids.forEach(put); };
+        put(l.root); l.hidden = (l.hidden || []).filter(p => (p.id || p) !== 'board');
+        return JSON.stringify(l);
+      })()`);
+      // the strip button of a focused pinned panel puts it away too (it minimised before)
+      await a.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`); await sleep(500);
+      out.away.boardByButton = await a.evalIn(AWAY);
+      // unpinned: slides out, a click elsewhere puts it back, as before
+      await a.click(LBTN('inbox')); await sleep(400);
+      await a.evalIn(`LD.dock.setViewMode('inbox', 'unpinned'); LD.dock.closeFly(); 0`); await sleep(400);
+      out.away.unpinnedIn = await a.evalIn(AWAY);
+      await a.click(LBTN('inbox')); await sleep(500);
+      out.away.unpinnedOut = await a.evalIn(AWAY);
+      await a.clickAt(900, 500); await sleep(500);
+      out.away.unpinnedBack = await a.evalIn(AWAY);
+      // pinned and put away, then a reload
+      await a.evalIn(`LD.dock.setViewMode('inbox', 'pinned'); 0`); await sleep(400);
+      await a.click(HIDE('#list-dock', 'inbox')); await sleep(500);
+      out.away.beforeReload = await a.evalIn(AWAY);
+      const keys = await a.evalIn(`JSON.stringify(Object.fromEntries(Object.keys(localStorage).filter(k => k.startsWith('cd-')).map(k => [k, localStorage.getItem(k)])))`);
+      await a.evalIn('location.reload(); 0'); await sleep(1500);
+      await a.until('window.ensBooted === true && !!LD.dock', 30000);
+      await toPo(a, P.Motors);
+      out.away.reloaded = await a.evalIn(AWAY);
+      await a.click(LBTN('inbox')); await sleep(500);
+      out.away.reloadedBack = await a.evalIn(AWAY);
+      await a.close();
+      // a layout saved with the Inbox and Projects minimised (before #326): put away
+      const seed = JSON.parse(keys);
+      const lay = JSON.parse(seed['cd-list-dock']);
+      lay.hidden = [];
+      lay.root = { t: 'split', dir: 'row', kids: [{ t: 'stack', panels: ['inbox', 'projects'], active: 'inbox', size: 260, min: true }, { t: 'stack', panels: ['page'], active: 'page' }] };
+      seed['cd-list-dock'] = JSON.stringify(lay);
+      const m = await page(1440, 900, false, seed);
+      await toPo(m, P.Motors);
+      out.away.migrated = await m.evalIn(AWAY);
+      await m.shot('away-1440-migrated');
+      await m.click(LBTN('inbox')); await sleep(500);
+      out.away.migratedBack = await m.evalIn(AWAY);
+      await m.close();
+      seed['cd-tool-strip'] = out.away.mixedSeed;
+      const mx = await page(1440, 900, false, seed);
+      await toPo(mx, P.Motors);
+      const MX = `(() => { const tabs = s => [...document.querySelectorAll('#po-dock .dk-stack' + s + ' [data-dk-tab]')].map(t => t.dataset.dkTab);
+        return { board: PD.dock.viewMode('board'), boardP: (document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]') || {}).getAttribute?.('aria-pressed'),
+          minTabs: tabs('.dk-min'), right: [...document.querySelectorAll('#po-dock .dk-strip-right .dk-strip-btn')].map(b => b.dataset.dkAuto) }; })()`;
+      out.away.mixed = await mx.evalIn(MX);
+      await mx.click(`document.querySelector('#po-dock .dk-strip-btn[data-dk-auto="board"]')`); await sleep(500);
+      out.away.mixedBack = await mx.evalIn(MX);
+      await mx.close();
+    }
     // ---- 800x600: nothing wider than the screen
     const sm = await page(800, 600, false);
     await toPo(sm, P.Motors);
@@ -660,6 +759,73 @@ class LeftStripInChrome(unittest.TestCase):
         for k in ("unpinned", "inboxFly", "float", "pinned", "window", "popIn", "right", "first"):
             with self.subTest(k=k):
                 self.assertNoOverflow(self.g(k))
+
+    # ---- #326 (P292): − on a pinned strip panel puts it away to its strip button
+    def assertAway(self, g, left=True, right=True):
+        self.assertEqual(g["mins"], 0)   # no minimised title bar anywhere
+        if left:
+            self.assertEqual(g["chat"]["x"], g["ls"]["r"])   # the conversation starts at the strip
+        if right:
+            self.assertEqual(g["chat"]["r"], g["rs"]["x"])
+        self.assertEqual(g["left"], ["inbox", "projects"])
+        self.assertEqual(g["right"], ["changes", "workspace", "board", "spec"])
+        self.assertTrue(g["ldIbx"])   # the bar's Inbox still gives way to the strip's
+
+    def test_minimising_a_pinned_left_panel_puts_it_away(self):
+        a = self.g("away")
+        self.assertEqual((a["open"]["inbox"], a["open"]["inboxP"]), ("pinned", True))
+        self.assertGreater(a["open"]["chat"]["x"], a["open"]["ls"]["r"] + 200)
+        for k, closed in (("inboxAway", ("inbox", "projects")), ("projAway", ("inbox", "projects"))):
+            with self.subTest(k=k):
+                g = a[k]
+                self.assertAway(g)
+                for id in closed:
+                    self.assertEqual((g[id], g[id + "P"]), ("hidden", False))
+        self.assertEqual((a["inboxBack"]["inbox"], a["inboxBack"]["inboxP"]), ("pinned", True))
+        self.assertEqual(a["inboxBack"]["chat"]["x"], a["open"]["chat"]["x"])
+        self.assertEqual((a["projBack"]["projects"], a["projBack"]["projectsP"]), ("pinned", True))
+        self.assertEqual(a["projBack"]["chat"]["x"], a["open"]["chat"]["x"])
+
+    def test_minimising_a_pinned_right_tool_puts_it_away(self):
+        a = self.g("away")
+        self.assertEqual((a["boardPinned"]["board"], a["boardPinned"]["boardP"]), ("pinned", True))
+        self.assertLess(a["boardPinned"]["chat"]["r"], a["boardPinned"]["rs"]["x"] - 200)
+        for k in ("boardAway", "boardByButton"):
+            with self.subTest(k=k):
+                self.assertAway(a[k])
+                self.assertEqual((a[k]["board"], a[k]["boardP"]), ("hidden", False))
+        self.assertEqual((a["boardBack"]["board"], a["boardBack"]["boardP"]), ("pinned", True))
+        self.assertEqual(a["boardBack"]["chat"]["r"], a["boardPinned"]["chat"]["r"])
+
+    def test_an_unpinned_panel_still_slides_and_folds(self):
+        a = self.g("away")
+        self.assertEqual(a["unpinnedIn"]["inbox"], "unpinned")
+        self.assertEqual(a["unpinnedIn"]["chat"]["x"], a["unpinnedIn"]["ls"]["r"])
+        self.assertEqual((a["unpinnedOut"]["fly"], a["unpinnedOut"]["inboxP"]), ("inbox", True))
+        self.assertEqual((a["unpinnedBack"]["fly"], a["unpinnedBack"]["inbox"], a["unpinnedBack"]["inboxP"]), (None, "unpinned", False))
+
+    def test_a_put_away_panel_stays_away_over_a_reload(self):
+        a = self.g("away")
+        self.assertAway(a["beforeReload"])
+        self.assertAway(a["reloaded"])
+        self.assertEqual((a["reloaded"]["inbox"], a["reloaded"]["inboxP"]), ("hidden", False))
+        self.assertEqual((a["reloadedBack"]["inbox"], a["reloadedBack"]["inboxP"]), ("pinned", True))
+
+    def test_a_saved_minimised_pinned_stack_opens_put_away(self):
+        a = self.g("away")
+        self.assertAway(a["migrated"])
+        self.assertEqual((a["migrated"]["inbox"], a["migrated"]["projects"]), ("hidden", "hidden"))
+        self.assertEqual((a["migratedBack"]["inbox"], a["migratedBack"]["inboxP"]), ("pinned", True))
+        self.assertEqual(a["migratedBack"]["mins"], 0)
+
+    def test_a_saved_minimised_mixed_stack_puts_its_strip_panel_away(self):
+        a = self.g("away")
+        self.assertIn('"board"', a["mixedSeed"])
+        m = a["mixed"]
+        self.assertEqual((m["board"], m["boardP"]), ("hidden", "false"))
+        self.assertNotIn("board", m["minTabs"])   # no minimised Board stub beside the strip
+        self.assertEqual(m["right"], ["changes", "workspace", "board", "spec"])
+        self.assertEqual(a["mixedBack"]["board"], "pinned")
 
     def test_a_reload_keeps_the_layout(self):
         r = self.g("reloaded")
