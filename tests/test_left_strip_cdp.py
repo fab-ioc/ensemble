@@ -154,7 +154,7 @@ const GEOM = `(() => {
     // the Inbox's rows against what the list picked: the scope's rows in IBX.data
     ibxRooms: [...new Set([...document.querySelectorAll('#ld-ibx-body a.ibx-link[data-room]')].map(a => a.dataset.room))].sort(),
     wantRooms: (() => { try { const lp = ibxLdPid(); return [...new Set(ibxRows(IBX.data, IBX.scope === 'all' || !lp ? 'all' : 'project', lp).map(r => r.roomId))].sort(); } catch (e) { return ['x:' + e.message]; } })(),
-    scope: (window.IBX && IBX.scope) || '',
+    scope: (typeof IBX !== 'undefined' && IBX.scope) || '',
     panelText: ((document.getElementById('ld-inbox') || {}).innerText || '') + '|' + ((document.querySelector('#list-dock .dk-strip-left') || {}).innerText || ''),
     strip: R(document.querySelector('#list-dock .dk-strip-left')), stored: get('cd-list-dock'), pdStored: get('cd-tool-strip') };
 })()`;
@@ -424,6 +424,24 @@ async function main() {
       const m = await page(1440, 900, false, { 'cd-ld-sel': 'room:' + A.loose });
       await sleep(1500);
       out.selSeeded = await G(m);
+      await m.close();
+    }
+    // ---- #328 review 1: a remembered pick that is gone falls back to All, and is forgotten
+    out.selGone = {};
+    for (const [k, v] of [['proj', 'proj-gone000'], ['room', 'room:room-gone000']]) {
+      const m = await page(1440, 900, false, { 'cd-ld-sel': v });
+      await sleep(1500);
+      out.selGone[k] = await G(m);
+      await m.close();
+    }
+    // ---- #328 review 1: All, then a project opened from the bar: the list and the Inbox follow it
+    {
+      const m = await page(1440, 900, false, {});
+      await toPo(m, P.Motors);
+      await m.click(`document.querySelector('#ld-projs [data-ldp="all"]')`); await sleep(400);
+      out.allPicked = await G(m);
+      await m.evalIn(`projPick(${JSON.stringify(P.Wheels)}); 0`); await sleep(1200);
+      out.allThenBar = await G(m);
       await m.close();
     }
     // ---- #326 (P292): − on a pinned strip panel puts it away to its strip button
@@ -770,6 +788,26 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertIn("Loose carriage inspection", s["ibxTitle"])
         self.assertEqual(s["splitAria"]["now"], s["ldList"]["h"])
         self.assertRowsMatch(s)
+
+    def test_a_remembered_pick_that_is_gone_falls_back_to_all(self):
+        for k in ("proj", "room"):
+            g = self.got["selGone"][k]
+            with self.subTest(k=k):
+                # a fresh page opens on the PO screen, which picks it; or nothing: All
+                self.assertNotIn("gone000", g["ldSel"] or "")
+                self.assertNotIn("gone000", g["selStored"] or "")
+                self.assertEqual(sum(r["cur"] for r in g["ldp"]), 1, "one row picked")
+                self.assertRowsMatch(g)
+
+    def test_all_gives_way_to_a_project_opened_from_the_bar(self):
+        a, b = self.g("allPicked"), self.g("allThenBar")
+        self.assertEqual(a["scope"], "all")
+        self.assertTrue(a["ldp"][0]["cur"])
+        self.assertEqual(b["scope"], "project")
+        self.assertEqual(b["ldSel"], self.ids["Wheels"])
+        self.assertTrue(next(r for r in b["ldp"] if r["proj"] == self.ids["Wheels"])["cur"])
+        self.assertFalse(b["ldp"][0]["cur"], "All gave way")
+        self.assertRowsMatch(b)
 
     def test_the_inbox_follows_the_pick(self):
         for k in ("fresh", "alpha", "loose", "motors", "wheels", "wheelsAll"):

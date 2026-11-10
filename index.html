@@ -15959,22 +15959,42 @@ function ldHere() {
 const LD_SEL_KEY = 'cd-ld-sel';
 const LD_SEL_SETTLE_MS = 4000;
 var LD_SEL = null;   // { sel, seen }
+function ldProjectsLoaded() { return !!(PROJECTS && PROJECTS.projects); }
+// A remembered pick whose project or task is gone (#328 review 1): false only
+// once the projects and the rows have loaded and it is in neither.
+function ldSelGone(v) {
+  if (!v || !ldProjectsLoaded()) return false;
+  if (!v.startsWith('room:')) return !projectById(v);
+  if (!ALL_ROWS.length) return false;
+  const id = v.slice(5);
+  if (ALL_ROWS.some(r => r.roomId === id || r.sessionId === id)) return false;
+  const un = projectById(UNASSIGNED_ID);
+  return !((un && un.sessions) || []).some(s => s && (s.roomId === id || s.sessionId === id || s.id === id));
+}
 function ibxLdPid() {
   const here = ldHere();
   if (!LD_SEL) {
     let s = '';
     try { s = localStorage.getItem(LD_SEL_KEY) || ''; } catch (e) {}
-    LD_SEL = { sel: s || here, seen: here, at: Date.now() };
+    LD_SEL = { sel: s || here, seen: here, at: Date.now(), ready: ldProjectsLoaded() };
     return LD_SEL.sel;
   }
+  const wasReady = LD_SEL.ready;
+  LD_SEL.ready = ldProjectsLoaded();
   if (here !== LD_SEL.seen) {
     const was = LD_SEL.seen;
     LD_SEL.seen = here;
-    // '' -> a project in the page's first seconds is the page arriving where it
-    // was (the projects still loading), not a new pick.
-    const arriving = !was && Date.now() - LD_SEL.at < LD_SEL_SETTLE_MS;
-    if (here && (!arriving || !LD_SEL.sel)) ldSelSet(here);
+    // '' -> a project while the projects load, or in the page's first seconds,
+    // is the page arriving where it was, not a new pick.
+    const arriving = !was && (!wasReady || Date.now() - LD_SEL.at < LD_SEL_SETTLE_MS);
+    if (here && (!arriving || !LD_SEL.sel)) {
+      ldSelSet(here);
+      // Opening a project or task picks it: All gives way (#328 review 1).
+      if (IBX.scope === 'all') ldpScope('project');
+    }
   }
+  // A pick whose project or task is gone: back to All, and forgotten.
+  if (LD_SEL.sel && LD_SEL.sel !== here && ldSelGone(LD_SEL.sel)) ldSelSet('');
   return LD_SEL.sel;
 }
 function ldSelSet(v) {
@@ -16304,7 +16324,8 @@ function ldpModel() {
     seenL.add(e.key);
     loose.push({ key: e.key, row: e.row || null, it: e.it || null, kind, at: at || 0 });
   };
-  for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, 'task', e.at);
+  // Its icon by the Tasks list's rule (swRowHtml): a headless room is a task.
+  for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, e.row && !e.row.headless ? 'session' : 'task', e.at);
   for (const e of rec.unassigned) add(e, 'session', swActivity(e.row));
   loose.sort((a, b) => b.at - a.at);
   return { projs, loose };
@@ -20624,13 +20645,16 @@ function ldMigrate(fresh, pm) {
   } catch (e) {}
   const d = LD.dock;
   if (!d || (done && done6 && done7 && !fresh)) return;
-  try { [LD_A4_KEY, LD_A5_KEY, LD_A6_KEY, LD_A7_KEY].forEach(k => localStorage.setItem(k, '1')); } catch (e) {}
-  if (fresh) { ldDefaults(); return; }
-  if (window.ensListDocked) return;
+  // The flags are set once the steps ran (#328 review 1): a step that throws is
+  // tried again on the next load.
+  const mark = () => { try { [LD_A4_KEY, LD_A5_KEY, LD_A6_KEY, LD_A7_KEY].forEach(k => localStorage.setItem(k, '1')); } catch (e) {} };
+  if (fresh) { ldDefaults(); mark(); return; }
+  if (window.ensListDocked) { mark(); return; }
   if (!done) ldMigrateInbox(d);
   if (!done7) ldMigrateOne(d, pm);
   // A panel put on its strip by a migration waits there: nothing slides out by itself.
   if (d.flyOpen()) d.closeFly();
+  mark();
 }
 // #328 (P294): a layout saved with the Projects panel: its list is on top of the
 // Inbox now. Where Projects showed and the Inbox only waited on its strip, the
