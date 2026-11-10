@@ -15968,6 +15968,8 @@ function ldSelGone(v) {
   if (!ALL_ROWS.length) return false;
   const id = v.slice(5);
   if (ALL_ROWS.some(r => r.roomId === id || r.sessionId === id)) return false;
+  // a past conversation opened from its list is a valid pick too (#328 review 3)
+  if (PAST_ROWS.has(id) || [...PAST_ROWS.values()].some(r => r && r.roomId === id)) return false;
   const un = projectById(UNASSIGNED_ID);
   return !((un && un.sessions) || []).some(s => s && (s.roomId === id || s.sessionId === id || s.id === id));
 }
@@ -20650,10 +20652,13 @@ function ldMigrate(fresh, pm) {
   const mark = () => { try { [LD_A4_KEY, LD_A5_KEY, LD_A6_KEY, LD_A7_KEY].forEach(k => localStorage.setItem(k, '1')); } catch (e) {} };
   if (fresh) { ldDefaults(); mark(); return; }
   if (window.ensListDocked) { mark(); return; }
-  if (!done) ldMigrateInbox(d);
-  if (!done7) ldMigrateOne(d, pm);
+  // A step that throws leaves the flags unset and never stops the page's startup.
+  try {
+    if (!done) ldMigrateInbox(d);
+    if (!done7) ldMigrateOne(d, pm);
+  } catch (e) { console.warn('layout migration', e); return; }
   // A panel put on its strip by a migration waits there: nothing slides out by itself.
-  if (d.flyOpen()) d.closeFly();
+  try { if (d.flyOpen()) d.closeFly(); } catch (e) {}
   mark();
 }
 // #328 (P294): a layout saved with the Projects panel: its list is on top of the

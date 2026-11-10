@@ -434,6 +434,17 @@ async function main() {
       out.selGone[k] = await G(m);
       await m.close();
     }
+    // ---- #328 review 3: a past conversation opened from its list is a pick that stays
+    {
+      const m = await page(1440, 900, false, {});
+      await sleep(1500);
+      out.selPast = await m.evalIn(`(() => {
+        PAST_ROWS.set('sid-past000', { sessionId: 'sid-past000', roomId: 'room-past000', headless: true });
+        ldSelSet('room:room-past000');
+        return { gone: ldSelGone('room:room-past000'), lp: ibxLdPid(), sel: LD_SEL.sel || '' };
+      })()`);
+      await m.close();
+    }
     // ---- #328 review 1: All, then a project opened from the bar: the list and the Inbox follow it
     {
       const m = await page(1440, 900, false, {});
@@ -798,6 +809,11 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertNotIn("gone000", g["selStored"] or "")
                 self.assertEqual(sum(r["cur"] for r in g["ldp"]), 1, "one row picked")
                 self.assertRowsMatch(g)
+
+    def test_a_past_conversation_pick_is_not_gone(self):
+        s = self.got["selPast"]
+        self.assertFalse(s["gone"])
+        self.assertEqual(s["sel"], "room:room-past000")
 
     def test_all_gives_way_to_a_project_opened_from_the_bar(self):
         a, b = self.g("allPicked"), self.g("allThenBar")
