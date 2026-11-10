@@ -154,7 +154,7 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `side(id)`, `moveSide(id, side)` | a panel's side (`left right top bottom`) in any mode; move it to another side in the mode it has (Move To), as deep as it last was on that axis (see "Title bar and view modes") |
 | `moveStrip(id, index, side?)` | a strip panel to place `index` (from 0) of its strip, or of the strip on `side` in the mode it has, as a drag of its button does; saved, `onChange` told; false when it is not on a strip, already there, or `index` is not a number (a string of digits counts as one) (v0.8.0) |
 | `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to the strip on its side and back (pinned, it docks on its strip's side) |
-| `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack |
+| `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack; a pinned strip panel goes to its button by default |
 | `fitExpand(id)`, `fitRestore()`, `isFitExpanded(id?)` | fit-expand a panel (its content's size over the dimmed dock, for a moment; false when it cannot be: a tab behind another, a minimised stack, narrow), restore it, whether `id` (or any) is fit-expanded; the root gets `fit-expand` / `fit-restore` events (`detail.id`). See "Expand buttons" |
 | `setVisible(id, on)`, `showPanel(id)` | hide or show a panel; showing a hidden Window reopens its window |
 | `popOut(id)`, `popIn(id)`, `popWindow(id)`, `isOpenOut(id)` | a browser window of its own, and back where it was; its window; whether that window is open now (after a reload: once the page took it back) |
@@ -215,6 +215,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and the pointer leaving it slides it back; `false`: only a click (or the keys, or `reveal`) opens it, and the pointer leaving keeps it. Either way a click or focus elsewhere hides it (`stripAutoHide`) |
 | `stripAutoHide` | `true` | a strip panel slid out (Dock Unpinned, Undock) slides back when a click or focus goes elsewhere in the page, as in IntelliJ, however it was opened; not while its ⋯ menu or a dialog is open, during a drag, when the whole window loses focus, or with focus in an iframe inside it. `false` (v0.5.0): one opened by a click with `stripHover: false` or beside stays until its button, its slide-in control, `closeFly()`, Esc or another strip panel |
 | `stripKeepsButton` | `true` | a panel that has a strip place keeps its button there in Window, Float and Dock Pinned too; `false`: v0.12.0's button only while Dock Unpinned or Undock (and for a closed Window that can be reopened) |
+| `pinnedMin` | `'strip'` | a pinned panel with a retained strip button goes back to that button when minimised; `'stub'` keeps v0.23.0's minimised title bar |
 | `stripReorder` | `true` | a strip button can be dragged along its strip to reorder it, or onto another edge (see "The tool strip"), and moved by **Alt+Shift+arrow**; `false`: neither (the app's `moveStrip` still works). `can(id, 'move')` false also keeps a panel's button still |
 | `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip"). A panel's own View Mode (Dock Unpinned: beside, Undock: over) overrides it, and is saved as its strip entry's `open` |
 | `headButtons` | `'menu'` | a title bar's controls: `'menu'`, IntelliJ's ⋯ (Options) and − (Hide); `'classic'`, v0.4's buttons (menu, minimise, maximise, pop out, float or dock back, unpin; a flyout's pop out, float, slide in, pin) and its menu, exactly |
@@ -225,7 +226,8 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `menuButton` | `{ place: 'end', icon: 'dots' }` | Start puts the active panel's menu before its name or tabs. `icon` accepts `panel`, `vdots`, `lines`, `vlines`, `dots`, `gear`, an SVG string or element, or `(panel) => SVG string \| Element \| null`. A panel's `menuIcon` of the same forms overrides it. `panel` uses that panel's `icon` plus a chevron, or the chevron alone without an icon. `caret` defaults to `true` for `panel` and `false` otherwise. An invalid icon falls back to `gear`; a function returning `null` uses `panel` for start or `dots` for end. Built-in SVGs are exported as `MENU_BUTTON_SVGS`. |
 | `tabContextMenu` | `true` | A right-click on any tab, or `Shift+F10` / the ContextMenu key on a focused one, opens that panel's own menu (the one its menu button opens when it is shown: the app's `menuItems`, View Mode, Move To, Help, Zoom, Take Screenshot, Maximise, Hide, Close), at the pointer or under the tab. It switches no tab and starts no drag; every item acts on that panel. A right-click on a strip button opens its panel's menu too. Right-clicks in `tabExtra`'s markup or help's `?`, and an event the app's own handler already `preventDefault()`ed (on the page, or on the document before the dock), are left alone. `false`: the browser's menu, as before. Passes through `createDocks`. |
 | `helpIn` | `'tab'` | `'menu'` removes each tab's `?` and adds Help to that panel's menu. `F1` opens the same help. Independent of `menuButton`. |
-| `zoomControls` | `false` | Show Zoom In, Zoom Out and Reset Zoom in the menu, and enable `Ctrl+Alt+=`, `Ctrl+Alt+-`, `Ctrl+Alt+0` for the focused panel. Independent of menu placement and `helpIn`. The zoom API and persistence work without this UI option. |
+| `zoomControls` | `false` | Show the zoom controls in the panel menus (its title bar's menu button and its tab's right-click), as `zoomMenu` says, and enable `Ctrl+Alt+=`, `Ctrl+Alt+-`, `Ctrl+Alt+0` for the focused panel. Independent of menu placement and `helpIn`. The zoom API and persistence work without this UI option. |
+| `zoomMenu` | `'row'` | with `zoomControls`: `'row'`, one line in the menu (a group named Zoom): a − icon button, the panel's zoom in %, a + and a reset button (disabled at 100 %; − and + at 50 % and 200 %). Its buttons zoom the panel at once and leave the menu open, focus on the button pressed, so it can be pressed again; Esc, a click outside, Tab or any other item close the menu. Keyboard: the row is one stop for ↑ / ↓, ← / → move between its buttons, Enter or Space presses one. Tooltips give the shortcut (`text.zoomKeys`; `text.zoom`, `text.zoomReset` name the group and reset). `'items'`: v0.22's three items, Zoom In, Zoom Out and Reset Zoom (N%), each closing the menu. Passes through `createDocks`. |
 | `scaleChrome` | `false` | With application zoom, also scale title bars. Panel zoom always scales only the body. |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
@@ -346,8 +348,18 @@ An unpinned panel has a button on its edge's strip. By default that button stays
 to Dock Pinned, Float or Window, as in IntelliJ. It keeps its icon, badge, title and tooltip; its active look plus
 `aria-expanded` and `aria-pressed` say whether the panel is open. A hover only opens Dock Unpinned and Undock; raising,
 focusing or reopening the other modes always takes a click (or Enter/Space). A panel that has never had a strip place
-gets no button. Six options, each off unless asked for except `stripKeepsButton`, make the strip a tool strip
+gets no button. The options below make the strip a tool strip
 (Ensemble's layout A: a list and a conversation fixed, the tools on the right edge):
+
+With `pinnedMin: 'strip'` (the default), −, Options → Hide, an open pinned panel's strip button, and
+`toggleMin(id)` hide a pinned strip panel to its button. The button reads closed and reopens that panel pinned in its
+saved place and size. A stack containing only strip panels goes away whole; each button reopens **its own panel** into
+the former stack. Other panels stay hidden until their buttons are used. A mixed stack loses only the selected strip
+panel; its non-strip tabs remain. Minimising a mixed stack from a non-strip tab puts its strip tabs away and leaves
+the other tabs minimised. The previously active tab is hidden last, so opening its button brings it back in
+front. Old saved layouts with minimised strip stacks are converted on load; non-strip tabs in mixed stacks stay
+minimised. Narrow layouts, Float, Window, unpinned panels and panels without strip buttons keep their behaviour.
+Use `pinnedMin: 'stub'` for the v0.23.0 behaviour; the demo shows it with `?toolstrip=1&pinnedmin=stub`.
 
 ```js
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4z"/></svg>';
@@ -392,7 +404,7 @@ dock.setBadge('asks', '3', '3 asks waiting');
   raises and focuses a Float, focuses or hides Dock Pinned as described above, and focuses/reopens Window. Browser
   focus policy can refuse a scripted `window.focus()`, but the call is made directly from the person's button click.
   `stripKeepsButton: false` restores v0.12.0's disappearing button. Every way back to Dock Unpinned returns to the same
-  strip place, size and home. A minimised stack shows each panel's `icon` instead of its name.
+  strip place, size and home. With `pinnedMin: 'stub'`, a minimised stack shows each panel's `icon` instead of its name.
 - **Reorder by drag and drop** (v0.8.0, IntelliJ's stripe; `stripReorder: false` turns it off): press a strip button
   (icon or text) and drag it along its strip. From 5 px on the press is a drag: the panel slid out goes back, no hover
   slides one out, the button is dimmed, and a line in the strip shows where it will land; let go and the order changes.

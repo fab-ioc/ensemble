@@ -30,3 +30,10 @@ export function menuIconVisual(panel, config) {
   if (kind === 'custom' && !markup) { kind = 'gear'; markup = MENU_BUTTON_SVGS.gear; }
   return { kind, markup, caret: typeof config?.caret === 'boolean' ? config.caret : kind === 'panel' };
 }
+
+// The zoom row's buttons (zoomMenu: 'row'): −, + and reset, drawn in the text colour like the menu button's icons.
+export const ZOOM_SVGS = Object.freeze({
+  out: svg('<path d="M2.5 6h7"/>'),
+  in: svg('<path d="M2.5 6h7M6 2.5v7"/>'),
+  reset: svg('<path d="M2.6 4.2A3.6 3.6 0 1 1 2.4 7"/><path d="M2.3 1.8v2.6h2.6"/>'),
+});

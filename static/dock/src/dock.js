@@ -30,7 +30,7 @@ import { afterPaint, canCapture, capturePanel, writePng } from './screenshot.js'
 import { canDraw, drawPanel } from './draw.js';
 import { normalizeMenuItems, menuItemsHtml, itemAt } from './menu-items.js';
 import { layoutFile, layoutText, parseLayoutFile, layoutIds, splitFractions } from './layout-file.js';
-import { MENU_BUTTON_SVGS, MENU_CARET_SVG, iconMarkup, menuIconVisual } from './menu-icons.js';
+import { MENU_BUTTON_SVGS, MENU_CARET_SVG, ZOOM_SVGS, iconMarkup, menuIconVisual } from './menu-icons.js';
 
 export const LAYOUT_KEY = 'dock.layout';
 export const POP_URL = 'popout.html'; // beside the app's page: same origin, nothing in the URL
@@ -66,6 +66,11 @@ export const TEXT = {
   zoomIn: 'Zoom In',
   zoomOut: 'Zoom Out',
   resetZoom: (percent) => `Reset Zoom (${percent}%)`,
+  // the menu's zoom row (zoomMenu: 'row'): its name, its reset button, the shortcuts its tooltips show ('' for none)
+  zoom: 'Zoom',
+  zoomReset: 'Reset Zoom',
+  zoomKeys: { in: 'Ctrl+Alt+=', out: 'Ctrl+Alt+-', reset: 'Ctrl+Alt+0' },
+  withKey: (label, key) => (key ? `${label} (${key})` : label),
   hide: 'Hide',
   viewMode: 'View Mode',
   moveTo: 'Move To',
@@ -281,6 +286,8 @@ export function panelsFrom(container) {
  *   tabContextMenu                          a right-click (Shift+F10, the ContextMenu key) on a tab or a strip button
  *                                           opens that panel's menu (default true); false: the browser's
  *   zoomControls, scaleChrome              opt-in panel zoom menu/keys and application zoom of title bars
+ *   zoomMenu                                with zoomControls: 'row' (default), one menu row of −, %, + and reset
+ *                                           that leaves the menu open; 'items', v0.22's three items, each closing it
  *   outNoteDismiss                          the notice of panels out with no window has a × (default true); false: it
  *                                           stays until each is reopened or brought back (a dock with no Panels menu)
  *   modalSelector, badgeClass, text, onReset, win
@@ -300,8 +307,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
   popAdoptTimeout = ADOPT_TIMEOUT, popLostNotice = 'banner',
-  stripHover = true, stripOpen = 'over', stripAutoHide = true, stripKeepsButton = true, stripReorder = true, headButtons = 'menu', outNoteDismiss = true,
-  menuButton = { place: 'end', icon: 'dots' }, tabContextMenu = true, helpIn = 'tab', zoomControls = false, scaleChrome = false, zoom: initialZoom,
+  stripHover = true, stripOpen = 'over', stripAutoHide = true, stripKeepsButton = true, stripReorder = true, pinnedMin = 'strip', headButtons = 'menu', outNoteDismiss = true,
+  menuButton = { place: 'end', icon: 'dots' }, tabContextMenu = true, helpIn = 'tab', zoomControls = false, zoomMenu = 'row', scaleChrome = false, zoom: initialZoom,
   screenshot: screenshotHook = null, screenshotItem = true, screenshotMode = 'auto', menuItems: appMenuItems = null, onMenu = null, keepSlots,
   tabExtra = null, groupBridge = null, expandButtons = [], fitPlace = EXPAND_DEFAULTS.fitPlace,
   fitDimCloses = EXPAND_DEFAULTS.fitDimCloses, maxTarget = EXPAND_DEFAULTS.maxTarget,
@@ -365,7 +372,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   let nodeEls = new Map(); // split child node -> its element
   let floatEls = new Map(); // float -> its element
   let flyEls = new Map(); // unpinned panel id -> its flyout
-  let stripBtns = new Map(); // unpinned panel id -> its strip button
+  let stripBtns = new Map(); // panel with a strip place -> its button
   let maxed = null; // the maximised stack node (not stored)
   let flyMax = null; // the slid-out panel at full size (its title bar's full size button; not stored)
   let fitted = null; // the fit-expanded panel: { id, kind, box, hole, layer, prevFocus, … } (not stored)
@@ -476,8 +483,30 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function load() {
     let raw = null;
     try { const s = storage && storage.getItem(storeKey()); raw = s ? JSON.parse(s) : null; } catch { raw = null; }
-    const l = cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport(), migrate }));
+    const l = putAwayLoaded(cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport(), migrate })));
     return narrowOn ? oneColumn(l) : l;
+  }
+  // Old saved layouts can contain minimised strip stacks. Remove their strip panels before the first draw;
+  // a mixed stack keeps its non-strip tabs minimised. Each hidden panel retains its own home and strip place.
+  function putAwayLoaded(l) {
+    if (narrowOn || pinnedMin === 'stub' || stripKeepsButton === false) return l;
+    const stacks = [];
+    const walk = (n) => {
+      if (!n) return;
+      if (n.t === 'stack') { if (n.min) stacks.push(n); }
+      else for (const kid of n.kids) walk(kid);
+    };
+    walk(l.root);
+    for (const stack of stacks) {
+      const strip = stack.panels.filter((id) => stripPlaceOf(l, id));
+      if (!strip.length) continue;
+      const active = stack.active;
+      delete stack.min;
+      // The active tab is hidden last, preserving its position as the stack is dismantled.
+      for (const id of strip.filter((id) => id !== active).concat(strip.includes(active) ? [active] : [])) hidePanel(l, id);
+      if (stack.panels.length) stack.min = true;
+    }
+    return l;
   }
   // The dock's size when its split sizes were last set (loaded, dragged, a panel docked): its layout is saved as drawn
   // at that size (exportLayout, a group's file), so a window made smaller or bigger since changes nothing saved.
@@ -615,7 +644,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     ? `<span class="dk-ctl dk-ctl-start">${controls.match(/<button[^>]*data-dk-act="menu"[\s\S]*?<\/button>/)?.[0] || ''}</span>${tabs}<span class="dk-ctl">${controls.replace(/<button[^>]*data-dk-act="menu"[\s\S]*?<\/button>/, '')}</span>`
     : `${tabs}<span class="dk-ctl">${controls}</span>`;
   const panelZoom = (id) => byId.has(id) ? (groupBridge && id.startsWith('dock:') ? 1 : layout.zoom?.[id] || 1) : null;
-  const stepZoom = (value) => Math.min(2, Math.max(0.5, Math.round(value * 10) / 10));
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 2;
+  const stepZoom = (value) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 10) / 10));
   const effectiveZoom = (id) => (groupBridge && id.startsWith('dock:') ? 1 : appZoom * panelZoom(id));
   const zoomSnapshot = () => new Map(ids.map((id) => [id, effectiveZoom(id)]));
   function emitZoomChanges(before) {
@@ -664,6 +695,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     else (layout.zoom || (layout.zoom = {}))[id] = next;
     applyZoom(id);
     save();
+    if (menu && menu._id === id) syncZoomRow();
     dockEvent(root, 'zoom', { id, zoom: next });
     return true;
   }
@@ -971,12 +1003,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (optionsOf(id, where).any || hasAppItems(id, where) || (helpIn === 'menu' && !!byId.get(id)?.help) || zoomable(id)) c.push(menuCtl(id, `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
       c.push(expandHtml(id, t, where, isMax, !!node.min));
       if (hideOk(id, where)) c.push(node.min ? ctl('hide', 'unmin', `${t}: ${T.restore}`, 'restore from its title bar')
-        : ctl('hide', 'hide', `${t}: ${T.hide}`, 'hide it to its title bar (a click on it brings it back)'));
+        : ctl('hide', 'hide', `${t}: ${T.hide}`, pinnedPutAway(id) ? 'hide it to its strip button' : 'hide it to its title bar (a click on it brings it back)'));
       return placeControls(`<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div>`, c.join(''));
     }
     if (classicItems(id, where).length || hasAppItems(id, where) || (helpIn === 'menu' && !!byId.get(id)?.help) || zoomable(id)) c.push(menuCtl(id, `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
     c.push(expandHtml(id, t, where, isMax, !!node.min));
-    if (allowed(id, 'min')) c.push(node.min ? ctl('min', 'unmin', `${t}: restore`, 'restore from its title bar') : ctl('min', 'min', `${t}: minimise`, 'minimise to its title bar'));
+    if (allowed(id, 'min')) c.push(node.min ? ctl('min', 'unmin', `${t}: restore`, 'restore from its title bar') : ctl('min', 'min', `${t}: minimise`, pinnedPutAway(id) ? 'hide to its strip button' : 'minimise to its title bar'));
     // With the full size button (before minimise), v0.4's maximise button is not drawn as well.
     if (allowed(id, 'max') && !expandOf(id).includes('max')) c.push(isMax ? ctl('max', 'restore', `${t}: restore size`, 'restore (Esc)') : ctl('max', 'max', `${t}: maximise`, 'maximise (Esc restores)'));
     if (allowed(id, 'pop')) c.push(ctl('pop', 'pop', `${t}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)'));
@@ -2185,6 +2217,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return !!(box && box.contains(doc.activeElement));
   }
 
+  // Only a docked panel with a retained, visible strip button uses the new minimise path.
+  function pinnedPutAway(id) {
+    return !narrowOn && pinnedMin !== 'stub' && stripKeepsButton !== false
+      && whereIs(layout, id)?.kind === 'dock' && !!stripPlaceOf(layout, id);
+  }
+
   // Bring a docked or floating panel to the front and put keyboard focus in it. A float's order is its z-order.
   function focusMainPanel(id, raiseFloat) {
     let w = whereIs(layout, id);
@@ -2221,7 +2259,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (mode === 'float') { focusMainPanel(id, true); return; }
     if (mode === 'pinned') {
       const w = whereIs(layout, id);
-      if (w && w.kind === 'dock' && w.stack.active === id && !w.stack.min && wasFocused) api.toggleMin(id);
+      if (w && w.kind === 'dock' && w.stack.active === id && !w.stack.min && (wasFocused || pinnedMin !== 'stub')) api.toggleMin(id);
       else focusMainPanel(id, false);
       return;
     }
@@ -2746,7 +2784,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     _place: (id, target, side) => { if (moveTo(layout, id, target, side, opts())) commit(); },
     _replaceLayout: (raw) => {
       const before = zoomSnapshot();
-      layout = cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport() }));
+      layout = putAwayLoaded(cleanZoom(normalizeLayout(raw, { cfg, viewportPx: viewport() })));
       commit();
       emitZoomChanges(before);
     },
@@ -2834,7 +2872,25 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     toggleMin(id) {
       const w = whereIs(layout, id);
       if (narrowOn || !w || !w.stack) return;
-      if (w.stack.min) delete w.stack.min; else { w.stack.min = true; if (maxed === w.stack) maxed = null; }
+      if (!w.stack.min && pinnedPutAway(id)) {
+        const stack = w.stack;
+        const whole = stack.panels.every((pid) => stripPlaceOf(layout, pid));
+        const away = whole ? stack.panels.filter((pid) => pid !== stack.active).concat(stack.active) : [id];
+        if (maxed === stack) maxed = null;
+        for (const pid of away) hidePanel(layout, pid);
+        commit();
+        const button = stripBtns.get(id);
+        if (button) focusQuiet(button);
+        return;
+      }
+      if (w.stack.min) delete w.stack.min;
+      else {
+        // A mixed stack saved now must load the same way as an old minimised stack:
+        // strip tabs go to their buttons; only non-strip tabs keep the stub.
+        if (w.kind === 'dock') for (const pid of [...w.stack.panels]) if (pinnedPutAway(pid)) hidePanel(layout, pid);
+        w.stack.min = true;
+        if (maxed === w.stack) maxed = null;
+      }
       commit();
     },
     toggleMax(id) {
@@ -2914,7 +2970,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     else if (name === 'hide-fly') closeFly(true);
     else if (name === 'hide') hideNow(id, !!btn.closest('.dk-flyout'));
   }
-  // − : a strip panel slides back in; a docked or floating one is minimised to its title bar, or restored from it.
+  // − : an unpinned strip panel slides back in; a pinned one with a button is put away; other stacks minimise.
   function hideNow(id, fly) {
     if (pops.has(id)) { if (allowed(id, 'hide')) api.setVisible(id, false); return; }
     if (fly || (flyOpen === id && modeOf(id) !== 'pinned' && modeOf(id) !== 'float')) { closeFly(true); return; }
@@ -2948,18 +3004,20 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     el.style.left = Math.max(4, left) + 'px';
     el.style.top = Math.max(4, top) + 'px';
   }
-  const menuButtons = (el) => [...el.querySelectorAll(':scope > button:not([disabled])')];
+  // A menu's stops for ↑ / ↓: its items, the zoom row one of them (its first button that is not disabled takes focus).
+  const menuButtons = (el) => [...el.querySelectorAll(':scope > button:not([disabled]), :scope > .dk-zoom-row')];
+  const stopFocus = (x) => (x && x.classList.contains('dk-zoom-row') ? [...x.querySelectorAll('button')].find((b) => !off(b)) || x.querySelector('button') : x);
   function moveFocus(el, key) {
     const list = menuButtons(el);
     if (!list.length) return;
-    const at = list.indexOf(el.ownerDocument.activeElement);
+    const at = list.findIndex((x) => x.contains(el.ownerDocument.activeElement));
     const down = key === 'ArrowDown';
     let to;
     if (key === 'Home') to = 0;
     else if (key === 'End') to = list.length - 1;
     else if (at < 0) to = down ? 0 : list.length - 1;
     else to = (at + (down ? 1 : list.length - 1)) % list.length;
-    focusQuiet(list[to]);
+    focusQuiet(stopFocus(list[to]));
   }
 
   // The Options menu: app items, View Mode, Move To, optional Help and zoom controls, then panel actions.
@@ -2984,11 +3042,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (o.sides.length || o.docks?.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="side">${escText(T.moveTo)}${arrow}</button>`);
       const tail = [];
       if (helpIn === 'menu' && byId.get(id)?.help) tail.push(`<button type="button" role="menuitem" data-dk-menu="help">${escText(T.help)}</button>`);
-      if (zoomable(id)) {
-        tail.push(`<button type="button" role="menuitem" data-dk-menu="zoom-in">${escText(T.zoomIn)}</button>`);
-        tail.push(`<button type="button" role="menuitem" data-dk-menu="zoom-out">${escText(T.zoomOut)}</button>`);
-        tail.push(`<button type="button" role="menuitem" data-dk-menu="zoom-reset">${escText(T.resetZoom(Math.round(panelZoom(id) * 100)))}</button>`);
-      }
+      if (zoomable(id)) tail.push(zoomMenuHtml(id));
       if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(typeof screenshotHook !== 'function' && shotMode === 'capture' ? T.screenshotHintCapture : T.screenshotHint)}">${escText(T.screenshot)}</button>`);
       if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
       if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
@@ -2999,6 +3053,36 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     showMenu(btn, id, { cls: 'dk-menu dk-mono dk-options', label: `${byId.get(id).title}: ${T.options}`, own, where, fly, o, at });
   }
   const MENU_SEP = '<div class="dk-menu-sep" role="separator"></div>';
+  // The menu's zoom controls. zoomMenu 'row': one stop in the menu, a group of −, the %, + and reset whose buttons zoom
+  // the panel and leave the menu open (syncZoomRow sets the % and which are disabled); 'items': v0.22's three items.
+  function zoomMenuHtml(id) {
+    const item = (k, label) => `<button type="button" role="menuitem" data-dk-menu="zoom-${k}">${escText(label)}</button>`;
+    if (zoomMenu === 'items') return item('in', T.zoomIn) + item('out', T.zoomOut) + item('reset', T.resetZoom(Math.round(panelZoom(id) * 100)));
+    const keys = T.zoomKeys || {};
+    const btn = (k, label) => `<button type="button" role="menuitem" class="dk-zoom-btn" data-dk-menu="zoom-${k}" aria-label="${escText(label)}"`
+      + ` title="${escText(T.withKey(label, keys[k]))}">${ZOOM_SVGS[k]}</button>`;
+    return `<div class="dk-zoom-row" role="group" aria-label="${escText(T.zoom)}">${btn('out', T.zoomOut)}`
+      + `<span class="dk-zoom-pct" aria-live="polite"></span>${btn('in', T.zoomIn)}${btn('reset', T.zoomReset)}</div>`;
+  }
+  function syncZoomRow() {
+    const row = menu && menu.querySelector('.dk-zoom-row');
+    if (!row) return;
+    const z = panelZoom(menu._id);
+    row.querySelector('.dk-zoom-pct').textContent = `${Math.round(z * 100)}%`;
+    for (const [k, off] of [['out', z <= ZOOM_MIN], ['in', z >= ZOOM_MAX], ['reset', z === 1]]) {
+      const b = row.querySelector(`[data-dk-menu="zoom-${k}"]`);
+      if (off) b.setAttribute('aria-disabled', 'true'); else b.removeAttribute('aria-disabled');
+    }
+  }
+  const zoomAct = (id, k) => setPanelZoom(id, k === 'zoom-reset' ? 1 : panelZoom(id) + (k === 'zoom-in' ? 0.1 : -0.1));
+  // ← / → in the zoom row: the next of its buttons that is not disabled, round the row.
+  function moveInRow(b, forward) {
+    const list = [...b.parentElement.querySelectorAll('button')];
+    for (let i = 1; i < list.length; i++) {
+      const to = list[(list.indexOf(b) + (forward ? i : list.length - i)) % list.length];
+      if (!off(to)) { focusQuiet(to); return; }
+    }
+  }
   // Puts up a ⋯ menu under `btn` (or at `at`, a tab's right-click), in its window: the app's items for `where` above
   // `own` (Dock's, or a function of the app's items giving them), a separator between. Nothing at all: no menu.
   function showMenu(btn, id, { cls, label, own: ownOf, where, fly = false, o = null, classicMenu = false, at = null }) {
@@ -3017,12 +3101,13 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     menu._o = o;
     menu._app = app;
     menu._classic = classicMenu;
+    syncZoomRow();
     btn.ownerDocument.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
     const x = at ? at.x : menuPlace === 'start' ? r.left : r.right - menu.offsetWidth;
     placeMenu(menu, x, at ? at.y : r.bottom + 2);
     if (!at && r.bottom + 2 + menu.offsetHeight > ((menuWin && menuWin.innerHeight) || 900) - 4) placeMenu(menu, x, r.top - 2 - menu.offsetHeight);
-    focusQuiet(menuButtons(menu)[0]);
+    focusQuiet(stopFocus(menuButtons(menu)[0]));
     menu.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (!b || off(b)) return;
@@ -3049,6 +3134,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const b = e.target.closest && e.target.closest('button');
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
       else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveFocus(menu, e.key); }
+      else if (b && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && b.closest('.dk-zoom-row')) { e.preventDefault(); moveInRow(b, e.key === 'ArrowRight'); }
       else if (b && b.dataset.dkSub && (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); if (!off(b)) openSub(b, true); }
       else if (e.key === 'Tab') closeMenu(false);
     });
@@ -3114,6 +3200,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }
     const k = b.dataset.dkMenu;
     if (!k) return;
+    // The zoom row's buttons zoom and leave the menu open, focus where it is.
+    if (b.closest('.dk-zoom-row')) { zoomAct(id, k); return; }
     const classicMenu = menu._classic;
     const anchor = menu._from;
     closeMenu(false);
@@ -3126,9 +3214,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       else if (k === 'hide') api.setVisible(id, false);
       else if (k === 'close') void closeNow(id);
       else if (k === 'help') openPanelHelp(id, anchor);
-      else if (k === 'zoom-in') setPanelZoom(id, panelZoom(id) + 0.1);
-      else if (k === 'zoom-out') setPanelZoom(id, panelZoom(id) - 0.1);
-      else if (k === 'zoom-reset') setPanelZoom(id, 1);
+      else if (k.startsWith('zoom-')) zoomAct(id, k);
       return;
     }
     if (k.startsWith('mode:')) setViewMode(id, k.slice(5));
@@ -3137,9 +3223,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     else if (k === 'max') api.toggleMax(id);
     else if (k === 'screenshot') void copyScreenshot(id);
     else if (k === 'help') openPanelHelp(id, anchor);
-    else if (k === 'zoom-in') setPanelZoom(id, panelZoom(id) + 0.1);
-    else if (k === 'zoom-out') setPanelZoom(id, panelZoom(id) - 0.1);
-    else if (k === 'zoom-reset') setPanelZoom(id, 1);
+    else if (k.startsWith('zoom-')) zoomAct(id, k);
     else if (k === 'hide') hideNow(id, fly);
     else if (k === 'close') { void closeNow(id); return; }
     refocusAfterPick(id);
@@ -3178,8 +3262,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const items = strip ? classicItems(id, 'dock').filter(([k]) => k !== 'unpin') : fly ? [] : classicItems(id, where);
     const own = items.map(([k, label]) => `<button type="button" role="menuitem" data-dk-menu="${k}">${escText(label)}</button>`).join('')
       + (helpIn === 'menu' && byId.get(id)?.help ? `<button type="button" role="menuitem" data-dk-menu="help">${escText(T.help)}</button>` : '')
-      + (zoomable(id)
-        ? `<button type="button" role="menuitem" data-dk-menu="zoom-in">${escText(T.zoomIn)}</button><button type="button" role="menuitem" data-dk-menu="zoom-out">${escText(T.zoomOut)}</button><button type="button" role="menuitem" data-dk-menu="zoom-reset">${escText(T.resetZoom(Math.round(panelZoom(id) * 100)))}</button>` : '');
+      + (zoomable(id) ? zoomMenuHtml(id) : '');
     showMenu(btn, id, { cls: 'dk-menu dk-mono', label: `${byId.get(id).title}: move or hide`, own, where, fly, classicMenu: true, at });
   }
 

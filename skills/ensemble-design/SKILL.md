@@ -1094,10 +1094,14 @@ component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's
 (`pdSyncTitles`, Dock's `setTitle`): the PO's chat is its **project's name** (#261, P213), on its tab, its window's name (once: `popTitle` adds no second project), and the Panels menu; "#12 The title" with a task in the middle, as a task's chat panel names its task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board has been past a 390 px row's edge since Topics came). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit, v0.22.2 now) of five panels, **PO chat, Needs you, Board, Workspace,
+library; `VERSION` names its commit, v0.24.0 now) of five panels, **PO chat, Needs you, Board, Workspace,
 Changes** (`PD_IDS` in `index.html`; Needs you is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
-menu, or popped out into a window of their own. **One click on a minimised panel's title bar
+menu, or popped out into a window of their own. A pinned panel with a strip button minimised
+(−, ⋯ › Hide, its open strip button) goes back to that button with no minimised title bar, and
+the button reopens it pinned where it was (P292; the library's own from v0.24.0, `pinnedMin`
+left at `'strip'`): a stack of strip panels only goes whole, a mixed stack keeps its other tabs
+minimised; floating panels and the phone minimise as before. **One click on a minimised panel's title bar
 brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
 keep their own clicks, a drag is not a click, and a double click still maximises (also when the
 restored chat's iframe slides under the pointer: for 500 ms after that click the dock's iframes
