@@ -2504,7 +2504,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
   body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
   /* The page follows the stand-in on its other sides too (Move To). */
-  body.ld-on main { margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
+  /* ED-334: and on its left, the one left panel's width (it was body.sw-on's
+     alone, the Tasks panel that went with #322), so a project's page with no PO
+     and no open task starts beside the panel, not under it. */
+  body.ld-on main { padding-left: calc(var(--list-w) + 20px); margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
   body.mid.po-dock.ld-on main { height: calc(100dvh - var(--top-h) - var(--list-t) - var(--list-b)); padding-bottom: 0; }
   body.ld-on thead { top: calc(var(--top-h) + var(--list-t)); }
   /* Two quiet controls, not form boxes: the project filter as a chip
@@ -18281,7 +18284,7 @@ function docsDocListen() {
     }));
   });
   document.addEventListener('click', (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
     });
   });
@@ -18289,7 +18292,7 @@ function docsDocListen() {
   // Overview, the page; scroll does not bubble, so it is caught on the way
   // down) or a resize closes it.
   const away = (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
     });
   };
@@ -18308,7 +18311,9 @@ function docsFilesWire(el, pid) {
   up.setAttribute('role', 'region'); up.setAttribute('aria-label', 'Files being added');
   side.insertBefore(up, tree);
   const menu = document.createElement('div');
-  menu.className = 'dcm'; menu.hidden = true; menu.setAttribute('role', 'menu');
+  // data-docs-menu: the document listeners below close this menu only, never
+  // another .dcm (a loose row's ⋯ in the left panel, ED-334).
+  menu.className = 'dcm'; menu.dataset.docsMenu = ''; menu.hidden = true; menu.setAttribute('role', 'menu');
   menu._el = el; menu._pid = pid;
   sec.appendChild(menu);
 

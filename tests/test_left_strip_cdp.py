@@ -560,6 +560,89 @@ async function main() {
     out.nounAll = await sm.evalIn(`(document.querySelector('#ld-projs [data-ldp="all"]') || {}).title || ''`);
     await sm.evalIn(`(() => { setNoun(null); window.dispatchEvent(new CustomEvent('cd-noun')); return 0; })()`);
     await sm.close();
+    // ---- ED-334: a loose row's ⋯ opens its menu, with a real mouse and the keys,
+    // once the Files panel's document listeners are on (they closed every .dcm)
+    {
+      const q = await page(1440, 900, false);
+      await toPo(q, P.Motors);
+      await q.until('!!document.querySelector("#ld-projs .ldp-row")', 15000).catch(() => null);
+      await q.evalIn('docsDocListen(); 0');
+      const SESS = `(() => { if (!ALL_ROWS.some(r => r.sessionId === 'sess-loose-334')) { const un = projectById(UNASSIGNED_ID);
+        ALL_ROWS.push({ sessionId: 'sess-loose-334', label: 'Notes on the trip', headless: false, updatedAt: Date.now() / 1000, isLive: false, agent: 'claude' });
+        if (un && !(un.sessions || []).some(x => x.sessionId === 'sess-loose-334')) un.sessions = (un.sessions || []).concat([{ sessionId: 'sess-loose-334' }]);
+        LDP.sig = ''; ldpPaint(); } return 0; })()`;
+      // spies: the row opening (its own click path), counted, not done
+      await q.evalIn(`(() => { window.__opened = []; const lo = ldpOpenLoose; ldpOpenLoose = b => { window.__opened.push('ldp'); }; const od = openDetail; openDetail = sid => { window.__opened.push('detail:' + sid); }; return 0; })()`);
+      const ST = `(() => { const m = [...document.querySelectorAll('body > .dcm')].find(e => !e.hidden && e.getBoundingClientRect().width > 0);
+        const b = document.activeElement;
+        if (!m) return { open: false, items: [], expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]'), opened: window.__opened.slice(), focusDots: !!(b && b.matches && b.matches('[data-ldp-menu]')) };
+        const r = m.getBoundingClientRect();
+        return { open: true, items: [...m.querySelectorAll('.dcm-item')].map(e => e.textContent.trim()), rect: { x: r.left, y: r.top, r: r.right, b: r.bottom },
+          inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, W: innerWidth, H: innerHeight,
+          expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]'), opened: window.__opened.slice() };
+      })()`;
+      const key = async (k, code, vk, text) => {
+        await c.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, text }, q.sessionId);
+        await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk }, q.sessionId);
+      };
+      out.dots334 = {};
+      for (const [kind, sel] of [['task', `[data-ldp-menu][data-ldp-room="${A.loose}"]`], ['session', `[data-ldp-menu][data-ldp-sid="sess-loose-334"]`]]) {
+        const o = {};
+        await q.evalIn(SESS); await sleep(50);
+        const [x, y] = await q.evalIn(`(() => { const b = ${LDP(sel)}; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+        await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, q.sessionId);
+        await q.clickAt(x, y); await sleep(300);
+        o.click = await q.evalIn(ST);
+        await q.shot(`ldp-menu-${kind}-1440x900`);
+        await q.key('Escape'); await sleep(200);
+        o.esc = await q.evalIn(ST);
+        // again, then a click outside (on the Inbox's body) closes it
+        await q.evalIn(SESS);
+        await q.clickAt(x, y); await sleep(250);
+        o.again = await q.evalIn(ST);
+        await q.click(`document.getElementById('ld-ibx-body')`); await sleep(250);
+        o.outside = await q.evalIn(ST);
+        // keyboard: focus ⋯, Enter opens; Escape; Space opens
+        await q.evalIn(SESS);
+        await q.evalIn(`(() => { ${LDP(sel)}.focus(); return 0; })()`);
+        await key('Enter', 'Enter', 13, '\r'); await sleep(250);
+        o.enter = await q.evalIn(ST);
+        await q.key('Escape'); await sleep(200);
+        o.enterEsc = await q.evalIn(ST);
+        await q.evalIn(SESS);
+        await q.evalIn(`(() => { ${LDP(sel)}.focus(); return 0; })()`);
+        await key(' ', 'Space', 32, ' '); await sleep(250);
+        o.space = await q.evalIn(ST);
+        await q.key('Escape'); await sleep(200);
+        out.dots334[kind] = o;
+      }
+      await q.close();
+      // a phone (390x844): no left panel, so no ⋯ to open there
+      const qp = await page(390, 844, true);
+      await toPo(qp, P.Motors).catch(() => null); await sleep(600);
+      out.dots334.phone = await qp.evalIn(`({ ld: !!LD.dock, dots: document.querySelectorAll('.ldp-dots').length, shown: [...document.querySelectorAll('.ldp-dots')].filter(b => b.getBoundingClientRect().width > 0).length })`);
+      await qp.close();
+    }
+    // ---- ED-334 (from #330): a project's page with no PO and no open task starts beside the left panel
+    {
+      const MAINGEO = `(() => { const m = document.querySelector('main'), v = document.getElementById('view'), ib = document.getElementById('ld-inbox');
+        const vr = v.getBoundingClientRect(), ir = ib && ib.getBoundingClientRect();
+        return { po: document.body.classList.contains('po-dock'), detail: document.body.classList.contains('detail-open'), sel: SELECTED_PROJECT || '',
+          viewL: Math.round(vr.left), viewR: Math.round(vr.right), viewW: Math.round(vr.width), panelR: ir && ir.width > 0 ? Math.round(ir.right) : null,
+          W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, ld: !!(window.LD && LD.dock) }; })()`;
+      const q = await page(1440, 900, false);
+      await q.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(P.Alpha)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
+      await sleep(1200);
+      out.inset334 = { wide: await q.evalIn(MAINGEO) };
+      await q.shot('ed334-alpha-1440x900');
+      await q.close();
+      const qp = await page(390, 844, true);
+      await qp.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(P.Alpha)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
+      await sleep(1200);
+      out.inset334.phone = await qp.evalIn(MAINGEO);
+      await qp.shot('ed334-alpha-390x844');
+      await qp.close();
+    }
     // ---- a phone: no list dock, the PO dock keeps its Inbox tab
     const ph = await page(390, 844, true);
     await toPo(ph, P.Motors).catch(() => null);
@@ -1108,6 +1191,43 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertTrue(g["narrow"])
         self.assertTrue(g["pdInbox"], "the PO dock's Inbox tab")
         self.assertLessEqual(g["scrollW"], g["W"])
+
+    def test_a_loose_rows_dots_open_its_menu(self):
+        """ED-334: with the Files panel's listeners on, a real click on ⋯ (a task
+        row and a session row) opens the row's menu inside the window, without
+        opening the row; Escape and a click outside close it; Enter and Space
+        on the focused ⋯ open it."""
+        d = self.g("dots334")
+        for kind in ("task", "session"):
+            with self.subTest(kind=kind):
+                o = d[kind]
+                self.assertTrue(o["click"]["open"], o["click"])
+                self.assertEqual(o["click"]["items"][0], "Open")
+                self.assertTrue(any(i.startswith("Make PO") for i in o["click"]["items"]), o["click"]["items"])
+                self.assertTrue(o["click"]["inside"], o["click"])
+                self.assertTrue(o["click"]["expanded"])
+                self.assertEqual(o["click"]["opened"], [], "the row did not open")
+                self.assertFalse(o["esc"]["open"]); self.assertFalse(o["esc"]["expanded"])
+                self.assertTrue(o["esc"]["focusDots"], "Escape gives focus back to the ⋯")
+                self.assertTrue(o["again"]["open"])
+                self.assertFalse(o["outside"]["open"]); self.assertFalse(o["outside"]["expanded"])
+                self.assertTrue(o["enter"]["open"], o["enter"]); self.assertTrue(o["enter"]["inside"])
+                self.assertFalse(o["enterEsc"]["open"])
+                self.assertTrue(o["space"]["open"], o["space"]); self.assertTrue(o["space"]["inside"])
+                self.assertEqual(o["space"]["opened"], [], "the row did not open")
+        self.assertEqual(d["phone"]["shown"], 0, "a phone has no left panel and no ⋯")
+
+    def test_a_project_page_without_a_po_starts_beside_the_left_panel(self):
+        g = self.g("inset334")
+        w = g["wide"]
+        self.assertFalse(w["po"]); self.assertFalse(w["detail"])
+        self.assertIsNotNone(w["panelR"], w)
+        self.assertGreaterEqual(w["viewL"], w["panelR"], w)
+        self.assertLessEqual(w["viewR"], w["W"], w)
+        p = g["phone"]
+        self.assertFalse(p["ld"])
+        self.assertGreaterEqual(p["viewL"], 0, p); self.assertLessEqual(p["viewL"], 24, p)
+        self.assertLessEqual(p["scrollW"], p["W"], p)
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])
