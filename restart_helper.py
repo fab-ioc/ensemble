@@ -1,4 +1,6 @@
-"""Detached macOS helper for a plain hub restart on code already on disk."""
+"""Detached helper (macOS, Linux) for a plain hub restart on code already on
+disk. The hub is stopped and started through its LaunchAgent or its systemd
+user unit when one runs it, else by signal and a start of its own."""
 from __future__ import annotations
 
 import json
@@ -31,6 +33,40 @@ def hub_args(plan: dict, port: int) -> list[str]:
     args.extend(["--port", str(port), "--log", plan["preflightLog"] if port != plan["port"]
                  else plan["log"], "--background"])
     return args
+
+
+# Set by systemd for each run of a unit, or the preflight's own: not carried over.
+UNIT_OWN_ENV = {"INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MANAGERPID",
+                "NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC", "ENSEMBLE_PTY_PREFLIGHT"}
+
+
+def systemctl(*args: str):
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True,
+                          encoding="utf-8", timeout=60)
+
+
+def systemd_start(plan: dict, unit: dict, log) -> bool:
+    """Start the hub's unit again. A transient unit (systemd-run, a test
+    hub's) is gone once stopped: it is made again under the same name, with
+    the hub's environment, the way the helper would start the hub itself."""
+    res = systemctl("start", unit["unit"])
+    log(f"systemctl --user start {unit['unit']}: {res.returncode}")
+    if res.returncode == 0 or not unit.get("transient"):
+        return res.returncode == 0
+    systemctl("reset-failed", unit["unit"])
+    argv = ["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit['unit']}",
+            f"--working-directory={plan['repo']}"]
+    argv += [f"--setenv={k}={v}" for k, v in plan["env"].items()
+             if k not in UNIT_OWN_ENV and "\n" not in v]
+    argv += ["--", *hub_args(plan, plan["port"])]
+    for _ in range(10):         # the old unit's name can take a moment to free
+        res = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        if res.returncode == 0:
+            break
+        time.sleep(0.5)
+    log(f"systemd-run --user --unit={unit['unit']}: {res.returncode}"
+        + (f" ({res.stderr.strip()[:200]})" if res.returncode else ""))
+    return res.returncode == 0
 
 
 def run(plan_path: str) -> int:
@@ -173,10 +209,19 @@ def _run(plan: dict) -> int:
             return 1
 
     svc = plan.get("launchd")
+    unit = plan.get("systemd")
     if svc:
         res = subprocess.run(["launchctl", "bootout", svc["target"]],
                              capture_output=True, text=True, encoding="utf-8", timeout=30)
         log(f"launchctl bootout: {res.returncode}")
+    elif unit:
+        res = systemctl("stop", unit["unit"])
+        log(f"systemctl --user stop {unit['unit']}: {res.returncode}")
+        if res.returncode != 0:
+            try:
+                os.kill(int(plan["hubPid"]), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
     else:
         try:
             os.kill(int(plan["hubPid"]), signal.SIGTERM)
@@ -224,6 +269,10 @@ def _run(plan: dict) -> int:
         log(f"launchctl bootstrap: {res.returncode}")
         if res.returncode != 0:
             log("launchd bootstrap failed; starting hub directly")
+            spawn(plan["port"])
+    elif unit:
+        if not systemd_start(plan, unit, log):
+            log("systemd start failed; starting hub directly")
             spawn(plan["port"])
     else:
         spawn(plan["port"])

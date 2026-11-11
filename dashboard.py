@@ -15234,6 +15234,8 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
         "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
         "keepAgents": keep_agents,
         "launchd": _launchd_service(),
+        # Linux: the systemd user unit running this hub (read at its start).
+        "systemd": BACKEND.systemd_service(),
         "graceSeconds": grace,
         "resumeRooms": resume,
         "wakeRoom": room_id if wake else "",
@@ -23395,6 +23397,12 @@ def main():
     BACKEND.warm_editors()
     servers = []
     remote_bound = False
+    if sys.platform.startswith("linux"):
+        # How a restart stops and starts this hub: read once, now.
+        unit = BACKEND.systemd_service()
+        print("[startup] restart: " + (f"through the systemd user unit {unit['unit']}" if unit
+                                      else "not under a systemd unit; the helper starts the hub"),
+              flush=True)
     if wildcard:
         servers.append(_listen_or_exit(remote_host, port))
         _announce_remote(remote_host)
