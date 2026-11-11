@@ -233,7 +233,7 @@ def preview(data, settings, host="", private_values=()):
 
 def fallback(plan, reason):
     query = urllib.parse.urlencode(dict(title=plan["title"], body=plan["body"], labels="feedback," + plan["kind"]))
-    return dict(ok=False, fallback=True, message=reason + " GitHub requires your login and will post under your account; this is not anonymous. Review and submit there.",
+    return dict(ok=False, fallback=True, reason=reason, message=reason + " GitHub requires your login and will post under your account; this is not anonymous. Review and submit there.",
                 url=f'https://github.com/{plan["repo"]}/issues/new?{query}')
 
 
