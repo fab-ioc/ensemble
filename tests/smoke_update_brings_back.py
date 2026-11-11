@@ -287,7 +287,8 @@ def main():
                              ("B", [{"agent": "claude", "role": "engineer"},
                                     {"agent": "claude", "role": "designer"}])):
             code, body = req("/api/room/new", {"title": f"Room {name}", "task": "Say hello.",
-                                                "projectId": pid, "agents": agents})
+                                                "projectId": pid, "agents": agents},
+                             timeout=120)              # a stub agent's start can take ~20s each
             assert code == 200, (code, body)
             rooms[name] = (body.get("room") or body)["id"]
         before = wait("3 agents running",
