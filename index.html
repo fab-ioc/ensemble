@@ -226,6 +226,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --fg-disabled: #8590A2;      /* inactive controls ONLY — see SKILL.md §3 */
     --border: #DCDFE4;
     --border-strong: #B3B9C4;
+    --proj-icon-edge: var(--border-strong);   /* #329: the hairline inside a project's own icon */
     --hover: rgba(9, 30, 66, .06);
     --pressed: rgba(9, 30, 66, .12);
 
@@ -4452,6 +4453,95 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
 }
 
+  /* #329 (P297 drawing): a project's own icon, in the square's box (.ldp-ico, .pm-sw: 12px),
+     cropped to a square, a hairline inside its edge so a white logo keeps its shape. */
+  .ldp-pic { position: relative; border-radius: 3px; overflow: hidden; }
+  .ldp-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ldp-pic::after { content: ''; position: absolute; inset: 0; border-radius: 3px; border: 1px solid var(--proj-icon-edge); }
+  .pm-head { display: flex; align-items: center; gap: 6px; }
+  .pm-head .pm-sw { flex: none; display: block; width: 12px; height: 12px; }
+  .dcm-rule { border-top: 1px solid var(--border); margin: 4px 0; }
+  #proj-switch-ico { flex: none; display: flex; }
+  #proj-switch-ico:empty { display: none; }
+  #proj-switch-ico .ldp-ico { margin-right: 6px; }
+  .ibx-where .ldp-ico { display: inline-block; vertical-align: -1px; margin-right: 4px; }
+  /* The settings dialog (projSettings). */
+  dialog.ps-dlg { width: 560px; max-width: calc(100vw - 16px); box-sizing: border-box; }
+  dialog.ps-dlg h3.ps-h { margin: 0; display: flex; align-items: center; gap: 8px; }
+  .ps-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-x { margin-left: auto; width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); font: inherit; font-size: 14px; cursor: pointer; }
+  .ps-x:hover { background: var(--hover); color: var(--fg); }
+  .ps-sub { color: var(--fg-muted); font-size: 12px; margin: 2px 0 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .ps-fld { margin: 16px 0 0; }
+  .ps-fld > label, .ps-lg { display: block; font-size: 12px; color: var(--fg-subtle); font-weight: 500; margin-bottom: 4px; }
+  .ps-inp { width: 100%; height: 34px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; outline: none; }
+  .ps-inp:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .ps-inp.bad { border-color: var(--c-danger-bold); }
+  .ps-inp.bad:focus { box-shadow: 0 0 0 1px var(--c-danger-bold); }
+  .ps-hint { font-size: 12px; color: var(--fg-muted); margin: 6px 0 0; }
+  .ps-err { font-size: 12px; color: var(--c-danger-fg); margin: 6px 0 0; }
+  .ps-choices { display: flex; flex-direction: column; gap: 8px; }
+  .ps-choice { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-200); font-size: 13px; cursor: pointer; }
+  .ps-choice:has(.ps-radio:checked) { background: var(--selected-bg); border-color: var(--accent); }
+  .ps-radio { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin: 0; flex: none; border-radius: 50%;
+    border: 1.5px solid var(--border-strong); background: transparent; cursor: pointer; }
+  .ps-radio:checked { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px); }
+  .ps-radio:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-big { width: 40px; height: 40px; flex: none; border-radius: 8px; overflow: hidden; position: relative; display: block; }
+  .ps-big svg { display: block; }
+  .ps-big img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ps-big-img::after { content: ''; position: absolute; inset: 0; border-radius: 8px; border: 1px solid var(--proj-icon-edge); }
+  .ps-big-none { border: 1px dashed var(--border-strong); box-sizing: border-box; }
+  .ps-t { flex: 1; min-width: 0; }
+  .ps-t b { font-weight: 500; display: block; }
+  .ps-t small { display: block; color: var(--fg-muted); font-size: 12px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-t small.ps-plain { font-family: inherit; }
+  .ps-btn { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; flex: none; border: 1px solid var(--border-strong); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .ps-btn:hover { background: var(--hover); }
+  .ps-save { height: 32px; padding: 0 16px; display: inline-flex; align-items: center; border: 0; border-radius: var(--r-200);
+    background: var(--accent); color: var(--accent-fg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .ps-save:hover { background: var(--accent-hover, var(--accent)); }
+  .ps-save.off, .ps-save:disabled { background: var(--c-neutral-bg); color: var(--fg-muted); cursor: default; }
+  .ps-btn:focus-visible, .ps-save:focus-visible, .ps-x:focus-visible, .ps-set-go:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-sample { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .ps-sample .ps-srow { width: 180px; cursor: default; }
+  .ps-sample .ps-srow:hover { background: var(--selected-bg); }
+  .ps-more { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .ps-more .ps-lg { margin-bottom: 6px; }
+  .ps-set { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 8px; min-height: 40px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .ps-set:last-child { border-bottom: 0; }
+  .ps-k { color: var(--fg-subtle); }
+  .ps-v { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-v code { font-family: var(--font-mono); font-size: 12px; }
+  .ps-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* The phone's menu offers its settings in one item (phone.html). */
+    #proj-menu .pm-set:not(.proj-settings-btn) { display: none; }
+    /* At the top (the keyboard), the screen's width less 8px gutters, 44px targets, 16px type in the field. */
+    dialog.ps-dlg { width: calc(100vw - 16px); max-width: none; max-height: calc(var(--vv-h, 100dvh) - 24px); margin: 12px auto auto; padding: 16px; }
+    dialog.ps-dlg h3.ps-h { font-size: 17px; }
+    .ps-x { width: 44px; height: 44px; margin: -10px -10px -10px auto; }
+    .ps-fld { margin-top: 14px; }
+    .ps-fld > label, .ps-lg { font-size: 13px; }
+    .ps-inp { height: 44px; font-size: 16px; }
+    .ps-hint { font-size: 13px; }
+    .ps-choice { min-height: 56px; padding: 6px 10px; font-size: 15px; }
+    .ps-radio { width: 16px; height: 16px; }
+    .ps-btn, .ps-save { height: auto; min-height: 44px; font-size: 15px; }
+    .ps-save { padding: 0 18px; }
+    .ps-more { margin-top: 14px; padding-top: 10px; }
+    .ps-more .ps-lg { margin-bottom: 2px; }
+    .ps-set { display: flex; gap: 8px; min-height: 44px; font-size: 15px; }
+    .ps-set-go { width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--fg); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+    .ps-set .ps-k { flex: none; width: 96px; font-size: 14px; }
+    .ps-set .ps-v { flex: 1; }
+    .ps-set .ps-v code { font-size: 13px; }
+    .ps-go { color: var(--fg-muted); font-size: 18px; }
+    .ps-foot { margin-top: 14px; }
+  }
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
@@ -4562,7 +4652,7 @@ window.DOC_LISTENERS_PAUSED = false;
          project's settings), then the conversation, the tool and the file
          (barCrumbs). -->
     <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s settings" title="Switch project, or change this project's settings" aria-haspopup="true" aria-expanded="false" aria-controls="proj-menu">
-      <span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
+      <span id="proj-switch-ico" aria-hidden="true"></span><span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
     </button>
     <span id="bar-crumbs"></span>
   </nav>
@@ -5017,6 +5107,12 @@ window.addEventListener('cd-noun', () => {
 // The one dialog most of the page's questions are asked in, kept by
 // reference: it moves to the window the person is using (pdModal).
 const MODAL_EL = document.getElementById('modal');
+// A chat under the dialog says its state itself while the dialog covers the
+// header that says it (session.html, placeState), and looks again only on its
+// next poll: once the dialog closes, it looks now.
+MODAL_EL.addEventListener('close', () => setTimeout(() => {
+  for (const f of document.querySelectorAll('iframe')) { try { f.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {} }
+}, 0));
 const fmtAgo = secs => {
   if (secs == null) return '-';
   if (secs < 0) secs = 0;
@@ -15809,7 +15905,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + `${hint ? `<span class="ibx-reason ibx-hint">${esc(hint)}</span>` : ''}</a>`;
     return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
       + (doneAll ? `<div class="ibx-hd">${link}${doneAll}</div>` : link)
-      + `<div class="ibx-meta"><span class="ibx-where">${esc(ibxWhere(r, all))}</span>`
+      + `<div class="ibx-meta"><span class="ibx-where">${all && r.project && r.projectId && typeof ldpSwatch === 'function' ? ldpSwatch(r.projectId) : ''}${esc(ibxWhere(r, all))}</span>`
       + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
       + (r.items && r.items.length ? more(r) : '')
@@ -16347,7 +16443,11 @@ function ldpColour(pid) {
 }
 // #328 (P294 drawing): every row's 12px icon. A project its colour square; a task
 // a check in a square; a session a speech bubble. Named by its tooltip.
+// #329: a project with an icon of its own shows it in the square's box instead.
 function ldpSwatch(pid, cls) {
+  let pj = null;
+  try { pj = projectById(pid); } catch (e) {}
+  if (pj && pj.icon && pj.icon.v) return `<span class="${cls || 'ldp-ico'} ldp-pic"><img src="${esc(projIconUrl(pid, pj.icon))}" alt="" draggable="false"></span>`;
   return `<svg class="${cls || 'ldp-ico'}" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pid)}"/></svg>`;
 }
 function ldpKindIcon(kind, cls) {
@@ -16367,8 +16467,11 @@ function ldpHtml(m) {
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
   const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
   for (const p of ps) {
-    h += `<button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
-      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`;
+    const reg = projectById(p.pid);
+    h += `<div class="ldp-item"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
+      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`
+      + (reg && reg.registered && p.pid !== UNASSIGNED_ID ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
+      + '</div>';
   }
   if (m.projs.length > LDP_N) {
     const rest = m.projs.length - LDP_N;
@@ -16409,7 +16512,7 @@ function ldpPaint() {
   LDP.sig = html;
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
-    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
+    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
       + (a.hasAttribute('data-ldp-menu') ? '[data-ldp-menu]' : (a.classList.contains('ldp-row') ? '.ldp-row' : ''))
     : '';
   el.innerHTML = html;
@@ -16432,20 +16535,17 @@ function ldpMenuClose() {
   m.el.remove();
   if (m.btn) m.btn.setAttribute('aria-expanded', 'false');
 }
-function ldpMenu(b, r, rect) {
+// A left-list row's menu (its ⋯ or a right click): `html` its items, `act(it)`
+// what a pick does (true: handled; else the item's own document handler acts).
+function ldpMenuOpen(b, rect, label, html, dotsSel, act) {
   ldpMenuClose();
   const el = document.createElement('div');
   el.className = 'dcm'; el.setAttribute('role', 'menu');
-  const title = rowTitle(r);
-  el.setAttribute('aria-label', 'Actions for ' + title);
-  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
-  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-  el.innerHTML = `<div class="dcm-head">${esc(title)}</div>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`;
+  el.setAttribute('aria-label', label);
+  el.innerHTML = html;
   document.body.appendChild(el);
   docsMenuPlace(el, rect);
-  const dots = b.matches('[data-ldp-menu]') ? b : (b.closest('.ldp-item') || b).querySelector('[data-ldp-menu]');
+  const dots = b.matches(dotsSel) ? b : (b.closest('.ldp-item') || b).querySelector(dotsSel);
   if (dots) dots.setAttribute('aria-expanded', 'true');
   const away = e => { if (!(e.target && e.target.nodeType === 1 && el.contains(e.target))) ldpMenuClose(); };
   const key = e => { if (e.key === 'Escape') { e.preventDefault(); const f = dots; ldpMenuClose(); if (f) f.focus(); } };
@@ -16466,15 +16566,44 @@ function ldpMenu(b, r, rect) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
     else if (e.key === 'Tab') { ldpMenuClose(); }
   };
-  // Make PO: the page's own .makepo-btn handler (on document) does the work.
   el.addEventListener('click', (e) => {
     const it = e.target.closest('.dcm-item');
     if (!it || it.disabled) return;
-    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return; }
+    if (act(it)) return;
     setTimeout(ldpMenuClose, 0);
   });
   const first = el.querySelector('.dcm-item');
   if (first) first.focus();
+}
+function ldpMenu(b, r, rect) {
+  const title = rowTitle(r);
+  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
+  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
+  // Make PO: the page's own .makepo-btn handler (on document) does the work.
+  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`,
+  '[data-ldp-menu]', it => {
+    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return true; }
+    return false;
+  });
+}
+// #329 (P297 drawing): a project row's menu: Open, then Rename and its settings.
+function ldpProjMenu(b, pid, rect) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  ldpMenuOpen(b, rect, 'Actions for ' + pj.name, `<div class="dcm-head">${esc(pj.name)}</div>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + '<div class="dcm-rule" role="separator"></div>'
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="rename">${esc(nounText('Rename {project}…'))}</button>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="settings">${esc(nounText('{Project} settings…'))}</button>`,
+  '[data-ldp-pmenu]', it => {
+    const a = it.dataset.act;
+    ldpMenuClose();
+    if (a === 'open') { ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint(); }
+    else projSettings(pid, { rename: a === 'rename' });
+    return true;
+  });
 }
 function ldpOpenLoose(b) {
   const r = ldpRow(b), room = b.getAttribute('data-ldp-room') || '';
@@ -16504,6 +16633,12 @@ function ldpOpenLoose(b) {
     if (more) {
       if (more === 'proj') LDP.more = !LDP.more; else LDP.moreLoose = !LDP.moreLoose;
       ldpPaint();
+      return;
+    }
+    const pm = b.getAttribute('data-ldp-pmenu');
+    if (pm) {
+      if (LDP_MENU && LDP_MENU.btn === b) { ldpMenuClose(); return; }
+      ldpProjMenu(b, pm, b.getBoundingClientRect());
       return;
     }
     if (b.hasAttribute('data-ldp-menu')) {
@@ -16537,6 +16672,14 @@ function ldpOpenLoose(b) {
     if (b.hasAttribute('data-ldp-room')) ldpOpenLoose(b);
   });
   box.addEventListener('contextmenu', (e) => {
+    const pr = e.target.closest('.ldp-item .ldp-row[data-ldp-proj]');
+    if (pr) {
+      const pid = pr.getAttribute('data-ldp-proj'), pj = projectById(pid);
+      if (!pj || !pj.registered || pid === UNASSIGNED_ID) return;
+      e.preventDefault();
+      ldpProjMenu(pr, pid, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
+      return;
+    }
     const b = e.target.closest('.ldp-item .ldp-row');
     if (!b) return;
     const r = ldpRow(b);
@@ -17296,6 +17439,8 @@ function openProjectPage(pid) {
 document.addEventListener('click', async (ev) => {
   const choose = ev.target.closest('.po-choose');
   if (choose) { projectSetupFlow({ projectId: choose.dataset.proj }); return; }
+  const psb = ev.target.closest('.proj-settings-btn, .proj-rename-btn');
+  if (psb) { projSettings(psb.dataset.proj, { rename: psb.classList.contains('proj-rename-btn') }); return; }
   const ttb = ev.target.closest('.task-tools-btn');
   if (ttb) { taskToolsChoose(ttb.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
@@ -17482,7 +17627,7 @@ async function keyChoose(pid, err) {
                                      body: JSON.stringify({ projectId: pid, key }) });
     toast(`${pj.name}'s tasks are ${key}-1, ${key}-2… where ${noun('many')} mix`, 4000, 'ok');
     await refreshProjects(); renderRows();
-  } catch (e) { keyChoose(pid, histErr(e)); }
+  } catch (e) { return keyChoose(pid, histErr(e)); }
 }
 // The plain sentence the hub sends with a refusal, out of api()'s error.
 function histErr(e) {
@@ -17508,6 +17653,250 @@ async function kindChoose(pid) {
     toast(kind === 'documents' ? `${pj.name} is a documents ${noun('one')}: its files are in its Workspace tab` : `${pj.name} is a code ${noun('one')} again`, 4000, 'ok');
     await refreshProjects(); renderRows();
   } catch (e) { toast(histErr(e), 8000, 'err'); }
+}
+
+// ---- #329 (P297 drawing): a project's settings ---------------------------------
+// One dialog: its name, its icon (the coloured square or a picture of its own),
+// then its other settings, each opening its own dialog and coming back here.
+// The name and the icon change only on Save (/api/projects/rename, /icon).
+const PS_MAX = 1024 * 1024;
+const PS_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'];
+function projIconUrl(pid, icon) {
+  return `/api/projects/icon?id=${encodeURIComponent(pid)}&v=${encodeURIComponent(String((icon && icon.v) || 0))}`;
+}
+function psSize(n) {
+  n = Number(n) || 0;
+  return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
+}
+function psName(s) { return String(s || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 120); }
+// The other project already called `name` (as the hub compares: case aside).
+function psClash(pid, name) {
+  const k = psName(name).toLowerCase();
+  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && String(p.name || '').trim().toLowerCase() === k) || null : null;
+}
+function psNameErr(pid, name) {
+  if (!psName(name)) return 'A name is needed.';
+  const o = psClash(pid, name);
+  return o ? nounText(`Another {project} is already called ${psName(name)}. Pick another name.`) : '';
+}
+// The picture the Image choice shows: a new file, else the one it has.
+function psPicSrc(pj, d) { return d.file ? d.file.dataUrl : (pj.icon ? projIconUrl(pj.id, pj.icon) : ''); }
+function psCanSave(pj, d) {
+  if (d.busy || psNameErr(pj.id, d.name)) return false;
+  if (d.choice === 'image' && !psPicSrc(pj, d)) return false;
+  return true;
+}
+function psSettingsRowsHtml(pj, phone) {
+  const po = poRowOf(pj);
+  const tools = pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit';
+  const rows = [];
+  if (pj.path) rows.push({ k: 'Kind', v: esc(nounText(isDocsProject(pj) ? 'Documents {project}' : 'Code {project}')), act: 'kind' });
+  if (pj.key) rows.push({ k: 'Key', v: `<code>${esc(pj.key)}</code>` + (phone ? '' : ` · its tasks are ${esc(pj.key)}-18 where ${esc(noun('many'))} mix`), act: 'key' });
+  rows.push({ k: phone ? 'Task tools' : "Task agents' tools", v: esc(tools), act: 'tools' });
+  if (po) {
+    const { m } = poAgent(po);
+    const n = pastCount(pj);
+    const past = n ? `${n} past conversation${n === 1 ? '' : 's'}` : '';
+    const v = phone ? (n ? `Past conversations (${n})` : m.agent || 'claude') : [m.agent || 'claude', shortModel(m.model), past].filter(Boolean).join(' · ');
+    rows.push({ k: 'PO', v: esc(v), act: n ? 'past' : '', btn: 'Past conversations…' });
+  } else rows.push({ k: 'PO', v: 'none', act: poChooseOffered(pj) ? 'po' : '', btn: 'Set up the PO…' });
+  return rows.map(r => phone
+    ? (r.act ? `<button type="button" class="ps-set ps-set-go" data-ps-act="${r.act}"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span><span class="ps-go" aria-hidden="true">›</span></button>`
+             : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span></div>`)
+    : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span>`
+      + (r.act ? `<button type="button" class="ps-btn" data-ps-act="${r.act}">${esc(r.btn || 'Change…')}</button>` : '<span></span>') + '</div>').join('');
+}
+function psHint(pj, phone) {
+  const keep = pj.key ? `Its folder, its id and its key ${pj.key} stay as they are.` : 'Its folder and its id stay as they are.';
+  return phone ? `Shown everywhere at once. ${keep}` : `Shown everywhere at once: the list, the bar, the Board, the Inbox and the chats. ${keep}`;
+}
+function psDialogHtml(pj, d, phone) {
+  const nameErr = psNameErr(pj.id, d.name);
+  const hint = esc(psHint(pj, phone));
+  const src = psPicSrc(pj, d);
+  const fileName = d.file ? d.file.name : (pj.icon && pj.icon.name) || '';
+  const fileSize = d.file ? d.file.size : (pj.icon && pj.icon.size) || 0;
+  const sq = d.choice !== 'image';
+  const bigSq = `<span class="ps-big"><svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><rect width="40" height="40" rx="8" fill="${ldpColour(pj.id)}"/></svg></span>`;
+  const bigPic = src ? `<span class="ps-big ps-big-img"><img src="${esc(src)}" alt=""></span>` : '<span class="ps-big ps-big-none"></span>';
+  const small = sq ? `<svg class="ldp-ico" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pj.id)}"/></svg>`
+    : (src ? `<span class="ldp-ico ldp-pic"><img src="${esc(src)}" alt=""></span>` : '<span class="ldp-ico"></span>');
+  let n = 0;
+  try { n = IBX.data ? ibxRows(IBX.data, 'project', pj.id).length : 0; } catch (e) {}
+  const save = psCanSave(pj, d);
+  return `<h3 class="ps-h">${ldpSwatch(pj.id)}<span class="ps-title">${esc(nounText('{Project} settings'))}</span>`
+    + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
+    + (pj.path ? `<div class="ps-sub">${esc(pj.path)}</div>` : '')
+    + `<div class="ps-fld"><label for="ps-name">Name</label>`
+    + `<input type="text" id="ps-name" class="ps-inp${nameErr && d.touched ? ' bad' : ''}" value="${esc(d.name)}" maxlength="120" autocomplete="off" spellcheck="false"`
+    + ` aria-describedby="ps-name-note"${nameErr && d.touched ? ' aria-invalid="true"' : ''}>`
+    + (nameErr && d.touched ? `<p class="ps-err" id="ps-name-note" role="alert">${esc(nameErr)}</p>` : `<p class="ps-hint" id="ps-name-note">${hint}</p>`)
+    + (d.nameErr ? `<p class="ps-err" role="alert">${esc(d.nameErr)}</p>` : '') + '</div>'
+    + `<div class="ps-fld"><div class="ps-lg" id="ps-icon-lg">Icon</div>`
+    + `<div class="ps-choices" role="radiogroup" aria-labelledby="ps-icon-lg">`
+    + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="square"${sq ? ' checked' : ''}>${bigSq}`
+    + `<span class="ps-t"><b>Coloured square</b>${phone ? '' : '<small class="ps-plain">its colour comes from its place in the list</small>'}</span></label>`
+    + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="image"${sq ? '' : ' checked'}>${bigPic}`
+    + `<span class="ps-t"><b>Image</b><small${src ? '' : ' class="ps-plain"'}>${src ? esc(fileName || 'image') + (fileSize ? ' · ' + esc(psSize(fileSize)) : '') : 'none yet'}</small></span>`
+    + `<button type="button" class="ps-btn" id="ps-up">${src ? 'Replace…' : 'Upload image…'}</button></label>`
+    + `<input type="file" id="ps-file" accept="${PS_TYPES.join(',')}" hidden></div>`
+    + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
+    + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, cropped to a square.'
+        : "PNG, JPEG, SVG or WebP, up to 1 MB. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
+    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    + '</div>'
+    + `<div class="ps-more"><div class="ps-lg">More settings</div>${psSettingsRowsHtml(pj, phone)}</div>`
+    + `<div class="ps-foot"><button type="button" class="ps-btn" id="ps-cancel">Cancel</button>`
+    + `<button type="button" class="ps-save${save ? '' : ' off'}" id="ps-save"${save ? '' : ' disabled'}>${d.busy ? 'Saving…' : 'Save'}</button></div>`;
+}
+function psReadFile(f) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(String(rd.result || ''));
+    rd.onerror = () => reject(rd.error || new Error('could not read the file'));
+    rd.readAsDataURL(f);
+  });
+}
+// The settings once: resolves 'saved', null (closed), or { sub } (another
+// setting's dialog to open; the dialog is closed by then).
+function psOnce(pid, d, focus) {
+  const dlg = pdModal();
+  const phone = phoneNow();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.classList.remove('ps-dlg');
+      if (dlg.open) dlg.close();
+      resolve(v);
+    };
+    const onCancel = (ev) => { ev.preventDefault(); finish(null); };
+    const paint = (keep) => {
+      const pj = projectById(pid);
+      if (!pj) { finish(null); return; }
+      const a = keep || (dlg.contains(document.activeElement) ? document.activeElement.id || '' : '');
+      const sel = dlg.querySelector('#ps-name');
+      const caret = sel && document.activeElement === sel ? [sel.selectionStart, sel.selectionEnd] : null;
+      dlg.innerHTML = psDialogHtml(pj, d, phone);
+      wire(pj);
+      const f = a && dlg.querySelector('#' + CSS.escape(a));
+      if (f) { f.focus(); if (caret && f.id === 'ps-name') f.setSelectionRange(caret[0], caret[1]); }
+    };
+    // The name's note and Save follow each key without redrawing the field.
+    const nameState = (pj) => {
+      const inp = dlg.querySelector('#ps-name');
+      const err = psNameErr(pid, d.name);
+      const shown = !!(err && d.touched);
+      inp.classList.toggle('bad', shown);
+      if (shown) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
+      const note = dlg.querySelector('#ps-name-note');
+      const want = shown ? 'ps-err' : 'ps-hint';
+      note.className = want;
+      if (shown) note.setAttribute('role', 'alert'); else note.removeAttribute('role');
+      const text = shown ? err : psHint(pj, phone);
+      if (note.textContent !== text) note.textContent = text;
+      const ok = psCanSave(pj, d);
+      const b = dlg.querySelector('#ps-save');
+      b.disabled = !ok; b.classList.toggle('off', !ok);
+      const s = dlg.querySelector('.ps-srow .ldp-name');
+      if (s) s.textContent = psName(d.name) || pj.name;
+    };
+    const save = async (pj) => {
+      if (!psCanSave(pj, d)) return;
+      d.busy = true; d.nameErr = ''; d.iconErr = '';
+      paint('ps-save');
+      const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      let step = 'name';
+      try {
+        const name = psName(d.name);
+        if (name !== pj.name) await post('/api/projects/rename', { projectId: pid, name });
+        step = 'icon';
+        if (d.choice === 'image' && d.file) await post('/api/projects/icon', { projectId: pid, dataUrl: d.file.dataUrl, name: d.file.name });
+        else if (d.choice !== 'image' && pj.icon) await post('/api/projects/icon', { projectId: pid, dataUrl: null });
+      } catch (e) {
+        d.busy = false;
+        if (step === 'name') d.nameErr = histErr(e); else d.iconErr = histErr(e);
+        // The Inbox's cards carry the project's name from the hub: ask for them again.
+        try { await refreshProjects(); renderRows(); ldpPaint(); syncProjSwitch(); ibxPoll(); } catch (x) {}
+        if (!done) paint(step === 'name' ? 'ps-name' : 'ps-up');
+        return;
+      }
+      d.busy = false;
+      try { await refreshProjects(); renderRows(); ldpPaint(); syncProjSwitch(); ibxPoll(); } catch (x) {}
+      finish('saved');
+    };
+    const wire = (pj) => {
+      const inp = dlg.querySelector('#ps-name');
+      inp.oninput = () => { d.name = inp.value; d.touched = true; d.nameErr = ''; nameState(pj); };
+      inp.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); d.touched = true; nameState(pj); save(pj); } };
+      dlg.querySelector('#ps-x').onclick = () => finish(null);
+      dlg.querySelector('#ps-cancel').onclick = () => finish(null);
+      dlg.querySelector('#ps-save').onclick = () => save(pj);
+      dlg.querySelectorAll('input[name="ps-icon"]').forEach(r => {
+        r.onchange = () => {
+          if (!r.checked) return;
+          d.choice = r.value; d.iconErr = '';
+          paint('');
+          const again = dlg.querySelector(`input[name="ps-icon"][value="${r.value}"]`);
+          if (again) again.focus();
+          // Image with no picture yet: pick one.
+          if (r.value === 'image' && !psPicSrc(pj, d)) dlg.querySelector('#ps-file').click();
+        };
+      });
+      const file = dlg.querySelector('#ps-file');
+      dlg.querySelector('#ps-up').onclick = (ev) => { ev.preventDefault(); file.click(); };
+      file.onchange = async () => {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        d.iconErr = '';
+        if (f.size > PS_MAX) d.iconErr = `That image is ${psSize(f.size)}; an icon can be up to 1 MB.`;
+        else if (f.type && !PS_TYPES.includes(f.type)) d.iconErr = 'Only a PNG, JPEG, SVG or WebP image can be an icon.';
+        else {
+          try { d.file = { dataUrl: await psReadFile(f), name: f.name, size: f.size }; d.choice = 'image'; }
+          catch (e) { d.iconErr = 'Could not read that file.'; }
+        }
+        if (!done) paint('ps-up');
+      };
+      dlg.querySelectorAll('[data-ps-act]').forEach(b => {
+        b.onclick = () => {
+          const act = b.getAttribute('data-ps-act');
+          const sub = act === 'kind' ? () => kindChoose(pid) : act === 'key' ? () => keyChoose(pid)
+            : act === 'tools' ? () => taskToolsChoose(pid) : act === 'past' ? () => pastList(pid)
+            : act === 'po' ? () => projectSetupFlow({ projectId: pid }) : null;
+          if (sub) finish({ sub, from: b.id || act });
+        };
+      });
+    };
+    dlg.classList.add('ps-dlg');
+    dlg.addEventListener('cancel', onCancel);
+    paint('');
+    if (!dlg.open) dlg.showModal();
+    const inp = dlg.querySelector('#ps-name');
+    if (focus === 'rename' && inp) { inp.focus(); inp.select(); }
+    else if (focus && dlg.querySelector(`[data-ps-act="${focus}"]`)) dlg.querySelector(`[data-ps-act="${focus}"]`).focus();
+    else if (inp) inp.focus();
+  });
+}
+// The dialog closes for another setting's dialog and comes back, with what
+// was typed and picked, once that one is closed; not after one that opened a
+// conversation (a past one, a new PO).
+async function projSettings(pid, opts) {
+  const pj = projectById(pid);
+  if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return;
+  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '' };
+  let focus = opts && opts.rename ? 'rename' : '';
+  for (;;) {
+    const got = await psOnce(pid, d, focus);
+    if (!got || got === 'saved') return;
+    const sid = SELECTED_SID;
+    await got.sub();
+    const dlg = pdModal();
+    if (dlg.open) await new Promise(res => dlg.addEventListener('close', res, { once: true }));
+    if (SELECTED_SID !== sid) return;
+    focus = got.from;
+  }
 }
 
 // ---- the file history ----
@@ -21395,9 +21784,17 @@ function projSwitchLabel() {
   const pj = projectById(SELECTED_PROJECT);
   return pj ? pj.name : noun('one', 'title');
 }
+// #329: the project's icon before its name in the bar (none for All).
+function projSwitchIco(pid) {
+  const el = document.getElementById('proj-switch-ico');
+  if (!el) return;
+  const h = pid && projectById(pid) ? ldpSwatch(pid) : '';
+  if (el.innerHTML !== h) el.innerHTML = h;
+}
 function syncProjSwitch() {
   const el = document.getElementById('proj-switch-name');
   if (el) el.textContent = projSwitchLabel();
+  projSwitchIco(SELECTED_PROJECT);
   barPaint();
 }
 // The bar is also the project's header: in a project, the way back and what
@@ -21681,6 +22078,7 @@ function barCrumbs() {
   // The switcher names the project you are in: an open task's too (#303).
   const nm = pc ? pc.text : projSwitchLabel();
   if (name.textContent !== nm) name.textContent = nm;
+  projSwitchIco(projHere());
   writeSlot(box, crumbsHtml(cs));
   projNoteOpened(projHere());
 }
@@ -21750,6 +22148,10 @@ document.getElementById('bar-crumbs').addEventListener('click', (e) => {
 function projMenuSettingsHtml(pj) {
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
   const items = [
+    `<button class="pm-item pm-set proj-settings-btn" data-proj="${esc(pj.id)}" title="${esc(nounText('Its name, its icon, its kind, its key, its task agents\' tools and its PO'))}">`
+      + `<span class="pm-name">${esc(nounText('{Project} settings…'))}</span></button>`,
+    `<button class="pm-item pm-set proj-rename-btn" data-proj="${esc(pj.id)}">`
+      + `<span class="pm-name">${esc(nounText('Rename {project}…'))}</span></button>`,
     `<button class="pm-item pm-set task-tools-btn" data-proj="${esc(pj.id)}" title="Which MCP servers and connectors its task owners, reviewers and handovers start with">`
       + `<span class="pm-name">Task agents' tools: ${esc(pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit')}…</span></button>`,
     pj.path ? `<button class="pm-item pm-set kind-btn" data-proj="${esc(pj.id)}" title="Code or documents: what its Overview and Workspace are">`
@@ -21761,7 +22163,8 @@ function projMenuSettingsHtml(pj) {
     poChooseOffered(pj) ? `<button class="pm-item pm-set po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">`
       + `<span class="pm-name">Set up the PO…</span></button>` : '',
   ].filter(Boolean);
-  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${esc(pj.name)}</div>` + items.join('') : '';
+  const ico = typeof ldpSwatch === 'function' ? ldpSwatch(pj.id, 'pm-sw') : '';
+  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${ico}${esc(pj.name)}</div>` + items.join('') : '';
 }
 // ---- The project switcher (#303, Layout A step 2): begin ---------------------
 // The bar's project name is the switcher: its menu lists the two or three
