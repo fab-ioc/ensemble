@@ -3392,6 +3392,41 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #update-close:hover { background: var(--hover); }
   #update-close:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #update-close[hidden] { display: none; }
+  /* The failure dialog fits a phone (#330). */
+  .update-modal { box-sizing: border-box; max-width: calc(100vw - 32px); min-width: min(380px, calc(100vw - 32px)); }
+  @media (max-width: 640px) { .update-modal { padding: 20px 16px; } }
+  /* Update now (#330): from the press until the page reloads on the new
+     version, the hub start-up card's look (static/startup.html) in the middle
+     of the page, shaded like #update-overlay. The drain's choices are in it. */
+  #upd-card { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: var(--s-400);
+    background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+  #upd-card[hidden] { display: none; }
+  #upd-card .upd-box { box-sizing: border-box; width: min(440px, 100%); background: var(--surface); border-radius: var(--r-300);
+    box-shadow: var(--e-100); padding: var(--s-600); color: var(--fg); font: var(--fs-300)/20px var(--font-sans); }
+  #upd-card .upd-brand { display: flex; align-items: center; gap: var(--s-200); color: var(--fg-subtle);
+    font-size: var(--fs-200); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  #upd-card .upd-brand img { width: 24px; height: 24px; border-radius: var(--r-200); }
+  #upd-card h2 { margin: var(--s-400) 0 var(--s-100); font-size: var(--fs-500); line-height: 24px; font-weight: 600; color: var(--fg); }
+  #upd-card .upd-detail { margin: 0; color: var(--fg-subtle); min-height: 20px; font-variant-numeric: tabular-nums; }
+  #upd-card .upd-drain { margin-top: 12px; }
+  #upd-card .upd-track { display: block; height: 4px; margin: var(--s-400) 0 0; border-radius: 2px; overflow: hidden;
+    background: color-mix(in srgb, var(--c-progress-bold) 20%, transparent); }
+  #upd-card .upd-fill { display: block; height: 100%; width: 35%; background: var(--c-progress-bold); border-radius: inherit;
+    animation: upd-slide 1.5s ease-in-out infinite; }
+  @keyframes upd-slide { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+  #upd-card .upd-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-300); margin-top: var(--s-600); }
+  #upd-card .upd-actions button { height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200); cursor: pointer;
+    font: 500 var(--fs-300)/20px var(--font-sans); border: 1px solid var(--border-strong); background: transparent; color: var(--fg); }
+  #upd-card .upd-actions button:hover { background: var(--hover); }
+  #upd-card .upd-actions .pri { border: 0; background: var(--accent); color: var(--accent-fg, #fff); }
+  #upd-card .upd-actions .pri:hover { background: var(--accent); filter: brightness(1.08); }
+  #upd-card .upd-actions button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #upd-card .upd-agents { display: flex; flex-direction: column; gap: 2px; margin-top: var(--s-300); color: var(--fg-subtle); font-size: var(--fs-200); }
+  #upd-card .upd-agents span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #upd-card [hidden] { display: none; }
+  #upd-card .upd-foot { margin: var(--s-400) 0 0; color: var(--fg-muted); font-size: var(--fs-200); line-height: 16px; }
+  @media (prefers-reduced-motion: reduce) { #upd-card .upd-fill { animation: none; width: 100%; } }
+  @media (pointer: coarse) { #upd-card .upd-actions button { height: 44px; } }
   .actions button.busy::before { content: '⏳ '; }
   .actions button.busy { opacity: .6; pointer-events: none; }
   dialog {
@@ -4544,6 +4579,24 @@ window.DOC_LISTENERS_PAUSED = false;
     <p class="update-stage" id="update-stage">Fetching from origin…</p>
     <p class="update-hint" id="update-hint">The server will restart and this page will refresh automatically.</p>
     <button type="button" id="update-close" hidden>Close</button>
+  </div>
+</div>
+<div id="upd-card" hidden>
+  <div class="upd-box" role="dialog" aria-modal="true" aria-labelledby="upd-card-title">
+    <div class="upd-brand"><img src="/static/icons/icon-192.png" alt=""><span>Ensemble</span></div>
+    <h2 id="upd-card-title">Updating Ensemble</h2>
+    <p class="upd-detail"><span id="upd-card-step" role="status" aria-live="polite"></span><span id="upd-card-time" aria-hidden="true"></span></p>
+    <span class="upd-track" role="progressbar" aria-label="Updating"><span class="upd-fill"></span></span>
+    <div id="upd-card-drain" hidden>
+      <p class="upd-detail upd-drain" id="upd-card-drain-text"></p>
+      <div class="upd-actions">
+        <button type="button" class="pri" id="upd-card-force">Restart now</button>
+        <button type="button" id="upd-card-cancel">Cancel</button>
+        <button type="button" id="upd-card-agents" aria-expanded="false" aria-controls="upd-card-agent-list">Agents ▸</button>
+      </div>
+      <div class="upd-agents" id="upd-card-agent-list" hidden></div>
+    </div>
+    <p class="upd-foot">Opens the new version by itself when it is ready.</p>
   </div>
 </div>
 <header>
@@ -9156,6 +9209,7 @@ async function setPref(key, val) {
 
 let UPDATE_DISMISSED = false;
 let UPDATE_IN_PROGRESS = false;
+let UPDATE_TARGET = '';   // the app: the release Update now installs
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
 async function checkForUpdate() {
   if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
@@ -9174,6 +9228,7 @@ function renderUpdateBanner(info) {
   const text = document.getElementById('update-banner-text');
   if (info.kind === 'release') {
     // The app: a newer release on GitHub.
+    UPDATE_TARGET = info.latestVersion || '';
     text.textContent = `Ensemble ${info.latestVersion} is available. You have ${info.currentVersion}.`;
     banner.hidden = false;
     return;
@@ -9265,6 +9320,7 @@ async function drainPoll() {
 function drainPaint(v) {
   const banner = document.getElementById('drain-banner');
   if (!banner) return;
+  if (updCardUp()) { banner.hidden = true; return; }   // the Update now card says it (#330)
   if (!v) {   // no answer: a restart under way keeps its banner, saying so
     if (DRAIN.wasHolding) document.getElementById('drain-text').textContent = 'Restarting… the page refreshes when the hub is back.';
     return;
@@ -9324,116 +9380,218 @@ function setUpdateStage(text) {
   const el = document.getElementById('update-stage');
   if (el) el.textContent = text;
 }
+// Update now (#330): from the press until the page reloads on the new
+// version, one card over the shaded page says the step and the time since the
+// press (m:ss); a drain's choices are in it. A failure goes to the update
+// dialog (showUpdateFailed).
+const UPD_CARD = { t0: 0, step: '', timer: 0, open: false };
+const updMmss = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function updCardTick() {
+  const t = document.getElementById('upd-card-time');
+  if (t) t.textContent = ' · ' + updMmss(Date.now() - UPD_CARD.t0);
+}
+function updCardShow(step) {
+  const o = document.getElementById('upd-card');
+  if (!o) return;
+  if (o.hidden) {
+    o.hidden = false;
+    clearInterval(UPD_CARD.timer);
+    UPD_CARD.timer = setInterval(updCardTick, 1000);
+  }
+  if (step && step !== UPD_CARD.step) {
+    UPD_CARD.step = step;
+    document.getElementById('upd-card-step').textContent = step;
+  }
+  updCardTick();
+  const db = document.getElementById('drain-banner');
+  if (db) db.hidden = true;   // the card says it, and the shade would cover it
+}
+function updCardHide() {
+  const o = document.getElementById('upd-card');
+  clearInterval(UPD_CARD.timer);
+  UPD_CARD.timer = 0;
+  UPD_CARD.step = '';
+  if (o) o.hidden = true;
+  updCardDrain(null);
+}
+const updCardUp = () => { const o = document.getElementById('upd-card'); return !!o && !o.hidden; };
+// The drain under way, in the card: whom it waits for, Restart now, Cancel, Agents.
+function updCardDrain(v) {
+  const box = document.getElementById('upd-card-drain');
+  if (!box) return;
+  const draining = !!v && v.state === 'draining';
+  box.hidden = !draining;
+  if (!draining) return;
+  const waiting = v.waitingFor || [];
+  const mins = Math.max(1, Math.ceil((v.secondsLeft || 0) / 60));
+  document.getElementById('upd-card-drain-text').textContent = waiting.length
+    ? `Waiting for ${waiting.length} agent${waiting.length === 1 ? '' : 's'} (${waiting.map(a => a.label).join(', ')}) · restarts anyway in ${mins} min.`
+    : 'Every agent is at a safe point · restarting.';
+  const btn = document.getElementById('upd-card-agents');
+  const list = document.getElementById('upd-card-agent-list');
+  btn.hidden = !(v.agents || []).length;
+  list.hidden = btn.hidden || !UPD_CARD.open;
+  btn.textContent = UPD_CARD.open ? 'Agents ▾' : 'Agents ▸';
+  btn.setAttribute('aria-expanded', String(UPD_CARD.open));
+  const sig = JSON.stringify(v.agents || []);
+  if (list.dataset.sig !== sig) {
+    list.dataset.sig = sig;
+    list.replaceChildren(...(v.agents || []).map(a => {
+      const s = document.createElement('span');
+      s.textContent = `${a.label}: ${DRAIN_STATE_WORDS[a.state] || a.state || 'looking'}` + (a.next ? `, next: ${a.next}` : '');
+      s.title = s.textContent;
+      return s;
+    }));
+  }
+}
+const updSleep = ms => new Promise(r => setTimeout(r, ms));
+async function updJson(url) {
+  try { const r = await fetch(url, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; }
+}
+// Where the update's helper writes: logs/update.log (the app) or logs/restart.log.
+function updLogPath(app) {
+  const dir = (RUNTIME_CFG && RUNTIME_CFG.stateDir) || '';
+  if (!dir) return (RUNTIME_CFG && RUNTIME_CFG.logFile) || '';
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return dir.replace(/[\\/]+$/, '') + sep + 'logs' + sep + (app ? 'update.log' : 'restart.log');
+}
+const UPD_DOWN_S = 300;        // the hub away this long: "The hub did not come back"
+const UPD_STALL_S = 600;       // the old hub answering this long with no new step: stopped
 async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
-  ensUpd.hold = true;   // the page refreshes on the new pid below, not for a changed stamp too
+  ensUpd.hold = true;   // the page reloads on the new hub below, not for a changed stamp too
   const banner = document.getElementById('update-banner');
   const overlay = document.getElementById('update-overlay');
   if (banner) banner.hidden = true;
-  if (overlay) overlay.hidden = false;
+  if (overlay) overlay.hidden = true;
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
   const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
-  setUpdateStage(app ? 'Downloading…' : 'Fetching from origin…');
-
+  let target = app ? UPDATE_TARGET : '';
+  UPD_CARD.t0 = Date.now();
+  UPD_CARD.open = false;
+  updCardShow(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
   const startedAt = Date.now() / 1000;
+  let logPath = updLogPath(app);
+  const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
+  const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
   // The hub only restarts for this page (it holds the key the hub handed it
   // when the page opened) or the Ensemble Dashboard PO. A 403 is a real no —
   // e.g. the key is from before a restart and the page needs a reload — so
-  // say why instead of waiting a minute for a restart that never comes.
-  let refused = '';
-  let logPath = (RUNTIME_CFG && RUNTIME_CFG.logFile) || '';
+  // say why instead of waiting for a restart that never comes. A source
+  // update fetches from GitHub inside this request.
+  let status = 0, body = {};
   try {
     const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                            body: JSON.stringify({ when: 'safe', reason: 'an update' }) });
-    const body = await r.json().catch(() => ({}));
-    if (body.log) logPath = body.log;
-    if (body.keepAgents && overlay) overlay.hidden = true;
-    if (body.draining) {
-      // The hub waits for every agent to reach a safe point first: the
-      // drain banner takes over, and refreshes the page once it is back.
-      UPDATE_IN_PROGRESS = false;
-      ensUpd.hold = false;
-      if (overlay) overlay.hidden = true;
-      drainPoll();
-      return;
-    }
-    if (body.started && overlay) overlay.hidden = true;
-    if (r.status === 403) {
-      refused = body.message || 'the hub refused the update';
-    } else if (!r.ok && r.status !== 202) {
-      // The update never started (the hub is still up): say why now.
-      refused = `Update could not start: ${body.error || body.message || `HTTP ${r.status}`}`;
-    }
+    status = r.status;
+    body = await r.json().catch(() => ({}));
   } catch {
-    // Network error here is expected — the server may have died mid-request.
+    // No answer: the hub may have stopped mid-request; the polls below see.
   }
-  if (refused) {
-    UPDATE_IN_PROGRESS = false;
-    ensUpd.hold = false;
-    if (overlay) overlay.hidden = true;
+  if (body.log) logPath = body.log;
+  if (body.version) target = body.version;
+  if (status === 403) {
+    stop();
     if (banner) banner.hidden = false;
-    toast(refused, 8000, 'err');
+    toast(body.message || 'the hub refused the update', 8000, 'err');
+    return;
+  }
+  if (status && (status < 200 || status >= 300)) {
+    // The update never started and the hub is still up: say why now.
+    const why = body.error || body.message || `HTTP ${status}`;
+    fail(why, /^git (fetch|reset) failed/.test(why) ? 'Check the connection, then Update now again.' : '');
     return;
   }
 
-  setUpdateStage(app ? 'Downloading…' : 'Restarting server…');
-  // Wait for the new pid to appear. launchctl kickstart is ~5-10s typically
-  // (git fetch dominates). Cap at 60s. The app downloads the release and
-  // starts it once on a spare port first: up to 4 minutes.
-  const deadline = performance.now() + (app ? 240_000 : 60_000);
-  let lastStage = 'restart';
-  while (performance.now() < deadline) {
-    await new Promise(r => setTimeout(r, app ? 1000 : 500));
-    if (app) {
+  let draining = !!body.draining;
+  let downSince = 0, notBack = false;
+  let lastStep = '', lastStepAt = Date.now();
+  const step = s => { if (s !== lastStep) { lastStep = s; lastStepAt = Date.now(); } updCardShow(s); };
+  while (true) {
+    await updSleep(notBack ? 3000 : 1000);
+    const cfg = await updJson('/api/config');
+    if (!cfg || !cfg.pid) {
+      // The hub is away: the restart under way.
+      if (!downSince) downSince = Date.now();
+      if (notBack) continue;
+      step('The hub is restarting, back in a moment');
+      if (Date.now() - downSince > UPD_DOWN_S * 1000) {
+        // Say where the reason is, and keep looking: the page still
+        // reloads if it comes back after all.
+        notBack = true;
+        fail('');
+      }
+      continue;
+    }
+    downSince = 0;
+    if (cfg.pid !== startPid) {
+      // A new hub. The app's: the new version, or the old one put back.
+      if (app && target && cfg.version && cfg.version !== target) {
+        const st = await updJson('/api/update-status');
+        const last = st && st.last;
+        fail(last && last.rolledBack && last.from
+          ? `Ensemble ${target} did not start, so ${last.from} was put back`
+          : `Ensemble ${target} did not start, so ${cfg.version} was put back`);
+        return;
+      }
+      document.getElementById('update-overlay').hidden = true;
+      updCardShow(app || target ? `${target || cfg.version} is running · Reloading the page`
+                                : 'The new code is running · Reloading the page');
+      await updSleep(600);
+      ensUpd.hold = false;
+      ensUpd.reload();   // keeps the place
+      return;
+    }
+    if (notBack) continue;
+    // The hub that took the update still runs: where it stands.
+    if (draining) {
+      const v = await updJson('/api/restart/drain');
+      if (v && v.state === 'draining') {
+        const n = (v.waitingFor || []).length;
+        updCardDrain(v);
+        step(n ? `Waiting for ${n} agent${n === 1 ? '' : 's'} to reach a safe point` : 'Every agent is at a safe point');
+        lastStepAt = Date.now();     // a drain has its own deadline
+        continue;
+      }
+      updCardDrain(null);
+      if (v && v.state === 'cancelled') {
+        stop();
+        if (banner) banner.hidden = false;
+        toast('Update cancelled: nothing was restarted', 6000);
+        return;
+      }
+      if (v && v.state === 'failed') {
+        fail(`The update did not happen: ${v.outcome || 'it failed'}`);
+        return;
+      }
+      if (v && v.state === 'restarting') step(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
+    }
+    const st = await updJson('/api/update-status');
+    if (app && st) {
       // Its stages, and a stop the hub survived (a checksum that does not
       // match, a new version that did not start): say so now.
-      let st = null;
-      try { const resp = await fetch('/api/update-status'); st = resp.ok ? await resp.json() : null; } catch {}
-      const last = st && st.last;
-      const why = st && st.stage === 'failed' ? st.error
-        : (last && !last.ok && last.at >= startedAt && last.stage === 'preflight' ? last.reason : '');
-      if (why) {
-        showUpdateFailed(logPath, why);
-        UPDATE_IN_PROGRESS = false;
-        ensUpd.hold = false;
+      if (st.to) target = st.to;
+      const last = st.last;
+      if (st.stage === 'failed') {
+        fail(lastStep.startsWith('Downloading') ? `The download failed: ${st.error}` : st.error,
+             lastStep.startsWith('Downloading') ? 'Try Update now again later.' : '');
         return;
       }
-      if (st && st.stage) {
-        const stages = { downloading: 'Downloading…', starting: 'Starting the new version…',
-                         restarting: 'Restarting…' };
-        if (stages[st.stage]) setUpdateStage(stages[st.stage]);
-      }
+      if (last && !last.ok && last.at >= startedAt && last.stage === 'preflight') { fail(last.reason); return; }
+      if (st.stage === 'downloading') step(`Downloading ${target || 'the update'}`);
+      else if (st.stage === 'starting' || st.stage === 'restarting') step(`Checking that ${target || 'the new version'} starts`);
+    } else if (st && st.restart) {
+      const rs = st.restart;
+      if (rs.stage === 'failed') { fail(rs.error || 'The new code did not start'); return; }
+      if (rs.stage === 'checking') step('Checking that the new code starts');
+      else if (rs.stage === 'restarting') step('Restarting the hub');
     }
-    try {
-      const resp = await fetch('/api/config');
-      if (!resp.ok) continue;
-      const cfg = await resp.json();
-      if (cfg && cfg.pid && cfg.pid !== startPid) {
-        if (overlay) overlay.hidden = true;
-        UPDATE_IN_PROGRESS = false;
-        ensUpd.hold = false;
-        ensUpd.checkedAt = 0;
-        ensUpd.poll();
-        refresh();
-        return;
-      }
-    } catch { /* still restarting */ }
-  }
-
-  // Timed out: the hub did not come back. Say where the reason is, and keep
-  // looking, so the page still reloads if it comes back after all.
-  showUpdateFailed(logPath);
-  UPDATE_IN_PROGRESS = false;
-  ensUpd.hold = false;
-  while (true) {
-    await new Promise(r => setTimeout(r, 3000));
-    try {
-      const resp = await fetch('/api/config');
-      const cfg = resp.ok ? await resp.json() : null;
-      if (cfg && cfg.pid && cfg.pid !== startPid) { ensUpd.checkedAt = 0; ensUpd.poll(); refresh(); return; }
-    } catch { /* still down */ }
+    if (Date.now() - lastStepAt > UPD_STALL_S * 1000) {
+      fail(`Nothing moved for ${UPD_STALL_S / 60} min at “${lastStep}”`);
+      return;
+    }
   }
 }
 function resetUpdateModal() {
@@ -9445,23 +9603,27 @@ function resetUpdateModal() {
     'The server will restart and this page will refresh automatically.';
   document.getElementById('update-close').hidden = true;
 }
-function showUpdateFailed(logPath, reason) {
+// A failure: what happened, what to do, where the log is, Close.
+function showUpdateFailed(logPath, reason, advice) {
   const overlay = document.getElementById('update-overlay');
   const modal = overlay && overlay.querySelector('.update-modal');
   if (!modal) return;
+  updCardHide();
   modal.classList.add('is-failed');
+  const log = tildeify(logPath) || 'the hub log';
   if (reason) {
     // The update stopped and this version keeps running.
     modal.querySelector('h3').textContent = 'Not updated';
     setUpdateStage(reason);
     document.getElementById('update-hint').textContent =
-      `This version keeps running. More in ${tildeify(logPath) || 'the hub log'}.`;
+      `This version keeps running. ${advice ? advice + ' ' : ''}More in ${log}.`;
   } else {
     modal.querySelector('h3').textContent = 'The hub did not come back';
-    setUpdateStage(`See ${tildeify(logPath) || 'the hub log'}`);
+    setUpdateStage(`Waited ${Math.round(UPD_DOWN_S / 60)} min. See ${log}`);
     document.getElementById('update-hint').textContent =
-      'The last lines there say why. This page refreshes if the hub starts again.';
+      'The last lines there say why. This page reloads by itself if the hub starts again.';
   }
+  overlay.hidden = false;
   const close = document.getElementById('update-close');
   close.hidden = false;
   close.onclick = () => { overlay.hidden = true; };
@@ -24374,6 +24536,16 @@ window.ensUpdPlace = () => ({
   // before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
   document.getElementById('drain-force')?.addEventListener('click', () => drainAction('force'));
+  document.getElementById('upd-card-force')?.addEventListener('click', () => drainAction('force'));
+  document.getElementById('upd-card-cancel')?.addEventListener('click', () => drainAction('cancel'));
+  document.getElementById('upd-card-agents')?.addEventListener('click', () => {
+    UPD_CARD.open = !UPD_CARD.open;
+    const list = document.getElementById('upd-card-agent-list');
+    list.hidden = !UPD_CARD.open;
+    const btn = document.getElementById('upd-card-agents');
+    btn.textContent = UPD_CARD.open ? 'Agents ▾' : 'Agents ▸';
+    btn.setAttribute('aria-expanded', String(UPD_CARD.open));
+  });
   document.getElementById('drain-cancel')?.addEventListener('click', () => drainAction('cancel'));
   document.getElementById('drain-dismiss')?.addEventListener('click', () => {
     DRAIN.dismissed = DRAIN.id || '';
