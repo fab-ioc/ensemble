@@ -178,6 +178,7 @@ import hub_typing
 import restore_problems
 import seat_folders
 import move_check
+import loose_sessions
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -6434,10 +6435,19 @@ _PO_BRIEF_HEADS = ("[rotation] You are the product owner (PO)", "[product owner]
                    "You are the product owner (PO) of the project")
 
 
+# The brief a PO has started with since board_brief (#350): the hub's board
+# first, after the hub's tag when there is one ("[rotation] ## Board now…").
+_PO_BOARD_HEAD = "## Board now (from the hub,"
+_HUB_TAG = re.compile(r"\[[^\]\n]{1,40}\] ")
+
+
 def is_po_brief(first: str) -> bool:
     """Whether a conversation's first user message is the hub's PO brief."""
     s = (first or "").lstrip().lstrip("-").lstrip()
-    return s.startswith(_PO_BRIEF_HEADS)
+    if s.startswith(_PO_BRIEF_HEADS):
+        return True
+    m = _HUB_TAG.match(s)
+    return (s[m.end():] if m else s).startswith(_PO_BOARD_HEAD)
 
 
 def _norm_folder(p: str) -> str:
@@ -11546,6 +11556,54 @@ def _find_deep(q: str, tag: str, seq: int) -> tuple[int, dict]:
     return 200, res
 
 
+def _find_hub_own():
+    """``hub_own(found)``: whether a deep-search hit no task holds is a
+    conversation the session list leaves out (#350): a deleted room's, or the
+    hub's, a test's or a probe's by its words, folder or launch. A PO's past
+    conversation (old_po_room) is not: its PO lists it."""
+    try:
+        gone = chatroom.gone_sessions()
+    except Exception:       # noqa: BLE001
+        gone = frozenset()
+    state: dict = {}
+
+    def hub_own(f: dict) -> bool:
+        sid = f.get("sessionId") or ""
+        if sid in gone:
+            return True
+        if not state:
+            try:
+                rooms = chatroom.list_rooms(copy_rooms=False)
+            except Exception:       # noqa: BLE001
+                rooms = []
+            try:
+                po_folders = po_seat_folders(load_projects(), rooms)
+            except Exception:       # noqa: BLE001
+                po_folders = ({}, {})
+            state.update(hidden=_loose_filter(rooms), po=po_folders)
+        path = f.get("path") or ""
+        cwd = f.get("cwd") or ""
+        first = ""
+        if f.get("agent") == "codex":
+            try:
+                cs = agents.codex._parse_rollout(Path(path)) if path else None
+            except Exception:       # noqa: BLE001
+                cs = None
+            if cs is not None:
+                first, cwd = cs.first, cs.cwd or cwd
+            one_shot = lambda: loose_sessions.codex_one_shot(path)     # noqa: E731
+        else:
+            try:
+                first = first_last_user(Path(path))[0] if path else ""
+            except Exception:       # noqa: BLE001
+                first = ""
+            one_shot = lambda: bool(path) and loose_sessions.claude_one_shot(path)     # noqa: E731
+        if old_po_room(cwd, first, state["po"]):
+            return False
+        return state["hidden"](first, cwd, one_shot)
+    return hub_own
+
+
 def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tuple[int, dict]:
     """GET /api/find: tasks, past sessions and messages for the top bar's
     drop-down. Each group is {count, items}; a group sends at most
@@ -11589,6 +11647,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
                 # A folder several tasks ran in names none of them: its
                 # conversations without a session link are Past sessions.
                 cwd_room[c] = e["id"] if cwd_room.get(c, e["id"]) == e["id"] else ""
+        hub_own = _find_hub_own()
         for f in res.get("found") or []:
             sid = f.get("sessionId") or ""
             rid = sid_room.get(sid) or cwd_room.get(_find_norm(f.get("cwd") or ""))
@@ -11599,6 +11658,9 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
                                   "hits": f.get("hits") or 0}
                 else:
                     t["hits"] += f.get("hits") or 0
+                continue
+            # Not a person's own conversation (#350): no Past session either.
+            if sid not in row_of and hub_own(f):
                 continue
             s = sessions.get(sid)
             if s is None:
@@ -13328,6 +13390,25 @@ def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
 _PAST_FOUND: dict[str, list[dict]] | None = None     # None: no load yet
 
 
+def _loose_filter(rooms: list[dict]):
+    """``hidden(first, cwd, one_shot)``: whether a conversation no room holds
+    is the hub's, a test's or a probe's rather than a person's
+    (loose_sessions.reason, #350). ``one_shot()`` may read the file; it is
+    asked only when nothing else told."""
+    try:
+        projects = load_projects()
+    except Exception:       # noqa: BLE001
+        projects = []
+    pdirs = [f for p in projects for f in (p.get("path") or "", p.get("home") or "") if f]
+    tdirs = loose_sessions.task_folders(rooms, pdirs, HOME, PROJECTS_ROOT)
+
+    def hidden(first: str, cwd: str, one_shot=None) -> bool:
+        return bool(loose_sessions.reason(first, cwd, hub_words=_hub_words_kind, one_shot=one_shot,
+                                          task_dirs=tdirs, project_dirs=pdirs,
+                                          home=HOME, root=PROJECTS_ROOT))
+    return hidden
+
+
 def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     """Unified view: recent transcripts with live-state overlaid where applicable.
     Sorted by updatedAt desc, so active live sessions naturally float to the top.
@@ -13375,6 +13456,12 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
     except Exception:
         po_folders = ({}, {})
     past_found: dict[str, list[dict]] = {}
+    # A deleted room's conversations stay the hub's (#350).
+    try:
+        collab_sids |= chatroom.gone_sessions()
+    except Exception:       # noqa: BLE001 — the words below still tell most
+        pass
+    hidden = _loose_filter(rooms)
 
     def _held(sid: str, cwd: str) -> bool:
         return sid in collab_sids or _norm_cwd(cwd or ".") in collab_cwds
@@ -13426,6 +13513,9 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             past_found.setdefault(po_rid, []).append(
                 {"sessionId": sid, "agent": "claude", "cwd": row_cwd, "updatedAt": mtime,
                  "first": first, "turns": turns})
+            continue
+        # The hub's, a test's or a probe's, not a person's (#350): no row.
+        if hidden(first, row_cwd, lambda: loose_sessions.claude_one_shot(jsonl)):
             continue
         row_label = labels.get(sid, "")
         out.append({
@@ -13517,11 +13607,16 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
         codex_live = {}
 
     # The same window as above: a task's rollouts and empty shells do not count.
+    def _codex_hidden(cs) -> bool:
+        return hidden(cs.first, cs.cwd, lambda: loose_sessions.codex_one_shot(cs.transcript_path))
+
     def _codex_dropped(cs) -> bool:
         return (_held(cs.session_id, cs.cwd)
                 or (cs.turns == 0 and not labels.get(cs.session_id)
                     and cs.session_id not in archived_set
-                    and _norm_cwd(cs.cwd) not in codex_live))
+                    and _norm_cwd(cs.cwd) not in codex_live)
+                # Not one a PO's past conversations take (old_po_room, below).
+                or (not old_po_room(cs.cwd, cs.first, po_folders) and _codex_hidden(cs)))
     try:
         if progress_key:
             progress.set_progress(progress_key, "Reading Codex conversations")
@@ -13550,6 +13645,8 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             past_found.setdefault(po_rid, []).append(
                 {"sessionId": sid, "agent": "codex", "cwd": cs.cwd, "updatedAt": cs.updated_at,
                  "first": cs.first, "turns": cs.turns})
+            continue
+        if _codex_hidden(cs):
             continue
         if is_live:
             _claimed_cwds.add(_ck)
