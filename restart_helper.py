@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from backends import ptyhost
+import restart_guard
 
 
 PORT_FREE_WAIT_S = 10.0     # for the old hub's port, once its process is gone
@@ -95,6 +96,24 @@ def systemd_start(plan: dict, unit: dict, log) -> bool:
     log(f"systemd-run --user --unit={unit['unit']}: {res.returncode}"
         + (f" ({res.stderr.strip()[:200]})" if res.returncode else ""))
     return res.returncode == 0
+
+
+def guard(plan: dict, log) -> bool:
+    """ED-342: before the hub's unit stops, every long-running process a
+    project left in its cgroups (or in a PTY host's scope) is moved into a
+    scope of its own (restart_guard). False: one could not be, and the
+    restart is refused unless the plan says to stop them anyway. A hub under
+    no unit: its stop ends its own process only, nothing to guard."""
+    unit = plan.get("systemd")
+    if not unit:
+        return True
+    res = restart_guard.protect(units=[unit["unit"]], hub_pids=[plan["hubPid"]],
+                                state_dirs=[Path(plan["leasePath"]).parent],
+                                force=bool(plan.get("stopForeign")),
+                                log_path=Path(plan["log"]), what="the restart")
+    if not res["ok"]:
+        log("guard: refused; hub left running")
+    return res["ok"]
 
 
 def run(plan_path: str) -> int:
@@ -210,6 +229,8 @@ def _run(plan: dict) -> int:
             pf.kill()
 
     time.sleep(max(0, plan.get("graceSeconds", 0)))
+    if not guard(plan, log):
+        return 1
     lease = {"lease": plan["leaseId"]}
     pinned_host = None
     try:
