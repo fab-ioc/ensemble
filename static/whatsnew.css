@@ -86,3 +86,9 @@
   #wn-dialog .wn-actions .po-btn { flex: 1 1 auto; }
   #wn-dialog .wn-actions .skip { margin-left: 0; flex-basis: 100%; }
 }
+/* Why Install now did not install (#345): a calm fact, or a no (.warn). */
+#wn-dialog .wn-msg {
+  margin: var(--s-300) 0 0; padding: var(--s-200) var(--s-300); border-radius: var(--r-200); font-size: var(--fs-200);
+  background: var(--surface-sunken); color: var(--fg);
+}
+#wn-dialog .wn-msg.warn { background: var(--c-warning-bg); color: var(--c-warning-fg); }

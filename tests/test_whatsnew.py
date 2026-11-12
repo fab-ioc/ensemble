@@ -170,6 +170,13 @@ class Seeded(unittest.TestCase):
 
 
 class GitList(Seeded):
+    def test_forced_check_waits_for_a_check_already_running(self):
+        stale = {"available": True, "latestSha": "old"}
+        with mock.patch.object(dashboard, "_UPDATE_CHECK_CACHE", (0, stale)), \
+                mock.patch.object(dashboard, "_UPDATE_CHECK_LOCK", True):
+            self.assertEqual(dashboard.check_for_update(force=True),
+                             {"available": False, "reason": "checking"})
+
     def test_first_parent_subjects_newest_first_plain(self):
         self.merge(1, "the first feature")
         (self.up / "g").write_text("x")
@@ -433,6 +440,30 @@ class Endpoint(Seeded):
             self.assertEqual(len(fetches), 1, fetches)
             # The page's periodic poll still checks again once it has run out.
             self.call("/api/update-check")
+            self.assertEqual(len(fetches), 2, fetches)
+
+    def test_install_now_checks_again_with_fresh(self):
+        # #345: &fresh=1 checks now, however new the cache, so Install now
+        # acts on the hub as it is.
+        real = dashboard._run
+        fetches = []
+        def run(cmd, *a, **kw):
+            if "fetch" in cmd:
+                fetches.append(cmd)
+            return real(cmd, *a, **kw)
+        with mock.patch.object(dashboard, "_run", side_effect=run), \
+                mock.patch.object(dashboard.restart_drain, "observe_hub", return_value={}), \
+                mock.patch.object(dashboard.restart_drain, "holding", return_value=False):
+            cold = self.call("/api/update-check?wait=1")[1]
+            self.assertEqual(cold["reason"], "not_checked")
+            self.assertTrue(self.call("/api/update-check")[1]["available"])
+            self.assertTrue(self.call("/api/update-check?wait=1")[1]["available"])
+            # Installed meanwhile (another page, a local pull): fresh says so.
+            git(self.co, "pull", "-q")
+            fresh = self.call("/api/update-check?wait=1&fresh=1")[1]
+            self.assertFalse(fresh["available"])
+            self.assertNotIn("reason", fresh, "up to date, not a failure")
+            self.assertFalse(self.call("/api/update-check?wait=1")[1]["available"], "the cache holds it")
             self.assertEqual(len(fetches), 2, fetches)
 
     def test_a_built_app_may_wait(self):
