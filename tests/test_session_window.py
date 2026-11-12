@@ -100,6 +100,8 @@ class Bench:
             mock.patch.object(dashboard, "_read_agent_session_files", return_value=[]),
             mock.patch.object(dashboard.chatroom, "list_rooms", return_value=self.rooms),
             mock.patch.object(dashboard, "compute_room_cost", return_value={"dollars": 0}),
+            # Every conversation here is in the temporary folder (#350).
+            mock.patch.object(dashboard.loose_sessions, "TEMP_RULE", False),
             *extra,
         ]
         with ExitStack() as stack:

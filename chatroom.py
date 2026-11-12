@@ -1199,12 +1199,75 @@ def _public(room: dict) -> dict:
     return r
 
 
+# The conversations of the rooms deleted so far (#350): the session list keeps
+# them out of its rows as it does a room's own, once the room that recorded
+# them is gone. One JSON line per room: {"roomId", "at", "sessionIds"}.
+GONE_SESSIONS_NAME = "gone-sessions.jsonl"
+_GONE: dict = {"sig": None, "ids": frozenset()}
+
+
+def room_session_ids(room: dict) -> list[str]:
+    """Every conversation a room records its agents having had: each seat's
+    (agent_conversations) and those of agents taken off it."""
+    out: list[str] = []
+    for part in agent_participants(room):
+        out += agent_conversations(part)
+    out += [str(r.get("sessionId") or "").strip()
+            for r in room.get("retiredSessions") or [] if isinstance(r, dict)]
+    return list(dict.fromkeys(s for s in out if s))
+
+
+def _note_gone_sessions(room: dict | None) -> None:
+    if not room or os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
+    sids = room_session_ids(room)
+    if not sids:
+        return
+    try:
+        ROOMS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(ROOMS_DIR / GONE_SESSIONS_NAME, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"roomId": room.get("id", ""), "at": _now(), "sessionIds": sids}) + "\n")
+    except OSError as e:
+        print(f"[rooms] {room.get('id')}: its conversations were not noted: {e!r}", flush=True)
+
+
+def gone_sessions() -> frozenset:
+    """The session ids of the rooms deleted so far (_note_gone_sessions)."""
+    p = ROOMS_DIR / GONE_SESSIONS_NAME
+    try:
+        st = p.stat()
+        sig = (str(p), st.st_size, st.st_mtime_ns)
+    except OSError:
+        return frozenset()
+    if _GONE["sig"] == sig:
+        return _GONE["ids"]
+    ids: set[str] = set()
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(d, dict):
+                    ids.update(s for s in d.get("sessionIds") or [] if isinstance(s, str) and s)
+    except OSError:
+        return frozenset()
+    _GONE.update(sig=sig, ids=frozenset(ids))
+    return _GONE["ids"]
+
+
 def delete_room(room_id: str) -> bool:
     with _LOCK:
+        try:
+            gone = _load(room_id)
+        except Exception:       # noqa: BLE001 — a damaged room is deleted all the same
+            gone = None
         try:
             _room_path(room_id).unlink()
         except (FileNotFoundError, OSError):
             return False
+        _note_gone_sessions(gone)
         _LOGGED.discard(room_id)
         _DAMAGED.pop(room_id, None)
         with _INDEX_LOCK:
