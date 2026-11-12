@@ -183,6 +183,30 @@ def _gone(path: Path) -> bool:
         raise ScanError(f"could not look at {path}: {e}") from e
 
 
+def process_gone(pid: int, start_ticks: int | None) -> bool:
+    """A failed move is harmless only if its original process exited.
+
+    Checking the kernel start tick also handles a PID reused during a pass.
+    An unreadable live process is not assumed gone.
+    """
+    base = Path(f"/proc/{pid}")
+    if _gone(base):
+        return True
+    if start_ticks is None:
+        return False
+    try:
+        stat = (base / "stat").read_text()
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError as e:
+        raise ScanError(f"could not look at {base / 'stat'}: {e}") from e
+    try:
+        fields = stat[stat.rindex(")") + 2:].split()
+        return int(fields[19]) != start_ticks
+    except (ValueError, IndexError) as e:
+        raise ScanError(f"could not read start time of pid {pid}: {e}") from e
+
+
 def cgroup_pids(cgroup: Path) -> list[int]:
     """Every process in ``cgroup`` and the cgroups below it. A cgroup that
     is gone (its unit ended since it was listed, a child cgroup removed
@@ -241,11 +265,13 @@ def read_proc(pid: int) -> dict | None:
         comm = stat[stat.index("(") + 1:stat.rindex(")")]
         fields = stat[stat.rindex(")") + 2:].split()
         ppid, pgid, sid, tty = int(fields[1]), int(fields[2]), int(fields[3]), int(fields[4])
-        start = int(fields[19]) / _clock_ticks()
+        start_ticks = int(fields[19])
+        start = start_ticks / _clock_ticks()
     except (ValueError, IndexError):
         return None
     info = {"pid": pid, "ppid": ppid, "pgid": pgid, "sid": sid, "tty": tty != 0,
-            "comm": comm, "age": max(0.0, _uptime() - start), "argv": [], "nohup": False,
+            "comm": comm, "age": max(0.0, _uptime() - start), "startTicks": start_ticks,
+            "argv": [], "nohup": False,
             "cwd": "", "room": "", "identity": "", "pty": "", "cgroup": ""}
     try:
         info["argv"] = [a for a in (base / "cmdline").read_bytes().decode(
@@ -522,6 +548,7 @@ class Guard:
         self.unit_cgroups = unit_cgroups
         self.cgroup_pids = cgroup_pids
         self.read_proc = read_proc
+        self.process_gone = process_gone
         self.ancestry = own_ancestry
         self.hosts = pty_host_pids
         self.start = start_scope
@@ -605,8 +632,12 @@ class Guard:
                 if not why:
                     why = self._wait_moved(pids, units)
                 if why:
-                    failed[root] = {"pid": root, "text": text, "error": why}
+                    failed[root] = {"pid": root, "text": text, "error": why,
+                                    "startTicks": top.get("startTicks")}
                     self.log(f"could not move pid {root} out of {top['unit']}: {why}")
+                    if self.process_gone(root, top.get("startTicks")):
+                        failed.pop(root, None)
+                        self.log(f"pid {root} exited during the move; no longer blocks {self.what}")
                     continue
                 failed.pop(root, None)
                 moved.update(pids)
@@ -616,7 +647,12 @@ class Guard:
                          + f" from {top['unit']} into {name}: {self.what} no longer stops it")
             if failed and all(r in failed for r in trees):
                 break       # nothing new moved on this pass: another pass changes nothing
-        result["failed"] = list(failed.values())
+        for root, entry in list(failed.items()):
+            if self.process_gone(root, entry["startTicks"]):
+                failed.pop(root)
+                self.log(f"pid {root} exited after the failed move; no longer blocks {self.what}")
+        result["failed"] = [{k: v for k, v in entry.items() if k != "startTicks"}
+                            for entry in failed.values()]
         if failed:
             if force:
                 result["forced"] = True

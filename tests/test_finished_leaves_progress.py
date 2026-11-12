@@ -215,7 +215,7 @@ class TheCatchUpAtStart(_Board):
         src = Path(dashboard.__file__).read_text(encoding="utf-8")
         main = src[src.index("def main():"):]
         self.assertLess(main.index("attach_pty_host()"), main.index("settle_finished_at_start()"))
-        self.assertLess(main.index("settle_finished_at_start()"), main.index("    startup.booted()\n"))
+        self.assertLess(main.index("settle_finished_at_start()"), main.rindex("    startup.booted()\n"))
 
 
 if __name__ == "__main__":

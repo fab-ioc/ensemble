@@ -158,7 +158,7 @@ class Classify(unittest.TestCase):
 class Protect(unittest.TestCase):
     """Guard.protect on the fake table with fake seams."""
 
-    def guard(self, start_errors=None, stays=(), force=False):
+    def guard(self, start_errors=None, stays=(), force=False, exits=()):
         procs = table()
         g = rg.Guard(units=["ensemble.service"], hub_pids=[HUB], state_dirs=["x"],
                      log_path=self.log)
@@ -171,6 +171,7 @@ class Protect(unittest.TestCase):
         # Gone from the hub's cgroups once moved: not listed again.
         g.read_proc = lambda pid: procs.get(pid) if cgroups.get(pid, "").startswith(
             "user.slice/app.slice/ensemble") else None
+        g.process_gone = lambda pid, start_ticks: pid in exits
         g.ancestry = lambda: {MINE}
         g.hosts = lambda dirs: {HOST}
         self.started = []
@@ -219,6 +220,28 @@ class Protect(unittest.TestCase):
         self.assertIn("systemd-run --user --unit=", res["message"])
         self.assertIn("guard: refused: the restart would stop pid 500",
                       self.log.read_text(encoding="utf-8"))
+
+    def test_a_root_that_exits_during_failed_move_does_not_refuse(self):
+        with mock.patch.object(rg, "MOVE_WAIT_S", 0):
+            res = self.guard(start_errors={500: "UnixProcessIdUnknown: No such process"},
+                             exits={500})
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["failed"], [])
+        self.assertIn("pid 500 exited during the move", self.log.read_text(encoding="utf-8"))
+
+    def test_a_root_still_present_after_failed_move_refuses(self):
+        with mock.patch.object(rg, "MOVE_WAIT_S", 0):
+            res = self.guard(start_errors={500: "UnixProcessIdUnknown: No such process"})
+        self.assertFalse(res["ok"], res)
+        self.assertEqual([f["pid"] for f in res["failed"]], [500])
+
+    def test_pid_reuse_counts_the_original_root_as_gone(self):
+        fields = ["S"] + ["0"] * 22
+        fields[19] = "200"
+        with mock.patch.object(rg, "_gone", return_value=False), \
+             mock.patch.object(Path, "read_text", return_value="500 (cat) " + " ".join(fields)):
+            self.assertTrue(rg.process_gone(500, 100))
+            self.assertFalse(rg.process_gone(500, 200))
 
     def test_one_still_in_place_after_the_call_refuses_too(self):
         with mock.patch.object(rg, "MOVE_WAIT_S", 0):
