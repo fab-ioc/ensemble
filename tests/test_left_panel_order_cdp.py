@@ -101,7 +101,7 @@ const ROWS = `[...document.querySelectorAll('#ld-projs .ldp-row')].map(b => { co
 const EXP = `(() => { const c = document.querySelector('.row-expanded'); if (!c) return null; const r = c.getBoundingClientRect();
   const cs = getComputedStyle(c);
   return { solid: cs.backgroundImage !== 'none' || !(cs.backgroundColor.startsWith('rgba(') || cs.backgroundColor.includes(' / ') || cs.backgroundColor === 'transparent'), w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.left), right: Math.round(r.right), text: c.textContent.trim(),
-    titles: [c, ...c.querySelectorAll('[title]')].filter(e => e.hasAttribute('title') && !e.matches('.dk-tab-x, .fd-tab-drag')).length, ids: c.querySelectorAll('[id]').length,
+    titles: [c, ...c.querySelectorAll('[title]')].filter(e => e.hasAttribute('title') && !e.matches('.dk-tab-x, .fd-tab-drag, .wst-x, .wst-win')).length, ids: c.querySelectorAll('[id]').length,
     titled: [c, ...c.querySelectorAll('[title]')].filter(e => e.hasAttribute('title')).map(e => e.className + '=' + e.getAttribute('title')) }; })()`;
 const TAB = id => `(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="${id}"]'); if (!t) return null; const r = t.getBoundingClientRect();
   const w = t.closest('.dk-tab-wrap').getBoundingClientRect();
@@ -262,12 +262,10 @@ async function main() {
       if (card) {
         o.cardClose = await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] [data-ibx-close]'); if (!b) return null; const r = b.getBoundingClientRect();
           const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2), top = document.elementFromPoint(x, y);
-          window._clk337 = []; for (const t of ['pointermove', 'pointerdown', 'click']) document.addEventListener(t, e => window._clk337.push(t + ':' + (e.target.className || e.target.tagName) + ':' + e.isTrusted + ':' + !!document.querySelector('.row-expanded')), true);
           window._acts337 = []; window._act337 = ibxRowAct; ibxRowAct = (...a) => { window._acts337.push(a.slice(0, 2)); };
           return { w: Math.round(r.width), h: Math.round(r.height), x, y, underCopy: !!(top && top.closest('.row-expanded')), raised: !!document.querySelector('.row-expanded'), focus: document.activeElement === document.body }; })()`);
         if (o.cardClose) {
           await p.clickAt(o.cardClose.x, o.cardClose.y); await sleep(300);
-          o.cardClose.dbg = await p.evalIn('window._clk337.slice(-12)');
           o.cardClose.acts = await p.evalIn('(() => { const a = window._acts337; ibxRowAct = window._act337; return a; })()');
         }
       }
@@ -330,12 +328,14 @@ async function main() {
       await away(p);
 
       // ---- workspace tabs (files in the Workspace's own row, not as panels): click and x through the copy
+      await p.evalIn("pdReveal('workspace'); 0"); await sleep(800);
       await p.evalIn(`(() => { window._pdOn337 = pdPanelsOn; pdPanelsOn = () => false;
-        const v = [...WS_VIEWS.values()].find(x => x.el && x.el.isConnected); window._v337 = v;
+        const vs = [...WS_VIEWS.values()].filter(x => x.el && x.el.isConnected);
+        const v = vs.find(x => PD.els.workspace && PD.els.workspace.contains(x.el)) || vs[0]; window._v337 = v;
         wsOpenTab(v, ${JSON.stringify(A.longFile)}); wsOpenTab(v, ${JSON.stringify(A.shortFile)}); wsPaintTabs(v); return 0; })()`);
       await sleep(800);
       const WT = `[...document.querySelectorAll('.wst-tab')].find(t => t.textContent.includes('fit its tab'))`;
-      const wtab = async () => p.evalIn(`(() => { const t = ${WT}; if (!t) return null; const r = t.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), sw: t.querySelector('.wst-nm').scrollWidth, cw: t.querySelector('.wst-nm').clientWidth, on: t.classList.contains('on'), n: document.querySelectorAll('.wst-tab').length, top: (document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)) || {}).className, ok: rowExpandAllowed(t, { ...TAB_ROW_EXPAND, root: document.body }) }; })()`);
+      const wtab = async () => p.evalIn(`(() => { const t = ${WT}; if (!t) return null; const r = t.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), sw: t.querySelector('.wst-nm').scrollWidth, cw: t.querySelector('.wst-nm').clientWidth, on: t.classList.contains('on'), n: document.querySelectorAll('.wst-tab').length }; })()`);
       let wt = await wtab();
       o.wsTab = { tab: wt };
       if (wt && wt.x) {
@@ -343,7 +343,9 @@ async function main() {
         await p.shot('hover-workspace-tab');
         if (o.wsTab.at450) { await p.clickAt(wt.x - 20, wt.y); await sleep(600); }
         o.wsTab.clicked = await wtab();
-        wt = o.wsTab.clicked;
+        await p.evalIn("pdReveal('workspace'); 0"); await sleep(800);
+        wt = await wtab();
+        o.wsTab.revealed = wt;
         if (wt) {
           await hover(p, wt.x, wt.y);
           const x = await p.evalIn(`(() => { const x = document.querySelector('.row-expanded .wst-x'); if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
@@ -352,7 +354,7 @@ async function main() {
           o.wsTab.afterX = await wtab();
         }
       }
-      await p.evalIn('(pdPanelsOn = window._pdOn337, wsPaintTabs(window._v337), 0)');
+      await p.evalIn(`(pdPanelsOn = window._pdOn337, wsPaintTabs(window._v337), PD.dock.activate('po-chat'), 0)`);
 
       // ---- the setting off
       await away(p);
