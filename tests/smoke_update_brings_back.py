@@ -12,8 +12,11 @@ Update now (POST /api/update, when=safe) fetches, resets and restarts the hub.
     py tests/smoke_update_brings_back.py --host       # the commit changes backends/ptyrun.py
     py tests/smoke_update_brings_back.py --branch main --kill-one   # the same against main
     py tests/smoke_update_brings_back.py --mac-helper ...  # through the Mac restart helper
+    python3 tests/smoke_update_brings_back.py --systemd ...  # Linux: the hub runs under a
+                      # transient systemd user unit (ens-test-8798-*), restarted through it
+    python3 tests/smoke_update_brings_back.py --systemd --restart  # a plain restart, no update
 
-Windows only for now (taskkill).
+Windows, and Linux (kill -9; --systemd for the unit).
 
 Run from the repo root. It never addresses port 8765, refuses an occupied
 8798, and stops only the processes it started (by pid). Not in discover.
@@ -161,6 +164,49 @@ def tail(path: Path, start: int = 0) -> str:
         return ""
 
 
+def print_restart_log(rlog: Path, r0: int) -> None:
+    for ln in tail(rlog, r0).splitlines():
+        if "[restart] " in ln:
+            print("restart.log:", ln)
+
+
+def restart_only(args, rooms, before, old_pid, hub_pids, rlog, r0, ok_box):
+    """The page's restart (as ensemble_restart_hub asks it): the hub comes
+    back on the same code, every room still running."""
+    code, res = req("/api/restart", {"reason": "smoke: a plain restart"}, timeout=180)
+    print("restart:", code, json.dumps({k: res.get(k) for k in ("started", "keepAgents", "draining")
+                                         if isinstance(res, dict)}))
+    assert code in (200, 202), res
+    if res.get("draining"):
+        time.sleep(3)
+        code, forced = req("/api/restart/drain", {"action": "force"})   # Restart now
+        print("restart now:", code)
+    new = wait("the new hub",
+               lambda: (lambda c: c if c and c.get("pid") != old_pid else None)(config()), 240)
+    hub_pids.add(new["pid"])
+    wait("restart complete", lambda: "restart complete" in tail(rlog, r0), 240)
+    after = wait("every agent running again",
+                 lambda: (lambda m: m if all(set(m.get(rooms[n], {})) == set(before[rooms[n]])
+                                             for n in rooms) else None)(agents_by_room()), 240)
+    print("after: ", json.dumps({n: after[r] for n, r in rooms.items()}))
+    if args.systemd:
+        shown = subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "-p", "ActiveState",
+                                *[u for u in [unit_of(new["pid"])] if u]],
+                               capture_output=True, text=True).stdout.split()
+        print("unit now:", unit_of(new["pid"]), shown)
+    print_restart_log(rlog, r0)
+    ok_box[0] = True
+    print("OK")
+
+
+def unit_of(pid: int) -> str:
+    try:
+        leaf = Path(f"/proc/{pid}/cgroup").read_text().strip().rsplit("/", 1)[-1]
+    except OSError:
+        return ""
+    return leaf if leaf.endswith(".service") else ""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", action="store_true", help="the update changes the PTY host")
@@ -171,6 +217,11 @@ def main():
     ap.add_argument("--mac-helper", action="store_true",
                     help="restart through the Mac helper (restart_helper.py), as a source "
                          "install on a Mac does")
+    ap.add_argument("--systemd", action="store_true",
+                    help="Linux: run the hub under a transient systemd user unit "
+                         "(ens-test-8798-*), as install-systemd.sh's unit runs it")
+    ap.add_argument("--restart", action="store_true",
+                    help="a plain restart (POST /api/restart) in place of the update")
     ap.add_argument("--keep", action="store_true", help="keep the scratch folder")
     ap.add_argument("--branch", help="the branch the hub runs (default: this checkout's)")
     args = ap.parse_args()
@@ -199,18 +250,30 @@ def main():
     for k in ("ENSEMBLE_ROOM", "ENSEMBLE_TOKEN", "ENSEMBLE_IDENTITY", "ENSEMBLE_HUB", "CLAUDECODE"):
         env.pop(k, None)
     hub_pids: set[int] = set()
+    unit = f"ens-test-{PORT}-{os.urandom(3).hex()}.service"
     ok = False
+    ok_box = [False]
     try:
         start = [str(co / "dashboard.py")]
         if args.mac_helper:
             (td / "machub.py").write_text(MAC_HUB, encoding="utf-8")
             start = [str(td / "machub.py"), str(co)]
-        hub = subprocess.Popen([sys.executable, *start, "--port", str(PORT),
-                                "--log", str(td / "hub.log")],
-                               cwd=co, env=env, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        hub_pids.add(hub.pid)
+        argv = [sys.executable, *start, "--port", str(PORT), "--log", str(td / "hub.log")]
+        if args.systemd:
+            # Never ensemble.service: a unit of its own, gone once stopped.
+            own = {"INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MANAGERPID",
+                   "NOTIFY_SOCKET"}
+            subprocess.run(["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit}",
+                            f"--working-directory={co}",
+                            *[f"--setenv={k}={v}" for k, v in env.items()
+                              if k not in own and "\n" not in v], "--", *argv],
+                           check=True, capture_output=True, text=True)
+            print("unit:", unit)
+        else:
+            hub = subprocess.Popen(argv, cwd=co, env=env, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            hub_pids.add(hub.pid)
         cfg = wait("the hub", config, 120)
         assert Path(cfg["stateDir"]).resolve() == state.resolve(), cfg
         old_pid = cfg["pid"]
@@ -224,7 +287,8 @@ def main():
                              ("B", [{"agent": "claude", "role": "engineer"},
                                     {"agent": "claude", "role": "designer"}])):
             code, body = req("/api/room/new", {"title": f"Room {name}", "task": "Say hello.",
-                                                "projectId": pid, "agents": agents})
+                                                "projectId": pid, "agents": agents},
+                             timeout=120)              # a stub agent's start can take ~20s each
             assert code == 200, (code, body)
             rooms[name] = (body.get("room") or body)["id"]
         before = wait("3 agents running",
@@ -232,6 +296,10 @@ def main():
                                else None)(agents_by_room()), 90)
         print("before:", json.dumps({n: before[r] for n, r in rooms.items()}))
 
+        rlog, ulog = state / "logs" / "restart.log", state / "logs" / "update.log"
+        r0 = rlog.stat().st_size if rlog.exists() else 0
+        if args.restart:
+            return restart_only(args, rooms, before, old_pid, hub_pids, rlog, r0, ok_box)
         # The commit the banner offers.
         git("clone", "--quiet", "--branch", branch, str(up), str(work))
         git("config", "user.email", "smoke@example.invalid", cwd=work)
@@ -247,8 +315,6 @@ def main():
         target = git("rev-parse", "HEAD", cwd=work)
         code, info = req("/api/update-check?force=1")
         assert info.get("available"), info                 # the banner shows
-        rlog, ulog = state / "logs" / "restart.log", state / "logs" / "update.log"
-        r0 = rlog.stat().st_size if rlog.exists() else 0
 
         code, res = req("/api/update", {"when": "safe", "reason": "an update"}, timeout=180)
         print("update:", code, json.dumps({k: res.get(k) for k in ("started", "keepAgents", "draining")
@@ -302,9 +368,13 @@ def main():
                         assert not kept, "the dead agent was not started again"
                     else:
                         assert kept, f"{n}/{i} was started a second time"
+        print_restart_log(rlog, r0)
         ok = True
         print("OK")
     finally:
+        ok = ok or ok_box[0]
+        if args.systemd:
+            subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
         # The scratch PTY host, by the pid its descriptor names (a host the
         # update changed does not answer this checkout's client), with every
         # agent under it.
