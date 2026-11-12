@@ -66,6 +66,10 @@ const readingPlace = () => null, keepPlace = () => {};
 let _cmtComposerOpen = false, selShown = () => false, STICK = false, LAST_ITEMS = [];
 const FOLD = { open: new Set() };
 let GROUP_OF_MID = new Map(), GAP_OF_MID = new Map(), GOTO_PART = '';
+// These scenarios exercise ordinary links. The Inbox route has its own CDP test.
+const ibxPart = () => false, barePart = p => String(p || '');
+const landedMs = () => 2600;
+function ibxUnmark() {}
 // A retry of the transcript runs at once; the landed mark's fade never ends.
 const setTimeout = (f, ms, ...a) => { if (f === renderSolo) setImmediate(() => f(...a)); return 0; };
 const clearTimeout = () => {};

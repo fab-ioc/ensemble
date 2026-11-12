@@ -297,7 +297,8 @@ const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const out = { renders: 0, notes: [] };
 const box = { clientHeight: 400, querySelectorAll: () => [] };
 const ctx = { out, $: () => box, CHAT_DRAWN: true, _landing: false, _cmtComposerOpen: false, selShown: () => false,
-  GOTO: '', THREAD_MODE: false, URL_GOTO: '', SOLO_WANT: null, SOLO_SID: 'now', SOLO_AGENT: 'claude', openGroupOf: () => {},
+  GOTO: '', GOTO_PART: '', THREAD_MODE: false, URL_GOTO: '', SOLO_WANT: null, SOLO_SID: 'now', SOLO_AGENT: 'claude', openGroupOf: () => {},
+  ibxPart: () => false,
   soloOwns: sid => sid === 'now' || sid === 'old', renderSolo: () => { out.renders++; },
   showGotoNote: t => { if (t) out.notes.push(t); } };
 // The card's words (#238, tests/test_card_text.py): plain here.

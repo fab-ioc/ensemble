@@ -995,9 +995,28 @@
     0%, 40% { box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
     100% { box-shadow:inset 0 0 0 2px transparent, inset 0 0 0 999px transparent; }
   }
+  /* Opened from the Inbox (ED-343, P316/P317): the whole balloon, an ask's card
+     too, takes that treatment at full strength (its real background is
+     --selected-bg, so a card in it keeps its --surface), with a FROM THE INBOX
+     label after its time; then it fades, gone the Inbox highlight setting
+     after it landed (ibxMark). The keyframes have only a start: the fade ends
+     on the balloon's own look. --ibx-hold is how long it stays full (less, or
+     below zero, when a redraw puts it on a new node part-way), --ibx-fade the
+     fade; `both` paints the start through the hold. Reduced motion: no fade,
+     the same look until it goes. */
+  .msg.ibx-landed { animation:ibx-landed var(--ibx-fade, 1s) linear var(--ibx-hold, 2.5s) both; }
+  @keyframes ibx-landed { from { box-shadow:inset 0 0 0 2px var(--accent); background-color:var(--selected-bg); } }
+  .lz.lz-inbox { background:var(--accent); color:var(--accent-fg); }
+  .msg.ibx-landed .lz-inbox { animation:ibx-label var(--ibx-fade, 1s) linear var(--ibx-hold, 2.5s) both; }
+  @keyframes ibx-label { to { background-color:transparent; color:transparent; } }
   @media (prefers-reduced-motion: reduce) {
     .msg.landed, .msg .landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
+    #msgs .msg.ibx-landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent); background-color:var(--selected-bg); }
+    .msg.ibx-landed .lz-inbox { animation:none; }
   }
+  /* It takes the focus to be announced (aria-current="location"); its ring is
+     what shows where the focus is, so no second one. */
+  .msg[tabindex="-1"]:focus { outline:none; }
   /* A link to another balloon, as a chip naming it: who, where, when, its first words. */
   .msg .text.md a.ref-chip, a.ref-chip { display:inline-flex; align-items:baseline; gap:var(--s-100); max-width:100%; box-sizing:border-box;
     vertical-align:baseline; padding:0 var(--s-100); background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border);
@@ -1824,7 +1843,11 @@ let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git na
 fetch('/api/settings').then(r => r.json()).then(s => {
   OPERATOR = s.operatorName || s.operatorNickname || 'you';
   if (CHAT_NAMES.operator !== OPERATOR) { CHAT_NAMES.operator = OPERATOR; refChanged(); }
-}).catch(() => {});
+  ibxHlSet(s.inboxHighlightSec);
+}).catch(() => {}).finally(() => {
+  // An Inbox landing waited for the highlight's length (#343).
+  if (!IBX_HL_READ) { IBX_HL_READ = true; if (GOTO && typeof landPending === 'function') landPending(); }
+});
 // The hub's port, so a link to its loopback address can be made this page's.
 fetch('/api/config').then(r => r.json()).then(c => { if (c && c.port) HUB_PORT = String(c.port); }).catch(() => {});
 if (qs.get('embed')) document.body.classList.add('embed');
@@ -5071,7 +5094,7 @@ function catchUpOpen() {
   CU_OPENED = true;
   if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE) {
     // Opened on a link to a reply: the landing wins (review 3).
-    if (GOTO || GOTO_OPEN || (LANDED && Date.now() - LANDED.at < 2600)) { GOTO_OPEN = false; STICK = nearEnd(box); return; }
+    if (GOTO || GOTO_OPEN || landedLive()) { GOTO_OPEN = false; STICK = nearEnd(box); return; }
     // A thread keeps no read point of its own: it opens at its latest reply (#333).
     box.scrollTop = box.scrollHeight;
     STICK = nearEnd(box);
@@ -5470,8 +5493,24 @@ let GOTO_PART = (qs.get('part') || '').trim();   // … and the passage of it (r
 const URL_GOTO = GOTO;     // the balloon this page was opened for
 let GOTO_OPEN = !!GOTO;    // the chat was opened for that link: no catch-up jump over it
 let SOLO_WANT = null;      // {sid, n, loaded}: an older transcript turn than shown, asked for by a link
-let LANDED = null;         // {mid, at}: the balloon just landed on, marked again if a redraw replaces it
+let LANDED = null;         // {mid, part, at, inbox, ms}: the balloon just landed on, marked again if a redraw replaces it
 let _landing = false;
+// A balloon opened from the Inbox (#343, P316/P317): its part starts "inbox"
+// ("inbox", or "inbox,ask:0" with the passage), which every hop a landing
+// takes carries as it is (a frame's goto-msg, a thread's or a tab's &part=).
+// It lands near the top, takes the whole balloon's highlight for the Inbox
+// highlight setting (the hub's inboxHighlightSec, 1–30 s) and the focus.
+const IBX_PART = /^inbox(?:,|$)/;
+const ibxPart = p => IBX_PART.test(String(p || ''));
+const barePart = p => String(p || '').replace(IBX_PART, '');
+let IBX_HL_MS = 3500;
+let IBX_HL_READ = false;   // the setting has been read (or the read failed): an Inbox landing waits for it
+function ibxHlSet(sec) {
+  const v = Number(sec);
+  if (sec !== null && sec !== '' && Number.isFinite(v)) IBX_HL_MS = Math.round(Math.max(1, Math.min(30, v)) * 1000);
+}
+const landedMs = L => L && L.inbox ? L.ms : 2600;
+const landedLive = () => !!LANDED && Date.now() - LANDED.at < landedMs(LANDED);
 function copyLinkHtml(m) {
   if (!ROOM || !m || !m.id || m.id === 'task') return '';
   return `<button type="button" class="copy-link" data-mid="${esc(m.id)}" title="Copy a link to this message, to paste into another chat">Copy link</button>`;
@@ -5566,7 +5605,7 @@ function gotoMsg(mid, part) {
 // the item of a numbered message holding P12's chip; "q:<text>" the quoted
 // words, wrapped in a mark of their own (unwrapped when the mark fades).
 function partOf(el, part) {
-  const m = String(part || '').match(/^(re|pt|q|ask):([\s\S]+)$/);
+  const m = barePart(part).match(/^(re|pt|q|ask):([\s\S]+)$/);
   if (!m || !el) return null;
   // "ask:0": that ask's card, its question and quick answers (#206: a point chip lands on it).
   if (m[1] === 'ask') return [...el.querySelectorAll('.qa[data-ask]')].find(x => x.dataset.ask === el.dataset.mid + ':' + m[2]) || null;
@@ -5627,6 +5666,8 @@ function landPending() {
     }
   }
   if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || selShown()) return;
+  // From the Inbox: once the highlight's length is known (the hub's settings read).
+  if (ibxPart(GOTO_PART) && !IBX_HL_READ) return;
   _landing = true;
   try {
     const mid = GOTO;
@@ -5711,6 +5752,25 @@ function landPending() {
     const part = GOTO_PART;
     GOTO_PART = '';
     unwrapMarks(box);
+    ibxUnmark(box);   // a landing before it is over: this one replaces it
+    if (ibxPart(part)) {
+      // From the Inbox: the balloon's top 72px under the chat's top (48 on a
+      // phone), not in the middle, so what came before shows above it; a
+      // passage further down it is kept in view as well.
+      const sub = partOf(el, part), gap = PHONE_CHAT.matches ? 48 : 72, br = box.getBoundingClientRect();
+      const y = e => box.scrollTop + e.getBoundingClientRect().top - br.top;
+      let top = y(el) - gap;
+      if (sub) top = Math.max(top, Math.min(y(sub) - gap, y(sub) + sub.offsetHeight + gap - box.clientHeight));
+      box.scrollTop = Math.max(0, top);
+      STICK = nearEnd(box);
+      showLatest();
+      LANDED = { mid, part: barePart(part), at: Date.now(), inbox: true, ms: IBX_HL_MS };
+      seenLink(mid);
+      markLanded(el);
+      try { el.focus({ preventScroll: true }); } catch (e) {}
+      LANDED.el = el;   // the node with the focus: a redraw replacing it hands the focus on (ibxMark)
+      return;
+    }
     const at = partOf(el, part) || el;   // the whole balloon when it has no such passage
     const top = at === el ? el.offsetTop : el.offsetTop + (at.getBoundingClientRect().top - el.getBoundingClientRect().top);
     box.scrollTop = Math.max(0, top - Math.max(8, (box.clientHeight - at.offsetHeight) / 2));
@@ -5729,9 +5789,10 @@ function landPending() {
 // got to.
 function markLanded(el) {
   if (!LANDED) return;
-  const age = Date.now() - LANDED.at;
-  if (age >= 2600) { LANDED = null; return; }
+  const age = Date.now() - LANDED.at, ms = landedMs(LANDED);
   const box = $('#msgs');
+  if (age >= ms) { LANDED = null; ibxUnmark(box); return; }
+  if (LANDED.inbox) { ibxMark(el || (box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid)), age, ms); return; }
   if (!el) {
     const msg = box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid);
     if (msg && LANDED.part) {
@@ -5746,7 +5807,60 @@ function markLanded(el) {
   el._landed = setTimeout(() => {
     el.classList.remove('landed'); el.style.animationDelay = '';
     if (el.matches && el.matches('mark.landed-q')) unwrapMarks(el.closest('.msg') || box);
-  }, 2600 - age);
+  }, ms - age);
+}
+// The Inbox highlight on a balloon (#343), where it has got to: a redraw that
+// keeps the node keeps its fade going; a new node in its place starts it at
+// the same point (its hold shortened by the age). The label, the focus target
+// and aria-current go with it.
+function ibxMark(el, age, ms) {
+  if (!el || !LANDED) return;
+  const at = LANDED.at;
+  const from = el.querySelector('.from');
+  if (from && !from.querySelector('.lz-inbox')) {
+    const tag = document.createElement('span');
+    tag.className = 'lz lz-inbox';
+    tag.textContent = 'From the Inbox';
+    // A rebuilt header on the same balloon joins the ring's current fade.
+    tag.style.animationDelay = (ms - Math.min(1000, ms * 0.3) - age) + 'ms';
+    const stamp = from.querySelector('.at');
+    if (stamp) stamp.after(tag); else from.appendChild(tag);
+  }
+  el.setAttribute('aria-current', 'location');
+  el.setAttribute('tabindex', '-1');
+  // A redraw put a new node in place of the focused one: the focus fell to the
+  // page, so it comes back here (not when it was taken somewhere else).
+  const old = LANDED.el;
+  if (old && old !== el && !old.isConnected) {
+    LANDED.el = el;
+    const a = document.activeElement;
+    if (!a || a === document.body) { try { el.focus({ preventScroll: true }); } catch (e) {} }
+  }
+  if (el._ibxAt === at && el.classList.contains('ibx-landed')) return;
+  const fade = Math.min(1000, ms * 0.3);
+  el.style.setProperty('--ibx-fade', fade + 'ms');
+  el.style.setProperty('--ibx-hold', (ms - fade - age) + 'ms');
+  el.classList.remove('ibx-landed');
+  void el.offsetWidth;          // start it again on a second landing on the same balloon
+  el.classList.add('ibx-landed');
+  el._ibxAt = at;
+  clearTimeout(el._ibx);
+  el._ibx = setTimeout(() => {
+    ibxUnmarkEl(el);
+    if (LANDED && LANDED.at === at) LANDED = null;
+  }, ms - age);
+}
+function ibxUnmarkEl(el) {
+  clearTimeout(el._ibx);
+  el._ibxAt = 0;
+  el.classList.remove('ibx-landed');
+  el.style.removeProperty('--ibx-fade');
+  el.style.removeProperty('--ibx-hold');
+  el.removeAttribute('aria-current');
+  el.querySelectorAll('.lz-inbox').forEach(t => t.remove());
+}
+function ibxUnmark(box) {
+  if (box) box.querySelectorAll('.msg.ibx-landed, .msg[aria-current="location"]').forEach(ibxUnmarkEl);
 }
 // The task text is the first message of the conversation. Prepend it as a user
 // bubble unless the history already records it verbatim.
@@ -7635,6 +7749,14 @@ function openThread(tid, mid, part = '') {
 function embedHost() {
   try { return window.parent !== window && window.parent.location.origin === location.origin ? window.parent : null; } catch (e) { return null; }
 }
+// A frame in a Dock pop-out window: the dashboard page that opened the window
+// (which talks to this frame directly), else null.
+function popOpener() {
+  try {
+    const o = window.parent !== window ? window.parent.opener : null;
+    return o && o.location.origin === location.origin ? o : null;
+  } catch (e) { return null; }
+}
 // The side thread (#234): this page in a frame (&side=1), kept per browser
 // and chat so a reload, or the chat opened again, shows it again.
 let SIDE_RESTORED = false;
@@ -7665,7 +7787,7 @@ function sideOpen(o) {
   tsLayout();
   if (same && shown) {
     // Open already: land on the balloon there instead of loading it again.
-    if (o.msg && f.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {} }
+    if (o.msg && f.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '', hl: IBX_HL_MS / 1000 }, location.origin); } catch (e) {} }
   } else {
     try { f.contentWindow?.edStoreNow(); } catch (e) {}
     f.setAttribute('src', u);
@@ -10061,8 +10183,11 @@ window.addEventListener('message', (e) => {
     if (typeof tickNow === 'function') tickNow();
   }
   // The dashboard opened this chat for a link to one of its balloons.
-  else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
+  // (From a pop-out window's frame, the dashboard that opened that window: #343.)
+  else if (d.ensemble === 'goto-msg' && (e.source === window.parent || (!!e.source && e.source === popOpener())) && e.origin === location.origin) {
     GOTO_OPEN = true;
+    // The Inbox highlight's length as the dashboard has it now (#343).
+    if (d.hl != null) { ibxHlSet(d.hl); IBX_HL_READ = true; }
     const thr = d.thread || d.tmid ? { thread: String(d.thread || ''), tmid: d.thread ? '' : String(d.tmid), msg: d.msg || '', part: d.part || '' } : null;
     if (thr && !THR_NOTED && !THREAD_MODE) GOTO_THREAD_WAIT = thr;
     else if (thr && THREADED && !THREAD_MODE) gotoThread(thr);
