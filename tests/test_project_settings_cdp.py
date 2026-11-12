@@ -192,6 +192,9 @@ async function main() {
     // the Inbox is asked again at once, and the hub's kept build was forgotten: well before its ten-second poll
     out.ibxRenamedIn = await q.until(`/Motors Two/.test((document.querySelector('#ld-ibx-body .ibx-where') || {}).textContent || '') && 1`, 4000).catch(() => 0);
     out.fold = await q.evalIn(`[psFold('Straße') === psFold('STRASSE'), psFold('Motors') === psFold('MOTORS')]`);
+    out.fold2 = await q.evalIn(`[psFold('\\u0131') === psFold('i'), psName(' A\\u2003 B\\x1f'), psName('A\\ufeffB')]`);
+    // every character the page folds, with what it folds it to: the hub's casefold() must agree
+    out.folded = await q.evalIn(`(() => { const o = []; for (let c = 0; c < 0x110000; c++) { if (c >= 0xD800 && c <= 0xDFFF) continue; const ch = String.fromCodePoint(c), k = psFold(ch); if (k !== ch) o.push([c, k]); } return o; })()`);
     await sleep(800);
     out.renamed = await q.evalIn(ICONS(P.Motors));
     // ---- the bar's switcher › Project settings…: an icon
@@ -420,6 +423,12 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertIn("Motors Two", r["ibxWhere"])
         self.assertEqual(self.g("ibxRenamedIn"), 1, "the Inbox names it at once")
         self.assertEqual(self.g("fold"), [True, True], "names compared as the hub's casefold()")
+        self.assertEqual(self.g("fold2"), [False, "A B", "A\ufeffB"],
+                         "dotless i is not i to the hub; its whitespace is Python's")
+        folded = self.g("folded")
+        self.assertGreater(len(folded), 100)
+        wrong = [(hex(c), k) for c, k in folded if k.casefold() != chr(c).casefold()]
+        self.assertEqual(wrong, [], "a name the page calls taken, the hub refuses too")
 
     def test_the_switcher_lists_the_settings_first(self):
         m = self.g("switchMenu")

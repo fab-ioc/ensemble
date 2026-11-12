@@ -133,6 +133,29 @@ class Rename(Hub):
             inbox.snapshot()
         self.assertEqual(b.call_count, 1, "a rename forgets the kept build")
 
+    def test_a_build_begun_before_the_rename_is_not_kept(self):
+        import threading
+        import inbox
+        inbox.forget()
+        real, started, release = inbox._build_all, threading.Event(), threading.Event()
+
+        def slow(*a, **k):
+            out = real(*a, **k)              # read before the rename: the old name
+            started.set()
+            release.wait(5)
+            return out
+        with mock.patch.object(inbox, "_build_all", side_effect=slow):
+            t = threading.Thread(target=inbox.snapshot)
+            t.start()
+            self.assertTrue(started.wait(5))
+            self.rename(self.ed, "Harbour Lights")   # forget() while that build runs
+            release.set()
+            t.join(5)
+        self.assertNotIn(False, inbox._CACHE, "the pre-rename build is not kept")
+        with mock.patch.object(inbox, "_build_all", wraps=inbox._build_all) as b:
+            inbox.snapshot()
+        self.assertEqual(b.call_count, 1, "the next read builds with the new name")
+
     def test_only_the_page_renames(self):
         self.page = False
         st, body = self.rename(self.ed, "Other")

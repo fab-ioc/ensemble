@@ -17668,14 +17668,21 @@ function psSize(n) {
   n = Number(n) || 0;
   return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
 }
-function psName(s) { return String(s || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 120); }
-// The other project already called `name` (as the hub compares: case aside).
-// The hub compares names with Python's casefold(); up then down is as near
-// as JavaScript gets (Straße and STRASSE are the same name).
-const psFold = s => String(s || '').toUpperCase().toLowerCase();
+// The hub's whitespace: what Python's str.split() and strip() treat as space.
+const PS_WS = '\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PS_WS_RUN = new RegExp(`[${PS_WS}]+`), PS_WS_ENDS = new RegExp(`^[${PS_WS}]+|[${PS_WS}]+$`, 'g');
+// A typed name as the hub keeps it: spaces run together, at most 120 characters.
+function psName(s) { return Array.from(String(s || '').split(PS_WS_RUN).filter(Boolean).join(' ')).slice(0, 120).join(''); }
+// The hub compares names with Python's casefold(). This folds only letters
+// below U+0590 (Latin, Greek, Cyrillic, Armenian: ß as ss), where JavaScript's
+// lower case and Python's casefold() agree, so a name it calls taken the hub
+// refuses too (Straße and STRASSE); any other case pair is left to the hub.
+const psFold = s => Array.from(String(s || '')).map(c => c.codePointAt(0) < 0x590 ? c.toLowerCase().replace('ß', 'ss') : c).join('');
+// The other project already called `name`, as the hub compares: its stored
+// name with only its ends trimmed against the typed one, case aside.
 function psClash(pid, name) {
   const k = psFold(psName(name));
-  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && psFold(psName(p.name)) === k) || null : null;
+  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && psFold(String(p.name || '').replace(PS_WS_ENDS, '')) === k) || null : null;
 }
 function psNameErr(pid, name) {
   if (!psName(name)) return 'A name is needed.';
