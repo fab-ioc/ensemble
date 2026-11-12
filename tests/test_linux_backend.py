@@ -197,11 +197,15 @@ class HelperUnderSystemd(TestCase):
 
     def run_helper(self, unit, results):
         calls = []
+        timeouts = self.timeouts = []
 
         def run(argv, **kw):
             calls.append(argv)
+            timeouts.append(kw.get("timeout"))
             for prefix, res in results:
                 if argv[:len(prefix)] == prefix:
+                    if isinstance(res, BaseException):
+                        raise res
                     return res
             return done(0)
 
@@ -246,6 +250,32 @@ class HelperUnderSystemd(TestCase):
         self.assertIn("systemctl --user stop ensemble.service: 0", log)
         self.assertIn("restart complete", log)
 
+    def test_a_stop_that_times_out_still_reaches_the_start(self):
+        import subprocess
+        stop = ["systemctl", "--user", "stop", "ensemble.service"]
+        rc, calls, spawn, killed, log = self.run_helper(
+            {"unit": "ensemble.service", "transient": False},
+            [(stop, subprocess.TimeoutExpired(stop, 150))])
+        self.assertEqual(rc, 0, log)
+        self.assertEqual(self.timeouts[calls.index(stop)], 150)   # past systemd's 90s
+        self.assertIn("systemctl --user stop ensemble.service: timed out after 150s; "
+                      "carrying on", log)
+        killed.assert_any_call(123, restart_helper.signal.SIGTERM)  # the fallback stop
+        self.assertIn(["systemctl", "--user", "start", "ensemble.service"], calls)
+        self.assertLess(calls.index(stop),
+                        calls.index(["systemctl", "--user", "start", "ensemble.service"]))
+        self.assertIn("restart complete", log)
+
+    def test_a_start_that_times_out_is_no_completed_restart(self):
+        import subprocess
+        start = ["systemctl", "--user", "start", "ensemble.service"]
+        rc, calls, spawn, killed, log = self.run_helper(
+            {"unit": "ensemble.service", "transient": False},
+            [(start, subprocess.TimeoutExpired(start, 60))])
+        self.assertEqual(rc, 1, log)
+        self.assertIn("systemctl --user start ensemble.service: timed out after 60s", log)
+        self.assertIn("restart incomplete", log)
+
     def test_a_transient_unit_is_made_again_under_its_name(self):
         rc, calls, spawn, killed, log = self.run_helper(
             {"unit": "ens-test-8798.service", "transient": True},
@@ -270,7 +300,7 @@ class HelperUnderSystemd(TestCase):
             return next(starts) if argv[:3] == ["systemctl", "--user", "start"] else done(0)
 
         with mock.patch.object(restart_helper, "systemctl",
-                               side_effect=lambda *a: run(["systemctl", "--user", *a])):
+                               side_effect=lambda *a, **kw: run(["systemctl", "--user", *a])):
             lines = []
             ok = restart_helper.systemd_start({}, {"unit": "ensemble.service",
                                                    "transient": False}, lines.append)

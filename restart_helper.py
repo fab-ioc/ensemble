@@ -40,35 +40,55 @@ UNIT_OWN_ENV = {"INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MANAGERP
                 "NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC", "ENSEMBLE_PTY_PREFLIGHT"}
 
 
-def systemctl(*args: str):
-    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True,
-                          encoding="utf-8", timeout=60)
+# systemd waits up to 90s (DefaultTimeoutStopSec) for a unit to stop, then
+# kills it: a stop gets longer than that.
+SYSTEMCTL_TIMEOUT_S = 60
+SYSTEMCTL_STOP_TIMEOUT_S = 150
+
+
+def systemctl(*args: str, log=None):
+    """``systemctl --user *args``. A call that times out is logged and
+    returns code 124, so the helper carries on (a helper that died here
+    left the unit stopped and no hub)."""
+    timeout = SYSTEMCTL_STOP_TIMEOUT_S if args[:1] == ("stop",) else SYSTEMCTL_TIMEOUT_S
+    argv = ["systemctl", "--user", *args]
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if log:
+            log(f"systemctl --user {' '.join(args)}: timed out after {timeout}s; carrying on")
+        return subprocess.CompletedProcess(argv, 124, "", f"timed out after {timeout}s")
 
 
 def systemd_start(plan: dict, unit: dict, log) -> bool:
     """Start the hub's unit again. A transient unit (systemd-run, a test
     hub's) is gone once stopped: it is made again under the same name, with
     the hub's environment, the way the helper would start the hub itself."""
-    res = systemctl("start", unit["unit"])
+    res = systemctl("start", unit["unit"], log=log)
     log(f"systemctl --user start {unit['unit']}: {res.returncode}")
     if res.returncode == 0:
         return True
     if not unit.get("transient"):
         # A unit left failed (start limit, a crash on the way down) starts
         # once its failure is cleared.
-        systemctl("reset-failed", unit["unit"])
-        res = systemctl("start", unit["unit"])
+        systemctl("reset-failed", unit["unit"], log=log)
+        res = systemctl("start", unit["unit"], log=log)
         log(f"systemctl --user start {unit['unit']} (after reset-failed): {res.returncode}"
             + (f" ({res.stderr.strip()[:200]})" if res.returncode else ""))
         return res.returncode == 0
-    systemctl("reset-failed", unit["unit"])
+    systemctl("reset-failed", unit["unit"], log=log)
     argv = ["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit['unit']}",
             f"--working-directory={plan['repo']}"]
     argv += [f"--setenv={k}={v}" for k, v in plan["env"].items()
              if k not in UNIT_OWN_ENV and "\n" not in v]
     argv += ["--", *hub_args(plan, plan["port"])]
     for _ in range(10):         # the old unit's name can take a moment to free
-        res = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        try:
+            res = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                                 timeout=60)
+        except subprocess.TimeoutExpired:
+            res = subprocess.CompletedProcess(argv, 124, "", "timed out after 60s")
         if res.returncode == 0:
             break
         time.sleep(0.5)
@@ -223,7 +243,7 @@ def _run(plan: dict) -> int:
                              capture_output=True, text=True, encoding="utf-8", timeout=30)
         log(f"launchctl bootout: {res.returncode}")
     elif unit:
-        res = systemctl("stop", unit["unit"])
+        res = systemctl("stop", unit["unit"], log=log)
         log(f"systemctl --user stop {unit['unit']}: {res.returncode}")
         if res.returncode != 0:
             try:
