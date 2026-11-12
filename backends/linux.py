@@ -91,18 +91,29 @@ class LinuxBackend(Backend):
         self._unit = {"unit": unit, "transient": props.get("Transient") == "yes"}
         return self._unit
 
-    def _outside_unit(self, argv: list[str]) -> list[str]:
+    def _outside_unit(self, argv: list[str]) -> list[str] | None:
         """``argv`` in a scope of its own when this hub runs under a unit, so
         stopping the unit does not end it. ``systemd-run --scope`` execs the
-        command itself: the pid Popen returns is the command's."""
-        run = shutil.which("systemd-run")
-        if not self.systemd_service() or not run:
+        command itself: the pid Popen returns is the command's. None under a
+        unit without ``systemd-run``: the command would stay in the unit's
+        cgroup and die with the stop it is meant to outlive."""
+        if not self.systemd_service():
             return list(argv)
+        run = shutil.which("systemd-run")
+        if not run:
+            return None
         return [run, "--user", "--scope", "--quiet", "--collect",
                 f"--unit=ensemble-detached-{uuid.uuid4().hex[:12]}", "--", *argv]
 
+    NO_SCOPE = ("this hub runs under the systemd unit {unit}, and systemd-run is not on "
+                "PATH: a process started now would stop with the unit")
+
     def start_detached(self, argv: list[str], log_file: Path) -> dict:
-        return super().start_detached(self._outside_unit(argv), log_file)
+        wrapped = self._outside_unit(argv)
+        if wrapped is None:
+            return {"started": False,
+                    "error": self.NO_SCOPE.format(unit=self.systemd_service()["unit"])}
+        return super().start_detached(wrapped, log_file)
 
     # ---------- self-update ----------
 
@@ -139,10 +150,13 @@ class LinuxBackend(Backend):
         env.pop("ENSEMBLE_SYSTEMD_UNIT", None)
         if unit:
             env["ENSEMBLE_SYSTEMD_UNIT"] = unit["unit"]
+        wrapped = self._outside_unit(argv)
+        if wrapped is None:
+            return {"started": False, "error": self.NO_SCOPE.format(unit=unit["unit"])}
         try:
             log.parent.mkdir(parents=True, exist_ok=True)
             with open(log, "ab") as out:
-                subprocess.Popen(self._outside_unit(argv), cwd=str(install_dir),
+                subprocess.Popen(wrapped, cwd=str(install_dir),
                                  stdout=out, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL, start_new_session=True,
                                  close_fds=True, env=env)

@@ -238,7 +238,7 @@ cmd_status() {
 
 cmd_logs() { exec tail -n 50 -f "$LOG"; }
 
-cmd_open() { if command -v xdg-open >/dev/null 2>&1; then xdg-open "$(url)"; else open "$(url)"; fi; }
+cmd_open() { if [[ "$(uname -s)" == "Darwin" ]]; then open "$(url)"; else xdg-open "$(url)"; fi; }
 
 # Pull the latest code and restart. Invoked by the in-app "Update now" button
 # (the server spawns `ensemble update` detached so it survives the restart).

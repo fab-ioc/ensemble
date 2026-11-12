@@ -51,7 +51,15 @@ def systemd_start(plan: dict, unit: dict, log) -> bool:
     the hub's environment, the way the helper would start the hub itself."""
     res = systemctl("start", unit["unit"])
     log(f"systemctl --user start {unit['unit']}: {res.returncode}")
-    if res.returncode == 0 or not unit.get("transient"):
+    if res.returncode == 0:
+        return True
+    if not unit.get("transient"):
+        # A unit left failed (start limit, a crash on the way down) starts
+        # once its failure is cleared.
+        systemctl("reset-failed", unit["unit"])
+        res = systemctl("start", unit["unit"])
+        log(f"systemctl --user start {unit['unit']} (after reset-failed): {res.returncode}"
+            + (f" ({res.stderr.strip()[:200]})" if res.returncode else ""))
         return res.returncode == 0
     systemctl("reset-failed", unit["unit"])
     argv = ["systemd-run", "--user", "--quiet", "--collect", f"--unit={unit['unit']}",
@@ -263,6 +271,7 @@ def _run(plan: dict) -> int:
                 log(f"pinned PTY host force-stop failed: {exc}")
                 forced = False
             log(f"pinned PTY host force-stop confirmed: {forced}; starting hub anyway")
+    unmanaged = ""
     if svc:
         res = subprocess.run(["launchctl", "bootstrap", svc["domain"], svc["plist"]],
                              capture_output=True, text=True, encoding="utf-8", timeout=30)
@@ -272,6 +281,12 @@ def _run(plan: dict) -> int:
             spawn(plan["port"])
     elif unit:
         if not systemd_start(plan, unit, log):
+            # Started directly, the hub serves, but outside the unit: no
+            # restart on a crash, and the unit stays failed. Said, not
+            # reported as a completed restart.
+            unmanaged = (f"restart incomplete: {unit['unit']} did not start, so the hub was "
+                         f"started outside it (no restart on a crash, not started at login); "
+                         f"run: systemctl --user restart {unit['unit']}")
             log("systemd start failed; starting hub directly")
             spawn(plan["port"])
     else:
@@ -288,6 +303,9 @@ def _run(plan: dict) -> int:
         except (OSError, ValueError) as exc:
             log(f"rooms could not be restored: {exc}; the hub brings back what the snapshot "
                 f"lists by itself")
+    if unmanaged:
+        log(unmanaged)
+        return 1
     log("hub up; restart complete")
     return 0
 

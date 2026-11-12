@@ -97,6 +97,22 @@ class Detached(TestCase):
         self.assertTrue(argv[5].startswith("--unit=ensemble-detached-"))
         self.assertEqual(argv[6:], ["--", "python3", "x.py"])
 
+    def test_under_a_unit_without_systemd_run_nothing_starts(self):
+        be = linux.LinuxBackend()
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.object(be, "systemd_service", return_value={"unit": "u.service"}), \
+             mock.patch.object(linux.shutil, "which", return_value=None), \
+             mock.patch("subprocess.Popen") as popen:
+            self.assertIsNone(be._outside_unit(["a"]))
+            res = be.start_detached(["a"], Path(td) / "x.log")
+            (Path(td) / "ensemble").write_text("", encoding="utf-8")
+            upd = be.self_update(Path(td), log_file=Path(td) / "x.log")
+        popen.assert_not_called()
+        for r in (res, upd):
+            self.assertFalse(r["started"])
+            self.assertIn("systemd-run is not on PATH", r["error"])
+            self.assertIn("u.service", r["error"])
+
     def test_by_hand_as_it_is(self):
         be = linux.LinuxBackend()
         with mock.patch.object(be, "systemd_service", return_value=None):
@@ -245,15 +261,39 @@ class HelperUnderSystemd(TestCase):
         self.assertEqual(spawn.call_count, 1)
         self.assertIn("systemd-run --user --unit=ens-test-8798.service: 0", log)
 
-    def test_systemd_fails_the_helper_starts_the_hub(self):
+    def test_a_failed_persistent_unit_is_cleared_and_started_again(self):
+        starts = iter([done(1), done(0)])     # failed once, then cleared
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return next(starts) if argv[:3] == ["systemctl", "--user", "start"] else done(0)
+
+        with mock.patch.object(restart_helper, "systemctl",
+                               side_effect=lambda *a: run(["systemctl", "--user", *a])):
+            lines = []
+            ok = restart_helper.systemd_start({}, {"unit": "ensemble.service",
+                                                   "transient": False}, lines.append)
+        self.assertTrue(ok, lines)
+        self.assertEqual(calls, [["systemctl", "--user", "start", "ensemble.service"],
+                                 ["systemctl", "--user", "reset-failed", "ensemble.service"],
+                                 ["systemctl", "--user", "start", "ensemble.service"]])
+        self.assertFalse(any(c[0] == "systemd-run" for c in calls))
+
+    def test_a_persistent_unit_that_does_not_start_is_no_completed_restart(self):
         rc, calls, spawn, killed, log = self.run_helper(
             {"unit": "ensemble.service", "transient": False},
             [(["systemctl", "--user", "stop"], done(1)),
              (["systemctl", "--user", "start"], done(1))])
-        self.assertEqual(rc, 0, log)
+        self.assertEqual(rc, 1, log)
         killed.assert_any_call(123, restart_helper.signal.SIGTERM)
         self.assertEqual(spawn.call_count, 2)     # preflight, then the hub itself
+        self.assertIn(["systemctl", "--user", "reset-failed", "ensemble.service"], calls)
+        self.assertFalse(any(c[0] == "systemd-run" for c in calls))   # never made transient
         self.assertIn("systemd start failed; starting hub directly", log)
+        self.assertIn("restart incomplete: ensemble.service did not start", log)
+        self.assertIn("systemctl --user restart ensemble.service", log)
+        self.assertNotIn("restart complete", log)
 
     def test_without_a_unit_no_systemctl(self):
         rc, calls, spawn, killed, log = self.run_helper(None, [])
@@ -282,8 +322,69 @@ class PlanAndInstall(TestCase):
         self.assertIn('UNIT="ensemble.service"', text)
         self.assertIn("Restart=on-failure", text)
 
+    def test_install_needs_systemd_run(self):
+        text = (ROOT / "install-systemd.sh").read_text(encoding="utf-8")
+        self.assertIn("command -v systemd-run", text)
+
+    def test_ensemble_open_keeps_open_on_macos(self):
+        text = (ROOT / "ensemble").read_text(encoding="utf-8")
+        line = next(ln for ln in text.splitlines() if ln.startswith("cmd_open()"))
+        self.assertIn('[[ "$(uname -s)" == "Darwin" ]]; then open', line)
+        self.assertIn("else xdg-open", line)
+
     def test_ensemble_update_restarts_through_the_named_unit(self):
         text = (ROOT / "ensemble").read_text(encoding="utf-8")
         body = text[text.index("cmd_update() {"):]
         self.assertIn('systemctl --user restart "$ENSEMBLE_SYSTEMD_UNIT"', body)
         self.assertLess(body.index("ENSEMBLE_SYSTEMD_UNIT"), body.index("launchctl print"))
+
+
+class InstallScript(TestCase):
+    """install-systemd.sh run for real, with systemctl, systemd-run and
+    loginctl stubbed, in a throwaway home."""
+
+    def install(self, env, args=()):
+        import subprocess
+        with tempfile.TemporaryDirectory(prefix="ens install ") as td:
+            d = Path(td)
+            stubs = d / "bin"
+            stubs.mkdir()
+            for name in ("systemctl", "systemd-run", "loginctl"):
+                (stubs / name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{d}/calls"\n',
+                                          encoding="utf-8")
+                (stubs / name).chmod(0o755)
+            conf = d / "config"
+            dropin = conf / "systemd" / "user" / "ensemble.service.d" / "tailnet.conf"
+            dropin.parent.mkdir(parents=True)
+            dropin.write_text("[Service]\nEnvironment=ENSEMBLE_BIND=tailscale\n", encoding="utf-8")
+            res = subprocess.run(["bash", str(ROOT / "install-systemd.sh"), *args],
+                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                 env={"HOME": str(d), "XDG_CONFIG_HOME": str(conf),
+                                      "PATH": f"{stubs}:{os.environ['PATH']}", **env},
+                                 timeout=60)
+            unit = conf / "systemd" / "user" / "ensemble.service"
+            return (res, unit.read_text(encoding="utf-8") if unit.exists() else None,
+                    dropin.exists(), (d / "calls").read_text(encoding="utf-8"))
+
+    def test_bind_and_port_reach_the_unit_and_drop_ins_stay(self):
+        res, unit, kept, calls = self.install({"ENSEMBLE_BIND": "tailscale",
+                                               "ENSEMBLE_PORT": "8799"})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn('Environment="ENSEMBLE_BIND=tailscale"', unit)
+        self.assertIn("--port 8799", unit)
+        self.assertTrue(kept)
+        self.assertIn("Drop-ins kept: tailnet.conf", res.stdout)
+        self.assertIn("systemctl --user restart ensemble.service", calls)
+
+    def test_no_bind_no_line(self):
+        res, unit, kept, _ = self.install({})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("ENSEMBLE_BIND", unit)
+        self.assertIn("--port 8765", unit)
+        self.assertTrue(kept)
+
+    def test_uninstall_keeps_drop_ins(self):
+        res, unit, kept, _ = self.install({}, ["uninstall"])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIsNone(unit)
+        self.assertTrue(kept)

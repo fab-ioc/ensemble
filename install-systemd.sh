@@ -9,6 +9,8 @@
 #   ./install-systemd.sh           # install + (re)start (asks what to call a board)
 #   ENSEMBLE_NOUN=Initiative ./install-systemd.sh   # the same, without asking
 #                                  # (ENSEMBLE_NOUN_PLURAL for a word of your own)
+#   ENSEMBLE_PORT=8766 ENSEMBLE_BIND=tailscale ./install-systemd.sh
+#                                  # another port; listen on the tailnet too
 #   ./install-systemd.sh uninstall # stop + disable + remove
 #   ./install-systemd.sh status    # show status
 #
@@ -16,16 +18,20 @@
 # Unit: ~/.config/systemd/user/ensemble.service
 #
 # Keep the unit name: the restart helper stops and starts the hub through the
-# unit that runs it.
+# unit that runs it. Only the unit file is written (and removed on uninstall):
+# drop-ins in ensemble.service.d/ are kept, and a drop-in's Environment= wins
+# over the unit's.
 set -euo pipefail
 
 UNIT="ensemble.service"
+ME="${USER:-$(id -un)}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$DIR/dashboard.py"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 UNIT_FILE="$UNIT_DIR/$UNIT"
 LOG="$HOME/.ensemble/logs/ensemble.log"
 PORT="${ENSEMBLE_PORT:-8765}"
+BIND="${ENSEMBLE_BIND:-}"
 
 action="${1:-install}"
 
@@ -40,11 +46,15 @@ case "$action" in
       echo "error: $SCRIPT not found" >&2
       exit 1
     fi
-    if [[ ! -d "$DIR/.git" ]]; then
+    if [[ ! -e "$DIR/.git" ]]; then
       echo "warning: $DIR is not a git clone: Update now will not find anything to update" >&2
     fi
     if ! command -v systemctl >/dev/null 2>&1; then
       echo "error: systemctl not found (this script needs systemd)" >&2
+      exit 1
+    fi
+    if ! command -v systemd-run >/dev/null 2>&1; then
+      echo "error: systemd-run not found: the hub's restart and Update now need it to outlive the unit" >&2
       exit 1
     fi
 
@@ -94,6 +104,11 @@ case "$action" in
     # global, nvm...): keep the PATH of the shell running the install.
     AGENT_PATH="$HOME/.local/bin:$PATH:/usr/local/bin:/usr/bin:/bin"
 
+    BIND_LINE=""
+    if [[ -n "$BIND" ]]; then
+      BIND_LINE="Environment=\"ENSEMBLE_BIND=$BIND\""
+    fi
+
     cat >"$UNIT_FILE" <<EOF
 [Unit]
 Description=Ensemble hub
@@ -103,6 +118,7 @@ After=network-online.target
 Type=simple
 WorkingDirectory=$DIR
 Environment="PATH=$AGENT_PATH"
+$BIND_LINE
 ExecStart="$PYTHON" "$SCRIPT" --port $PORT --log "$LOG"
 Restart=on-failure
 RestartSec=5
@@ -120,8 +136,16 @@ EOF
     echo "Code:      $DIR"
     echo "Logs:      $LOG"
     echo "URL:       http://127.0.0.1:$PORT"
-    if [[ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)" != "yes" ]]; then
-      echo "To keep the hub running while you are logged out: loginctl enable-linger $USER"
+    if [[ -n "$BIND" ]]; then
+      echo "Bind:      $BIND (ENSEMBLE_BIND)"
+    fi
+    if compgen -G "$UNIT_DIR/$UNIT.d/*.conf" >/dev/null; then
+      kept=""
+      for f in "$UNIT_DIR/$UNIT.d"/*.conf; do kept="$kept $(basename "$f")"; done
+      echo "Drop-ins kept:$kept"
+    fi
+    if [[ "$(loginctl show-user "$ME" --property=Linger --value 2>/dev/null || true)" != "yes" ]]; then
+      echo "To keep the hub running while you are logged out: loginctl enable-linger $ME"
     fi
     echo
     systemctl --user --no-pager status "$UNIT" | head -n 5 || true
