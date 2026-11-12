@@ -39,14 +39,17 @@ _CURSOR = "›❯>"
 
 # Each screen: the CLI, a short name, the words that identify it (squashed:
 # no spaces, lower case, all must be present), its options in screen order,
-# the option the hub picks (None: the hub never answers it), and the words a
+# the option the hub picks (None: the hub never answers it), the words a
 # CLI prints once it is past the screen, so an answered screen that is still
-# in the tail does not count.
+# in the tail does not count, and the screen's own closing words ("end").
+# Options, words and end words are the screen's anchors: the screen counts
+# only while it is the last thing drawn (``_is_latest``). "gap" widens the
+# text allowed between two anchors for a screen with prose among its options.
 SCREENS = (
     {"cli": "codex", "kind": "trust", "name": "Codex's \"Trust this folder?\" screen",
      "words": ("trustthisfolder?", "trustandcontinue"),
      "options": ("1.trustandcontinue", "2.back"), "pick": "1.trustandcontinue",
-     "past": ("askcodextodoanything", "forshortcuts")},
+     "past": ("askcodextodoanything", "forshortcuts"), "end": ("entercontinue·escback",)},
     # Codex before 0.160 asked it in other words.
     {"cli": "codex", "kind": "trust", "name": "Codex's \"Do you trust the contents of this directory?\" screen",
      "words": ("doyoutrustthecontentsofthisdirectory",),
@@ -64,18 +67,28 @@ SCREENS = (
      "past": ("bypasspermissionson", "forshortcuts", "shift+tabtocycle")},
     # First-run screens the hub must not answer for the person.
     {"cli": "claude", "kind": "bypass", "name": "Claude Code's Bypass Permissions warning",
-     "words": ("bypasspermissionsmode", "yes,iaccept"), "options": (), "pick": None,
+     "words": ("bypasspermissionsmode", "yes,iaccept"), "options": ("1.no,exit", "2.yes,iaccept"),
+     "pick": None,
      "past": ("bypasspermissionson", "forshortcuts")},
     {"cli": "claude", "kind": "theme", "name": "Claude Code's first-run setup (text style)",
-     "words": ("choosethetextstyle",), "options": (), "pick": None,
+     "words": ("choosethetextstyle",), "options": ("darkmode", "lightmode"), "pick": None,
+     "gap": 600,             # a code preview is drawn among its options
      "past": ("bypasspermissionson", "forshortcuts")},
     {"cli": "codex", "kind": "signin", "name": "Codex's sign-in screen",
-     "words": ("signinwithchatgpt",), "options": (), "pick": None,
+     "words": ("signinwithchatgpt",), "options": ("provideyourownapikey",), "pick": None,
+     "gap": 120,             # each option has a line of description
      "past": ("askcodextodoanything",)},
     {"cli": "codex", "kind": "update", "name": "Codex's \"Update available\" screen",
      "words": ("updateavailable", "skipuntilnextversion"), "options": (), "pick": None,
      "past": ("askcodextodoanything",)},
 )
+
+# Footers the CLIs draw under a screen; allowed after its last anchor.
+FOOTERS = ("entertoconfirm·esctocancel", "entercontinue·escback", "entertoconfirm·esctoexit",
+           "presstocontinue", "pressentertocontinue")
+# Text allowed between two anchors, and after the last one.
+_GAP = 24
+_TRAIL = 8
 
 _SPACE = re.compile(r"\s+")
 
@@ -97,6 +110,8 @@ def _find_in(flat: str) -> dict | None:
             continue
         if any(flat.rfind(p) > start for p in scr["past"]):
             continue                            # it moved on since
+        if not _is_latest(flat, scr, start):
+            continue                            # something else was drawn after it
         if best is None or start > best[0]:
             best = (start, scr)
     if best is None:
@@ -106,10 +121,39 @@ def _find_in(flat: str) -> dict | None:
             "answerable": scr["pick"] is not None, "at": start, "screen": scr}
 
 
+def _is_latest(flat: str, scr: dict, start: int) -> bool:
+    """The screen is the last thing drawn: from its first anchor after its
+    question, anchors (its options, words and end words, and the footers)
+    follow one another with at most a short gap and no question between
+    them, up to the end of the tail. The tail is a history, so a trust
+    screen followed by another modal ("Grant access to this tool?") is
+    still in it; this keeps the hub from answering, or reporting, the stale
+    one."""
+    anchors = tuple(scr["options"]) + tuple(scr["words"][1:]) + tuple(scr.get("end", ())) + FOOTERS
+    gap = scr.get("gap", _GAP)
+    q = start + len(scr["words"][0])
+    firsts = [i for i in (flat.find(a, q) for a in anchors) if i >= 0]
+    p = q if not firsts else None
+    if firsts:
+        i = min(firsts)
+        p = i + max(len(a) for a in anchors if flat.startswith(a, i))
+    while p < len(flat):
+        nxt = None
+        for a in anchors:
+            i = flat.find(a, p)
+            if i >= 0 and (nxt is None or i < nxt[0] or (i == nxt[0] and len(a) > len(nxt[1]))):
+                nxt = (i, a)
+        if nxt is None or nxt[0] - p > gap or "?" in flat[p:nxt[0]]:
+            break
+        p = nxt[0] + len(nxt[1])
+    rest = flat[p:]
+    return len(rest) <= _TRAIL and "?" not in rest
+
+
 def find(tail: str) -> dict | None:
     """The first-run screen a terminal is stopped on, or None: ``{cli, kind,
     name, answerable}`` (plus internals). Only a screen nothing has been
-    printed past counts."""
+    printed past, and nothing else drawn after, counts."""
     hit = _find_in(squash(tail))
     if hit is None:
         return None
@@ -163,14 +207,63 @@ def hub_folder(cwd: str) -> bool:
 # Answering
 # ---------------------------------------------------------------------------
 
+def codex_untrusted(cwd: str) -> bool:
+    """Codex's config marks ``cwd`` (any key it is looked up by) untrusted."""
+    try:
+        from agents import codex
+        return codex.explicitly_untrusted(cwd)
+    except Exception:
+        return False
+
+
+def _key(sess) -> str:
+    return str(getattr(sess, "id", "") or f"obj-{id(sess)}")
+
+
+# One answer per terminal, ever: the launch watch and the stall tick may look
+# at the same seat at the same moment, and a second Enter would land on
+# whatever the CLI draws next.
+_GUARD = threading.Lock()
+_LOCKS: dict[str, threading.Lock] = {}
+_ANSWERED: dict[str, float] = {}
+
+
+def answered(sess) -> bool:
+    """The hub already answered a trust screen in this terminal."""
+    return _key(sess) in _ANSWERED
+
+
 def answer(sess, cwd: str, log=print) -> bool:
     """If ``sess`` shows an answerable trust screen and ``cwd`` is a hub
     folder, pick the trust option: move the cursor onto it (checking the
     screen after each key, never more than the options) and press Enter only
     once the cursor is on it — an Enter on Claude's default "No, exit" would
-    end the seat. True when the Enter went in."""
+    end the seat. A terminal is answered once at most, by one caller at a
+    time (another caller at the same moment gets False at once). True when
+    the Enter went in."""
     if not hub_folder(cwd):
         return False
+    key = _key(sess)
+    with _GUARD:
+        if key in _ANSWERED:
+            return False
+        lock = _LOCKS.get(key)
+        if lock is None:
+            if len(_LOCKS) > 500:
+                for k in [k for k, v in _LOCKS.items() if not v.locked()]:
+                    del _LOCKS[k]
+            lock = _LOCKS[key] = threading.Lock()
+    if not lock.acquire(blocking=False):
+        return False
+    try:
+        if key in _ANSWERED:
+            return False
+        return _answer(sess, key, cwd, log)
+    finally:
+        lock.release()
+
+
+def _answer(sess, key: str, cwd: str, log) -> bool:
     for _ in range(4):
         try:
             flat = squash(sess.tail(lines=80, max_bytes=32768))
@@ -180,8 +273,16 @@ def answer(sess, cwd: str, log=print) -> bool:
         if hit is None or not hit["answerable"]:
             return False
         scr = hit["screen"]
+        if scr["cli"] == "codex" and codex_untrusted(cwd):
+            return False                # the person marked it untrusted
         on = _cursor_at(flat, scr, hit["at"])
         if on == scr["pick"]:
+            # Marked before the key: an Enter that went in is never repeated.
+            with _GUARD:
+                _ANSWERED[key] = time.time()
+                if len(_ANSWERED) > 2000:
+                    for k in list(_ANSWERED)[:1000]:
+                        del _ANSWERED[k]
             if sess.write(ENTER) is False:
                 return False
             log(f"[first-run] answered {scr['name']} in {cwd}")
@@ -249,7 +350,7 @@ def look(rid: str, now: float) -> str:
             hit = find(sess.tail(lines=80, max_bytes=32768))
         except Exception:
             continue
-        if not hit or not hit["answerable"]:
+        if not hit or not hit["answerable"] or answered(sess):
             continue
         key = (rid, part.get("ptyId") or "")
         if _TRIED.get(key, 0) >= 2:

@@ -108,6 +108,66 @@ def _toml_key(s: str) -> str:
     return '"' + "".join(out) + '"'
 
 
+def _trust_states(text: str, keys: list[str]) -> dict[str, str] | None:
+    """Each key's entry in the config text: "trusted", "untrusted" (or any
+    other trust level: not trusted), "notrust" (its table has no trust
+    level), or "missing". None when the text does not parse."""
+    if tomllib is None:
+        return {k: _scan_trust(text, k) for k in keys}
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    projects = data.get("projects")
+    out = {}
+    for k in keys:
+        entry = projects.get(k) if isinstance(projects, dict) else None
+        if entry is None:
+            out[k] = "missing"
+        elif not isinstance(entry, dict) or "trust_level" not in entry:
+            out[k] = "notrust"
+        else:
+            out[k] = "trusted" if entry.get("trust_level") == "trusted" else "untrusted"
+    return out
+
+
+_TRUST_LINE = re.compile(r"""^\s*trust_level\s*=\s*["']([^"']*)["']""")
+
+
+def _scan_trust(text: str, key: str) -> str:
+    """``_trust_states`` for one key without a TOML parser (Python 3.10):
+    the key's table is found by its header, and its lines up to the next
+    table are read for a trust level."""
+    heads = {f"[projects.{_toml_key(key)}]", f"[projects.'{key}']"}
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() not in heads:
+            continue
+        for body in lines[i + 1:]:
+            if body.lstrip().startswith("["):
+                break
+            m = _TRUST_LINE.match(body)
+            if m:
+                return "trusted" if m.group(1) == "trusted" else "untrusted"
+        return "notrust"
+    return "missing"
+
+
+def explicitly_untrusted(cwd: str) -> bool:
+    """Any of the keys Codex may look ``cwd`` up by is marked with a trust
+    level other than "trusted" in its config: the person decided, so the
+    hub neither trusts the folder nor answers its trust screen."""
+    if not cwd:
+        return False
+    cfg = _codex_home() / "config.toml"
+    try:
+        text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+    except OSError:
+        return False
+    states = _trust_states(text, _trust_keys(cwd)) or {}
+    return any(st == "untrusted" for st in states.values())
+
+
 def _iso_to_epoch(ts: str) -> float:
     """Parse Codex's ISO-8601 timestamps (e.g. '2026-08-06T09:09:06.301Z')."""
     if not ts:
@@ -542,48 +602,47 @@ class CodexAgent(AgentType):
         key, and is satisfied by the folder's own entry in a worktree or in a
         subfolder of a repository (where its screen offers to trust the
         repository root instead). So the folder itself is trusted, by its
-        real path, never the repository it is in. Idempotent; True when the
-        entry is there afterwards. A folder the person marked otherwise
-        (``trust_level = "untrusted"``) is left as it is, and so is a config
-        that does not parse: appending to it could not make it valid."""
+        real path and the path as given, never the repository it is in.
+
+        All or nothing: every key's state is worked out first, and if any of
+        them is marked otherwise (``trust_level = "untrusted"``, or a table
+        for it without a trust level) nothing is written. Missing entries go
+        in with one append, checked to parse first; a config that does not
+        parse is left as it is. Idempotent; True when every key is trusted
+        afterwards."""
         if not cwd:
             return False
+        keys = _trust_keys(cwd)
         with _TRUST_LOCK:
-            return all(self._trust(k) for k in _trust_keys(cwd))
-
-    def _trust(self, key: str) -> bool:
-        cfg = _codex_home() / "config.toml"
-        try:
-            text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
-        except OSError:
-            return False
-        block = f"[projects.{_toml_key(key)}]\ntrust_level = \"trusted\"\n"
-        sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
-        if tomllib is None:
-            if f"[projects.{_toml_key(key)}]" in text or f"[projects.'{key}']" in text:
+            cfg = _codex_home() / "config.toml"
+            try:
+                text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+            except OSError:
+                return False
+            states = _trust_states(text, keys)
+            if states is None:
+                return False
+            if any(st not in ("trusted", "missing") for st in states.values()):
+                return False
+            missing = [k for k in keys if states[k] == "missing"]
+            if not missing:
                 return True
-        else:
+            blocks = "\n".join(f"[projects.{_toml_key(k)}]\ntrust_level = \"trusted\"\n"
+                               for k in missing)
+            sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+            if tomllib is not None:
+                try:
+                    tomllib.loads(text + sep + blocks)
+                except tomllib.TOMLDecodeError:
+                    # `projects` is written another way (dotted keys, an
+                    # inline table): a header of ours would break the file.
+                    return False
             try:
-                data = tomllib.loads(text)
-            except tomllib.TOMLDecodeError:
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                # Appended, not rewritten: Codex itself rewrites this file, and
+                # a config kept as a link (dotfiles) stays a link.
+                with cfg.open("a", encoding="utf-8") as fh:
+                    fh.write(sep + blocks)
+                return True
+            except OSError:
                 return False
-            projects = data.get("projects")
-            entry = projects.get(key) if isinstance(projects, dict) else None
-            if isinstance(entry, dict) and "trust_level" in entry:
-                return entry.get("trust_level") == "trusted"
-            try:
-                tomllib.loads(text + sep + block)
-            except tomllib.TOMLDecodeError:
-                # The folder's table exists without a trust level, or
-                # `projects` is written another way: a second header would
-                # break the file.
-                return False
-        try:
-            cfg.parent.mkdir(parents=True, exist_ok=True)
-            # Appended, not rewritten: Codex itself rewrites this file, and a
-            # config kept as a link (dotfiles) stays a link.
-            with cfg.open("a", encoding="utf-8") as fh:
-                fh.write(sep + block)
-            return True
-        except OSError:
-            return False

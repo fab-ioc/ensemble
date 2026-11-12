@@ -8,9 +8,11 @@ screen it leaves up as a stalled seat. Every config here lives in a temporary
 folder; the real home is never read or written.
 """
 
+import itertools
 import json
 import os
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -24,6 +26,7 @@ except ImportError:  # Python 3.10
 import dashboard  # noqa: F401  (binds first_run and attention)
 import attention
 import first_run
+import agents.codex
 from agents.claude import ClaudeAgent
 from agents.codex import CodexAgent
 
@@ -116,6 +119,60 @@ class CodexTrustTest(unittest.TestCase):
         self.assertEqual(projects[os.path.realpath(self.folder)]["trust_level"], "trusted")
         self.assertEqual(projects[str(link)]["trust_level"], "trusted")
 
+    @unittest.skipIf(tomllib is None, "Python 3.11+")
+    def test_an_alias_marked_untrusted_means_no_write_at_all(self):
+        if os.name == "nt":
+            self.skipTest("symlinks")
+        link = Path(self.tmp.name) / "link"
+        link.symlink_to(self.folder)
+        self.home.mkdir()
+        text = f'[projects."{link}"]\ntrust_level = "untrusted"\n'
+        self.cfg.write_text(text, encoding="utf-8")
+        self.assertFalse(self.agent.ensure_trusted(str(link)))
+        self.assertEqual(self.cfg.read_text(encoding="utf-8"), text,
+                         "the real path is not trusted behind the person's back")
+        self.assertTrue(agents.codex.explicitly_untrusted(str(link)))
+        self.assertFalse(agents.codex.explicitly_untrusted(str(Path(self.tmp.name))))
+
+    @unittest.skipIf(tomllib is None, "Python 3.11+")
+    def test_a_table_without_a_trust_level_is_left_alone(self):
+        self.home.mkdir()
+        text = f'[projects."{os.path.realpath(self.folder)}"]\nnote = "mine"\n'
+        self.cfg.write_text(text, encoding="utf-8")
+        self.assertFalse(self.agent.ensure_trusted(str(self.folder)))
+        self.assertEqual(self.cfg.read_text(encoding="utf-8"), text)
+
+    def test_without_tomllib_only_a_trusted_entry_counts(self):
+        self.home.mkdir()
+        key = os.path.realpath(self.folder)
+        head = f'[projects."{key}"]\n'
+        with mock.patch.object(agents.codex, "tomllib", None):
+            for body in ('trust_level = "untrusted"\n', 'note = "mine"\n'):
+                text = head + body + '\n[tui]\ntrust_level = "trusted"\n'
+                self.cfg.write_text(text, encoding="utf-8")
+                self.assertFalse(self.agent.ensure_trusted(str(self.folder)), body)
+                self.assertEqual(self.cfg.read_text(encoding="utf-8"), text, body)
+            self.assertTrue(agents.codex.explicitly_untrusted(str(self.folder)) is False)
+            text = head + 'trust_level = "trusted"\n'
+            self.cfg.write_text(text, encoding="utf-8")
+            self.assertTrue(self.agent.ensure_trusted(str(self.folder)))
+            self.assertEqual(self.cfg.read_text(encoding="utf-8"), text, "already there")
+            self.cfg.write_text('model = "x"\n', encoding="utf-8")
+            self.assertTrue(self.agent.ensure_trusted(str(self.folder)))
+            self.assertIn(head + 'trust_level = "trusted"\n', self.cfg.read_text(encoding="utf-8"))
+            self.cfg.write_text(head + 'trust_level = "untrusted"\n', encoding="utf-8")
+            self.assertTrue(agents.codex.explicitly_untrusted(str(self.folder)))
+
+    def test_answer_reads_untrusted_from_the_codex_config(self):
+        self.home.mkdir()
+        self.cfg.write_text(f'[projects."{os.path.realpath(self.folder)}"]\n'
+                            'trust_level = "untrusted"\n', encoding="utf-8")
+        sess = FakeSess("codex_trust", {})
+        with mock.patch.object(first_run, "hub_folder", return_value=True), \
+             mock.patch.object(first_run.time, "sleep", return_value=None):
+            self.assertFalse(first_run.answer(sess, str(self.folder), log=lambda m: None))
+        self.assertEqual(sess.writes, [])
+
     def test_the_repository_root_is_not_trusted(self):
         if tomllib is None:
             self.skipTest("Python 3.11+")
@@ -190,6 +247,17 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(hit["kind"], "bypass")
         self.assertFalse(hit["answerable"])
 
+    def test_a_screen_followed_by_another_modal_is_not_the_screen(self):
+        # The tail is a history: a trust screen still in it, with another
+        # modal drawn after, is not what the terminal waits on.
+        stale = fixture("codex_trust") + "\nGrant access to this tool? 1. Yes 2. No\n"
+        self.assertIsNone(first_run.find(stale))
+        stale = fixture("claude_trust") + ("\nDo you want to proceed?\n❯ 1. Yes\n2. No\n"
+                                           "Enter to confirm · Esc to cancel\n")
+        self.assertIsNone(first_run.find(stale))
+        # A redraw of the screen's own options after a key still counts.
+        self.assertIsNotNone(first_run.find(fixture("claude_down")))
+
     def test_old_codex_wording(self):
         hit = first_run.find("> You are in /x\nDo you trust the contents of this directory?\n"
                              "› 1. Yes, continue\n2. No, quit")
@@ -200,11 +268,14 @@ class FakeSess:
     """A terminal that replays captured screens: each key moves it to the next
     screen named in ``moves`` for (screen, key)."""
 
-    def __init__(self, screen: str, moves: dict):
-        self.screen, self.moves, self.writes = screen, moves, []
+    _ids = itertools.count()
+
+    def __init__(self, screen: str, moves: dict, extra: str = ""):
+        self.screen, self.moves, self.writes, self.extra = screen, moves, [], extra
+        self.id = f"pty-test-{next(self._ids)}"
 
     def tail(self, lines=40, max_bytes=16384):
-        return fixture(self.screen)
+        return fixture(self.screen) + self.extra
 
     def write(self, data):
         self.writes.append(data)
@@ -220,6 +291,9 @@ class AnswerTest(unittest.TestCase):
         sleep = mock.patch.object(first_run.time, "sleep", return_value=None)
         sleep.start()
         self.addCleanup(sleep.stop)
+        untrusted = mock.patch.object(first_run, "codex_untrusted", return_value=False)
+        untrusted.start()
+        self.addCleanup(untrusted.stop)
 
     def hub(self, yes=True):
         return mock.patch.object(first_run, "hub_folder", return_value=yes)
@@ -253,6 +327,46 @@ class AnswerTest(unittest.TestCase):
             self.assertFalse(first_run.answer(sess, "/home/someone/code", log=lambda m: None))
         self.assertEqual(sess.writes, [])
 
+    def test_a_stale_screen_under_another_modal_gets_no_key(self):
+        sess = FakeSess("codex_trust", {}, extra="\nGrant access to this tool? 1. Yes 2. No\n")
+        with self.hub():
+            self.assertFalse(first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None))
+        self.assertEqual(sess.writes, [])
+
+    def test_a_folder_marked_untrusted_in_codex_gets_no_key(self):
+        sess = FakeSess("codex_trust", {})
+        with self.hub(), mock.patch.object(first_run, "codex_untrusted", return_value=True):
+            self.assertFalse(first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None))
+        self.assertEqual(sess.writes, [])
+
+    def test_two_callers_at_once_press_enter_once(self):
+        gate, inside = threading.Event(), threading.Event()
+
+        class Slow(FakeSess):
+            def tail(self, lines=40, max_bytes=16384):
+                inside.set()
+                gate.wait(5)
+                return super().tail(lines, max_bytes)
+
+        sess = Slow("codex_trust", {})          # the screen stays up after Enter
+        got = []
+        with self.hub():
+            a = threading.Thread(target=lambda: got.append(
+                first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None)))
+            a.start()
+            inside.wait(5)
+            b = threading.Thread(target=lambda: got.append(
+                first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None)))
+            b.start()
+            b.join(5)
+            gate.set()
+            a.join(5)
+            # Later callers (the stall tick) never answer it again either.
+            self.assertFalse(first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None))
+        self.assertEqual(sorted(got), [False, True])
+        self.assertEqual(sess.writes, [first_run.ENTER])
+        self.assertTrue(first_run.answered(sess))
+
     def test_watch_answers_a_fresh_seat(self):
         sess = FakeSess("codex_trust", {("codex_trust", first_run.ENTER): "codex_answered"})
         with self.hub():
@@ -281,7 +395,7 @@ class HubFolderTest(unittest.TestCase):
 
 
 class LookTest(unittest.TestCase):
-    def test_stall_tick_answers_at_most_twice_per_seat(self):
+    def test_stall_tick_answers_a_seat_once(self):
         first_run._TRIED.clear()
         self.addCleanup(first_run._TRIED.clear)
         sess = FakeSess("codex_trust", {})       # never moves on
@@ -292,10 +406,11 @@ class LookTest(unittest.TestCase):
             rotation=types.SimpleNamespace(_pty=lambda p: sess))
         with mock.patch.object(first_run, "_d", fake), \
              mock.patch.object(first_run, "hub_folder", return_value=True), \
+             mock.patch.object(first_run, "codex_untrusted", return_value=False), \
              mock.patch.object(first_run, "_log"):
             for _ in range(4):
                 first_run.look("room-x", 0)
-        self.assertEqual(sess.writes, [first_run.ENTER, first_run.ENTER])
+        self.assertEqual(sess.writes, [first_run.ENTER])
 
 
 class AttentionTest(unittest.TestCase):
@@ -328,6 +443,19 @@ class AttentionTest(unittest.TestCase):
     def test_not_within_the_grace(self):
         got = self.classify(self.ev(fixture("codex_trust"), 5))
         self.assertFalse(got and got[2].get("cause") == "first_run")
+
+    def test_a_stale_screen_does_not_hide_the_modal_after_it(self):
+        tail = fixture("codex_trust") + "\nGrant access to this tool? 1. Yes 2. No\n"
+        with mock.patch.object(first_run, "hub_folder", return_value=True):
+            got = self.classify(self.ev(tail, 120))
+        self.assertFalse(got and got[2].get("cause") == "first_run")
+
+    def test_untrusted_folder_wording(self):
+        with mock.patch.object(first_run, "hub_folder", return_value=True), \
+             mock.patch.object(first_run, "codex_untrusted", return_value=True):
+            _, reason, extra = self.classify(self.ev(fixture("codex_trust"), 120))
+        self.assertEqual(extra["cause"], "first_run")
+        self.assertIn("marked untrusted in Codex's config", reason)
 
     def test_an_answered_screen_is_not_a_stall(self):
         got = self.classify(self.ev(fixture("codex_answered"), 120))
