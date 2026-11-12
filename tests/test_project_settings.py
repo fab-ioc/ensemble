@@ -125,6 +125,14 @@ class Rename(Hub):
         self.assertEqual(dashboard.find_project(self.ed)["name"], "Ensemble Dashboard")
         self.assertEqual(self.rename(self.ed, "ensemble dashboard")[0], 200, "its own name in another case is fine")
 
+    def test_the_inbox_has_the_new_name_at_once(self):
+        import inbox
+        inbox.snapshot()                     # a fresh build is kept a while
+        self.rename(self.ed, "Harbour Lights")
+        with mock.patch.object(inbox, "_build_all", wraps=inbox._build_all) as b:
+            inbox.snapshot()
+        self.assertEqual(b.call_count, 1, "a rename forgets the kept build")
+
     def test_only_the_page_renames(self):
         self.page = False
         st, body = self.rename(self.ed, "Other")
@@ -205,11 +213,18 @@ class Icon(Hub):
                     f'<svg {ns}><style>@import url(https://example.com/a.css);</style></svg>',
                     f'<svg {ns}><rect style="fill:url(https://example.com/#a)"/></svg>',
                     f'<svg {ns}><use href="https://example.com/s.svg#a"/></svg>',
-                    f'<!DOCTYPE svg [<!ENTITY a "aaaa">]><svg {ns}><text>&a;</text></svg>'):
+                    f'<!DOCTYPE svg [<!ENTITY a "aaaa">]><svg {ns}><text>&a;</text></svg>',
+                    # review 1: forms the url() check alone did not see
+                    f'<svg {ns} xml:base="https://example.com/"><image href="#x"/></svg>',
+                    f'<svg {ns}><rect style="fill:u\\72l(https://example.com/a.svg#b)"/></svg>',
+                    f'<svg {ns}><rect fill="u\\72l(https://example.com/a.svg#b)"/></svg>',
+                    f'<svg {ns}><style>@\\69mport "https://example.com/a.css";</style></svg>',
+                    f'<svg {ns}><style>@font-face {{ font-family: x; src: local(x) }}</style></svg>',
+                    f'<svg {ns}><rect style="fill: image-set(\'https://example.com/a.png\' 1x)"/></svg>'):
             st, body = self.upload(bad.encode(), "image/svg+xml", name="x.svg")
             self.assertEqual((st, body["error"]), (400, "unsafe_svg"), bad)
-        st, body = self.upload(f'<svg {ns}><defs><linearGradient id="g"/></defs>'
-                               f'<rect fill="url(#g)" width="4" height="4"/><use href="#g"/></svg>'.encode(),
+        st, body = self.upload(f'<svg {ns}><defs><linearGradient id="g"/></defs><style>.a {{ fill: url(#g); font-family: "Inter" }}</style>'
+                               f'<rect class="a" fill="url(#g)" width="4" height="4"/><use href="#g"/></svg>'.encode(),
                                "image/svg+xml", name="ok.svg")
         self.assertEqual(st, 200, "local references are fine")
         st, body = self.upload(b"<svg><rect></svg>", "image/svg+xml", name="broken.svg")

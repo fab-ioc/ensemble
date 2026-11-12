@@ -16447,7 +16447,7 @@ function ldpColour(pid) {
 function ldpSwatch(pid, cls) {
   let pj = null;
   try { pj = projectById(pid); } catch (e) {}
-  if (pj && pj.icon && pj.icon.v) return `<span class="${cls || 'ldp-ico'} ldp-pic"><img src="${esc(projIconUrl(pid, pj.icon))}" alt="" draggable="false"></span>`;
+  if (pj && pj.icon && pj.icon.v) return `<span class="${cls || 'ldp-ico'} ldp-pic"><img src="${esc(projIconUrl(pid, pj.icon))}" alt="${esc(pj.name || '')}" draggable="false"></span>`;
   return `<svg class="${cls || 'ldp-ico'}" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pid)}"/></svg>`;
 }
 function ldpKindIcon(kind, cls) {
@@ -17670,9 +17670,12 @@ function psSize(n) {
 }
 function psName(s) { return String(s || '').split(/\s+/).filter(Boolean).join(' ').slice(0, 120); }
 // The other project already called `name` (as the hub compares: case aside).
+// The hub compares names with Python's casefold(); up then down is as near
+// as JavaScript gets (Straße and STRASSE are the same name).
+const psFold = s => String(s || '').toUpperCase().toLowerCase();
 function psClash(pid, name) {
-  const k = psName(name).toLowerCase();
-  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && String(p.name || '').trim().toLowerCase() === k) || null : null;
+  const k = psFold(psName(name));
+  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && psFold(psName(p.name)) === k) || null : null;
 }
 function psNameErr(pid, name) {
   if (!psName(name)) return 'A name is needed.';
@@ -17728,10 +17731,10 @@ function psDialogHtml(pj, d, phone) {
     + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
     + (pj.path ? `<div class="ps-sub">${esc(pj.path)}</div>` : '')
     + `<div class="ps-fld"><label for="ps-name">Name</label>`
-    + `<input type="text" id="ps-name" class="ps-inp${nameErr && d.touched ? ' bad' : ''}" value="${esc(d.name)}" maxlength="120" autocomplete="off" spellcheck="false"`
-    + ` aria-describedby="ps-name-note"${nameErr && d.touched ? ' aria-invalid="true"' : ''}>`
+    + `<input type="text" id="ps-name" class="ps-inp${(nameErr && d.touched) || d.nameErr ? ' bad' : ''}" value="${esc(d.name)}" maxlength="120" autocomplete="off" spellcheck="false"`
+    + ` aria-describedby="ps-name-note"${(nameErr && d.touched) || d.nameErr ? ' aria-invalid="true"' : ''}>`
     + (nameErr && d.touched ? `<p class="ps-err" id="ps-name-note" role="alert">${esc(nameErr)}</p>` : `<p class="ps-hint" id="ps-name-note">${hint}</p>`)
-    + (d.nameErr ? `<p class="ps-err" role="alert">${esc(d.nameErr)}</p>` : '') + '</div>'
+    + (d.nameErr ? `<p class="ps-err" id="ps-name-hub" role="alert">${esc(d.nameErr)}</p>` : '') + '</div>'
     + `<div class="ps-fld"><div class="ps-lg" id="ps-icon-lg">Icon</div>`
     + `<div class="ps-choices" role="radiogroup" aria-labelledby="ps-icon-lg">`
     + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="square"${sq ? ' checked' : ''}>${bigSq}`
@@ -17789,7 +17792,10 @@ function psOnce(pid, d, focus) {
       const inp = dlg.querySelector('#ps-name');
       const err = psNameErr(pid, d.name);
       const shown = !!(err && d.touched);
-      inp.classList.toggle('bad', shown);
+      // The hub's refusal holds until the name is typed again.
+      const hub = dlg.querySelector('#ps-name-hub');
+      if (hub && !d.nameErr) hub.remove();
+      inp.classList.toggle('bad', shown || !!d.nameErr);
       if (shown) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
       const note = dlg.querySelector('#ps-name-note');
       const want = shown ? 'ps-err' : 'ps-hint';

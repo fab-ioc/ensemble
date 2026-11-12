@@ -8206,6 +8206,7 @@ def rename_project(project_id: str, name: str) -> tuple[bool, str]:
     ok, msg = _set_project_field(project_id, "name", new)
     if not ok:
         return ok, msg
+    inbox.forget()      # its cards carry the project's name: the next read has the new one
     po_rid = (proj.get("poRoomId") or "").strip()
     po_room = chatroom.get_room(po_rid) if po_rid else None
     if po_room is not None:

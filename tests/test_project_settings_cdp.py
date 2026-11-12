@@ -134,7 +134,7 @@ async function main() {
   })()`;
   const ICONS = pid => `(() => { const pid = ${JSON.stringify(pid)};
     const one = e => { if (!e) return null; const r = e.getBoundingClientRect(); const img = e.querySelector('img');
-      return { tag: e.tagName.toLowerCase(), w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10, img: !!img, loaded: !!img && img.complete && img.naturalWidth > 0, src: img ? img.getAttribute('src') : '' }; };
+      return { tag: e.tagName.toLowerCase(), w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10, img: !!img, loaded: !!img && img.complete && img.naturalWidth > 0, src: img ? img.getAttribute('src') : '', alt: img ? img.getAttribute('alt') : null }; };
     return { row: one(document.querySelector('#ld-projs .ldp-row[data-ldp-proj="' + pid + '"] .ldp-ico')),
       rowName: ((document.querySelector('#ld-projs .ldp-row[data-ldp-proj="' + pid + '"] .ldp-name') || {}).textContent || ''),
       bar: one(document.querySelector('#proj-switch-ico .ldp-ico')), barName: (document.getElementById('proj-switch-name') || {}).textContent,
@@ -189,6 +189,9 @@ async function main() {
     await q.evalIn(`document.querySelector('#modal #ps-save').click()`);
     await q.until(`!document.getElementById('modal').open`, 8000);
     await q.until(`(projectById(${JSON.stringify(P.Motors)}) || {}).name === 'Motors Two'`, 8000);
+    // the Inbox is asked again at once, and the hub's kept build was forgotten: well before its ten-second poll
+    out.ibxRenamedIn = await q.until(`/Motors Two/.test((document.querySelector('#ld-ibx-body .ibx-where') || {}).textContent || '') && 1`, 4000).catch(() => 0);
+    out.fold = await q.evalIn(`[psFold('Straße') === psFold('STRASSE'), psFold('Motors') === psFold('MOTORS')]`);
     await sleep(800);
     out.renamed = await q.evalIn(ICONS(P.Motors));
     // ---- the bar's switcher › Project settings…: an icon
@@ -415,6 +418,8 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertEqual(r["rowName"], "Motors Two")
         self.assertEqual(r["barName"], "Motors Two")
         self.assertIn("Motors Two", r["ibxWhere"])
+        self.assertEqual(self.g("ibxRenamedIn"), 1, "the Inbox names it at once")
+        self.assertEqual(self.g("fold"), [True, True], "names compared as the hub's casefold()")
 
     def test_the_switcher_lists_the_settings_first(self):
         m = self.g("switchMenu")
@@ -455,6 +460,7 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertIcon(w["row"], True)
         self.assertIcon(w["bar"], True)
         self.assertIcon(w["ibx"], True)
+        self.assertEqual([w[k]["alt"] for k in ("row", "bar", "ibx")], ["Motors Two"] * 3, "the image says the name")
         wh = self.g("wheels")
         self.assertEqual(wh["icon"]["file"], "project-icon.png")
         self.assertIcon(wh["row"], True)

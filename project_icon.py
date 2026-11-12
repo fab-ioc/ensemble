@@ -86,10 +86,17 @@ def _ok_ref(v: str) -> bool:
     return v == "" or v.startswith("#") or bool(re.match(r"data:image/(png|jpeg|webp|gif);base64,", v, re.I))
 
 
+# CSS that could name something outside the file in a form the url() check
+# would not see: an escape (u\72l(, @\69mport), any at-rule, and the
+# functions that take a URL as a plain string.
+_CSS_BAD_RE = re.compile(r"\\|@|\b(?:-webkit-)?image-set\s*\(|\bimage\s*\(|\bcross-fade\s*\(|\belement\s*\(", re.I)
+
+
 def _ok_style(text: str) -> bool:
-    if "@import" in (text or "").lower():
+    text = text or ""
+    if _CSS_BAD_RE.search(text):
         return False
-    return all(_ok_ref(u) for u in _URL_RE.findall(text or ""))
+    return all(_ok_ref(u) for u in _URL_RE.findall(text))
 
 
 def check_svg(raw: bytes) -> None:
@@ -116,6 +123,10 @@ def check_svg(raw: bytes) -> None:
             raise Refused("unsafe_svg")
         for k, v in el.attrib.items():
             name = _local(k)
+            # xml:base turns a "#x" below it into an outside address; a
+            # backslash is a CSS escape in a presentation attribute.
+            if name == "base" or "\\" in (v or ""):
+                raise Refused("unsafe_svg")
             if name.startswith("on"):
                 raise Refused("unsafe_svg")
             if name in ("href", "src", "action", "formaction") and not _ok_ref(v):
