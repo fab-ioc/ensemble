@@ -9622,7 +9622,6 @@ async function runUpdate() {
   // The hub as it is now, before the request: a page left open across a
   // restart still holds the pid it loaded with, and would take the hub that
   // already runs for the new one (#345).
-  let startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
   const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
   const stopPreflight = () => {
     stop();
@@ -9645,15 +9644,11 @@ async function runUpdate() {
     stopPreflight();
     return;
   }
-  startPid = cfg0.pid;
+  const startPid = cfg0.pid;
   const now = () => performance.now();
   let logPath = updLogPath(app);
   // A failure leaves this hub as it was: What's new still offers Install now.
   const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
-  if (!before) {
-    stopPreflight();
-    return;
-  }
   const seen = {
     last: (before.last && before.last.at) || 0,
     app: before.at || 0,
