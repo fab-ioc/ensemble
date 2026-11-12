@@ -183,6 +183,32 @@ def _gone(path: Path) -> bool:
         raise ScanError(f"could not look at {path}: {e}") from e
 
 
+def process_gone(pid: int, start_ticks: int | None) -> bool:
+    """A failed move is harmless only if its original process exited.
+
+    Checking the kernel start tick also handles a PID reused during a pass.
+    An unreadable live process is not assumed gone.
+    """
+    base = Path(f"/proc/{pid}")
+    if _gone(base):
+        return True
+    if start_ticks is None:
+        return False
+    try:
+        stat = (base / "stat").read_text()
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError as e:
+        raise ScanError(f"could not look at {base / 'stat'}: {e}") from e
+    try:
+        fields = stat[stat.rindex(")") + 2:].split()
+        if fields[0] in ("Z", "X", "x"):
+            return True   # only a process table entry remains; no work to stop
+        return int(fields[19]) != start_ticks
+    except (ValueError, IndexError) as e:
+        raise ScanError(f"could not read start time of pid {pid}: {e}") from e
+
+
 def cgroup_pids(cgroup: Path) -> list[int]:
     """Every process in ``cgroup`` and the cgroups below it. A cgroup that
     is gone (its unit ended since it was listed, a child cgroup removed
@@ -241,11 +267,13 @@ def read_proc(pid: int) -> dict | None:
         comm = stat[stat.index("(") + 1:stat.rindex(")")]
         fields = stat[stat.rindex(")") + 2:].split()
         ppid, pgid, sid, tty = int(fields[1]), int(fields[2]), int(fields[3]), int(fields[4])
-        start = int(fields[19]) / _clock_ticks()
+        start_ticks = int(fields[19])
+        start = start_ticks / _clock_ticks()
     except (ValueError, IndexError):
         return None
     info = {"pid": pid, "ppid": ppid, "pgid": pgid, "sid": sid, "tty": tty != 0,
-            "comm": comm, "age": max(0.0, _uptime() - start), "argv": [], "nohup": False,
+            "comm": comm, "age": max(0.0, _uptime() - start), "startTicks": start_ticks,
+            "argv": [], "nohup": False,
             "cwd": "", "room": "", "identity": "", "pty": "", "cgroup": ""}
     try:
         info["argv"] = [a for a in (base / "cmdline").read_bytes().decode(
@@ -522,6 +550,7 @@ class Guard:
         self.unit_cgroups = unit_cgroups
         self.cgroup_pids = cgroup_pids
         self.read_proc = read_proc
+        self.process_gone = process_gone
         self.ancestry = own_ancestry
         self.hosts = pty_host_pids
         self.start = start_scope
@@ -599,24 +628,49 @@ class Guard:
                 name = _scope_name(top)
                 if attempt:
                     name = name[:-len(".scope")] + f"-{attempt}.scope"
-                why = self.start(name, sorted(pids),
-                                 f"Kept out of {top['unit']} by the Ensemble restart guard: "
-                                 f"{' '.join(top.get('argv') or [top['comm']])[:200]}")
-                if not why:
-                    why = self._wait_moved(pids, units)
-                if why:
-                    failed[root] = {"pid": root, "text": text, "error": why}
+                live = sorted(pids)
+                description = (f"Kept out of {top['unit']} by the Ensemble restart guard: "
+                               f"{' '.join(top.get('argv') or [top['comm']])[:200]}")
+                while live:
+                    why = self.start(name, live, description)
+                    if not why:
+                        why = self._wait_moved(live, units)
+                    if not why:
+                        break
                     self.log(f"could not move pid {root} out of {top['unit']}: {why}")
+                    # systemd rejects the whole call if even one child in
+                    # PIDs exited. Retry immediately with the survivors; each
+                    # retry removes at least one gone pid, so this is bounded.
+                    gone = [pid for pid in live if self.process_gone(
+                        pid, procs[pid].get("startTicks"))]
+                    if not gone:
+                        break
+                    live = [pid for pid in live if pid not in gone]
+                    self.log(f"pid(s) {', '.join(map(str, gone))} exited during the move"
+                             + (f"; retrying {len(live)} survivor(s)" if live else "; tree gone"))
+                if why:
+                    if live:
+                        failed[root] = {"pid": root, "text": text, "error": why,
+                                        "_pids": live,
+                                        "_starts": {pid: procs[pid].get("startTicks") for pid in live}}
+                    else:
+                        failed.pop(root, None)
                     continue
                 failed.pop(root, None)
-                moved.update(pids)
-                result["moved"].append({"pid": root, "pids": sorted(pids), "scope": name,
+                moved.update(live)
+                result["moved"].append({"pid": root, "pids": live, "scope": name,
                                         "from": top["unit"], "text": text})
-                self.log(f"moved pid {root}" + (f" and {len(pids) - 1} child(ren)" if len(pids) > 1 else "")
+                self.log(f"moved pid {root}" + (f" and {len(live) - 1} child(ren)" if len(live) > 1 else "")
                          + f" from {top['unit']} into {name}: {self.what} no longer stops it")
             if failed and all(r in failed for r in trees):
                 break       # nothing new moved on this pass: another pass changes nothing
-        result["failed"] = list(failed.values())
+        for root, entry in list(failed.items()):
+            if all(self.process_gone(pid, entry["_starts"][pid]) for pid in entry["_pids"]):
+                failed.pop(root)
+                self.log(f"tree rooted at pid {root} exited after the failed move; "
+                         f"no longer blocks {self.what}")
+        result["failed"] = [{k: v for k, v in entry.items() if not k.startswith("_")}
+                            for entry in failed.values()]
         if failed:
             if force:
                 result["forced"] = True

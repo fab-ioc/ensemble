@@ -1541,6 +1541,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100); }
   .dcm-head { padding: var(--s-100) var(--s-200); font-size: var(--fs-100); font-weight: 600; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dcm-list { display: flex; flex-direction: column; max-height: min(50vh, 320px); overflow: auto; }
+  /* #347: an item keeps its natural height (an overflow:hidden flex item would
+     shrink to nothing); a menu taller than its window (max-height from
+     docsMenuPlace) scrolls its list under the head, or itself. */
+  .dcm { overflow: hidden auto; overscroll-behavior: contain; }
+  .dcm > *, .dcm-list > * { flex-shrink: 0; }
+  .dcm > .dcm-list { flex-shrink: 1; min-height: 0; }
+  .dcm-list.dcm-acts { max-height: none; }
   .dcm .ov-item { overflow: hidden; text-overflow: ellipsis; }
   .dcm .ov-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .dcm-empty { padding: var(--s-200); color: var(--fg-muted); font-size: var(--fs-200); }
@@ -17097,7 +17104,7 @@ function ldpMenu(b, r, rect) {
   // A pick runs the page's own handler for it (on document, keyed on the
   // item's class and data), through the Dock menu's stand-in button; a picker
   // it opens (Terminal colours) opens under the ⋯.
-  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div><div class="dcm-list">`
+  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div><div class="dcm-list dcm-acts">`
     + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
     + groups.map(g => '<div class="dcm-rule" role="separator"></div>' + g.map(itemHtml).join('')).join('')
     + '</div>',
@@ -19654,6 +19661,7 @@ function docsMenuPlace(menu, r) {
   menu.hidden = false;
   menu.style.left = '0px'; menu.style.top = '0px';
   const win = menu.ownerDocument.defaultView || window;   // its panel's window, popped out or not
+  menu.style.maxHeight = (win.innerHeight - 16) + 'px';   // #347: never past the window; it scrolls
   const w = menu.offsetWidth, h = menu.offsetHeight, vw = win.innerWidth, vh = win.innerHeight;
   let top = r.bottom + 4;
   if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
