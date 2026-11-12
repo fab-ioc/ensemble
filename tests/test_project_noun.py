@@ -48,6 +48,7 @@ class Isolated(unittest.TestCase):
     def get_settings(self) -> dict:
         h = dashboard.Handler.__new__(dashboard.Handler)
         h.path, h.command, h.request_version = "/api/settings", "GET", "HTTP/1.1"
+        h.client_address = ("127.0.0.1", 0)   # the hub machine: no token needed
         sent = {}
         h._send_json = lambda code, body: sent.update(code=code, body=body)
         h.headers = {}

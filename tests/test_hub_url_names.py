@@ -220,7 +220,8 @@ async function main() {
         if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value;
       };
       const until = async (expr, n=160) => { for (let i=0;i<n;i++) { try { if(await ev(expr)) return; } catch (e) {} await sleep(150); } throw Error('timeout '+expr+' '+await ev('document.body.innerText.slice(-1600)')); };
-      await send('Page.navigate', {url:A.base+'/session?room='+A.room});
+      // Signed in as another computer is (ED-341): the hub swaps ?token= for its cookie.
+      await send('Page.navigate', {url:A.base+'/session?room='+A.room+'&token='+A.token});
       // drawn once the message chip and the task chip have their names
       await until(`(() => { const b = [...document.querySelectorAll('#msgs .bubble, #msgs .msg')].find(x => x.textContent.includes('LINKS:'));
         return b && b.querySelector('a.ref-chip') && b.querySelector('a.task-chip'); })()`);
@@ -247,6 +248,8 @@ class HubUrlNamesInChrome(Hub):
         for attr, val in [('_agent_peer', lambda h: ''), ('log_message', lambda *a, **k: None)]:
             p = mock.patch.object(dashboard.Handler, attr, val); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(dashboard, 'SETTINGS_FILE', base / 'settings.json'); p.start(); self.addCleanup(p.stop)
+        # Another computer needs the token, as on every hub (ED-341).
+        p = mock.patch.object(dashboard, 'ACCESS_TOKEN', 'token-for-the-test'); p.start(); self.addCleanup(p.stop)
         rid = self.room('Task chat', self.ed)
         other = self.room('Another task', self.ed, numbered=True)
         first = chatroom.post_message(rid, 'claude', 'Plan is ready for a look.', to='user')['message']['id']
@@ -269,7 +272,7 @@ class HubUrlNamesInChrome(Hub):
         chatroom.post_message(rid, 'claude', text, to='user')
         shots = os.environ.get('ENSEMBLE_SHOTS', '')
         if shots: Path(shots).mkdir(parents=True, exist_ok=True)
-        args = {**chrome_profile.node_args(), 'tmp': str(base), 'base': f"http://{MAC_HOST}:{port}", 'room': rid, 'shots': shots}
+        args = {**chrome_profile.node_args(), 'tmp': str(base), 'base': f"http://{MAC_HOST}:{port}", 'token': 'token-for-the-test', 'room': rid, 'shots': shots}
         script = base / 'hub_url_names_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         r = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=300)
         self.assertEqual(r.returncode, 0, r.stderr[-4000:])
