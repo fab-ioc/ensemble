@@ -151,6 +151,16 @@ class Stage(Base):
              mock.patch.object(dashboard, "pull_checkout", return_value=""), \
              mock.patch.object(dashboard, "trigger_restart", return_value={"started": True}):
             restart_drain.request_restart("an update", {"label": "the page"}, "update")
+        st = self.stage()
+        self.assertEqual(st["stage"], "fetching", "under way, for a page whose request got no answer")
+        self.assertNotIn("error", st)
+
+    def test_an_update_joining_a_drain_forgets_the_last_outcome(self):
+        dashboard.src_update_stage("failed", "L1", error="old")
+        with mock.patch.object(restart_drain, "holding", return_value=True), \
+             mock.patch.object(dashboard, "_current_restart_lease", return_value=None), \
+             mock.patch.object(restart_drain, "current", return_value={"state": "restarting"}):
+            restart_drain.request_restart("an update", {"label": "the page"}, "update")
         self.assertEqual(self.stage()["stage"], "idle")
 
     def test_a_failed_fetch_says_why_and_where(self):
@@ -166,6 +176,9 @@ class Stage(Base):
         self.assertEqual(res["error"], "git fetch failed: Could not resolve host: github.com")
         self.assertEqual(Path(res["log"]), self.dir / "logs" / "restart.log")
         self.assertIn("Could not resolve host", (self.dir / "logs" / "restart.log").read_text(encoding="utf-8"))
+        st = self.stage()
+        self.assertEqual((st["stage"], st["error"]), ("failed", res["error"]))
+        self.assertEqual(st["advice"], "Check the connection, then Update now again.")
 
 
 if __name__ == "__main__":

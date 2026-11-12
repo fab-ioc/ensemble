@@ -594,19 +594,25 @@ def request_restart(reason: str, by: dict, action: str = "restart",
     if action == "restart" and not holding() and _d.pty_host_compatible():
         _log(f"hub-only mode by {by.get('label') or 'someone'}: {reason or '(no reason)'}")
         return _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""))
+    if action == "update" and not external and not _d._current_restart_lease():
+        # An earlier attempt's outcome is not this one's, also when this one
+        # joins a drain under way.
+        _d.src_update_stage("idle")
     if action == "update" and not holding() and not external:
-        if not _d._current_restart_lease():
-            _d.src_update_stage("idle")     # an earlier attempt's outcome is not this one's
         if _d.app_version.packaged():
             _log("packaged update staging; helper will select hub-only or classic mode")
             res = _d.start_app_update()
             return {"status": 202 if res.get("started") else 500, **res}
         if _d.source_update_keeps_host():
+            _d.src_update_stage("fetching")   # a page whose request got no answer sees it under way
             err = _d.pull_checkout()
             if err:
                 _d._restart_log(f"source update not started: {err}")
-                return {"status": 500, "started": False, "error": err,
-                        "log": str(_d.DASHBOARD_DIR / "logs" / "restart.log")}
+                log = str(_d.DASHBOARD_DIR / "logs" / "restart.log")
+                advice = ("Check the connection, then Update now again."
+                          if err.startswith(("git fetch failed", "git reset failed")) else "")
+                _d.src_update_stage("failed", error=err, advice=advice, log=log)
+                return {"status": 500, "started": False, "error": err, "log": log}
             _log("source update: PTY host unchanged; hub-only mode")
             # The page's own Update now: nobody's reply needs the grace.
             res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),

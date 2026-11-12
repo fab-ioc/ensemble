@@ -9388,7 +9388,7 @@ const UPD_CARD = { t0: 0, step: '', timer: 0, open: false };
 const updMmss = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function updCardTick() {
   const t = document.getElementById('upd-card-time');
-  if (t) t.textContent = ' · ' + updMmss(Date.now() - UPD_CARD.t0);
+  if (t) t.textContent = ' · ' + updMmss(performance.now() - UPD_CARD.t0);   // monotonic: never counts back
 }
 function updCardShow(step) {
   const o = document.getElementById('upd-card');
@@ -9445,8 +9445,10 @@ function updCardDrain(v) {
   }
 }
 const updSleep = ms => new Promise(r => setTimeout(r, ms));
+// A timed-out fetch, so a hung request never keeps the card spinning.
+const updSignal = ms => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
 async function updJson(url) {
-  try { const r = await fetch(url, { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; }
+  try { const r = await fetch(url, { cache: 'no-store', signal: updSignal(8000) }); return r.ok ? await r.json() : null; } catch { return null; }
 }
 // Where the update's helper writes: logs/update.log (the app) or logs/restart.log.
 function updLogPath(app) {
@@ -9455,8 +9457,12 @@ function updLogPath(app) {
   const sep = dir.includes('\\') ? '\\' : '/';
   return dir.replace(/[\\/]+$/, '') + sep + 'logs' + sep + (app ? 'update.log' : 'restart.log');
 }
-const UPD_DOWN_S = 300;        // the hub away this long: "The hub did not come back"
-const UPD_STALL_S = 600;       // the old hub answering this long with no new step: stopped
+const UPD_LIMITS = {
+  downS: 300,      // the hub away this long: "The hub did not come back"
+  stallS: 600,     // the old hub answering this long with no new step: stopped
+  idlePolls: 5,    // the request got no answer and the hub, up, shows no update this many polls
+};
+let UPD_ATTEMPT = 0;           // a new press ends the loop of the one before (one still looking after "did not come back")
 async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
@@ -9468,11 +9474,21 @@ async function triggerUpdate() {
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
   const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
   let target = app ? UPDATE_TARGET : '';
-  UPD_CARD.t0 = Date.now();
+  const my = ++UPD_ATTEMPT;
+  const mine = () => my === UPD_ATTEMPT;
+  UPD_CARD.t0 = performance.now();
   UPD_CARD.open = false;
   updCardShow(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
-  const startedAt = Date.now() / 1000;
+  // What the hub said before this press: anything it records later is this
+  // attempt's (an earlier attempt's outcome is not).
+  const before = (await updJson('/api/update-status')) || {};
+  const seen = {
+    last: (before.last && before.last.at) || 0,
+    app: before.at || 0,
+    src: (before.restart && before.restart.at) || 0,
+  };
+  const now = () => performance.now();
   let logPath = updLogPath(app);
   const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
   const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
@@ -9484,7 +9500,8 @@ async function triggerUpdate() {
   let status = 0, body = {};
   try {
     const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                           body: JSON.stringify({ when: 'safe', reason: 'an update' }) });
+                                           body: JSON.stringify({ when: 'safe', reason: 'an update' }),
+                                           signal: updSignal(200000) });   // a source fetch and reset: 3 min at most
     status = r.status;
     body = await r.json().catch(() => ({}));
   } catch {
@@ -9505,19 +9522,24 @@ async function triggerUpdate() {
     return;
   }
 
+  // No answer at all: the hub may have stopped mid-request, or the request
+  // never reached it. The polls below tell which.
+  const unanswered = !status;
   let draining = !!body.draining;
-  let downSince = 0, notBack = false;
-  let lastStep = '', lastStepAt = Date.now();
-  const step = s => { if (s !== lastStep) { lastStep = s; lastStepAt = Date.now(); } updCardShow(s); };
+  let downSince = 0, notBack = false, idlePolls = 0;
+  let lastStep = '', lastStepAt = now();
+  const step = s => { if (s !== lastStep) { lastStep = s; lastStepAt = now(); } updCardShow(s); };
   while (true) {
     await updSleep(notBack ? 3000 : 1000);
+    if (!mine()) return;
     const cfg = await updJson('/api/config');
+    if (!mine()) return;
     if (!cfg || !cfg.pid) {
       // The hub is away: the restart under way.
-      if (!downSince) downSince = Date.now();
+      if (!downSince) downSince = now();
       if (notBack) continue;
       step('The hub is restarting, back in a moment');
-      if (Date.now() - downSince > UPD_DOWN_S * 1000) {
+      if (now() - downSince > UPD_LIMITS.downS * 1000) {
         // Say where the reason is, and keep looking: the page still
         // reloads if it comes back after all.
         notBack = true;
@@ -9546,13 +9568,17 @@ async function triggerUpdate() {
     }
     if (notBack) continue;
     // The hub that took the update still runs: where it stands.
+    if (unanswered && !draining) {
+      const v = await updJson('/api/restart/drain');
+      if (v && (v.state === 'draining' || v.state === 'restarting')) draining = true;
+    }
     if (draining) {
       const v = await updJson('/api/restart/drain');
       if (v && v.state === 'draining') {
         const n = (v.waitingFor || []).length;
         updCardDrain(v);
         step(n ? `Waiting for ${n} agent${n === 1 ? '' : 's'} to reach a safe point` : 'Every agent is at a safe point');
-        lastStepAt = Date.now();     // a drain has its own deadline
+        lastStepAt = now();     // a drain has its own deadline
         continue;
       }
       updCardDrain(null);
@@ -9569,27 +9595,41 @@ async function triggerUpdate() {
       if (v && v.state === 'restarting') step(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
     }
     const st = await updJson('/api/update-status');
+    if (!mine()) return;
+    let busy = draining;
     if (app && st) {
       // Its stages, and a stop the hub survived (a checksum that does not
       // match, a new version that did not start): say so now.
       if (st.to) target = st.to;
       const last = st.last;
-      if (st.stage === 'failed') {
+      if (st.stage === 'failed' && (st.at || 0) > seen.app) {
         fail(lastStep.startsWith('Downloading') ? `The download failed: ${st.error}` : st.error,
              lastStep.startsWith('Downloading') ? 'Try Update now again later.' : '');
         return;
       }
-      if (last && !last.ok && last.at >= startedAt && last.stage === 'preflight') { fail(last.reason); return; }
+      // The helper gave up while this hub runs (preflight, copy, stop ...).
+      if (last && !last.ok && (last.at || 0) > seen.last) { fail(last.reason || 'The update did not happen'); return; }
+      busy = busy || (['downloading', 'starting', 'restarting'].includes(st.stage) && (st.at || 0) > seen.app);
       if (st.stage === 'downloading') step(`Downloading ${target || 'the update'}`);
       else if (st.stage === 'starting' || st.stage === 'restarting') step(`Checking that ${target || 'the new version'} starts`);
     } else if (st && st.restart) {
       const rs = st.restart;
-      if (rs.stage === 'failed') { fail(rs.error || 'The new code did not start'); return; }
+      const ours = (rs.at || 0) > seen.src;   // not an earlier attempt's outcome
+      if (rs.stage === 'failed' && ours) { fail(rs.error || 'The new code did not start', rs.advice || ''); return; }
+      busy = busy || (ours && ['fetching', 'checking', 'restarting'].includes(rs.stage));
       if (rs.stage === 'checking') step('Checking that the new code starts');
       else if (rs.stage === 'restarting') step('Restarting the hub');
     }
-    if (Date.now() - lastStepAt > UPD_STALL_S * 1000) {
-      fail(`Nothing moved for ${UPD_STALL_S / 60} min at “${lastStep}”`);
+    if (unanswered && !busy) {
+      // The hub is up, the same one, and no update is under way: the request
+      // never reached it.
+      if (++idlePolls >= UPD_LIMITS.idlePolls) {
+        fail('The hub did not get the update request', 'Check the connection, then Update now again.');
+        return;
+      }
+    } else idlePolls = 0;
+    if (now() - lastStepAt > UPD_LIMITS.stallS * 1000) {
+      fail(`Nothing moved for ${Math.round(UPD_LIMITS.stallS / 60)} min at “${lastStep}”`);
       return;
     }
   }
@@ -9619,7 +9659,7 @@ function showUpdateFailed(logPath, reason, advice) {
       `This version keeps running. ${advice ? advice + ' ' : ''}More in ${log}.`;
   } else {
     modal.querySelector('h3').textContent = 'The hub did not come back';
-    setUpdateStage(`Waited ${Math.round(UPD_DOWN_S / 60)} min. See ${log}`);
+    setUpdateStage(`Waited ${Math.round(UPD_LIMITS.downS / 60)} min. See ${log}`);
     document.getElementById('update-hint').textContent =
       'The last lines there say why. This page reloads by itself if the hub starts again.';
   }

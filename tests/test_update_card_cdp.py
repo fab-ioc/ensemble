@@ -15,7 +15,13 @@ without an answer; "the new hub" is /api/config answering with another pid.
 * a helper that gives up while the hub runs on: the card goes, the update
   dialog says Not updated, why, and that this version keeps running; Close;
 * a fetch that fails: the dialog says git fetch failed and to check the
-  connection, naming restart.log.
+  connection, naming restart.log;
+* a request that never reaches the hub (the hub up, no update under way):
+  the dialog says so within seconds, not after the ten-minute stall;
+* the hub away past the limit, then back the same: Update now again works,
+  and the first attempt's loop is over (a later new hub reloads nothing);
+* the app: a helper that gives up after its preflight (the copy) is a
+  failure with its reason at once.
 
 Screenshots of every step go to $ENSEMBLE_SHOTS when it is set (the #330
 drawing-vs-built comparison). Skipped without Node or Chrome.
@@ -85,7 +91,7 @@ async function main() {
           drain: !document.getElementById('drain-banner').hidden, failed: !document.getElementById('update-overlay').hidden,
           box: (() => { const r = document.querySelector('#upd-card .upd-box').getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round); })() }))()`); } catch { await sleep(50); continue; }
         if (!g.mark) { R.reloaded = true; R.reloadMs = Date.now() - t0; break; }
-        if (g.failed) { R.failed = true; break; }
+        if (g.failed) { R.failed = true; R.failMs = Date.now() - t0; break; }
         if (g.up && g.step && R.steps[R.steps.length - 1] !== g.step) {
           R.steps.push(g.step); R.times.push(g.time); R.card.push(g.box);
           const name = names && names[g.step]; if (name) await shot(name);
@@ -130,6 +136,40 @@ async function main() {
       R.dialog = await ev(`({ title: document.querySelector('#update-overlay h3').textContent, stage: document.getElementById('update-stage').textContent,
         hint: document.getElementById('update-hint').textContent, card: document.getElementById('upd-card').hidden })`);
       await shot('12-fail-fetch'); }
+    const dialog = () => ev(`({ title: document.querySelector('#update-overlay h3').textContent, stage: document.getElementById('update-stage').textContent,
+        hint: document.getElementById('update-hint').textContent, card: document.getElementById('upd-card').hidden })`);
+    // 4. The request gets no answer and the hub, up, never started an update.
+    { const R = out.lost = {};
+      await open();
+      await click('#update-banner-go');
+      await watch(R, {});
+      R.dialog = await dialog(); }
+    // 5. The hub stays away past the limit (it says so and keeps looking),
+    //    comes back the same; Update now again fails; then a new hub answers:
+    //    the first attempt's loop is over, so nothing reloads the page.
+    { const R = out.retry = {};
+      await open();
+      await ev('UPD_LIMITS.downS = 1.5; true');
+      await click('#update-banner-go');
+      await watch(R, {});
+      R.notBack = await dialog();
+      R.back = await until(`fetch('/api/config').then(r => r.ok).catch(() => false)`, 100);
+      await click('#update-close');
+      await ev('triggerUpdate(); true');
+      const R2 = R.second = {};
+      await watch(R2, {});
+      R2.dialog = await dialog();
+      R.pid = await ev('RUNTIME_CFG.pid');
+      await sleep(5000);                  // a new hub answers 3 s after the failure
+      R.newPid = await ev(`fetch('/api/config').then(r => r.json()).then(c => c.pid)`);
+      R.markAfter = await ev('window.__mark330 || 0'); }
+    // 6. The app: the helper gives up after the preflight (the copy).
+    { const R = out.app = {};
+      await open();
+      R.packaged = await ev('!!RUNTIME_CFG.packaged');
+      await click('#update-banner-go');
+      await watch(R, {});
+      R.dialog = await dialog(); }
   } finally { ch.kill(); }
   console.log(JSON.stringify(out));
 }
@@ -147,6 +187,7 @@ class FakeHub:
         self.down = False
         self.gen = 0
         self.log = []
+        self.lost_until = 0.0
 
     def pull_checkout(self):
         self.mode = self.modes.pop(0)
@@ -162,18 +203,42 @@ class FakeHub:
 
     def helper(self, lease, mode):
         time.sleep(1.5)                       # the new code on a spare port
-        if mode == "fail":
+        if mode in ("fail", "late"):
             dashboard._drop_restart_lease(lease)
             dashboard.src_update_stage("failed", lease, error="The new code did not start: "
                                        "PREFLIGHT FAILED - the new code did not serve on port 9000")
+            if mode == "late":
+                time.sleep(3.0)
+                self.gen += 1                 # some later restart: no page loop of before may react
             return
         dashboard.src_update_stage("restarting", lease)   # its snapshot call, just before the stop
         time.sleep(1.5)
         self.down = True
-        time.sleep(3.0)
+        time.sleep(3.0 if mode == "ok" else 4.0)
         dashboard._drop_restart_lease(lease)
-        self.gen += 1                         # a new process answers
-        self.down = False
+        if mode == "ok":
+            self.gen += 1                     # a new process answers
+        self.down = False                     # "away": the same one is back
+
+    def packaged(self):
+        return self.mode == "app" or (self.modes[:1] == ["app"])
+
+    def start_app_update(self):
+        self.mode = self.modes.pop(0)
+        with dashboard._APP_UPDATE_LOCK:
+            dashboard._APP_UPDATE.update(stage="downloading", to="9.9.9", error="", at=time.time())
+
+        def helper():
+            time.sleep(1.0)
+            with dashboard._APP_UPDATE_LOCK:
+                dashboard._APP_UPDATE.update(stage="restarting")
+            time.sleep(1.5)                   # past its preflight, the copy fails; the hub runs on
+            dashboard.UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+            (dashboard.UPDATE_DIR / "last.json").write_text(json.dumps({
+                "at": time.time(), "from": "0.9.4", "to": "9.9.9", "ok": False, "stage": "copy",
+                "reason": "could not copy the new version next to the app; nothing was changed: disk full"}))
+        threading.Thread(target=helper, daemon=True).start()
+        return {"started": True, "version": "9.9.9", "pid": os.getpid()}
 
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
@@ -188,7 +253,7 @@ class UpdateCard(unittest.TestCase):
         cls.root.mkdir()
         (base / "transcripts").mkdir()
         (base / "cs").mkdir()
-        hub = cls.hub = FakeHub(["ok", "fail", "fetch"])
+        hub = cls.hub = FakeHub(["ok", "fail", "fetch", "lost", "away", "late", "app"])
         real_get, real_post, real_json = dashboard.Handler.do_GET, dashboard.Handler.do_POST, dashboard.Handler._send_json
 
         def away(h) -> bool:
@@ -202,6 +267,12 @@ class UpdateCard(unittest.TestCase):
                 real_get(h)
 
         def do_post(h):
+            if h.path.split("?")[0] == "/api/update" and (hub.modes[:1] == ["lost"] or time.time() < hub.lost_until):
+                if hub.modes[:1] == ["lost"]:
+                    hub.mode = hub.modes.pop(0)
+                    hub.lost_until = time.time() + 2   # Chrome sends it again at once on a fresh socket
+                h.close_connection = True     # the request never reaches the hub
+                return
             if not away(h):
                 real_post(h)
 
@@ -211,6 +282,8 @@ class UpdateCard(unittest.TestCase):
             return real_json(h, code, payload)
         info = {"available": True, "kind": "source", "behind": 2, "latestSha": "abc1234",
                 "latestMessage": "Merge #330: the Update now card"}
+        app_info = {"available": True, "kind": "release", "latestVersion": "9.9.9", "currentVersion": "0.9.4",
+                    "release": {"version": "9.9.9"}}
         cls.patches = [
             mock.patch.object(dashboard, "PROJECTS_ROOT", cls.root),
             mock.patch.object(dashboard, "DASHBOARD_DIR", state),
@@ -228,8 +301,11 @@ class UpdateCard(unittest.TestCase):
             mock.patch.object(dashboard.Handler, "do_GET", do_get),
             mock.patch.object(dashboard.Handler, "do_POST", do_post),
             mock.patch.object(dashboard.Handler, "_send_json", send_json),
-            mock.patch.object(dashboard, "check_for_update", lambda *a, **k: info),
-            mock.patch.object(dashboard.app_version, "packaged", lambda: False),
+            mock.patch.object(dashboard, "check_for_update", lambda *a, **k: app_info if hub.packaged() else info),
+            mock.patch.object(dashboard.app_version, "packaged", hub.packaged),
+            mock.patch.object(dashboard, "start_app_update", hub.start_app_update),
+            mock.patch.object(dashboard, "UPDATE_DIR", state / "update"),
+            mock.patch.dict(dashboard._APP_UPDATE, {"stage": "idle"}, clear=True),
             mock.patch.object(dashboard, "source_update_keeps_host", lambda: True),
             mock.patch.object(dashboard, "pull_checkout", hub.pull_checkout),
             mock.patch.object(dashboard.BACKEND, "self_restart", hub.self_restart),
@@ -292,6 +368,35 @@ class UpdateCard(unittest.TestCase):
         vw = self.size[0]
         self.assertEqual(width, min(440, vw - 32))
         self.assertLessEqual(abs(left + width / 2 - vw / 2), 1)
+
+    def test_a_request_that_never_arrived_says_so(self):
+        g = self.got["lost"]
+        self.assertTrue(g.get("failed"), g)
+        self.assertLess(g["failMs"], 15000)
+        self.assertEqual(g["dialog"]["title"], "Not updated")
+        self.assertEqual(g["dialog"]["stage"], "The hub did not get the update request")
+        self.assertIn("Check the connection, then Update now again.", g["dialog"]["hint"])
+
+    def test_after_not_back_a_new_press_ends_the_old_loop(self):
+        g = self.got["retry"]
+        self.assertTrue(g.get("failed"), g)
+        self.assertRegex(g["notBack"]["stage"], r"^Waited ")
+        self.assertTrue(g["back"], g)
+        s = g["second"]
+        self.assertTrue(s.get("failed"), s)
+        self.assertEqual(s["dialog"]["stage"],
+                         "The new code did not start: PREFLIGHT FAILED - the new code did not serve on port 9000")
+        self.assertNotEqual(g["newPid"], g["pid"], "a new hub answers")
+        self.assertEqual(g["markAfter"], 1, "the first attempt's loop did not reload the page")
+
+    def test_an_app_helper_that_fails_after_the_preflight_says_why(self):
+        g = self.got["app"]
+        self.assertTrue(g["packaged"], g)
+        self.assertTrue(g.get("failed"), g)
+        self.assertLess(g["failMs"], 15000, "not the ten-minute stall")
+        self.assertEqual(g["dialog"]["stage"],
+                         "could not copy the new version next to the app; nothing was changed: disk full")
+        self.assertEqual(g["steps"][:2], ["Downloading 9.9.9", "Checking that 9.9.9 starts"], g)
 
     def test_the_page_update_waits_no_grace(self):
         self.assertEqual(self.hub.log[0], {"grace": 0, "mode": "ok"})

@@ -13717,7 +13717,7 @@ def update_status() -> dict:
 
 
 # Where a source update's restart stands, for the page's Update now card:
-# idle | checking (the helper starts the new code on a spare port) |
+# idle | fetching (the page's request pulls the checkout) | checking (the helper starts the new code on a spare port) |
 # restarting (the helper stops this hub) | failed (``error``: this hub runs on).
 _SRC_UPDATE: dict = {"stage": "idle"}
 
