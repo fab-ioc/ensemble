@@ -210,7 +210,7 @@
         const a = anchor(result.url, 'open GitHub (not anonymous)');
         a.addEventListener('click', () => setTimeout(() => showDone(result.url, true)));
         el('feedback-status').append(a, draft.route === 'browser' ? ' to finish there.' : '.');
-      } else status('Not sent. ' + (result.message || 'Feedback failed. Your text is kept.'), true);
+      } else status((result.unsure ? '' : 'Not sent. ') + (result.message || 'Feedback failed. Your text is kept.'), true);
     } catch { status('Could not confirm delivery. Check the repository before retrying; your text is kept.', true); }
     finally { if (!done) sending(false); }
   };

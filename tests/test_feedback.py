@@ -237,6 +237,47 @@ class FeedbackEndpoint(unittest.TestCase):
         self.assertTrue(result['unsure'])    # the relay may have created it (#332)
         self.assertEqual(feedback._drafts[draft['id']]['state'], 'ready')
 
+    def test_delivery_unknown_only_after_the_request_left(self):
+        # #332 review 2: a failure before the POST left says Not sent; one
+        # after it (timeout, dropped connection, bad reply) may have created the issue.
+        import socket
+        cases = [(urllib.error.URLError(socket.gaierror(-2, 'Name or service not known')), False),
+                 (urllib.error.URLError(ConnectionRefusedError(111, 'Connection refused')), False),
+                 (ConnectionRefusedError(111, 'Connection refused'), False),
+                 (urllib.error.URLError(TimeoutError('timed out')), True),
+                 (TimeoutError('timed out'), True),
+                 (ConnectionResetError(104, 'Connection reset by peer'), True),
+                 (urllib.error.HTTPError('url', 502, 'Bad gateway', {}, None), True)]
+        for error, unsure in cases:
+            with self.subTest(error=repr(error)):
+                draft = self.draft(anonymous=True)
+                opener = Mock(); opener.open.side_effect = error
+                with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+                    _, result = self.post('send', {'id': draft['id']})
+                self.assertTrue(result['fallback'])
+                self.assertIs(result['unsure'], unsure)
+                self.assertEqual('nothing was sent' in result['reason'], not unsure)
+                self.assertEqual(feedback._drafts[draft['id']]['state'], 'ready')
+
+    def test_malformed_success_reply_is_delivery_unknown(self):
+        for reply in (b'[]', b'"x"', b'null', b'{"url": 7}', b'not json'):
+            with self.subTest(reply=reply):
+                draft = self.draft(anonymous=True)
+                opener = Mock()
+                opener.open.return_value.__enter__ = Mock(return_value=io.BytesIO(reply))
+                opener.open.return_value.__exit__ = Mock(return_value=False)
+                with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+                    status, result = self.post('send', {'id': draft['id']})
+                self.assertEqual(status, 200)
+                self.assertTrue(result['fallback']); self.assertTrue(result['unsure'])
+        with patch.object(feedback, 'output', return_value='alice-gh'):
+            draft = self.draft()
+        with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run', return_value=Mock(returncode=0, stdout='[]')):
+            status, result = self.post('send', {'id': draft['id']})
+        self.assertEqual(status, 200)
+        self.assertFalse(result['ok']); self.assertTrue(result['unsure'])
+        self.assertTrue(result['message'].startswith('Could not confirm delivery.'))
+
     def test_missing_ca_certificates_are_named(self):
         draft = self.draft(anonymous=True)
         opener = Mock(); opener.open.side_effect = urllib.error.URLError(feedback.ssl.SSLCertVerificationError(1, 'unable to get local issuer certificate'))

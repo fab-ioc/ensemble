@@ -242,6 +242,12 @@ def issue_url(url, repo):
     return isinstance(url, str) and bool(re.fullmatch(r"https://github\.com/" + re.escape(repo) + r"/issues/\d+", url, re.I))
 
 
+# Failures before the request left this machine: no name lookup, or nothing
+# listening. Anything later (a timeout, a dropped connection, a bad reply) may
+# have created the issue.
+PRE_REQUEST = (socket.gaierror, ConnectionRefusedError)
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -269,6 +275,8 @@ def send(ident):
             if r.returncode:
                 return dict(ok=False, message="GitHub refused the issue. Check gh authentication, repository access and labels; your text is kept.")
             issue = json.loads(r.stdout)
+            if not isinstance(issue, dict):
+                raise ValueError("bad response")
             url = issue.get("html_url")
             if not issue_url(url, plan["repo"]):
                 raise ValueError("bad response")
@@ -281,7 +289,8 @@ def send(ident):
             request = urllib.request.Request(plan["relay"], data=raw, headers=RELAY_HEADERS)
             try:
                 with urllib.request.build_opener(NoRedirect).open(request, timeout=25) as response:
-                    url = json.loads(response.read(4096)).get("url")
+                    reply = json.loads(response.read(4096))
+                url = reply.get("url") if isinstance(reply, dict) else None
                 if not issue_url(url, plan["repo"]):
                     raise ValueError("bad response")
                 result = dict(ok=True, url=url)
@@ -293,13 +302,17 @@ def send(ident):
                 if isinstance(error.reason, ssl.SSLCertVerificationError):
                     # python.org's macOS Python ships without CA certificates until its installer script runs.
                     result = fallback(plan, "This machine's Python cannot verify the relay's certificate. On a Mac, run \"Install Certificates.command\" in the Python folder under Applications, then send again.")
+                elif isinstance(error.reason, PRE_REQUEST):
+                    result = fallback(plan, "The relay could not be reached, so nothing was sent.")
                 else:
                     result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.", unsure=True)
+            except PRE_REQUEST:
+                result = fallback(plan, "The relay could not be reached, so nothing was sent.")
             except (OSError, ValueError):
                 result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.", unsure=True)
         return result
     except (OSError, subprocess.SubprocessError, ValueError):
-        return dict(ok=False, message="Could not confirm delivery. Check the repository before retrying; your text is kept.")
+        return dict(ok=False, unsure=True, message="Could not confirm delivery. Check the repository before retrying; your text is kept.")
     finally:
         with _lock:
             plan["state"] = "ready"

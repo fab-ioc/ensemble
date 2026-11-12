@@ -98,6 +98,9 @@ async function main() {
         preview: !$('feedback-preview').hidden, status: $('feedback-status').textContent, error: $('feedback-status').className === 'feedback-error',
         name: $('feedback-name').value, anonymous: $('feedback-anonymous').checked, send: !$('feedback-send').hidden && !$('feedback-send').disabled,
         focusTitle: document.activeElement === $('feedback-title')}; })()`;
+    // A download link's blob: its text while alive, 'revoked' once gone.
+    const HREF = `(document.querySelector('#feedback-done-hint a[download]') || {}).href || ''`;
+    const blob = href => ev(`fetch(${JSON.stringify(href)}).then(r => r.text(), () => 'revoked')`);
     const reopen = () => ev(`document.getElementById('me-btn').click(); document.querySelector('[data-me="feedback"]').click();`);
     const relay = url => ev(`(async () => { document.getElementById('feedback-relay').value = ${JSON.stringify(url)}; await feedbackSaveSettings();
       return document.getElementById('feedback-settings-status').textContent; })()`);
@@ -131,7 +134,9 @@ async function main() {
       await ctl('login=octocat');
       await fill('GitHub login ' + w, {image: true}); await send();
       o.gh = await ev(DONE);
-      await ev(`document.getElementById('feedback-done-close').click()`); await reopen();
+      const ghHref = await ev(HREF); o.ghBlob = await blob(ghHref);
+      await ev(`document.getElementById('feedback-done-close').click()`); await sleep(100);
+      o.ghBlobClosed = await blob(ghHref); await reopen();
       o.ghReopen = await ev(FORM);
       await ctl('login=');
 
@@ -153,7 +158,9 @@ async function main() {
       await until(`!document.getElementById('feedback-done').hidden`);
       o.opened = await ev(DONE);
       o.openedAgain = await ev(`document.querySelector('#feedback-done-hint a:not([download])').href`);
-      await key('Escape'); await sleep(200); await reopen();
+      const openedHref = await ev(HREF); o.openedBlob = await blob(openedHref);
+      await key('Escape'); await sleep(200);
+      o.openedBlobClosed = await blob(openedHref); await reopen();
       o.openedReopen = await ev(FORM);
       await ctl('relay=ok');
 
@@ -256,6 +263,7 @@ class FeedbackDonePage(unittest.TestCase):
             self.assertIn('posted as GitHub user octocat', o['gh']['what'])
             self.assertTrue(o['gh']['link'].endswith('/issues/77'))
             self.assertEqual(o['gh']['downloads'], ['screenshot.png'])
+            self.assertEqual((o['ghBlob'], o['ghBlobClosed']), ('image', 'revoked'))   # usable, then freed on Close
             self.assertIn('drag it onto the GitHub issue', o['gh']['hint'])
             self.assertBlank(o['ghReopen'])
 
@@ -276,6 +284,7 @@ class FeedbackDonePage(unittest.TestCase):
             d = o['opened']; self.assertDone(d, w, 'Opened on GitHub')
             self.assertIn('not anonymous', d['what']); self.assertEqual(d['label'], 'What was filled in')
             self.assertEqual(d['downloads'], ['screenshot.png'])   # still downloadable until Close
+            self.assertEqual((o['openedBlob'], o['openedBlobClosed']), ('image', 'revoked'))
             self.assertIn('drag it onto the GitHub page', d['hint'])
             self.assertTrue(o['openedAgain'].startswith('https://github.com/fab-ioc/ensemble/issues/new?'))
             self.assertBlank(o['openedReopen'])
