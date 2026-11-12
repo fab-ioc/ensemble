@@ -85,6 +85,8 @@ def patches(base: Path) -> list:
         mock.patch.object(dashboard, "_SESSION_FOLDERS", {}),
         mock.patch.object(dashboard, "_SESSION_FOLDER_REAL", {}),
         mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+        # Every conversation here is in the temporary folder (#350).
+        mock.patch.object(dashboard.loose_sessions, "TEMP_RULE", False),
     ]
 
 

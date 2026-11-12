@@ -38,34 +38,49 @@ CLAUDE_ONE_SHOT = ("sdk-",)
 # Whether a temporary folder hides a conversation. The hub's own tests build
 # their conversations in this machine's temporary folder and turn it off.
 TEMP_RULE = True
-# What is read of a file's start for its launch facts.
-HEAD_BYTES = 256 * 1024
+# How much of a file is read, at most, for its launch facts.
+SCAN_BYTES = 8 * 1024 * 1024
 
 _LOCK = threading.Lock()
 _ONE_SHOT: dict[str, bool] = {}
+_UNTOLD: dict[str, tuple] = {}     # path -> (size, mtime) it told nothing at
 
 
 def _key(p: str) -> str:
     return os.path.normcase(os.path.normpath(p)) if p else ""
 
 
-def _head_lines(path: Path):
+def _decide(path: Path, judge):
+    """``judge`` over the file's lines from its start, until one tells (True /
+    False) or SCAN_BYTES are read: None when none told yet."""
     try:
         with open(path, "rb") as f:
-            data = f.read(HEAD_BYTES)
+            seen = 0
+            while seen < SCAN_BYTES:
+                raw = f.readline(SCAN_BYTES - seen)
+                if not raw:
+                    return None
+                seen += len(raw)
+                if not raw.strip():
+                    continue
+                try:
+                    d = json.loads(raw)
+                except (ValueError, UnicodeDecodeError):
+                    continue        # cut short, or still being written
+                if isinstance(d, dict):
+                    said = judge(d)
+                    if said is not None:
+                        return said
     except OSError:
-        return None, False
-    whole = len(data) < HEAD_BYTES
-    lines = data.split(b"\n")
-    if not whole:
-        lines = lines[:-1]      # the last one may be cut
-    return lines, whole
+        return None
+    return None
 
 
 def _one_shot(path, kind: str, judge) -> bool:
     """``judge`` over the file's first lines: True / False once it can tell,
-    None to read on. Remembered (in memory and in filefacts): how a
-    conversation was started never changes."""
+    None to read on. Remembered once told (in memory and in filefacts): how a
+    conversation was started never changes. A file that tells nothing yet is
+    read again once it has changed (it may be growing)."""
     k = str(path)
     with _LOCK:
         hit = _ONE_SHOT.get(k)
@@ -76,26 +91,23 @@ def _one_shot(path, kind: str, judge) -> bool:
         with _LOCK:
             _ONE_SHOT[k] = kept
         return kept
-    lines, whole = _head_lines(Path(path))
-    if lines is None:
+    try:
+        st = os.stat(k)
+        sig = (st.st_size, st.st_mtime_ns)
+    except OSError:
         return False
-    said = None
-    for raw in lines:
-        if not raw.strip():
-            continue
-        try:
-            d = json.loads(raw)
-        except (ValueError, UnicodeDecodeError):
-            continue
-        if isinstance(d, dict):
-            said = judge(d)
-            if said is not None:
-                break
-    if said is None and whole:
-        return False        # nothing yet: a growing file is asked again
+    with _LOCK:
+        if _UNTOLD.get(k) == sig:
+            return False
+    said = _decide(Path(k), judge)
+    if said is None:
+        with _LOCK:
+            _UNTOLD[k] = sig
+        return False
     out = bool(said)
     with _LOCK:
         _ONE_SHOT[k] = out
+        _UNTOLD.pop(k, None)
     filefacts.put(kind, k, None, out)
     return out
 
@@ -178,10 +190,12 @@ def task_folders(rooms: list[dict], project_dirs, home=None, root=None) -> froze
         td = rm.get("taskDir") if isinstance(rm, dict) else ""
         if not isinstance(td, str) or not td.strip():
             continue
-        for k in _candidates(td, home, root):
-            if k in pj or any(_within(p, {k}) for p in pj):
-                continue
-            out.add(k)
+        names = _candidates(td, home, root)
+        # One alias a project's folder, or holding one: none of them is kept
+        # (the old copy of a moved project is still a person's folder).
+        if any(k in pj or any(_within(p, {k}) for p in pj) for k in names):
+            continue
+        out.update(names)
     return frozenset(out)
 
 

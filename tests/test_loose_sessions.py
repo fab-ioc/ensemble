@@ -91,6 +91,10 @@ class Folders(unittest.TestCase):
         tdirs = ls.task_folders([{"taskDir": "/home/u/EnsembleProjects/Dash"}], ["/home/v/EnsembleProjects/Dash"],
                                 home, root)
         self.assertFalse(ls.in_task_folder("/home/v/EnsembleProjects/Dash/x", tdirs, home, root))
+        # Nor its old copy: one alias a project's folder keeps every alias out.
+        self.assertEqual(tdirs, frozenset())
+        kw = dict(hub_words=hub, task_dirs=tdirs, home=home, root=root)
+        self.assertEqual(ls.reason("Fix header", "/home/u/EnsembleProjects/Dash/src", **kw), "")
 
 
 class OneShot(unittest.TestCase):
@@ -99,6 +103,7 @@ class OneShot(unittest.TestCase):
         self.addCleanup(td.cleanup)
         self.d = Path(td.name)
         ls._ONE_SHOT.clear()
+        ls._UNTOLD.clear()
 
     def write(self, name: str, *lines: dict) -> Path:
         p = self.d / name
@@ -119,6 +124,18 @@ class OneShot(unittest.TestCase):
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps({"type": "user", "entrypoint": "sdk-cli"}) + "\n")
         self.assertTrue(ls.claude_one_shot(p))
+
+    def test_a_long_start_that_says_nothing_is_not_taken_as_an_answer(self):
+        # A first line longer than any head read: nothing told, nothing kept.
+        p = self.write("f.jsonl", {"type": "summary", "summary": "x" * (270 * 1024)})
+        self.assertFalse(ls.claude_one_shot(p))
+        self.assertFalse(ls.claude_one_shot(p))
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "user", "entrypoint": "sdk-cli"}) + "\n")
+        self.assertTrue(ls.claude_one_shot(p))
+        q = self.write("g.jsonl", {"type": "summary", "summary": "x" * (270 * 1024)},
+                       {"type": "user", "entrypoint": "sdk-cli"})
+        self.assertTrue(ls.claude_one_shot(q))
 
     def test_codex(self):
         meta = lambda **p: {"type": "session_meta", "payload": {"id": "x", **p}}    # noqa: E731
@@ -147,6 +164,26 @@ class GoneSessions(unittest.TestCase):
         self.assertEqual(chatroom.gone_sessions(), frozenset({"c-now", "c-old", "r-1"}))
         self.assertFalse(chatroom.delete_room(room["id"]))
 
+    def test_a_damaged_rooms_conversations_are_noted_too(self):
+        # Its log lost: the room reads as damaged, its file still names its seats.
+        room = chatroom.create_room("t", [{"identity": "claude", "agent": "claude", "sessionId": "old-run", "cwd": "x"}])
+        chatroom.post_message(room["id"], "claude", "hello")
+        raw = json.loads(chatroom._room_path(room["id"]).read_text(encoding="utf-8"))
+        raw["messageLog"] = {**(raw.get("messageLog") or {}), "count": 3}
+        chatroom._room_path(room["id"]).write_text(json.dumps(raw), encoding="utf-8")
+        chatroom._log_path(room["id"]).unlink(missing_ok=True)
+        with chatroom._INDEX_LOCK:
+            chatroom._INDEX.pop(room["id"], None)
+        self.assertIsNone(chatroom._load(room["id"]))
+        self.assertTrue(chatroom.delete_room(room["id"]))
+        self.assertEqual(chatroom.gone_sessions(), frozenset({"old-run"}))
+
+    def test_the_note_comes_before_the_file_goes(self):
+        room = chatroom.create_room("t", [{"identity": "claude", "agent": "claude", "sessionId": "c-2", "cwd": "x"}])
+        with mock.patch.object(Path, "unlink", side_effect=OSError("busy")):
+            self.assertFalse(chatroom.delete_room(room["id"]))
+        self.assertEqual(chatroom.gone_sessions(), frozenset({"c-2"}))
+
     def test_a_preflight_notes_nothing(self):
         room = chatroom.create_room("t", [{"identity": "claude", "agent": "claude", "sessionId": "c-1", "cwd": "x"}])
         with mock.patch.dict(os.environ, {"ENSEMBLE_PTY_PREFLIGHT": "1"}):
@@ -164,6 +201,7 @@ class TheList(unittest.TestCase):
         self.mine = "/home/u/code/shop"         # a person's folder, outside the temporary one
         self.gone = mock.patch.object(dashboard.chatroom, "gone_sessions", return_value=frozenset({"deleted"}))
         ls._ONE_SHOT.clear()
+        ls._UNTOLD.clear()
 
     def claude(self, sid: str, cwd: str, text: str = "hello", entrypoint: str = "cli") -> Path:
         p = self.b.claude(sid, cwd, age_days=1, text=text)
@@ -226,6 +264,7 @@ class DeepSearch(unittest.TestCase):
         self.addCleanup(td.cleanup)
         d = Path(td.name)
         ls._ONE_SHOT.clear()
+        ls._UNTOLD.clear()
 
         def tr(name, text, ep="cli"):
             p = d / f"{name}.jsonl"

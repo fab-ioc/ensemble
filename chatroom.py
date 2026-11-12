@@ -1220,7 +1220,10 @@ def room_session_ids(room: dict) -> list[str]:
 def _note_gone_sessions(room: dict | None) -> None:
     if not room or os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         return
-    sids = room_session_ids(room)
+    try:
+        sids = room_session_ids(room)
+    except (AttributeError, TypeError):     # a damaged file's odd shapes
+        return
     if not sids:
         return
     try:
@@ -1257,17 +1260,30 @@ def gone_sessions() -> frozenset:
     return _GONE["ids"]
 
 
+def _raw_room(room_id: str) -> dict | None:
+    """The room file as it is on disk, for what it records only."""
+    try:
+        d = json.loads(_room_path(room_id).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
 def delete_room(room_id: str) -> bool:
     with _LOCK:
         try:
             gone = _load(room_id)
         except Exception:       # noqa: BLE001 — a damaged room is deleted all the same
             gone = None
+        if gone is None:
+            gone = _raw_room(room_id)   # a room _load refuses (its log lost) still names its seats
+        # Noted before the file goes: an interrupted delete leaves the room
+        # and the note, never the room gone and its conversations unnamed.
+        _note_gone_sessions(gone)
         try:
             _room_path(room_id).unlink()
         except (FileNotFoundError, OSError):
             return False
-        _note_gone_sessions(gone)
         _LOGGED.discard(room_id)
         _DAMAGED.pop(room_id, None)
         with _INDEX_LOCK:
