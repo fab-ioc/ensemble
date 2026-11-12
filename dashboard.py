@@ -71,6 +71,7 @@ import project_icon
 # for the built app (from GitHub Releases).
 import app_version
 import app_update
+import update_notes
 import app_setup
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
@@ -830,7 +831,7 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/hub-resilience.js", "static/filedrag.js",
-              "static/feedback.js", "static/feedback.css",
+              "static/feedback.js", "static/feedback.css", "static/whatsnew.js", "static/whatsnew.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
               "static/pagekey.js", "static/filelinks.js", "static/progress.js", "static/progress.css",
@@ -1950,6 +1951,9 @@ TASK_AGENT_TOOLS_VALUES = {TASK_AGENT_TOOLS_ENSEMBLE, TASK_AGENT_TOOLS_OWN}
 _SETTINGS_DEFAULTS = {
     "feedbackRepo": feedback.DEFAULT_REPO,
     "feedbackRelayUrl": feedback.DEFAULT_RELAY,
+    # What's new › Skip this version: the commit or release skipped, on the
+    # hub so every device agrees (#339). "" = none skipped.
+    "updateSkipped": "",
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
     # Settings › Editor: what Open in editor opens, for every project. ""
     # = Automatic (from the repo's language, among the editors installed), an
@@ -2724,6 +2728,9 @@ def _save_settings_locked(settings: dict) -> dict:
                 continue
             v = {**current["poFallbackModels"],
                  **{kind: model.strip() for kind, model in v.items()}}
+        if k == "updateSkipped":
+            if not isinstance(v, str) or not re.fullmatch(r"[0-9A-Za-z._+-]{0,64}", v):
+                continue
         if k == "operatorNickname":
             if not isinstance(v, str) or len(v) > 60:
                 continue
@@ -13705,9 +13712,11 @@ def check_for_update(force: bool = False) -> dict:
         else:
             try:
                 def git(*args) -> str:
+                    # UTF-8 whatever the locale (a Windows code page): an
+                    # emoji subject, or a byte that is not UTF-8, never fails.
                     return _run(
                         ["git", *args], cwd=str(install_dir),
-                        capture_output=True, text=True, timeout=5,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                     ).stdout.strip()
                 # Fetch the remote our branch actually tracks — not always
                 # "origin". Otherwise we'd fetch origin but compare against
@@ -13717,7 +13726,7 @@ def check_for_update(force: bool = False) -> dict:
                 fetch = _run(
                     ["git", "fetch", "--quiet", remote_name],
                     cwd=str(install_dir),
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
                 )
                 if fetch.returncode != 0:
                     result = {"available": False, "reason": "fetch_failed"}
@@ -13735,20 +13744,98 @@ def check_for_update(force: bool = False) -> dict:
                         if behind == 0:
                             result = {"available": False, "currentSha": current[:7]}
                         else:
-                            latest_msg = git("log", "-1", "--format=%s", upstream)
+                            try:
+                                latest_msg = git("log", "-1", "--format=%s", upstream)
+                            except subprocess.TimeoutExpired:
+                                latest_msg = ""
                             result = {
                                 "available": True,
                                 "currentSha": current[:7],
                                 "latestSha": upstream[:7],
+                                "latestId": upstream,
                                 "behind": behind,
                                 "latestMessage": latest_msg[:120],
                             }
-            except (subprocess.SubprocessError, OSError) as e:
+                            # What's new (#339): the merge subjects in plain
+                            # words, from the commits just fetched. A slow or
+                            # failing log drops the list, not the update: the
+                            # dialog falls back to the newest subject.
+                            try:
+                                result.update(update_notes.git_items(git, current, upstream))
+                            except (subprocess.SubprocessError, OSError, ValueError):
+                                pass
+                            # Whether Install restarts the hub only (no agent
+                            # waits) or drains first: the dialog says so.
+                            try:
+                                result["keepsHost"] = source_update_keeps_host(fetch=False)
+                            except (OSError, ValueError, ConnectionError, TimeoutError):
+                                result["keepsHost"] = False
+            except (subprocess.SubprocessError, OSError, ValueError) as e:
                 result = {"available": False, "reason": f"error: {e.__class__.__name__}"}
         _UPDATE_CHECK_CACHE = (now, result)
         return result
     finally:
         _UPDATE_CHECK_LOCK = False
+
+
+def cached_update_check() -> dict:
+    """The last check's answer, however old, and never a check of its own:
+    what the What's new dialog and Skip read (#339). Before the first check,
+    nothing is available."""
+    cache = _UPDATE_CHECK_CACHE
+    return cache[1] if cache else {"available": False, "reason": "not_checked"}
+
+
+def update_check_view(info: dict, wait: bool = False) -> dict:
+    """The cached check as the page reads it: whether the newest is the one
+    skipped (Settings, so every device agrees) and, with ``wait``, how many
+    agents Install would wait for (#339)."""
+    out = dict(info or {})
+    latest = str(out.get("latestId") or "")
+    skipped = str(load_settings().get("updateSkipped") or "")
+    out["skipped"] = bool(out.get("available") and latest and skipped == latest)
+    # No task number or hash in what the page shows, even in the fallback line.
+    if out.get("latestMessage"):
+        out["latestMessage"] = update_notes.plain_title(str(out["latestMessage"]))
+    if wait and out.get("available"):
+        out["wait"] = update_wait()
+    return out
+
+
+def update_wait() -> dict:
+    """{agents, minutes} when Install would first wait for agents at a safe
+    point (restart_drain), else {agents: 0}. A checkout whose PTY host is
+    unchanged restarts the hub only: nothing waits. A built app learns whether
+    the new release changes the PTY host only once it is downloaded (the
+    helper drains through /api/restart/external-drain when it does), so for it
+    the answer carries ``maybe``: Install may wait. Reads the cached check."""
+    if restart_drain.holding():
+        return {"agents": 0}
+    packaged = app_version.packaged()
+    if not packaged and cached_update_check().get("keepsHost"):
+        return {"agents": 0}
+    try:
+        seen = restart_drain.observe_hub()
+    except Exception as e:      # noqa: BLE001 — unknown: the dialog says nothing
+        print(f"[update] agents not read: {e!r}", flush=True)
+        return {"agents": 0}
+    busy = sum(1 for a in seen.values() if a.get("state") == "working" or a.get("background"))
+    out = {"agents": busy, "minutes": int(restart_drain.deadline_s(load_settings()) // 60)}
+    if packaged:
+        out["maybe"] = True
+    return out
+
+
+def skip_update(skip: bool) -> dict:
+    """Skip this version: the newest the check knows is stored on the hub,
+    or ``skip=False`` clears it. Returns the check as the page reads it.
+    Reads the cached check: the version skipped is the one the dialog showed."""
+    info = cached_update_check()
+    latest = str(info.get("latestId") or "")
+    if skip and not (info.get("available") and latest):
+        return {"error": "no update to skip"}
+    save_settings({"updateSkipped": latest if skip else ""})
+    return update_check_view(info)
 
 
 def trigger_update() -> dict:
@@ -13791,19 +13878,21 @@ def pull_checkout() -> str:
     return ""
 
 
-def source_update_keeps_host() -> bool:
-    """Read the upstream PTY owner before choosing the update's restart mode."""
+def source_update_keeps_host(fetch: bool = True) -> bool:
+    """Read the upstream PTY owner before choosing the update's restart mode.
+    ``fetch=False``: from the commits fetched already (the update check)."""
     if _PTY_HOST_MODE == "local":
         return False
     host = ptyhost.connect(DASHBOARD_DIR, start=False)
     if not host:
         return False
     try:
-        fetched = _run(["git", "-C", str(STATIC_DIR), "fetch", "--quiet"],
-                       capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=120)
-        if fetched.returncode:
-            return False
+        if fetch:
+            fetched = _run(["git", "-C", str(STATIC_DIR), "fetch", "--quiet"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=120)
+            if fetched.returncode:
+                return False
         digest = hashlib.sha256()
         for name in ("backends/ptyhost.py", "backends/ptyrun.py"):
             shown = _run(["git", "-C", str(STATIC_DIR), "show", f"@{{u}}:{name}"],
@@ -18911,7 +19000,13 @@ class Handler(BaseHTTPRequestHandler):
                                   "prefixes": sorted(JIRA_PREFIXES)})
             return
         if p == "/api/update-check":
-            self._send_json(200, check_for_update())
+            # ?wait=1 (the What's new dialog opening): the cached check only,
+            # however old (never a fetch), and who Install would wait for,
+            # read now. Without it (the page's periodic poll): the check,
+            # fetching again when the 30-minute cache has run out.
+            want_wait = parse_qs(u.query).get("wait", [""])[0] == "1"
+            info = cached_update_check() if want_wait else check_for_update()
+            self._send_json(200, update_check_view(info, wait=want_wait))
             return
         if p == "/api/version":
             try:
@@ -22060,6 +22155,16 @@ class Handler(BaseHTTPRequestHandler):
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
             result = restart_drain.restart_now(resolved[0] if resolved else "")
             self._send_json(result.pop("status"), result)
+            return
+        if p == "/api/update-skip":
+            # What's new › Skip this version ({skip: false} clears it): the
+            # page, or a PO that may restart the hub.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            result = skip_update(data.get("skip", True) is not False)
+            self._send_json(409 if result.get("error") else 200, result)
             return
         if p == "/api/restart/drain":
             # Restart now / Cancel for a drain under way: the page, or a PO

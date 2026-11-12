@@ -3244,35 +3244,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-transform: uppercase;
   }
   .instance-badge::before { content: '●'; font-size: 8px; }
-  /* Update banner — shown at the top when a newer commit is available */
-  #update-banner {
-    display: flex; align-items: center; gap: 12px;
-    padding: 8px 16px;
-    background: var(--c-progress-bg);
-    border-bottom: 1px solid var(--border);
-    color: var(--fg); font-size: 13px;
-    position: sticky; top: 0; z-index: 100;
-  }
-  #update-banner[hidden] { display: none; }
-  #update-banner-text { flex: 1; }
-  #update-banner-text code {
-    background: var(--c-neutral-bg);
-    padding: 1px 6px; border-radius: 3px;
-    font-family: var(--font-mono); font-size: 12px;
-  }
-  #update-banner-go {
-    background: var(--accent); color: var(--accent-fg);
-    border: 0; padding: 5px 14px; border-radius: 5px;
-    cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
-  }
-  #update-banner-go:hover { background: var(--accent-hover); }
-  #update-banner-go:disabled { opacity: .65; cursor: progress; }
-  #update-banner-dismiss {
-    background: transparent; border: 0; color: var(--fg-muted);
-    font-size: 16px; line-height: 1; padding: 4px 6px;
-    cursor: pointer; border-radius: 3px;
-  }
-  #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A restart waiting for agents to reach a safe point (restart_drain.py):
      it needs the person only eventually, so the warning wash. */
   #drain-banner {
@@ -3806,7 +3777,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go, #wide-banner-dismiss,
+    .dl-cbtns button, #dock-banner-go, #wide-banner-dismiss,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -3814,8 +3785,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .dcm .ov-item, .wse-edit, .dcs-all { min-height: var(--touch-min); }
-    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more,
-    #update-banner-dismiss {
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -4560,6 +4530,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
+<!-- What's new (#339): the update chip on the user button, its menu item and dialog. -->
+<link rel="stylesheet" href="/static/whatsnew.css">
+<script src="/static/whatsnew.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
      Imported when a PO screen is first drawn; listed here so the page knows it
      depends on them (Page update), and fetched early. -->
@@ -4604,11 +4577,6 @@ window.DOC_LISTENERS_PAUSED = false;
 <script src="/static/actions.js"></script>
 </head>
 <body>
-<div id="update-banner" hidden>
-  <span id="update-banner-text"></span>
-  <button id="update-banner-go">Update now</button>
-  <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
-</div>
 <div id="drain-banner" role="status" hidden>
   <span id="drain-text"></span>
   <button id="drain-details" type="button" aria-expanded="false" aria-controls="drain-agents">Agents ▸</button>
@@ -4756,6 +4724,8 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
   <div class="me-rule"></div>
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
+  <!-- What's new (#339): shown while an update is available; quiet once it is skipped. -->
+  <button class="me-item me-upd" id="me-whatsnew" data-me="whatsnew" hidden><span class="me-upd-dot" aria-hidden="true"></span>What's new<span class="me-upd-tag">Update available</span></button>
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="feedback">Send feedback…</button>
   <button class="me-item" data-me="settings">Settings</button>
@@ -9258,35 +9228,16 @@ async function setPref(key, val) {
   } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
 }
 
-let UPDATE_DISMISSED = false;
 let UPDATE_IN_PROGRESS = false;
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
+// No banner (#339): an available update is a dot on the user button and a
+// What's new item in its menu (static/whatsnew.js).
 async function checkForUpdate() {
-  if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
+  if (UPDATE_IN_PROGRESS) return;
   try {
     const info = await api('/api/update-check');
-    renderUpdateBanner(info);
+    if (window.whatsNew) whatsNew.render(info);
   } catch {}
-}
-function renderUpdateBanner(info) {
-  const banner = document.getElementById('update-banner');
-  if (!banner) return;
-  if (!info || !info.available) {
-    banner.hidden = true;
-    return;
-  }
-  const text = document.getElementById('update-banner-text');
-  if (info.kind === 'release') {
-    // The app: a newer release on GitHub.
-    text.textContent = `Ensemble ${info.latestVersion} is available. You have ${info.currentVersion}.`;
-    banner.hidden = false;
-    return;
-  }
-  const plural = info.behind === 1 ? '' : 's';
-  text.innerHTML =
-    `Update available — ${info.behind} commit${plural} behind. Latest: ` +
-    `<code>${esc(info.latestMessage || info.latestSha || '')}</code>`;
-  banner.hidden = false;
 }
 // After a restart: how the app's last update ended, said once.
 async function noteLastUpdate() {
@@ -9432,9 +9383,7 @@ async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
   ensUpd.hold = true;   // the page refreshes on the new pid below, not for a changed stamp too
-  const banner = document.getElementById('update-banner');
   const overlay = document.getElementById('update-overlay');
-  if (banner) banner.hidden = true;
   if (overlay) overlay.hidden = false;
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
   const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
@@ -9477,7 +9426,6 @@ async function triggerUpdate() {
     UPDATE_IN_PROGRESS = false;
     ensUpd.hold = false;
     if (overlay) overlay.hidden = true;
-    if (banner) banner.hidden = false;
     toast(refused, 8000, 'err');
     return;
   }
@@ -22508,7 +22456,7 @@ function wideBanner() {
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
+  const ids = ['drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -22840,6 +22788,7 @@ $('#me-menu').addEventListener('click', (ev) => {
   }
   closeMeMenu();
   if (it.dataset.me === 'feedback') { feedbackOpen(); return; }
+  if (it.dataset.me === 'whatsnew') { if (window.whatsNew) whatsNew.open(); return; }
   openSettingsPanel($('#me-btn'));
 });
 $('#feedback-open').addEventListener('click', () => feedbackOpen());
@@ -24840,9 +24789,8 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-split')?.addEventListener('click', (ev) => {
     runItermAction('/api/iterm/split-live', 'split', ev.currentTarget);
   });
-  // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
-  // before the first check so triggerUpdate can detect the new pid later.
-  document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  // The update check (What's new, #339): initial + periodic. RUNTIME_CFG.pid
+  // must be set before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('drain-force')?.addEventListener('click', () => drainAction('force'));
   document.getElementById('drain-cancel')?.addEventListener('click', () => drainAction('cancel'));
   document.getElementById('drain-dismiss')?.addEventListener('click', () => {
@@ -24862,10 +24810,6 @@ window.ensUpdPlace = () => ({
   document.getElementById('wide-banner-dismiss')?.addEventListener('click', e => {
     const b = e.currentTarget.parentElement;
     b.dataset.closed = '1'; b.hidden = true;
-  });
-  document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
-    UPDATE_DISMISSED = true;
-    document.getElementById('update-banner').hidden = true;
   });
   checkForUpdate();
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
