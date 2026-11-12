@@ -83,8 +83,15 @@ class Classify(unittest.TestCase):
         self.assertEqual(self.kind(850), "foreign")
         self.assertIn("without a terminal", self.v[850]["why"])
 
-    def test_a_young_attached_one_is_left_alone(self):
-        self.assertEqual(self.kind(600), "recent")
+    def test_a_young_child_of_an_outside_parent_is_foreign(self):
+        # Review 4: any parent outside the cgroups is an adopter (a
+        # subreaper that is not systemd, a parent that moved itself away).
+        self.assertEqual(self.kind(600), "foreign")
+        self.assertIn("its parent (pid 4242) runs outside these cgroups", self.v[600]["why"])
+
+    def test_one_that_cannot_be_placed_is_left_alone(self):
+        procs = {5: proc(5, 6, "a", sid=0), 6: proc(6, 5, "b", sid=0)}    # a loop
+        self.assertIn("recent", {v["kind"] for v in rg.classify(procs, set(), set(), set()).values()})
 
     def test_a_young_orphan_is_foreign(self):
         # Review 2: `java -jar app.jar &` from a shell that ended, 15 s old,
@@ -94,7 +101,11 @@ class Classify(unittest.TestCase):
         procs = {651: proc(651, 13990, "java", age=15, sid=1)}
         v = rg.classify(procs, set(), set(), set(), reapers={1, 13990})
         self.assertEqual(v[651]["kind"], "foreign")
-        self.assertEqual(rg.classify(procs, set(), set(), set())[651]["kind"], "recent")
+        self.assertIn("taken in by pid 13990", v[651]["why"])
+        # Review 4: a subreaper that is not systemd still makes it foreign.
+        v = rg.classify(procs, set(), set(), set())
+        self.assertEqual(v[651]["kind"], "foreign")
+        self.assertIn("runs outside these cgroups", v[651]["why"])
 
     def test_a_detached_app_under_a_live_tool_shell_is_foreign(self):
         # Review 1: `setsid nohup java &` while the agent's tool shell still
@@ -187,11 +198,11 @@ class Protect(unittest.TestCase):
             res = self.guard()
         self.assertTrue(res["ok"], res)
         self.assertIn(("kept-java-500.scope", [500, 510]), self.started)
-        self.assertEqual(sorted(m["pid"] for m in res["moved"]), [500, 650, 700, 800, 850])
+        self.assertEqual(sorted(m["pid"] for m in res["moved"]), [500, 600, 650, 700, 800, 850])
         self.assertFalse(any(300 in pids or HUB in pids for _, pids in self.started))
         self.assertIn("Moved out before the restart", res["message"])
         self.assertIn("kept-java-500.scope", res["message"])
-        self.assertEqual(len(res["recent"]), 1)          # the young sleep, left in place
+        self.assertEqual(res["recent"], [])
         log = self.log.read_text(encoding="utf-8")
         self.assertIn("[restart] guard: found pid 500", log)
         self.assertIn("moved pid 500 and 1 child(ren) from ensemble.service into "
@@ -292,8 +303,8 @@ class Machine(unittest.TestCase):
 
     def test_unit_cgroups_reads_systemctl(self):
         outs = {"list-units": "ensemble-detached-abc.scope loaded active running x\n",
-                "show": "Id=ensemble.service\nControlGroup=/u/ensemble.service\nMainPID=77\n\n"
-                        "Id=ensemble-detached-abc.scope\nControlGroup=/u/d.scope\nMainPID=0\n"}
+                "show": "Id=ensemble.service\nControlGroup=/u/ensemble.service\nMainPID=77\nActiveState=active\n\n"
+                        "Id=ensemble-detached-abc.scope\nControlGroup=/u/d.scope\nActiveState=active\n"}
         with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]) as sc:
             got = rg.unit_cgroups(["ensemble.service"])
             self.assertEqual(got["ensemble.service"],
@@ -315,18 +326,42 @@ class Machine(unittest.TestCase):
 
     def test_a_unit_show_left_out_raises(self):
         # Review 2: an answer for another unit is no answer for this one.
-        outs = {"show": "Id=other.service\nNames=other.service\nControlGroup=/u/o\nMainPID=1\n"}
+        outs = {"show": "Id=other.service\nNames=other.service\nControlGroup=/u/o\nMainPID=1\nActiveState=active\n"}
         with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
             with self.assertRaisesRegex(rg.ScanError, "did not answer for ensemble.service"):
                 rg.unit_cgroups(["ensemble.service"], detached=False)
-        outs["show"] = "Id=ensemble.service\nNames=ensemble.service\nControlGroup=/u/e\nMainPID=7\n"
+        outs["show"] = "Id=ensemble.service\nNames=ensemble.service\nControlGroup=/u/e\nMainPID=7\nActiveState=active\n"
         with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
             self.assertIn("ensemble.service", rg.unit_cgroups(["ensemble"], detached=False))
 
     def test_a_unit_that_is_not_running_has_no_cgroup(self):
-        outs = {"show": "Id=ensemble.service\nControlGroup=\nMainPID=0\n"}
+        outs = {"show": "Id=ensemble.service\nControlGroup=\nMainPID=0\nActiveState=inactive\n"}
         with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
             self.assertEqual(rg.unit_cgroups(["ensemble.service"], detached=False), {})
+
+    def test_a_running_unit_without_a_cgroup_raises(self):
+        # Review 4: an active target, or a live MainPID, with no usable
+        # ControlGroup; a property left out; an active detached scope too.
+        cases = {
+            "Id=ensemble.service\nControlGroup=\nMainPID=0\nActiveState=active\n": "is active",
+            "Id=ensemble.service\nControlGroup=\nMainPID=123\nActiveState=inactive\n":
+                "with MainPID 123",
+            "Id=ensemble.service\nMainPID=123\nActiveState=active\n": "no ControlGroup",
+            "Id=ensemble.service\nControlGroup=/u/e\nMainPID=1\n": "no ActiveState",
+            "Id=ensemble.service\nControlGroup=/u/e\nMainPID=x\nActiveState=active\n":
+                "is not a pid",
+        }
+        for show, why in cases.items():
+            with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: show):
+                with self.assertRaisesRegex(rg.ScanError, why):
+                    rg.unit_cgroups(["ensemble.service"], detached=False)
+        outs = {"list-units": "ensemble-detached-abc.scope loaded active running x\n",
+                "show": "Id=ensemble.service\nControlGroup=/u/e\nMainPID=7\nActiveState=active\n\n"
+                        "Id=ensemble-detached-abc.scope\nControlGroup=\nMainPID=0\n"
+                        "ActiveState=active\n"}
+        with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
+            with self.assertRaisesRegex(rg.ScanError, "ensemble-detached-abc.scope is active"):
+                rg.unit_cgroups(["ensemble.service"])
 
     def test_cgroup_pids_gone_is_empty_unreadable_raises(self):
         with tempfile.TemporaryDirectory() as td:
@@ -344,6 +379,32 @@ class Machine(unittest.TestCase):
             (cg / "cgroup.procs").unlink()                     # review 2: missing, dir still there
             with self.assertRaisesRegex(rg.ScanError, "is missing while"):
                 rg.cgroup_pids(cg)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads past file modes")
+    def test_an_unreadable_or_unlistable_cgroup_raises(self):
+        # Review 4: EACCES is not "gone" (Path.exists() says False for it),
+        # and a child cgroup that cannot be listed is not skipped (rglob
+        # swallowed that error).
+        with tempfile.TemporaryDirectory() as td:
+            top = Path(td) / "slice"
+            cg = top / "u.service"
+            (cg / "sub" / "deep").mkdir(parents=True)
+            for d, pids in ((cg, "11\n"), (cg / "sub", "12\n"), (cg / "sub" / "deep", "13\n")):
+                (d / "cgroup.procs").write_text(pids)
+            self.assertEqual(sorted(rg.cgroup_pids(cg)), [11, 12, 13])
+            top.chmod(0o600)                                    # no search permission
+            try:
+                with self.assertRaisesRegex(rg.ScanError, "could not look at"):
+                    rg.cgroup_pids(cg)
+            finally:
+                top.chmod(0o700)
+            (cg / "sub").chmod(0o300)                           # cannot be listed
+            try:
+                with self.assertRaisesRegex(rg.ScanError, "could not list"):
+                    rg.cgroup_pids(cg)
+            finally:
+                (cg / "sub").chmod(0o700)
+            self.assertEqual(sorted(rg.cgroup_pids(cg)), [11, 12, 13])
 
 
 class HubWiring(unittest.TestCase):

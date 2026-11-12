@@ -22,9 +22,12 @@ and sorts them:
   longer;
   An orphan (its parent ended: pid 1 or the user manager took it in, as
   ``java -jar app.jar &`` from a shell that has ended) is foreign at any age.
-* **recent**: the rest: a young process whose parent runs outside these
-  cgroups (a child of a process that moved itself elsewhere, as Chrome
-  does): left where it is.
+  A process whose parent runs outside these cgroups at all (a subreaper
+  other than the user manager took it in, or its parent moved itself
+  elsewhere, as Chrome does) is foreign too: whether its parent ended
+  cannot be told, so it is moved out rather than left to the stop.
+* **recent**: the rest (a young, attached process whose parent is inside
+  but cannot be placed, as in a loop in the table): left where it is.
 
 Each foreign tree is moved, before the stop, into a transient scope of its
 own (``kept-<name>-<pid>.scope``), through the user manager's
@@ -36,8 +39,9 @@ cannot be moved (no ``busctl`` or ``gdbus``, the call refused) makes the
 guard refuse the stop, naming each process, unless it is forced.
 
 A scan that cannot read what the stop would end (the user manager does not
-answer, a ``cgroup.procs`` cannot be read) refuses the stop too: it never
-passes processes it did not look at.
+answer or leaves a property out, a running unit has no ControlGroup, a
+cgroup or a ``cgroup.procs`` cannot be looked at, listed or read) refuses
+the stop too: it never passes processes it did not look at.
 
 Everything it finds and does is logged to ``~/.ensemble/logs/restart.log``.
 
@@ -128,7 +132,7 @@ def unit_cgroups(units, detached: bool = True) -> dict[str, dict]:
     if not names:
         return {}
     out = _systemctl("show", "--property=Id", "--property=Names", "--property=ControlGroup",
-                     "--property=MainPID", *names)
+                     "--property=MainPID", "--property=ActiveState", *names)
     found = {}
     blocks = [dict(ln.split("=", 1) for ln in b.splitlines() if "=" in ln)
               for b in out.split("\n\n") if b.strip()]
@@ -142,36 +146,73 @@ def unit_cgroups(units, detached: bool = True) -> dict[str, dict]:
     if missing:
         raise ScanError("systemctl --user show did not answer for " + ", ".join(missing))
     for props in blocks:
-        unit, cg = props.get("Id", ""), props.get("ControlGroup", "")
-        if unit and cg:
-            try:
-                main = int(props.get("MainPID") or 0)
-            except ValueError:
-                main = 0
-            found[unit] = {"cgroup": CGROUP_ROOT / cg.lstrip("/"), "mainPid": main}
+        unit = props.get("Id", "")
+        # Every property asked for must be there: one left out is not known.
+        # (A scope has no main process: systemd prints no MainPID for it.)
+        need = ("ControlGroup", "ActiveState") + (() if unit.endswith(".scope") else ("MainPID",))
+        lacking = [k for k in need if k not in props]
+        if not unit or lacking:
+            raise ScanError(f"systemctl --user show gave {unit or 'a unit'} no "
+                            + ", ".join(lacking or ["Id"]))
+        try:
+            main = int(props.get("MainPID") or 0)
+        except ValueError as e:
+            raise ScanError(f"{unit}: MainPID={props['MainPID']!r} is not a pid") from e
+        cg, state = props["ControlGroup"], props["ActiveState"]
+        if not cg:
+            # Not running: no cgroup, nothing to stop. Running (or a live
+            # main process) without one: what the stop ends is not known.
+            if main or state not in ("inactive", "failed"):
+                raise ScanError(f"{unit} is {state or 'in an unknown state'}"
+                                f"{f' with MainPID {main}' if main else ''} but has no ControlGroup")
+            continue
+        found[unit] = {"cgroup": CGROUP_ROOT / cg.lstrip("/"), "mainPid": main}
     return found
+
+
+def _gone(path: Path) -> bool:
+    """True only when ``path`` does not exist (ENOENT); a path that cannot
+    be looked at (EACCES, …) raises ScanError: Path.exists() reads both as
+    False."""
+    try:
+        os.stat(path)
+        return False
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError as e:
+        raise ScanError(f"could not look at {path}: {e}") from e
 
 
 def cgroup_pids(cgroup: Path) -> list[int]:
     """Every process in ``cgroup`` and the cgroups below it. A cgroup that
-    is gone (its unit ended since it was listed) holds none; one that
-    cannot be read raises ScanError."""
-    pids = []
-    if not cgroup.exists():
+    is gone (its unit ended since it was listed, a child cgroup removed
+    while it was walked) holds none; one that cannot be listed or read
+    raises ScanError."""
+    pids: list[int] = []
+    if _gone(cgroup):
         return pids
-    try:
-        files = [cgroup / "cgroup.procs", *sorted(cgroup.rglob("*/cgroup.procs"))]
-    except OSError as e:
-        raise ScanError(f"could not list {cgroup}: {e}") from e
-    for f in files:
+    todo = [cgroup]
+    while todo:
+        d = todo.pop()
+        f = d / "cgroup.procs"
         try:
             pids += [int(x) for x in f.read_text().split()]
         except FileNotFoundError as e:
-            if not f.parent.exists():
+            if _gone(d):
                 continue    # that cgroup was removed meanwhile: its processes are gone
-            raise ScanError(f"{f} is missing while {f.parent} exists") from e
+            raise ScanError(f"{f} is missing while {d} exists") from e
         except (OSError, ValueError) as e:
             raise ScanError(f"could not read {f}: {e}") from e
+        try:
+            with os.scandir(d) as it:
+                subs = sorted(Path(e.path) for e in it if e.is_dir(follow_symlinks=False))
+        except FileNotFoundError:
+            if _gone(d):
+                continue
+            raise ScanError(f"could not list {d} (not found) while it exists")
+        except OSError as e:
+            raise ScanError(f"could not list {d}: {e}") from e
+        todo.extend(reversed(subs))
     return pids
 
 
@@ -328,7 +369,8 @@ def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[
             res = {"kind": "expected", "root": p["ppid"],
                    "why": f"runs under {anchor(p['ppid'], None) or 'an expected process'}"}
         else:
-            res = {"root": pid, **_sort_top(p, hosts, threshold, moved, reapers)}
+            res = {"root": pid, **_sort_top(p, hosts, threshold, moved, reapers,
+                                            outside=p["ppid"] not in procs)}
         out[pid] = res
         return res
 
@@ -337,12 +379,18 @@ def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[
     return out
 
 
-def _sort_top(p: dict, hosts: set[int], threshold: float, moved, reapers=frozenset({1})) -> dict:
+def _sort_top(p: dict, hosts: set[int], threshold: float, moved, reapers=frozenset({1}),
+              outside: bool = False) -> dict:
     """The top process of a tree no expected process runs. ``reapers``: pid 1
-    and the user manager, which take in a process whose parent ended."""
+    and the user manager, which take in a process whose parent ended.
+    ``outside``: its parent runs outside the cgroups the stop ends (a
+    subreaper took it in, or its parent moved itself away): it is moved
+    out too, since whether its parent ended cannot be told."""
     signs = []
     if p["ppid"] in reapers:
         signs.append(f"its parent ended (it was taken in by pid {p['ppid']})")
+    elif outside:
+        signs.append(f"its parent (pid {p['ppid']}) runs outside these cgroups")
     if p["sid"] == p["pid"]:
         signs.append("in a session of its own (setsid)")
     if p["nohup"]:
