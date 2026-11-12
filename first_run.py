@@ -236,7 +236,8 @@ def look(rid: str, now: float) -> str:
     trust screen in a hub folder gets it answered (a seat started by a path
     without ``watch``, or one the watch missed). Twice per seat at most."""
     cr = _d.chatroom
-    room = cr.get_room(rid, public=False)
+    # Read, never changed: the indexed room, without its messages (#228).
+    room = cr.get_room(rid, public=False, copy_room=False, messages=False)
     if not room or not room.get("launched", True):
         return ""
     done = []

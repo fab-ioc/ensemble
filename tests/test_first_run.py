@@ -287,7 +287,7 @@ class LookTest(unittest.TestCase):
         sess = FakeSess("codex_trust", {})       # never moves on
         part = {"identity": "codex", "ptyId": "pty-1", "cwd": "/srv/hub/work/WT"}
         fake = types.SimpleNamespace(
-            chatroom=types.SimpleNamespace(get_room=lambda rid, public=False: {"launched": True},
+            chatroom=types.SimpleNamespace(get_room=lambda rid, **kw: {"launched": True},
                                            agent_participants=lambda room: [part]),
             rotation=types.SimpleNamespace(_pty=lambda p: sess))
         with mock.patch.object(first_run, "_d", fake), \
