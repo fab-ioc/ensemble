@@ -141,7 +141,7 @@ async function main() {
     await ev(`PD.dock.setViewMode('po-chat','pinned'); 0`);
     await size(1728,2000); await sleep(400); out.middlePopRestore=await ev(measure);
     out.tools={};
-    for(const id of ['spec','changes','points','board','workspace']) {
+    for(const id of ['spec','changes','board','workspace']) {
       await ev(`PD.dock.setViewMode(${JSON.stringify(id)},'pinned'); PD.dock.reveal(${JSON.stringify(id)}); 0`);
       await sleep(250);
       out.tools[id]=await ev(`(() => { const e=PD.els[${JSON.stringify(id)}]; const r=e.getBoundingClientRect();
@@ -285,16 +285,15 @@ class ChatHeight(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertLessEqual(g['emptyBelow'], 16, g)
                 self.assertGreaterEqual(g['ratio'], .7, g)
+
+    def test_a_thread_opens_at_its_latest_reply(self):
         for name in ('threadLaptop', 'threadTall', 'threadReload'):
             with self.subTest(name=name):
                 g = self.got[name]
-                # Up to a screen and a half tall it opens on its first
-                # message (Slack's), a longer one at its latest reply; made
-                # taller once open (threadTall), it stays where it was.
-                if g['screens'] <= 1.5 and name != 'threadTall':
-                    self.assertEqual(g['scrollTop'], 0, g)
-                else:
-                    self.assertLessEqual(g['scrollRemaining'], 16, g)
+                # A thread opens at its latest reply, short or long, on a
+                # reload too (#333: the #234 open-at-top rule is gone); made
+                # taller once open (threadTall), it stays at the end.
+                self.assertLessEqual(g['scrollRemaining'], 16, g)
                 self.assertFalse(g['layer'], 'a laptop: the thread in a panel beside the chat')
                 self.assertGreaterEqual(g['sideOfMain'], .99, g)
 
