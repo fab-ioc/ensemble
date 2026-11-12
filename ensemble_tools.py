@@ -749,7 +749,12 @@ RESTART_TOOLS = [
             "code on a spare port and calls it off if it does not serve. `when: "
             "\"now\"` restarts at once (agents mid-turn are cut off), or forces a "
             "drain under way; `cancel: true` calls a drain off. Progress is logged "
-            "to ~/.ensemble/logs/restart.log. Call it once."
+            "to ~/.ensemble/logs/restart.log. Call it once. Before the hub stops, "
+            "a project's long-running process left in the hub's processes (an app "
+            "an agent started with setsid or nohup) is moved into a systemd scope "
+            "of its own and runs on; the answer names each. One that cannot be "
+            "moved refuses the restart, naming it: stop it, or pass `stopForeign: "
+            "true` to restart anyway and stop it."
         ),
         "inputSchema": {
             "type": "object",
@@ -758,6 +763,9 @@ RESTART_TOOLS = [
                          "description": "safe (default): drain first; now: at once."},
                 "reason": {"type": "string", "description": "Why, for the CEO's banner."},
                 "cancel": {"type": "boolean", "description": "Call off a drain under way."},
+                "stopForeign": {"type": "boolean",
+                                "description": "Restart even if a project's long-running "
+                                               "process could not be moved out and stops."},
             },
         },
     },
@@ -2261,17 +2269,20 @@ def _restart_hub(ctx, args, handler):
     when = str(args.get("when") or "safe").lower()
     if when not in ("safe", "now"):
         raise ToolError('when is "safe" or "now"')
+    stop_foreign = args.get("stopForeign") is True
     if when == "now" and _d.restart_drain.draining():
-        res = _d.restart_drain.force_drain(by["label"])
+        res = _d.restart_drain.force_drain(by["label"], stop_foreign=stop_foreign)
         if not res["ok"]:
             raise ToolError(res.get("error") or "the restart is already under way")
         return {"ok": True, "forced": True, "drain": res["drain"]}
     if when == "safe":
-        res = _d.restart_drain.request_restart(str(args.get("reason") or ""), by, "restart")
+        res = _d.restart_drain.request_restart(str(args.get("reason") or ""), by, "restart",
+                                               stop_foreign=stop_foreign)
     elif _d.restart_drain.holding():
-        res = _d.restart_drain.restart_now(ctx["room"]["id"])
+        res = _d.restart_drain.restart_now(ctx["room"]["id"], stop_foreign=stop_foreign)
     else:
-        res = _d.trigger_restart(ctx["room"]["id"], identity=by.get("identity", ""))
+        res = _d.trigger_restart(ctx["room"]["id"], identity=by.get("identity", ""),
+                                 stop_foreign=stop_foreign)
     res.pop("status", None)
     if not res.get("started"):
         raise ToolError(res.get("error") or "the restart did not start")

@@ -663,7 +663,7 @@ class Tool(unittest.TestCase):
         import ensemble_tools
         self.assertIn("ensemble_ready_for_restart", ensemble_tools.COMMON_TOOL_NAMES)
         schema = next(t for t in ensemble_tools.RESTART_TOOLS if t["name"] == "ensemble_restart_hub")
-        self.assertEqual(set(schema["inputSchema"]["properties"]), {"when", "reason", "cancel"})
+        self.assertEqual(set(schema["inputSchema"]["properties"]), {"when", "reason", "cancel", "stopForeign"})
 
 
 if __name__ == "__main__":

@@ -139,6 +139,7 @@ import input_provenance
 import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
+import restart_guard
 import sends
 # Slash commands from the chat: what to suggest, what a command is (#253).
 import slash
@@ -174,6 +175,7 @@ agent_launch.install_spawn_guard()
 import running_rooms
 import hub_typing
 import restore_problems
+import seat_folders
 import move_check
 
 # Windows: a console program started by a host that has no console of its own
@@ -221,6 +223,7 @@ lost_sessions.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
 restore_problems.bind(sys.modules[__name__])
+seat_folders.bind(sys.modules[__name__])
 move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
@@ -2720,6 +2723,8 @@ usage.hub_codex_model = _hub_codex_model
 
 def save_settings(settings: dict) -> dict:
     """Persist only known keys with validated values; ignore extras."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return load_settings()
     with _SETTINGS_LOCK:
         return _save_settings_locked(settings)
 
@@ -5961,8 +5966,10 @@ def review_repo(room: dict) -> str:
     """The git checkout a review looks at: the owner's or the task's working dir
     when it is one, else the first checkout found inside them."""
     own = set(chatroom.owners(room))
+    # An owner seat an older hub left outside a worktree task's folder (~/cs)
+    # is not where its work is (ED-344).
     cands = [p.get("cwd", "") for p in chatroom.agent_participants(room)
-             if p["identity"] in own]
+             if p["identity"] in own and not seat_folders.outside_task(room, p.get("cwd", ""))]
     cands += [room.get("cwd", ""), room.get("taskDir", "")]
     for c in cands:
         if not c or not os.path.isdir(c):
@@ -6679,6 +6686,8 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
 
 
 def save_projects(projects: list[dict]) -> None:
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PROJECTS_FILE.with_suffix(".json.tmp")
     durable.write_tmp(tmp, json.dumps(projects, indent=2))
@@ -8101,6 +8110,8 @@ _PROJECT_META_LOCK = threading.RLock()
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
     """Set (or, with None, remove) one key of a project's own ``project.json``
     in its home. Only that one key is touched."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return False, "read_only_preflight"
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project"
@@ -9573,7 +9584,8 @@ def build_projects() -> dict:
                            "aliases": aliases.get(p["id"], []),
                            "home": project_home(p, create=False),
                            # Where its tasks put reports and design notes.
-                           "documentsDir": project_documents_dir(p),
+                           "documentsDir": project_documents_dir(
+                               p, persist=not os.environ.get("ENSEMBLE_PTY_PREFLIGHT")),
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
@@ -10720,7 +10732,7 @@ def project_home(project: dict, create: bool = True) -> str:
         return os.path.normpath(ppath)
     if not home:
         home = _free_home(project)
-    if create:
+    if create and not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         with contextlib.suppress(OSError):
             _make_home(project, home)
     return os.path.normpath(home)
@@ -15619,8 +15631,46 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
         return
 
 
+def _guard_room_name(rid: str) -> str:
+    """Who a guarded process belongs to, for the PO: its task (ED-18 and
+    title) or its project's PO."""
+    info = task_ref_info(rid)
+    if info and info.get("ref"):
+        return " ".join(x for x in (info["ref"], info.get("title") or "") if x)
+    project = next((p for p in load_projects() if (p.get("poRoomId") or "") == rid), None)
+    return f"the {project.get('name') or 'project'} PO" if project else ""
+
+
+def guard_foreign(what: str = "the restart", force: bool = False) -> dict | None:
+    """ED-342: before a restart stops this hub's systemd unit, a project's
+    long-running process in its cgroups (or a PTY host's scope) is moved
+    into a scope of its own (restart_guard.py). The result's ``ok`` False:
+    one could not be moved and the restart is refused (``force``: it goes
+    ahead). None when no unit runs this hub: its stop ends its own process
+    only, and no scope of its own exists."""
+    unit = BACKEND.systemd_service()
+    if not unit:
+        return None
+    return restart_guard.protect(units=[unit["unit"]], hub_pids=[os.getpid()],
+                                 state_dirs=[_restart_lease_path().parent], force=force,
+                                 log_path=DASHBOARD_DIR / "logs" / "restart.log",
+                                 room_name=_guard_room_name, what=what)
+
+
+def guard_refusal(res: dict | None) -> dict | None:
+    """The 409 a refused guard answers with."""
+    if res is None or res["ok"]:
+        return None
+    return {"started": False, "status": 409, "refused": True,
+            "error": res["message"] + " To restart anyway and stop them, ask again with "
+                                      "stopForeign: true.",
+            "foreign": [{"pid": f["pid"], "process": f["text"], "error": f["error"]}
+                        for f in res["failed"]]}
+
+
 def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
-                    purpose: str = "restart", grace: int | None = None) -> dict:
+                    purpose: str = "restart", grace: int | None = None,
+                    stop_foreign: bool = False) -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
     ``drain``: the restart a drain led to (restart_drain.py): its PO's note
     says why, and who paused. ``identity``: the agent in ``room_id`` that
@@ -15628,6 +15678,9 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
 
     ``purpose``: "update" for a source update's restart (its outcome also
     goes to update.log). ``grace``: see restart_plan.
+
+    ``stop_foreign``: go ahead even when a project's long-running process
+    could not be moved out of the hub's cgroups and stops with it (ED-342).
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -15644,6 +15697,15 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
             _drop_restart_lease(lease)
             view = {k: v for k, v in plan.items() if k != "env"}
             return {"started": True, "status": 202, "dryRun": True, "plan": view}
+        guarded = guard_foreign("the update's restart" if purpose == "update" else "the restart",
+                                force=stop_foreign)
+        refused = guard_refusal(guarded)
+        if refused:
+            _drop_restart_lease(lease)
+            if purpose == "update":
+                src_update_stage("failed", error=refused["error"])
+            return refused
+        plan["stopForeign"] = bool(stop_foreign)
         # Who is running, now: what the hub that comes back restores from if
         # the helper's own snapshot, taken just before the stop, never lands.
         _restart_log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
@@ -15692,7 +15754,8 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                         "one line): do not resume rooms by hand. "
                         + ("You will be resumed and told when it is back. "
                            if plan["wakeRoom"] else "")
-                        + f"Progress: {plan['log']}") )}
+                        + f"Progress: {plan['log']}")
+                        + (" " + guarded["message"] if guarded and guarded["message"] else ""))}
 
 
 # ---------- HTTP server ----------
@@ -15755,6 +15818,11 @@ PRODUCT_OWNER_ROLE = chatroom.PRODUCT_OWNER_ROLE
 
 class StartRoomError(Exception):
     """A first launch that cannot be satisfied by an installed agent kind."""
+
+
+class MissingFolderError(StartRoomError):
+    """A seat's folder is missing and the hub cannot make it again: the start
+    is refused, never moved to another folder (seat_folders.py, ED-344)."""
 
 
 def check_signed_in(agent_key: str, env: dict | None = None) -> None:
@@ -18278,6 +18346,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         p = u.path
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and p not in (
+                "/", "/startup", "/api/health", "/api/platform", "/api/version",
+                "/api/sessions", "/api/projects"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
             with _CHAT_REPAIRS_LOCK:
@@ -19271,6 +19344,9 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_PUT(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         try:
@@ -19354,6 +19430,9 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_DELETE(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         try:
@@ -19672,11 +19751,14 @@ class Handler(BaseHTTPRequestHandler):
                           "repo": root, "branch": git.get("branch", ""),
                           "head": git.get("head", ""), "base": git.get("base", ""),
                           "allocation": review_allocation}
-                if chatroom.patch_participant(
-                        room_id, ident,
-                        {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
-                         "cwd": info["cwd"], "pid": None, "review": review},
-                        drop=("lastExit", "fresh")) is None:
+                # The review runs in the checkout under review; the seat's own
+                # recorded folder stays its folder (ED-344), set only when none is.
+                fields = {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                          "pid": None, "review": review}
+                if not (part.get("cwd") or "").strip():
+                    fields["cwd"] = info["cwd"]
+                if chatroom.patch_participant(room_id, ident, fields,
+                                              drop=("lastExit", "fresh")) is None:
                     raise StartRoomError("the task went away before its reviewer was recorded")
             except BaseException:
                 for pid in seat_ptys(room_id, ident):
@@ -19865,6 +19947,23 @@ class Handler(BaseHTTPRequestHandler):
             args += ["-c", f"mcp_servers.{json.dumps(name, ensure_ascii=False)}.enabled=false"]
         return args
 
+    @staticmethod
+    def _seat_folder(room_full: dict, ident: str) -> tuple[str, str]:
+        """(the folder a seat starts in by default, the hub's own per-agent
+        folder it may make for it — "" when it has none). Project-backed
+        sessions share one workspace (agents work on the same files); ad-hoc
+        scratch collaborations keep per-identity subdirs. A room with no
+        folder recorded runs under ~/cs, made as needed."""
+        base = room_full.get("cwd") or ""
+        if not base:
+            base = str(CS_ROOT)
+            with contextlib.suppress(OSError):
+                os.makedirs(base, exist_ok=True)
+        if room_full.get("sharedCwd"):
+            return base, (base if not room_full.get("cwd") else "")
+        own = os.path.join(base, ident)
+        return own, own
+
     def _launch_room_agent(self, room_full: dict, part: dict, task: str) -> dict:
         """Spawn one agent for a room, pre-wired to the chat MCP with its own
         bearer token, in its own working dir, seeded with the collaboration
@@ -19874,14 +19973,8 @@ class Handler(BaseHTTPRequestHandler):
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         url = self._mcp_url()
-        base = room_full.get("cwd") or str(CS_ROOT)
-        # Project-backed sessions share one workspace (agents work on the same
-        # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
-        try:
-            os.makedirs(cwd, exist_ok=True)
-        except OSError:
-            pass
+        cwd, scratch = self._seat_folder(room_full, ident)
+        cwd = seat_folders.launch_folder(room_full, ident, cwd, scratch)
         teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                      for p in room_full["participants"]
                      if p.get("kind") == "agent" and p["identity"] != ident]
@@ -20003,15 +20096,16 @@ class Handler(BaseHTTPRequestHandler):
         model, effort = hub_launch_model(agent_key, part.get("model"))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        base = room_full.get("cwd") or str(CS_ROOT)
-        # Project-backed sessions share one workspace (agents work on the same
-        # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        if not cwd:
-            cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
-        try:
-            os.makedirs(cwd, exist_ok=True)
-        except OSError:
-            pass
+        default, scratch = self._seat_folder(room_full, ident)
+        # The folder asked for, else the seat's own recorded folder (a fresh
+        # session of a seat moved to a second checkout stays there), else the
+        # task's default. Made again when it is the task's missing worktree;
+        # a folder that cannot be is a refused start, never another folder.
+        recorded = (part.get("cwd") or "").strip()
+        moved = bool(cwd) and not (recorded and os.path.normcase(os.path.normpath(cwd))
+                                   == os.path.normcase(os.path.normpath(recorded)))
+        cwd = seat_folders.launch_folder(room_full, ident, cwd or recorded or default,
+                                         scratch, moved=moved)
         rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         if prompt is not None:
             briefing = prompt
@@ -20091,25 +20185,17 @@ class Handler(BaseHTTPRequestHandler):
                          else hub_launch_model(agent_key, part.get("model")))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        base = room_full.get("cwd") or str(CS_ROOT)
+        default, scratch = self._seat_folder(room_full, ident)
         recorded_cwd = (part.get("cwd") or "").strip()
-        cwd = recorded_cwd or (base if room_full.get("sharedCwd")
-                               else os.path.join(base, ident))
-        if not os.path.isdir(cwd):
-            # An unrecorded scratch seat gets the same directory as on first
-            # launch. A recorded directory that disappeared must not be
-            # silently recreated as an empty replacement for its old files.
-            if not recorded_cwd:
-                try:
-                    os.makedirs(cwd, exist_ok=True)
-                except OSError:
-                    pass
-            if not os.path.isdir(cwd):
-                fallback = base if os.path.isdir(base) else str(CS_ROOT)
-                os.makedirs(fallback, exist_ok=True)
-                print(f"[resume] {room_full['id']}/{ident}: cwd missing: {cwd}; "
-                      f"using {fallback}", flush=True)
-                cwd = fallback
+        # It resumes where its conversation is: its recorded folder. An
+        # unrecorded scratch seat gets the folder of its first launch; a
+        # recorded folder that disappeared is made again only when it is the
+        # task's worktree (never as an empty stand-in for its old files), and
+        # is otherwise a refused start (ED-344: never another folder).
+        cwd = seat_folders.launch_folder(room_full, ident, recorded_cwd or default,
+                                         "" if recorded_cwd else scratch)
+        if agent_key != "codex" and (part.get("sessionId") or "").strip():
+            seat_folders.resume_folder_check(room_full, ident, part["sessionId"].strip(), cwd)
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
@@ -21862,6 +21948,10 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_POST(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and urlparse(self.path).path not in (
+                "/api/restart/typing-check", "/api/restart/host-stop"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         if urlparse(self.path).path == "/api/agent/hook":
@@ -22254,7 +22344,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
             result = restart_drain.request_restart(
                 str(data.get("reason") or ""), self._drain_requester(),
-                "update" if p == "/api/update" else "restart")
+                "update" if p == "/api/update" else "restart",
+                stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p in ("/api/update", "/api/restart") and restart_drain.holding():
@@ -22263,13 +22354,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             if restart_drain.draining():
-                result = restart_drain.force_drain(self._drain_requester()["label"])
+                result = restart_drain.force_drain(self._drain_requester()["label"],
+                                                   stop_foreign=data.get("stopForeign") is True)
                 self._send_json(202 if result["ok"] else 409, {"started": result["ok"], **result})
                 return
             # The drain went to restart and nothing stopped the hub yet: a
             # plain restart now, which the drain follows.
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
-            result = restart_drain.restart_now(resolved[0] if resolved else "")
+            result = restart_drain.restart_now(resolved[0] if resolved else "",
+                                               stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p == "/api/update-skip":
@@ -22292,7 +22385,7 @@ class Handler(BaseHTTPRequestHandler):
             action = str(data.get("action") or "")
             who = self._drain_requester()["label"]
             if action == "force":
-                result = restart_drain.force_drain(who)
+                result = restart_drain.force_drain(who, stop_foreign=data.get("stopForeign") is True)
             elif action == "cancel":
                 result = restart_drain.cancel_drain(who)
             else:
@@ -22308,7 +22401,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             result = restart_drain.request_restart(str(data.get("reason") or "an update"),
-                                                   self._drain_requester(), "update")
+                                                   self._drain_requester(), "update",
+                                                   stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p == "/api/app/autostart":
@@ -22337,7 +22431,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
-            result = trigger_restart(resolved[0] if resolved else "")
+            result = trigger_restart(resolved[0] if resolved else "",
+                                     stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p in ("/api/restart/snapshot", "/api/restart/restore", "/api/restart/host-stop",
@@ -23761,6 +23856,10 @@ def _listen_or_exit(host: str, port: int) -> HubServer:
 
 def main():
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        # The project list calls git status. A probe must not refresh a real
+        # repository's index or hold its index.lock beside the running hub.
+        os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     args = sys.argv[1:]
     if "--set-project-noun" in args:
         i = args.index("--set-project-noun")
@@ -23828,10 +23927,11 @@ def main():
             ACCESS_TOKEN = tok_file.read_text(encoding="utf-8").strip()
         if not ACCESS_TOKEN:
             ACCESS_TOKEN = secrets.token_urlsafe(24)
-            try:
-                tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
-            except OSError:
-                pass
+            if not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+                try:
+                    tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
+                except OSError:
+                    pass
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
@@ -23916,6 +24016,21 @@ def main():
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
 
+    # The spare-port hub probes real state while the old hub still owns it.
+    # Only attach its isolated PTY host and serve read probes; all migrations,
+    # repairs, caches, schedulers, restores and backup setup belong to the
+    # real start after the old hub has stopped.
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        startup.step("Connecting to the agents' terminals")
+        attach_pty_host()
+        startup.booted()
+        startup.ready()
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            return
+
     startup.step("Opening the saved state")
     # Moving from claude-dashboard: copy its state in once, and say so in the
     # log, however this hub was started (see legacy_install).
@@ -23971,6 +24086,16 @@ def main():
             print(f"finished tasks moved to In review: {name}: {n}", flush=True)
     except Exception as e:
         print(f"finished tasks not moved to In review: {e!r}", flush=True)
+    # Seats an older hub moved to its fallback folder (~/cs) when a worktree
+    # task's folder was missing go back to the task's folder (ED-344). Once
+    # per seat: a repaired seat is the task's folder. A running one is left.
+    try:
+        for r in seat_folders.repair_at_start():
+            what = f"left ({r['skipped']})" if r.get("skipped") else f"-> {r['now']}"
+            print(f"seat folders: {r['room']} #{r.get('no') or '?'} {r['identity']}: "
+                  f"{r['was']} {what}", flush=True)
+    except Exception as e:
+        print(f"seat folders not repaired: {e!r}", flush=True)
 
     startup.step("Updating questions and points")
     # Answers recorded before an ask of two questions became two asks (#195)

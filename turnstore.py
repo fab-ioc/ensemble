@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -37,6 +38,16 @@ def _conn(db: Path) -> sqlite3.Connection:
     key = str(db)
     conn = _CONN.get(key)
     if conn is None:
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            # The spare-port hub shares the live profile. SQLite's usual
+            # open can create the database, WAL or SHM, and its damage path
+            # can replace a database that the real hub has open. A read-only
+            # immutable view is enough for the preflight's list probes;
+            # rows still in the WAL are parsed from their transcripts.
+            conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro&immutable=1",
+                                   uri=True, timeout=2, check_same_thread=False)
+            _CONN[key] = conn
+            return conn
         db.parent.mkdir(parents=True, exist_ok=True)
         try:
             conn = _open(db)
@@ -147,6 +158,8 @@ def get_kept(db: Path, path: str) -> list[dict] | None:
 def put(db: Path, path: str, sig: tuple[int, int], ver: str, turns: list[dict],
         *, force: bool = False) -> bool:
     """Store ``turns``; skipped (False) for a file stored under PUT_EVERY ago."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return False
     now = time.monotonic()
     if not force and now - _LAST_PUT.get(path, -PUT_EVERY) < PUT_EVERY:
         return False
