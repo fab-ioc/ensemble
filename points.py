@@ -533,6 +533,8 @@ SAVED = 0                      # every ledger save by this hub: what was worked 
 
 
 def _save(room_id: str, led: dict) -> None:
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
     p = _path(room_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")

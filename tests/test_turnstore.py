@@ -50,6 +50,25 @@ class TurnStoreTest(unittest.TestCase):
             again = dashboard._stored_text_turns(self.t, self._sig())
         self.assertEqual(again, first)
 
+    def test_preflight_reads_without_touching_store_or_replacing_damage(self):
+        sig = self._sig()
+        self.assertTrue(turnstore.put(self.db, str(self.t), sig, "v", [{"text": "kept"}]))
+        turnstore.close()
+        before = self.db.read_bytes()
+        with mock.patch.dict(os.environ, {"ENSEMBLE_PTY_PREFLIGHT": "1"}):
+            self.assertEqual(turnstore.get(self.db, str(self.t), sig, "v"), [{"text": "kept"}])
+            self.assertFalse(turnstore.put(self.db, str(self.t), sig, "other", [{"text": "new"}],
+                                           force=True))
+            turnstore.close()
+            bad = self.db.with_name("bad.sqlite3")
+            bad.write_bytes(b"not sqlite")
+            self.assertIsNone(turnstore.get(bad, "x", sig, "v"))
+            turnstore.close()
+            self.assertEqual(bad.read_bytes(), b"not sqlite")
+            self.assertFalse(list(bad.parent.glob("bad.sqlite3.damaged-*")))
+        self.assertEqual(self.db.read_bytes(), before)
+        self.assertFalse(self.db.with_name(self.db.name + "-shm").exists())
+
     def test_a_changed_file_is_read_again(self):
         dashboard._stored_text_turns(self.t, self._sig())
         with self.t.open("a", encoding="utf-8") as f:
