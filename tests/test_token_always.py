@@ -87,8 +87,41 @@ class LoadingTheToken(unittest.TestCase):
         self.assertTrue(self.file.read_text(encoding="utf-8") == "kept-one")
 
     def test_a_state_dir_that_cannot_be_written_still_gives_a_token(self):
-        with mock.patch.object(dashboard.os, "open", side_effect=PermissionError):
+        with mock.patch.object(dashboard.tempfile, "mkstemp", side_effect=PermissionError):
             self.assertTrue(dashboard._load_access_token())
+        self.assertFalse(self.file.exists())
+
+    @unittest.skipUnless(os.name == "posix", "file modes and links as on Linux and macOS")
+    def test_an_empty_file_others_could_read_is_replaced_by_an_owner_only_one(self):
+        self.dir.mkdir(parents=True)
+        self.file.write_text("", encoding="utf-8")
+        os.chmod(self.file, 0o644)
+        tok = dashboard._load_access_token()
+        self.assertTrue(self.file.read_text(encoding="utf-8") == tok)
+        self.assertEqual(stat.S_IMODE(self.file.stat().st_mode), 0o600)
+        self.assertEqual([p.name for p in self.dir.iterdir()], ["access-token.txt"], "no temporary file left")
+
+    @unittest.skipUnless(os.name == "posix", "file modes and links as on Linux and macOS")
+    def test_a_kept_token_others_could_read_is_made_owner_only(self):
+        self.dir.mkdir(parents=True)
+        self.file.write_text("kept-one", encoding="utf-8")
+        os.chmod(self.file, 0o644)
+        self.assertTrue(dashboard._load_access_token() == "kept-one")
+        self.assertEqual(stat.S_IMODE(self.file.stat().st_mode), 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "file modes and links as on Linux and macOS")
+    def test_a_link_is_replaced_and_its_target_left_alone(self):
+        self.dir.mkdir(parents=True)
+        target = self.dir.parent / "elsewhere.txt"
+        target.write_text("", encoding="utf-8")
+        os.chmod(target, 0o644)
+        self.file.symlink_to(target)
+        tok = dashboard._load_access_token()
+        self.assertFalse(self.file.is_symlink(), "the link itself is replaced")
+        self.assertTrue(self.file.read_text(encoding="utf-8") == tok)
+        self.assertEqual(stat.S_IMODE(self.file.stat().st_mode), 0o600)
+        self.assertEqual(target.read_text(encoding="utf-8"), "", "the target is not written")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644, "nor its mode changed")
 
     def test_main_loads_it_at_every_start(self):
         src = inspect.getsource(dashboard.main)
@@ -144,6 +177,18 @@ class TheGateBehindTailscaleServe(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertNotEqual(body, dashboard.SIGN_IN_PAGE)
 
+    def test_a_write_needs_the_token_too(self):
+        """PUT went to its routes before any gate: /api/settings was saved
+        through the proxy without the token."""
+        put = lambda path, h: self.hub.get(path, {**SERVE, "Content-Type": "application/json", **h}, method="PUT")
+        for path in ("/api/settings", "/api/backup/now"):
+            self.assertEqual(put(path, {})[0], 401, path)
+        with mock.patch.object(dashboard, "save_settings") as save:
+            self.assertEqual(put("/api/settings", {})[0], 401)
+            save.assert_not_called()
+        for method in ("POST", "DELETE"):
+            self.assertEqual(self.hub.get("/api/settings", SERVE, method=method)[0], 401, method)
+
     def test_a_wrong_token_does_not(self):
         self.assertEqual(self.hub.get("/api/ptys", {**SERVE, "Cookie": "ensemble_token=nope"})[0], 401)
 
@@ -170,6 +215,13 @@ class AnEmptyTokenLetsNoOneIn(unittest.TestCase):
         self.assertIn(self.hub.get("/api/ptys?token=", SERVE)[0], (401, 403))
         code, _, body = self.hub.get("/", {**SERVE, **NAV})
         self.assertEqual((code, body), (401, dashboard.SIGN_IN_PAGE))
+
+    def test_a_write_is_refused(self):
+        self.assertEqual(self.hub.get("/api/settings", SERVE, method="PUT")[0], 401)
+
+    def test_the_drag_bearer_opens_nothing_either(self):
+        drag = dashboard._FILE_DRAG_TOKEN
+        self.assertEqual(self.hub.get(f"/api/file/download?path=x&drag={drag}", SERVE)[0], 401)
 
     def test_the_manifest_still_opens_and_this_machine_passes(self):
         self.assertEqual(self.hub.get("/manifest.webmanifest", SERVE)[0], 200)

@@ -38,6 +38,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import feedback
 import file_refs
@@ -249,16 +250,46 @@ def _load_access_token() -> str:
     except (OSError, UnicodeDecodeError):
         tok = ""
     if tok:
+        _owner_only(tok_file)
         return tok
     tok = secrets.token_urlsafe(24)
+    _keep_token(tok_file, tok)
+    return tok
+
+
+def _owner_only(path: Path) -> None:
+    """A kept token file that others may read (one written by an older hub
+    with the default mode) is made the owner's only. A link is left alone:
+    chmod would change the file it points to."""
     try:
-        tok_file.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(tok_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(tok)
+        st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode) and st.st_mode & 0o077:
+            os.chmod(path, 0o600)
     except OSError:
         pass
-    return tok
+
+
+def _keep_token(path: Path, tok: str) -> None:
+    """Write a new token to ``path`` as a fresh owner-only file: written to a
+    temporary file beside it (mkstemp makes it 0600) and renamed over it, so
+    an existing file keeps no mode of its own and a link there is replaced,
+    not followed."""
+    tmp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".access-token-", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(tok)
+        os.replace(tmp, path)
+        tmp = None
+    except OSError:
+        pass
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def _addr_is_loopback(host: str) -> bool:
@@ -17803,7 +17834,9 @@ class Handler(BaseHTTPRequestHandler):
         # boundary before it returns anything.
         if self.command in ("GET", "HEAD") and u.path == "/api/file/download":
             drag = (parse_qs(u.query).get("drag", [""])[0] or "").strip()
-            if drag and hmac.compare_digest(drag, _FILE_DRAG_TOKEN):
+            # Only beside an access token: with none, nothing that is not
+            # local passes this gate, a drag bearer neither.
+            if ACCESS_TOKEN and drag and hmac.compare_digest(drag, _FILE_DRAG_TOKEN):
                 return True
         if self._is_local():
             return True
@@ -18962,6 +18995,10 @@ class Handler(BaseHTTPRequestHandler):
             invalidate_session_listing()
 
     def _do_PUT(self):
+        # The same gate as GET, POST and DELETE: a PUT through tailscale serve
+        # or from the tailnet saved settings without the token (ED-341).
+        if not self._gate():
+            return
         u = urlparse(self.path)
         p = u.path
         ln = int(self.headers.get("Content-Length", "0"))
