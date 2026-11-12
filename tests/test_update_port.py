@@ -67,7 +67,8 @@ class BashLauncher(unittest.TestCase):
         self.bin = self.home / "bin"
         self.bin.mkdir()
         (self.home / ".ensemble").mkdir()
-        self.log = self.home / "Library" / "Logs" / "ensemble.log"
+        self.log = (self.home / "Library" / "Logs" / "ensemble.log" if sys.platform == "darwin"
+                    else self.home / ".ensemble" / "logs" / "ensemble.log")
         self.args_file = self.home / "hub-args"
         _stub(self.bin, "python3",
               'if [[ "$1" == "-c" || "$1" == "-m" ]]; then exit 0; fi\n'

@@ -800,6 +800,16 @@ What happens … How to reproduce … What we need …"
 - **At most 6 wakes an hour between two projects.** More are held until the
   hour allows, and the product owner's bell shows it. Batch what you have.
 
+**After a move to another machine, `ensemble_move_check` (POs).** The hub runs
+the move check at every start: code folders, task folders, task worktrees whose
+git folder is gone, and Claude conversations filed under the old folder's name.
+It repairs what is safe by itself (a worktree only when its files equal a
+commit; a conversation is copied, never moved) and keeps the rest as it is: a
+worktree with work of its own gets `moved-<date>.patch` in its task folder.
+What it could not repair is listed in Settings › This instance, and you get one
+line about it. Without arguments the tool returns the last result; `run: true`
+runs it again (`repair: false` only looks).
+
 **Write what is due at a time under `## Due`.** One line per item, promises to
 the product owner first:
 
