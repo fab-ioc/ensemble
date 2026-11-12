@@ -80,6 +80,27 @@ _REC_LEAD = re.compile(r"^(?:\*\*|__)?recommended(?:\*\*|__)?[ \t]*[:—–-][ \
 _BOLD_HEAD = re.compile(r"^(?:\*\*|__)(?P<l>[^*_\n]+?)(?:\*\*|__)[ \t]*(?P<rest>.*)$")
 _SPLIT = re.compile(r"[ \t]+[—–][ \t]+|[ \t]+-{1,2}[ \t]+|:[ \t]+")
 _MARKS = re.compile(r"\*\*|__|`")
+# An ask whose words are only links (bare, <…> or [text](…), with commas or
+# "and" between): a reminder of the cards it links to, not a question (P321,
+# #351). It makes no card; the page shows the line as those links' chips.
+_LINKS_ONLY = re.compile(
+    r"^(?:(?:[ \t,;]|and\b)*(?:<https?://[^\s<>]+>|\[[^\]\n]*\]\([ \t]*<?https?://[^\s)]+>?[ \t]*\)"
+    r"|https?://[^\s,;]+))+[ \t.,;]*$", re.I)
+
+
+def links_only(text: str) -> bool:
+    """``text`` is only one or more links: no words to answer."""
+    return bool(_LINKS_ONLY.match(_plain(text)))
+
+
+def title(question: str, who: str = "") -> str:
+    """The words a list shows for an ask: its question, never a bare link
+    (P321): "Question from <who>" for an ask that is only links."""
+    if not links_only(question or ""):
+        return question
+    return f"Question from {who}" if who else "Question"
+
+
 _YESNO_TAG = re.compile(r"^(?:yes[ \t]*(?:/|-|or)[ \t]*no|y/n|yesno)$", re.I)
 _OPEN_TAG = re.compile(r"^(?:open|free[ \t]*text|text)$", re.I)
 
@@ -438,8 +459,8 @@ def parse(text: str) -> list[dict]:
             end = j
         i = end
         question = _plain(q)[:QUESTION_MAX]
-        if not question:
-            continue
+        if not question or links_only(q):
+            continue        # a reminder of a card ("Ask: <its link>") asks nothing
         tag = " ".join((m.group("kind") or "").split())
         if opts or _OPEN_TAG.match(tag):
             found = [(question, opts)]
@@ -496,6 +517,9 @@ def validated(questions, warnings: list | None = None) -> list[dict]:
         q = item.get("question")
         if not isinstance(q, str) or not q.strip() or len(q.strip()) > QUESTION_MAX:
             raise ValueError(f"{where}.question must be 1-{QUESTION_MAX} characters")
+        if links_only(q):
+            raise ValueError(f"{where}.question is only a link; write the question in words "
+                             "(to remind them of an open card, paste its link alone in your message)")
         yesno = item.get("yesno", False)
         if not isinstance(yesno, bool):
             raise ValueError(f"{where}.yesno must be true or false")

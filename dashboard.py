@@ -3080,7 +3080,8 @@ ASK_NOTE = (
     "A task with a PO routes its question to that PO unless forCeo is true; "
     "reviewers ask the owner. Never mention an open card without its link: "
     "ensemble_ask returns a reference to paste, and a plain Ask card's "
-    "Copy link control provides one too.")
+    "Copy link control provides one too. To remind them of an open card, paste "
+    "its link alone on its line, never after Ask: (that line asks nothing).")
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (

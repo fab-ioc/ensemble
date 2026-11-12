@@ -50,6 +50,8 @@ from __future__ import annotations
 import threading
 import time
 
+from asks import title as _ask_title    # pure: an ask's words, never a bare link (P321)
+
 _d = None   # the dashboard module (bind)
 
 
@@ -356,8 +358,8 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 if hit:
                     R.fold(hit, "ask:decision", pts)
                     continue
-                row(s, "answer", "ask:decision", c["mid"], part, c["question"], c["ts"], pts,
-                    reason=f"{c.get('who') or 'The PO'} asks")
+                row(s, "answer", "ask:decision", c["mid"], part, _ask_title(c["question"], c.get("who") or "the PO"),
+                    c["ts"], pts, reason=f"{c.get('who') or 'The PO'} asks")
             for c in older:
                 key = (rid, c["mid"], f"ask:{c['n']}")
                 if key in R.by_key:
@@ -368,7 +370,8 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 older_of[key] = why
                 older_rows.append({"id": f"older:{rid}:{c['mid']}:{key[2]}", "kind": "answer", "older": True,
                                    **where(s), "mid": c["mid"], "part": key[2], "n": c["n"],
-                                   "line": _line(c["question"]), "since": float(c.get("ts") or 0),
+                                   "line": _line(_ask_title(c["question"], c.get("who") or "the PO")),
+                                   "since": float(c.get("ts") or 0),
                                    "reason": _line(f"{c.get('who') or 'The PO'} asks", 240),
                                    "why": c.get("why") or "older", "taskRef": c.get("task") or "",
                                    "points": list(c.get("points") or [])})
@@ -402,8 +405,8 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                         R.drop(roomId=rid, mid=q["mid"], part=part, since=q.get("ts"), line=_line(q.get("question")),
                                source="ask:open", why=older_of[key])
                     continue
-                row(s, "answer", "ask:open", q["mid"], part, q["question"], q["ts"],
-                    reason=f"{q.get('who') or 'An agent'} asks")
+                row(s, "answer", "ask:open", q["mid"], part, _ask_title(q["question"], q.get("who") or "an agent"),
+                    q["ts"], reason=f"{q.get('who') or 'An agent'} asks")
         except Exception as e:      # noqa: BLE001
             failed("open asks", e, rid)
 

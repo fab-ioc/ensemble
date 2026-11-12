@@ -211,6 +211,17 @@ class InboxTest(unittest.TestCase):
         self.assertEqual([r["roomId"] for r in out["rows"]], [TASK])
         self.assertTrue(any(d["why"].startswith("another project") for d in out["dropped"]))
 
+    def test_no_row_shows_a_bare_link_as_its_question(self):
+        # P321: an ask whose words are only a link reads as who asks it.
+        url = "http://127.0.0.1:8765/session?room=room-8d56cd21&msg=d6801a1e8ab0&part=ask:0"
+        self.w.decisions[PO] = ([{"mid": "m1", "n": 0, "question": url, "ts": NOW - 100, "who": "claude"}],
+                                [{"mid": "o1", "n": 0, "question": url, "ts": NOW - 9000, "who": "claude", "why": "past"}])
+        self.w.open_asks[TASK] = [{"mid": "t1", "n": 0, "question": url, "ts": NOW - 50, "who": "codex"},
+                                  {"mid": "t2", "n": 0, "question": "Ship it?", "ts": NOW - 40, "who": "codex"}]
+        out = self.build()
+        lines = sorted(r["line"] for r in out["rows"] + out["older"])
+        self.assertEqual(lines, ["Question from claude", "Question from claude", "Question from codex", "Ship it?"])
+
     def test_older_questions_are_dropped_with_reason(self):
         old = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "po", "why": "past"}
         self.w.decisions[PO] = ([], [old])

@@ -2741,6 +2741,9 @@ function mdToHtml(src) {
     const i = codes.push(codeSpanHtml(body)) - 1;
     return ` I${i} `;
   });
+  // "Ask: <a card's link>" is a reminder of that card (P321): the line is its chip, no marker.
+  s = s.replace(/^([ \t>]*(?:(?:#{1,6}|[-*+]|[0-9]{1,3}[.)])[ \t]+)*)(?:\*\*|__)?[ \t]*ask(?:[ \t]*\([^)\n]{1,24}\))?[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*?)(?:[ \t]*(?:\*\*|__))?[ \t]*$/gim,
+    (m, lead, q) => /^(?:(?:[ \t,;]|and\b)*(?:<https?:\/\/[^\s<>]+>|\[[^\]\n]*\]\([ \t]*<?https?:\/\/[^\s)]+>?[ \t]*\)|https?:\/\/[^\s,;]+))+[ \t.,;]*$/i.test(q.replace(/\*\*|__|`/g, '').trim()) ? lead + q : m);   // the same as QA_RE.linksOnly
   // A link to a balloon is its chip, parked like code and put back at the end.
   // The target of a [text](link) keeps its text. A link to a task, at any of
   // the hub's addresses, is its room id, which parkTaskRefs makes the task's
@@ -3350,6 +3353,8 @@ const QA_RE = {
   split: /[ \t]+[—–][ \t]+|[ \t]+-{1,2}[ \t]+|:[ \t]+/,
   yesno: /^(?:yes[ \t]*(?:\/|-|or)[ \t]*no|y\/n|yesno)$/i,
   open: /^(?:open|free[ \t]*text|text)$/i,
+  // Only links: a reminder of the cards they link to, not a question (asks.py _LINKS_ONLY, P321).
+  linksOnly: /^(?:(?:[ \t,;]|and\b)*(?:<https?:\/\/[^\s<>]+>|\[[^\]\n]*\]\([ \t]*<?https?:\/\/[^\s)]+>?[ \t]*\)|https?:\/\/[^\s,;]+))+[ \t.,;]*$/i,
 };
 const ASK_Q_MAX = 200, ASK_LABEL_MAX = 80;
 const askPlain = s => String(s || '').replace(/\*\*|__|`/g, '').split(/\s+/).filter(Boolean).join(' ');
@@ -3583,7 +3588,7 @@ function parseAsks(text) {
     }
     i = end;
     const question = askCut(askPlain(q), ASK_Q_MAX);
-    if (!question) continue;
+    if (!question || QA_RE.linksOnly.test(askPlain(q))) continue;   // "Ask: <a card's link>" reminds, it asks nothing
     const tag = (m[3] || '').split(/\s+/).filter(Boolean).join(' ');
     let found;
     if (opts.length || QA_RE.open.test(tag)) found = [[question, opts]];

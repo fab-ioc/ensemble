@@ -1065,7 +1065,10 @@ reply, use the `Ask:` format below. Never put a question to them in prose.
 Never mention an open card without a link to that card. `ensemble_ask` returns
 one reference per question to paste in later messages. For a plain `Ask:` card,
 use its Copy link control. The linked card opens in its own chat and remains
-open until the person answers or closes it.
+open until the person answers or closes it. To remind someone of an open card,
+paste its link alone on its line, never after `Ask:` or `Ask (yes/no):`: an
+`Ask:` line that holds only links asks nothing and makes no card (the chat
+shows it as the card's chip). Only a question in words makes a new card.
 When a task's `ensemble_ask` routes to its project PO, the result instead has
 `reportReference`: link the PO report when following up with the PO. The PO
 creates a new card and uses its returned card reference if it relays the
@@ -1101,6 +1104,8 @@ message, `Re “<question>”: <option>` with their comment under it, once.
   is what you get. One question per `Ask:` line; two in one line become two
   cards. Only a question that truly needs their words (`Ask (open):`, or a
   what/which question with no options) gets a comment box alone.
+- An `Ask:` line holds the question in words, never only a link. To remind
+  them of a card already open, paste its link alone, without `Ask:`.
 - Only for their real decisions and questions: an `Ask:` stays on their Needs
   you list until they answer it, write to the chat after it, or a week passes. Never mark your own rhetorical
   questions, or quote the marker inside code.
