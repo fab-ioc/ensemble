@@ -125,6 +125,13 @@ class Rename(Hub):
         self.assertEqual(dashboard.find_project(self.ed)["name"], "Ensemble Dashboard")
         self.assertEqual(self.rename(self.ed, "ensemble dashboard")[0], 200, "its own name in another case is fine")
 
+    def test_unicode_names_count_in_characters(self):
+        long = "\U0001F680" * 61 + " Ğüç Ωμέγα"
+        st, body = self.rename(self.ed, long)
+        self.assertEqual((st, body["name"]), (200, long), "61 emoji are 61 characters, not 122")
+        st, body = self.rename(self.ed, "\u00e9" * 130)
+        self.assertEqual((st, body["name"]), (200, "\u00e9" * 120), "a longer name is cut at 120 characters")
+
     def test_the_inbox_has_the_new_name_at_once(self):
         import inbox
         inbox.snapshot()                     # a fresh build is kept a while

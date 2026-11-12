@@ -17738,7 +17738,7 @@ function psDialogHtml(pj, d, phone) {
     + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
     + (pj.path ? `<div class="ps-sub">${esc(pj.path)}</div>` : '')
     + `<div class="ps-fld"><label for="ps-name">Name</label>`
-    + `<input type="text" id="ps-name" class="ps-inp${(nameErr && d.touched) || d.nameErr ? ' bad' : ''}" value="${esc(d.name)}" maxlength="120" autocomplete="off" spellcheck="false"`
+    + `<input type="text" id="ps-name" class="ps-inp${(nameErr && d.touched) || d.nameErr ? ' bad' : ''}" value="${esc(d.name)}" autocomplete="off" spellcheck="false"`
     + ` aria-describedby="ps-name-note"${(nameErr && d.touched) || d.nameErr ? ' aria-invalid="true"' : ''}>`
     + (nameErr && d.touched ? `<p class="ps-err" id="ps-name-note" role="alert">${esc(nameErr)}</p>` : `<p class="ps-hint" id="ps-name-note">${hint}</p>`)
     + (d.nameErr ? `<p class="ps-err" id="ps-name-hub" role="alert">${esc(d.nameErr)}</p>` : '') + '</div>'

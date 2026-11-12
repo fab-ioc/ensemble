@@ -176,6 +176,13 @@ async function main() {
     await q.shot('live-1140x1000-error-light');
     await setName(q, '   ');
     out.empty = await q.evalIn(DLG);
+    // typed for real (no maxlength in the way): 61 emoji are 61 characters to the hub, 122 UTF-16 units
+    await setName(q, '');
+    await q.evalIn(`(document.querySelector('#modal #ps-name').focus(), 0)`);
+    await c.send('Input.insertText', { text: '\u{1F680}'.repeat(61) + ' Ğüç Ωμέγα' }, q.sessionId);
+    await sleep(100);
+    out.longTyped = await q.evalIn(`(() => { const i = document.querySelector('#modal #ps-name'), b = document.querySelector('#modal #ps-save');
+      return { chars: Array.from(i.value).length, max: i.getAttribute('maxlength'), invalid: i.getAttribute('aria-invalid'), save: !b.disabled }; })()`);
     await setName(q, 'Motors Two');
     out.typed = await q.evalIn(DLG);
     // the Key's Change… and back: what was typed is kept
@@ -423,6 +430,8 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertIn("Motors Two", r["ibxWhere"])
         self.assertEqual(self.g("ibxRenamedIn"), 1, "the Inbox names it at once")
         self.assertEqual(self.g("fold"), [True, True], "names compared as the hub's casefold()")
+        self.assertEqual(self.g("longTyped"), {"chars": 71, "max": None, "invalid": None, "save": True},
+                         "a name the hub takes can be typed: no UTF-16 maxlength")
         self.assertEqual(self.g("fold2"), [False, "A B", "A\ufeffB"],
                          "dotless i is not i to the hub; its whitespace is Python's")
         folded = self.g("folded")
