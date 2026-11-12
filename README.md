@@ -162,7 +162,7 @@ py dashboard.py --bind tailscale        # or --bind <an IP of this machine>; ENS
 ```
 
 - With a non-loopback bind, the hub keeps serving `127.0.0.1` and adds a second listener that needs a **token**.
-- The token comes from `ENSEMBLE_TOKEN`, or is created once and kept in `~/.ensemble/access-token.txt`.
+- The token comes from `ENSEMBLE_TOKEN`, or is created once and kept in `~/.ensemble/access-token.txt`. It exists with any bind, loopback too: every request that is not from this machine needs it, also one through a proxy here (see `tailscale serve` below).
 - At startup the hub logs the address to open, `http://<ip>:8765/?token=…`. The first visit sets a cookie; after that the plain address works.
 - A client can also send the token as an `X-Ensemble-Token` header or `Authorization: Bearer`.
 - For the scheduled task or LaunchAgent, set `ENSEMBLE_BIND` as a user environment variable (Windows) or add it to the plist's `EnvironmentVariables` (macOS), then restart the hub.

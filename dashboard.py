@@ -223,14 +223,42 @@ restart_drain.bind(sys.modules[__name__])
 attention.install()
 
 # --- Remote-access gate ------------------------------------------------------
-# When the server is bound to anything other than loopback (e.g. exposed on a
-# Tailscale interface so other machines can reach it), every non-loopback
-# request must present this access token. Loopback requests (the local browser
-# and the agents' own /mcp calls on 127.0.0.1) are always allowed, so nothing
-# local changes. Empty token => open (the historical local-only behaviour).
+# Every request that is not local (another machine, or a proxy on this one
+# such as `tailscale serve`, see _is_local) must present this access token.
+# Local requests (the local browser and the agents' own /mcp calls on
+# 127.0.0.1) are always allowed, so nothing local changes. The token is loaded
+# or minted at every start (_load_access_token), whatever the hub listens on:
+# a proxy can expose a loopback-only hub (ED-341). Should it still be empty, a
+# request that is not local is refused, never let through.
 ACCESS_TOKEN = ""
 TOKEN_COOKIE = "ensemble_token"
 _LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost", ""}
+
+
+def _load_access_token() -> str:
+    """The access token: ENSEMBLE_TOKEN when set, else the one kept in
+    DASHBOARD_DIR/access-token.txt, else a new one written there, so links and
+    cookies survive a restart. A file that cannot be written still leaves the
+    new token in use until the hub stops."""
+    tok = os.environ.get("ENSEMBLE_TOKEN", "").strip()
+    if tok:
+        return tok
+    tok_file = DASHBOARD_DIR / "access-token.txt"
+    try:
+        tok = tok_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        tok = ""
+    if tok:
+        return tok
+    tok = secrets.token_urlsafe(24)
+    try:
+        tok_file.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(tok_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(tok)
+    except OSError:
+        pass
+    return tok
 
 
 def _addr_is_loopback(host: str) -> bool:
@@ -17765,8 +17793,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _gate(self) -> bool:
-        """Return True if the request may proceed. When an ACCESS_TOKEN is set,
-        non-loopback requests must present it; a matching ?token= on a GET is
+        """Return True if the request may proceed. A request that is not local
+        must present ACCESS_TOKEN (and is refused while it is empty); a matching ?token= on a GET is
         swapped for an HttpOnly cookie via redirect so the URL stays clean."""
         u = urlparse(self.path)
         # Unlike the page credential, this bearer survives being handed to a
@@ -17777,7 +17805,7 @@ class Handler(BaseHTTPRequestHandler):
             drag = (parse_qs(u.query).get("drag", [""])[0] or "").strip()
             if drag and hmac.compare_digest(drag, _FILE_DRAG_TOKEN):
                 return True
-        if not ACCESS_TOKEN or self._is_local():
+        if self._is_local():
             return True
         # The path exactly as sent, up to a query: urlparse drops a last
         # ";params", a "#..." and an absolute-form "http://host" in front,
@@ -17788,7 +17816,9 @@ class Handler(BaseHTTPRequestHandler):
                 raw in UNGATED_PATHS or raw.startswith(UNGATED_PREFIXES)):
             return True
         tok = self._presented_token(u)
-        if tok and hmac.compare_digest(tok, ACCESS_TOKEN):
+        # No token (none could be loaded or minted) lets no one in: the
+        # request is not local, and an empty secret matches an empty cookie.
+        if ACCESS_TOKEN and tok and hmac.compare_digest(tok, ACCESS_TOKEN):
             q = parse_qs(u.query)
             if q.get("token") and self.command == "GET":
                 # Re-encoded: a file link's path= holds \, spaces, & and #,
@@ -23361,24 +23391,12 @@ def main():
         remote_host = _detect_tailscale_ip()  # may be None now; retried in a thread
     elif not _addr_is_loopback(host):
         remote_host = host
-    want_remote = tailnet or remote_host is not None
     wildcard = remote_host in ("0.0.0.0", "::")
 
-    # Access token: required for every non-loopback request. Explicit
-    # ENSEMBLE_TOKEN wins; otherwise, when the server will expose a remote
-    # listener (now or once Tailscale is up), load-or-mint a stable token
-    # persisted under the state dir so URLs/cookies survive a restart.
-    ACCESS_TOKEN = os.environ.get("ENSEMBLE_TOKEN", "").strip()
-    if want_remote:
-        tok_file = DASHBOARD_DIR / "access-token.txt"
-        if not ACCESS_TOKEN and tok_file.exists():
-            ACCESS_TOKEN = tok_file.read_text(encoding="utf-8").strip()
-        if not ACCESS_TOKEN:
-            ACCESS_TOKEN = secrets.token_urlsafe(24)
-            try:
-                tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
-            except OSError:
-                pass
+    # Access token: required for every request that is not local, at every
+    # start, also without a remote listener: `tailscale serve` exposes a
+    # loopback-only hub too (ED-341).
+    ACCESS_TOKEN = _load_access_token()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
