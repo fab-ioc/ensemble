@@ -12,10 +12,14 @@ and sorts them:
 * **expected**: the hub (the unit's main process), the PTY host, whatever
   runs the guard (the restart helper, ``install-systemd.sh``), every
   terminal of the PTY host (the agent CLIs: claude, codex) and every
-  descendant of one of those (shells, tool runs, MCP servers);
-* **foreign**: any other process tree whose top process is detached (its own
-  session: ``setsid``; SIGHUP ignored: ``nohup``; a child of the PTY host
-  without a terminal) or has run for ``THRESHOLD_S`` or longer;
+  descendant of one of those (shells, tool runs, MCP servers), except
+* **foreign**: a process a terminal's tool run left on purpose (below the
+  agent CLI's own children, in a session of its own or ignoring the hang-up
+  its parent does not: ``setsid``/``nohup java &`` while the shell lives),
+  with its descendants; and any other process tree whose top process is
+  detached (its own session: ``setsid``; SIGHUP ignored: ``nohup``; a child
+  of the PTY host without a terminal) or has run for ``THRESHOLD_S`` or
+  longer;
 * **recent**: the rest: a young process neither detached nor started by an
   expected one (``cmd &`` left by a tool run, about to end; a child of a
   process that moved itself elsewhere, as Chrome does): left where it is.
@@ -28,6 +32,10 @@ for any process of the same user. The processes run on untouched; stopping
 the hub's unit or the PTY host's scope no longer reaches them. A tree that
 cannot be moved (no ``busctl`` or ``gdbus``, the call refused) makes the
 guard refuse the stop, naming each process, unless it is forced.
+
+A scan that cannot read what the stop would end (the user manager does not
+answer, a ``cgroup.procs`` cannot be read) refuses the stop too: it never
+passes processes it did not look at.
 
 Everything it finds and does is logged to ``~/.ensemble/logs/restart.log``.
 
@@ -82,19 +90,32 @@ def default_log() -> Path:
 # Reading the machine (each function is one seam the tests replace)
 # ---------------------------------------------------------------------------
 
+class ScanError(RuntimeError):
+    """What a stop would end could not be read in full: the guard refuses
+    rather than let it stop processes it never looked at."""
+
+
 def _systemctl(*args: str, timeout: float = 20) -> str:
+    """systemctl --user's output; ScanError when it fails (the user manager
+    did not answer, it timed out): an empty answer would read as "nothing
+    runs there"."""
     try:
         r = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True,
                            encoding="utf-8", timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return r.stdout if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ScanError(f"systemctl --user {args[0]}: {e.__class__.__name__}: {e}") from e
+    if r.returncode != 0:
+        raise ScanError(f"systemctl --user {args[0]}: "
+                        f"{(r.stderr or r.stdout).strip()[:200] or f'exit {r.returncode}'}")
+    return r.stdout
 
 
 def unit_cgroups(units, detached: bool = True) -> dict[str, dict]:
     """{unit: {"cgroup": Path, "mainPid": int}} for the given units that are
     running, and (``detached``) for every running ``ensemble-detached-*``
-    scope (the PTY host's, the restart helper's)."""
+    scope (the PTY host's, the restart helper's). A unit that is not
+    running (no ControlGroup) is left out; a query that fails raises
+    ScanError."""
     names = [u for u in units if u]
     listed = _systemctl("list-units", "--type=scope", "--state=active", "--plain",
                         "--no-legend", DETACHED_GLOB) if detached else ""
@@ -107,6 +128,8 @@ def unit_cgroups(units, detached: bool = True) -> dict[str, dict]:
     out = _systemctl("show", "--property=Id", "--property=ControlGroup",
                      "--property=MainPID", *names)
     found = {}
+    if not out.strip():
+        raise ScanError("systemctl --user show answered nothing for " + ", ".join(names))
     for block in out.split("\n\n"):
         props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
         unit, cg = props.get("Id", ""), props.get("ControlGroup", "")
@@ -120,17 +143,23 @@ def unit_cgroups(units, detached: bool = True) -> dict[str, dict]:
 
 
 def cgroup_pids(cgroup: Path) -> list[int]:
-    """Every process in ``cgroup`` and the cgroups below it."""
+    """Every process in ``cgroup`` and the cgroups below it. A cgroup that
+    is gone (its unit ended since it was listed) holds none; one that
+    cannot be read raises ScanError."""
     pids = []
+    if not cgroup.exists():
+        return pids
     try:
         files = [cgroup / "cgroup.procs", *sorted(cgroup.rglob("*/cgroup.procs"))]
-    except OSError:
-        return pids
+    except OSError as e:
+        raise ScanError(f"could not list {cgroup}: {e}") from e
     for f in files:
         try:
             pids += [int(x) for x in f.read_text().split()]
-        except (OSError, ValueError):
-            pass
+        except FileNotFoundError:
+            continue        # a child cgroup removed meanwhile: its processes are gone
+        except (OSError, ValueError) as e:
+            raise ScanError(f"could not read {f}: {e}") from e
     return pids
 
 
@@ -244,21 +273,40 @@ def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[
             return f"a terminal of the PTY host ({_name(p)})"
         return ""
 
+    def terminal(pid: int) -> bool:
+        p = procs.get(pid)
+        return bool(p and pid not in hubs and pid not in hosts and pid not in mine
+                    and p["ppid"] in hosts and p["tty"])
+
+    def detached_below(p: dict, up: dict) -> bool:
+        """A process an agent's terminal runs that left it on purpose: it
+        is in a session of its own (setsid), or ignores the hang-up its
+        parent does not (nohup), and is not the terminal's own child (an
+        agent CLI's tool shells are session leaders; its MCP servers its
+        children too)."""
+        if not up.get("terminal") or p["ppid"] == up["root"]:
+            return False
+        parent = procs.get(p["ppid"]) or {}
+        return p["sid"] == p["pid"] or (p["nohup"] and not parent.get("nohup"))
+
     def sort(pid: int, path: tuple = ()) -> dict:
         if pid in out:
             return out[pid]
         p = procs[pid]
         why = anchor(pid, p)
         if why:
-            res = {"kind": "expected", "why": why, "root": pid}
+            res = {"kind": "expected", "why": why, "root": pid, "terminal": terminal(pid)}
         elif p["ppid"] in hosts:
             # Not a terminal (anchor): the PTY host starts nothing else.
             res = {"root": pid, **_sort_top(p, hosts, threshold, moved)}
         elif p["ppid"] in procs and p["ppid"] not in path:
             up = sort(p["ppid"], path + (pid,))
-            if up["kind"] == "expected":
+            if up["kind"] == "expected" and detached_below(p, up):
+                res = {"root": pid, **_sort_top(p, hosts, threshold, moved),
+                       "under": up["root"]}
+            elif up["kind"] == "expected":
                 top = procs.get(up["root"])
-                res = {"kind": "expected", "root": up["root"],
+                res = {"kind": "expected", "root": up["root"], "terminal": up.get("terminal", False),
                        "why": f"runs under {_name(top) if top else 'an expected process'} "
                               f"(pid {up['root']})"}
             else:
@@ -570,9 +618,11 @@ def protect(units=DEFAULT_UNITS, hub_pids=(), state_dirs=(), force: bool = False
         res = {"ok": bool(force), "supported": True, "units": [], "foreign": [], "moved": [],
                "failed": [{"pid": 0, "text": "the guard itself", "error": f"{e.__class__.__name__}: {e}"}],
                "recent": [], "forced": bool(force), "message": ""}
-        res["message"] = (f"The restart guard failed ({e.__class__.__name__}: {e}), so it could "
-                          f"not tell what {what} would stop" + ("; forced, so it goes ahead."
-                                                                if force else "; refused."))
+        why = str(e) if isinstance(e, ScanError) else f"{e.__class__.__name__}: {e}"
+        res["failed"][0]["error"] = why
+        res["message"] = (f"The restart guard could not tell what {what} would stop ({why})"
+                          + ("; forced, so it goes ahead." if force else
+                             "; refused."))
         return res
 
 

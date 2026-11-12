@@ -370,6 +370,14 @@ def _sf(flag) -> dict:
     return {"stop_foreign": True} if flag else {}
 
 
+def _with_guard(res: dict, guarded: dict | None) -> dict:
+    """``res`` with what the guard that ran first moved out, in its message."""
+    said = (guarded or {}).get("message") or ""
+    if not said or said in (res.get("message") or ""):
+        return res
+    return {**res, "message": ((res.get("message") or "") + " " + said).strip()}
+
+
 def restart_now(room_id: str = "", stop_foreign: bool = False) -> dict:
     """``when: "now"`` after the drain went to restart (its helper hung, or
     there is none to watch): a plain restart. When it starts, the drain
@@ -378,6 +386,11 @@ def restart_now(room_id: str = "", stop_foreign: bool = False) -> dict:
     st = current()
     res = _d.trigger_restart(room_id, drain=True,
                              **_sf(stop_foreign or (st and st.get("stopForeign"))))
+    if res.get("refused"):
+        # Nothing restarts: the drain lets go of what it holds now, not at a
+        # later tick (ED-342).
+        end_drain("failed", res.get("error") or "the restart guard refused the restart")
+        return res
     if res.get("started") and res.get("leaseId"):
         with LOCK:
             st = current()
@@ -606,23 +619,13 @@ def request_restart(reason: str, by: dict, action: str = "restart",
         _log(f"hub-only mode by {by.get('label') or 'someone'}: {reason or '(no reason)'}")
         return _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
                                   **_sf(stop_foreign))
-    if action == "update" and not holding() and not external:
-        if _d.app_version.packaged():
-            _log("packaged update staging; helper will select hub-only or classic mode")
-            res = _d.start_app_update()
-            return {"status": 202 if res.get("started") else 500, **res}
-        if _d.source_update_keeps_host():
-            err = _d.pull_checkout()
-            if err:
-                return {"status": 500, "started": False, "error": err}
-            _log("source update: PTY host unchanged; hub-only mode")
-            res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
-                                     purpose="update", **_sf(stop_foreign))
-            if res.get("refused"):
-                return res
-            return {"status": 202 if res.get("started") else 500, **res}
-    # Refused before any agent is drained: a process the restart would stop
-    # (ED-342). The restart itself checks again just before the stop.
+    if action == "update" and not holding() and not external and _d.app_version.packaged():
+        _log("packaged update staging; helper will select hub-only or classic mode")
+        res = _d.start_app_update()
+        return {"status": 202 if res.get("started") else 500, **res}
+    # Refused before any agent is drained and before the checkout changes: a
+    # process the restart would stop (ED-342). The restart itself checks
+    # again just before the stop.
     guarded = None
     if not external and not (action == "update" and _d.app_version.packaged()):
         guarded = _d.guard_foreign("the update's restart" if action == "update"
@@ -631,6 +634,16 @@ def request_restart(reason: str, by: dict, action: str = "restart",
         if refused:
             _log(f"refused by the restart guard, no drain: {refused['error']}")
             return refused
+    if action == "update" and not holding() and not external and _d.source_update_keeps_host():
+        err = _d.pull_checkout()
+        if err:
+            return {"status": 500, "started": False, "error": err}
+        _log("source update: PTY host unchanged; hub-only mode")
+        res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
+                                 purpose="update", **_sf(stop_foreign))
+        if res.get("refused"):
+            return res
+        return {"status": 202 if res.get("started") else 500, **_with_guard(res, guarded)}
     now = time.time()
     with LOCK:
         st = current()
@@ -806,6 +819,13 @@ def _launch() -> None:
             res["status"] = 202 if res.get("started") else (409 if "under way" in res.get("error", "") else 500)
         else:
             if update:
+                # The guard before the checkout changes (ED-342); the restart
+                # checks again just before the stop.
+                refused = _d.guard_refusal(_d.guard_foreign("the update's restart",
+                                                            force=bool(st.get("stopForeign"))))
+                if refused:
+                    end_drain("failed", refused["error"])
+                    return
                 err = _d.pull_checkout()
                 if err:
                     end_drain("failed", f"the update could not be fetched: {err}")

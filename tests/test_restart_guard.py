@@ -84,6 +84,32 @@ class Classify(unittest.TestCase):
     def test_a_young_attached_one_is_left_alone(self):
         self.assertEqual(self.kind(600), "recent")
 
+    def test_a_detached_app_under_a_live_tool_shell_is_foreign(self):
+        # Review 1: `setsid nohup java &` while the agent's tool shell still
+        # runs; `nohup node &` without setsid. The shell, its tool's own
+        # children and the agent CLI's MCP servers stay expected.
+        procs = table()
+        procs.update({p["pid"]: p for p in (
+            proc(330, 310, "java", age=3600, nohup=True),
+            proc(331, 330, "java", age=3600, sid=330),
+            proc(340, 310, "node", age=3600, sid=310, nohup=True),
+            proc(350, 300, "mcp", age=4000, sid=300, nohup=True),
+            proc(360, 320, "sleep", age=600, sid=310),
+        )})
+        v = rg.classify(procs, {HUB}, {HOST}, {MINE})
+        self.assertEqual((v[330]["kind"], v[330]["root"]), ("foreign", 330))
+        self.assertIn("setsid", v[330]["why"])
+        self.assertEqual((v[331]["kind"], v[331]["root"]), ("foreign", 330))
+        self.assertEqual((v[340]["kind"], v[340]["root"]), ("foreign", 340))
+        self.assertIn("nohup", v[340]["why"])
+        for pid in (300, 310, 320, 350, 360):
+            self.assertEqual(v[pid]["kind"], "expected", pid)
+
+    def test_a_setsid_child_of_the_hub_stays_expected(self):
+        procs = table()
+        procs[120] = proc(120, 110, "chrome", age=3600, nohup=True)
+        self.assertEqual(rg.classify(procs, {HUB}, {HOST}, {MINE})[120]["kind"], "expected")
+
     def test_a_child_of_a_moved_process_follows_it(self):
         # A child forked during the move, its parent already out of the table.
         v = rg.classify({601: proc(601, 600, "sleep", age=0, sid=1)}, {HUB}, {HOST}, {MINE},
@@ -210,8 +236,20 @@ class Platform(unittest.TestCase):
             res = rg.protect(log_path=Path(os.devnull))
             forced = rg.protect(log_path=Path(os.devnull), force=True)
         self.assertFalse(res["ok"])
-        self.assertIn("The restart guard failed (RuntimeError: boom)", res["message"])
+        self.assertIn("could not tell what the restart would stop (RuntimeError: boom)", res["message"])
         self.assertTrue(forced["ok"])
+
+    def test_a_scan_that_cannot_read_refuses(self):
+        # Review 1: a user manager that does not answer is not "nothing runs".
+        err = rg.ScanError("systemctl --user show: Failed to connect to bus")
+        with mock.patch.object(rg, "supported", return_value=True), \
+             mock.patch.object(rg, "unit_cgroups", side_effect=err):
+            res = rg.protect(log_path=Path(os.devnull))
+            forced = rg.protect(log_path=Path(os.devnull), force=True)
+        self.assertFalse(res["ok"])
+        self.assertIn("could not tell what the restart would stop (systemctl --user show: "
+                      "Failed to connect to bus); refused.", res["message"])
+        self.assertTrue((forced["ok"], forced["forced"]) == (True, True))
 
     def test_the_cli_exits_3_on_a_refusal(self):
         refused = {"ok": False, "message": "Refused: …"}
@@ -252,6 +290,34 @@ class Machine(unittest.TestCase):
             sc.reset_mock()
             rg.unit_cgroups(["ensemble.service"], detached=False)
             self.assertEqual(sc.call_args_list[0].args[0], "show")
+
+
+    def test_a_failed_systemctl_raises(self):
+        done = mock.Mock(returncode=1, stdout="", stderr="Failed to connect to bus")
+        with mock.patch.object(rg.subprocess, "run", return_value=done):
+            with self.assertRaisesRegex(rg.ScanError, "Failed to connect to bus"):
+                rg.unit_cgroups(["ensemble.service"])
+        with mock.patch.object(rg.subprocess, "run", side_effect=rg.subprocess.TimeoutExpired("x", 20)):
+            with self.assertRaises(rg.ScanError):
+                rg.unit_cgroups(["ensemble.service"], detached=False)
+
+    def test_a_unit_that_is_not_running_has_no_cgroup(self):
+        outs = {"show": "Id=ensemble.service\nControlGroup=\nMainPID=0\n"}
+        with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
+            self.assertEqual(rg.unit_cgroups(["ensemble.service"], detached=False), {})
+
+    def test_cgroup_pids_gone_is_empty_unreadable_raises(self):
+        with tempfile.TemporaryDirectory() as td:
+            cg = Path(td) / "u.service"
+            self.assertEqual(rg.cgroup_pids(cg), [])           # ended since it was listed
+            (cg / "sub").mkdir(parents=True)
+            (cg / "cgroup.procs").write_text("11\n12\n")
+            (cg / "sub" / "cgroup.procs").write_text("13\n")
+            self.assertEqual(sorted(rg.cgroup_pids(cg)), [11, 12, 13])
+            (cg / "sub" / "cgroup.procs").unlink()
+            (cg / "sub" / "cgroup.procs").mkdir()             # unreadable: not a file
+            with self.assertRaises(rg.ScanError):
+                rg.cgroup_pids(cg)
 
 
 class HubWiring(unittest.TestCase):
@@ -324,6 +390,61 @@ class HubWiring(unittest.TestCase):
             res = rd.request_restart("merged #1", {"label": "the page"}, stop_foreign=True)
         self.assertEqual(res["status"], 202)
         self.assertTrue(rd.current()["stopForeign"])
+
+    def _restarting_drain(self, action="restart"):
+        rd = self.d.restart_drain
+        rd.reset()
+        self.addCleanup(rd.reset)
+        ok = {"ok": True, "message": "", "failed": []}
+        with mock.patch.object(self.d, "pty_host_compatible", return_value=False), \
+             mock.patch.object(self.d, "source_update_keeps_host", return_value=False), \
+             mock.patch.object(self.d.app_version, "packaged", return_value=False), \
+             mock.patch.object(self.d, "load_settings", return_value={}), \
+             mock.patch.object(self.d.restart_guard, "protect", return_value=ok):
+            self.assertEqual(rd.request_restart("merged #1", {"label": "the page"}, action)["status"], 202)
+        with rd.LOCK:
+            st = rd.current()
+            st.update(state="restarting", hubPid=os.getpid())
+            rd.save(st)
+        return rd
+
+    def test_a_source_update_is_refused_before_the_checkout_changes(self):
+        # Review 1: the fast hub-only update fetched and reset first.
+        rd = self.d.restart_drain
+        rd.reset()
+        self.addCleanup(rd.reset)
+        refused = {"ok": False, "message": "Refused: x.", "failed": []}
+        with mock.patch.object(self.d.app_version, "packaged", return_value=False), \
+             mock.patch.object(self.d, "source_update_keeps_host", return_value=True) as keeps, \
+             mock.patch.object(self.d, "pull_checkout") as pull, \
+             mock.patch.object(self.d.restart_guard, "protect", return_value=refused):
+            res = rd.request_restart("update", {"label": "the page"}, "update")
+        self.assertEqual((res["status"], res.get("refused")), (409, True))
+        pull.assert_not_called()
+        keeps.assert_not_called()
+        self.assertIsNone(rd.current())
+
+    def test_a_drained_update_is_refused_before_the_checkout_changes(self):
+        rd = self._restarting_drain("update")
+        refused = {"ok": False, "message": "Refused: x.", "failed": []}
+        with mock.patch.object(self.d.app_version, "packaged", return_value=False), \
+             mock.patch.object(self.d, "pull_checkout") as pull, \
+             mock.patch.object(self.d.restart_guard, "protect", return_value=refused):
+            rd._launch()
+        pull.assert_not_called()
+        self.assertFalse(rd.holding())
+        self.assertIn("Refused: x.", rd.current().get("error") or rd.current().get("outcome", ""))
+
+    def test_a_refused_restart_now_lets_the_drain_go(self):
+        # Review 1: it stayed held until a later tick.
+        rd = self._restarting_drain()
+        refused = {"ok": False, "message": "Refused: x.", "failed": []}
+        with mock.patch.object(self.d.restart_guard, "protect", return_value=refused), \
+             mock.patch.object(self.d.BACKEND, "self_restart") as real:
+            res = rd.restart_now("")
+        real.assert_not_called()
+        self.assertTrue(res.get("refused"))
+        self.assertFalse(rd.holding())
 
     def test_a_refused_helper_is_why_the_drain_failed(self):
         log = self.d.DASHBOARD_DIR / "logs" / "restart.log"

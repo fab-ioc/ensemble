@@ -402,23 +402,34 @@ class InstallScript(TestCase):
     and python3 stubbed (the stub has ptyprocess, so no pip runs), in a
     throwaway home."""
 
-    def install(self, env, args=(), guard_rc=0):
+    def install(self, env, args=(), guard_rc=0, state="", no_guard=False):
+        """``state``: what ``systemctl --user is-active`` prints ("" as when
+        the user manager does not answer). ``no_guard``: the script runs from
+        a copy of its own with no restart_guard.py beside it."""
+        import shutil
         import subprocess
         with tempfile.TemporaryDirectory(prefix="ens install ") as td:
             d = Path(td)
             stubs = d / "bin"
             stubs.mkdir()
+            script = ROOT / "install-systemd.sh"
+            if no_guard:
+                (d / "code").mkdir()
+                script = Path(shutil.copy(script, d / "code" / "install-systemd.sh"))
+                (d / "code" / "dashboard.py").write_text("", encoding="utf-8")
             for name in ("systemctl", "systemd-run", "loginctl", "python3"):
                 body = f'#!/bin/sh\necho "{name} $*" >> "{d}/calls"\n'
                 if name == "python3":       # the restart guard answers guard_rc
                     body += f'case "$1" in *restart_guard.py) exit {guard_rc};; esac\n'
+                if name == "systemctl" and state:
+                    body += f'case "$*" in *is-active*) echo {state};; esac\n'
                 (stubs / name).write_text(body, encoding="utf-8")
                 (stubs / name).chmod(0o755)
             conf = d / "config"
             dropin = conf / "systemd" / "user" / "ensemble.service.d" / "tailnet.conf"
             dropin.parent.mkdir(parents=True)
             dropin.write_text("[Service]\nEnvironment=ENSEMBLE_BIND=tailscale\n", encoding="utf-8")
-            res = subprocess.run(["bash", str(ROOT / "install-systemd.sh"), *args],
+            res = subprocess.run(["bash", str(script), *args],
                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                  env={"HOME": str(d), "XDG_CONFIG_HOME": str(conf),
                                       "PATH": f"{stubs}:{os.environ['PATH']}", **env},
@@ -465,6 +476,25 @@ class InstallScript(TestCase):
         res, unit, kept, calls = self.install({}, ["uninstall"], guard_rc=3)
         self.assertEqual(res.returncode, 3, res.stderr)
         self.assertNotIn("disable", calls)
+
+    def test_a_unit_not_running_needs_no_guard(self):
+        res, unit, kept, calls = self.install({}, state="inactive")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("restart_guard.py", calls)
+        self.assertIn("systemctl --user restart ensemble.service", calls)
+
+    def test_a_guard_that_cannot_run_refuses_unless_forced(self):
+        # Review 1: it was skipped silently.
+        for state in ("active", ""):
+            res, unit, kept, calls = self.install({}, state=state, no_guard=True)
+            self.assertEqual(res.returncode, 3, res.stderr)
+            self.assertIn("cannot be checked", res.stderr)
+            self.assertIsNone(unit)
+            self.assertNotIn("systemctl --user restart", calls)
+        res, unit, kept, calls = self.install({}, ["--force"], state="active", no_guard=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("goes ahead unchecked", res.stderr)
+        self.assertIn("systemctl --user restart ensemble.service", calls)
 
     def test_no_bind_no_line(self):
         res, unit, kept, _ = self.install({})
