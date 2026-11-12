@@ -80,9 +80,9 @@ The app needs no Python: download it from the [latest release](https://github.co
   | 15 Sequoia, 26 Tahoe | Open **Ensemble** once and click **Done** on "Apple could not verify Ensemble is free of malware". Then System Settings › **Privacy & Security**, scroll to **Security**: next to "Ensemble was blocked to protect your Mac", click **Open Anyway**, enter your password, and click **Open Anyway** in the next window. The button is there for about an hour after the blocked try. |
   | Any, from Terminal | `xattr -dr com.apple.quarantine /Applications/Ensemble.app`, then open it as usual. This removes the "downloaded from the internet" mark from that app only. |
 
-  You do this once: after that it opens like any other app, and **Update now** keeps it current.
+  You do this once: after that it opens like any other app, and **Install now** in **What's new** keeps it current.
 
-Opening Ensemble starts the hub and opens `http://127.0.0.1:8765` in your browser; opening it again while it runs opens the page again (on a Mac, open the page from a bookmark: the app has no window or Dock icon). If the port is held by an older Ensemble hub or another program, or the hub stops while starting, Ensemble says so in a dialog (an older hub can be stopped from there) and in its log, before it changes anything. Settings shows the version, whether `claude` and `codex` are installed and signed in, and **Start Ensemble when I sign in**. When a newer release is out, the dashboard offers **Update now**: the app downloads it, checks its SHA-256, tries it on a spare port, swaps it in and restarts on the same port, and goes back to the version it had if the new one does not start. You still need `claude` or `codex` (and `git`) installed and signed in: Ensemble starts them, it does not install them.
+Opening Ensemble starts the hub and opens `http://127.0.0.1:8765` in your browser; opening it again while it runs opens the page again (on a Mac, open the page from a bookmark: the app has no window or Dock icon). If the port is held by an older Ensemble hub or another program, or the hub stops while starting, Ensemble says so in a dialog (an older hub can be stopped from there) and in its log, before it changes anything. Settings shows the version, whether `claude` and `codex` are installed and signed in, and **Start Ensemble when I sign in**. When a newer release is out, a dot appears on the user button, and **What's new** in its menu lists the changes and offers **Install now**: the app downloads it, checks its SHA-256, tries it on a spare port, swaps it in and restarts on the same port, and goes back to the version it had if the new one does not start. You still need `claude` or `codex` (and `git`) installed and signed in: Ensemble starts them, it does not install them.
 
 To run Ensemble from a clone instead, read on.
 
@@ -113,7 +113,7 @@ cd ensemble
 .\ensemble.ps1 doctor     # checks Python, pywinpty, claude/codex, git, the hub
 ```
 
-Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. `restart` and the dashboard's Update now bring the hub back on the port `start` last used (kept in `%USERPROFILE%\.ensemble\server.port`); the update's output goes to the same log. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. `restart` and the dashboard's Install now bring the hub back on the port `start` last used (kept in `%USERPROFILE%\.ensemble\server.port`); the update's output goes to the same log. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 To start the hub at logon and restart it if it crashes:
 
@@ -136,7 +136,7 @@ cd ~/ensemble
 ./ensemble open
 ```
 
-Other commands are `stop`, `restart`, `status` and `logs`, and `--port N` picks another port. The log is `~/Library/Logs/ensemble.log`. `restart` and the dashboard's Update now bring the hub back on the port `start` last used (kept in `~/.ensemble/server.port`); the update's output goes to the same log. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
+Other commands are `stop`, `restart`, `status` and `logs`, and `--port N` picks another port. The log is `~/Library/Logs/ensemble.log`. `restart` and the dashboard's Install now bring the hub back on the port `start` last used (kept in `~/.ensemble/server.port`); the update's output goes to the same log. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
 
 The macOS scripts were read and adjusted but not run for this README; only the Windows steps were tried.
 
