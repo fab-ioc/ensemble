@@ -764,6 +764,31 @@ RESTART_TOOLS = [
 ]
 RESTART_TOOL_NAMES = frozenset(t["name"] for t in RESTART_TOOLS)
 
+# Offered to every project's PO (#331).
+MOVE_TOOLS = [
+    {
+        "name": "ensemble_move_check",
+        "description": (
+            "The move check: what the state copied from another machine still "
+            "points at there (code folders, task folders, task worktrees whose git "
+            "folder is gone, Claude conversations filed under the old folder's "
+            "name). The hub runs it at every start and repairs what is safe; the "
+            "rest is listed in Settings. Without arguments it returns the last "
+            "result; `run: true` runs it again now (and repairs), `run: true, "
+            "repair: false` only looks."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run": {"type": "boolean", "description": "Run the check now."},
+                "repair": {"type": "boolean",
+                           "description": "With run: repair what is safe (default true)."},
+            },
+        },
+    },
+]
+MOVE_TOOL_NAMES = frozenset(t["name"] for t in MOVE_TOOLS)
+
 
 def _role_head(part: dict) -> str:
     return ((part or {}).get("role") or "").split(":", 1)[0].strip().lower()
@@ -808,6 +833,7 @@ def tool_schemas(room: dict, identity: str) -> list[dict]:
         tools += list(RESTART_TOOLS)
     if _is_project_po(room or {}, identity):
         tools += list(PO_MESSAGE_TOOLS)
+        tools += list(MOVE_TOOLS)
     return tools
 
 
@@ -2342,6 +2368,13 @@ def _mark_wait(ctx, args, handler):
             "reads": f"Waiting {_d.idle.wait_words(mark)}"}
 
 
+def _move_check(ctx, args, handler):
+    if args.get("run") is True:
+        repair = args.get("repair") is not False
+        return _d.move_check.run_check(repair=repair, notify=False)
+    return _d.move_check.last() or {"note": "the move check has not run yet: run: true runs it"}
+
+
 _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_report": _report,
@@ -2366,6 +2399,7 @@ _IMPL = {
     "ensemble_points": _points,
     "ensemble_message_po": _message_po,
     "ensemble_read_message": _read_message,
+    "ensemble_move_check": _move_check,
 }
 
 NAMES = frozenset(_IMPL)
@@ -2387,7 +2421,7 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
                     f"{name} is available only to a reviewer during an active review")
             if name in RESTART_TOOL_NAMES:
                 raise ToolError(_d.RESTART_REFUSED)
-            if name in PO_MESSAGE_TOOL_NAMES:
+            if name in PO_MESSAGE_TOOL_NAMES or name in MOVE_TOOL_NAMES:
                 raise ToolError(
                     f"{name} is only for a project's PO: a task reports to its own PO "
                     "with ensemble_report, and that PO writes to other projects' POs")

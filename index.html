@@ -4964,6 +4964,12 @@ window.DOC_LISTENERS_PAUSED = false;
     <h4>This instance</h4>
     <dl class="cfg-grid"></dl>
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
+    <!-- #331: what the move check at hub start could not repair; shown only when there is something. -->
+    <div id="move-check" hidden>
+      <h5 class="sp-sub">Moved from another machine</h5>
+      <p class="cfg-hint" style="margin-top: 0;">The check at hub start repaired what was safe. These it left as they are, for you to look at.</p>
+      <dl class="cfg-grid" id="move-check-list" style="margin-top: 10px;"></dl>
+    </div>
   </div>
   </div>
   </div>
@@ -22244,6 +22250,20 @@ function openSettings(tab, opener) {
   const focus = asked && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
   if (focus) focus.focus();
   loadAgentModels();            // what the agents offer may have changed
+  loadMoveCheck();
+}
+// The move check's open items (#331): one list in "This instance", only when there is one.
+async function loadMoveCheck() {
+  let r = null;
+  try { r = await api('/api/move-check'); } catch (e) { return; }
+  const box = document.getElementById('move-check');
+  const list = document.getElementById('move-check-list');
+  if (!box || !list) return;
+  const items = (r && Array.isArray(r.open)) ? r.open : [];
+  box.hidden = !items.length;
+  const kind = {code: 'code folder', taskFolder: 'task folder', worktree: 'worktree', transcript: 'conversation'};
+  list.innerHTML = items.map(it =>
+    `<dt>${esc(it.what || '')} · ${esc(kind[it.kind] || it.kind || '')}</dt><dd>${esc(it.detail || '')}</dd>`).join('');
 }
 // Kept for the tests and any caller that hangs Settings off a control.
 function openSettingsPanel(anchor, tab) { openSettings(tab, anchor); }
