@@ -20,9 +20,11 @@ and sorts them:
   detached (its own session: ``setsid``; SIGHUP ignored: ``nohup``; a child
   of the PTY host without a terminal) or has run for ``THRESHOLD_S`` or
   longer;
-* **recent**: the rest: a young process neither detached nor started by an
-  expected one (``cmd &`` left by a tool run, about to end; a child of a
-  process that moved itself elsewhere, as Chrome does): left where it is.
+  An orphan (its parent ended: pid 1 or the user manager took it in, as
+  ``java -jar app.jar &`` from a shell that has ended) is foreign at any age.
+* **recent**: the rest: a young process whose parent runs outside these
+  cgroups (a child of a process that moved itself elsewhere, as Chrome
+  does): left where it is.
 
 Each foreign tree is moved, before the stop, into a transient scope of its
 own (``kept-<name>-<pid>.scope``), through the user manager's
@@ -125,13 +127,21 @@ def unit_cgroups(units, detached: bool = True) -> dict[str, dict]:
             names.append(name)
     if not names:
         return {}
-    out = _systemctl("show", "--property=Id", "--property=ControlGroup",
+    out = _systemctl("show", "--property=Id", "--property=Names", "--property=ControlGroup",
                      "--property=MainPID", *names)
     found = {}
-    if not out.strip():
-        raise ScanError("systemctl --user show answered nothing for " + ", ".join(names))
-    for block in out.split("\n\n"):
-        props = dict(ln.split("=", 1) for ln in block.splitlines() if "=" in ln)
+    blocks = [dict(ln.split("=", 1) for ln in b.splitlines() if "=" in ln)
+              for b in out.split("\n\n") if b.strip()]
+    # Every unit asked for is answered for, by its name or an alias of it
+    # (a bare "ensemble" is ensemble.service): one left out was not looked at.
+    answered = set()
+    for props in blocks:
+        answered.add(props.get("Id", ""))
+        answered.update(props.get("Names", "").split())
+    missing = [n for n in names if n not in answered and f"{n}.service" not in answered]
+    if missing:
+        raise ScanError("systemctl --user show did not answer for " + ", ".join(missing))
+    for props in blocks:
         unit, cg = props.get("Id", ""), props.get("ControlGroup", "")
         if unit and cg:
             try:
@@ -156,8 +166,10 @@ def cgroup_pids(cgroup: Path) -> list[int]:
     for f in files:
         try:
             pids += [int(x) for x in f.read_text().split()]
-        except FileNotFoundError:
-            continue        # a child cgroup removed meanwhile: its processes are gone
+        except FileNotFoundError as e:
+            if not f.parent.exists():
+                continue    # that cgroup was removed meanwhile: its processes are gone
+            raise ScanError(f"{f} is missing while {f.parent} exists") from e
         except (OSError, ValueError) as e:
             raise ScanError(f"could not read {f}: {e}") from e
     return pids
@@ -254,7 +266,8 @@ def pty_host_pids(state_dirs) -> set[int]:
 # ---------------------------------------------------------------------------
 
 def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[int],
-             threshold: float = THRESHOLD_S, moved=frozenset()) -> dict[int, dict]:
+             threshold: float = THRESHOLD_S, moved=frozenset(),
+             reapers=frozenset({1})) -> dict[int, dict]:
     """{pid: {"kind": expected|foreign|recent, "why": str, "root": pid}} for
     every process in ``procs`` (the processes of the cgroups a stop ends).
     ``hubs``, ``hosts``, ``mine``: the hub's pids, its PTY hosts', the guard's
@@ -298,11 +311,11 @@ def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[
             res = {"kind": "expected", "why": why, "root": pid, "terminal": terminal(pid)}
         elif p["ppid"] in hosts:
             # Not a terminal (anchor): the PTY host starts nothing else.
-            res = {"root": pid, **_sort_top(p, hosts, threshold, moved)}
+            res = {"root": pid, **_sort_top(p, hosts, threshold, moved, reapers)}
         elif p["ppid"] in procs and p["ppid"] not in path:
             up = sort(p["ppid"], path + (pid,))
             if up["kind"] == "expected" and detached_below(p, up):
-                res = {"root": pid, **_sort_top(p, hosts, threshold, moved),
+                res = {"root": pid, **_sort_top(p, hosts, threshold, moved, reapers),
                        "under": up["root"]}
             elif up["kind"] == "expected":
                 top = procs.get(up["root"])
@@ -315,7 +328,7 @@ def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[
             res = {"kind": "expected", "root": p["ppid"],
                    "why": f"runs under {anchor(p['ppid'], None) or 'an expected process'}"}
         else:
-            res = {"root": pid, **_sort_top(p, hosts, threshold, moved)}
+            res = {"root": pid, **_sort_top(p, hosts, threshold, moved, reapers)}
         out[pid] = res
         return res
 
@@ -324,9 +337,12 @@ def classify(procs: dict[int, dict], hubs: set[int], hosts: set[int], mine: set[
     return out
 
 
-def _sort_top(p: dict, hosts: set[int], threshold: float, moved) -> dict:
-    """The top process of a tree no expected process runs."""
+def _sort_top(p: dict, hosts: set[int], threshold: float, moved, reapers=frozenset({1})) -> dict:
+    """The top process of a tree no expected process runs. ``reapers``: pid 1
+    and the user manager, which take in a process whose parent ended."""
     signs = []
+    if p["ppid"] in reapers:
+        signs.append(f"its parent ended (it was taken in by pid {p['ppid']})")
     if p["sid"] == p["pid"]:
         signs.append("in a session of its own (setsid)")
     if p["nohup"]:
@@ -491,7 +507,13 @@ class Guard:
         hubs = self.hub_pids | {u["mainPid"] for name, u in units.items()
                                 if u["mainPid"] and name.endswith(".service")}
         hosts = self.hosts(self.state_dirs)
-        verdicts = classify(procs, hubs, hosts, self.ancestry(), self.threshold, moved)
+        # Who takes in an orphan: pid 1, or the user manager (a subreaper).
+        reapers = {1}
+        for ppid in {p["ppid"] for p in procs.values() if p["ppid"] not in procs} - {0, 1}:
+            info = self.read_proc(ppid)
+            if info and info["comm"] == "systemd":
+                reapers.add(ppid)
+        verdicts = classify(procs, hubs, hosts, self.ancestry(), self.threshold, moved, reapers)
         return units, procs, verdicts
 
     def protect(self, force: bool = False) -> dict:

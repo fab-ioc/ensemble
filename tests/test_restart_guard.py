@@ -37,7 +37,8 @@ def proc(pid, ppid, comm, age=10.0, sid=None, tty=False, nohup=False, argv=None,
 def table():
     """The hub and its tool run; the PTY host with a claude (a shell and a
     tool under it) and a codex; a project's setsid'd java (with a child)
-    left by an agent; a young `cmd &` and an old one; a nohup'd one."""
+    left by an agent; a young orphaned `java &` and an old one; a nohup'd
+    one; a young child of a process outside the cgroups."""
     return {p["pid"]: p for p in (
         proc(HUB, 1, "python3", age=5000, sid=1),
         proc(110, HUB, "git", age=1, sid=1),
@@ -49,7 +50,8 @@ def table():
         proc(500, 1, "java", age=3000, argv=["/usr/bin/java", "-jar", "trader.jar"],
              room="room-trade", identity="claude", pty="pty-7", cwd="/srv/trader"),
         proc(510, 500, "java", age=3000, sid=500),
-        proc(600, 1, "sleep", age=5, sid=1),
+        proc(600, 4242, "chrome", age=5, sid=4242),    # its parent moved itself elsewhere
+        proc(650, 1, "java", age=15, sid=1),            # `java -jar app.jar &`, its shell ended
         proc(700, 1, "node", age=500, sid=1),
         proc(800, 1, "watch", age=5, sid=1, nohup=True),
         proc(850, HOST, "helper", age=5, sid=HOST),     # the PTY host starts terminals only
@@ -83,6 +85,16 @@ class Classify(unittest.TestCase):
 
     def test_a_young_attached_one_is_left_alone(self):
         self.assertEqual(self.kind(600), "recent")
+
+    def test_a_young_orphan_is_foreign(self):
+        # Review 2: `java -jar app.jar &` from a shell that ended, 15 s old,
+        # its session inherited, SIGHUP not ignored.
+        self.assertEqual(self.kind(650), "foreign")
+        self.assertIn("its parent ended (it was taken in by pid 1)", self.v[650]["why"])
+        procs = {651: proc(651, 13990, "java", age=15, sid=1)}
+        v = rg.classify(procs, set(), set(), set(), reapers={1, 13990})
+        self.assertEqual(v[651]["kind"], "foreign")
+        self.assertEqual(rg.classify(procs, set(), set(), set())[651]["kind"], "recent")
 
     def test_a_detached_app_under_a_live_tool_shell_is_foreign(self):
         # Review 1: `setsid nohup java &` while the agent's tool shell still
@@ -175,7 +187,7 @@ class Protect(unittest.TestCase):
             res = self.guard()
         self.assertTrue(res["ok"], res)
         self.assertIn(("kept-java-500.scope", [500, 510]), self.started)
-        self.assertEqual(sorted(m["pid"] for m in res["moved"]), [500, 700, 800, 850])
+        self.assertEqual(sorted(m["pid"] for m in res["moved"]), [500, 650, 700, 800, 850])
         self.assertFalse(any(300 in pids or HUB in pids for _, pids in self.started))
         self.assertIn("Moved out before the restart", res["message"])
         self.assertIn("kept-java-500.scope", res["message"])
@@ -301,6 +313,16 @@ class Machine(unittest.TestCase):
             with self.assertRaises(rg.ScanError):
                 rg.unit_cgroups(["ensemble.service"], detached=False)
 
+    def test_a_unit_show_left_out_raises(self):
+        # Review 2: an answer for another unit is no answer for this one.
+        outs = {"show": "Id=other.service\nNames=other.service\nControlGroup=/u/o\nMainPID=1\n"}
+        with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
+            with self.assertRaisesRegex(rg.ScanError, "did not answer for ensemble.service"):
+                rg.unit_cgroups(["ensemble.service"], detached=False)
+        outs["show"] = "Id=ensemble.service\nNames=ensemble.service\nControlGroup=/u/e\nMainPID=7\n"
+        with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
+            self.assertIn("ensemble.service", rg.unit_cgroups(["ensemble"], detached=False))
+
     def test_a_unit_that_is_not_running_has_no_cgroup(self):
         outs = {"show": "Id=ensemble.service\nControlGroup=\nMainPID=0\n"}
         with mock.patch.object(rg, "_systemctl", side_effect=lambda *a, **kw: outs[a[0]]):
@@ -317,6 +339,10 @@ class Machine(unittest.TestCase):
             (cg / "sub" / "cgroup.procs").unlink()
             (cg / "sub" / "cgroup.procs").mkdir()             # unreadable: not a file
             with self.assertRaises(rg.ScanError):
+                rg.cgroup_pids(cg)
+            (cg / "sub" / "cgroup.procs").rmdir()
+            (cg / "cgroup.procs").unlink()                     # review 2: missing, dir still there
+            with self.assertRaisesRegex(rg.ScanError, "is missing while"):
                 rg.cgroup_pids(cg)
 
 
