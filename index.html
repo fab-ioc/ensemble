@@ -2505,7 +2505,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
   body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
   /* The page follows the stand-in on its other sides too (Move To). */
-  body.ld-on main { margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
+  /* ED-334: and on its left, the one left panel's width (it was body.sw-on's
+     alone, the Tasks panel that went with #322), so a project's page with no PO
+     and no open task starts beside the panel, not under it. */
+  body.ld-on main { padding-left: calc(var(--list-w) + 20px); margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
   body.mid.po-dock.ld-on main { height: calc(100dvh - var(--top-h) - var(--list-t) - var(--list-b)); padding-bottom: 0; }
   body.ld-on thead { top: calc(var(--top-h) + var(--list-t)); }
   /* Two quiet controls, not form boxes: the project filter as a chip
@@ -15371,14 +15374,14 @@ function pdActionItems(r, ctx, o) {
 // button has no place, so one that opens something under its button is
 // given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
 // colours' picker, Open in editor's repo picker).
-function pdRunAction(it, ctx, el) {
+function pdRunAction(it, ctx, el, at) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = it.cls || '';
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  b._at = pdMenuButton(ctx, el);
+  b._at = at || pdMenuButton(ctx, el);
   if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
@@ -16584,16 +16587,54 @@ function ldpMenuOpen(b, rect, label, html, dotsSel, act) {
 }
 function ldpMenu(b, r, rect) {
   const title = rowTitle(r);
-  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
-  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-  // Make PO: the page's own .makepo-btn handler (on document) does the work.
-  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div>`
+  // ED-334: the row's own actions, the same model as its row and task panel
+  // menus (Start/Resume, Rename, Move, Make PO, Delete…), after Open (the
+  // row's click). Hidden items (Hide terminal) are left out: no terminal is
+  // up for a row in the left panel.
+  const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
+  const acts = [];
+  const groups = (model.primary ? [[model.primary], ...model.groups] : model.groups)
+    .map(g => g.filter(it => !it.hidden && it.id !== 'open')).filter(g => g.length);
+  const itemHtml = (it) => {
+    const i = acts.push(it) - 1;
+    const tip = it.disabled ? it.reason : it.title;
+    return `<button type="button" role="${it.role || 'menuitem'}" class="ov-item dcm-item${it.danger ? ' danger' : ''}" data-ldp-act="${i}"`
+      + (tip ? ` title="${esc(tip)}"` : '') + (it.disabled ? ' disabled aria-disabled="true"' : '')
+      + (it.role === 'menuitemcheckbox' ? ` aria-checked="${!!it.checked}"` : '')
+      + (it.popup ? ' aria-haspopup="dialog"' : '') + `>${esc(it.label)}</button>`;
+  };
+  // A pick runs the page's own handler for it (on document, keyed on the
+  // item's class and data), through the Dock menu's stand-in button; a picker
+  // it opens (Terminal colours) opens under the ⋯.
+  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div><div class="dcm-list">`
     + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`,
+    + groups.map(g => '<div class="dcm-rule" role="separator"></div>' + g.map(itemHtml).join('')).join('')
+    + '</div>',
   '[data-ldp-menu]', it => {
     if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return true; }
-    return false;
+    const a = acts[+it.dataset.ldpAct], dots = LDP_MENU && LDP_MENU.btn;
+    ldpMenuClose();
+    if (a && a.id === 'terminals') ldpTerms(b, r);
+    else if (a) pdRunAction(a, null, null, dots || b);
+    return true;
   });
+}
+// The terminals item for this row's task, never the open one's (the
+// handler's own fallback is the task in the middle): its chat panel's
+// terminals when it has one, else the task is picked and opened with its
+// terminal showing.
+function ldpTerms(b, r) {
+  const room = r.roomId || '';
+  const pf = room ? pdChatFrameOf(room) : null;
+  if (pf) { toggleCapturedTerms(pf); return; }
+  // On the hub the item shows or hides: the task already open in the middle
+  // has its terminals toggled there (a second pick hides them).
+  const mid = room && onHubMachine() ? document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(room)}"]`) : null;
+  if (mid) { toggleCapturedTerms(mid); return; }
+  ldpScope('project');
+  ldSelSet('room:' + room);
+  showCapturedTerminal(room);
+  ibxRepaint();
 }
 // #329 (P297 drawing): a project row's menu: Open, then Rename and its settings.
 function ldpProjMenu(b, pid, rect) {
@@ -18851,7 +18892,7 @@ function docsDocListen() {
     }));
   });
   document.addEventListener('click', (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
     });
   });
@@ -18859,7 +18900,7 @@ function docsDocListen() {
   // Overview, the page; scroll does not bubble, so it is caught on the way
   // down) or a resize closes it.
   const away = (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
     });
   };
@@ -18878,7 +18919,9 @@ function docsFilesWire(el, pid) {
   up.setAttribute('role', 'region'); up.setAttribute('aria-label', 'Files being added');
   side.insertBefore(up, tree);
   const menu = document.createElement('div');
-  menu.className = 'dcm'; menu.hidden = true; menu.setAttribute('role', 'menu');
+  // data-docs-menu: the document listeners below close this menu only, never
+  // another .dcm (a loose row's ⋯ in the left panel, ED-334).
+  menu.className = 'dcm'; menu.dataset.docsMenu = ''; menu.hidden = true; menu.setAttribute('role', 'menu');
   menu._el = el; menu._pid = pid;
   sec.appendChild(menu);
 
