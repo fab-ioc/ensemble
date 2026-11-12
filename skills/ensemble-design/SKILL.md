@@ -1526,6 +1526,11 @@ self-contained component, so a later layout can host it elsewhere.
   deliberately not included. The checkbox beside the task list's filter, labelled **Full names** with the full accessible name
   **Show full names on hover**, is on by default and saves
   `cd-switcher-full-names` per browser. On `(hover: none)` there is no expansion.
+  #337 wires the same helper and setting (also in Settings > Preferences > Lists) to the left panel's
+  project, task and session rows and the Inbox title, and to cut panel tabs (Dock `.dk-tab`, workspace
+  `.wst-tab`): a raised tab keeps its strip's height and type, grows leftwards near the window's
+  right edge, and passes clicks, ×, right click and drag to the tab under it; while the setting is on,
+  an expanding tab drops its native `title` tooltip.
 - **Group: project** (`swByProject`): a head per project (its open task count), its PO first
   (once, with its lozenge if it needs you), then its tasks in the status groups' order; then
   Unassigned, which holds the tasks in no project, and Done today, both folded.

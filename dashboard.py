@@ -1534,6 +1534,20 @@ def _news_in_messages(room: dict) -> float:
     return 0.0
 
 
+def _conv_in_messages(room: dict) -> float:
+    """When its chat was last spoken in (#337: the left panel's project order):
+    the newest message from anyone, the person included, but no hub note or
+    landmark. A state or column change is no conversation, so not updatedAt."""
+    for m in reversed(room.get("messages") or []):
+        if not isinstance(m, dict) or m.get("from") == "ensemble" or _news_landmark(m):
+            continue
+        try:
+            return float(m.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
 def room_news_at(room: dict, msg_news: float | None = None) -> float:
     """When a task's chat last got something for its reader: epoch seconds, 0
     for never. The page compares it with the read point the chat keeps per
@@ -9544,7 +9558,10 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "attention", "no", "firstWords", "after", "onReady")
+            "attention", "no", "firstWords", "after", "onReady",
+            # #337: the left panel ties projects by their latest conversation,
+            # for tasks past the task list's 300 rows too
+            "convAt", "newsAt")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)
@@ -13091,7 +13108,7 @@ def _message_facts(room: dict) -> dict:
                        if m.get("from") != "user" and (m.get("text") or "").strip()), None)
     return {"turns": len(msgs), "first": first_txt, "last": last_txt,
             "lastAgent": ((last_agent or {}).get("text") or "")[:400],
-            "newsMsgAt": _news_in_messages(room)}
+            "newsMsgAt": _news_in_messages(room), "convMsgAt": _conv_in_messages(room)}
 
 
 def _keeps_room_whole(room: dict) -> bool:
@@ -13537,6 +13554,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             last_agent_txt = facts.get("lastAgent", "")
             room_cost = {} if cold else compute_room_cost(rm, files=claude_files)
             pend = pending_input(rid)
+            news_at = room_news_at(rm, facts.get("newsMsgAt"))
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 # Its number in its project (#18), when it has one.
@@ -13596,7 +13614,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "costTokens": room_cost.get("tokens"),
                 # When its chat last got something to read (the unread dot),
                 # and a worktree branch's change against main (+N −N).
-                "newsAt": room_news_at(rm, facts.get("newsMsgAt")),
+                "newsAt": news_at,
+                # When it was last spoken in (#337): its messages, or a solo
+                # chat's transcript (newsAt); a card from before has newsAt only.
+                "convAt": max(facts.get("convMsgAt") or 0, news_at),
                 "changes": (branch_changes(rm.get("cwd", ""))
                             if not cold and (rm.get("workspace") or {}).get("mode") == "worktree" else None),
                 # Its branch's commits ahead of main and their times (#316).

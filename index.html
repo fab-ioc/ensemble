@@ -2603,6 +2603,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .row-expanded.row-expand-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .sw-row.on { background: var(--selected-bg); }
   .row-expanded.on { background: var(--selected-bg); }
+  /* #337: a raised tab (a Dock panel tab, a workspace file tab) keeps its
+     strip's height and its own look; only the cap on its width goes. */
+  .tab-expanded.row-expanded { max-width: none; height: auto; padding-block: 0; }
+  .dk-tab-wrap.tab-expanded.on, .wst-tab.tab-expanded.on { background: var(--surface); }
+  /* Dock's and the workspace's own tab hover is transparent: solid here too. */
+  .tab-expanded.row-expanded:not(.on), .tab-expanded.row-expanded:not(.on):hover {
+    background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
+  .tab-expanded .dk-tab { max-width: none; height: auto; align-self: stretch; }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
   .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg,
@@ -3961,13 +3969,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-align: left; cursor: pointer; }
   .ldp-row:hover { background: var(--hover); }
   .ldp-row:focus-visible, .ldp-more:focus-visible, .ldp-dots:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-  .ldp-row[aria-current="true"] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
+  .ldp-row[aria-current="true"], .ldp-row[data-cur] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
   .ldp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ldp-row[data-ldp="all"] { padding-left: 24px; }
   .ldp-ico { flex: none; display: block; width: 12px; height: 12px; }
   .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
     font-size: 10px; text-align: center; font-weight: 400; }
-  .ldp-row[aria-current="true"] .ldp-n { background: var(--surface); }
+  .ldp-row[aria-current="true"] .ldp-n, .ldp-row[data-cur] .ldp-n { background: var(--surface); }
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
@@ -4103,7 +4111,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-row { --ibx-ground: var(--surface); position: relative; }
   .ibx-row.ibx-mark { --ibx-ground: var(--c-danger-bg); }
   .ibx-acts { display: none; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
-  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts { display: flex; }
+  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts, .ibx-row.row-expand-host .ibx-acts { display: flex; }
   @media (hover: hover) {
     .ibx-row:not(.ibx-confirming) > .ibx-acts { position: absolute; right: 0; bottom: var(--s-100); z-index: 1; margin: 0; flex-wrap: nowrap;
       padding-left: var(--s-400); background: linear-gradient(to right, transparent, var(--ibx-ground) var(--s-300)); }
@@ -4128,7 +4136,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* #322 P287 drawing: under the project list the rows are cards (.row: 7px 8px, 1px border, radius 6, 5px apart,
      12px, bold title, small muted line), a 3px left bar: amber asks/waits, green checks. */
   .ibx.ibx-listed { gap: 0; padding: 8px; font-family: var(--ldp-font, inherit); }
-  .ibx-listed .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
+  .ibx-listed .ibx-title.ibx-title-listed, .ldp-expanded .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
   .ibx-cards { list-style: none; margin: 0; padding: 0; }
   .ibx-listed .ibx-row, .ibx-listed .ibx-row:last-child { padding: 7px 8px; margin: 5px 0; border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); font-size: 12px; line-height: 1.4; }
@@ -4137,6 +4145,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-listed .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
   .ibx-listed .ibx-reason, .ibx-listed .ibx-meta { font-size: 11px; line-height: 1.4; margin-top: 0; }
   .ibx-listed .ibx-meta { color: var(--fg-muted); }
+  /* #337: a card's cut text raised whole on hover (rowExpandShow's copy, in the body): the card's own type, unclamped. */
+  .ldp-expanded.ibx-link { display: block; padding: 2px 4px; color: var(--fg); text-decoration: none; font-size: 12px; line-height: 1.4; }
+  .ldp-expanded .ibx-line, .ldp-expanded .ibx-reason { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .ldp-expanded .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
+  .ldp-expanded .ibx-reason { font-size: 11px; line-height: 1.4; margin-top: 0; color: var(--fg-subtle); }
   .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
   @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px; } }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
@@ -4187,7 +4200,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #po-dock { --dk-strip-badge-bg: var(--surface); --dk-strip-badge-fs: 10px; }
   /* The list dock's left strip (#322, the P287 drawing): 52px, the Inbox's icon in a 32x30 box with its
      name under it, a red count on the icon's corner; the font is the drawing's. */
-  #list-dock { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #list-dock, .ldp-expanded { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  /* #337: a cut name raised from the left panel (rowExpandShow) keeps the panel's font. */
+  .row-expanded.ldp-expanded { font-family: var(--ldp-font); }
+  .ldp-row.row-expanded:not([data-cur]) { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
   #list-dock .dk-strip-left { padding: 8px 0; gap: 8px; align-items: center; }
   #list-dock .dk-strip-btn.dk-strip-icon-btn { aspect-ratio: auto; width: auto; flex-direction: column; gap: 1px; padding: 0; border: 0; border-radius: 0;
     background: transparent; color: var(--fg-muted); font: 9px/1.4 var(--ldp-font); }
@@ -5002,6 +5018,11 @@ window.DOC_LISTENERS_PAUSED = false;
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
+    <!-- #337: the Tasks list's Full names switch (#170), which a computer's list
+         no longer shows since #322; this browser's, as that one was. -->
+    <h5 class="sp-sub">Lists</h5>
+    <div class="pref-row"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label></div>
+    <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
     <h5 class="sp-sub">Stalls and restarts</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call an agent stalled after</span>
@@ -13175,7 +13196,7 @@ let CH_FILE = '';
 const ROW_EXPAND_HOVER_KEY = 'cd-switcher-full-names';
 let ROW_EXPAND_NAMES = true;
 try { ROW_EXPAND_NAMES = localStorage.getItem(ROW_EXPAND_HOVER_KEY) !== 'false'; } catch (e) {}
-let ROW_EXPAND = null, ROW_EXPAND_TIMER = 0, ROW_EXPAND_LAST = 0;
+let ROW_EXPAND = null, ROW_EXPAND_TIMER = 0, ROW_EXPAND_LAST = 0, ROW_EXPAND_PENDING = null;
 let ROW_EXPAND_MENU_OBSERVER = null, ROW_EXPAND_WIN = null;
 function rowExpandOpenMenu(doc) {
   return [...doc.querySelectorAll('.dk-menu, .ov-menu:not([hidden]), .dcm:not([hidden]), #create-menu:not([hidden]), .me-menu:not([hidden]), .wf-menu:not([hidden]), .pr-menu:not([hidden])')]
@@ -13188,23 +13209,82 @@ function rowExpandHide() {
   ROW_EXPAND_MENU_OBSERVER = null;
   if (ROW_EXPAND_WIN) ROW_EXPAND_WIN.removeEventListener('resize', rowExpandHide);
   ROW_EXPAND_WIN = null;
-  if (ROW_EXPAND) ROW_EXPAND.copy.remove();
+  if (ROW_EXPAND) {
+    ROW_EXPAND.copy.remove();
+    // Raised by focus, the card shows its buttons by :focus-within: nothing to hold.
+    if (ROW_EXPAND.host && !ROW_EXPAND.focus) rowExpandHostHold(ROW_EXPAND.host);
+    else rowExpandHostLet();
+  }
   ROW_EXPAND = null;
+}
+// The card under a copy that just went (spec.host): the browser marks it :hover
+// only at the pointer's next move, so a press at once would miss its Close/Done.
+// It keeps them shown until the pointer is off the card.
+let ROW_EXPAND_HOST = null;
+function rowExpandHostLet() {
+  if (!ROW_EXPAND_HOST) return;
+  ROW_EXPAND_HOST.el.classList.remove('row-expand-host');
+  ROW_EXPAND_HOST.doc.removeEventListener('pointermove', ROW_EXPAND_HOST.off, true);
+  ROW_EXPAND_HOST = null;
+}
+function rowExpandHostHold(el) {
+  if (ROW_EXPAND_HOST && ROW_EXPAND_HOST.el === el) return;
+  rowExpandHostLet();
+  const doc = el.ownerDocument;
+  const off = ev => {
+    const r = el.getBoundingClientRect();
+    if (!el.isConnected || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) rowExpandHostLet();
+  };
+  el.classList.add('row-expand-host');
+  doc.addEventListener('pointermove', off, true);
+  ROW_EXPAND_HOST = { el, doc, off };
 }
 function rowExpandBeforeChange(root) {
   if (ROW_EXPAND && root && root.contains(ROW_EXPAND.row)) rowExpandHide();
+  if (ROW_EXPAND_HOST && root && root.contains(ROW_EXPAND_HOST.el)) rowExpandHostLet();
 }
 function rowExpandRefresh(root) {
   if (!ROW_EXPAND || (root && !root.contains(ROW_EXPAND.row))) return;
   const { row, spec } = ROW_EXPAND;
   rowExpandShow(row, spec, row.ownerDocument.activeElement === row);
 }
+// #337: a row whose name expands drops its native tooltip (spec.untitle names
+// the elements that carry one), so the two never show together; a row that no
+// longer expands (the setting off, or the name fits) gets it back.
+function rowExpandUntitle(row, spec, drop) {
+  if (!spec.untitle || !row) return;
+  for (const el of [row, ...row.querySelectorAll(spec.untitle)]) {
+    if (!el.matches(spec.untitle)) continue;
+    if (drop && el.hasAttribute('title')) { el.dataset.rxTitle = el.getAttribute('title'); el.removeAttribute('title'); }
+    else if (!drop && el.dataset.rxTitle != null && !el.hasAttribute('title')) el.setAttribute('title', el.dataset.rxTitle);
+    if (!drop) delete el.dataset.rxTitle;
+  }
+}
+function rowExpandRetitleAll(doc) {
+  doc.querySelectorAll('[data-rx-title]').forEach(el => {
+    if (!el.hasAttribute('title')) el.setAttribute('title', el.dataset.rxTitle);
+    delete el.dataset.rxTitle;
+  });
+}
+// The original element at the copy's element's place (the copy is a clone).
+function rowExpandOriginal(copy, row, el) {
+  const path = [];
+  for (let n = el; n && n !== copy; n = n.parentElement) path.unshift([...n.parentElement.children].indexOf(n));
+  let o = row;
+  for (const i of path) { o = o && o.children[i]; }
+  return o || row;
+}
 function rowExpandAllowed(row, spec) {
   if (!ROW_EXPAND_NAMES || !row || !spec || !row.isConnected || !spec.root.contains(row)) return false;
   const win = row.ownerDocument.defaultView, name = row.querySelector(spec.name);
   return !!(win && win.matchMedia('(hover: hover) and (pointer: fine)').matches
     && !rowExpandOpenMenu(row.ownerDocument)
-    && name && name.scrollWidth > name.clientWidth + 1);
+    && name && (name.scrollWidth > name.clientWidth + 1 || rowExpandClamped(name, win)));
+}
+// #337: a name cut at its lines (-webkit-line-clamp, an Inbox card's text) is cut too.
+function rowExpandClamped(name, win) {
+  const c = win.getComputedStyle(name).webkitLineClamp;
+  return !!c && c !== 'none' && name.scrollHeight > name.clientHeight + 1;
 }
 function rowExpandShow(row, spec, focus = false) {
   rowExpandHide();
@@ -13213,14 +13293,30 @@ function rowExpandShow(row, spec, focus = false) {
   const rect = row.getBoundingClientRect(), edge = 8;
   const opensLeft = spec.opensLeft ? spec.opensLeft(row, rect, win) : rect.left > win.innerWidth / 2;
   const available = opensLeft ? rect.right - edge : win.innerWidth - rect.left - edge;
-  const wanted = rect.width + name.scrollWidth - name.clientWidth + 8;
+  // A name cut at its lines (an Inbox card) keeps its card's width: it grows downwards.
+  const cutX = name.scrollWidth - name.clientWidth;
+  const wanted = rect.width + (cutX > 1 ? cutX + 8 : 0);
   const width = Math.min(Math.max(rect.width, wanted), available);
   const copy = row.cloneNode(true), copyName = copy.querySelector(spec.name);
   copy.classList.add('row-expanded', spec.copyClass);
   if (copyName) copyName.classList.add('row-expand-name');
   if (focus) copy.classList.add('row-expand-focus', spec.focusClass);
   copy.removeAttribute('id');
+  copy.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  if (copyName) copyName.removeAttribute('title');
   copy.removeAttribute('title');
+  if (spec.forward) {
+    // A tab: its text styles come from where it lives (the copy is in the
+    // body), its height stays the strip's, and nothing in it takes the focus.
+    const cs = win.getComputedStyle(row);
+    for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'textTransform', 'lineHeight', 'color'])
+      copy.style[k] = cs[k];
+    copy.style.minHeight = `${rect.height}px`;
+    copy.querySelectorAll('button, [tabindex]').forEach(el => { el.tabIndex = -1; });
+    // Dock's own native drag (between windows) listens on the dock: the copy
+    // moves its panel by Dock's pointer drag instead.
+    copy.querySelectorAll('[data-dk-tab][draggable]').forEach(el => el.removeAttribute('draggable'));
+  }
   copy.removeAttribute('aria-current');
   copy.tabIndex = -1;
   copy.setAttribute('aria-hidden', 'true');
@@ -13245,30 +13341,71 @@ function rowExpandShow(row, spec, focus = false) {
     if (next.matches(spec.row)) rowExpandSchedule(next, spec, true);
     else rowExpandHide();
   });
+  // spec.forward (a tab): a click, middle click, right click or press goes to
+  // the original element at the same place (the tab, its ×), so the tab's own
+  // handlers act; a press that moves (Dock's tab drag) lets the copy go.
+  const at = ev => (spec.forward && ev.target.nodeType === 1 ? rowExpandOriginal(copy, row, ev.target) : row);
+  const mouse = (ev, extra) => ({ view: win, bubbles: true, cancelable: true, clientX: ev.clientX, clientY: ev.clientY,
+    ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, altKey: ev.altKey, ...extra });
   copy.addEventListener('click', ev => {
     ev.preventDefault();
     const next = covered(ev);
+    const target = next || at(ev);
     rowExpandHide();
-    const target = next || row;
-    target.dispatchEvent(new MouseEvent('click', { view: target.ownerDocument.defaultView, bubbles: true,
-      ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey }));
+    target.dispatchEvent(new MouseEvent('click', mouse(ev)));
   });
   copy.addEventListener('auxclick', ev => {
     if (ev.button !== 1) return;
     ev.preventDefault();
+    const target = at(ev);
     rowExpandHide();
-    row.dispatchEvent(new MouseEvent('auxclick', { view: row.ownerDocument.defaultView, bubbles: true, button: 1 }));
+    target.dispatchEvent(new MouseEvent('auxclick', mouse(ev, { button: 1 })));
   });
+  if (spec.forward) {
+    copy.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      const target = at(ev);
+      rowExpandHide();
+      target.dispatchEvent(new MouseEvent('contextmenu', mouse(ev, { button: 2, buttons: 2 })));
+    });
+    copy.addEventListener('pointerdown', ev => {
+      if (ev.button !== 0) return;
+      // A file tab's own drag handle is a native drag (FileDrag, marked on the
+      // clone too): the copy stays until that drag ends.
+      if (!ev.target.closest('[draggable="true"]')) ev.preventDefault();
+      at(ev).dispatchEvent(new PointerEvent('pointerdown', mouse(ev, { button: 0, buttons: 1,
+        pointerId: ev.pointerId, pointerType: ev.pointerType, isPrimary: ev.isPrimary })));
+      const x0 = ev.clientX, y0 = ev.clientY;
+      const move = e => {
+        if (Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) <= 4) return;
+        if (ROW_EXPAND && ROW_EXPAND.copy === copy) rowExpandHide();
+        end();
+      };
+      const end = () => { doc.removeEventListener('pointermove', move, true); doc.removeEventListener('pointerup', end, true); };
+      doc.addEventListener('pointermove', move, true);
+      doc.addEventListener('pointerup', end, true);
+    });
+    copy.addEventListener('dragend', () => { if (ROW_EXPAND && ROW_EXPAND.copy === copy) rowExpandHide(); });
+  }
   copy.addEventListener('pointerleave', ev => {
     if (!ROW_EXPAND || ROW_EXPAND.copy !== copy) return;
     const next = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest(spec.row);
     if (next && spec.root.contains(next) && next !== row) rowExpandSchedule(next, spec, true);
-    else if (!focus || doc.activeElement !== row) rowExpandHide();
+    else if (!focus || !row.contains(doc.activeElement)) rowExpandHide();
   });
   doc.body.appendChild(copy);
-  ROW_EXPAND = { row, copy, spec };
+  // spec.host (an Inbox card): the pointer is on the copy, not the card, so the card
+  // would lose its :hover and hide its Close/Done under the copy; it keeps them
+  // shown while the copy is up and until the pointer is off the card (rowExpandHostHold).
+  const host = spec.host ? row.closest(spec.host) : null;
+  if (host) rowExpandHostHold(host);
+  else rowExpandHostLet();
+  ROW_EXPAND = { row, copy, spec, host, focus };
   if (win.MutationObserver) {
-    ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => { if (rowExpandOpenMenu(doc)) rowExpandHide(); });
+    // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
+    ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => {
+      if (rowExpandOpenMenu(doc) || (ROW_EXPAND && !ROW_EXPAND.row.isConnected)) rowExpandHide();
+    });
     ROW_EXPAND_MENU_OBSERVER.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
   }
   ROW_EXPAND_WIN = win;
@@ -13279,9 +13416,11 @@ function rowExpandSchedule(row, spec, immediate = false) {
   if (ROW_EXPAND && ROW_EXPAND.row === row) return;
   clearTimeout(ROW_EXPAND_TIMER);
   ROW_EXPAND_TIMER = 0;
-  if (!rowExpandAllowed(row, spec)) { rowExpandHide(); return; }
+  const ok = rowExpandAllowed(row, spec);
+  rowExpandUntitle(row, spec, ok);
+  if (!ok) { rowExpandHide(); return; }
   if (immediate || Date.now() - ROW_EXPAND_LAST < 200) rowExpandShow(row, spec);
-  else ROW_EXPAND_TIMER = setTimeout(() => rowExpandShow(row, spec), 320);
+  else { ROW_EXPAND_PENDING = row; ROW_EXPAND_TIMER = setTimeout(() => rowExpandShow(row, spec), 320); }
 }
 function rowExpandWire(root, spec) {
   if (!root || root._rowExpandWired) return;
@@ -13308,15 +13447,41 @@ function rowExpandWire(root, spec) {
   });
   root.addEventListener('focusin', ev => {
     const row = ev.target.closest(spec.row);
-    if (row && spec.root.contains(row) && row.matches(':focus-visible')) rowExpandShow(row, spec, true);
+    if (row && spec.root.contains(row) && (row.matches(':focus-visible') || (spec.forward && ev.target.matches(':focus-visible')))) {
+      rowExpandUntitle(row, spec, rowExpandAllowed(row, spec));
+      rowExpandShow(row, spec, true);
+    }
   });
   root.addEventListener('focusout', ev => {
-    if (ROW_EXPAND && ROW_EXPAND.row === ev.target) rowExpandHide();
+    const r = ROW_EXPAND && ROW_EXPAND.row;
+    if (r && (r === ev.target || (r.contains(ev.target) && !r.contains(ev.relatedTarget)))) rowExpandHide();
   });
   root.addEventListener('scroll', rowExpandHide, { passive: true });
   root._rowExpandSpec = spec;
 }
 const CH_ROW_EXPAND = { row: '.chf:not(.none)', name: '.nm', copyClass: 'ch-expanded', focusClass: 'ch-expand-focus' };
+// #337 (P309): a panel tab (Dock's, in any dock of the window) or a
+// workspace file tab whose title is cut shows whole on hover or focus, raised
+// over its neighbours. Its clicks, ×, right click and drag go to the tab under
+// it (spec.forward); it grows leftwards when the window's edge is near.
+const TAB_ROW_EXPAND = {
+  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
+  name: '.dk-tab:not(.dk-tab-iconic), .wst-nm', untitle: '.dk-tab, .wst-tab',
+  copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true,
+  opensLeft: (row, rect, win) => {
+    const name = row.querySelector('.dk-tab, .wst-nm');
+    return rect.right + (name ? name.scrollWidth - name.clientWidth : 0) + 16 > win.innerWidth;
+  },
+};
+function tabExpandWire(doc) {
+  if (!doc || !doc.body || doc.body._rowExpandWired) return;
+  rowExpandWire(doc.body, TAB_ROW_EXPAND);
+  // A tab row scrolled sideways moves the tab from under its copy.
+  doc.addEventListener('scroll', ev => {
+    if (ROW_EXPAND && ev.target && ev.target.contains && ev.target.contains(ROW_EXPAND.row)) rowExpandHide();
+  }, { capture: true, passive: true });
+}
+tabExpandWire(document);
 
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
 // Review comments belong to one repository of one project. Each keeps its own
@@ -14932,6 +15097,7 @@ function pdPanelName(k) {
 }
 function pdTabTips() {
   for (const d of pdHostDocs()) {
+    tabExpandWire(d);
     FileDrag.attach(d);
     if (!PD.rt.size) continue;
     d.querySelectorAll('.dk-tab[data-dk-tab^="file:"]').forEach(tab => {
@@ -14948,7 +15114,10 @@ function pdTabTips() {
         handle.innerHTML = '<svg viewBox="0 0 16 16"><path d="M3 1.5h6l4 4v9H3z"/><path d="M9 1.5v4h4"/></svg>';
         tab.prepend(handle);
       }
-      tab.title = t + ': drag the tab to move its panel';
+      // A tab whose name expands keeps its tip aside (#337, rowExpandUntitle).
+      const tip = t + ': drag the tab to move its panel';
+      if (tab.dataset.rxTitle != null) { tab.dataset.rxTitle = tip; tab.removeAttribute('title'); }
+      else tab.title = tip;
       wsDragMark(e.v, handle, e.path, 'dock-tab', t);
     });
   }
@@ -16267,6 +16436,7 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
     .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
+  rowExpandBeforeChange(el);
   el.innerHTML = html;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
@@ -16623,7 +16793,7 @@ document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
-var LDP = { more: false, moreLoose: false, sig: '' };
+var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0 };
 var LDP_N = 9, LDP_LOOSE_N = 5;
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
@@ -16641,14 +16811,16 @@ function ldpModel() {
     rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
   } catch (e) {}
-  const opened = projOpened();
-  const seenP = new Set(), projs = [];
+  // #337 (P309): by Inbox count, then latest conversation (ldpConvAt), then
+  // name. Opening one never moves it.
+  const seenP = new Set(), projs = [], fresh = new Map();
+  for (const r of ALL_ROWS || []) if (r) fresh.set(r.roomId || r.sessionId, r);
   for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
     if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
     seenP.add(e.pid);
-    projs.push({ pid: e.pid, name: e.project || e.pid, at: Math.max(e.at || 0, (Number(opened[e.pid]) || 0) / 1000) });
+    projs.push({ pid: e.pid, name: e.project || e.pid, at: ldpConvAt(e.pid, fresh), n: ldpCount(e.pid) });
   }
-  projs.sort((a, b) => (b.at - a.at) || a.name.localeCompare(b.name));
+  projs.sort((a, b) => (b.n - a.n) || (b.at - a.at) || a.name.localeCompare(b.name));
   const seenL = new Set(), loose = [];
   const add = (e, kind, at) => {
     if (!e || !e.key || seenL.has(e.key)) return;
@@ -16659,7 +16831,59 @@ function ldpModel() {
   for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, e.row && !e.row.headless ? 'session' : 'task', e.at);
   for (const e of rec.unassigned) add(e, 'session', swActivity(e.row));
   loose.sort((a, b) => b.at - a.at);
-  return { projs, loose };
+  return { projs: ldpHeld('projs', projs, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
+}
+// When a project was last spoken in (#337): the newest message in its PO's
+// chat, its tasks' chats (the hub's convAt; newsAt on a card from before it)
+// or its sessions (a session's updatedAt is its transcript's last write). Not
+// swActivity: a state, column or spec change is no conversation.
+// `fresh`: the task list's rows by id, which it polls more often than PROJECTS.
+function ldpConvAt(pid, fresh) {
+  const p = projectById(pid);
+  if (!p) return 0;
+  const rows = (p.sessions || []).map(r => fresh.get(r && (r.roomId || r.sessionId)) || r);
+  if (p.poRoomId && fresh.has(p.poRoomId)) rows.push(fresh.get(p.poRoomId));
+  let at = 0;
+  for (const r of rows) {
+    if (!r || r.draft) continue;
+    at = Math.max(at, r.headless ? (Number(r.convAt) || Number(r.newsAt) || 0) : (Number(r.updatedAt) || 0));
+  }
+  return at;
+}
+// A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
+function ldpCount(pid) {
+  const d = IBX.data;
+  return d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+}
+// #337: nothing moves under the pointer. A change that comes while it is over
+// the list (or a row raised from it) waits until it has left and 2 s have
+// passed since the latest change: each list keeps the order it was shown in,
+// a newcomer last, a gone one out. Away from the list a change shows at once.
+const LDP_HOLD_MS = 2000;
+function ldpPointerIn() {
+  const box = document.getElementById('ld-projs');
+  return !!box && (box.matches(':hover') || !!(ROW_EXPAND && box.contains(ROW_EXPAND.row)));
+}
+function ldpHeld(k, list, id) {
+  const shown = LDP.shown[k], now = Date.now(), fresh = list.map(id).join('\n');
+  // The wanted order moved again: the 2 s count from now (held, or arriving under the pointer).
+  if (fresh !== LDP.want[k]) {
+    LDP.want[k] = fresh;
+    if (LDP.hold[k] || ldpPointerIn()) LDP.hold[k] = now;
+  }
+  const at = LDP.hold[k];
+  if (!shown || !at || fresh === shown.join('\n') || (!ldpPointerIn() && now - at >= LDP_HOLD_MS)) {
+    LDP.hold[k] = 0;
+    LDP.shown[k] = list.map(id);
+    return list;
+  }
+  clearTimeout(LDP.holdT);
+  LDP.holdT = setTimeout(ldpPaint, 300);   // till it may go: then ldpHeld lets it
+  const by = new Map(list.map(e => [id(e), e]));
+  const out = shown.filter(x => by.has(x)).map(x => by.get(x));
+  for (const e of list) if (!shown.includes(id(e))) out.push(e);
+  LDP.shown[k] = out.map(id);
+  return out;
 }
 // A project's swatch (P289 drawing): a project has no colour of its own, so a
 // stable pick from the status tokens' bold shades. #328: by its place among the
@@ -16695,12 +16919,12 @@ function ldpKindIcon(kind, cls) {
     + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
 function ldpHtml(m) {
-  const d = IBX.data;
-  const cnt = pid => d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+  const cnt = ldpCount;
   const pill = n => n ? `<span class="ldp-n" title="${n} waiting on you">${n}</span>` : '';
   const lp = ibxLdPid();
   const selAll = IBX.scope === 'all' || !lp;
-  const cur = on => on ? ' aria-current="true"' : '';
+  // data-cur: the row raised whole on hover (#337) drops aria-current but stays selected.
+  const cur = on => on ? ' aria-current="true" data-cur' : '';
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
   const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
   for (const p of ps) {
@@ -16747,6 +16971,7 @@ function ldpPaint() {
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
   if (html === LDP.sig) return;
   LDP.sig = html;
+  rowExpandBeforeChange(el);
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
     ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
@@ -16888,6 +17113,17 @@ function ldpOpenLoose(b) {
   else swOpenRoomTab(room);
   ibxRepaint();
 }
+// #337 (P309, P123): a cut name in the left panel shows whole on hover, as the
+// old list's did (#170): its project, task and session rows, and the Inbox's
+// title under them, which names the project or task picked.
+rowExpandWire(document.getElementById('ld-projs'),
+  { row: '.ldp-row', name: '.ldp-name', covered: '.ldp-row, .ldp-dots, .ldp-more', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+// A card's text cut at its lines (a question, an answer) shows whole too,
+// downwards; a press on what the copy covers (the card's buttons) goes there.
+rowExpandWire(document.getElementById('ld-ibx-body'),
+  { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
+    covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
+    host: '.ibx-row', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;
@@ -21177,7 +21413,12 @@ const SW_ROW_EXPAND = {
 rowExpandWire($('#sw-list'), SW_ROW_EXPAND);
 // Compatibility names used by #170's focused regression test and any open
 // dashboard console; their implementation is the shared row helper above.
-function swExpandHide() { rowExpandHide(); }
+// #337: only the task list's own raised row (its redraw must not hide a
+// left panel row's or a tab's).
+function swExpandHide() {
+  const box = $('#sw-list'), r = ROW_EXPAND ? ROW_EXPAND.row : ROW_EXPAND_TIMER ? ROW_EXPAND_PENDING : null;
+  if (!r || box.contains(r)) rowExpandHide();
+}
 function swExpandAllowed(row) { return rowExpandAllowed(row, $('#sw-list')._rowExpandSpec); }
 function swExpandShow(row, focus = false) { rowExpandShow(row, $('#sw-list')._rowExpandSpec, focus); }
 function swExpandSchedule(row, immediate = false) { rowExpandSchedule(row, $('#sw-list')._rowExpandSpec, immediate); }
@@ -21186,10 +21427,12 @@ Object.defineProperties(window, {
   SW_EXPAND_TIMER: { configurable: true, get: () => ROW_EXPAND_TIMER },
   SW_EXPAND_LAST: { configurable: true, get: () => ROW_EXPAND_LAST, set: v => { ROW_EXPAND_LAST = v; } },
 });
-$('#sw-hover-names').addEventListener('change', ev => {
+$('#pref-full-names').checked = ROW_EXPAND_NAMES;
+for (const id of ['#sw-hover-names', '#pref-full-names']) $(id).addEventListener('change', ev => {
   ROW_EXPAND_NAMES = ev.target.checked;
+  $('#sw-hover-names').checked = $('#pref-full-names').checked = ROW_EXPAND_NAMES;
   try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(ROW_EXPAND_NAMES)); } catch (e) {}
-  if (!ROW_EXPAND_NAMES) rowExpandHide();
+  if (!ROW_EXPAND_NAMES) { rowExpandHide(); pdHostDocs().forEach(rowExpandRetitleAll); }
 });
 function swRender() {
   const el = SW_EL;
