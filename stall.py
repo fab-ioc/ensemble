@@ -808,7 +808,8 @@ def tick(now: float | None = None) -> dict[str, str]:
                 _log(f"{rid}: {str(e)[:200]}")
                 continue
             dids = []
-            for look in (lambda: _look_provider(rid, now),
+            for look in (lambda: _d.first_run.look(rid, now),
+                         lambda: _look_provider(rid, now),
                          lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
                          lambda: _look_silent(rid, state, now, statuses),
                          lambda: _look_permission(rid, state, now, statuses)):
