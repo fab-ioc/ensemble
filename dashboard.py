@@ -174,6 +174,7 @@ agent_launch.install_spawn_guard()
 import running_rooms
 import hub_typing
 import restore_problems
+import seat_folders
 import move_check
 
 # Windows: a console program started by a host that has no console of its own
@@ -221,6 +222,7 @@ lost_sessions.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
 restore_problems.bind(sys.modules[__name__])
+seat_folders.bind(sys.modules[__name__])
 move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
@@ -5961,8 +5963,10 @@ def review_repo(room: dict) -> str:
     """The git checkout a review looks at: the owner's or the task's working dir
     when it is one, else the first checkout found inside them."""
     own = set(chatroom.owners(room))
+    # An owner seat an older hub left outside a worktree task's folder (~/cs)
+    # is not where its work is (ED-344).
     cands = [p.get("cwd", "") for p in chatroom.agent_participants(room)
-             if p["identity"] in own]
+             if p["identity"] in own and not seat_folders.outside_task(room, p.get("cwd", ""))]
     cands += [room.get("cwd", ""), room.get("taskDir", "")]
     for c in cands:
         if not c or not os.path.isdir(c):
@@ -15757,6 +15761,11 @@ class StartRoomError(Exception):
     """A first launch that cannot be satisfied by an installed agent kind."""
 
 
+class MissingFolderError(StartRoomError):
+    """A seat's folder is missing and the hub cannot make it again: the start
+    is refused, never moved to another folder (seat_folders.py, ED-344)."""
+
+
 def check_signed_in(agent_key: str, env: dict | None = None) -> None:
     """Before the hub starts ``agent_key``: one with no login is not started,
     and the start fails saying so, instead of an agent that opens a sign-in
@@ -19672,11 +19681,14 @@ class Handler(BaseHTTPRequestHandler):
                           "repo": root, "branch": git.get("branch", ""),
                           "head": git.get("head", ""), "base": git.get("base", ""),
                           "allocation": review_allocation}
-                if chatroom.patch_participant(
-                        room_id, ident,
-                        {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
-                         "cwd": info["cwd"], "pid": None, "review": review},
-                        drop=("lastExit", "fresh")) is None:
+                # The review runs in the checkout under review; the seat's own
+                # recorded folder stays its folder (ED-344), set only when none is.
+                fields = {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                          "pid": None, "review": review}
+                if not (part.get("cwd") or "").strip():
+                    fields["cwd"] = info["cwd"]
+                if chatroom.patch_participant(room_id, ident, fields,
+                                              drop=("lastExit", "fresh")) is None:
                     raise StartRoomError("the task went away before its reviewer was recorded")
             except BaseException:
                 for pid in seat_ptys(room_id, ident):
@@ -19865,6 +19877,23 @@ class Handler(BaseHTTPRequestHandler):
             args += ["-c", f"mcp_servers.{json.dumps(name, ensure_ascii=False)}.enabled=false"]
         return args
 
+    @staticmethod
+    def _seat_folder(room_full: dict, ident: str) -> tuple[str, str]:
+        """(the folder a seat starts in by default, the hub's own per-agent
+        folder it may make for it — "" when it has none). Project-backed
+        sessions share one workspace (agents work on the same files); ad-hoc
+        scratch collaborations keep per-identity subdirs. A room with no
+        folder recorded runs under ~/cs, made as needed."""
+        base = room_full.get("cwd") or ""
+        if not base:
+            base = str(CS_ROOT)
+            with contextlib.suppress(OSError):
+                os.makedirs(base, exist_ok=True)
+        if room_full.get("sharedCwd"):
+            return base, (base if not room_full.get("cwd") else "")
+        own = os.path.join(base, ident)
+        return own, own
+
     def _launch_room_agent(self, room_full: dict, part: dict, task: str) -> dict:
         """Spawn one agent for a room, pre-wired to the chat MCP with its own
         bearer token, in its own working dir, seeded with the collaboration
@@ -19874,14 +19903,8 @@ class Handler(BaseHTTPRequestHandler):
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         url = self._mcp_url()
-        base = room_full.get("cwd") or str(CS_ROOT)
-        # Project-backed sessions share one workspace (agents work on the same
-        # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
-        try:
-            os.makedirs(cwd, exist_ok=True)
-        except OSError:
-            pass
+        cwd, scratch = self._seat_folder(room_full, ident)
+        cwd = seat_folders.launch_folder(room_full, ident, cwd, scratch)
         teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                      for p in room_full["participants"]
                      if p.get("kind") == "agent" and p["identity"] != ident]
@@ -20003,15 +20026,16 @@ class Handler(BaseHTTPRequestHandler):
         model, effort = hub_launch_model(agent_key, part.get("model"))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        base = room_full.get("cwd") or str(CS_ROOT)
-        # Project-backed sessions share one workspace (agents work on the same
-        # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        if not cwd:
-            cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
-        try:
-            os.makedirs(cwd, exist_ok=True)
-        except OSError:
-            pass
+        default, scratch = self._seat_folder(room_full, ident)
+        # The folder asked for, else the seat's own recorded folder (a fresh
+        # session of a seat moved to a second checkout stays there), else the
+        # task's default. Made again when it is the task's missing worktree;
+        # a folder that cannot be is a refused start, never another folder.
+        recorded = (part.get("cwd") or "").strip()
+        moved = bool(cwd) and not (recorded and os.path.normcase(os.path.normpath(cwd))
+                                   == os.path.normcase(os.path.normpath(recorded)))
+        cwd = seat_folders.launch_folder(room_full, ident, cwd or recorded or default,
+                                         scratch, moved=moved)
         rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         if prompt is not None:
             briefing = prompt
@@ -20091,25 +20115,17 @@ class Handler(BaseHTTPRequestHandler):
                          else hub_launch_model(agent_key, part.get("model")))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        base = room_full.get("cwd") or str(CS_ROOT)
+        default, scratch = self._seat_folder(room_full, ident)
         recorded_cwd = (part.get("cwd") or "").strip()
-        cwd = recorded_cwd or (base if room_full.get("sharedCwd")
-                               else os.path.join(base, ident))
-        if not os.path.isdir(cwd):
-            # An unrecorded scratch seat gets the same directory as on first
-            # launch. A recorded directory that disappeared must not be
-            # silently recreated as an empty replacement for its old files.
-            if not recorded_cwd:
-                try:
-                    os.makedirs(cwd, exist_ok=True)
-                except OSError:
-                    pass
-            if not os.path.isdir(cwd):
-                fallback = base if os.path.isdir(base) else str(CS_ROOT)
-                os.makedirs(fallback, exist_ok=True)
-                print(f"[resume] {room_full['id']}/{ident}: cwd missing: {cwd}; "
-                      f"using {fallback}", flush=True)
-                cwd = fallback
+        # It resumes where its conversation is: its recorded folder. An
+        # unrecorded scratch seat gets the folder of its first launch; a
+        # recorded folder that disappeared is made again only when it is the
+        # task's worktree (never as an empty stand-in for its old files), and
+        # is otherwise a refused start (ED-344: never another folder).
+        cwd = seat_folders.launch_folder(room_full, ident, recorded_cwd or default,
+                                         "" if recorded_cwd else scratch)
+        if agent_key != "codex" and (part.get("sessionId") or "").strip():
+            seat_folders.resume_folder_check(room_full, ident, part["sessionId"].strip(), cwd)
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
@@ -23971,6 +23987,16 @@ def main():
             print(f"finished tasks moved to In review: {name}: {n}", flush=True)
     except Exception as e:
         print(f"finished tasks not moved to In review: {e!r}", flush=True)
+    # Seats an older hub moved to its fallback folder (~/cs) when a worktree
+    # task's folder was missing go back to the task's folder (ED-344). Once
+    # per seat: a repaired seat is the task's folder. A running one is left.
+    try:
+        for r in seat_folders.repair_at_start():
+            what = f"left ({r['skipped']})" if r.get("skipped") else f"-> {r['now']}"
+            print(f"seat folders: {r['room']} #{r.get('no') or '?'} {r['identity']}: "
+                  f"{r['was']} {what}", flush=True)
+    except Exception as e:
+        print(f"seat folders not repaired: {e!r}", flush=True)
 
     startup.step("Updating questions and points")
     # Answers recorded before an ask of two questions became two asks (#195)
