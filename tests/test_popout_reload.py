@@ -507,8 +507,15 @@ class ThePage(unittest.TestCase):
         self.assertEqual(index.count("popLostNotice: 'quiet',"), 2)
         self.assertIn("pdOnAdopt('pd', PD_ROOT);", index)
         self.assertIn("pdOnAdopt('ld', LD_ROOT);", index)
-        for gone in ("ensPopAdopt", "ensPopOpen", "ensPopLeaving", "openWindow:", ".dk-outnote { display: none"):
+        for gone in ("ensPopAdopt", "ensPopOpen", "ensPopLeaving", ".dk-outnote { display: none"):
             self.assertNotIn(gone, index, gone)
+        # #204's own window keeping is gone; the one openWindow left is #346's
+        # hand-over of a window from one panel to another (PD_HELD_WIN), which
+        # opens every other window as Dock would.
+        self.assertEqual(index.count("openWindow:"), 1)
+        at = index.index("openWindow:")
+        self.assertIn("PD_HELD_WIN", index[at:at + 300])
+        self.assertIn("return window.open(url, name, features);", index[at:at + 400])
         self.assertFalse((ROOT / "static" / "popout.html").exists(), "Ensemble's copy of the page is gone")
 
     def test_the_librarys_pop_out_page_waits_for_the_next_page(self):

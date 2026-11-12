@@ -6075,6 +6075,12 @@ function openDetail(sid) {
     const r0 = rowBySid(sid);
     const cid = r0 && r0.roomId ? pdChatId(r0.roomId) : '';
     if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.reveal(cid); } catch (e) {} return; }
+    // A task of another project: the one open in the conversation's window
+    // keeps that window (#346); the middle comes back here for this one.
+    const r1 = SELECTED_SID && sid !== SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+    const pjOf = r => r && (projectOfRoom(r.roomId || r.sessionId) || wsProjectForRow(r));
+    const p0 = pjOf(r0), p1 = pjOf(r1);
+    if (r1 && (p0 && p0.id) !== (p1 && p1.id)) pdTaskKeepOut();
   }
   const reopened = !document.body.classList.contains('detail-open') || sid !== SELECTED_SID;
   if (sid !== SELECTED_SID) {
@@ -14481,7 +14487,45 @@ function poMidGo() {
 // An open task fills the middle (a phone's whole screen): going somewhere else
 // closes it.
 function midLeave() {
+  pdTaskKeepOut();
   if (SELECTED_SID && document.body.classList.contains('detail-open')) closeDetail();
+}
+// The conversation's panel in a window of its own takes the open task with it
+// (#148). Going somewhere else in this page (another project, its PO, a task
+// of another project) took the task out of that window, which then showed the
+// PO the page went to (#346, GitHub issue 42). Now the task keeps the window:
+// it becomes the task's own chat panel (pdChatOpen) in that same window, which
+// does not move or reload as a page, and the conversation's panel comes back
+// here, docked, for where the person went. Closing the task (its ×, Esc,
+// deleting or archiving it) is not going somewhere else: the window shows the
+// PO, as before. Dock has no call that hands a panel's window to another
+// panel; its openWindow option is how the new panel gets this window rather
+// than a new one (PD_HELD_WIN), and the window's close is held while the
+// conversation's panel comes back (Dock closes the window it leaves).
+let PD_HELD_WIN = null;
+function pdTaskKeepOut() {
+  const d = PD.dock;
+  if (!d || !pdTask()) return false;
+  let w = null;
+  try { w = d.popWindow('po-chat'); } catch (e) { w = null; }
+  const r = rowBySid(SELECTED_SID);
+  if (!w || !r || !r.roomId || PD.rt.has(pdChatId(r.roomId))) return false;
+  try { if (w.closed) return false; } catch (e) { return false; }
+  const id = pdChatId(r.roomId), name = 'ensemble-panel-' + id;
+  // The Window's own close, put back once the panel is home.
+  let own = false, close = null;
+  try { own = Object.prototype.hasOwnProperty.call(w, 'close'); close = w.close; w.close = () => {}; } catch (e) { return false; }
+  try { d.popIn('po-chat'); }
+  finally { try { if (own) w.close = close; else delete w.close; } catch (e) {} }
+  // Its name is the new panel's (popName + id): a reload of this page finds it.
+  try { w.name = name; } catch (e) {}
+  PD_HELD_WIN = { name, win: w };
+  let out = false;
+  try { out = pdChatOpen(r.roomId) && d.popOut(id); } catch (e) { out = false; }
+  finally { PD_HELD_WIN = null; }
+  // The task did not get its window: the window shows nothing, so it goes.
+  if (!out) { try { w.close(); } catch (e) {} }
+  return out;
 }
 function poClosePeek() {
   PO_PEEK = false; PO_PIN = '';
@@ -14996,6 +15040,13 @@ function pdEnsure() {
       || (id !== 'po-chat' ? (a !== 'hide' || PD.dock?.viewMode(id) === 'window')
           : (a === 'float' || a === 'pop' || a === 'max' || a === 'min' || (a === 'hide' && PD.dock?.viewMode(id) === 'window'))),
     popName: 'ensemble-panel-',
+    // A task keeping the window its conversation's panel had (#346,
+    // pdTaskKeepOut): its chat panel goes out into that same window.
+    openWindow: (url, name, features) => {
+      const h = PD_HELD_WIN;
+      if (h && h.name === name) { PD_HELD_WIN = null; try { if (!h.win.closed) return h.win; } catch (e) {} }
+      return window.open(url, name, features);
+    },
     // A window is named after its panel, then the project. The library asks
     // again when a panel's title changes (Dock v0.11.0's setTitle, pdSyncTitles).
     popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },
@@ -15291,7 +15342,7 @@ document.getElementById('workspace-compose-link').addEventListener('click', e =>
   e.preventDefault();
   const t = WC.target;
   if (!t) return;
-  if (t.kind === 'po') { if (SELECTED_SID) closeDetail(); PD.dock.reveal('po-chat'); }
+  if (t.kind === 'po') { midLeave(); if (SELECTED_SID) closeDetail(); PD.dock.reveal('po-chat'); }
   else if (t.kind === 'thread') PD.dock.reveal(PD_THREAD);
   else {
     const id = PD.rt.has(pdChatId(t.room)) ? pdChatId(t.room) : 'po-chat';
@@ -17476,6 +17527,7 @@ async function makePoOpen(resp) {
     if (!shown()) await new Promise(res => setTimeout(res, 250));
   } while (!shown() && Date.now() < end);
   updateRoomsBadge();
+  midLeave();
   if (SELECTED_SID) closeDetail();
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = '';
   PO_PIN = pid; PO_PEEK = true;       // renderPo drops the peek where the PO leads the page
@@ -17943,6 +17995,7 @@ async function projectSetupFlow(opts) {
   return got;
 }
 function openProjectPage(pid) {
+  midLeave();
   if (SELECTED_SID) closeDetail();
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = '';
   renderRows();
@@ -22782,6 +22835,7 @@ function crumbGo(level) {
   if (level === 'project') {
     const pj = crumbProject(r);
     if (!pj) return;
+    midLeave();
     if (SELECTED_SID) closeDetail();
     if (SELECTED_PROJECT !== pj.id) WS_SCOPE = '';
     SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks';
