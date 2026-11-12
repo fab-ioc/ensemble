@@ -13631,6 +13631,14 @@ def check_for_update(force: bool = False) -> dict:
         _UPDATE_CHECK_LOCK = False
 
 
+def cached_update_check() -> dict:
+    """The last check's answer, however old, and never a check of its own:
+    what the What's new dialog and Skip read (#339). Before the first check,
+    nothing is available."""
+    cache = _UPDATE_CHECK_CACHE
+    return cache[1] if cache else {"available": False, "reason": "not_checked"}
+
+
 def update_check_view(info: dict, wait: bool = False) -> dict:
     """The cached check as the page reads it: whether the newest is the one
     skipped (Settings, so every device agrees) and, with ``wait``, how many
@@ -13639,6 +13647,9 @@ def update_check_view(info: dict, wait: bool = False) -> dict:
     latest = str(out.get("latestId") or "")
     skipped = str(load_settings().get("updateSkipped") or "")
     out["skipped"] = bool(out.get("available") and latest and skipped == latest)
+    # No task number or hash in what the page shows, even in the fallback line.
+    if out.get("latestMessage"):
+        out["latestMessage"] = update_notes.plain_title(str(out["latestMessage"]))
     if wait and out.get("available"):
         out["wait"] = update_wait()
     return out
@@ -13646,12 +13657,15 @@ def update_check_view(info: dict, wait: bool = False) -> dict:
 
 def update_wait() -> dict:
     """{agents, minutes} when Install would first wait for agents at a safe
-    point (restart_drain), else {agents: 0}. A built app and a checkout whose
-    PTY host is unchanged restart the hub only: nothing waits."""
-    if app_version.packaged() or restart_drain.holding():
+    point (restart_drain), else {agents: 0}. A checkout whose PTY host is
+    unchanged restarts the hub only: nothing waits. A built app learns whether
+    the new release changes the PTY host only once it is downloaded (the
+    helper drains through /api/restart/external-drain when it does), so for it
+    the answer carries ``maybe``: Install may wait. Reads the cached check."""
+    if restart_drain.holding():
         return {"agents": 0}
-    info = check_for_update()
-    if info.get("keepsHost"):
+    packaged = app_version.packaged()
+    if not packaged and cached_update_check().get("keepsHost"):
         return {"agents": 0}
     try:
         seen = restart_drain.observe_hub()
@@ -13659,14 +13673,17 @@ def update_wait() -> dict:
         print(f"[update] agents not read: {e!r}", flush=True)
         return {"agents": 0}
     busy = sum(1 for a in seen.values() if a.get("state") == "working" or a.get("background"))
-    return {"agents": busy,
-            "minutes": int(restart_drain.deadline_s(load_settings()) // 60)}
+    out = {"agents": busy, "minutes": int(restart_drain.deadline_s(load_settings()) // 60)}
+    if packaged:
+        out["maybe"] = True
+    return out
 
 
 def skip_update(skip: bool) -> dict:
     """Skip this version: the newest the check knows is stored on the hub,
-    or ``skip=False`` clears it. Returns the check as the page reads it."""
-    info = check_for_update()
+    or ``skip=False`` clears it. Returns the check as the page reads it.
+    Reads the cached check: the version skipped is the one the dialog showed."""
+    info = cached_update_check()
     latest = str(info.get("latestId") or "")
     if skip and not (info.get("available") and latest):
         return {"error": "no update to skip"}
@@ -18831,10 +18848,13 @@ class Handler(BaseHTTPRequestHandler):
                                   "prefixes": sorted(JIRA_PREFIXES)})
             return
         if p == "/api/update-check":
-            # ?wait=1 (the What's new dialog opening): who Install would wait
-            # for, read now. Never a fetch: the check is the cached one.
+            # ?wait=1 (the What's new dialog opening): the cached check only,
+            # however old (never a fetch), and who Install would wait for,
+            # read now. Without it (the page's periodic poll): the check,
+            # fetching again when the 30-minute cache has run out.
             want_wait = parse_qs(u.query).get("wait", [""])[0] == "1"
-            self._send_json(200, update_check_view(check_for_update(), wait=want_wait))
+            info = cached_update_check() if want_wait else check_for_update()
+            self._send_json(200, update_check_view(info, wait=want_wait))
             return
         if p == "/api/version":
             try:

@@ -1,6 +1,6 @@
 """What's new in the page (#339), in headless Chrome over CDP against a hub in a
 thread serving the pages, with an update faked on the hub (check_for_update
-patched; the merge subjects go through update_notes.plain_title as the real
+and cached_update_check patched; the merge subjects go through update_notes.plain_title as the real
 check does). Checked:
 
 * no #update-banner anywhere, at 1728x1117, 1440x900 and a phone (390x844);
@@ -222,6 +222,7 @@ class WhatsNewInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "load_live", lambda: []),
             mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
             mock.patch.object(dashboard, "check_for_update", fake_check),
+            mock.patch.object(dashboard, "cached_update_check", fake_check),
             mock.patch.object(dashboard.app_version, "packaged", lambda: False),
             mock.patch.object(restart_drain, "holding", lambda: False),
             mock.patch.object(restart_drain, "observe_hub", lambda: agents),

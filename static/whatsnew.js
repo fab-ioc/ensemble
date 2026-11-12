@@ -77,7 +77,8 @@
       const body = notes.map(n => (many ? `<h3 class="wn-ver">Ensemble ${esc(n.version)}${n.at ? ` · ${esc(day(n.at))}` : ''}</h3>` : '')
         + (n.body ? md(n.body) : '<p>No notes for this release.</p>')).join('');
       return `<div class="wn-label">${many ? 'Release notes, newest first' : 'Release notes'}</div>`
-        + (body || `<p>${esc(i.latestMessage || 'No notes for this release.')}</p>`);
+        + (body || `<p>${esc(i.latestMessage || 'No notes for this release.')}</p>`)
+        + (i.more ? `<div class="wn-more">and ${plural(i.more, 'earlier release', 'earlier releases')}</div>` : '');
     }
     const items = i.items || [];
     if (!items.length) return `<div class="wn-label">What's new</div><p>${esc(i.latestMessage || '')}</p>`;
@@ -99,8 +100,12 @@
     const p = el('wn-wait');
     p.hidden = !(w && w.agents > 0);
     if (p.hidden) return;
-    p.textContent = `${plural(w.agents, 'agent is', 'agents are')} working. Install now waits until each reaches a safe point`
-      + ` (at most ${plural(w.minutes || 20, 'minute', 'minutes')}, set in Settings), then updates and restarts the hub.`;
+    const limit = `(at most ${plural(w.minutes || 20, 'minute', 'minutes')}, set in Settings)`;
+    // A built app knows only once the release is downloaded whether agents
+    // must stop for it (the hub ?wait=1 answer says maybe).
+    p.textContent = w.maybe
+      ? `${plural(w.agents, 'agent is', 'agents are')} working. If this release changes how agents run, Install now waits until each reaches a safe point ${limit}, then updates and restarts; otherwise only the hub restarts and agents keep working.`
+      : `${plural(w.agents, 'agent is', 'agents are')} working. Install now waits until each reaches a safe point ${limit}, then updates and restarts the hub.`;
   }
   const toggleRow = li => {
     const open = li.classList.toggle('open');

@@ -63,7 +63,28 @@ class PlainTitle(unittest.TestCase):
 
     def test_notes_keep_their_markdown(self):
         got = update_notes.plain_notes("## What's new (#339)\n\n- Projects above the Inbox (P294)\n* Fixed in 2d8ec38\n")
-        self.assertEqual(got, "## What's new\n\n- Projects above the Inbox\n* Fixed in")
+        self.assertEqual(got, "## What's new\n\n- Projects above the Inbox\n* Fixed")
+
+    def test_ref_runs_go_with_their_lead_words(self):
+        cases = {
+            "Fix #12/#13; see P4": "Fix",
+            "Fix #14, #15, and #16 in ED-3": "Fix",
+            "Fix (P1) and #2 or #3": "Fix",
+            "Fix this, and #4.": "Fix this.",
+            "#326's wrapper keeps the port after #330": "The wrapper keeps the port",
+            "Bump to aceeb60 and fix the cafe": "Bump and fix the cafe",
+            "Log in and sign on": "Log in and sign on",
+            "Show 12 items and 3.5 MB in 2026 for P2P": "Show 12 items and 3.5 MB in 2026 for P2P",
+            "Read https://x.org/a#12 and P4 now": "Read https://x.org/a#12 now",
+        }
+        for subject, want in cases.items():
+            got = update_notes.plain_title(subject)
+            self.assertEqual(got, want, subject)
+            self.assertNotRegex(got.replace("https://x.org/a#12", ""), r"#\d|\bP\d+\b|ED-\d")
+
+    def test_notes_keep_links_and_clean_their_labels(self):
+        got = update_notes.plain_notes("- [Fix ED-12](https://x/y/12) now\n- [#12](https://x/12)\n- Plain #9 ![a](i.png)")
+        self.assertEqual(got, "- [Fix](https://x/y/12) now\n- Plain ![a](i.png)")
 
 
 class Seeded(unittest.TestCase):
@@ -152,10 +173,26 @@ class ReleaseNotes(unittest.TestCase):
         self.assertTrue(got["available"])
         self.assertEqual(got["latestId"], "1.2.0")
         self.assertEqual([n["version"] for n in got["notes"]], ["1.2.0", "1.1.0"])
-        self.assertEqual(got["notes"][0]["body"], "## New\n- Fixed in")
+        self.assertEqual(got["notes"][0]["body"], "## New\n- Fixed")
         self.assertEqual(got["notes"][1]["body"], "- Projects above the Inbox")
         self.assertEqual(got["latestDate"], 1794301200)
         self.assertEqual(got["updates"], 2)
+        self.assertEqual(got["more"], 0)
+
+    def test_only_up_to_the_release_install_installs(self):
+        newest = self.rel("v1.2.0", "- Only on Mac")
+        newest["assets"] = [{"name": "Ensemble-1.2.0-macos-arm64.zip"}, {"name": app_update.SUMS_NAME}]
+        rels = [newest, self.rel("v1.1.0", "- For everyone"), self.rel("v1.0.5", "- Earlier")]
+        got = app_update.check("1.0.0", "windows-x64", fetch=lambda: rels)
+        self.assertEqual(got["latestVersion"], "1.1.0")
+        self.assertEqual([n["version"] for n in got["notes"]], ["1.1.0", "1.0.5"])
+
+    def test_a_long_release_list_says_how_many_more(self):
+        rels = [self.rel(f"v1.{n}.0", f"- Change {n}") for n in range(1, 26)]
+        got = app_update.check("1.0.0", "windows-x64", fetch=lambda: rels)
+        self.assertEqual(len(got["notes"]), 20)
+        self.assertEqual(got["notes"][0]["version"], "1.25.0")
+        self.assertEqual((got["updates"], got["more"]), (25, 5))
 
 
 class Endpoint(Seeded):
@@ -230,8 +267,48 @@ class Endpoint(Seeded):
     def test_skip_without_an_update_is_refused(self):
         git(self.co, "pull", "-q")
         dashboard._UPDATE_CHECK_CACHE = None
+        self.assertFalse(self.call("/api/update-check")[1]["available"])
         code, body = self.call("/api/update-skip", {"skip": True})
         self.assertEqual(code, 409, body)
+
+    def test_open_with_an_expired_or_cold_cache_never_checks(self):
+        real = dashboard._run
+        fetches = []
+        def run(cmd, *a, **kw):
+            if "fetch" in cmd:
+                fetches.append(cmd)
+            return real(cmd, *a, **kw)
+        with mock.patch.object(dashboard, "_run", side_effect=run), \
+                mock.patch.object(dashboard.restart_drain, "observe_hub", return_value={}), \
+                mock.patch.object(dashboard.restart_drain, "holding", return_value=False):
+            code, cold = self.call("/api/update-check?wait=1")
+            self.assertEqual((code, cold["available"], fetches), (200, False, []))
+            self.assertEqual(self.call("/api/update-skip", {"skip": True})[0], 409)
+            first = self.call("/api/update-check")[1]
+            self.assertEqual(len(fetches), 1)
+            stamp, cached = dashboard._UPDATE_CHECK_CACHE
+            dashboard._UPDATE_CHECK_CACHE = (stamp - 2 * dashboard._UPDATE_CHECK_TTL, cached)
+            code, opened = self.call("/api/update-check?wait=1")
+            self.assertEqual(opened["items"], first["items"])
+            self.assertEqual(self.call("/api/update-skip", {"skip": True})[0], 200)
+            self.assertEqual(len(fetches), 1, fetches)
+            # The page's periodic poll still checks again once it has run out.
+            self.call("/api/update-check")
+            self.assertEqual(len(fetches), 2, fetches)
+
+    def test_a_built_app_may_wait(self):
+        seen = {"a": {"state": "working"}}
+        with mock.patch.object(dashboard.app_version, "packaged", return_value=True), \
+                mock.patch.object(dashboard.restart_drain, "observe_hub", return_value=seen), \
+                mock.patch.object(dashboard.restart_drain, "holding", return_value=False):
+            self.assertEqual(dashboard.update_wait(), {"agents": 1, "minutes": 20, "maybe": True})
+            with mock.patch.object(dashboard.restart_drain, "observe_hub", return_value={}):
+                self.assertEqual(dashboard.update_wait(), {"agents": 0, "minutes": 20, "maybe": True})
+
+    def test_the_fallback_line_is_plain(self):
+        view = dashboard.update_check_view({"available": True, "latestId": "x",
+                                            "latestMessage": "Merge #12 (P3): the menu after #4"})
+        self.assertEqual(view["latestMessage"], "The menu")
 
     def test_skip_needs_the_page_or_a_po(self):
         with mock.patch.object(dashboard.Handler, "_restart_refusal", return_value="no"):

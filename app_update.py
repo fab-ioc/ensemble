@@ -176,12 +176,15 @@ def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetc
     if not rel:
         return {"available": False, "kind": "release", "currentVersion": current}
     # What's new (#339): the notes of every newer release, from the same list.
-    notes = update_notes.release_notes(releases, current)
+    # Only those up to the one Install installs: a newer release with no build
+    # for this platform is not what the dialog offers.
+    notes = update_notes.release_notes(releases, current, upto=rel["version"])
     latest = next((n for n in notes if n["version"] == rel["version"]), None)
     return {"available": True, "kind": "release", "currentVersion": current,
-            "latestVersion": rel["version"], "latestMessage": rel["name"], "release": rel,
-            "latestId": rel["version"], "notes": notes, "updates": len(notes),
-            "latestDate": latest["at"] if latest else 0}
+            "latestVersion": rel["version"], "latestMessage": update_notes.plain_title(rel["name"]),
+            "release": rel, "latestId": rel["version"],
+            "notes": notes[:update_notes.MAX_ITEMS], "more": max(0, len(notes) - update_notes.MAX_ITEMS),
+            "updates": len(notes), "latestDate": latest["at"] if latest else 0}
 
 
 def download(url: str, dest: Path, timeout: float = 60) -> Path:
