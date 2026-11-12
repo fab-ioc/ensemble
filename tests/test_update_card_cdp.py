@@ -7,7 +7,7 @@ moves the hub's own update stage (dashboard.src_update_stage) the way a
 helper's calls do. "The hub is down" is the hub closing every API request
 without an answer; "the new hub" is /api/config answering with another pid.
 
-* success: a click on Update now shows the card at once (Fetching the update
+* success: Install now in What's new shows the card at once (Fetching the update
   from GitHub), then Checking that the new code starts, Restarting the hub,
   The hub is restarting, back in a moment, and The new code is running ·
   Reloading the page; the time line counts up from 0:0x; the page then
@@ -18,10 +18,10 @@ without an answer; "the new hub" is /api/config answering with another pid.
   connection, naming restart.log;
 * a request that never reaches the hub (the hub up, no update under way):
   the dialog says so within seconds, not after the ten-minute stall;
-* the hub away past the limit, then back the same: Update now again works,
+* the hub away past the limit, then back the same: Install now again works,
   and the first attempt's loop is over (a later new hub reloads nothing);
 * the hub not answering before the request: no request, the dialog says so,
-  and after every failure with a reason Update now is there again;
+  and after every failure with a reason What's new still offers Install now;
 * a hung status request ends even without AbortSignal.timeout;
 * the app: a helper that gives up after its preflight (the copy) is a
   failure with its reason at once.
@@ -74,9 +74,16 @@ async function main() {
       await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b.x, y: b.y, button: 'left', clickCount: 1 }, s);
       await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 }, s);
     };
+    // Install now in What's new (#339), pressed as a person would.
+    const install = async () => {
+      await ev(`(document.getElementById('me-whatsnew').click(), true)`);
+      await until(`document.getElementById('wn-dialog').open`, 50);
+      await click('#wn-install');
+    };
+    const offered = `!document.getElementById('me-whatsnew').hidden && !document.getElementById('wn-dialog').open`;
     const open = async () => {
       await c.send('Page.navigate', { url: A.base + '/' }, s);
-      await until(`typeof RUNTIME_CFG !== 'undefined' && !!RUNTIME_CFG && !!RUNTIME_CFG.pid && !document.getElementById('update-banner').hidden`, 300);
+      await until(`typeof RUNTIME_CFG !== 'undefined' && !!RUNTIME_CFG && !!RUNTIME_CFG.pid && !!window.whatsNew && !!whatsNew.info && !!whatsNew.info.available`, 300);
       if (A.theme) await ev(`document.documentElement.setAttribute('data-theme', ${JSON.stringify(A.theme)}); true`);
       await ev(`(document.getElementById('agents-banner') || {}).hidden = true; window.__mark330 = 1; true`);
       await sleep(400);
@@ -112,7 +119,7 @@ async function main() {
       if (!A.only || A.only === 'ok') {
         R.pidBefore = await ev('RUNTIME_CFG.pid');
         R.cardHiddenBefore = await ev(`document.getElementById('upd-card').hidden`);
-        await click('#update-banner-go');
+        await install();
         await watch(R, NAMES);
         await until(`typeof RUNTIME_CFG !== 'undefined' && !!RUNTIME_CFG && !!RUNTIME_CFG.pid`, 300);
         R.pidAfter = await ev('RUNTIME_CFG.pid');
@@ -121,7 +128,7 @@ async function main() {
     // 2. The helper gives up while the hub runs on.
     { const R = out.fail = {};
       await open();
-      await click('#update-banner-go');
+      await install();
       await watch(R, {});
       await sleep(200);
       R.dialog = await ev(`({ title: document.querySelector('#update-overlay h3').textContent, stage: document.getElementById('update-stage').textContent,
@@ -133,7 +140,7 @@ async function main() {
     // 3. The fetch fails.
     { const R = out.fetch = {};
       await open();
-      await click('#update-banner-go');
+      await install();
       await watch(R, {});
       await sleep(200);
       R.dialog = await ev(`({ title: document.querySelector('#update-overlay h3').textContent, stage: document.getElementById('update-stage').textContent,
@@ -144,24 +151,23 @@ async function main() {
     // 4. The request gets no answer and the hub, up, never started an update.
     { const R = out.lost = {};
       await open();
-      await click('#update-banner-go');
+      await install();
       await watch(R, {});
       R.dialog = await dialog();
       await click('#update-close');
-      R.bannerAfter = await ev(`!document.getElementById('update-banner').hidden`); }
+      R.bannerAfter = await ev(offered); }
     // 5. The hub stays away past the limit (it says so and keeps looking),
-    //    comes back the same; Update now again fails; then a new hub answers:
+    //    comes back the same; Install now again fails; then a new hub answers:
     //    the first attempt's loop is over, so nothing reloads the page.
     { const R = out.retry = {};
       await open();
       await ev('UPD_LIMITS.downS = 1.5; true');
-      await click('#update-banner-go');
+      await install();
       await watch(R, {});
       R.notBack = await dialog();
-      R.bannerWhileAway = await ev(`!document.getElementById('update-banner').hidden`);
-      R.back = await until(`!document.getElementById('update-banner').hidden`, 150);   // Update now again, once the hub is back
+      R.back = await until(`fetch('/api/config').then(r => r.ok, () => false)`, 150);   // the same hub is back
       await click('#update-close');
-      await click('#update-banner-go');
+      await install();
       const R2 = R.second = {};
       await watch(R2, {});
       R2.dialog = await dialog();
@@ -178,23 +184,24 @@ async function main() {
           if (p.startsWith('/api/update-status')) return Promise.reject(new TypeError('Failed to fetch'));
           if (p === '/api/update' && o && o.method === 'POST') window.__posts++;
           return f(u, o); }; return true; })()`);
-      await click('#update-banner-go');
+      await install();
       await watch(R, {});
       R.dialog = await dialog();
       R.posts = await ev('window.__posts');
       await click('#update-close');
-      R.bannerAfter = await ev(`!document.getElementById('update-banner').hidden`); }
+      R.bannerAfter = await ev(offered); }
     // 7. A browser without AbortSignal.timeout still gives up on a hung request.
     { const R = out.hang = {};
       await open();
       R.got = await ev(`(async () => { UPD_LIMITS.fetchS = 1; AbortSignal.timeout = undefined;
         const t = performance.now(); const v = await updJson('/api/__hang'); return { v, ms: performance.now() - t }; })()`); }
     // 7b. An update check in flight when Update now is pressed: its answer
-    //     touches no banner, during the update or after it failed.
+    //     reaches What's new only when no press came meanwhile.
     { const R = out.check = {};
       await open();
       R.got = await ev(`(async () => {
-        const f = window.fetch, banner = document.getElementById('update-banner'); let answer = null;
+        const f = window.fetch, wn = whatsNew.render; let answer = null, renders = 0;
+        whatsNew.render = i => { renders++; return wn(i); };
         window.fetch = (u, o) => String(u).startsWith('/api/update-check')
           ? new Promise(r => { answer = r; }) : f(u, o);
         const reply = body => answer(new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } }));
@@ -202,20 +209,21 @@ async function main() {
         const info = { available: true, kind: 'source', behind: 1, latestSha: 'abc1234', latestMessage: 'x' };
         // A: the answer comes while the update runs (the press as triggerUpdate makes it).
         let p = checkForUpdate(); await settle();
-        UPD_ATTEMPT++; UPDATE_IN_PROGRESS = true; banner.hidden = true;
+        UPD_ATTEMPT++; UPDATE_IN_PROGRESS = true;
         reply(info); await p; await settle();
-        const during = banner.hidden;
+        const during = renders === 0;
         // B: the update failed (Update now is back) before the answer, which says nothing is available.
-        UPDATE_IN_PROGRESS = false; banner.hidden = false;
+        UPDATE_IN_PROGRESS = false;
         p = checkForUpdate(); await settle();
-        UPD_ATTEMPT++; UPDATE_IN_PROGRESS = true; banner.hidden = true;
-        UPDATE_IN_PROGRESS = false; banner.hidden = false;      // fail(): Update now again
+        UPD_ATTEMPT++; UPDATE_IN_PROGRESS = true;
+        UPDATE_IN_PROGRESS = false;      // fail(): What's new still offers Install now
         reply({ available: false }); await p; await settle();
-        const after = !banner.hidden;
+        const after = renders === 0 && !document.getElementById('me-whatsnew').hidden;
         // C: no press meanwhile: the answer is used as before.
         p = checkForUpdate(); await settle();
         reply({ available: false }); await p; await settle();
-        const plain = banner.hidden;
+        const plain = renders === 1 && document.getElementById('me-whatsnew').hidden;
+        whatsNew.render = wn;
         window.fetch = f;
         return { during, after, plain };
       })()`); }
@@ -223,7 +231,7 @@ async function main() {
     { const R = out.app = {};
       await open();
       R.packaged = await ev('!!RUNTIME_CFG.packaged');
-      await click('#update-banner-go');
+      await install();
       await watch(R, {});
       R.dialog = await dialog(); }
   } finally { ch.kill(); }
@@ -433,7 +441,7 @@ class UpdateCard(unittest.TestCase):
         self.assertLess(g["failMs"], 15000)
         self.assertEqual(g["dialog"]["title"], "Not updated")
         self.assertEqual(g["dialog"]["stage"], "The hub did not get the update request")
-        self.assertIn("Check the connection, then Update now again.", g["dialog"]["hint"])
+        self.assertIn("Check the connection, then Install now again.", g["dialog"]["hint"])
 
     def test_after_a_failure_update_now_is_there_again(self):
         self.assertTrue(self.got["lost"]["bannerAfter"])
@@ -453,7 +461,6 @@ class UpdateCard(unittest.TestCase):
 
     def test_after_not_back_a_new_press_ends_the_old_loop(self):
         g = self.got["retry"]
-        self.assertFalse(g["bannerWhileAway"], "no Update now while the hub is away")
         self.assertTrue(g.get("failed"), g)
         self.assertRegex(g["notBack"]["stage"], r"^Waited ")
         self.assertTrue(g["back"], g)
@@ -464,10 +471,10 @@ class UpdateCard(unittest.TestCase):
         self.assertNotEqual(g["newPid"], g["pid"], "a new hub answers")
         self.assertEqual(g["markAfter"], 1, "the first attempt's loop did not reload the page")
 
-    def test_an_update_check_in_flight_leaves_the_banner_to_the_update(self):
+    def test_an_update_check_in_flight_leaves_what_s_new_to_the_update(self):
         g = self.got["check"]["got"]
-        self.assertTrue(g["during"], "no Update now banner while the update runs")
-        self.assertTrue(g["after"], "Update now again stays after the failure")
+        self.assertTrue(g["during"], "the answer is dropped while the update runs")
+        self.assertTrue(g["after"], "Install now is still offered after the failure")
         self.assertTrue(g["plain"], "with no press meanwhile the answer still renders")
 
     def test_an_app_helper_that_fails_after_the_preflight_says_why(self):
@@ -501,7 +508,7 @@ class UpdateCard(unittest.TestCase):
         d = g["dialog"]
         self.assertEqual(d["title"], "Not updated")
         self.assertEqual(d["stage"], "git fetch failed: Could not resolve host: github.com")
-        self.assertTrue(d["hint"].startswith("This version keeps running. Check the connection, then Update now again. More in "), d)
+        self.assertTrue(d["hint"].startswith("This version keeps running. Check the connection, then Install now again. More in "), d)
         self.assertTrue(d["hint"].endswith("restart.log."), d)
         self.assertTrue(d["card"], d)
 

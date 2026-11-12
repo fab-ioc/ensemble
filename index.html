@@ -2505,7 +2505,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
   body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
   /* The page follows the stand-in on its other sides too (Move To). */
-  body.ld-on main { margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
+  /* ED-334: and on its left, the one left panel's width (it was body.sw-on's
+     alone, the Tasks panel that went with #322), so a project's page with no PO
+     and no open task starts beside the panel, not under it. */
+  body.ld-on main { padding-left: calc(var(--list-w) + 20px); margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
   body.mid.po-dock.ld-on main { height: calc(100dvh - var(--top-h) - var(--list-t) - var(--list-b)); padding-bottom: 0; }
   body.ld-on thead { top: calc(var(--top-h) + var(--list-t)); }
   /* Two quiet controls, not form boxes: the project filter as a chip
@@ -3244,35 +3247,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-transform: uppercase;
   }
   .instance-badge::before { content: '●'; font-size: 8px; }
-  /* Update banner — shown at the top when a newer commit is available */
-  #update-banner {
-    display: flex; align-items: center; gap: 12px;
-    padding: 8px 16px;
-    background: var(--c-progress-bg);
-    border-bottom: 1px solid var(--border);
-    color: var(--fg); font-size: 13px;
-    position: sticky; top: 0; z-index: 100;
-  }
-  #update-banner[hidden] { display: none; }
-  #update-banner-text { flex: 1; }
-  #update-banner-text code {
-    background: var(--c-neutral-bg);
-    padding: 1px 6px; border-radius: 3px;
-    font-family: var(--font-mono); font-size: 12px;
-  }
-  #update-banner-go {
-    background: var(--accent); color: var(--accent-fg);
-    border: 0; padding: 5px 14px; border-radius: 5px;
-    cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
-  }
-  #update-banner-go:hover { background: var(--accent-hover); }
-  #update-banner-go:disabled { opacity: .65; cursor: progress; }
-  #update-banner-dismiss {
-    background: transparent; border: 0; color: var(--fg-muted);
-    font-size: 16px; line-height: 1; padding: 4px 6px;
-    cursor: pointer; border-radius: 3px;
-  }
-  #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A restart waiting for agents to reach a safe point (restart_drain.py):
      it needs the person only eventually, so the warning wash. */
   #drain-banner {
@@ -3841,7 +3815,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go, #wide-banner-dismiss,
+    .dl-cbtns button, #dock-banner-go, #wide-banner-dismiss,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -3849,8 +3823,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .dcm .ov-item, .wse-edit, .dcs-all { min-height: var(--touch-min); }
-    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more,
-    #update-banner-dismiss {
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -4554,6 +4527,45 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ps-v { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ps-v code { font-family: var(--font-mono); font-size: 12px; }
   .ps-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  /* Generate (#335): four icons drawn by the hub's CLI, under the Image choice. */
+  .ps-ibtns { display: contents; }
+  .ps-btn .ps-gi { width: 14px; height: 14px; margin-right: 6px; flex: none; }
+  .ps-btn.off { color: var(--fg-disabled); border-color: var(--border); }
+  .ps-btn.off:hover { background: var(--surface); }
+  .ps-gen { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface-sunken); padding: 10px 12px; }
+  .ps-gen-h { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .ps-gen-h b { font-weight: 500; }
+  .ps-gen-who { margin-left: auto; font-size: 12px; color: var(--fg-muted); font-family: var(--font-mono); white-space: nowrap; }
+  .ps-gen-sub { font-size: 12px; color: var(--fg-muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .ps-gen-sub b { font-weight: 500; color: var(--fg-subtle); }
+  .ps-tiles { display: flex; gap: 8px; margin-top: 10px; }
+  .ps-tile { width: 64px; height: 64px; flex: none; padding: 0; border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface);
+    display: grid; place-items: center; position: relative; cursor: pointer; }
+  .ps-tile img { width: 44px; height: 44px; display: block; }
+  button.ps-tile:hover { border-color: var(--border-strong); }
+  .ps-tile.wait { border-style: dashed; border-color: var(--border-strong); background: transparent; cursor: default; }
+  .ps-tile.on { background: var(--selected-bg); border: 2px solid var(--accent); }
+  .ps-tile.on::after { content: '✓'; position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg); font-size: 11px; line-height: 16px; text-align: center; font-weight: 600; }
+  .ps-tile:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-gen-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--fg-muted); }
+  .ps-gen-foot .ps-sp { flex: 1; }
+  .ps-gen-msg { font-size: 13px; color: var(--fg); margin-top: 8px; }
+  .ps-gen-msg:first-child { margin-top: 0; }
+  .ps-gen-msg small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: 2px; }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* Generate on a phone (phone.html): Upload… and Generate… on a row under the Image choice, the tiles spread. */
+    .ps-choice-img { flex-wrap: wrap; }
+    .ps-ibtns { display: flex; gap: 8px; width: 100%; padding-left: 26px; margin-bottom: 4px; box-sizing: border-box; }
+    .ps-btn .ps-gi { width: 16px; height: 16px; }
+    .ps-gen-h { font-size: 15px; }
+    .ps-gen-sub { font-size: 13px; }
+    .ps-tiles { justify-content: space-between; }
+    .ps-tile.on::after { width: 18px; height: 18px; font-size: 12px; line-height: 18px; }
+    .ps-gen-foot { font-size: 13px; }
+    .ps-gen-msg { font-size: 15px; }
+    .ps-gen-msg small { font-size: 13px; }
+  }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     /* The phone's menu offers its settings in one item (phone.html). */
     #proj-menu .pm-set:not(.proj-settings-btn) { display: none; }
@@ -4595,6 +4607,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
+<!-- What's new (#339): the update chip on the user button, its menu item and dialog. -->
+<link rel="stylesheet" href="/static/whatsnew.css">
+<script src="/static/whatsnew.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
      Imported when a PO screen is first drawn; listed here so the page knows it
      depends on them (Page update), and fetched early. -->
@@ -4639,11 +4654,6 @@ window.DOC_LISTENERS_PAUSED = false;
 <script src="/static/actions.js"></script>
 </head>
 <body>
-<div id="update-banner" hidden>
-  <span id="update-banner-text"></span>
-  <button id="update-banner-go">Update now</button>
-  <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
-</div>
 <div id="drain-banner" role="status" hidden>
   <span id="drain-text"></span>
   <button id="drain-details" type="button" aria-expanded="false" aria-controls="drain-agents">Agents ▸</button>
@@ -4809,6 +4819,8 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
   <div class="me-rule"></div>
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
+  <!-- What's new (#339): shown while an update is available; quiet once it is skipped. -->
+  <button class="me-item me-upd" id="me-whatsnew" data-me="whatsnew" hidden><span class="me-upd-dot" aria-hidden="true"></span>What's new<span class="me-upd-tag">Update available</span></button>
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="feedback">Send feedback…</button>
   <button class="me-item" data-me="settings">Settings</button>
@@ -9311,40 +9323,21 @@ async function setPref(key, val) {
   } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
 }
 
-let UPDATE_DISMISSED = false;
 let UPDATE_IN_PROGRESS = false;
 let UPDATE_TARGET = '';   // the app: the release Update now installs
 let UPD_ATTEMPT = 0;           // a new press ends the loop of the one before (one still looking after "did not come back")
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
+// No banner (#339): an available update is a dot on the user button and a
+// What's new item in its menu (static/whatsnew.js).
 async function checkForUpdate() {
-  if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
-  const at = UPD_ATTEMPT;   // an Update now press since this check began owns the banner (#330)
+  if (UPDATE_IN_PROGRESS) return;
+  const at = UPD_ATTEMPT;   // an Install now press since this check began owns what the page shows (#330)
   try {
     const info = await api('/api/update-check');
     if (UPDATE_IN_PROGRESS || at !== UPD_ATTEMPT) return;
-    renderUpdateBanner(info);
+    if (info && info.kind === 'release') UPDATE_TARGET = info.latestVersion || '';   // the app: the release it installs
+    if (window.whatsNew) whatsNew.render(info);
   } catch {}
-}
-function renderUpdateBanner(info) {
-  const banner = document.getElementById('update-banner');
-  if (!banner) return;
-  if (!info || !info.available) {
-    banner.hidden = true;
-    return;
-  }
-  const text = document.getElementById('update-banner-text');
-  if (info.kind === 'release') {
-    // The app: a newer release on GitHub.
-    UPDATE_TARGET = info.latestVersion || '';
-    text.textContent = `Ensemble ${info.latestVersion} is available. You have ${info.currentVersion}.`;
-    banner.hidden = false;
-    return;
-  }
-  const plural = info.behind === 1 ? '' : 's';
-  text.innerHTML =
-    `Update available — ${info.behind} commit${plural} behind. Latest: ` +
-    `<code>${esc(info.latestMessage || info.latestSha || '')}</code>`;
-  banner.hidden = false;
 }
 // After a restart: how the app's last update ended, said once.
 async function noteLastUpdate() {
@@ -9579,9 +9572,7 @@ async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
   ensUpd.hold = true;   // the page reloads on the new hub below, not for a changed stamp too
-  const banner = document.getElementById('update-banner');
   const overlay = document.getElementById('update-overlay');
-  if (banner) banner.hidden = true;
   if (overlay) overlay.hidden = true;
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
   const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
@@ -9605,10 +9596,10 @@ async function triggerUpdate() {
   const now = () => performance.now();
   let logPath = updLogPath(app);
   const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
-  // A failure with a reason leaves this hub as it was: Update now is there again.
-  const fail = (reason, advice) => { stop(); if (reason && banner) banner.hidden = false; showUpdateFailed(logPath, reason, advice); };
+  // A failure leaves this hub as it was: What's new still offers Install now.
+  const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
   if (!before) {
-    fail('The hub did not answer', 'Check the connection, then Update now again.');
+    fail('The hub did not answer', 'Check the connection, then Install now again.');
     return;
   }
   const seen = {
@@ -9635,14 +9626,13 @@ async function triggerUpdate() {
   if (body.version) target = body.version;
   if (status === 403) {
     stop();
-    if (banner) banner.hidden = false;
     toast(body.message || 'the hub refused the update', 8000, 'err');
     return;
   }
   if (status && (status < 200 || status >= 300)) {
     // The update never started and the hub is still up: say why now.
     const why = body.error || body.message || `HTTP ${status}`;
-    fail(why, /^git (fetch|reset) failed/.test(why) ? 'Check the connection, then Update now again.' : '');
+    fail(why, /^git (fetch|reset) failed/.test(why) ? 'Check the connection, then Install now again.' : '');
     return;
   }
 
@@ -9693,9 +9683,8 @@ async function triggerUpdate() {
       return;
     }
     if (notBack) {
-      // The same hub is back after all: it still runs the old code, so
-      // Update now can be pressed again.
-      if (banner && banner.hidden && !UPDATE_IN_PROGRESS) banner.hidden = false;
+      // The same hub is back after all: it still runs the old code (What's
+      // new still offers Install now); keep looking for a new one.
       continue;
     }
     // The hub that took the update still runs: where it stands.
@@ -9715,7 +9704,6 @@ async function triggerUpdate() {
       updCardDrain(null);
       if (v && v.state === 'cancelled') {
         stop();
-        if (banner) banner.hidden = false;
         toast('Update cancelled: nothing was restarted', 6000);
         return;
       }
@@ -9735,7 +9723,7 @@ async function triggerUpdate() {
       const last = st.last;
       if (st.stage === 'failed' && (st.at || 0) > seen.app) {
         fail(lastStep.startsWith('Downloading') ? `The download failed: ${st.error}` : st.error,
-             lastStep.startsWith('Downloading') ? 'Try Update now again later.' : '');
+             lastStep.startsWith('Downloading') ? 'Try Install now again later.' : '');
         return;
       }
       // The helper gave up while this hub runs (preflight, copy, stop ...).
@@ -9755,7 +9743,7 @@ async function triggerUpdate() {
       // The hub is up, the same one, and no update is under way: the request
       // never reached it.
       if (++idlePolls >= UPD_LIMITS.idlePolls) {
-        fail('The hub did not get the update request', 'Check the connection, then Update now again.');
+        fail('The hub did not get the update request', 'Check the connection, then Install now again.');
         return;
       }
     } else idlePolls = 0;
@@ -15613,14 +15601,14 @@ function pdActionItems(r, ctx, o) {
 // button has no place, so one that opens something under its button is
 // given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
 // colours' picker, Open in editor's repo picker).
-function pdRunAction(it, ctx, el) {
+function pdRunAction(it, ctx, el, at) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = it.cls || '';
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  b._at = pdMenuButton(ctx, el);
+  b._at = at || pdMenuButton(ctx, el);
   if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
@@ -16826,16 +16814,54 @@ function ldpMenuOpen(b, rect, label, html, dotsSel, act) {
 }
 function ldpMenu(b, r, rect) {
   const title = rowTitle(r);
-  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
-  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-  // Make PO: the page's own .makepo-btn handler (on document) does the work.
-  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div>`
+  // ED-334: the row's own actions, the same model as its row and task panel
+  // menus (Start/Resume, Rename, Move, Make PO, Delete…), after Open (the
+  // row's click). Hidden items (Hide terminal) are left out: no terminal is
+  // up for a row in the left panel.
+  const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
+  const acts = [];
+  const groups = (model.primary ? [[model.primary], ...model.groups] : model.groups)
+    .map(g => g.filter(it => !it.hidden && it.id !== 'open')).filter(g => g.length);
+  const itemHtml = (it) => {
+    const i = acts.push(it) - 1;
+    const tip = it.disabled ? it.reason : it.title;
+    return `<button type="button" role="${it.role || 'menuitem'}" class="ov-item dcm-item${it.danger ? ' danger' : ''}" data-ldp-act="${i}"`
+      + (tip ? ` title="${esc(tip)}"` : '') + (it.disabled ? ' disabled aria-disabled="true"' : '')
+      + (it.role === 'menuitemcheckbox' ? ` aria-checked="${!!it.checked}"` : '')
+      + (it.popup ? ' aria-haspopup="dialog"' : '') + `>${esc(it.label)}</button>`;
+  };
+  // A pick runs the page's own handler for it (on document, keyed on the
+  // item's class and data), through the Dock menu's stand-in button; a picker
+  // it opens (Terminal colours) opens under the ⋯.
+  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div><div class="dcm-list">`
     + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`,
+    + groups.map(g => '<div class="dcm-rule" role="separator"></div>' + g.map(itemHtml).join('')).join('')
+    + '</div>',
   '[data-ldp-menu]', it => {
     if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return true; }
-    return false;
+    const a = acts[+it.dataset.ldpAct], dots = LDP_MENU && LDP_MENU.btn;
+    ldpMenuClose();
+    if (a && a.id === 'terminals') ldpTerms(b, r);
+    else if (a) pdRunAction(a, null, null, dots || b);
+    return true;
   });
+}
+// The terminals item for this row's task, never the open one's (the
+// handler's own fallback is the task in the middle): its chat panel's
+// terminals when it has one, else the task is picked and opened with its
+// terminal showing.
+function ldpTerms(b, r) {
+  const room = r.roomId || '';
+  const pf = room ? pdChatFrameOf(room) : null;
+  if (pf) { toggleCapturedTerms(pf); return; }
+  // On the hub the item shows or hides: the task already open in the middle
+  // has its terminals toggled there (a second pick hides them).
+  const mid = room && onHubMachine() ? document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(room)}"]`) : null;
+  if (mid) { toggleCapturedTerms(mid); return; }
+  ldpScope('project');
+  ldSelSet('room:' + room);
+  showCapturedTerminal(room);
+  ibxRepaint();
 }
 // #329 (P297 drawing): a project row's menu: Open, then Rename and its settings.
 function ldpProjMenu(b, pid, rect) {
@@ -17969,6 +17995,80 @@ function psHint(pj, phone) {
   const keep = pj.key ? `Its folder, its id and its key ${pj.key} stay as they are.` : 'Its folder and its id stay as they are.';
   return phone ? `Shown everywhere at once. ${keep}` : `Shown everywhere at once: the list, the bar, the Board, the Inbox and the chats. ${keep}`;
 }
+// ---- Generate (#335): four icons drawn by the CLI the hub runs ----
+const PS_SPARK = '<svg class="ps-gi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.4 3.6 3.6 1.4-3.6 1.4L8 11.5 6.6 7.9 3 6.5l3.6-1.4z" fill="currentColor"/>'
+  + '<path d="M12.5 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor"/></svg>';
+const PS_GEN_WAIT = 65000;   // the hub gives its CLI 60 s
+// What the hub's refusals say after "No icons this time: <agent> ".
+const PS_GEN_WHY = { timeout: 'did not answer within 60 s.', failed: 'stopped with an error.', no_icons: 'answered with no icon that could be used.', busy: 'is already drawing icons on the hub.' };
+// Generate is greyed only once the hub said it has neither CLI.
+const psGenOff = d => !!(d.genInfo && d.genInfo.agent === '');
+const psGenWho = (agent, model) => [agent, model].filter(Boolean).join(' · ');
+function psImageSub(d, src, fileName, fileSize) {
+  if (d.file && d.file.gen) return `<small class="ps-plain">drawn by ${esc([d.file.gen.agent, d.file.gen.model].filter(Boolean).join(' '))}, not saved yet</small>`;
+  return `<small${src ? '' : ' class="ps-plain"'}>${src ? esc(fileName || 'image') + (fileSize ? ' · ' + esc(psSize(fileSize)) : '') : 'none yet'}</small>`;
+}
+function psGenSecs(g) { return Math.max(0, Math.floor((Date.now() - g.t0) / 1000)); }
+function psGenHtml(pj, d) {
+  const g = d.gen;
+  if (!g) return '';
+  if (g.st === 'nocli') return `<div class="ps-gen" id="ps-gen-box"><div class="ps-gen-msg" role="status">Generating needs claude or codex on the hub, and neither is installed there.`
+    + '<small>Upload an image instead. Once either is installed, Generate works without a restart.</small></div></div>';
+  const info = d.genInfo || {};
+  const who = psGenWho(g.agent || info.agent, g.agent ? g.model : info.model);
+  const name = psName(d.name) || pj.name;
+  const about = info.about ? (Array.from(info.about).length > 60 ? Array.from(info.about).slice(0, 59).join('').trimEnd() + '…' : info.about) : '';
+  const head = `<div class="ps-gen-h"><b>Generate an icon</b>${who ? `<span class="ps-gen-who">${esc(who)}</span>` : ''}</div>`
+    + `<div class="ps-gen-sub">From the name <b>${esc(name)}</b>${about ? ` and its roadmap, “${esc(about)}”` : ''}</div>`;
+  if (g.st === 'busy') {
+    const n = psGenSecs(g);
+    return `<div class="ps-gen" id="ps-gen-box" aria-busy="true">${head}<div class="ps-tiles">${'<span class="ps-tile wait"></span>'.repeat(4)}</div>`
+      + `<div class="ps-gen-foot"><span role="status">Drawing 4 icons…</span> <span id="ps-gen-t">${n} s</span><span class="ps-sp"></span>`
+      + '<button type="button" class="ps-btn" id="ps-gen-cancel">Cancel</button></div></div>';
+  }
+  if (g.st === 'cands') {
+    const tiles = g.svgs.map((u, i) => `<button type="button" class="ps-tile${g.pick === i ? ' on' : ''}" id="ps-gt-${i}" role="radio" aria-checked="${g.pick === i}"`
+      + ` tabindex="${(g.pick < 0 ? i === 0 : g.pick === i) ? 0 : -1}" data-gt="${i}"><img src="${esc(u.url)}" alt="Icon ${i + 1}"></button>`).join('');
+    return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-tiles" role="radiogroup" aria-label="Generated icons">${tiles}</div>`
+      + `<div class="ps-gen-foot"><span role="status">${g.pick >= 0 ? `Icon ${g.pick + 1} picked: it becomes the image when you save.` : 'Pick one. Nothing changes until you save.'}</span>`
+      + '<span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-more">More ideas</button></div></div>';
+  }
+  // failed
+  const agent = g.agent || info.agent || 'the hub';
+  let msg, small;
+  if (g.code === 'busy') { msg = 'Icons for this project are already being drawn.'; small = 'Nothing was changed. Try again in a minute.'; }
+  else if (g.code === 'network') { msg = 'No icons this time: the hub did not answer.'; small = 'Nothing was changed. Try again in a minute, or upload an image.'; }
+  else {
+    msg = `No icons this time: ${agent} ${PS_GEN_WHY[g.code] || PS_GEN_WHY.failed}`;
+    small = g.code === 'timeout' ? 'Nothing was changed. It may be busy or signed out; try again in a minute, or upload an image.'
+      : g.code === 'busy' ? 'Nothing was changed. Try again in a minute, or upload an image.'
+      : 'Nothing was changed. Try again, or upload an image.';
+  }
+  return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-gen-msg" role="status">${esc(msg)}<small>${esc(small)}</small></div>`
+    + '<div class="ps-gen-foot"><span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-close">Close</button>'
+    + '<button type="button" class="ps-btn" id="ps-gen-again">Try again</button></div></div>';
+}
+// One POST: {svgs, agent, model} or {error, agent, model}; throws only when aborted.
+async function psGenPost(pid, name, signal) {
+  let r;
+  try {
+    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name }), signal });
+  } catch (e) {
+    if (signal && signal.aborted) throw e;
+    return { error: 'network' };
+  }
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (r.ok && j && j.ok && Array.isArray(j.svgs) && j.svgs.length) return j;
+  return { error: (j && j.error) || (r.ok ? 'no_icons' : 'failed'), agent: (j && j.agent) || '', model: (j && j.model) || '' };
+}
+// A generated SVG as the data URL the Image choice and Save take.
+function psSvgUrl(svg) {
+  const bytes = new TextEncoder().encode(svg);
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return { url: 'data:image/svg+xml;base64,' + btoa(bin), size: bytes.length };
+}
 function psDialogHtml(pj, d, phone) {
   const nameErr = psNameErr(pj.id, d.name);
   const hint = esc(psHint(pj, phone));
@@ -17995,13 +18095,15 @@ function psDialogHtml(pj, d, phone) {
     + `<div class="ps-choices" role="radiogroup" aria-labelledby="ps-icon-lg">`
     + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="square"${sq ? ' checked' : ''}>${bigSq}`
     + `<span class="ps-t"><b>Coloured square</b>${phone ? '' : '<small class="ps-plain">its colour comes from its place in the list</small>'}</span></label>`
-    + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="image"${sq ? '' : ' checked'}>${bigPic}`
-    + `<span class="ps-t"><b>Image</b><small${src ? '' : ' class="ps-plain"'}>${src ? esc(fileName || 'image') + (fileSize ? ' · ' + esc(psSize(fileSize)) : '') : 'none yet'}</small></span>`
-    + `<button type="button" class="ps-btn" id="ps-up">${src ? 'Replace…' : 'Upload image…'}</button></label>`
+    + `<label class="ps-choice ps-choice-img"><input type="radio" class="ps-radio" name="ps-icon" value="image"${sq ? '' : ' checked'}>${bigPic}`
+    + `<span class="ps-t"><b>Image</b>${psImageSub(d, src, fileName, fileSize)}</span>`
+    + `<span class="ps-ibtns"><button type="button" class="ps-btn" id="ps-up">${src && !phone ? 'Replace…' : phone ? 'Upload…' : 'Upload image…'}</button>`
+    + `<button type="button" class="ps-btn${psGenOff(d) ? ' off' : ''}" id="ps-gen"${psGenOff(d) ? ' aria-disabled="true"' : ''} aria-expanded="${!!d.gen}" aria-controls="ps-gen-box">${PS_SPARK}Generate…</button></span></label>`
     + `<input type="file" id="ps-file" accept="${PS_TYPES.join(',')}" hidden></div>`
+    + psGenHtml(pj, d)
     + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
-    + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, cropped to a square.'
-        : "PNG, JPEG, SVG or WebP, up to 1 MB. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
+    + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
+        : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
     + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
     + '</div>'
     + `<div class="ps-more"><div class="ps-lg">More settings</div>${psSettingsRowsHtml(pj, phone)}</div>`
@@ -18023,9 +18125,13 @@ function psOnce(pid, d, focus) {
   const phone = phoneNow();
   return new Promise(resolve => {
     let done = false;
+    let tick = 0;
     const finish = (v) => {
       if (done) return;
       done = true;
+      clearInterval(tick);
+      // Drawing stops with the dialog (or another setting's dialog over it).
+      if (d.gen && d.gen.st === 'busy') { d.gen.ctl.abort(); d.gen = d.gen.prev || null; }
       dlg.removeEventListener('cancel', onCancel);
       dlg.classList.remove('ps-dlg');
       if (dlg.open) dlg.close();
@@ -18064,6 +18170,50 @@ function psOnce(pid, d, focus) {
       b.disabled = !ok; b.classList.toggle('off', !ok);
       const s = dlg.querySelector('.ps-srow .ldp-name');
       if (s) s.textContent = psName(d.name) || pj.name;
+      const g = dlg.querySelector('.ps-gen-sub b');
+      if (g) g.textContent = psName(d.name) || pj.name;
+    };
+    // ---- Generate (#335) ----
+    const genInfoLoad = async () => {
+      try { d.genInfo = await api('/api/projects/icon-gen?id=' + encodeURIComponent(pid)); } catch (e) {}
+    };
+    const genStart = async (pj) => {
+      if (d.busy || (d.gen && d.gen.st === 'busy')) return;
+      // Greyed, it asks the hub again: a CLI installed since works at once.
+      if (psGenOff(d)) {
+        await genInfoLoad();
+        if (done) return;
+        if (psGenOff(d)) { d.gen = { st: 'nocli' }; paint('ps-gen'); return; }
+      }
+      const was = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      const g = { st: 'busy', t0: Date.now(), ctl: new AbortController(), prev: d.gen && d.gen.st === 'cands' ? d.gen : null, timedOut: false };
+      d.gen = g;
+      paint(was === 'ps-gen' ? 'ps-gen' : 'ps-gen-cancel');
+      const tm = setTimeout(() => { g.timedOut = true; g.ctl.abort(); }, PS_GEN_WAIT);
+      let res = null;
+      try { res = await psGenPost(pid, psName(d.name) || pj.name, g.ctl.signal); }
+      catch (e) { res = g.timedOut ? { error: 'timeout', agent: (d.genInfo && d.genInfo.agent) || '' } : null; }
+      finally { clearTimeout(tm); }
+      if (done || d.gen !== g || !res) return;   // cancelled, or the dialog closed
+      if (res.error === 'no_cli') { d.genInfo = Object.assign({}, d.genInfo, { agent: '', model: '' }); d.gen = { st: 'nocli' }; }
+      else if (res.error) d.gen = { st: 'failed', code: res.error, agent: res.agent || '', model: res.model || '' };
+      else {
+        d.gen = { st: 'cands', svgs: res.svgs.slice(0, 4).map(psSvgUrl), pick: -1, agent: res.agent || '', model: res.model || '' };
+        if (res.agent) d.genInfo = Object.assign({}, d.genInfo, { agent: res.agent, model: res.model || '' });
+      }
+      // Focus moves to the answer from where the drawing was asked (or Cancel,
+      // which is gone); elsewhere, as in the name, it stays.
+      const now = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      const asked = !now || now === 'ps-gen' || now === 'ps-gen-cancel';
+      paint(!asked ? '' : d.gen.st === 'cands' ? 'ps-gt-0' : d.gen.st === 'failed' ? 'ps-gen-again' : 'ps-gen');
+    };
+    const genPick = (i) => {
+      const g = d.gen;
+      if (!g || g.st !== 'cands' || !g.svgs[i]) return;
+      g.pick = i;
+      d.file = { dataUrl: g.svgs[i].url, name: 'generated-icon.svg', size: g.svgs[i].size, gen: { agent: g.agent, model: g.model } };
+      d.choice = 'image'; d.iconErr = '';
+      paint('ps-gt-' + i);
     };
     const save = async (pj) => {
       if (!psCanSave(pj, d)) return;
@@ -18109,6 +18259,29 @@ function psOnce(pid, d, focus) {
       });
       const file = dlg.querySelector('#ps-file');
       dlg.querySelector('#ps-up').onclick = (ev) => { ev.preventDefault(); file.click(); };
+      dlg.querySelector('#ps-gen').onclick = (ev) => { ev.preventDefault(); genStart(pj); };
+      const gb = (id, fn) => { const b = dlg.querySelector('#' + id); if (b) b.onclick = fn; };
+      gb('ps-gen-cancel', () => {
+        const g = d.gen;
+        if (!g || g.st !== 'busy') return;
+        d.gen = g.prev || null;
+        g.ctl.abort();
+        paint(d.gen ? 'ps-gen-more' : 'ps-gen');
+      });
+      gb('ps-gen-more', () => genStart(pj));
+      gb('ps-gen-again', () => genStart(pj));
+      gb('ps-gen-close', () => { d.gen = null; paint('ps-gen'); });
+      dlg.querySelectorAll('[data-gt]').forEach(t => {
+        const i = +t.getAttribute('data-gt');
+        t.onclick = () => genPick(i);
+        t.onkeydown = (ev) => {
+          const n = d.gen && d.gen.svgs ? d.gen.svgs.length : 0;
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+          if (!step || !n) return;
+          ev.preventDefault();
+          genPick((i + step + n) % n);
+        };
+      });
       file.onchange = async () => {
         const f = file.files && file.files[0];
         if (!f) return;
@@ -18116,7 +18289,10 @@ function psOnce(pid, d, focus) {
         if (f.size > PS_MAX) d.iconErr = `That image is ${psSize(f.size)}; an icon can be up to 1 MB.`;
         else if (f.type && !PS_TYPES.includes(f.type)) d.iconErr = 'Only a PNG, JPEG, SVG or WebP image can be an icon.';
         else {
-          try { d.file = { dataUrl: await psReadFile(f), name: f.name, size: f.size }; d.choice = 'image'; }
+          try {
+            d.file = { dataUrl: await psReadFile(f), name: f.name, size: f.size }; d.choice = 'image';
+            if (d.gen && d.gen.st === 'cands') d.gen.pick = -1;   // the upload, not a drawn one
+          }
           catch (e) { d.iconErr = 'Could not read that file.'; }
         }
         if (!done) paint('ps-up');
@@ -18134,6 +18310,17 @@ function psOnce(pid, d, focus) {
     dlg.classList.add('ps-dlg');
     dlg.addEventListener('cancel', onCancel);
     paint('');
+    // Drawing's seconds count up without redrawing the dialog.
+    tick = setInterval(() => {
+      const t = dlg.querySelector('#ps-gen-t');
+      const v = d.gen && d.gen.st === 'busy' ? `${psGenSecs(d.gen)} s` : '';
+      if (t && v && t.textContent !== v) t.textContent = v;
+    }, 250);
+    // Which CLI draws, once per settings: greys Generate when there is none.
+    if (d.genInfo === undefined) {
+      d.genInfo = null;
+      genInfoLoad().then(() => { if (!done && (psGenOff(d) || d.gen)) paint(''); });
+    }
     if (!dlg.open) dlg.showModal();
     const inp = dlg.querySelector('#ps-name');
     if (focus === 'rename' && inp) { inp.focus(); inp.select(); }
@@ -18147,7 +18334,7 @@ function psOnce(pid, d, focus) {
 async function projSettings(pid, opts) {
   const pj = projectById(pid);
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return;
-  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '' };
+  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '', gen: null, genInfo: undefined };
   let focus = opts && opts.rename ? 'rename' : '';
   for (;;) {
     const got = await psOnce(pid, d, focus);
@@ -18932,7 +19119,7 @@ function docsDocListen() {
     }));
   });
   document.addEventListener('click', (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
     });
   });
@@ -18940,7 +19127,7 @@ function docsDocListen() {
   // Overview, the page; scroll does not bubble, so it is caught on the way
   // down) or a resize closes it.
   const away = (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
     });
   };
@@ -18959,7 +19146,9 @@ function docsFilesWire(el, pid) {
   up.setAttribute('role', 'region'); up.setAttribute('aria-label', 'Files being added');
   side.insertBefore(up, tree);
   const menu = document.createElement('div');
-  menu.className = 'dcm'; menu.hidden = true; menu.setAttribute('role', 'menu');
+  // data-docs-menu: the document listeners below close this menu only, never
+  // another .dcm (a loose row's ⋯ in the left panel, ED-334).
+  menu.className = 'dcm'; menu.dataset.docsMenu = ''; menu.hidden = true; menu.setAttribute('role', 'menu');
   menu._el = el; menu._pid = pid;
   sec.appendChild(menu);
 
@@ -22737,7 +22926,7 @@ function wideBanner() {
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
+  const ids = ['drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -23069,6 +23258,7 @@ $('#me-menu').addEventListener('click', (ev) => {
   }
   closeMeMenu();
   if (it.dataset.me === 'feedback') { feedbackOpen(); return; }
+  if (it.dataset.me === 'whatsnew') { if (window.whatsNew) whatsNew.open(); return; }
   openSettingsPanel($('#me-btn'));
 });
 $('#feedback-open').addEventListener('click', () => feedbackOpen());
@@ -25069,9 +25259,8 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-split')?.addEventListener('click', (ev) => {
     runItermAction('/api/iterm/split-live', 'split', ev.currentTarget);
   });
-  // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
-  // before the first check so triggerUpdate can detect the new pid later.
-  document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  // The update check (What's new, #339): initial + periodic. RUNTIME_CFG.pid
+  // must be set before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('drain-force')?.addEventListener('click', () => drainAction('force'));
   document.getElementById('upd-card-force')?.addEventListener('click', () => drainAction('force'));
   document.getElementById('upd-card-cancel')?.addEventListener('click', () => drainAction('cancel'));
@@ -25101,10 +25290,6 @@ window.ensUpdPlace = () => ({
   document.getElementById('wide-banner-dismiss')?.addEventListener('click', e => {
     const b = e.currentTarget.parentElement;
     b.dataset.closed = '1'; b.hidden = true;
-  });
-  document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
-    UPDATE_DISMISSED = true;
-    document.getElementById('update-banner').hidden = true;
   });
   checkForUpdate();
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);

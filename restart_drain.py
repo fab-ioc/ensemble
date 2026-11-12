@@ -609,7 +609,7 @@ def request_restart(reason: str, by: dict, action: str = "restart",
             if err:
                 _d._restart_log(f"source update not started: {err}")
                 log = str(_d.DASHBOARD_DIR / "logs" / "restart.log")
-                advice = ("Check the connection, then Update now again."
+                advice = ("Check the connection, then Install now again."
                           if err.startswith(("git fetch failed", "git reset failed")) else "")
                 _d.src_update_stage("failed", error=err, advice=advice, log=log)
                 return {"status": 500, "started": False, "error": err, "log": log}

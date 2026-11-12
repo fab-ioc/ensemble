@@ -178,7 +178,7 @@ class Stage(Base):
         self.assertIn("Could not resolve host", (self.dir / "logs" / "restart.log").read_text(encoding="utf-8"))
         st = self.stage()
         self.assertEqual((st["stage"], st["error"]), ("failed", res["error"]))
-        self.assertEqual(st["advice"], "Check the connection, then Update now again.")
+        self.assertEqual(st["advice"], "Check the connection, then Install now again.")
 
 
 if __name__ == "__main__":
