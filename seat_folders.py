@@ -107,11 +107,30 @@ def recreate_worktree(room: dict) -> tuple[bool, str]:
     repo = _project_path(room)
     if not repo or not os.path.isdir(repo):
         return False, f"its project's repository {repo or '(none)'} is not there"
-    if not _d._branch_exists(repo, branch):
-        return False, f"its branch {branch} is not in the project's repository {repo}"
+    local_branch = _d._branch_exists(repo, branch)
+    if not local_branch:
+        remote_ref = f"refs/remotes/origin/{branch}"
+        try:
+            remote = _git(repo, "rev-parse", "--verify", "--quiet", remote_ref)
+            if remote.returncode != 0:
+                # An origin branch may have been pushed since this project's
+                # checkout last fetched. Fetch only the recorded branch.
+                fetched = _git(repo, "fetch", "origin",
+                               f"refs/heads/{branch}:{remote_ref}")
+                if fetched.returncode != 0:
+                    return False, (f"its branch {branch} is not local and could not be "
+                                   f"fetched from origin: "
+                                   f"{(fetched.stderr or fetched.stdout or '').strip()[:300]}")
+                remote = _git(repo, "rev-parse", "--verify", "--quiet", remote_ref)
+            if remote.returncode != 0:
+                return False, f"its branch {branch} is neither local nor on origin"
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, f"could not fetch branch {branch} from origin: {e}"
     try:
         _git(repo, "worktree", "prune")
-        out = _git(repo, "worktree", "add", path, branch)
+        out = (_git(repo, "worktree", "add", path, branch) if local_branch
+               else _git(repo, "worktree", "add", "-b", branch, "--track",
+                         path, f"origin/{branch}"))
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"git worktree add failed: {e}"
     if out.returncode != 0:

@@ -131,6 +131,36 @@ class LaunchFolder(_Base):
         # On the caller's copy too, so its own later write keeps it.
         self.assertTrue(any(m.get("noticeKind") == "folder" for m in room["messages"]))
 
+    def test_a_branch_only_on_bare_origin_is_fetched_and_tracks_origin(self):
+        origin = self.dir / "origin.git"
+        repo = self.dir / "project"
+        branch = "sess/ED-1-x"
+        _git(self.dir, "init", "--bare", "-q", str(origin))
+        _git(self.dir, "clone", "-q", str(origin), str(repo))
+        _git(repo, "switch", "-q", "-c", "main")
+        _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q",
+             "--allow-empty", "-m", "init")
+        _git(repo, "push", "-q", "origin", "main")
+        _git(repo, "branch", branch)
+        _git(repo, "push", "-q", "origin", branch)
+        _git(repo, "branch", "-D", branch)
+        _git(repo, "update-ref", "-d", f"refs/remotes/origin/{branch}")
+        self.assertFalse(dashboard._branch_exists(str(repo), branch))
+        self.projects["p1"] = {"id": "p1", "path": str(repo)}
+
+        task = self.dir / "task"
+        task.mkdir()
+        wt = task / "repo"
+        rid = self.room(wt, task, branch=branch)
+        self.assertEqual(seat_folders.launch_folder(self.full(rid), "claude", str(wt)),
+                         str(wt))
+        self.assertTrue((wt / ".git").exists())
+        self.assertTrue(dashboard._branch_exists(str(repo), branch))
+        upstream = subprocess.run(["git", "-C", str(wt), "rev-parse", "--abbrev-ref",
+                                   "@{upstream}"], check=True, capture_output=True,
+                                  text=True).stdout.strip()
+        self.assertEqual(upstream, f"origin/{branch}")
+
     def test_an_empty_folder_left_at_the_worktrees_place_is_made_a_worktree(self):
         self.project_repo()
         task = self.dir / "task"
