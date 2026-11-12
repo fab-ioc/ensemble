@@ -4134,6 +4134,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-listed .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
   .ibx-listed .ibx-reason, .ibx-listed .ibx-meta { font-size: 11px; line-height: 1.4; margin-top: 0; }
   .ibx-listed .ibx-meta { color: var(--fg-muted); }
+  /* #337: a card's cut text raised whole on hover (rowExpandShow's copy, in the body): the card's own type, unclamped. */
+  .ldp-expanded.ibx-link { display: block; padding: 2px 4px; color: var(--fg); text-decoration: none; font-size: 12px; line-height: 1.4; }
+  .ldp-expanded .ibx-line, .ldp-expanded .ibx-reason { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .ldp-expanded .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
+  .ldp-expanded .ibx-reason { font-size: 11px; line-height: 1.4; margin-top: 0; color: var(--fg-subtle); }
   .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
   @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px; } }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
@@ -12925,7 +12930,12 @@ function rowExpandAllowed(row, spec) {
   const win = row.ownerDocument.defaultView, name = row.querySelector(spec.name);
   return !!(win && win.matchMedia('(hover: hover) and (pointer: fine)').matches
     && !rowExpandOpenMenu(row.ownerDocument)
-    && name && name.scrollWidth > name.clientWidth + 1);
+    && name && (name.scrollWidth > name.clientWidth + 1 || rowExpandClamped(name, win)));
+}
+// #337: a name cut at its lines (-webkit-line-clamp, an Inbox card's text) is cut too.
+function rowExpandClamped(name, win) {
+  const c = win.getComputedStyle(name).webkitLineClamp;
+  return !!c && c !== 'none' && name.scrollHeight > name.clientHeight + 1;
 }
 function rowExpandShow(row, spec, focus = false) {
   rowExpandHide();
@@ -14747,7 +14757,10 @@ function pdTabTips() {
         handle.innerHTML = '<svg viewBox="0 0 16 16"><path d="M3 1.5h6l4 4v9H3z"/><path d="M9 1.5v4h4"/></svg>';
         tab.prepend(handle);
       }
-      tab.title = t + ': drag the tab to move its panel';
+      // A tab whose name expands keeps its tip aside (#337, rowExpandUntitle).
+      const tip = t + ': drag the tab to move its panel';
+      if (tab.dataset.rxTitle != null) { tab.dataset.rxTitle = tip; tab.removeAttribute('title'); }
+      else tab.title = tip;
       wsDragMark(e.v, handle, e.path, 'dock-tab', t);
     });
   }
@@ -16415,7 +16428,7 @@ document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
-var LDP = { more: false, moreLoose: false, sig: '', shown: {}, hold: {}, holdT: 0 };
+var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0 };
 var LDP_N = 9, LDP_LOOSE_N = 5;
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
@@ -16433,13 +16446,14 @@ function ldpModel() {
     rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
   } catch (e) {}
-  // #337 (P309): by Inbox count, then latest conversation (its PO's and its
-  // tasks' chats, swRecent's `at`), then name. Opening one never moves it.
-  const seenP = new Set(), projs = [];
+  // #337 (P309): by Inbox count, then latest conversation (ldpConvAt), then
+  // name. Opening one never moves it.
+  const seenP = new Set(), projs = [], fresh = new Map();
+  for (const r of ALL_ROWS || []) if (r) fresh.set(r.roomId || r.sessionId, r);
   for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
     if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
     seenP.add(e.pid);
-    projs.push({ pid: e.pid, name: e.project || e.pid, at: e.at || 0, n: ldpCount(e.pid) });
+    projs.push({ pid: e.pid, name: e.project || e.pid, at: ldpConvAt(e.pid, fresh), n: ldpCount(e.pid) });
   }
   projs.sort((a, b) => (b.n - a.n) || (b.at - a.at) || a.name.localeCompare(b.name));
   const seenL = new Set(), loose = [];
@@ -16454,6 +16468,23 @@ function ldpModel() {
   loose.sort((a, b) => b.at - a.at);
   return { projs: ldpHeld('projs', projs, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
 }
+// When a project was last spoken in (#337): the newest message in its PO's
+// chat, its tasks' chats (the hub's convAt; newsAt on a card from before it)
+// or its sessions (a session's updatedAt is its transcript's last write). Not
+// swActivity: a state, column or spec change is no conversation.
+// `fresh`: the task list's rows by id, which it polls more often than PROJECTS.
+function ldpConvAt(pid, fresh) {
+  const p = projectById(pid);
+  if (!p) return 0;
+  const rows = (p.sessions || []).map(r => fresh.get(r && (r.roomId || r.sessionId)) || r);
+  if (p.poRoomId && fresh.has(p.poRoomId)) rows.push(fresh.get(p.poRoomId));
+  let at = 0;
+  for (const r of rows) {
+    if (!r || r.draft) continue;
+    at = Math.max(at, r.headless ? (Number(r.convAt) || Number(r.newsAt) || 0) : (Number(r.updatedAt) || 0));
+  }
+  return at;
+}
 // A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
 function ldpCount(pid) {
   const d = IBX.data;
@@ -16461,22 +16492,26 @@ function ldpCount(pid) {
 }
 // #337: nothing moves under the pointer. A change that comes while it is over
 // the list (or a row raised from it) waits until it has left and 2 s have
-// passed since the change: each list keeps the order it was shown in, a
-// newcomer last, a gone one out. Away from the list a change shows at once.
+// passed since the latest change: each list keeps the order it was shown in,
+// a newcomer last, a gone one out. Away from the list a change shows at once.
 const LDP_HOLD_MS = 2000;
 function ldpPointerIn() {
   const box = document.getElementById('ld-projs');
   return !!box && (box.matches(':hover') || !!(ROW_EXPAND && box.contains(ROW_EXPAND.row)));
 }
 function ldpHeld(k, list, id) {
-  const shown = LDP.shown[k], now = Date.now(), fresh = list.map(id);
-  const at = LDP.hold[k] || (ldpPointerIn() ? now : 0);
-  if (!shown || !at || fresh.join('\n') === shown.join('\n') || (!ldpPointerIn() && now - at >= LDP_HOLD_MS)) {
+  const shown = LDP.shown[k], now = Date.now(), fresh = list.map(id).join('\n');
+  // The wanted order moved again: the 2 s count from now (held, or arriving under the pointer).
+  if (fresh !== LDP.want[k]) {
+    LDP.want[k] = fresh;
+    if (LDP.hold[k] || ldpPointerIn()) LDP.hold[k] = now;
+  }
+  const at = LDP.hold[k];
+  if (!shown || !at || fresh === shown.join('\n') || (!ldpPointerIn() && now - at >= LDP_HOLD_MS)) {
     LDP.hold[k] = 0;
-    LDP.shown[k] = fresh;
+    LDP.shown[k] = list.map(id);
     return list;
   }
-  LDP.hold[k] = at;
   clearTimeout(LDP.holdT);
   LDP.holdT = setTimeout(ldpPaint, 300);   // till it may go: then ldpHeld lets it
   const by = new Map(list.map(e => [id(e), e]));
@@ -16643,8 +16678,12 @@ function ldpOpenLoose(b) {
 // title under them, which names the project or task picked.
 rowExpandWire(document.getElementById('ld-projs'),
   { row: '.ldp-row', name: '.ldp-name', covered: '.ldp-row, .ldp-dots, .ldp-more', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+// A card's text cut at its lines (a question, an answer) shows whole too,
+// downwards; a press on what the copy covers (the card's buttons) goes there.
 rowExpandWire(document.getElementById('ld-ibx-body'),
-  { row: '.ibx-head', name: '.ibx-title-listed', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+  { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
+    covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
+    copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;
