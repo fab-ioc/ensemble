@@ -77,6 +77,8 @@ import re
 import threading
 import time
 
+import first_run
+
 _d = None  # the dashboard module, set by bind()
 
 
@@ -100,6 +102,10 @@ STALL_SECONDS_DEFAULT = 900
 # A floor on terminal silence before anything is called stalled, so an agent
 # caught mid-turn (status file a second out of date) is never accused.
 _MIN_QUIET = 60
+
+# How long a first-run screen may stand before it is called a stall: the hub
+# answers a trust screen within seconds of the launch (first_run.watch).
+FIRST_RUN_GRACE_S = 30
 
 # How long after being rung a one-agent task's terminal must still be printing
 # to count as having answered there. Typing the doorbell prints at once; a turn
@@ -623,7 +629,8 @@ _ANALYSIS_LOCK = threading.Lock()
 
 def analyse(tail: str) -> dict:
     return {"block": find_block(tail), "busy": looks_busy(tail),
-            "prompt": looks_like_prompt(tail), "ownWork": own_work(tail)}
+            "prompt": looks_like_prompt(tail), "ownWork": own_work(tail),
+            "firstRun": first_run.find(tail)}
 
 
 # A stopped terminal's last screen never changes: its verdict, by the screen
@@ -1086,6 +1093,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
     sess = ptyrun.get(pty_id) if pty_id else None
     alive = bool(sess and sess.alive())
     tail, idle, death, submitted, printed, hook = "", None, None, 0.0, 0.0, None
+    cwd = ""
     if alive:
         tail, scan = _analyse_live(sess)
         try:
@@ -1097,7 +1105,8 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
             # not about this one.
             hook = _d.agent_hooks.state_for(pty_id)
         try:
-            idle = sess.info().get("idleSeconds")
+            info = sess.info() or {}
+            idle, cwd = info.get("idleSeconds"), info.get("cwd") or ""
         except Exception:
             idle = None
         try:
@@ -1141,6 +1150,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
         "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
         "claudeStatus": said[0], "claudeStatusAt": said[1],
         "hook": hook, "lastOutput": printed, "limit": limit, "permission": perm,
+        "cwd": cwd,
     }
 
 
@@ -1400,6 +1410,32 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if put and put["kind"] != "completed":
         still = f"; {_ASK_NAMES.get(put['kind'], 'its message to you')} is still open: “{q}”"
         still_extra = {**asked, **({"cause": "reported"} if put["kind"] == "blocked" else {})}
+
+    first = (ev["scan"].get("firstRun") or None) if ev["alive"] else None
+    if first and (ev["idleSeconds"] is None or ev["idleSeconds"] >= FIRST_RUN_GRACE_S):
+        # Its CLI's own first-run screen (ED-340): nothing reaches the agent
+        # until a key is pressed there. The hub answers a trust screen in its
+        # own folders at once (first_run.watch / look), so one still up after
+        # the grace is one it could not or must not answer.
+        cwd = part.get("cwd") or ev.get("cwd") or ""
+        if not first["answerable"]:
+            why = "the hub does not answer it; answer it in its terminal"
+        elif first["cli"] == "codex" and (blocker := first_run.codex_blocker(cwd)):
+            why = {"untrusted": "its folder is marked untrusted in Codex's config, so the hub "
+                                "leaves it to you; answer it in its terminal or change that entry",
+                   "noparser": "the hub cannot read Codex's config on this Python (no tomllib), "
+                               "so it leaves it to you; answer it in its terminal",
+                   }.get(blocker, "the hub cannot read Codex's config, so it leaves it to you; "
+                                  "answer it in its terminal")
+        elif first_run.hub_folder(cwd):
+            why = "the hub could not answer it; answer it in its terminal"
+        else:
+            why = (f"its folder {cwd} is not one the hub runs agents in, so the hub "
+                   f"leaves it to you; answer it in its terminal") if cwd else \
+                  "answer it in its terminal"
+        return ("stalled", f"{who} is stopped on {first['name']} and has not started: {why}{still}",
+                {**still_extra, "cause": "first_run", "screen": first["kind"],
+                 "cli": first["cli"], "idleSeconds": ev["idleSeconds"]})
 
     if block:
         why, cause, line = block

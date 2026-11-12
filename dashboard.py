@@ -89,6 +89,8 @@ import provider_retry
 import permission_mode
 # Which tasks need a human, and why (the /api/attention join).
 import attention
+# A seat stopped on its CLI's first-run screen, answered or reported (ED-340).
+import first_run
 # What the task list read from each transcript, kept across hub starts (ED-200).
 import filefacts
 import filetable
@@ -207,6 +209,7 @@ pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
+first_run.bind(sys.modules[__name__])
 idle.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
 provider_retry.bind(sys.modules[__name__])
@@ -20028,6 +20031,7 @@ class Handler(BaseHTTPRequestHandler):
                     + _codex_task_args(room_full) + _codex_model_args(model, effort))
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+            first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
             _record_typed_input_safely(
                 sess, briefing,
                 {"kind": _launch_input_kind(room_full, part, briefing, prompt)})
@@ -20040,6 +20044,7 @@ class Handler(BaseHTTPRequestHandler):
         cmd = BACKEND.headless_launch(cwd, argv, briefing)
         meta["sessionId"] = new_sid
         sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+        first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
         _record_typed_input_safely(
             sess, briefing,
             {"kind": _launch_input_kind(room_full, part, briefing, prompt)})
@@ -20111,6 +20116,7 @@ class Handler(BaseHTTPRequestHandler):
             first = po_hub_prompt(room_full, seed) if seed and not codex_sid else ""
             cmd = BACKEND.headless_launch(cwd, argv, first)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+            first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
             if first:
                 _record_typed_input_safely(sess, first, {"kind": "brief"})
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", ""),
@@ -20125,6 +20131,7 @@ class Handler(BaseHTTPRequestHandler):
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, "")
         sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+        first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid, "prompted": False}
 
     def _start_room(self, room_full: dict) -> list[dict]:

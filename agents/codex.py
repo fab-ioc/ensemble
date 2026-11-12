@@ -28,6 +28,11 @@ from pathlib import Path
 import filefacts
 import filetable
 
+try:
+    import tomllib
+except ImportError:             # Python 3.10: trust is checked by its header
+    tomllib = None
+
 from .base import AgentSession, AgentType
 
 _FALLBACK_LOCK = threading.Lock()
@@ -72,14 +77,79 @@ def _codex_home() -> Path:
     return Path(env) if env else (Path.home() / ".codex")
 
 
-def _git_root(path: str) -> str:
-    """The nearest folder at or above ``path`` holding a ``.git`` (a directory,
-    or a worktree's file), or ""."""
-    p = Path(os.path.normpath(path))
-    for d in (p, *p.parents):
-        if (d / ".git").exists():
-            return str(d)
-    return ""
+_TRUST_LOCK = threading.Lock()
+
+
+def _trust_keys(cwd: str) -> list[str]:
+    """The keys Codex may look ``cwd`` up by: its real path (Codex resolves
+    links in its working folder) and the path as given, when that differs.
+    Windows compares paths without case, and an older hub wrote them
+    lowercased there, so its lowercased form is added on Windows only."""
+    keys = []
+    for k in (os.path.realpath(cwd), os.path.normpath(os.path.abspath(cwd))):
+        if k not in keys:
+            keys.append(k)
+    if os.name == "nt":
+        keys += [k.lower() for k in keys if k.lower() not in keys]
+    return keys
+
+
+def _toml_key(s: str) -> str:
+    """``s`` as a TOML basic-string key: quotes, backslashes (Windows paths)
+    and control characters escaped."""
+    out = []
+    for ch in s:
+        if ch in ('"', "\\"):
+            out.append("\\" + ch)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def _trust_states(text: str, keys: list[str]) -> dict[str, str] | None:
+    """Each key's entry in the config text: "trusted", "untrusted" (or any
+    other trust level: not trusted), "notrust" (its table has no trust
+    level), or "missing". None when the text does not parse, or there is
+    no TOML parser to read it with (Python 3.10)."""
+    if tomllib is None:
+        return None
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    projects = data.get("projects")
+    out = {}
+    for k in keys:
+        entry = projects.get(k) if isinstance(projects, dict) else None
+        if entry is None:
+            out[k] = "missing"
+        elif not isinstance(entry, dict) or "trust_level" not in entry:
+            out[k] = "notrust"
+        else:
+            out[k] = "trusted" if entry.get("trust_level") == "trusted" else "untrusted"
+    return out
+
+
+def trust_blocker(cwd: str) -> str:
+    """Why the hub must leave ``cwd``'s Codex trust screen to a person, or
+    "": "untrusted" when any key Codex may look it up by is marked with a
+    trust level other than "trusted" (the person decided), "noparser" when
+    there is no TOML parser to read the config with (Python 3.10: the hub
+    never guesses at it), "unreadable" when the config cannot be read or
+    parsed."""
+    if tomllib is None:
+        return "noparser"
+    cfg = _codex_home() / "config.toml"
+    try:
+        text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+    except OSError:
+        return "unreadable"
+    states = _trust_states(text, _trust_keys(cwd or "."))
+    if states is None:
+        return "unreadable"
+    return "untrusted" if any(st == "untrusted" for st in states.values()) else ""
 
 
 def _iso_to_epoch(ts: str) -> float:
@@ -507,39 +577,60 @@ class CodexAgent(AgentType):
         return argv
 
     def ensure_trusted(self, cwd: str) -> bool:
-        """Pre-authorize `cwd` in ~/.codex/config.toml so an unattended launch
-        skips Codex's interactive "Do you trust this directory?" gate (which
-        otherwise blocks the session before it ever starts). Codex persists
-        trust as `[projects.'<path>']` with `trust_level = "trusted"`, keying on
-        the lowercased path — we match that. Idempotent; returns True if the
-        entry is present (already there or freshly written).
+        """Pre-authorize ``cwd`` in ``$CODEX_HOME/config.toml`` so an unattended
+        launch skips Codex's interactive "Trust this folder?" screen, which
+        otherwise holds the session before it reads its first message (ED-340:
+        ten reviews waited eleven hours on it). Codex records trust as
+        ``[projects."<path>"] trust_level = "trusted"`` and looks the folder up
+        by its exact path: Codex 0.167 on Linux asks again for a lowercased
+        key, and is satisfied by the folder's own entry in a worktree or in a
+        subfolder of a repository (where its screen offers to trust the
+        repository root instead). So the folder itself is trusted, by its
+        real path and the path as given, never the repository it is in.
 
-        Inside a git repository Codex asks about the repository's root, not the
-        folder — a task folder in the projects' backup repo stopped at "Trusting
-        will apply to the repository root" — so that root is trusted too."""
-        if not cwd:
-            return False
-        ok = self._trust(cwd)
-        root = _git_root(cwd)
-        if root and os.path.normcase(root) != os.path.normcase(os.path.normpath(cwd)):
-            ok = self._trust(root) and ok
-        return ok
+        All or nothing: every key's state is worked out first, and if any of
+        them is marked otherwise (``trust_level = "untrusted"``, or a table
+        for it without a trust level) nothing is written. Missing entries go
+        in with one append, checked to parse first; a config that does not
+        parse is left as it is. Idempotent; True when every key is trusted
+        afterwards.
 
-    def _trust(self, cwd: str) -> bool:
-        key = os.path.normpath(cwd).lower()
-        cfg = _codex_home() / "config.toml"
-        try:
-            existing = ""
-            if cfg.exists():
-                existing = cfg.read_text(encoding="utf-8")
-                # Cheap idempotency check: the exact table header already there.
-                for variant in (key, cwd, os.path.normpath(cwd)):
-                    if f"[projects.'{variant}']" in existing:
-                        return True
-            cfg.parent.mkdir(parents=True, exist_ok=True)
-            block = f"\n[projects.'{key}']\ntrust_level = \"trusted\"\n"
-            with cfg.open("a", encoding="utf-8") as fh:
-                fh.write(block)
-            return True
-        except OSError:
+        Known limit: without a TOML parser (Python 3.10, no ``tomllib``) the
+        config is never written, since a header appended to a config the hub
+        cannot read could duplicate a table. Codex then shows its trust screen
+        and the seat is flagged for a person (``first_run`` / ``attention``)."""
+        if not cwd or tomllib is None:
             return False
+        keys = _trust_keys(cwd)
+        with _TRUST_LOCK:
+            cfg = _codex_home() / "config.toml"
+            try:
+                text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+            except OSError:
+                return False
+            states = _trust_states(text, keys)
+            if states is None:
+                return False
+            if any(st not in ("trusted", "missing") for st in states.values()):
+                return False
+            missing = [k for k in keys if states[k] == "missing"]
+            if not missing:
+                return True
+            blocks = "\n".join(f"[projects.{_toml_key(k)}]\ntrust_level = \"trusted\"\n"
+                               for k in missing)
+            sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+            try:
+                tomllib.loads(text + sep + blocks)
+            except tomllib.TOMLDecodeError:
+                # `projects` is written another way (dotted keys, an inline
+                # table): a header of ours would break the file.
+                return False
+            try:
+                cfg.parent.mkdir(parents=True, exist_ok=True)
+                # Appended, not rewritten: Codex itself rewrites this file, and
+                # a config kept as a link (dotfiles) stays a link.
+                with cfg.open("a", encoding="utf-8") as fh:
+                    fh.write(sep + blocks)
+                return True
+            except OSError:
+                return False

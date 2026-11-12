@@ -11,6 +11,7 @@ layer; this class currently owns availability + launch/resume only.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -31,26 +32,43 @@ class ClaudeAgent(AgentType):
         unattended launch doesn't block on the "Is this a folder you trust?"
         prompt (which is separate from --permission-mode). Claude records trust
         as ``projects["<path>"].hasTrustDialogAccepted = true`` in
-        ~/.claude.json, keyed by the forward-slash path. Idempotent."""
+        ~/.claude.json (``$CLAUDE_CONFIG_DIR/.claude.json`` when that is set),
+        keyed by the forward-slash path. Claude 2.1 on Linux shows the dialog
+        in every new worktree ("Is this a project you created or one you
+        trust?", default "No, exit") and skips it for this entry (ED-340). The
+        real path is the one Claude sees as its working folder, so that is
+        trusted too when a link leads there. Idempotent."""
         if not cwd:
             return False
-        cfg = Path.home() / ".claude.json"
-        key = str(Path(cwd)).replace("\\", "/")
+        conf = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
+        cfg = (Path(conf) if conf else Path.home()) / ".claude.json"
+        keys = []
+        for k in (str(Path(cwd)), os.path.realpath(cwd)):
+            k = k.replace("\\", "/")
+            if k not in keys:
+                keys.append(k)
         try:
             data = json.loads(cfg.read_text(encoding="utf-8")) if cfg.exists() else {}
         except (json.JSONDecodeError, OSError):
             return False
+        if not isinstance(data, dict):
+            return False
         projects = data.setdefault("projects", {})
-        entry = projects.get(key)
-        if isinstance(entry, dict) and entry.get("hasTrustDialogAccepted") is True:
+        if not isinstance(projects, dict):
+            return False
+        todo = [k for k in keys if not (isinstance(projects.get(k), dict)
+                                        and projects[k].get("hasTrustDialogAccepted") is True)]
+        if not todo:
             return True
-        if not isinstance(entry, dict):
-            entry = {}
-        entry["hasTrustDialogAccepted"] = True
-        # Claude expects a few companion flags on a project entry; set the ones
-        # that gate first-run prompts so the session starts clean.
-        entry.setdefault("hasCompletedProjectOnboarding", True)
-        projects[key] = entry
+        for key in todo:
+            entry = projects.get(key)
+            if not isinstance(entry, dict):
+                entry = {}
+            entry["hasTrustDialogAccepted"] = True
+            # Claude expects a few companion flags on a project entry; set the
+            # ones that gate first-run prompts so the session starts clean.
+            entry.setdefault("hasCompletedProjectOnboarding", True)
+            projects[key] = entry
         try:
             tmp = cfg.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
