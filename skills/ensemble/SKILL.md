@@ -336,6 +336,22 @@ After a crash (no planned restart) nothing comes back by itself: resume a room
 that has nothing new to do with `POST /api/room/resume` and `"quiet": true`,
 which types no line.
 
+**A service that must outlive your terminal or a hub restart** (a project's
+app, a server, a bot) is started as a systemd unit of its own, never with
+`setsid`, `nohup` or `&` alone:
+
+```sh
+systemd-run --user --unit=<project>-<name> --working-directory="$PWD" -- <command>
+```
+
+Stop it with `systemctl --user stop <project>-<name>`; `journalctl --user -u
+<project>-<name>` has its output. `setsid` and `nohup` change the session and
+the signals, not the cgroup: on Linux the process stays in the cgroup of the
+hub's unit or of its PTY host's scope, and stopping that unit ends every
+process in it. Before a restart the hub moves such a process into a scope of
+its own (`kept-<name>-<pid>.scope`) and says so, or refuses the restart when it
+cannot; do not count on that, and say in your report how the service runs.
+
 ## Long tasks: the handover
 
 Every model call re-sends the whole conversation, so a task's owner (the
