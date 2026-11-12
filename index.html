@@ -15275,14 +15275,14 @@ function pdActionItems(r, ctx, o) {
 // button has no place, so one that opens something under its button is
 // given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
 // colours' picker, Open in editor's repo picker).
-function pdRunAction(it, ctx, el) {
+function pdRunAction(it, ctx, el, at) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = it.cls || '';
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  b._at = pdMenuButton(ctx, el);
+  b._at = at || pdMenuButton(ctx, el);
   if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
@@ -16441,11 +16441,26 @@ function ldpMenu(b, r, rect) {
   el.className = 'dcm'; el.setAttribute('role', 'menu');
   const title = rowTitle(r);
   el.setAttribute('aria-label', 'Actions for ' + title);
-  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
-  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-  el.innerHTML = `<div class="dcm-head">${esc(title)}</div>`
+  // ED-334: the row's own actions, the same model as its row and task panel
+  // menus (Start/Resume, Rename, Move, Make PO, Delete…), after Open (the
+  // row's click). Hidden items (Hide terminal) are left out: no terminal is
+  // up for a row in the left panel.
+  const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
+  const acts = [];
+  const groups = (model.primary ? [[model.primary], ...model.groups] : model.groups)
+    .map(g => g.filter(it => !it.hidden && it.id !== 'open')).filter(g => g.length);
+  const itemHtml = (it) => {
+    const i = acts.push(it) - 1;
+    const tip = it.disabled ? it.reason : it.title;
+    return `<button type="button" role="${it.role || 'menuitem'}" class="ov-item dcm-item${it.danger ? ' danger' : ''}" data-ldp-act="${i}"`
+      + (tip ? ` title="${esc(tip)}"` : '') + (it.disabled ? ' disabled aria-disabled="true"' : '')
+      + (it.role === 'menuitemcheckbox' ? ` aria-checked="${!!it.checked}"` : '')
+      + (it.popup ? ' aria-haspopup="dialog"' : '') + `>${esc(it.label)}</button>`;
+  };
+  el.innerHTML = `<div class="dcm-head">${esc(title)}</div><div class="dcm-list">`
     + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`;
+    + groups.map(g => '<div class="am-sep" role="separator"></div>' + g.map(itemHtml).join('')).join('')
+    + '</div>';
   document.body.appendChild(el);
   docsMenuPlace(el, rect);
   const dots = b.matches('[data-ldp-menu]') ? b : (b.closest('.ldp-item') || b).querySelector('[data-ldp-menu]');
@@ -16469,12 +16484,16 @@ function ldpMenu(b, r, rect) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
     else if (e.key === 'Tab') { ldpMenuClose(); }
   };
-  // Make PO: the page's own .makepo-btn handler (on document) does the work.
+  // An action runs the page's own handler for it (on document, keyed on the
+  // item's class and data), through the Dock menu's stand-in button; a picker
+  // it opens (Terminal colours) opens under the ⋯.
   el.addEventListener('click', (e) => {
     const it = e.target.closest('.dcm-item');
     if (!it || it.disabled) return;
     if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return; }
-    setTimeout(ldpMenuClose, 0);
+    const a = acts[+it.dataset.ldpAct];
+    ldpMenuClose();
+    if (a) pdRunAction(a, null, null, dots || b);
   });
   const first = el.querySelector('.dcm-item');
   if (first) first.focus();

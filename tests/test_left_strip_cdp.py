@@ -282,11 +282,18 @@ async function main() {
     await front(p, 'inbox'); await p.click(LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)); await sleep(900);
     out.loose = await G(p);
     // its ⋯ and its right click: Open and Make PO
-    const MENU = `(() => { const m = document.querySelector('body > .dcm'); return m ? { items: [...m.querySelectorAll('.dcm-item')].map(b => ({ t: b.textContent.trim(), makepo: b.classList.contains('makepo-btn'), room: b.dataset.room || '', disabled: b.disabled })), expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]') } : null; })()`;
+    const MENU = `(() => { const m = document.querySelector('body > .dcm'); return m ? { items: [...m.querySelectorAll('.dcm-item')].map(b => ({ t: b.textContent.trim(), makepo: b.textContent.trim().startsWith('Make PO'), disabled: b.disabled })), expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]') } : null; })()`;
     await p.evalIn(`(() => { const b = ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}; b.click(); return 0; })()`); await sleep(300);
     out.dotsMenu = await p.evalIn(MENU);
     await p.key('Escape'); await sleep(200);
     out.dotsClosed = await p.evalIn(MENU);
+    // ED-334: an action picked in the ⋯ menu (Agents and models…) runs the page's own handler for the row
+    await p.evalIn(`(() => { const b = ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}; b.click(); return 0; })()`); await sleep(300);
+    out.actRun = await p.evalIn(`(async () => { const was = showAgentsModal; let got = null;
+      showAgentsModal = (room) => { got = room || ''; };
+      try { const it = [...document.querySelectorAll('body > .dcm .dcm-item')].find(e => e.textContent.trim().startsWith('Agents and models'));
+        if (!it) return { found: false }; it.click(); await new Promise(r => setTimeout(r, 300));
+        return { found: true, room: got, closed: !document.querySelector('body > .dcm') }; } finally { showAgentsModal = was; } })()`);
     const [cx, cy] = await p.evalIn(`(() => { const r = ${LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)}.getBoundingClientRect(); return [r.left + 30, r.top + r.height / 2]; })()`);
     await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'right', clickCount: 1 }, p.sessionId);
     await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'right', clickCount: 1 }, p.sessionId);
@@ -600,7 +607,12 @@ async function main() {
         await q.evalIn(SESS);
         await q.clickAt(x, y); await sleep(250);
         o.again = await q.evalIn(ST);
-        await q.click(`document.getElementById('ld-ibx-body')`); await sleep(250);
+        // a click outside: on the Inbox's body, below (or above) the menu, never on it
+        const [ox, oy] = await q.evalIn(`(() => { const b = document.getElementById('ld-ibx-body').getBoundingClientRect();
+          const m = document.querySelector('body > .dcm:not([hidden])'), r = m ? m.getBoundingClientRect() : { top: b.top, bottom: b.top };
+          const y = r.bottom + 12 < b.bottom ? (r.bottom + b.bottom) / 2 : r.top - 12 > b.top ? (b.top + r.top) / 2 : b.top + 4;
+          return [b.left + 8, y]; })()`);
+        await q.clickAt(ox, oy); await sleep(250);
         o.outside = await q.evalIn(ST);
         // keyboard: focus ⋯, Enter opens; Escape; Space opens
         await q.evalIn(SESS);
@@ -957,8 +969,9 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertEqual(m["items"][0]["t"], "Open")
                 mp = [i for i in m["items"] if i["makepo"]]
                 self.assertEqual(len(mp), 1)
-                self.assertEqual(mp[0]["room"], self.loose)
                 self.assertTrue(mp[0]["t"].startswith("Make PO of a new"))
+        run = self.g("actRun")
+        self.assertEqual(run, {"found": True, "room": self.loose, "closed": True}, "an action runs for the row and the menu closes")
         self.assertTrue(self.g("dotsMenu")["expanded"])
         self.assertIsNone(self.g("dotsClosed"), "Esc closes it")
         self.assertIsNone(self.g("ctxClosed"), "a click elsewhere closes it")
@@ -1203,7 +1216,14 @@ class LeftStripInChrome(unittest.TestCase):
                 o = d[kind]
                 self.assertTrue(o["click"]["open"], o["click"])
                 self.assertEqual(o["click"]["items"][0], "Open")
-                self.assertTrue(any(i.startswith("Make PO") for i in o["click"]["items"]), o["click"]["items"])
+                items = o["click"]["items"]
+                self.assertTrue(any(i.startswith("Make PO") for i in items), items)
+                # the row's own actions (the same model as its row and task panel menus)
+                self.assertIn("Rename…", items)
+                self.assertTrue(any(i.startswith("Move to") for i in items), items)
+                self.assertIn("Delete task…" if kind == "task" else "Delete session…", items)
+                if kind == "session":
+                    self.assertIn("Archive", items)
                 self.assertTrue(o["click"]["inside"], o["click"])
                 self.assertTrue(o["click"]["expanded"])
                 self.assertEqual(o["click"]["opened"], [], "the row did not open")
