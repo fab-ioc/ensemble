@@ -7,6 +7,9 @@
   plain icon is written out again from its tree, 48x48 with its viewBox, and
   #329's own check (project_icon.accept) takes it;
 * parse(): the usable ones from a chatty answer, no two alike, at most four;
+  linear on many openers with no closer, at most 32 tried, `</svg >` closes;
+* _run(): the prompt goes in on stdin, never in argv (a Windows .cmd shim
+  would shell-parse it); a runaway answer is read only up to MAX_OUTPUT;
 * about_text(): the roadmap's first line of prose, its first sentence;
 * generate() with the CLI stubbed: ok, no CLI, a timeout, an error, no
   usable icon, already busy; the prompt carries the name and what it is about;
@@ -18,9 +21,12 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -132,6 +138,19 @@ class Parse(unittest.TestCase):
         self.assertEqual(len(got), 4)
         self.assertIn('width="1"', got[0].split("<rect", 1)[1])
 
+    def test_malformed_answers_parse_in_linear_time(self):
+        t = time.monotonic()
+        self.assertEqual(icon_gen.parse("<svg " * 60000), [])
+        self.assertEqual(icon_gen.parse("<svg>x</svgx " * 20000), [])
+        self.assertEqual(icon_gen.parse("<svgx " * 40000 + GOOD), [icon_gen.sanitize(GOOD)])
+        self.assertLess(time.monotonic() - t, 1.0)
+
+    def test_at_most_32_are_tried_and_a_spaced_closer_counts(self):
+        bad = svg('<script>x</script>')
+        self.assertEqual(icon_gen.parse(bad * 32 + GOOD), [])
+        self.assertEqual(icon_gen.parse(bad * 31 + GOOD), [icon_gen.sanitize(GOOD)])
+        self.assertEqual(icon_gen.parse(GOOD[:-6] + "</svg \n>"), [icon_gen.sanitize(GOOD)])
+
     def test_nothing_usable(self):
         self.assertEqual(icon_gen.parse(""), [])
         self.assertEqual(icon_gen.parse("I cannot draw."), [])
@@ -216,6 +235,47 @@ class Generate(unittest.TestCase):
         self.assertNotIn("N" * 121, p)
         self.assertNotIn("A" * 201, p)
         self.assertNotIn("about:", icon_gen.prompt("Motors", ""))
+
+
+class Run(unittest.TestCase):
+    """_run() with subprocess.run caught or a stand-in CLI script."""
+    NASTY = 'Harbour" & del /q * | calc ^ %PATH% $(id) `id`'
+
+    def caught(self, cli):
+        seen = {}
+
+        def fake(cmd, **kw):
+            seen["cmd"] = cmd
+            seen["stdin"] = kw["stdin"].read().decode("utf-8")
+            self.assertNotIn("input", kw)
+            kw["stdout"].write(GOOD.encode())
+            return subprocess.CompletedProcess(cmd, 0)
+        with mock.patch.object(icon_gen.subprocess, "run", fake):
+            out = icon_gen._run(cli, icon_gen.prompt(self.NASTY, "about & | ^"), 5)
+        return seen, out
+
+    def test_the_prompt_goes_in_on_stdin_never_in_argv(self):
+        for cli in (CLAUDE, {"agent": "codex", "model": "", "bin": "C:/npm/codex.cmd"}):
+            seen, out = self.caught(cli)
+            self.assertIn(self.NASTY, seen["stdin"], cli["agent"])
+            self.assertFalse(any("Harbour" in a or "about" in a for a in seen["cmd"]), seen["cmd"])
+            self.assertEqual(out, GOOD)
+        self.assertEqual(self.caught(CLAUDE)[0]["cmd"][1:], ["-p", "--model", "haiku", "--tools", ""])
+        self.assertEqual(seen["cmd"][-1], "-", "codex exec reads its prompt from stdin")
+
+    @unittest.skipIf(os.name == "nt", "a POSIX stand-in script")
+    def test_a_runaway_answer_is_read_only_up_to_the_cap(self):
+        with tempfile.TemporaryDirectory() as d:
+            cli = Path(d) / "stand-in"   # a "claude" would be refused by agent_launch in a test
+            cli.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n"
+                           "sys.stdout.write('x' * (3 * 1024 * 1024))\n")
+            cli.chmod(0o755)
+            out = icon_gen._run({"agent": "claude", "model": "haiku", "bin": str(cli)}, "p", 20)
+            self.assertEqual(len(out), icon_gen.MAX_OUTPUT)
+            cli.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('e' * 100000 + 'signed out')\nsys.exit(1)\n")
+            with self.assertRaises(RuntimeError) as e:
+                icon_gen._run({"agent": "claude", "model": "haiku", "bin": str(cli)}, "p", 20)
+            self.assertLessEqual(len(str(e.exception)), 300)
 
 
 class Endpoints(Hub):

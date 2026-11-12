@@ -126,15 +126,44 @@ def sanitize(text: str) -> str:
     return walk(root, 0)
 
 
-_SVG_RE = re.compile(r"<svg\b.*?</svg\s*>", re.S | re.I)
+MAX_CANDIDATES = 32
+_SVG_CLOSE = re.compile(r"\s*>")
+
+
+def _svg_blocks(text: str):
+    """Each `<svg ...>...</svg>` in text, the shortest from each opener, in one
+    pass (a regex's lazy match is quadratic on many openers with no closer)."""
+    low = text.lower()
+    i = 0
+    while True:
+        a = low.find("<svg", i)
+        if a < 0:
+            return
+        nxt = low[a + 4:a + 5]
+        if nxt and (nxt.isalnum() or nxt == "_"):
+            i = a + 4
+            continue
+        b = low.find("</svg", a + 4)
+        while b >= 0:
+            m = _SVG_CLOSE.match(low, b + 5)
+            if m:
+                break
+            b = low.find("</svg", b + 5)
+        if b < 0:
+            return   # no closer after this opener, so none after a later one
+        yield text[a:m.end()]
+        i = m.end()
 
 
 def parse(output: str) -> list[str]:
-    """The usable icons in a model's answer, sanitised, at most COUNT, no two alike."""
+    """The usable icons in a model's answer, sanitised, at most COUNT, no two
+    alike; at most MAX_CANDIDATES are tried."""
     out: list[str] = []
-    for m in _SVG_RE.finditer((output or "")[:MAX_OUTPUT]):
+    for n, block in enumerate(_svg_blocks((output or "")[:MAX_OUTPUT])):
+        if n >= MAX_CANDIDATES:
+            break
         try:
-            s = sanitize(m.group(0))
+            s = sanitize(block)
         except Unsafe:
             continue
         if s not in out:
@@ -190,28 +219,42 @@ def which_cli() -> dict | None:
     return None
 
 
+def _head(path: Path, limit: int = MAX_OUTPUT) -> str:
+    """The first `limit` bytes of a file, as text ("" when it is missing)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _run(cli: dict, text: str, timeout: float) -> str:
-    """The CLI's answer (raises subprocess.TimeoutExpired, RuntimeError)."""
+    """The CLI's answer, at most MAX_OUTPUT bytes of it (raises
+    subprocess.TimeoutExpired, RuntimeError, OSError).
+
+    The prompt, which holds the typed name and the roadmap's words, goes in on
+    stdin, never in argv: on Windows the CLI is often a .cmd shim, and cmd.exe
+    would parse its arguments as shell text. Its answer goes to files, read
+    only up to MAX_OUTPUT, so a runaway answer cannot fill the hub's memory."""
     with tempfile.TemporaryDirectory(prefix="ens-icon-") as tmp:
+        t = Path(tmp)
         env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE",)}
         if cli["agent"] == "claude":
-            # The prompt first: `--tools ""` before it would take it as a tool list.
-            cmd = [cli["bin"], "-p", text, "--model", cli["model"], "--tools", ""]
+            cmd = [cli["bin"], "-p", "--model", cli["model"], "--tools", ""]
             out_file = None
         else:
-            out_file = Path(tmp) / "answer.txt"
+            out_file = t / "answer.txt"
             cmd = [cli["bin"], "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
-                   "-C", tmp, "-o", str(out_file), text]
-        p = subprocess.run(cmd, cwd=tmp, env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace", timeout=timeout)
+                   "-C", tmp, "-o", str(out_file), "-"]
+        (t / "prompt.txt").write_text(text, encoding="utf-8")
+        with open(t / "prompt.txt", "rb") as fin, open(t / "stdout.txt", "wb") as fout, \
+                open(t / "stderr.txt", "wb") as ferr:
+            p = subprocess.run(cmd, cwd=tmp, env=env, stdin=fin, stdout=fout, stderr=ferr, timeout=timeout)
         if p.returncode:
-            raise RuntimeError((p.stderr or p.stdout or "")[-300:])
-        if out_file is not None:
-            try:
-                return out_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                return p.stdout or ""
-        return p.stdout or ""
+            raise RuntimeError((_head(t / "stderr.txt", 4096) or _head(t / "stdout.txt", 4096))[-300:])
+        if out_file is not None and out_file.exists():
+            return _head(out_file)
+        return _head(t / "stdout.txt")
 
 
 def generate(key: str, name: str, about: str, timeout: float = TIMEOUT_S) -> tuple[bool, str, dict]:
