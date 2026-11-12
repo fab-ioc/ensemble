@@ -995,10 +995,7 @@
     0%, 40% { box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
     100% { box-shadow:inset 0 0 0 2px transparent, inset 0 0 0 999px transparent; }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .msg.landed, .msg .landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
-  }
-  /* Opened from the Inbox (#343, P316/P317): the whole balloon, an ask's card
+  /* Opened from the Inbox (ED-343, P316/P317): the whole balloon, an ask's card
      too, takes that treatment at full strength (its real background is
      --selected-bg, so a card in it keeps its --surface), with a FROM THE INBOX
      label after its time; then it fades, gone the Inbox highlight setting
@@ -1013,7 +1010,9 @@
   .msg.ibx-landed .lz-inbox { animation:ibx-label var(--ibx-fade, 1s) linear var(--ibx-hold, 2.5s) both; }
   @keyframes ibx-label { to { background-color:transparent; color:transparent; } }
   @media (prefers-reduced-motion: reduce) {
-    .msg.ibx-landed, .msg.ibx-landed .lz-inbox { animation-timing-function:step-end; }
+    .msg.landed, .msg .landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
+    .msg.ibx-landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent); background-color:var(--selected-bg); }
+    .msg.ibx-landed .lz-inbox { animation:none; }
   }
   /* It takes the focus to be announced (aria-current="location"); its ring is
      what shows where the focus is, so no second one. */
@@ -5822,6 +5821,8 @@ function ibxMark(el, age, ms) {
     const tag = document.createElement('span');
     tag.className = 'lz lz-inbox';
     tag.textContent = 'From the Inbox';
+    // A rebuilt header on the same balloon joins the ring's current fade.
+    tag.style.animationDelay = (ms - Math.min(1000, ms * 0.3) - age) + 'ms';
     const stamp = from.querySelector('.at');
     if (stamp) stamp.after(tag); else from.appendChild(tag);
   }
@@ -7786,7 +7787,7 @@ function sideOpen(o) {
   tsLayout();
   if (same && shown) {
     // Open already: land on the balloon there instead of loading it again.
-    if (o.msg && f.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {} }
+    if (o.msg && f.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '', hl: IBX_HL_MS / 1000 }, location.origin); } catch (e) {} }
   } else {
     try { f.contentWindow?.edStoreNow(); } catch (e) {}
     f.setAttribute('src', u);

@@ -127,6 +127,10 @@ let GOTO = '', LANDED = null, _landing = false, CHAT_DRAWN = true, LAST_ITEMS = 
 let _cmtComposerOpen = false, selShown = () => false, STICK = false;
 const FOLD = { open: new Set() };
 let GROUP_OF_MID = new Map(), GAP_OF_MID = new Map(), GOTO_PART = '';
+// This harness exercises an ordinary link; Inbox landings are tested in Chrome.
+const ibxPart = () => false, barePart = p => String(p || '');
+const landedMs = () => 2600;
+function ibxUnmark() {}
 const setTimeout = () => 0;
 const clearTimeout = () => {};
 function showGotoNote() {}

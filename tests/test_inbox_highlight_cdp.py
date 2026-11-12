@@ -134,6 +134,17 @@ async function main() {
       const inbox = async () => { if (mobile) { await p.evalIn('ibxOpen(); 0'); await sleep(400); } await p.until(`!!(${link(A.answer)})`, 20000); };
       await inbox();
       o.hrefs = await p.evalIn(`[${link(A.answer)}, ${link(A.ask)}].map(a => a && a.getAttribute('href'))`);
+      // A Dock pop-out's document is kept in PD_POP_DOCS. Exercise the same
+      // forwarding path with a frame shaped like the one in that document.
+      o.popoutForward = await p.evalIn(`(() => {
+        const rid = 'room-popout-inbox-check', sent = [];
+        const frame = { dataset: { room: rid }, contentWindow: { postMessage: (data, origin) => sent.push({ data, origin }) } };
+        const doc = { querySelectorAll: () => [frame] };
+        GOTO_MSG.set(rid, { msg: 'm-popout', part: 'inbox,ask:0' });
+        PD_POP_DOCS.set(doc, []);
+        try { sendGotoMsg(rid); } finally { PD_POP_DOCS.delete(doc); GOTO_MSG.delete(rid); }
+        return sent[0] || null;
+      })()`);
       o.inboxRowMarked = await p.evalIn(`[...document.querySelectorAll('.ibx-row')].some(r => /landed|current/.test(r.className) || r.hasAttribute('aria-current'))`);
       // (a) the answer, from a real Inbox click
       o.answer = await series(p, tag + '-answer', A.answer, 3500, () => p.click(link(A.answer)));
@@ -343,6 +354,16 @@ class InboxHighlightInChrome(unittest.TestCase):
                 answer, ask = o["hrefs"]
                 self.assertTrue(answer.endswith(f"msg={self.ids['answer']}&part=inbox"), answer)
                 self.assertTrue(ask.endswith(f"msg={self.ids['ask']}&part=inbox,ask:0"), ask)
+
+    def test_a_dock_popout_frame_receives_the_inbox_landing(self):
+        for o, gap, tag in self.each():
+            with self.subTest(tag):
+                sent = o["popoutForward"]
+                self.assertIsNotNone(sent)
+                self.assertEqual(sent["data"]["msg"], "m-popout")
+                self.assertEqual(sent["data"]["part"], "inbox,ask:0")
+                self.assertEqual(sent["data"]["hl"], 3.5)
+                self.assertTrue(sent["origin"].startswith("http://127.0.0.1:"))
 
     def test_a_second_click_moves_it_and_an_ask_marks_its_whole_message(self):
         for o, gap, tag in self.each():
