@@ -14503,6 +14503,18 @@ function midLeave() {
 // than a new one (PD_HELD_WIN), and the window's close is held while the
 // conversation's panel comes back (Dock closes the window it leaves).
 let PD_HELD_WIN = null;
+function pdPopInKeepWindow(d, id, w) {
+  let own = false, close = null, held = false;
+  try {
+    own = Object.prototype.hasOwnProperty.call(w, 'close');
+    close = w.close;
+    const keep = () => {};
+    w.close = keep;
+    held = w.close === keep;
+    return held && !!d.popIn(id);
+  } catch (e) { return false; }
+  finally { if (held) { try { if (own) w.close = close; else delete w.close; } catch (e) {} } }
+}
 function pdTaskKeepOut() {
   const d = PD.dock;
   if (!d || !pdTask()) return false;
@@ -14512,11 +14524,7 @@ function pdTaskKeepOut() {
   if (!w || !r || !r.roomId || PD.rt.has(pdChatId(r.roomId))) return false;
   try { if (w.closed) return false; } catch (e) { return false; }
   const id = pdChatId(r.roomId), name = 'ensemble-panel-' + id;
-  // The Window's own close, put back once the panel is home.
-  let own = false, close = null;
-  try { own = Object.prototype.hasOwnProperty.call(w, 'close'); close = w.close; w.close = () => {}; } catch (e) { return false; }
-  try { d.popIn('po-chat'); }
-  finally { try { if (own) w.close = close; else delete w.close; } catch (e) {} }
+  if (!pdPopInKeepWindow(d, 'po-chat', w)) return false;
   // Its name is the new panel's (popName + id): a reload of this page finds it.
   try { w.name = name; } catch (e) {}
   PD_HELD_WIN = { name, win: w };
@@ -14527,6 +14535,9 @@ function pdTaskKeepOut() {
   if (!out) { try { w.close(); } catch (e) {} }
   return out;
 }
+// A page reload also removes the middle task. Hand its window to the task's
+// chat before Dock suspends windows for the next page to adopt.
+window.addEventListener('pagehide', () => { pdTaskKeepOut(); });
 function poClosePeek() {
   PO_PEEK = false; PO_PIN = '';
   renderPo();
@@ -15187,7 +15198,36 @@ const pdChatId = roomId => 'chat:' + roomId;
 // The room's chat panel, if it has one, goes (dock-removed -> pdChatRemoved).
 function pdChatUnpanel(roomId) {
   const cid = pdChatId(roomId);
-  if (PD.dock && PD.rt.has(cid)) { try { PD.dock.removePanel(cid); } catch (e) {} }
+  const d = PD.dock;
+  if (!d || !PD.rt.has(cid)) return;
+  // Changes and Workspace take a task's chat from its panel back to the
+  // middle. If the chat has its own window, the task and its tools keep that
+  // window: transfer it back to po-chat before removing the chat panel.
+  let w = null;
+  try { w = d.popWindow(cid); } catch (e) {}
+  // If another task owns the conversation's window, it keeps that one too.
+  if (w && d.popWindow('po-chat') && pdTask()) pdTaskKeepOut();
+  else if (w && d.popWindow('po-chat')) {
+    // A PO conversation in its own window can stay there as a standalone
+    // conversation, freeing po-chat for this task and its tools.
+    const poWin = d.popWindow('po-chat');
+    const poRoom = wcPoRoom() || poDockProject()?.poRoomId;
+    if (poRoom && pdPopInKeepWindow(d, 'po-chat', poWin)) {
+      try { poWin.location.replace('/session?room=' + encodeURIComponent(poRoom)); } catch (e) {}
+    }
+  }
+  if (w) {
+    // Leave the task in its window if the transfer cannot run.
+    if (d.popWindow('po-chat') || !pdPopInKeepWindow(d, cid, w)) return;
+    try { d.removePanel(cid); } catch (e) {}
+    const name = 'ensemble-panel-po-chat';
+    try { w.name = name; } catch (e) {}
+    PD_HELD_WIN = { name, win: w };
+    try { d.popOut('po-chat'); } catch (e) {}
+    finally { PD_HELD_WIN = null; }
+    return;
+  }
+  try { d.removePanel(cid); } catch (e) {}
 }
 // What a chat panel is called: "#12 The title" (the conversation's window too).
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
