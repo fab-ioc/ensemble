@@ -4017,6 +4017,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
     body.po-dock #workspace-compose:not([hidden]) { display:block; }
+    /* Clear of the window's foot and right edge, all four corners in view (#333). */
+    body.po-dock #workspace-compose { margin:0 var(--s-300) var(--s-200) 0; }
   }
   /* Just after a click restored a minimised panel: its second click, if it
      lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
@@ -14821,7 +14823,8 @@ function wcFrameFit(height, sized) {
   const f = document.getElementById('workspace-compose-frame');
   // A height set by hand (#274) may take about 70% of the window, To: line included.
   const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
-  WC.boxH = Math.min(Math.max(80, +height || 110), cap);
+  // Unsized, the frame is as tall as the box it holds (#333: no blank under the input).
+  WC.boxH = Math.min(Math.max(sized ? 80 : 40, +height || 110), cap);
   wcFrameApply(f);
 }
 // A menu opening upward from the box (+, Send's, Stop's, the / list) needs
@@ -22089,7 +22092,7 @@ function wideBanner() {
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner'];
+  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
