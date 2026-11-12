@@ -304,6 +304,20 @@ class FeedbackEndpoint(unittest.TestCase):
             _, result = self.post('send', {'id': draft['id']})
         self.assertIn('refused', result['message'])
 
+    def test_gh_odd_label_metadata_is_success_with_warning(self):
+        # #332 review 3: once html_url is valid the issue exists.
+        url = 'https://github.com/fab-ioc/ensemble/issues/9'
+        for labels in (None, 'feedback', [{'name': 7}], [None, 'bug'], {'name': 'feedback'}, 'missing'):
+            with self.subTest(labels=labels):
+                with patch.object(feedback, 'output', return_value='alice-gh'):
+                    draft = self.draft()
+                issue = {'html_url': url} | ({} if labels == 'missing' else {'labels': labels})
+                with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run', return_value=Mock(returncode=0, stdout=json.dumps(issue))):
+                    status, result = self.post('send', {'id': draft['id']})
+                self.assertEqual(status, 200)
+                self.assertTrue(result['ok']); self.assertEqual(result['url'], url)
+                self.assertIn('omitted requested labels', result['warning'])
+
     def test_limits_origin_and_diagnostic_allowlist(self):
         self.assertEqual(self.post('preview', self.data | {'description': 'a' * 41000})[0], 413)
         self.assertEqual(self.post('preview', self.data, {'Origin': 'https://evil.example'})[0], 403)

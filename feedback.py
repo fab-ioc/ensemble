@@ -281,7 +281,10 @@ def send(ident):
             if not issue_url(url, plan["repo"]):
                 raise ValueError("bad response")
             result = dict(ok=True, url=url)
-            applied = {label.get("name", "").lower() for label in issue.get("labels", []) if isinstance(label, dict)}
+            # The issue exists once its URL is valid: odd label metadata is only a warning.
+            labels = issue.get("labels")
+            applied = {label["name"].lower() for label in (labels if isinstance(labels, list) else [])
+                       if isinstance(label, dict) and isinstance(label.get("name"), str)}
             if not {"feedback", plan["kind"]}.issubset(applied):
                 result["warning"] = "GitHub omitted requested labels (repository permission may be required). The Bug/Idea classification remains in the issue body."
         else:
