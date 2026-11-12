@@ -225,6 +225,7 @@ class FeedbackEndpoint(unittest.TestCase):
         self.assertIn('not anonymous', result['message'])
         self.assertTrue(result['url'].startswith('https://github.com/fab-ioc/ensemble/issues/new?'))
         self.assertNotIn('Alice', result['url'])
+        self.assertFalse(result['unsure'])   # nothing was sent anywhere
 
     def test_relay_down_offers_fallback_and_preserves_retry(self):
         draft = self.draft(anonymous=True)
@@ -233,7 +234,49 @@ class FeedbackEndpoint(unittest.TestCase):
             _, result = self.post('send', {'id': draft['id']})
         self.assertTrue(result['fallback'])
         self.assertNotIn('private host', result['message'])
+        self.assertTrue(result['unsure'])    # the relay may have created it (#332)
         self.assertEqual(feedback._drafts[draft['id']]['state'], 'ready')
+
+    def test_delivery_unknown_only_after_the_request_left(self):
+        # #332 review 2: a failure before the POST left says Not sent; one
+        # after it (timeout, dropped connection, bad reply) may have created the issue.
+        import socket
+        cases = [(urllib.error.URLError(socket.gaierror(-2, 'Name or service not known')), False),
+                 (urllib.error.URLError(ConnectionRefusedError(111, 'Connection refused')), False),
+                 (ConnectionRefusedError(111, 'Connection refused'), False),
+                 (urllib.error.URLError(TimeoutError('timed out')), True),
+                 (TimeoutError('timed out'), True),
+                 (ConnectionResetError(104, 'Connection reset by peer'), True),
+                 (urllib.error.HTTPError('url', 502, 'Bad gateway', {}, None), True)]
+        for error, unsure in cases:
+            with self.subTest(error=repr(error)):
+                draft = self.draft(anonymous=True)
+                opener = Mock(); opener.open.side_effect = error
+                with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+                    _, result = self.post('send', {'id': draft['id']})
+                self.assertTrue(result['fallback'])
+                self.assertIs(result['unsure'], unsure)
+                self.assertEqual('nothing was sent' in result['reason'], not unsure)
+                self.assertEqual(feedback._drafts[draft['id']]['state'], 'ready')
+
+    def test_malformed_success_reply_is_delivery_unknown(self):
+        for reply in (b'[]', b'"x"', b'null', b'{"url": 7}', b'not json'):
+            with self.subTest(reply=reply):
+                draft = self.draft(anonymous=True)
+                opener = Mock()
+                opener.open.return_value.__enter__ = Mock(return_value=io.BytesIO(reply))
+                opener.open.return_value.__exit__ = Mock(return_value=False)
+                with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+                    status, result = self.post('send', {'id': draft['id']})
+                self.assertEqual(status, 200)
+                self.assertTrue(result['fallback']); self.assertTrue(result['unsure'])
+        with patch.object(feedback, 'output', return_value='alice-gh'):
+            draft = self.draft()
+        with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run', return_value=Mock(returncode=0, stdout='[]')):
+            status, result = self.post('send', {'id': draft['id']})
+        self.assertEqual(status, 200)
+        self.assertFalse(result['ok']); self.assertTrue(result['unsure'])
+        self.assertTrue(result['message'].startswith('Could not confirm delivery.'))
 
     def test_missing_ca_certificates_are_named(self):
         draft = self.draft(anonymous=True)
@@ -242,6 +285,7 @@ class FeedbackEndpoint(unittest.TestCase):
             _, result = self.post('send', {'id': draft['id']})
         self.assertTrue(result['fallback'])
         self.assertIn('Install Certificates', result['message'])
+        self.assertFalse(result['unsure'])   # refused before anything was sent
 
     def test_rate_limit_does_not_bypass_through_fallback(self):
         draft = self.draft(anonymous=True)
@@ -259,6 +303,20 @@ class FeedbackEndpoint(unittest.TestCase):
         with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run', return_value=Mock(returncode=1)):
             _, result = self.post('send', {'id': draft['id']})
         self.assertIn('refused', result['message'])
+
+    def test_gh_odd_label_metadata_is_success_with_warning(self):
+        # #332 review 3: once html_url is valid the issue exists.
+        url = 'https://github.com/fab-ioc/ensemble/issues/9'
+        for labels in (None, 'feedback', [{'name': 7}], [None, 'bug'], {'name': 'feedback'}, 'missing'):
+            with self.subTest(labels=labels):
+                with patch.object(feedback, 'output', return_value='alice-gh'):
+                    draft = self.draft()
+                issue = {'html_url': url} | ({} if labels == 'missing' else {'labels': labels})
+                with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run', return_value=Mock(returncode=0, stdout=json.dumps(issue))):
+                    status, result = self.post('send', {'id': draft['id']})
+                self.assertEqual(status, 200)
+                self.assertTrue(result['ok']); self.assertEqual(result['url'], url)
+                self.assertIn('omitted requested labels', result['warning'])
 
     def test_limits_origin_and_diagnostic_allowlist(self):
         self.assertEqual(self.post('preview', self.data | {'description': 'a' * 41000})[0], 413)
