@@ -137,7 +137,7 @@ def _find_in(flat: str) -> dict | None:
             "answerable": scr["pick"] is not None, "at": start, "screen": scr}
 
 
-def _is_latest(flat: str, scr: dict, start: int) -> bool:
+def _is_latest(flat: str, scr: dict, start: int, strict: bool = False) -> bool:
     """The screen is the last thing drawn. The tail is a history: a trust
     screen followed by another modal ("Grant access to this tool?", or a
     short "Allow this action" over the same footer) is still in it, and
@@ -149,11 +149,18 @@ def _is_latest(flat: str, scr: dict, start: int) -> bool:
     words, a common footer) after at most ``tailgap`` (none by default), a
     gap never holding a question mark, a cursor or a numbered item, and at
     most ``_TRAIL`` chars and no question mark after the last anchor. A
-    later modal's own text breaks the chain before its footer."""
+    later modal's own text breaks the chain before its footer.
+
+    ``strict`` is the rule for sending a key: from its first option on, the
+    screen's own options and footer (and the cursor and numbers leading an
+    option) must be all that is drawn, to the very end of the tail.
+    Anything after them, however short, leaves the screen to a person: it
+    is reported, not answered."""
     body = tuple(scr["options"]) + tuple(scr["words"][1:]) + tuple(scr.get("bridge", ()))
     closing = tuple(scr.get("end", ())) + FOOTERS
-    limit = {a: scr.get("gap", _GAP) for a in body}
-    limit.update({a: scr.get("tailgap", _TAILGAP) for a in closing if a not in limit})
+    limit = {a: 0 if strict else scr.get("gap", _GAP) for a in body}
+    limit.update({a: 0 if strict else scr.get("tailgap", _TAILGAP)
+                  for a in closing if a not in limit})
     q = start + len(scr["words"][0])
 
     def next_anchor(p):
@@ -171,12 +178,15 @@ def _is_latest(flat: str, scr: dict, start: int) -> bool:
         if nxt is None:
             break
         gap = flat[p:nxt[0]]
-        if len(gap) > limit[nxt[1]]:
+        bare = _LEAD.sub("", gap, count=1)
+        if len(bare if strict else gap) > limit[nxt[1]]:
             break
-        if _FOREIGN.search(_LEAD.sub("", gap, count=1)):
+        if _FOREIGN.search(bare):
             break
         p = nxt[0] + len(nxt[1])
     rest = flat[p:]
+    if strict:
+        return not rest
     return len(rest) <= _TRAIL and "?" not in rest
 
 
@@ -237,13 +247,14 @@ def hub_folder(cwd: str) -> bool:
 # Answering
 # ---------------------------------------------------------------------------
 
-def codex_untrusted(cwd: str) -> bool:
-    """Codex's config marks ``cwd`` (any key it is looked up by) untrusted."""
+def codex_blocker(cwd: str) -> str:
+    """Why ``cwd``'s Codex trust screen is left to a person, or "" (see
+    ``agents.codex.trust_blocker``)."""
     try:
         from agents import codex
-        return codex.explicitly_untrusted(cwd)
+        return codex.trust_blocker(cwd)
     except Exception:
-        return False
+        return "unreadable"
 
 
 def _key(sess) -> str:
@@ -303,8 +314,10 @@ def _answer(sess, key: str, cwd: str, log) -> bool:
         if hit is None or not hit["answerable"]:
             return False
         scr = hit["screen"]
-        if scr["cli"] == "codex" and codex_untrusted(cwd):
-            return False                # the person marked it untrusted
+        if scr["cli"] == "codex" and codex_blocker(cwd):
+            return False                # marked untrusted, or a config the hub cannot read
+        if not _is_latest(flat, scr, hit["at"], strict=True):
+            return False                # something follows its options and footer: flag it
         on = _cursor_at(flat, scr, hit["at"])
         if on == scr["pick"]:
             # Marked before the key: an Enter that went in is never repeated.

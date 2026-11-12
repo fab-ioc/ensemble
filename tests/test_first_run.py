@@ -131,8 +131,8 @@ class CodexTrustTest(unittest.TestCase):
         self.assertFalse(self.agent.ensure_trusted(str(link)))
         self.assertEqual(self.cfg.read_text(encoding="utf-8"), text,
                          "the real path is not trusted behind the person's back")
-        self.assertTrue(agents.codex.explicitly_untrusted(str(link)))
-        self.assertFalse(agents.codex.explicitly_untrusted(str(Path(self.tmp.name))))
+        self.assertEqual(agents.codex.trust_blocker(str(link)), "untrusted")
+        self.assertEqual(agents.codex.trust_blocker(str(Path(self.tmp.name))), "")
 
     @unittest.skipIf(tomllib is None, "Python 3.11+")
     def test_a_table_without_a_trust_level_is_left_alone(self):
@@ -141,27 +141,6 @@ class CodexTrustTest(unittest.TestCase):
         self.cfg.write_text(text, encoding="utf-8")
         self.assertFalse(self.agent.ensure_trusted(str(self.folder)))
         self.assertEqual(self.cfg.read_text(encoding="utf-8"), text)
-
-    def test_without_tomllib_only_a_trusted_entry_counts(self):
-        self.home.mkdir()
-        key = os.path.realpath(self.folder)
-        head = f'[projects."{key}"]\n'
-        with mock.patch.object(agents.codex, "tomllib", None):
-            for body in ('trust_level = "untrusted"\n', 'note = "mine"\n'):
-                text = head + body + '\n[tui]\ntrust_level = "trusted"\n'
-                self.cfg.write_text(text, encoding="utf-8")
-                self.assertFalse(self.agent.ensure_trusted(str(self.folder)), body)
-                self.assertEqual(self.cfg.read_text(encoding="utf-8"), text, body)
-            self.assertTrue(agents.codex.explicitly_untrusted(str(self.folder)) is False)
-            text = head + 'trust_level = "trusted"\n'
-            self.cfg.write_text(text, encoding="utf-8")
-            self.assertTrue(self.agent.ensure_trusted(str(self.folder)))
-            self.assertEqual(self.cfg.read_text(encoding="utf-8"), text, "already there")
-            self.cfg.write_text('model = "x"\n', encoding="utf-8")
-            self.assertTrue(self.agent.ensure_trusted(str(self.folder)))
-            self.assertIn(head + 'trust_level = "trusted"\n', self.cfg.read_text(encoding="utf-8"))
-            self.cfg.write_text(head + 'trust_level = "untrusted"\n', encoding="utf-8")
-            self.assertTrue(agents.codex.explicitly_untrusted(str(self.folder)))
 
     def test_answer_reads_untrusted_from_the_codex_config(self):
         self.home.mkdir()
@@ -173,27 +152,33 @@ class CodexTrustTest(unittest.TestCase):
             self.assertFalse(first_run.answer(sess, str(self.folder), log=lambda m: None))
         self.assertEqual(sess.writes, [])
 
-    def test_without_tomllib_other_forms_of_the_key_are_respected(self):
-        # Review 2: dotted keys and inline tables are valid TOML for the same
-        # entry; a header of ours after them would be a duplicate table.
-        self.home.mkdir()
-        k = agents.codex._toml_key(os.path.realpath(self.folder))
-        cases = {
-            f'projects.{k}.trust_level = "untrusted"\n': "untrusted",
-            f'[projects]\n{k} = {{ trust_level = "untrusted" }}\n': "untrusted",
-            f'[projects]\n{k}.note = "mine"\n': "notrust",
-            f'projects.{k}.trust_level = "trusted"\n': "trusted",
-        }
+    def test_without_tomllib_the_config_is_never_written(self):
+        # Known limit (PO decision after review 3): on Python 3.10 the hub does
+        # not guess at a config it cannot parse; the seat is flagged instead.
         with mock.patch.object(agents.codex, "tomllib", None):
-            for text, state in cases.items():
-                self.cfg.write_text(text, encoding="utf-8")
-                self.assertEqual(self.agent.ensure_trusted(str(self.folder)), state == "trusted", text)
-                self.assertEqual(self.cfg.read_text(encoding="utf-8"), text, text)
-                self.assertEqual(agents.codex.explicitly_untrusted(str(self.folder)),
-                                 state == "untrusted", text)
-        if tomllib is not None:
-            for text in cases:
-                tomllib.loads(text)             # the cases are valid TOML, left valid
+            self.assertFalse(self.agent.ensure_trusted(str(self.folder)))
+            self.assertFalse(self.cfg.exists(), "no config created")
+            self.home.mkdir()
+            text = 'model = "x"\n'
+            self.cfg.write_text(text, encoding="utf-8")
+            self.assertFalse(self.agent.ensure_trusted(str(self.folder)))
+            self.assertEqual(self.cfg.read_text(encoding="utf-8"), text)
+            self.assertEqual(agents.codex.trust_blocker(str(self.folder)), "noparser")
+            sess = FakeSess("codex_trust", {})
+            with mock.patch.object(first_run, "hub_folder", return_value=True), \
+                 mock.patch.object(first_run.time, "sleep", return_value=None):
+                self.assertFalse(first_run.answer(sess, str(self.folder), log=lambda m: None))
+            self.assertEqual(sess.writes, [], "flagged, not answered")
+            ev = {"alive": True, "scan": attention.analyse(fixture("codex_trust")), "hook": None,
+                  "claudeStatus": "", "limit": None, "idleSeconds": 120,
+                  "tail": fixture("codex_trust"), "cwd": str(self.folder), "death": None}
+            with mock.patch.object(first_run, "hub_folder", return_value=True), \
+                 mock.patch.object(attention._d.provider_retry, "status", return_value=None), \
+                 mock.patch.object(attention._d, "workflow_of", return_value="inprogress"):
+                state, reason, extra = attention._classify_agent(
+                    {"owners": ["claude"]}, {"identity": "codex", "agent": "codex"}, ev, 600, 1791878500)
+            self.assertEqual((state, extra["cause"]), ("stalled", "first_run"))
+            self.assertIn("no tomllib", reason)
 
     def test_the_repository_root_is_not_trusted(self):
         if tomllib is None:
@@ -330,7 +315,7 @@ class AnswerTest(unittest.TestCase):
         sleep = mock.patch.object(first_run.time, "sleep", return_value=None)
         sleep.start()
         self.addCleanup(sleep.stop)
-        untrusted = mock.patch.object(first_run, "codex_untrusted", return_value=False)
+        untrusted = mock.patch.object(first_run, "codex_blocker", return_value="")
         untrusted.start()
         self.addCleanup(untrusted.stop)
 
@@ -379,9 +364,24 @@ class AnswerTest(unittest.TestCase):
             self.assertFalse(first_run.answer(sess, "/srv/hub/work/WTD/repo", log=lambda m: None))
         self.assertEqual(sess.writes, [])
 
+    def test_anything_after_the_options_and_footer_gets_no_key(self):
+        # PO rule after review 3: Enter only when the screen's own options and
+        # footer are the last thing drawn; anything after them, however
+        # short, is flagged instead.
+        for extra in ("\nAllow\nNo, exit\nEnter to confirm · Esc to cancel\n", "\nContinue\n", "\nx\n"):
+            sess = FakeSess("claude_down", {}, extra=extra)
+            with self.hub():
+                self.assertFalse(first_run.answer(sess, "/srv/hub/work/WTD/repo", log=lambda m: None),
+                                 extra)
+            self.assertEqual(sess.writes, [], extra)
+        sess = FakeSess("codex_trust", {}, extra="\nContinue\n")
+        with self.hub():
+            self.assertFalse(first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None))
+        self.assertEqual(sess.writes, [])
+
     def test_a_folder_marked_untrusted_in_codex_gets_no_key(self):
         sess = FakeSess("codex_trust", {})
-        with self.hub(), mock.patch.object(first_run, "codex_untrusted", return_value=True):
+        with self.hub(), mock.patch.object(first_run, "codex_blocker", return_value="untrusted"):
             self.assertFalse(first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None))
         self.assertEqual(sess.writes, [])
 
@@ -452,7 +452,7 @@ class LookTest(unittest.TestCase):
             rotation=types.SimpleNamespace(_pty=lambda p: sess))
         with mock.patch.object(first_run, "_d", fake), \
              mock.patch.object(first_run, "hub_folder", return_value=True), \
-             mock.patch.object(first_run, "codex_untrusted", return_value=False), \
+             mock.patch.object(first_run, "codex_blocker", return_value=""), \
              mock.patch.object(first_run, "_log"):
             for _ in range(4):
                 first_run.look("room-x", 0)
@@ -498,10 +498,17 @@ class AttentionTest(unittest.TestCase):
 
     def test_untrusted_folder_wording(self):
         with mock.patch.object(first_run, "hub_folder", return_value=True), \
-             mock.patch.object(first_run, "codex_untrusted", return_value=True):
+             mock.patch.object(first_run, "codex_blocker", return_value="untrusted"):
             _, reason, extra = self.classify(self.ev(fixture("codex_trust"), 120))
         self.assertEqual(extra["cause"], "first_run")
         self.assertIn("marked untrusted in Codex's config", reason)
+
+    def test_a_screen_with_something_short_after_it_is_flagged(self):
+        tail = fixture("claude_down") + "\nContinue\n"
+        with mock.patch.object(first_run, "hub_folder", return_value=True):
+            state, reason, extra = self.classify(self.ev(tail, 120),
+                                                 {"identity": "claude", "agent": "claude"})
+        self.assertEqual((state, extra["cause"]), ("stalled", "first_run"))
 
     def test_an_answered_screen_is_not_a_stall(self):
         got = self.classify(self.ev(fixture("codex_answered"), 120))

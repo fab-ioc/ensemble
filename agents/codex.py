@@ -111,9 +111,10 @@ def _toml_key(s: str) -> str:
 def _trust_states(text: str, keys: list[str]) -> dict[str, str] | None:
     """Each key's entry in the config text: "trusted", "untrusted" (or any
     other trust level: not trusted), "notrust" (its table has no trust
-    level), or "missing". None when the text does not parse."""
+    level), or "missing". None when the text does not parse, or there is
+    no TOML parser to read it with (Python 3.10)."""
     if tomllib is None:
-        return {k: _scan_trust(text, k) for k in keys}
+        return None
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
@@ -131,56 +132,24 @@ def _trust_states(text: str, keys: list[str]) -> dict[str, str] | None:
     return out
 
 
-_TRUST_LINE = re.compile(r"""^\s*trust_level\s*=\s*["']([^"']*)["']""")
-_TRUST_ANY = re.compile(r"""\btrust_level\s*=\s*["']([^"']*)["']""")
-
-
-def _scan_trust(text: str, key: str) -> str:
-    """``_trust_states`` for one key without a TOML parser (Python 3.10).
-    The key's own table (``[projects."<key>"]``) is read up to the next
-    table for a trust level. Any other line naming the key (dotted keys
-    ``projects."<key>".trust_level = ...``, an inline table, a sub-table,
-    the path as some other value) counts by the trust level written on it,
-    and as "notrust" (never appended to) without one: a header of ours
-    could then duplicate a table the parser would see. The most cautious
-    reading wins: untrusted, then unknown, then trusted."""
-    names = (_toml_key(key), f"'{key}'")
-    heads = {f"[projects.{n}]" for n in names}
-    found = []
-    lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if line.strip() in heads:
-            state = "notrust"
-            for body in lines[i + 1:]:
-                if body.lstrip().startswith("["):
-                    break
-                m = _TRUST_LINE.match(body)
-                if m:
-                    state = "trusted" if m.group(1) == "trusted" else "untrusted"
-                    break
-            found.append(state)
-        elif any(n in line for n in names):
-            m = _TRUST_ANY.search(line)
-            found.append(("trusted" if m.group(1) == "trusted" else "untrusted") if m else "notrust")
-    for state in ("untrusted", "notrust", "trusted"):
-        if state in found:
-            return state
-    return "missing"
-
-
-def explicitly_untrusted(cwd: str) -> bool:
-    """Any of the keys Codex may look ``cwd`` up by is marked with a trust
-    level other than "trusted" in its config: the person decided, so the
-    hub neither trusts the folder nor answers its trust screen."""
-    if not cwd:
-        return False
+def trust_blocker(cwd: str) -> str:
+    """Why the hub must leave ``cwd``'s Codex trust screen to a person, or
+    "": "untrusted" when any key Codex may look it up by is marked with a
+    trust level other than "trusted" (the person decided), "noparser" when
+    there is no TOML parser to read the config with (Python 3.10: the hub
+    never guesses at it), "unreadable" when the config cannot be read or
+    parsed."""
+    if tomllib is None:
+        return "noparser"
     cfg = _codex_home() / "config.toml"
     try:
         text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
     except OSError:
-        return False
-    states = _trust_states(text, _trust_keys(cwd)) or {}
-    return any(st == "untrusted" for st in states.values())
+        return "unreadable"
+    states = _trust_states(text, _trust_keys(cwd or "."))
+    if states is None:
+        return "unreadable"
+    return "untrusted" if any(st == "untrusted" for st in states.values()) else ""
 
 
 def _iso_to_epoch(ts: str) -> float:
@@ -624,8 +593,13 @@ class CodexAgent(AgentType):
         for it without a trust level) nothing is written. Missing entries go
         in with one append, checked to parse first; a config that does not
         parse is left as it is. Idempotent; True when every key is trusted
-        afterwards."""
-        if not cwd:
+        afterwards.
+
+        Known limit: without a TOML parser (Python 3.10, no ``tomllib``) the
+        config is never written, since a header appended to a config the hub
+        cannot read could duplicate a table. Codex then shows its trust screen
+        and the seat is flagged for a person (``first_run`` / ``attention``)."""
+        if not cwd or tomllib is None:
             return False
         keys = _trust_keys(cwd)
         with _TRUST_LOCK:
@@ -645,13 +619,12 @@ class CodexAgent(AgentType):
             blocks = "\n".join(f"[projects.{_toml_key(k)}]\ntrust_level = \"trusted\"\n"
                                for k in missing)
             sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
-            if tomllib is not None:
-                try:
-                    tomllib.loads(text + sep + blocks)
-                except tomllib.TOMLDecodeError:
-                    # `projects` is written another way (dotted keys, an
-                    # inline table): a header of ours would break the file.
-                    return False
+            try:
+                tomllib.loads(text + sep + blocks)
+            except tomllib.TOMLDecodeError:
+                # `projects` is written another way (dotted keys, an inline
+                # table): a header of ours would break the file.
+                return False
             try:
                 cfg.parent.mkdir(parents=True, exist_ok=True)
                 # Appended, not rewritten: Codex itself rewrites this file, and

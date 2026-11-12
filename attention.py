@@ -1420,9 +1420,13 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         cwd = part.get("cwd") or ev.get("cwd") or ""
         if not first["answerable"]:
             why = "the hub does not answer it; answer it in its terminal"
-        elif first["cli"] == "codex" and first_run.codex_untrusted(cwd):
-            why = ("its folder is marked untrusted in Codex's config, so the hub leaves it "
-                   "to you; answer it in its terminal or change that entry")
+        elif first["cli"] == "codex" and (blocker := first_run.codex_blocker(cwd)):
+            why = {"untrusted": "its folder is marked untrusted in Codex's config, so the hub "
+                                "leaves it to you; answer it in its terminal or change that entry",
+                   "noparser": "the hub cannot read Codex's config on this Python (no tomllib), "
+                               "so it leaves it to you; answer it in its terminal",
+                   }.get(blocker, "the hub cannot read Codex's config, so it leaves it to you; "
+                                  "answer it in its terminal")
         elif first_run.hub_folder(cwd):
             why = "the hub could not answer it; answer it in its terminal"
         else:
