@@ -20,6 +20,9 @@ without an answer; "the new hub" is /api/config answering with another pid.
   the dialog says so within seconds, not after the ten-minute stall;
 * the hub away past the limit, then back the same: Update now again works,
   and the first attempt's loop is over (a later new hub reloads nothing);
+* the hub not answering before the request: no request, the dialog says so,
+  and after every failure with a reason Update now is there again;
+* a hung status request ends even without AbortSignal.timeout;
 * the app: a helper that gives up after its preflight (the copy) is a
   failure with its reason at once.
 
@@ -143,7 +146,9 @@ async function main() {
       await open();
       await click('#update-banner-go');
       await watch(R, {});
-      R.dialog = await dialog(); }
+      R.dialog = await dialog();
+      await click('#update-close');
+      R.bannerAfter = await ev(`!document.getElementById('update-banner').hidden`); }
     // 5. The hub stays away past the limit (it says so and keeps looking),
     //    comes back the same; Update now again fails; then a new hub answers:
     //    the first attempt's loop is over, so nothing reloads the page.
@@ -153,9 +158,10 @@ async function main() {
       await click('#update-banner-go');
       await watch(R, {});
       R.notBack = await dialog();
-      R.back = await until(`fetch('/api/config').then(r => r.ok).catch(() => false)`, 100);
+      R.bannerWhileAway = await ev(`!document.getElementById('update-banner').hidden`);
+      R.back = await until(`!document.getElementById('update-banner').hidden`, 150);   // Update now again, once the hub is back
       await click('#update-close');
-      await ev('triggerUpdate(); true');
+      await click('#update-banner-go');
       const R2 = R.second = {};
       await watch(R2, {});
       R2.dialog = await dialog();
@@ -163,7 +169,27 @@ async function main() {
       await sleep(5000);                  // a new hub answers 3 s after the failure
       R.newPid = await ev(`fetch('/api/config').then(r => r.json()).then(c => c.pid)`);
       R.markAfter = await ev('window.__mark330 || 0'); }
-    // 6. The app: the helper gives up after the preflight (the copy).
+    // 6. The hub does not answer before the request (stale failures on it):
+    //    no request goes out, the dialog says so, Update now is there again.
+    { const R = out.noBaseline = {};
+      await open();
+      await ev(`(() => { const f = window.fetch; window.__posts = 0;
+        window.fetch = (u, o) => { const p = String(u);
+          if (p.startsWith('/api/update-status')) return Promise.reject(new TypeError('Failed to fetch'));
+          if (p === '/api/update' && o && o.method === 'POST') window.__posts++;
+          return f(u, o); }; return true; })()`);
+      await click('#update-banner-go');
+      await watch(R, {});
+      R.dialog = await dialog();
+      R.posts = await ev('window.__posts');
+      await click('#update-close');
+      R.bannerAfter = await ev(`!document.getElementById('update-banner').hidden`); }
+    // 7. A browser without AbortSignal.timeout still gives up on a hung request.
+    { const R = out.hang = {};
+      await open();
+      R.got = await ev(`(async () => { UPD_LIMITS.fetchS = 1; AbortSignal.timeout = undefined;
+        const t = performance.now(); const v = await updJson('/api/__hang'); return { v, ms: performance.now() - t }; })()`); }
+    // 8. The app: the helper gives up after the preflight (the copy).
     { const R = out.app = {};
       await open();
       R.packaged = await ev('!!RUNTIME_CFG.packaged');
@@ -263,6 +289,8 @@ class UpdateCard(unittest.TestCase):
             return False
 
         def do_get(h):
+            if h.path.startswith("/api/__hang"):
+                time.sleep(4)                 # a request that hangs
             if not away(h):
                 real_get(h)
 
@@ -377,8 +405,25 @@ class UpdateCard(unittest.TestCase):
         self.assertEqual(g["dialog"]["stage"], "The hub did not get the update request")
         self.assertIn("Check the connection, then Update now again.", g["dialog"]["hint"])
 
+    def test_after_a_failure_update_now_is_there_again(self):
+        self.assertTrue(self.got["lost"]["bannerAfter"])
+        self.assertTrue(self.got["noBaseline"]["bannerAfter"])
+
+    def test_a_hub_that_does_not_answer_first_gets_no_request(self):
+        g = self.got["noBaseline"]
+        self.assertTrue(g.get("failed"), g)
+        self.assertEqual(g["dialog"]["stage"], "The hub did not answer")
+        self.assertIn("Check the connection", g["dialog"]["hint"])
+        self.assertEqual(g["posts"], 0)
+
+    def test_a_hung_request_ends_without_abortsignal_timeout(self):
+        g = self.got["hang"]["got"]
+        self.assertIsNone(g["v"])
+        self.assertLess(g["ms"], 2500)
+
     def test_after_not_back_a_new_press_ends_the_old_loop(self):
         g = self.got["retry"]
+        self.assertFalse(g["bannerWhileAway"], "no Update now while the hub is away")
         self.assertTrue(g.get("failed"), g)
         self.assertRegex(g["notBack"]["stage"], r"^Waited ")
         self.assertTrue(g["back"], g)

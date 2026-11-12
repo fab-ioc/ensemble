@@ -9446,9 +9446,14 @@ function updCardDrain(v) {
 }
 const updSleep = ms => new Promise(r => setTimeout(r, ms));
 // A timed-out fetch, so a hung request never keeps the card spinning.
-const updSignal = ms => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(ms) : undefined;
+function updSignal(ms) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const c = new AbortController();   // a browser without AbortSignal.timeout
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
 async function updJson(url) {
-  try { const r = await fetch(url, { cache: 'no-store', signal: updSignal(8000) }); return r.ok ? await r.json() : null; } catch { return null; }
+  try { const r = await fetch(url, { cache: 'no-store', signal: updSignal(UPD_LIMITS.fetchS * 1000) }); return r.ok ? await r.json() : null; } catch { return null; }
 }
 // Where the update's helper writes: logs/update.log (the app) or logs/restart.log.
 function updLogPath(app) {
@@ -9461,6 +9466,7 @@ const UPD_LIMITS = {
   downS: 300,      // the hub away this long: "The hub did not come back"
   stallS: 600,     // the old hub answering this long with no new step: stopped
   idlePolls: 5,    // the request got no answer and the hub, up, shows no update this many polls
+  fetchS: 8,       // one status request, at most
 };
 let UPD_ATTEMPT = 0;           // a new press ends the loop of the one before (one still looking after "did not come back")
 async function triggerUpdate() {
@@ -9481,17 +9487,29 @@ async function triggerUpdate() {
   updCardShow(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
   // What the hub said before this press: anything it records later is this
-  // attempt's (an earlier attempt's outcome is not).
-  const before = (await updJson('/api/update-status')) || {};
+  // attempt's (an earlier attempt's outcome is not). Without it nothing
+  // could be told apart from an earlier attempt's, so a hub that does not
+  // answer gets no request.
+  let before = null;
+  for (let i = 0; i < 3 && !before; i++) {
+    if (i) await updSleep(1000);
+    before = await updJson('/api/update-status');
+  }
+  if (!mine()) return;
+  const now = () => performance.now();
+  let logPath = updLogPath(app);
+  const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
+  // A failure with a reason leaves this hub as it was: Update now is there again.
+  const fail = (reason, advice) => { stop(); if (reason && banner) banner.hidden = false; showUpdateFailed(logPath, reason, advice); };
+  if (!before) {
+    fail('The hub did not answer', 'Check the connection, then Update now again.');
+    return;
+  }
   const seen = {
     last: (before.last && before.last.at) || 0,
     app: before.at || 0,
     src: (before.restart && before.restart.at) || 0,
   };
-  const now = () => performance.now();
-  let logPath = updLogPath(app);
-  const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
-  const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
   // The hub only restarts for this page (it holds the key the hub handed it
   // when the page opened) or the Ensemble Dashboard PO. A 403 is a real no —
   // e.g. the key is from before a restart and the page needs a reload — so
@@ -9552,6 +9570,7 @@ async function triggerUpdate() {
       // A new hub. The app's: the new version, or the old one put back.
       if (app && target && cfg.version && cfg.version !== target) {
         const st = await updJson('/api/update-status');
+        if (!mine()) return;
         const last = st && st.last;
         fail(last && last.rolledBack && last.from
           ? `Ensemble ${target} did not start, so ${last.from} was put back`
@@ -9562,11 +9581,17 @@ async function triggerUpdate() {
       updCardShow(app || target ? `${target || cfg.version} is running · Reloading the page`
                                 : 'The new code is running · Reloading the page');
       await updSleep(600);
+      if (!mine()) return;
       ensUpd.hold = false;
       ensUpd.reload();   // keeps the place
       return;
     }
-    if (notBack) continue;
+    if (notBack) {
+      // The same hub is back after all: it still runs the old code, so
+      // Update now can be pressed again.
+      if (banner && banner.hidden && !UPDATE_IN_PROGRESS) banner.hidden = false;
+      continue;
+    }
     // The hub that took the update still runs: where it stands.
     if (unanswered && !draining) {
       const v = await updJson('/api/restart/drain');
