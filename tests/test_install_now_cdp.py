@@ -101,6 +101,10 @@ async function main() {
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('window.ensBooted === true && !!window.whatsNew && !!whatsNew.info && whatsNew.info.available', 30000);
     await sleep(300);
+    await evalIn(`{ const original = window.fetch; window.__updatePosts = [];
+      window.fetch = async (...args) => { const r = await original(...args);
+        if (String(args[0]) === '/api/update' && args[1]?.method === 'POST') window.__updatePosts.push(r.status);
+        return r; }; } 0`);
     return { evalIn, until, click, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   // The chip's menu, then What's new (the route the CEO takes).
@@ -119,7 +123,7 @@ async function main() {
     return p.evalIn(SEEN);
   };
   const OK = { cached: 'avail', check: 'avail' };
-  const cardUp = `!document.getElementById('upd-card').hidden`;
+  const cardUp = `!document.getElementById('upd-card').hidden && window.__updatePosts.includes(202)`;
   const said = `!document.getElementById('wn-msg').hidden && !/^Checking/.test(document.getElementById('wn-msg').textContent)`;
   try {
     // A: a page loaded while an update is available.
@@ -240,7 +244,7 @@ class InstallNowInChrome(unittest.TestCase):
             cls.log.append({"case": m.get("case"), "refusal": handler.path, "refused": bool(why)})
             return why
 
-        def request_restart(reason, who, kind):
+        def request_restart(reason, who, kind, stop_foreign=False):
             cls.log.append({"case": mode().get("case"), "post": kind})
             return {"status": 202, "started": True, "draining": False}
 
