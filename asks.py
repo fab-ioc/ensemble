@@ -47,6 +47,7 @@ import functools
 import re
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 _d = None   # the dashboard module (bind)
 
@@ -80,17 +81,45 @@ _REC_LEAD = re.compile(r"^(?:\*\*|__)?recommended(?:\*\*|__)?[ \t]*[:—–-][ \
 _BOLD_HEAD = re.compile(r"^(?:\*\*|__)(?P<l>[^*_\n]+?)(?:\*\*|__)[ \t]*(?P<rest>.*)$")
 _SPLIT = re.compile(r"[ \t]+[—–][ \t]+|[ \t]+-{1,2}[ \t]+|:[ \t]+")
 _MARKS = re.compile(r"\*\*|__|`")
-# An ask whose words are only links (bare, <…> or [text](…), with commas or
-# "and" between): a reminder of the cards it links to, not a question (P321,
-# #351). It makes no card; the page shows the line as those links' chips.
-_LINKS_ONLY = re.compile(
-    r"^(?:(?:[ \t,;]|and\b)*(?:<https?://[^\s<>]+>|\[[^\]\n]*\]\([ \t]*<?https?://[^\s)]+>?[ \t]*\)"
-    r"|https?://[^\s,;]+))+[ \t.,;]*$", re.I)
+# The links of an ask's words (bare, <…> or [text](…), with commas or "and"
+# between) when it has no other words (P321, #351). One that links only hub
+# messages ("Ask: <a card's link>") is a reminder of those cards, not a
+# question: it makes no card and the page shows the line as their chips. Any
+# other ask that is only links is still asked, under a title of words.
+_LINK = re.compile(r"<(https?://[^\s<>]+)>|\[[^\]\n]*\]\([ \t]*<?(https?://[^\s<>()]+)>?[ \t]*\)"
+                   r"|(https?://[^\s<>]+)", re.I)
+_LINK_GAP = re.compile(r"(?:[\s.,;]|\band\b)*", re.I)
+_URL_TAIL = re.compile(r"[.,;:!?_]+$")
+
+
+def _links(text: str) -> list[str]:
+    """The links ``text`` is made of; [] when it has words besides links."""
+    urls: list[str] = []
+    rest = _LINK.sub(lambda m: urls.append(m.group(1) or m.group(2) or m.group(3)) or " ", _plain(text))
+    return urls if urls and _LINK_GAP.fullmatch(rest) else []
+
+
+def _message_link(url: str) -> bool:
+    """``url`` is a link to a hub message (/session?room=…&msg=…, any host),
+    as message_refs.find_message_refs and the page's refOfUrl read one."""
+    try:
+        parts = urlsplit(_URL_TAIL.sub("", url))
+        q = parse_qs(parts.query)
+    except ValueError:
+        return False
+    return (parts.path == "/session" and bool((q.get("room") or [""])[0].strip())
+            and bool((q.get("msg") or [""])[0].strip()))
 
 
 def links_only(text: str) -> bool:
     """``text`` is only one or more links: no words to answer."""
-    return bool(_LINKS_ONLY.match(_plain(text)))
+    return bool(_links(text))
+
+
+def reminder(text: str) -> bool:
+    """``text`` is only links to hub messages: a reminder of their cards."""
+    urls = _links(text)
+    return bool(urls) and all(_message_link(u) for u in urls)
 
 
 def title(question: str, who: str = "") -> str:
@@ -459,7 +488,7 @@ def parse(text: str) -> list[dict]:
             end = j
         i = end
         question = _plain(q)[:QUESTION_MAX]
-        if not question or links_only(q):
+        if not question or reminder(q):
             continue        # a reminder of a card ("Ask: <its link>") asks nothing
         tag = " ".join((m.group("kind") or "").split())
         if opts or _OPEN_TAG.match(tag):

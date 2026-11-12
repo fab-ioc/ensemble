@@ -35,6 +35,9 @@ console.log(JSON.stringify({
   yesno: mdToHtml('**Ask (yes/no):** ' + U),
   listed: mdToHtml('1. **Ask:** ' + U),
   real: mdToHtml('Ask: Is ' + U + ' still right?'),
+  md: mdToHtml('Ask: [the card](' + U + ')'),
+  angle: mdToHtml('Ask: <' + U + '>.'),
+  other: mdToHtml('Ask: https://example.org/help'),
 }));
 """
 
@@ -55,7 +58,7 @@ class AskReminderLine(unittest.TestCase):
         cls.r = node(JS % (src, URL))
 
     def test_the_reminder_is_the_cards_chip_alone(self):
-        for k in ("plain", "yesno", "listed"):
+        for k in ("plain", "yesno", "listed", "md", "angle"):
             with self.subTest(form=k):
                 html = self.r[k]
                 self.assertIn('class="ref-chip card-jump"', html)
@@ -66,9 +69,15 @@ class AskReminderLine(unittest.TestCase):
         self.assertIn("Ask:", self.r["real"])
         self.assertIn("still right?", self.r["real"])
 
+    def test_a_link_alone_that_is_no_hub_message_stays_asked(self):
+        self.assertIn("Ask:", self.r["other"])
+        self.assertNotIn("card-jump", self.r["other"])
+
     def test_the_pages_two_patterns_are_the_same(self):
-        lit = re.search(r"^  linksOnly: (/.*?/i),\r?$", SESSION, re.M).group(1)
-        self.assertIn(lit + ".test(", fn(SESSION, "mdToHtml"))
+        lit = re.search(r"^  link: (/.*?/gi),\r?$", SESSION, re.M).group(1)
+        self.assertIn(".replace(" + lit + ",", fn(SESSION, "mdToHtml"))
+        gap = re.search(r"^  linkGap: (/.*?/i),\r?$", SESSION, re.M).group(1)
+        self.assertIn(gap + ".test(rest)", fn(SESSION, "mdToHtml"))
 
 
 if __name__ == "__main__":

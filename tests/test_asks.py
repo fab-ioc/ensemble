@@ -86,6 +86,8 @@ FIXTURES = {
     "reminder_links": "1. **Ask:** [the card](" + CARD_URL + "), and <" + CARD_URL.replace("ask:0", "ask:1") + ">.",
     "reminder_then_real": "Ask: " + CARD_URL + "\n\nAsk: Which hub sent them?\n- **Main** — epyc-32\n- **Other**",
     "question_with_link": "Ask: Is " + CARD_URL + " still right?",
+    # Only a link, but not to a hub message: still a question (review 1).
+    "other_link": "Ask: https://example.org/help",
 }
 
 NODE_JS = r"""
@@ -93,7 +95,7 @@ const vm = require('vm');
 const { code, fixtures } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, withPathAbbrevs: (t, f) => f(),
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, URL };
 // The card's words (#238, tests/test_card_text.py): plain here.
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
@@ -212,11 +214,22 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(len(q), 1, "words around the link are a question")
         self.assertTrue(asks.links_only(CARD_URL) and asks.links_only(f"`{CARD_URL}`"))
         self.assertFalse(asks.links_only("Which one? " + CARD_URL))
+        # Only links to hub messages remind; any other link alone is still asked.
+        self.assertEqual([a["question"] for a in asks.parse(FIXTURES["other_link"])], ["https://example.org/help"])
+        self.assertTrue(asks.reminder(CARD_URL + ", " + CARD_URL + "."))
+        self.assertFalse(asks.reminder("https://example.org/help"))
+        self.assertFalse(asks.reminder(CARD_URL + " https://example.org/help"))
+        self.assertFalse(asks.reminder("http://127.0.0.1:8765/session?room=room-8d56cd21"))
 
     def test_a_bare_link_is_never_an_asks_title(self):
         self.assertEqual(asks.title(CARD_URL, "claude"), "Question from claude")
         self.assertEqual(asks.title("<" + CARD_URL + ">"), "Question")
         self.assertEqual(asks.title("Ship it?", "claude"), "Ship it?")
+        # Any link alone, with the punctuation a URL may hold (review 1).
+        for u in ("https://example.org/help", "https://example.org/a;b", "https://example.org/a,b",
+                  "[help](https://example.org/a;b)"):
+            with self.subTest(url=u):
+                self.assertEqual(asks.title(u, "claude"), "Question from claude")
         with self.assertRaises(ValueError) as e:
             asks.validated([{"question": CARD_URL, "yesno": True}])
         self.assertIn("paste its link alone", str(e.exception))
