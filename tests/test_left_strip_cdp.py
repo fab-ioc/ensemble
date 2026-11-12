@@ -579,8 +579,18 @@ async function main() {
       if (un) un.sessions = (un.sessions || []).concat(rs.map(r => ({ sessionId: r.sessionId })));
       phPane('list'); swSetView('status');
       for (const d of document.querySelectorAll('details.sw-group[data-group="unassigned"]')) d.open = true;
-      return [...document.querySelectorAll('[data-group="unassigned"] .sw-kind-ico')].filter(s => s.getBoundingClientRect().width > 0).map(s => { const r = s.getBoundingClientRect();
-        return { k: s.getAttribute('aria-label'), w: Math.round(r.width), h: Math.round(r.height), parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(',') }; });
+      // each seeded row by its own id, scrolled to as a person would, its icon inside the screen
+      const W = document.documentElement.clientWidth, H = document.documentElement.clientHeight;
+      return rs.map(x => {
+        const row = document.querySelector('[data-group="unassigned"] [data-sid="' + x.sessionId + '"]');
+        const s = row && row.querySelector('.sw-kind-ico');
+        if (!s) return { sid: x.sessionId, k: null };
+        s.scrollIntoView({ block: 'center' });
+        const r = s.getBoundingClientRect();
+        return { sid: x.sessionId, k: s.getAttribute('aria-label'), w: Math.round(r.width), h: Math.round(r.height),
+                 inView: r.left >= 0 && r.top >= 0 && r.right <= W && r.bottom <= H,
+                 parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(',') };
+      });
     })()`);
     out.phoneListW = await ph.evalIn(`[document.documentElement.clientWidth, document.documentElement.scrollWidth]`);
     await ph.shot('left-strip-phone-list');
@@ -801,14 +811,13 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(s["sz"], [12, 12])
 
     def test_the_phone_list_wears_the_same_icons(self):
-        icos = self.got["phoneList"]
-        task = [i for i in icos if i["k"] == "task"]
-        sess = [i for i in icos if i["k"] == "session"]
-        self.assertTrue(task and sess, icos)
-        for i in task:
-            self.assertEqual((i["parts"], i["w"], i["h"]), ("rect,rect,path", 12, 12))
-        for i in sess:
-            self.assertEqual((i["parts"], i["w"], i["h"]), ("rect,path", 12, 12))
+        by = {i["sid"]: i for i in self.got["phoneList"]}
+        want = {"ph-task-1": ("task", "rect,rect,path"), "ph-sess-1": ("session", "rect,path")}
+        for sid, (k, parts) in want.items():
+            with self.subTest(sid=sid):
+                i = by[sid]
+                self.assertEqual((i["k"], i["parts"], i["w"], i["h"]), (k, parts, 12, 12), i)
+                self.assertTrue(i["inView"], "its icon on the screen: %s" % i)
         w, sw = self.got["phoneListW"]
         self.assertEqual((w, sw), (390, 390), "no sideways scroll on a phone")
 
