@@ -16384,8 +16384,15 @@ function ibxOlder(d, scope, pid) { return ibxScoped(d && d.older, scope, pid); }
 // dismissible rooms shown in its current scope, using the old Needs you rules.
 function ibxClearKeys(d, scope, pid) {
   if (!d) return [];
-  const rooms = new Set(ibxRows(d, scope, pid).concat(ibxOlder(d, scope, pid)).map(r => r.roomId));
-  return swClearable(swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs.filter(e => rooms.has(e.key)));
+  const shown = ibxRows(d, scope, pid);
+  const rooms = new Set(shown.concat(ibxOlder(d, scope, pid)).map(r => r.roomId));
+  const keys = swClearable(swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs.filter(e => rooms.has(e.key)));
+  // #352: a card closed by Done is cleared by Clear all too; `needs` stays
+  // the rooms Done with this is offered for (an item it clears).
+  const all = keys.slice();
+  for (const r of shown) if (ibxDealt(r) && r.roomId && !all.includes(r.roomId)) all.push(r.roomId);
+  all.needs = keys;
+  return all;
 }
 // A question the hub can close: an Ask card's (room, message, number).
 function ibxClosable(r) { return !!(r && r.roomId && r.mid && Number.isInteger(r.n) && (r.kind === 'answer')); }
@@ -16469,8 +16476,11 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
           + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it">Close this and earlier <span class="ibx-cn">${n}</span></button>` : '');
     } else if (r.kind === 'check' && cardN < 0) {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
+    } else if (ibxDealt(r)) {
+      // #352: every card can be closed; it comes back when its state is new.
+      acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Done: off the list until something new happens">Done</button>`;
     }
-    if (listed && dismissible.has(r.roomId) && r.kind !== 'check') {
+    if (listed && dismissible.has(r.roomId) && r.kind !== 'check' && !ibxDealt(r)) {
       acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back">Done with this</button>`;
     }
     const link = `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
@@ -16595,7 +16605,7 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   if (key === 'ldSig' && opts && opts.listed) {
     SW_CLEAR_KEYS = ibxClearKeys(IBX.data, IBX.scope, pid);
     if (SW_CLEAR && SW_CLEAR.phase === 'confirm' && !SW_CLEAR_KEYS.length) SW_CLEAR = null;
-    opts = { ...opts, clearHtml: swClearHtml(SW_CLEAR_KEYS), dismissible: SW_CLEAR_KEYS };
+    opts = { ...opts, clearHtml: swClearHtml(SW_CLEAR_KEYS), dismissible: SW_CLEAR_KEYS.needs || SW_CLEAR_KEYS };
   }
   const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone, opts);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
@@ -16696,13 +16706,22 @@ function ibxPoll() {
       if (IBX.data && IBX.data.pending && !IBX.soon) IBX.soon = setTimeout(() => { IBX.soon = 0; ibxPoll(); }, 2500);
     });
 }
-// A row without a message: its conversation (the PO's, or the task's).
+// A row without a message: its conversation (the PO's, or the task's), at
+// its latest (#352): a chat already open is told it is shown, so a click on
+// the task in the middle still takes it there; the list slid out goes back,
+// as a task row's click does.
 function ibxOpenRoom(rid) {
   const pj = registeredProjects().find(p => p.poRoomId === rid && poRowOf(p));
-  if (pj) { openPoOf(pj); return; }
-  const row = ALL_ROWS.find(r => r.roomId === rid || r.sessionId === rid);
-  if (row) openDetail(row.sessionId);
-  else window.open('/session?room=' + encodeURIComponent(rid), '_blank', 'noopener');
+  const row = pj ? null : ALL_ROWS.find(r => r.roomId === rid || r.sessionId === rid);
+  if (pj) openPoOf(pj);
+  else if (row) openDetail(row.sessionId);
+  else { window.open('/session?room=' + encodeURIComponent(rid), '_blank', 'noopener'); return; }
+  for (const d of [document, ...PD_POP_DOCS.keys()]) {
+    let fs = [];
+    try { fs = [...d.querySelectorAll('iframe.dp-session, iframe.po-session')]; } catch (e) {}
+    fs.forEach(f => { if (f.dataset.room === rid) pdWakeChat(f); });
+  }
+  if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
 }
 function ibxFind(id) {
   const d = IBX.data || {};
@@ -16724,11 +16743,15 @@ function ibxRowReq(r) {
       ? ['/api/room/points', { roomId: r.roomId, ids: r.points, action: 'ack', ...(r.item && r.answer ? { answer: r.answer } : {}) }]
       : ['/api/attention/done', { roomId: r.roomId }];
   }
+  // #352: a row no card closes (waiting, or a task's question put to them): Done is the room's dealtAt.
+  if (ibxDealt(r)) return ['/api/attention/done', { roomId: r.roomId }];
   return ['/api/room/ask/close', { roomId: r.roomId, mid: r.mid, n: r.n }];
 }
+// A row closed by Done (#352): no Ask card to close, not a check.
+function ibxDealt(r) { return !!r && r.kind !== 'check' && (r.dismiss ? r.dismiss === 'dealt' : !ibxClosable(r)); }
 function ibxRowSend(r) {
   const [url, body] = ibxRowReq(r);
-  if (r.kind === 'check') return ibxPost(url, body);
+  if (r.kind === 'check' || ibxDealt(r)) return ibxPost(url, body);
   return ibxPost(url, body).catch(e => {
     if (e.status === 409) return {};     // answered or closed meanwhile: gone either way
     throw e;

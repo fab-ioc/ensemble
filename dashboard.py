@@ -8717,6 +8717,7 @@ def attention_done_many(room_ids) -> tuple[int, dict]:
     if done:
         asks.forget()
         attention.snapshot(0)
+        inbox.forget()      # a waiting card it set aside leaves the Inbox now (#352)
     return 200, {"ok": True, "done": done, "missing": missing, "prev": prev}
 
 
@@ -8732,6 +8733,7 @@ def attention_undo(restore) -> tuple[int, dict]:
     back = [rid for rid, marks in restore.items() if chatroom.restore_dealt(rid, marks)]
     asks.forget()
     attention.snapshot(0)
+    inbox.forget()
     return 200, {"ok": True, "restored": back}
 
 
@@ -22888,6 +22890,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             asks.forget()
             attention.snapshot(0)
+            inbox.forget()      # a waiting card it set aside leaves the Inbox now (#352)
             self._send_json(200, {"ok": True, "dealtAt": dealt})
             return
         if p == "/api/attention/undo":

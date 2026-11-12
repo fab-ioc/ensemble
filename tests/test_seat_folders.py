@@ -190,6 +190,20 @@ class LaunchFolder(_Base):
         self.assertEqual(raw["folderMissing"]["identity"], "claude")
         self.assertIsInstance(dashboard.MissingFolderError("x"), dashboard.StartRoomError)
 
+    def test_352_a_refusal_says_the_full_folder_once_in_the_chat(self):
+        task = self.dir / "task"
+        task.mkdir()
+        rid = self.room(task / "repo", task, mode="inplace")
+        notes = lambda: [m for m in self.full(rid).get("messages", []) if m.get("noticeKind") == "folder"]
+        for _ in range(2):
+            with self.assertRaises(dashboard.MissingFolderError):
+                seat_folders.launch_folder(self.full(rid), "claude", str(task / "repo"))
+        got = notes()
+        self.assertEqual(len(got), 1, got)
+        self.assertIn(str(task / "repo"), got[0]["text"])
+        mark = self.raw(rid)["folderMissing"]
+        self.assertEqual((mark["roomCwd"], mark["seatCwd"]), (str(task / "repo"), str(task / "repo")))
+
     def test_a_folder_that_comes_back_clears_the_mark(self):
         task = self.dir / "task"
         task.mkdir()
@@ -515,6 +529,23 @@ class Attention(unittest.TestCase):
             self.assertIsNotNone(attention._folder_missing(self.room(d, kind="elsewhere")))
         self.assertIsNone(attention._folder_missing({"id": "r"}))
 
+
+    def test_352_a_running_seat_or_a_moved_task_is_no_longer_refused(self):
+        r = self.room("/no/such/folder")
+        self.assertIsNone(attention._folder_missing(r, ["claude"]))
+        self.assertIsNotNone(attention._folder_missing(r, ["codex"]))
+        r = self.room("/no/such/folder")
+        r["cwd"] = "/old"
+        r["participants"][0]["cwd"] = "/old"
+        r["folderMissing"].update(roomCwd="/old", seatCwd="/old")
+        self.assertIsNotNone(attention._folder_missing(r))
+        r["cwd"] = "/new"                       # the task moved
+        self.assertIsNone(attention._folder_missing(r))
+        r["cwd"] = "/old"
+        r["participants"][0]["cwd"] = "/new"    # the seat moved
+        self.assertIsNone(attention._folder_missing(r))
+        hit = attention._folder_missing(self.room("/no/such/folder", kind="elsewhere"))
+        self.assertEqual(hit[2]["folderKind"], "elsewhere")
 
 if __name__ == "__main__":
     unittest.main()

@@ -948,7 +948,7 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "model", "role",
                                    "ptyId", "sessionId", "lastExit", "resumedAt",
-                                   "rotatedAt", "answeredAt", "review")}
+                                   "rotatedAt", "answeredAt", "review", "cwd")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -1631,20 +1631,30 @@ def _stall_seconds() -> int:
 _DUP_GRACE_S = 30.0
 
 
-def _folder_missing(room: dict) -> tuple | None:
+def _folder_missing(room: dict, live_agents: list[str] | tuple = ()) -> tuple | None:
     """A start refused because a seat's folder is missing
-    (seat_folders.launch_folder): until its folder is there again or a start
-    succeeds."""
+    (seat_folders.launch_folder): until its folder is there again, a start
+    succeeds, the marked seat is running, or the task's or the seat's folder
+    is no longer the one the refusal was about (the task was moved, #352)."""
     mark = room.get("folderMissing")
     if not isinstance(mark, dict) or not mark.get("reason"):
         return None
     path = mark.get("path") or ""
     if path and mark.get("kind") != "elsewhere" and os.path.isdir(path):
         return None
+    ident = mark.get("identity") or ""
+    if ident and ident in live_agents:
+        return None             # it runs: whatever stopped it is over
     part = next((p for p in room.get("participants", [])
-                 if p.get("identity") == mark.get("identity")), {})
+                 if p.get("identity") == ident), {})
+    # A mark written by #352 or later records the folders it was about.
+    if "roomCwd" in mark and (mark.get("roomCwd") or "") != (room.get("cwd") or ""):
+        return None
+    if "seatCwd" in mark and part and (mark.get("seatCwd") or "") != (part.get("cwd") or ""):
+        return None
     return ("blocked", f"could not start: {mark['reason']}",
-            {"since": float(mark.get("since") or 0), "cause": "folder_missing", "path": path}, part)
+            {"since": float(mark.get("since") or 0), "cause": "folder_missing", "path": path,
+             "folderKind": mark.get("kind") or "missing"}, part)
 
 
 def _duplicate_ptys(room: dict, now: float) -> tuple | None:
@@ -1779,7 +1789,7 @@ def _items() -> list[dict]:
             hit = _classify_agent(room, part, ev, stall, now)
             if hit:
                 found.append((*hit, part))
-        missing = _folder_missing(room)
+        missing = _folder_missing(room, live_agents)
         if missing:
             # Its start was refused: its folder is not there (ED-344). That,
             # not "the agent is gone", is what the person has to fix.
@@ -1877,7 +1887,7 @@ def _items() -> list[dict]:
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId", "askPart",
                   "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds",
-                  "openAsks", "permission", "permissionKey"):
+                  "openAsks", "permission", "permissionKey", "folderKind"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         if extra.get("dismiss"):

@@ -145,9 +145,20 @@ def recreate_worktree(room: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def _mark(room: dict, ident: str, path: str, reason: str, kind: str = "missing") -> None:
+    """The refusal on the room for the person (attention). It records the
+    task's and the seat's folders as they were, so a task moved since reads
+    as no longer refused (#352). A refusal not already marked in the same
+    words is also said in the task's chat, with the full folder: the Inbox
+    card names no path, the opened task does."""
+    part = next((p for p in room.get("participants", []) if p.get("identity") == ident), {})
+    prev = room.get("folderMissing")
     mark = {"path": path, "identity": ident, "reason": reason, "kind": kind,
-            "since": time.time()}
+            "since": time.time(), "roomCwd": room.get("cwd") or "",
+            "seatCwd": part.get("cwd") or ""}
     room["folderMissing"] = mark
+    if not (isinstance(prev, dict) and prev.get("reason") == reason
+            and prev.get("identity") == ident):
+        _note(room, f"Could not start {ident or 'the task'}: {reason}")
     rid = room.get("id", "")
     if not rid:
         return
