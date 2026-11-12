@@ -67,6 +67,8 @@ from backends.shared import (
 # Images pasted into a chat box, kept for the agent.
 import attachments
 import project_icon
+# An initiative's icon drawn by an AI model (#335).
+import icon_gen
 # Which Ensemble this is (its version; built app or a checkout), and Update now
 # for the built app (from GitHub Releases).
 import app_version
@@ -198,6 +200,7 @@ if "backends.windows" in sys.modules:
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
+icon_gen.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
 task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
@@ -8274,6 +8277,37 @@ def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, s
             with contextlib.suppress(OSError):
                 f.unlink()
     return True, "ok", icon
+
+
+def project_icon_about(proj: dict) -> str:
+    """What Generate tells the model a project is about (#335): its roadmap's first prose line."""
+    try:
+        return icon_gen.about_text(read_roadmap(proj).get("text") or "")
+    except OSError:
+        return ""
+
+
+def project_icon_gen_info(project_id: str) -> dict | None:
+    """What the settings show above Generate (#335): which CLI draws, and from what."""
+    proj = find_project(project_id)
+    if proj is None:
+        return None
+    cli = icon_gen.which_cli()
+    return {"agent": cli["agent"] if cli else "", "model": cli["model"] if cli else "",
+            "name": proj.get("name") or "", "about": project_icon_about(proj)}
+
+
+def generate_project_icons(project_id: str, name: str = "") -> tuple[bool, str, dict]:
+    """Four icons for a project, drawn by the CLI the hub runs (#335). Nothing is
+    kept: the page shows them and saves the picked one through /api/projects/icon.
+    `name` is the one typed in the settings, not saved yet; else the project's."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project", {}
+    # A lone surrogate (JSON's "\ud800") cannot be encoded for the CLI: it becomes "?".
+    name = str(name or "").encode("utf-8", "replace").decode("utf-8")
+    name = " ".join(name.split())[:120] or proj.get("name") or ""
+    return icon_gen.generate(project_id, name, project_icon_about(proj))
 
 
 def project_icon_file(project_id: str) -> Path | None:
@@ -18839,6 +18873,18 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects/icon":
             self._project_icon_get(u)
             return
+        if p == "/api/projects/icon-gen":
+            # #335: Generate's header: the CLI that draws, the name and what the project is about.
+            # A same-origin GET carries no Origin, so it is gated like the icon itself.
+            if not self._page_read_ok():
+                self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
+                return
+            info = project_icon_gen_info((parse_qs(u.query).get("id", [""])[0] or "").strip())
+            if info is None:
+                self._send_json(404, {"error": "no_such_project", "message": icon_gen.REFUSALS["no_such_project"]})
+            else:
+                self._send_json(200, info)
+            return
         if p == "/api/room/msg":
             # The message a balloon link points at, for the chip that shows it.
             q = parse_qs(u.query)
@@ -21418,13 +21464,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_json(200, {"ok": True, "room": rid, **res, "url": attachment_url(rid, res["name"])})
 
+    def _page_read_ok(self) -> bool:
+        """A GET only the page may make (#329, #335): its key cookie, from its own
+        origin (a same-origin GET or an <img> sends no Origin, so Sec-Fetch-Site
+        says it), never a bearer."""
+        key = self._cookie(self._ui_cookie())
+        return not (self._bearer_token() or not key or not hmac.compare_digest(key, _UI_KEY)
+                    or self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"))
+
     def _project_icon_get(self, u) -> None:
         """GET /api/projects/icon?id=<project>&v=<version>: a project's icon
         (#329), for the page only: its key cookie, from its own origin (an
         <img> sends no Origin, so Sec-Fetch-Site says it), never a bearer."""
-        key = self._cookie(self._ui_cookie())
-        if (self._bearer_token() or not key or not hmac.compare_digest(key, _UI_KEY)
-                or self.headers.get("Sec-Fetch-Site") not in (None, "same-origin")):
+        if not self._page_read_ok():
             self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
             return
         pid = (parse_qs(u.query).get("id", [""])[0] or "").strip()
@@ -22479,6 +22531,26 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(404 if msg == "no_such_project" else (413 if msg == "too_big" else 400),
                                 {"error": msg, "message": refusals.get(msg, msg)})
+            return
+        if p == "/api/projects/icon-gen":
+            # #335: {projectId, name?} -> {ok, svgs[<=4], agent, model, ms}; nothing is saved.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "bad_json"})
+                return
+            nm = data.get("name")
+            ok, code, res = generate_project_icons(str(data.get("projectId") or ""), nm if isinstance(nm, str) else "")
+            if ok:
+                self._send_json(200, {"ok": True, **res})
+            else:
+                # A CLI that is missing, slow or wrong is an answer, not a hub that is
+                # down: never 502-504, which the page's hub-resilience.js takes for an
+                # update in progress (it shows "Updating" and throws).
+                status = {"no_such_project": 404, "busy": 409}.get(code, 200)
+                self._send_json(status, {"ok": False, "error": code, "message": icon_gen.REFUSALS.get(code, code), **res})
             return
         if p == "/api/projects/kind":
             # {projectId, kind: "code" | "documents"}.
