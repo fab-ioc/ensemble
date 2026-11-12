@@ -82,6 +82,19 @@ class PlainTitle(unittest.TestCase):
             self.assertEqual(got, want, subject)
             self.assertNotRegex(got.replace("https://x.org/a#12", ""), r"#\d|\bP\d+\b|ED-\d")
 
+    def test_a_nul_in_the_text_is_not_a_placeholder(self):
+        self.assertEqual(update_notes.plain_title("Fix \x000\x00 now"), "Fix 0 now")
+        self.assertEqual(update_notes.plain_title("Fix \x000\x00 now [a](b) #3", links=True), "Fix 0 now [a](b)")
+        rels = [{"tag_name": "v1.1.0", "name": "v1.1.0", "body": "- \x000\x00 [x](y)", "published_at": "",
+                 "assets": [{"name": "Ensemble-1.1.0-windows-x64.zip"}, {"name": app_update.SUMS_NAME}]}]
+        got = app_update.check("1.0.0", "windows-x64", fetch=lambda: rels)
+        self.assertEqual(got["notes"][0]["body"], "- 0 [x](y)")
+
+    def test_wrapped_note_lines_keep_their_words(self):
+        body = "- Added drag and\n  drop to the inbox\n- Works on macOS or\n  Windows (#4)\n- Merge requests: faster"
+        self.assertEqual(update_notes.plain_notes(body),
+                         "- Added drag and\n  drop to the inbox\n- Works on macOS or\n  Windows\n- Merge requests: faster")
+
     def test_notes_keep_links_and_clean_their_labels(self):
         got = update_notes.plain_notes("- [Fix ED-12](https://x/y/12) now\n- [#12](https://x/12)\n- Plain #9 ![a](i.png)")
         self.assertEqual(got, "- [Fix](https://x/y/12) now\n- Plain ![a](i.png)")
@@ -186,6 +199,25 @@ class ReleaseNotes(unittest.TestCase):
         got = app_update.check("1.0.0", "windows-x64", fetch=lambda: rels)
         self.assertEqual(got["latestVersion"], "1.1.0")
         self.assertEqual([n["version"] for n in got["notes"]], ["1.1.0", "1.0.5"])
+
+    def test_the_fetch_reads_every_page_newer_than_the_running_one(self):
+        sizes = {1: 100, 2: 100, 3: 50}
+        pages = {n: [self.rel(f"v1.{260 - (n - 1) * 100 - i}.0", "-") for i in range(k)] for n, k in sizes.items()}
+        asked = []
+        def get(url, timeout=20):
+            page = int(url.rsplit("page=", 1)[1])
+            asked.append(page)
+            return json.dumps(pages.get(page, [])).encode()
+        with mock.patch.object(app_update, "_get", side_effect=get), \
+                mock.patch.dict(os.environ, {"ENSEMBLE_RELEASES_URL": ""}):
+            # v1.260 .. v1.161 then v1.160 .. v1.61: page 2 holds 1.100.0, so page 3 is not read.
+            got = app_update.fetch_releases(current="1.100.0")
+            self.assertEqual(asked, [1, 2])
+            self.assertEqual(len(got), 200)
+            asked.clear()
+            # Everything newer: page 3 is short, so it is the last.
+            self.assertEqual(len(app_update.fetch_releases(current="1.0.0")), 250)
+            self.assertEqual(asked, [1, 2, 3])
 
     def test_a_long_release_list_says_how_many_more(self):
         rels = [self.rel(f"v1.{n}.0", f"- Change {n}") for n in range(1, 26)]

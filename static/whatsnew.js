@@ -130,7 +130,13 @@
     // Who Install would wait for, read now (the hub's cached check: no fetch).
     try {
       const r = await fetch('/api/update-check?wait=1');
-      if (r.ok && dialog.open) render(await r.json());
+      const got = r.ok ? await r.json() : null;
+      // A hub that restarted since this page's last poll has no check yet:
+      // keep what the page shows and let the ordinary poll check now (the
+      // dialog itself never makes the hub check).
+      if (got && got.reason === 'not_checked') {
+        if (typeof window.checkForUpdate === 'function') window.checkForUpdate();
+      } else if (got && dialog.open) render(got);
     } catch {}
   }
   dialog.addEventListener('close', () => {

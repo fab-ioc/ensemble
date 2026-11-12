@@ -48,7 +48,10 @@ import app_version
 import update_notes
 
 SUMS_NAME = "SHA256SUMS.txt"
-RELEASES_URL = "https://api.github.com/repos/{repo}/releases?per_page=20"
+RELEASES_URL = "https://api.github.com/repos/{repo}/releases?per_page=100"
+# What's new counts every release newer than the running one (#339): further
+# pages are read while a full page is still all newer, up to this many.
+RELEASES_MAX_PAGES = 5
 USER_AGENT = "Ensemble-updater"
 PREVIOUS_DIR = ".previous"
 FAILED_DIR = ".failed"
@@ -154,10 +157,27 @@ def _get(url: str, timeout: float = 20) -> bytes:
         return r.read()
 
 
-def fetch_releases(repo: str = app_version.REPO, timeout: float = 15) -> list:
-    # ENSEMBLE_RELEASES_URL: another list in the same shape (a rehearsal, a fork).
-    url = os.environ.get("ENSEMBLE_RELEASES_URL") or RELEASES_URL.format(repo=repo)
-    return json.loads(_get(url, timeout).decode("utf-8"))
+def fetch_releases(repo: str = app_version.REPO, timeout: float = 15,
+                   current: str = app_version.VERSION) -> list:
+    # ENSEMBLE_RELEASES_URL: another list in the same shape (a rehearsal, a
+    # fork), read as one page.
+    feed = os.environ.get("ENSEMBLE_RELEASES_URL")
+    if feed:
+        return json.loads(_get(feed, timeout).decode("utf-8"))
+    url = RELEASES_URL.format(repo=repo)
+    out: list = []
+    for page in range(1, RELEASES_MAX_PAGES + 1):
+        got = json.loads(_get(f"{url}&page={page}", timeout).decode("utf-8"))
+        if not isinstance(got, list):
+            raise ValueError("the release list is not a list")
+        out.extend(got)
+        # A short page is the last; a page that reaches the running version
+        # holds everything newer (GitHub lists the newest first).
+        tags = [str(r.get("tag_name") or "") for r in got if isinstance(r, dict)]
+        if len(got) < 100 or any(app_version.parse_version(t) and not app_version.is_newer(t, current)
+                                 for t in tags):
+            break
+    return out
 
 
 def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetch_releases) -> dict:

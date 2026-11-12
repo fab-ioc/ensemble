@@ -53,21 +53,29 @@ def _tidy(s: str) -> str:
 
 
 def _plain(s: str) -> str:
+    """References out; the punctuation tidied only where one was taken out,
+    so a line without any (a wrapped "drag and") is left as it is."""
+    was = s
     s = _REF_PARENS.sub("", s)
     s = _REF_POSSESSIVE.sub("the", s)
     s = _REF_LEAD.sub("", s)
     s = _REF_LONE.sub("", s)
     s = _SHA.sub("", s)
-    return _tidy(s)
+    return s if s == was else _tidy(s)
 
 
 def plain_title(subject: str, links: bool = False) -> str:
     """A commit subject as a feature line: the merge prefix, task and point
-    numbers and hashes taken out, the leftover punctuation tidied. URLs are
-    kept as they are; with ``links``, so are Markdown links' targets (their
-    labels are cleaned, and a link whose label was only references goes)."""
-    s = _MERGE_PREFIX.sub("", subject or "", count=1)
-    s = _MERGE_WORD.sub("", s, count=1)
+    numbers and hashes taken out, the leftover punctuation tidied, the first
+    letter a capital. URLs are kept as they are. With ``links`` (a line of
+    release notes): Markdown links keep their targets (their labels are
+    cleaned, and a link whose label was only references goes), and the line
+    keeps its first letter and a "Merge …:" without a number."""
+    # NUL marks what is kept (below); one in the text itself is dropped first.
+    s = (subject or "").replace("\x00", "")
+    s = _MERGE_PREFIX.sub("", s, count=1)
+    if not links:
+        s = _MERGE_WORD.sub("", s, count=1)
     kept: list[str] = []
 
     def keep(text: str) -> str:
@@ -82,7 +90,7 @@ def plain_title(subject: str, links: bool = False) -> str:
     s = _URL.sub(lambda m: keep(m.group(0)), s)
     s = _plain(s)
     s = _KEEP.sub(lambda m: kept[int(m.group(1))], s)
-    return s[:1].upper() + s[1:] if s else ""
+    return s[:1].upper() + s[1:] if s and not links else s
 
 
 def plain_notes(body: str) -> str:

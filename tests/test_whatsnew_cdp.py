@@ -151,6 +151,17 @@ async function main() {
     await p.key('Escape', 'Escape', 27);
     await sleep(200);
     out.afterEsc = await p.evalIn(STATE);
+    // The hub restarted since this page's last poll: its cache is cold. The
+    // dialog keeps what it shows and the page's ordinary poll runs.
+    fs.writeFileSync(path.join(A.tmp, 'cold'), '1');
+    await p.evalIn(`window.__polls = 0; { const f = window.checkForUpdate; window.checkForUpdate = () => { window.__polls++; return f(); }; } 0`);
+    await openDialog(p);
+    await p.until('window.__polls > 0', 5000).catch(() => null);
+    await sleep(300);
+    out.cold = { polls: await p.evalIn('window.__polls'), dialog: await p.evalIn(DIALOG), state: await p.evalIn(STATE) };
+    fs.unlinkSync(path.join(A.tmp, 'cold'));
+    await p.click(`document.getElementById('wn-later')`);
+    await sleep(200);
     await p.evalIn(`window.__trig = 0; window.triggerUpdate = () => { window.__trig++; }; 0`);
     await openDialog(p);
     await p.click(`document.getElementById('wn-install')`);
@@ -222,7 +233,9 @@ class WhatsNewInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "load_live", lambda: []),
             mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
             mock.patch.object(dashboard, "check_for_update", fake_check),
-            mock.patch.object(dashboard, "cached_update_check", fake_check),
+            mock.patch.object(dashboard, "cached_update_check",
+                              lambda: ({"available": False, "reason": "not_checked"}
+                                       if (base / "cold").exists() else fake_check())),
             mock.patch.object(dashboard.app_version, "packaged", lambda: False),
             mock.patch.object(restart_drain, "holding", lambda: False),
             mock.patch.object(restart_drain, "observe_hub", lambda: agents),
@@ -301,6 +314,13 @@ class WhatsNewInChrome(unittest.TestCase):
                 self.assertEqual(s["focusAfterLater"], "me-btn")
         self.assertFalse(self.got["afterEsc"]["dialogOpen"])
         self.assertIsNotNone(self.got["afterEsc"]["dot"])
+
+    def test_a_cold_hub_cache_keeps_the_open_dialog_and_polls(self):
+        g = self.got["cold"]
+        self.assertTrue(g["dialog"]["open"], g)
+        self.assertEqual(len(g["dialog"]["rows"]), len(SUBJECTS))
+        self.assertFalse(g["state"]["itemHidden"])
+        self.assertGreaterEqual(g["polls"], 1, "the ordinary poll ran")
 
     def test_install_calls_trigger_update(self):
         self.assertEqual(self.got["install"]["trig"], 1)
