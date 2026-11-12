@@ -2741,12 +2741,12 @@ function mdToHtml(src) {
     const i = codes.push(codeSpanHtml(body)) - 1;
     return ` I${i} `;
   });
-  // "Ask: <links to hub messages>" is a reminder of those cards (P321): the line is their chips,
+  // "Ask: <links to ask cards>" is a reminder of those cards (P321): the line is their chips,
   // no marker, a [text](link) or <link> drawn as its bare link so it parks as a chip below.
   s = s.replace(/^([ \t>]*(?:(?:#{1,6}|[-*+]|[0-9]{1,3}[.)])[ \t]+)*)(?:\*\*|__)?[ \t]*ask(?:[ \t]*\([^)\n]{1,24}\))?[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*?)(?:[ \t]*(?:\*\*|__))?[ \t]*$/gim,
     (m, lead, q) => {
       const urls = [], rest = q.replace(/\*\*|__|`/g, '').trim().replace(/<(https?:\/\/[^\s<>]+)>|\[[^\]\n]*\]\([ \t]*<?(https?:\/\/[^\s<>()]+)>?[ \t]*\)|(https?:\/\/[^\s<>]+)/gi, (x, a, b, c) => { urls.push(a || b || c); return ' '; });   // QA_RE.link
-      return urls.length && /^(?:[\s.,;]|\band\b)*$/i.test(rest) && urls.every(u => refOfUrl(u)) ? lead + urls.join(' ') : m;
+      return urls.length && /^(?:[\s.,;]|\band\b)*$/i.test(rest) && urls.every(u => /^ask:\d{1,4}$/.test((refOfUrl(u) || {}).part || '')) ? lead + urls.join(' ') : m;
     });
   // A link to a balloon is its chip, parked like code and put back at the end.
   // The target of a [text](link) keeps its text. A link to a task, at any of
@@ -3560,17 +3560,18 @@ function askInline(text) {
   });
 }
 const askKind = opts => { const l = opts.map(o => o.label.toLowerCase()).sort(); return l.length === 2 && l[0] === 'no' && l[1] === 'yes' ? 'yesno' : opts.length ? 'decision' : 'open'; };
-// [{ n, question, kind: decision | yesno | open, options: [{ label, detail,
-// recommended }], recommended: index or -1, line, end }]: its lines, end exclusive.
-// Only links to hub messages (asks.py reminder): a reminder of their cards, not a question (P321).
+// Only links to ask cards (part=ask:<n>; asks.py reminder): a reminder of those cards, not a question (P321).
 function askReminder(t) {
   const urls = [], rest = String(t || '').replace(QA_RE.link, (x, a, b, c) => { urls.push(a || b || c); return ' '; });
   return urls.length > 0 && QA_RE.linkGap.test(rest) && urls.every(u => {
     let x = null;
     try { x = new URL(u.replace(/[.,;:!?_]+$/, '')); } catch (e) { return false; }
-    return x.pathname === '/session' && !!(x.searchParams.get('room') || '').trim() && !!(x.searchParams.get('msg') || '').trim();
+    return x.pathname === '/session' && !!(x.searchParams.get('room') || '').trim() && !!(x.searchParams.get('msg') || '').trim()
+      && /^ask:\d{1,4}$/.test((x.searchParams.get('part') || '').trim());
   });
 }
+// [{ n, question, kind: decision | yesno | open, options: [{ label, detail,
+// recommended }], recommended: index or -1, line, end }]: its lines, end exclusive.
 function parseAsks(text) {
   const lines = askLines(text);
   const bare = lines.map(l => l.replace(QA_RE.quote, ''));

@@ -38,6 +38,7 @@ console.log(JSON.stringify({
   md: mdToHtml('Ask: [the card](' + U + ')'),
   angle: mdToHtml('Ask: <' + U + '>.'),
   other: mdToHtml('Ask: https://example.org/help'),
+  message: mdToHtml('Ask: ' + U.replace('&part=ask:0', '')),
 }));
 """
 
@@ -70,8 +71,10 @@ class AskReminderLine(unittest.TestCase):
         self.assertIn("still right?", self.r["real"])
 
     def test_a_link_alone_that_is_no_hub_message_stays_asked(self):
-        self.assertIn("Ask:", self.r["other"])
-        self.assertNotIn("card-jump", self.r["other"])
+        for k in ("other", "message"):
+            with self.subTest(form=k):
+                self.assertIn("Ask:", self.r[k])
+                self.assertNotIn("card-jump", self.r[k])
 
     def test_the_pages_two_patterns_are_the_same(self):
         lit = re.search(r"^  link: (/.*?/gi),\r?$", SESSION, re.M).group(1)

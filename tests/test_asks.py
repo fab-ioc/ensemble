@@ -88,6 +88,8 @@ FIXTURES = {
     "question_with_link": "Ask: Is " + CARD_URL + " still right?",
     # Only a link, but not to a hub message: still a question (review 1).
     "other_link": "Ask: https://example.org/help",
+    # A link to a message, not to one of its cards: still a question (review 2).
+    "message_link": "Ask: http://127.0.0.1:8765/session?room=room-12345678&msg=abc",
 }
 
 NODE_JS = r"""
@@ -220,6 +222,8 @@ class TheMarker(unittest.TestCase):
         self.assertFalse(asks.reminder("https://example.org/help"))
         self.assertFalse(asks.reminder(CARD_URL + " https://example.org/help"))
         self.assertFalse(asks.reminder("http://127.0.0.1:8765/session?room=room-8d56cd21"))
+        self.assertEqual(len(asks.parse(FIXTURES["message_link"])), 1)
+        self.assertFalse(asks.reminder(CARD_URL.replace("part=ask:0", "part=file")))
 
     def test_a_bare_link_is_never_an_asks_title(self):
         self.assertEqual(asks.title(CARD_URL, "claude"), "Question from claude")
@@ -230,6 +234,11 @@ class TheMarker(unittest.TestCase):
                   "[help](https://example.org/a;b)"):
             with self.subTest(url=u):
                 self.assertEqual(asks.title(u, "claude"), "Question from claude")
+        # A long link the question was cut inside (review 2).
+        long = asks.parse("Ask: [help](https://example.org/" + "a" * 210 + ")")
+        self.assertEqual(len(long), 1)
+        self.assertEqual(asks.title(long[0]["question"], "claude"), "Question from claude")
+        self.assertEqual(asks.title("Which one? https://example.org/" + "a" * 210, "claude")[:10], "Which one?")
         with self.assertRaises(ValueError) as e:
             asks.validated([{"question": CARD_URL, "yesno": True}])
         self.assertIn("paste its link alone", str(e.exception))

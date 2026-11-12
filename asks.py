@@ -82,14 +82,17 @@ _BOLD_HEAD = re.compile(r"^(?:\*\*|__)(?P<l>[^*_\n]+?)(?:\*\*|__)[ \t]*(?P<rest>
 _SPLIT = re.compile(r"[ \t]+[—–][ \t]+|[ \t]+-{1,2}[ \t]+|:[ \t]+")
 _MARKS = re.compile(r"\*\*|__|`")
 # The links of an ask's words (bare, <…> or [text](…), with commas or "and"
-# between) when it has no other words (P321, #351). One that links only hub
-# messages ("Ask: <a card's link>") is a reminder of those cards, not a
+# between) when it has no other words (P321, #351). One that links only ask
+# cards (part=ask:<n>; "Ask: <a card's link>") is a reminder of those cards, not a
 # question: it makes no card and the page shows the line as their chips. Any
 # other ask that is only links is still asked, under a title of words.
 _LINK = re.compile(r"<(https?://[^\s<>]+)>|\[[^\]\n]*\]\([ \t]*<?(https?://[^\s<>()]+)>?[ \t]*\)"
                    r"|(https?://[^\s<>]+)", re.I)
 _LINK_GAP = re.compile(r"(?:[\s.,;]|\band\b)*", re.I)
 _URL_TAIL = re.compile(r"[.,;:!?_]+$")
+_CARD_PART = re.compile(r"ask:\d{1,4}")
+# A link the question was cut inside (QUESTION_MAX), at its very end.
+_CUT_LINK = re.compile(r"(?:\[[^\]\n]*\]\([ \t]*<?|<)?https?://[^\s<>]*$", re.I)
 
 
 def _links(text: str) -> list[str]:
@@ -99,16 +102,18 @@ def _links(text: str) -> list[str]:
     return urls if urls and _LINK_GAP.fullmatch(rest) else []
 
 
-def _message_link(url: str) -> bool:
-    """``url`` is a link to a hub message (/session?room=…&msg=…, any host),
-    as message_refs.find_message_refs and the page's refOfUrl read one."""
+def _card_link(url: str) -> bool:
+    """``url`` is a link to an ask card of a hub message
+    (/session?room=…&msg=…&part=ask:<n>, any host), as the page's refOfUrl
+    reads it."""
     try:
         parts = urlsplit(_URL_TAIL.sub("", url))
         q = parse_qs(parts.query)
     except ValueError:
         return False
     return (parts.path == "/session" and bool((q.get("room") or [""])[0].strip())
-            and bool((q.get("msg") or [""])[0].strip()))
+            and bool((q.get("msg") or [""])[0].strip())
+            and bool(_CARD_PART.fullmatch((q.get("part") or [""])[0].strip())))
 
 
 def links_only(text: str) -> bool:
@@ -117,15 +122,18 @@ def links_only(text: str) -> bool:
 
 
 def reminder(text: str) -> bool:
-    """``text`` is only links to hub messages: a reminder of their cards."""
+    """``text`` is only links to ask cards: a reminder of those cards."""
     urls = _links(text)
-    return bool(urls) and all(_message_link(u) for u in urls)
+    return bool(urls) and all(_card_link(u) for u in urls)
 
 
 def title(question: str, who: str = "") -> str:
     """The words a list shows for an ask: its question, never a bare link
-    (P321): "Question from <who>" for an ask that is only links."""
-    if not links_only(question or ""):
+    (P321): "Question from <who>" for an ask that is only links, even one
+    cut inside its last link."""
+    t = _plain(question or "")
+    rest = _LINK.sub(" ", _CUT_LINK.sub(" ", t))
+    if rest == t or not _LINK_GAP.fullmatch(rest):
         return question
     return f"Question from {who}" if who else "Question"
 
