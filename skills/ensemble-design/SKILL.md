@@ -392,7 +392,9 @@ Focus: `box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring)`. Neve
 ### Lozenge — the workhorse
 
 16px tall, `0 6px`, `--r-100`, `--fs-100`/600, uppercase, `letter-spacing: .05em`, `-bg` background
-with `-fg` text, no border. **A lozenge never uses `--accent`.**
+with `-fg` text, no border. **A lozenge never uses `--accent`.** One exception, approved as drawn (#343): the
+**FROM THE INBOX** label (`.lz-inbox`) on a message opened from the Inbox is `--accent`/`--accent-fg`, so it
+matches that message's accent ring, and it fades out with it.
 
 **Maximum two lozenges on a card or row.** If a third wants in, something else must go.
 
@@ -944,6 +946,13 @@ alarm: **no colour of its own, never in the task list's Needs you group.**
   (`.landed`: the drop-target treatment, fading), on the passage. A link from an ask carries `&part=`
   and can be copied as such; the balloon's own **Copy link** names the balloon. A comment on a
   *plan* balloon only links the thread: the ask stays in progress until its delivery.
+- **A message opened from the Inbox is marked whole** (#343, P317): every Inbox link carries a part
+  starting `inbox` (`inbox`, or `inbox,ask:0`), which every hop of a landing keeps. The chat puts the
+  balloon's top 72px under its top (48 on a phone), marks the whole balloon `.ibx-landed` (an inset 2px
+  `--accent` ring on `--selected-bg`, full strength, then a fade of min(1 s, 30%)) with the **FROM THE
+  INBOX** lozenge after its time, gives it `aria-current="location"` and the focus, and drops it all
+  the Inbox highlight setting after it landed (Settings › Preferences › Inbox, 1–30 s, default 3.5).
+  The Inbox row gets no mark. Other links keep `.landed` on the passage.
 - **The bar under a balloon** (`.pt-bar`, a hairline `--border` above it): on the person's balloon
   each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
   answer, "acknowledged", "dropped") with Drop or Reopen; on the agent's, "answers P12 ↑" linked to

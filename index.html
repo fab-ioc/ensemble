@@ -3187,7 +3187,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-codex-weight,
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate,
-  #settings-panel #pref-idle-alert {
+  #settings-panel #pref-idle-alert,
+  #settings-panel #pref-inbox-hl {
     width: 100%; padding: 5px 10px;
     border: 1px solid var(--border); border-radius: 6px;
     background: var(--bg); color: var(--fg); font: inherit;
@@ -3201,7 +3202,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-balance-margin,
   #settings-panel #pref-claude-weight,
   #settings-panel #pref-codex-weight,
-  #settings-panel #pref-idle-alert { width: 6em; }
+  #settings-panel #pref-idle-alert,
+  #settings-panel #pref-inbox-hl { width: 6em; }
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
@@ -3214,7 +3216,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-codex-weight:focus,
   #settings-panel #pref-po-rotate:focus,
   #settings-panel #pref-task-rotate:focus,
-  #settings-panel #pref-idle-alert:focus {
+  #settings-panel #pref-idle-alert:focus,
+  #settings-panel #pref-inbox-hl:focus {
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
   }
@@ -5023,6 +5026,14 @@ window.DOC_LISTENERS_PAUSED = false;
     <h5 class="sp-sub">Lists</h5>
     <div class="pref-row"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label></div>
     <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
+    <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
+    <h5 class="sp-sub">Inbox</h5>
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-inbox-hl">Inbox highlight</label>
+      <span><input type="number" id="pref-inbox-hl" min="1" max="30" step="0.5"
+             placeholder="3.5" autocomplete="off"> <span class="pref-label">seconds</span></span>
+    </div>
+    <p class="cfg-hint">A message opened from the Inbox is highlighted in its chat at full strength, then fades out, gone this long after it is shown. 1 to 30 seconds.</p>
     <h5 class="sp-sub">Stalls and restarts</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call an agent stalled after</span>
@@ -8879,6 +8890,10 @@ function renderPrefs() {
   const rotInput = document.getElementById('pref-po-rotate');
   if (rotInput && document.activeElement !== rotInput) {
     rotInput.value = PREFS.poRotateTokens ?? 150000;
+  }
+  const inboxHlInput = document.getElementById('pref-inbox-hl');
+  if (inboxHlInput && document.activeElement !== inboxHlInput) {
+    inboxHlInput.value = inboxHlSec();
   }
   const idleAlertInput = document.getElementById('pref-idle-alert');
   if (idleAlertInput && document.activeElement !== idleAlertInput) {
@@ -15474,7 +15489,7 @@ function pdThreadPanel(frameEl, o) {
     const f = had.el.querySelector('iframe');
     const same = had.room === o.room && (o.tid ? had.tid === o.tid : !had.tid && had.mid === o.mid);
     if (same && f && f.contentWindow) {
-      if (o.msg) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '' }, location.origin); } catch (e) {} }
+      if (o.msg) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '', hl: inboxHlSec() }, location.origin); } catch (e) {} }
     } else if (f) {
       // Another chat's thread goes from that chat (it is told, as by its ×).
       if (had.room !== o.room) pdThreadTell(had.room, 'thread-closed');
@@ -16261,8 +16276,9 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + `<div class="ibx-bt"><button type="button" class="ibx-btn primary" data-ibx-go${IBX.busyClose ? ' disabled' : ''}>${esc(IBX.busyClose ? 'Closing…' : `Close ${confN}`)}</button>`
       + `<button type="button" class="ibx-btn" data-ibx-cancel${IBX.busyClose ? ' disabled' : ''}>Cancel</button></div></div>`;
   };
-  const href = r => '/session?room=' + encodeURIComponent(r.roomId) + (r.mid ? '&msg=' + encodeURIComponent(r.mid).replace(/%3A/gi, ':') : '')
-    + (r.part ? '&part=' + encodeURIComponent(r.part).replace(/%3A/gi, ':') : '');
+  // #343: a message opened in a new tab is highlighted as opened from the Inbox too.
+  const href = r => '/session?room=' + encodeURIComponent(r.roomId) + (r.mid ? '&msg=' + encodeURIComponent(r.mid).replace(/%3A/gi, ':')
+    + '&part=' + encodeURIComponent('inbox' + (r.part ? ',' + r.part : '')).replace(/%3A/gi, ':').replace(/%2C/gi, ',') : '');
   const row = r => {
     const line = String(r.line || r.reason || '').replace(/\*\*|__/g, '');
     const g = IBX.gone.get(r.id);
@@ -16748,7 +16764,8 @@ function ibxWire(box) {
     const ck = a.dataset.ibxCheck ? () => { const li = a.closest('li.ibx-row[data-ibx]'); if (li) ibxItemAct(li.dataset.ibx, a.dataset.ibxCheck); } : null;
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) { if (ck) ck(); return; }
     e.preventDefault();
-    if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, a.dataset.part || '');
+    // #343: the chat highlights it as opened from the Inbox (its part starts "inbox").
+    if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, 'inbox' + (a.dataset.part ? ',' + a.dataset.part : ''));
     else ibxOpenRoom(a.dataset.room);
     if (ck) ck();
   });
@@ -23688,13 +23705,24 @@ function openMsgLink(rid, msg, part) {
   }
   sendGotoMsg(rid);
 }
+// The chats framed here and in the Dock's pop-out windows (#343: a chat
+// popped out is told as well); hl: the Inbox highlight's length now.
 function sendGotoMsg(rid) {
   const g = GOTO_MSG.get(rid);
   if (!g) return;
-  document.querySelectorAll('iframe.dp-session, iframe.po-session').forEach(f => {
-    if (f.dataset.room !== rid || !f.contentWindow) return;
-    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '' }, location.origin); } catch (e) {}
-  });
+  for (const d of [document, ...PD_POP_DOCS.keys()]) {
+    let fs = [];
+    try { fs = [...d.querySelectorAll('iframe.dp-session, iframe.po-session')]; } catch (e) {}
+    fs.forEach(f => {
+      if (f.dataset.room !== rid || !f.contentWindow) return;
+      try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
+    });
+  }
+}
+// Settings › Preferences › Inbox highlight, seconds (the hub's inboxHighlightSec, #343).
+function inboxHlSec() {
+  const v = Number(PREFS && PREFS.inboxHighlightSec);
+  return Number.isFinite(v) && v > 0 ? Math.max(1, Math.min(30, v)) : 3.5;
 }
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,
 // or its role, @reviewer@18) the task opens at that agent's terminal.
@@ -25460,6 +25488,20 @@ window.ensUpdPlace = () => ({
     taskRotInput.addEventListener('blur', commitTaskRot);
     taskRotInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); taskRotInput.blur(); }
+    });
+  }
+  // How long a message opened from the Inbox stays highlighted (#343; the hub clamps to 1–30).
+  const inboxHlInput = document.getElementById('pref-inbox-hl');
+  if (inboxHlInput) {
+    const commitInboxHl = () => {
+      const v = parseFloat(inboxHlInput.value);
+      if (Number.isNaN(v)) { inboxHlInput.value = inboxHlSec(); return; }
+      if (v !== inboxHlSec()) setPref('inboxHighlightSec', Math.max(1, Math.min(30, v)));
+      else inboxHlInput.value = inboxHlSec();
+    };
+    inboxHlInput.addEventListener('blur', commitInboxHl);
+    inboxHlInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); inboxHlInput.blur(); }
     });
   }
   // Minutes a running agent may do nothing before its PO hears (#292).

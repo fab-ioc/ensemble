@@ -1961,6 +1961,24 @@ CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
 PACE_MARGIN_DEFAULT = 10
 # A preferred seat changes kinds only for this relative capacity advantage.
 BALANCE_HYSTERESIS_DEFAULT = 25
+# A message opened from the Inbox stays highlighted this many seconds (#343).
+INBOX_HIGHLIGHT_DEFAULT = 3.5
+INBOX_HIGHLIGHT_MIN, INBOX_HIGHLIGHT_MAX = 1, 30
+
+
+def clamp_inbox_highlight(v) -> float | None:
+    """Seconds, 1–30 to a tenth; None for what is not a number (a bool too)."""
+    if isinstance(v, bool):
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v in (float("inf"), float("-inf")):
+        return None
+    v = round(max(INBOX_HIGHLIGHT_MIN, min(INBOX_HIGHLIGHT_MAX, v)), 1)
+    return int(v) if v == int(v) else v
+
 # Settings › Agent models › Prefer: a kind every seat goes to while it is
 # usable, or "balanced" (the warning and pacing rule).
 PREFER_CHOICES = ("balanced", "claude", "codex")
@@ -2038,6 +2056,9 @@ _SETTINGS_DEFAULTS = {
     # A restart at a safe point (restart_drain.py): how long the hub waits for
     # every working agent to reach one before it restarts anyway.
     "restartDrainMinutes": restart_drain.DEFAULT_DEADLINE_MIN,
+    # Settings › Preferences › Inbox highlight (#343, P317): how long a message
+    # opened from the Inbox stays highlighted in its chat, in seconds (1–30).
+    "inboxHighlightSec": INBOX_HIGHLIGHT_DEFAULT,
     # Pace each agent kind's 7-day allowance and compare weighted spare
     # capacity per hour until each kind's own reset (ED-203).
     "paceWeek": True,
@@ -2783,6 +2804,10 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(restart_drain.MIN_DEADLINE_MIN, min(restart_drain.MAX_DEADLINE_MIN, v))
+        if k == "inboxHighlightSec":
+            v = clamp_inbox_highlight(v)
+            if v is None:
+                continue
         if k == "attentionStallSeconds":
             try:
                 v = int(v)

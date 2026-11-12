@@ -9,7 +9,8 @@ yet (a "check" row of the inbox). Checked:
   its group heading, task (PO) and age; the bar's "Inbox N" counts every
   project; "All" lists the other project's row with its project's name and
   "This project" filters it out again;
-* a real click on a row opens its message: the PO chat lands on that balloon;
+* a real click on a row opens its message: the PO chat lands on that balloon,
+  marked as opened from the Inbox (#343);
 * the bar's Inbox from another screen (the task list, no project chosen)
   opens a PO screen that has rows, with the Inbox column shown;
 * on a phone (390x844, and 360 and 430) the bar's Inbox opens the Inbox pane
@@ -128,11 +129,11 @@ async function main() {
     const mid = await p.evalIn('LD_INBOX.querySelector(".ibx-row a.ibx-link[data-mid]").dataset.mid');
     await p.evalIn('(() => { const b = pdChatFrame().contentDocument.getElementById("msgs"); b.scrollTop = 0; })(); 0');
     await p.click('LD_INBOX.querySelector(".ibx-row a.ibx-link[data-mid]")');
-    await p.until(`(() => { const d = pdChatFrame().contentDocument, l = d.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(mid)}; })()`, 10000).catch(() => null);
-    out.open = await p.evalIn(`(() => { const d = pdChatFrame().contentDocument, box = d.getElementById('msgs'), l = d.querySelector('.landed');
+    await p.until(`(() => { const d = pdChatFrame().contentDocument, l = d.querySelector('.msg.ibx-landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(mid)}; })()`, 10000).catch(() => null);
+    out.open = await p.evalIn(`(() => { const d = pdChatFrame().contentDocument, box = d.getElementById('msgs'), l = d.querySelector('.msg.ibx-landed');
       const m = l && (l.closest('.msg[data-mid]') || l), el = [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(mid)});
       const er = el && el.getBoundingClientRect(), br = box.getBoundingClientRect();
-      return { mid: ${JSON.stringify(mid)}, landed: m ? m.dataset.mid : '', inView: !!el && er.bottom > br.top && er.top < br.bottom, here: location.pathname }; })()`);
+      return { mid: ${JSON.stringify(mid)}, landed: m ? m.dataset.mid : '', current: m ? m.getAttribute('aria-current') : '', inView: !!el && er.bottom > br.top && er.top < br.bottom, here: location.pathname }; })()`);
     // The row's answers, listed under it: the second one opens its own answer.
     await p.click('LD_INBOX.querySelector(".ibx-more > summary")'); await sleep(200);
     out.more = await p.evalIn(`(() => { const d = LD_INBOX.querySelector('.ibx-more');
@@ -141,8 +142,8 @@ async function main() {
     await p.evalIn('(() => { IBX.sig = ""; ibxPaint(); return 0; })()');
     out.moreKept = await p.evalIn('LD_INBOX.querySelector(".ibx-more").open');
     await p.click('LD_INBOX.querySelectorAll(".ibx-item a.ibx-link")[1]');
-    await p.until(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(A.mid2)}; })()`, 10000).catch(() => null);
-    out.moreOpen = await p.evalIn(`(() => { const l = pdChatFrame().contentDocument.querySelector('.landed'); const m = l && (l.closest('.msg[data-mid]') || l); return m ? m.dataset.mid : ''; })()`);
+    await p.until(`(() => { const l = pdChatFrame().contentDocument.querySelector('.msg.ibx-landed'); const m = l && (l.closest('.msg[data-mid]') || l); return !!m && m.dataset.mid === ${JSON.stringify(A.mid2)}; })()`, 10000).catch(() => null);
+    out.moreOpen = await p.evalIn(`(() => { const l = pdChatFrame().contentDocument.querySelector('.msg.ibx-landed'); const m = l && (l.closest('.msg[data-mid]') || l); return m ? m.dataset.mid : ''; })()`);
     // #322: off the PO screen the Inbox stays on the left strip; #328: with nothing open it keeps the last pick.
     out.prePid = await p.evalIn('IBX.ldPid');
     await p.evalIn(`(() => { midLeave(); VIEW_MODE = 'board'; SELECTED_PROJECT = ''; renderRows(); return 0; })()`);
@@ -300,7 +301,8 @@ class InboxInChrome(unittest.TestCase):
     def test_a_row_opens_its_message(self):
         o = self.got["open"]
         self.assertEqual(o["mid"], self.mid, "the row names the answer's message")
-        self.assertEqual(o["landed"], o["mid"], o)
+        self.assertEqual(o["landed"], o["mid"], "#343: the whole message marked as opened from the Inbox")
+        self.assertEqual(o["current"], "location", o)
         self.assertTrue(o["inView"], o)
         self.assertEqual(o["here"], "/", "in the page, not a new tab")
 
