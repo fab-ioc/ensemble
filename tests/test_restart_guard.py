@@ -158,8 +158,12 @@ class Classify(unittest.TestCase):
 class Protect(unittest.TestCase):
     """Guard.protect on the fake table with fake seams."""
 
-    def guard(self, start_errors=None, stays=(), force=False, exits=()):
+    def guard(self, start_errors=None, stays=(), force=False, exits=(), only_tree=False):
         procs = table()
+        if only_tree:
+            procs = {pid: p for pid, p in procs.items()
+                     if pid in (HUB, HOST, MINE, 300, 310, 320, 400, 500, 510)}
+        exited_now = set()
         g = rg.Guard(units=["ensemble.service"], hub_pids=[HUB], state_dirs=["x"],
                      log_path=self.log)
         cgroups = {pid: str(CG.relative_to(rg.CGROUP_ROOT)) for pid in procs}
@@ -169,7 +173,7 @@ class Protect(unittest.TestCase):
         g.cgroup_pids = lambda cg: [p for p in procs if p not in (HOST, 300, 310, 320, 400, 850)] \
             if cg == CG else [HOST, 300, 310, 320, 400, 850]
         # Gone from the hub's cgroups once moved: not listed again.
-        g.read_proc = lambda pid: procs.get(pid) if cgroups.get(pid, "").startswith(
+        g.read_proc = lambda pid: procs.get(pid) if pid not in exited_now and cgroups.get(pid, "").startswith(
             "user.slice/app.slice/ensemble") else None
         g.process_gone = lambda pid, start_ticks: pid in exits
         g.ancestry = lambda: {MINE}
@@ -178,7 +182,9 @@ class Protect(unittest.TestCase):
 
         def start(name, pids, description):
             self.started.append((name, pids))
-            err = (start_errors or {}).get(pids[0], "")
+            exited_now.update(exits)
+            err = (start_errors(pids) if callable(start_errors)
+                   else (start_errors or {}).get(pids[0], ""))
             if not err:
                 for p in pids:
                     if p not in stays:
@@ -224,14 +230,36 @@ class Protect(unittest.TestCase):
     def test_a_root_that_exits_during_failed_move_does_not_refuse(self):
         with mock.patch.object(rg, "MOVE_WAIT_S", 0):
             res = self.guard(start_errors={500: "UnixProcessIdUnknown: No such process"},
-                             exits={500})
+                             exits={500}, only_tree=True)
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["failed"], [])
-        self.assertIn("pid 500 exited during the move", self.log.read_text(encoding="utf-8"))
+        self.assertIn("pid(s) 500 exited during the move", self.log.read_text(encoding="utf-8"))
 
     def test_a_root_still_present_after_failed_move_refuses(self):
         with mock.patch.object(rg, "MOVE_WAIT_S", 0):
             res = self.guard(start_errors={500: "UnixProcessIdUnknown: No such process"})
+        self.assertFalse(res["ok"], res)
+        self.assertEqual([f["pid"] for f in res["failed"]], [500])
+
+    def test_only_tree_retries_when_a_child_exits_mid_move(self):
+        # A systemd StartTransientUnit call rejects the whole PIDs list when
+        # one short-lived renderer has exited. The root is still alive.
+        with mock.patch.object(rg, "MOVE_WAIT_S", 0):
+            res = self.guard(start_errors=lambda pids: (
+                "UnixProcessIdUnknown: No such process" if 510 in pids else ""),
+                exits={510}, only_tree=True)
+        self.assertTrue(res["ok"], res)
+        self.assertIn(("kept-java-500.scope", [500, 510]), self.started)
+        self.assertIn(("kept-java-500.scope", [500]), self.started)
+        self.assertEqual(res["failed"], [])
+
+    def test_root_exit_on_last_pass_keeps_a_live_child_failed(self):
+        # A failed tree is not harmless just because its top process exited.
+        # Its child would still be killed by the hub stop.
+        with mock.patch.object(rg, "MOVE_WAIT_S", 0), \
+             mock.patch.object(rg, "PASSES", 1):
+            res = self.guard(start_errors=lambda pids: "Access denied", exits={500},
+                             only_tree=True)
         self.assertFalse(res["ok"], res)
         self.assertEqual([f["pid"] for f in res["failed"]], [500])
 
@@ -242,6 +270,10 @@ class Protect(unittest.TestCase):
              mock.patch.object(Path, "read_text", return_value="500 (cat) " + " ".join(fields)):
             self.assertTrue(rg.process_gone(500, 100))
             self.assertFalse(rg.process_gone(500, 200))
+        fields[0] = "Z"
+        with mock.patch.object(rg, "_gone", return_value=False), \
+             mock.patch.object(Path, "read_text", return_value="500 (cat) " + " ".join(fields)):
+            self.assertTrue(rg.process_gone(500, 200))
 
     def test_one_still_in_place_after_the_call_refuses_too(self):
         with mock.patch.object(rg, "MOVE_WAIT_S", 0):

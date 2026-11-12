@@ -202,6 +202,8 @@ def process_gone(pid: int, start_ticks: int | None) -> bool:
         raise ScanError(f"could not look at {base / 'stat'}: {e}") from e
     try:
         fields = stat[stat.rindex(")") + 2:].split()
+        if fields[0] in ("Z", "X", "x"):
+            return True   # only a process table entry remains; no work to stop
         return int(fields[19]) != start_ticks
     except (ValueError, IndexError) as e:
         raise ScanError(f"could not read start time of pid {pid}: {e}") from e
@@ -626,32 +628,48 @@ class Guard:
                 name = _scope_name(top)
                 if attempt:
                     name = name[:-len(".scope")] + f"-{attempt}.scope"
-                why = self.start(name, sorted(pids),
-                                 f"Kept out of {top['unit']} by the Ensemble restart guard: "
-                                 f"{' '.join(top.get('argv') or [top['comm']])[:200]}")
-                if not why:
-                    why = self._wait_moved(pids, units)
-                if why:
-                    failed[root] = {"pid": root, "text": text, "error": why,
-                                    "startTicks": top.get("startTicks")}
+                live = sorted(pids)
+                description = (f"Kept out of {top['unit']} by the Ensemble restart guard: "
+                               f"{' '.join(top.get('argv') or [top['comm']])[:200]}")
+                while live:
+                    why = self.start(name, live, description)
+                    if not why:
+                        why = self._wait_moved(live, units)
+                    if not why:
+                        break
                     self.log(f"could not move pid {root} out of {top['unit']}: {why}")
-                    if self.process_gone(root, top.get("startTicks")):
+                    # systemd rejects the whole call if even one child in
+                    # PIDs exited. Retry immediately with the survivors; each
+                    # retry removes at least one gone pid, so this is bounded.
+                    gone = [pid for pid in live if self.process_gone(
+                        pid, procs[pid].get("startTicks"))]
+                    if not gone:
+                        break
+                    live = [pid for pid in live if pid not in gone]
+                    self.log(f"pid(s) {', '.join(map(str, gone))} exited during the move"
+                             + (f"; retrying {len(live)} survivor(s)" if live else "; tree gone"))
+                if why:
+                    if live:
+                        failed[root] = {"pid": root, "text": text, "error": why,
+                                        "_pids": live,
+                                        "_starts": {pid: procs[pid].get("startTicks") for pid in live}}
+                    else:
                         failed.pop(root, None)
-                        self.log(f"pid {root} exited during the move; no longer blocks {self.what}")
                     continue
                 failed.pop(root, None)
-                moved.update(pids)
-                result["moved"].append({"pid": root, "pids": sorted(pids), "scope": name,
+                moved.update(live)
+                result["moved"].append({"pid": root, "pids": live, "scope": name,
                                         "from": top["unit"], "text": text})
-                self.log(f"moved pid {root}" + (f" and {len(pids) - 1} child(ren)" if len(pids) > 1 else "")
+                self.log(f"moved pid {root}" + (f" and {len(live) - 1} child(ren)" if len(live) > 1 else "")
                          + f" from {top['unit']} into {name}: {self.what} no longer stops it")
             if failed and all(r in failed for r in trees):
                 break       # nothing new moved on this pass: another pass changes nothing
         for root, entry in list(failed.items()):
-            if self.process_gone(root, entry["startTicks"]):
+            if all(self.process_gone(pid, entry["_starts"][pid]) for pid in entry["_pids"]):
                 failed.pop(root)
-                self.log(f"pid {root} exited after the failed move; no longer blocks {self.what}")
-        result["failed"] = [{k: v for k, v in entry.items() if k != "startTicks"}
+                self.log(f"tree rooted at pid {root} exited after the failed move; "
+                         f"no longer blocks {self.what}")
+        result["failed"] = [{k: v for k, v in entry.items() if not k.startswith("_")}
                             for entry in failed.values()]
         if failed:
             if force:

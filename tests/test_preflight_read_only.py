@@ -31,10 +31,22 @@ class PreflightReadOnly(unittest.TestCase):
             env = dict(os.environ, HOME=str(home), ENSEMBLE_NO_MOVE_CHECK="1")
             env.pop("ENSEMBLE_PTY_PREFLIGHT", None)
             # Build a real room using the same save format as the application.
-            seed = '''import chatroom
+            seed = '''import chatroom, json, turnstore
+from pathlib import Path
+from backends.base import HOME, DASHBOARD_DIR
+sid = "0199a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5b"
+t = HOME / ".claude" / "projects" / "-fixture" / (sid + ".jsonl")
+t.parent.mkdir(parents=True)
+t.write_text(json.dumps({"type":"user", "timestamp":"2026-11-12T11:00:00Z", "message":{"role":"user", "content":"fixture"}}) + "\\n")
 r = chatroom.create_room("Finished", [{"identity":"claude", "agent":"claude", "role":"engineer"}])
-chatroom.patch_room(r["id"], mode="solo", launched=True, workflow="inprogress")
+room = chatroom.get_room(r["id"], public=False)
+room.update(mode="solo", launched=True, workflow="inprogress")
+chatroom.update_room(room)
 chatroom.record_report(r["id"], "claude", "completed", "Done")
+st = t.stat()
+turnstore.put(DASHBOARD_DIR / "cache" / "turns.sqlite3", str(t), (st.st_size, st.st_mtime_ns),
+              "old-parser", [{"role":"user", "text":"old cache"}], force=True)
+turnstore.close()
 print(r["id"])
 '''
             rid = subprocess.check_output([sys.executable, "-c", seed], cwd=ROOT, env=env,
@@ -66,6 +78,9 @@ print(r["id"])
                 for endpoint in ("/api/sessions?n=5", "/?startup=skip", "/api/projects"):
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}{endpoint}", timeout=30) as response:
                         self.assertEqual(response.status, 200)
+                        body = response.read()
+                        if endpoint.startswith("/api/sessions"):
+                            self.assertIn(b"0199a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5b", body)
                 request = urllib.request.Request(f"http://127.0.0.1:{port}/api/projects/new",
                                                  data=b"{}", headers={"Content-Type": "application/json"})
                 with self.assertRaises(urllib.error.HTTPError) as denied:

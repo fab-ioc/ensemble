@@ -23856,6 +23856,10 @@ def _listen_or_exit(host: str, port: int) -> HubServer:
 
 def main():
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        # The project list calls git status. A probe must not refresh a real
+        # repository's index or hold its index.lock beside the running hub.
+        os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     args = sys.argv[1:]
     if "--set-project-noun" in args:
         i = args.index("--set-project-noun")
