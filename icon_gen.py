@@ -128,12 +128,13 @@ def sanitize(text: str) -> str:
 
 MAX_CANDIDATES = 32
 _SVG_CLOSE = re.compile(r"\s*>")
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 def _svg_blocks(text: str):
     """Each `<svg ...>...</svg>` in text, the shortest from each opener, in one
     pass (a regex's lazy match is quadratic on many openers with no closer)."""
-    low = text.lower()
+    low = text.translate(_ASCII_FOLD)   # str.lower() can lengthen ("İ" -> "i̇"), shifting the offsets
     i = 0
     while True:
         a = low.find("<svg", i)

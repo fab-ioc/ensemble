@@ -132,6 +132,11 @@ class Parse(unittest.TestCase):
         got = icon_gen.parse(answer)
         self.assertEqual(got, [icon_gen.sanitize(GOOD), icon_gen.sanitize(GOOD2)])
 
+    def test_text_that_lowercases_longer_does_not_shift_the_cut(self):
+        # "İ".lower() is two characters; the offsets must stay the answer's own.
+        self.assertEqual(icon_gen.parse("İşte: " + GOOD + "\nİİİ ẞ " + GOOD2),
+                         [icon_gen.sanitize(GOOD), icon_gen.sanitize(GOOD2)])
+
     def test_at_most_four(self):
         many = "\n".join(svg(f'<rect width="{i + 1}" height="4" fill="#123456"/>') for i in range(7))
         got = icon_gen.parse(many)
