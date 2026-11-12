@@ -231,6 +231,41 @@ class Check(unittest.TestCase):
         self.assertEqual((wt / ".secret").read_text(), "only here\n")
         self.assertIn("ignored", r["repaired"][0]["detail"])
 
+    def _ignored_secret(self):
+        (self.repo / ".gitignore").write_text(".secret\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "ignore")
+
+    @unittest.skipIf(os.name == "nt", "a POSIX hook")
+    def test_an_ignored_file_made_by_the_checkout_is_not_overwritten_and_is_listed(self):
+        self._ignored_secret()
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r12", "sess/twelve", files={".secret": "unique\n"})
+        hook = self.repo / ".git" / "hooks" / "post-checkout"
+        hook.write_text("#!/bin/sh\necho generated > .secret\n")
+        hook.chmod(0o755)
+        r = mc.run_check(repair=True, notify=False)
+        self.assertEqual(r["repaired"], [])
+        self.assertIn(".secret", r["open"][0]["detail"])
+        self.assertEqual((wt / ".secret").read_text(), "generated\n")
+        aside = Path(r["open"][0]["aside"])
+        self.assertEqual((aside / ".secret").read_text(), "unique\n")
+
+    @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "POSIX permissions")
+    def test_an_ignored_file_that_cannot_be_copied_is_listed(self):
+        self._ignored_secret()
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r13", "sess/thirteen", files={".secret": "unique\n"})
+        (wt / ".secret").chmod(0)
+        try:
+            r = mc.run_check(repair=True, notify=False)
+        finally:
+            for f in wt.parent.glob("repo*/.secret"):
+                f.chmod(0o644)
+        self.assertEqual(r["repaired"], [])
+        self.assertIn("only in", r["open"][0]["detail"])
+        self.assertFalse((wt / ".secret").exists())
+
     @unittest.skipIf(os.name == "nt", "exec bits")
     def test_exec_bit_counts_when_not_from_windows(self):
         hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])

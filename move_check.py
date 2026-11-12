@@ -37,6 +37,7 @@ touched (it is listed until it stops). Every repair is logged to
 """
 from __future__ import annotations
 
+import filecmp
 import json
 import os
 import re
@@ -652,23 +653,39 @@ def _room_working(room: dict) -> bool:
     return False
 
 
-def _copy_ignored(src: Path, dst: Path, names: list[str]) -> list[str]:
-    """The ignored files and folders of the old folder into the new worktree
-    (no commit holds them); those that could not be copied."""
-    failed = []
-    for name in names:
-        s, d = src / name, dst / name
+def _copy_ignored(src: Path, dst: Path, names: list[str]) -> tuple[int, list[str]]:
+    """The ignored files of the old folder into the new worktree (no commit
+    holds them), never over a file that is there: (files copied, the paths
+    that are not in the new worktree as they were in the old folder: a copy
+    that failed, or a file there already with other contents)."""
+    copied, missed = 0, []
+
+    def one(s: Path, d: Path, rel: str) -> None:
+        nonlocal copied
         try:
-            if d.exists():
-                continue
-            d.parent.mkdir(parents=True, exist_ok=True)
-            if s.is_dir() and not s.is_symlink():
-                shutil.copytree(s, d, symlinks=True)
-            else:
+            if s.is_symlink() or not s.is_dir():
+                if d.exists() or d.is_symlink():
+                    same = (s.is_symlink() and d.is_symlink() and os.readlink(s) == os.readlink(d)) \
+                        or (not s.is_symlink() and d.is_file() and filecmp.cmp(s, d, shallow=False))
+                    if not same:
+                        missed.append(rel)
+                    return
+                d.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(s, d, follow_symlinks=False)
+                copied += 1
+                return
+            if d.exists() and not d.is_dir():
+                missed.append(rel)
+                return
+            d.mkdir(parents=True, exist_ok=True)
+            for c in sorted(s.iterdir()):
+                one(c, d / c.name, f"{rel}/{c.name}")
         except OSError:
-            failed.append(name)
-    return failed
+            missed.append(rel)
+
+    for name in names:
+        one(src / name, dst / name, name)
+    return copied, missed
 
 
 def _recreate(run: _Run, room: dict, wt: Path, repo: str, branch: str, tip: str,
@@ -727,10 +744,14 @@ def _recreate(run: _Run, room: dict, wt: Path, repo: str, branch: str, tip: str,
     detail = (f"made again at {commit[:10]} on {name or 'a new branch'}; "
               f"the old folder (git folder {gd}) is kept as {aside}")
     if ignored:
-        failed = _copy_ignored(aside, wt, ignored)
-        detail += f"; its {len(ignored)} ignored file(s)/folder(s) copied in"
-        if failed:
-            detail += f", except {', '.join(failed[:5])}{' …' if len(failed) > 5 else ''}"
+        copied, missed = _copy_ignored(aside, wt, ignored)
+        detail += f"; {copied} ignored file(s) copied in from it"
+        if missed:
+            shown = ", ".join(missed[:5]) + (" …" if len(missed) > 5 else "")
+            run.left("worktree", label, f"{detail}; but {len(missed)} ignored file(s) are only "
+                     f"in {aside} (not copied, or the new worktree has another file there): "
+                     f"{shown}", roomId=rid, aside=str(aside))
+            return
     run.fixed("worktree", label, detail, roomId=rid, aside=str(aside))
 
 
