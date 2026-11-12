@@ -118,7 +118,8 @@ class OldPoConversations(unittest.TestCase):
         self.b.claude("persons-own", self.proj, age_days=4, text="Fix the header please")
         self.b.claude("elsewhere-brief", str(self.b.base / "other"), age_days=4, text=PO_BRIEF)
         rows = self.b.load(50)
-        self.assertEqual(plain(rows), ["elsewhere-brief", "persons-own"])
+        # A brief outside the PO's folders is no PO's past, and no row either (#350).
+        self.assertEqual(plain(rows), ["persons-own"])
         self.assertEqual(task_row(rows, "room-po")["pastConversations"], 4)
         self.assertEqual(sorted(x["sessionId"] for x in dashboard._PAST_FOUND["room-po"]),
                          ["old-brief", "old-brief-po-folder", "old-codex-seat", "old-seat"])

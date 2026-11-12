@@ -1199,8 +1199,87 @@ def _public(room: dict) -> dict:
     return r
 
 
+# The conversations of the rooms deleted so far (#350): the session list keeps
+# them out of its rows as it does a room's own, once the room that recorded
+# them is gone. One JSON line per room: {"roomId", "at", "sessionIds"}.
+GONE_SESSIONS_NAME = "gone-sessions.jsonl"
+_GONE: dict = {"sig": None, "ids": frozenset()}
+
+
+def room_session_ids(room: dict) -> list[str]:
+    """Every conversation a room records its agents having had: each seat's
+    (agent_conversations) and those of agents taken off it."""
+    out: list[str] = []
+    for part in agent_participants(room):
+        out += agent_conversations(part)
+    out += [str(r.get("sessionId") or "").strip()
+            for r in room.get("retiredSessions") or [] if isinstance(r, dict)]
+    return list(dict.fromkeys(s for s in out if s))
+
+
+def _note_gone_sessions(room: dict | None) -> None:
+    if not room or os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
+    try:
+        sids = room_session_ids(room)
+    except (AttributeError, TypeError):     # a damaged file's odd shapes
+        return
+    if not sids:
+        return
+    try:
+        ROOMS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(ROOMS_DIR / GONE_SESSIONS_NAME, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"roomId": room.get("id", ""), "at": _now(), "sessionIds": sids}) + "\n")
+    except OSError as e:
+        print(f"[rooms] {room.get('id')}: its conversations were not noted: {e!r}", flush=True)
+
+
+def gone_sessions() -> frozenset:
+    """The session ids of the rooms deleted so far (_note_gone_sessions)."""
+    p = ROOMS_DIR / GONE_SESSIONS_NAME
+    try:
+        st = p.stat()
+        sig = (str(p), st.st_size, st.st_mtime_ns)
+    except OSError:
+        return frozenset()
+    if _GONE["sig"] == sig:
+        return _GONE["ids"]
+    ids: set[str] = set()
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(d, dict):
+                    ids.update(s for s in d.get("sessionIds") or [] if isinstance(s, str) and s)
+    except OSError:
+        return frozenset()
+    _GONE.update(sig=sig, ids=frozenset(ids))
+    return _GONE["ids"]
+
+
+def _raw_room(room_id: str) -> dict | None:
+    """The room file as it is on disk, for what it records only."""
+    try:
+        d = json.loads(_room_path(room_id).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
 def delete_room(room_id: str) -> bool:
     with _LOCK:
+        try:
+            gone = _load(room_id)
+        except Exception:       # noqa: BLE001 — a damaged room is deleted all the same
+            gone = None
+        if gone is None:
+            gone = _raw_room(room_id)   # a room _load refuses (its log lost) still names its seats
+        # Noted before the file goes: an interrupted delete leaves the room
+        # and the note, never the room gone and its conversations unnamed.
+        _note_gone_sessions(gone)
         try:
             _room_path(room_id).unlink()
         except (FileNotFoundError, OSError):
