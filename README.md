@@ -200,6 +200,7 @@ Installed as an app, Ensemble runs in a window of its own with its own icon in t
 3. On the hub's machine, in a terminal run as Administrator on Windows (Tailscale requires it there):
    - `tailscale serve status` first, to pick the https port `<port>`: 443 if nothing uses it yet, otherwise a free one such as 8443 (a port already in use would be replaced);
    - then `tailscale serve --https=<port> --bg 8765`. The setting survives restarts. `tailscale serve status` shows it.
+   - Use only the https (or http) mode, which adds `X-Forwarded-For`; never `--tcp` or `--tls-terminated-tcp` to the hub's port: those pass raw connections from loopback with no header, and the hub would take them as this machine's own, with no token.
    - To remove only this address: `tailscale serve --https=<port> off`. Avoid `tailscale serve reset`: it removes every Serve address on the machine, not just this one.
 4. On the other device, open `https://<machine>.<tailnet domain>/?token=<token>` once (with `:<port>` after the domain when the port is not 443) (or open it without the token and paste it into the page that asks for it), then install from Settings or the address bar.
 

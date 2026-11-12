@@ -18,6 +18,9 @@ Checked:
   page navigation gets the sign-in page; the same request with ?token= is
   swapped for the cookie, and with the cookie passes; loopback without proxy
   headers passes with no token;
+* a non-ASCII credential (?token=%C3%A9, a cookie, a bearer, a drag key)
+  gets the normal 401 or sign-in page, and the handler logs no traceback:
+  compare_digest on str raised TypeError for it;
 * should the token still be empty, such a request is refused all the same
   (an empty cookie never matches an empty token), and local ones pass.
 
@@ -25,7 +28,9 @@ The token is never printed: assertions compare it, messages never hold it.
 """
 from __future__ import annotations
 
+import contextlib
 import inspect
+import io
 import os
 import stat
 import sys
@@ -208,6 +213,58 @@ class TheGateBehindTailscaleServe(unittest.TestCase):
         self.assertEqual(self.hub.get("/api/ptys")[0], 200)
         self.assertEqual(self.hub.get("/api/ptys", {"Host": f"localhost:{self.hub.port}"})[0], 200)
 
+
+class ANonAsciiTokenIsRefusedNotThrown(unittest.TestCase):
+    """compare_digest on two str raises TypeError when either holds a non-ASCII
+    character, so ?token=%C3%A9 threw in the handler and logged a traceback."""
+
+    @classmethod
+    def setUpClass(cls):
+        for p in (mock.patch.object(dashboard, "ACCESS_TOKEN", "a-real-token-for-the-test"),
+                  mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None)):
+            p.start()
+            cls.addClassCleanup(p.stop)
+        cls.hub = Hub()
+        cls.addClassCleanup(cls.hub.close)
+
+    def _get(self, path, headers):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            out = self.hub.get(path, headers)
+        self.assertNotIn("Traceback", err.getvalue(), path)
+        self.assertNotIn("TypeError", err.getvalue(), path)
+        return out
+
+    def test_the_compare_takes_any_text(self):
+        self.assertFalse(dashboard._same_secret("é", "a-real-token-for-the-test"))
+        self.assertFalse(dashboard._same_secret("\udce9", "x"))
+        self.assertFalse(dashboard._same_secret("", "x"))
+        self.assertTrue(dashboard._same_secret("é", "é"))
+
+    def test_each_way_of_presenting_it_gets_401(self):
+        # http.client sends header values as latin-1; the server reads them back as "é".
+        for path, extra in (("/api/ptys?token=%C3%A9", {}),
+                            ("/api/ptys?token=%E9", {}),
+                            ("/api/ptys", {"Cookie": "ensemble_token=\u00e9"}),
+                            ("/api/ptys", {"X-Ensemble-Token": "\u00e9"}),
+                            ("/api/ptys", {"Authorization": "Bearer \u00e9"}),
+                            ("/api/file/download?drag=%C3%A9&path=x", {})):
+            code, _, _ = self._get(path, {**SERVE, **extra})
+            self.assertEqual(code, 401, (path, sorted(extra)))
+
+    def test_a_page_gets_the_sign_in_page(self):
+        code, _, body = self._get("/?token=%C3%A9", {**SERVE, **NAV})
+        self.assertEqual(code, 401)
+        self.assertEqual(body, dashboard.SIGN_IN_PAGE)
+        code, _, body = self._get("/", {**SERVE, **NAV, "Cookie": "ensemble_token=\u00e9"})
+        self.assertEqual(code, 401)
+        self.assertEqual(body, dashboard.SIGN_IN_PAGE)
+
+    def test_a_non_ascii_page_key_is_refused_too(self):
+        """The page's key cookie is compared the same way (here on this machine)."""
+        cookie = f"ensemble_ui_{self.hub.port}=\u00e9"
+        code, _, _ = self._get("/api/projects/icon?id=x", {"Cookie": cookie})
+        self.assertEqual(code, 403)
 
 class AnEmptyTokenLetsNoOneIn(unittest.TestCase):
     """Belt and braces: should no token exist, the gate fails closed."""

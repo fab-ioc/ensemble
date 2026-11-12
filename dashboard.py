@@ -275,6 +275,14 @@ def _load_access_token() -> str:
     return tok
 
 
+def _same_secret(given, secret) -> bool:
+    """A presented credential against the hub's secret, as bytes: compare_digest
+    on str raises TypeError for any non-ASCII character, so a ?token=%C3%A9 or
+    a non-ASCII cookie or bearer threw in the handler instead of being refused."""
+    return hmac.compare_digest(str(given or "").encode("utf-8", "surrogatepass"),
+                               str(secret or "").encode("utf-8", "surrogatepass"))
+
+
 def _owner_only(path: Path) -> None:
     """A kept token file that others may read (one written by an older hub
     with the default mode) is made the owner's only. A link is left alone:
@@ -18000,7 +18008,7 @@ class Handler(BaseHTTPRequestHandler):
         stays signed in for as long as it is used."""
         if not ACCESS_TOKEN or self._is_local() or not self._is_page_navigation():
             return []
-        if not hmac.compare_digest(self._cookie(TOKEN_COOKIE), ACCESS_TOKEN):
+        if not _same_secret(self._cookie(TOKEN_COOKIE), ACCESS_TOKEN):
             return []
         return [("Set-Cookie", f"{TOKEN_COOKIE}={ACCESS_TOKEN}; HttpOnly; SameSite=Lax; "
                                "Path=/; Max-Age=31536000")]
@@ -18045,7 +18053,7 @@ class Handler(BaseHTTPRequestHandler):
         key = self._cookie(self._ui_cookie())
         if not key:
             return RESTART_REFUSED
-        if not hmac.compare_digest(key, _UI_KEY):
+        if not _same_secret(key, _UI_KEY):
             # The page was opened before the hub last restarted.
             return RESTART_REFUSED + " Reload the dashboard page and try again."
         if not self._same_origin_request():
@@ -18098,7 +18106,7 @@ class Handler(BaseHTTPRequestHandler):
         key = self._cookie(self._ui_cookie())
         if not key or not self._same_origin_request():
             return "Only the dashboard page can do this."
-        if not hmac.compare_digest(key, _UI_KEY):
+        if not _same_secret(key, _UI_KEY):
             return "Reload the dashboard page and try again."
         why = self._agent_peer()
         if why:
@@ -18233,7 +18241,7 @@ class Handler(BaseHTTPRequestHandler):
             drag = (parse_qs(u.query).get("drag", [""])[0] or "").strip()
             # Only beside an access token: with none, nothing that is not
             # local passes this gate, a drag bearer neither.
-            if ACCESS_TOKEN and drag and hmac.compare_digest(drag, _FILE_DRAG_TOKEN):
+            if ACCESS_TOKEN and drag and _same_secret(drag, _FILE_DRAG_TOKEN):
                 return True
         if self._is_local():
             return True
@@ -18248,7 +18256,7 @@ class Handler(BaseHTTPRequestHandler):
         tok = self._presented_token(u)
         # No token (none could be loaded or minted) lets no one in: the
         # request is not local, and an empty secret matches an empty cookie.
-        if ACCESS_TOKEN and tok and hmac.compare_digest(tok, ACCESS_TOKEN):
+        if ACCESS_TOKEN and tok and _same_secret(tok, ACCESS_TOKEN):
             q = parse_qs(u.query)
             if q.get("token") and self.command == "GET":
                 # Re-encoded: a file link's path= holds \, spaces, & and #,
@@ -21699,7 +21707,7 @@ class Handler(BaseHTTPRequestHandler):
         origin (a same-origin GET or an <img> sends no Origin, so Sec-Fetch-Site
         says it), never a bearer."""
         key = self._cookie(self._ui_cookie())
-        return not (self._bearer_token() or not key or not hmac.compare_digest(key, _UI_KEY)
+        return not (self._bearer_token() or not key or not _same_secret(key, _UI_KEY)
                     or self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"))
 
     def _project_icon_get(self, u) -> None:
