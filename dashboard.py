@@ -13793,6 +13793,8 @@ def check_for_update(force: bool = False) -> dict:
     if not force and _UPDATE_CHECK_CACHE and (now - _UPDATE_CHECK_CACHE[0]) < _UPDATE_CHECK_TTL:
         return _UPDATE_CHECK_CACHE[1]
     if _UPDATE_CHECK_LOCK:
+        if force:
+            return {"available": False, "reason": "checking"}
         if _UPDATE_CHECK_CACHE:
             return _UPDATE_CHECK_CACHE[1]
         return {"available": False, "reason": "checking"}
@@ -19208,8 +19210,14 @@ class Handler(BaseHTTPRequestHandler):
             # however old (never a fetch), and who Install would wait for,
             # read now. Without it (the page's periodic poll): the check,
             # fetching again when the 30-minute cache has run out.
-            want_wait = parse_qs(u.query).get("wait", [""])[0] == "1"
-            info = cached_update_check() if want_wait else check_for_update()
+            # &fresh=1 (Install now, #345): check again now, then answer, so
+            # the press acts on the hub as it is.
+            q = parse_qs(u.query)
+            want_wait = q.get("wait", [""])[0] == "1"
+            if q.get("fresh", [""])[0] == "1":
+                info = check_for_update(force=True)
+            else:
+                info = cached_update_check() if want_wait else check_for_update()
             self._send_json(200, update_check_view(info, wait=want_wait))
             return
         if p == "/api/version":
