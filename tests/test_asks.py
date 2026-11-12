@@ -50,6 +50,8 @@ from tests.test_page_update import CHROME  # noqa: E402
 from tests.test_points import _World, http, turn  # noqa: E402
 from tests.test_po_chat_clean import NODE, NOUN, SRC, _turn, fold_block  # noqa: E402
 
+CARD_URL = "http://127.0.0.1:8765/session?room=room-8d56cd21&msg=d6801a1e8ab0&part=ask:0"
+
 THREE = """Three things need you before I merge.
 
 1. **Ask:** Which retention for old transcripts?
@@ -78,6 +80,16 @@ FIXTURES = {
     "spaces": "Ask:" + chr(0x3000) + "Which" + chr(0x1f) + "one" + chr(0xfeff) + "?\n- **Keep" + chr(0x85) + "it** " + chr(0x2003) + "— less churn",
     "digits": "Ask: Which?\n" + chr(0x661) + ". Not an option\n1. Real",
     "emoji": "Ask: Which name?\n- " + ("Name " + chr(0x1f600)) * 16 + " — long\n- Short",
+    # P321 (#351): "Ask: <a card's link>" reminds of that card; it asks nothing.
+    "reminder": "Still waiting on you: which Ensemble you used.\n\nAsk: " + CARD_URL,
+    "reminder_yesno": "**Ask (yes/no):** " + CARD_URL + "\n\nMore below.",
+    "reminder_links": "1. **Ask:** [the card](" + CARD_URL + "), and <" + CARD_URL.replace("ask:0", "ask:1") + ">.",
+    "reminder_then_real": "Ask: " + CARD_URL + "\n\nAsk: Which hub sent them?\n- **Main** — epyc-32\n- **Other**",
+    "question_with_link": "Ask: Is " + CARD_URL + " still right?",
+    # Only a link, but not to a hub message: still a question (review 1).
+    "other_link": "Ask: https://example.org/help",
+    # A link to a message, not to one of its cards: still a question (review 2).
+    "message_link": "Ask: http://127.0.0.1:8765/session?room=room-12345678&msg=abc",
 }
 
 NODE_JS = r"""
@@ -85,7 +97,7 @@ const vm = require('vm');
 const { code, fixtures } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, withPathAbbrevs: (t, f) => f(),
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, URL };
 // The card's words (#238, tests/test_card_text.py): plain here.
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
@@ -188,6 +200,49 @@ class TheMarker(unittest.TestCase):
         e = asks.parse(FIXTURES["emoji"])[0]["options"][0]["label"]
         self.assertEqual(len(e), 80)
         self.assertTrue(e.endswith("…"))
+
+    def test_a_link_only_ask_is_a_reminder_not_a_card(self):
+        # P321: the PO ended two replies with "Ask: <the open card's link>";
+        # each made a card whose question was the URL.
+        self.assertEqual(asks.parse(FIXTURES["reminder"]), [])
+        self.assertEqual(asks.parse(FIXTURES["reminder_yesno"]), [])
+        self.assertEqual(asks.parse(FIXTURES["reminder_links"]), [])
+        self.assertEqual(asks.safety(FIXTURES["reminder"]), [])
+        self.assertEqual(asks.of_message({"text": FIXTURES["reminder"]}), [])
+        r = asks.parse(FIXTURES["reminder_then_real"])
+        self.assertEqual([(a["n"], a["question"], a["kind"], [o["label"] for o in a["options"]]) for a in r],
+                         [(0, "Which hub sent them?", "decision", ["Main", "Other"])])
+        q = asks.parse(FIXTURES["question_with_link"])
+        self.assertEqual(len(q), 1, "words around the link are a question")
+        self.assertTrue(asks.links_only(CARD_URL) and asks.links_only(f"`{CARD_URL}`"))
+        self.assertFalse(asks.links_only("Which one? " + CARD_URL))
+        # Only links to hub messages remind; any other link alone is still asked.
+        self.assertEqual([a["question"] for a in asks.parse(FIXTURES["other_link"])], ["https://example.org/help"])
+        self.assertTrue(asks.reminder(CARD_URL + ", " + CARD_URL + "."))
+        self.assertFalse(asks.reminder("https://example.org/help"))
+        self.assertFalse(asks.reminder(CARD_URL + " https://example.org/help"))
+        self.assertFalse(asks.reminder("http://127.0.0.1:8765/session?room=room-8d56cd21"))
+        self.assertEqual(len(asks.parse(FIXTURES["message_link"])), 1)
+        self.assertFalse(asks.reminder(CARD_URL.replace("part=ask:0", "part=file")))
+
+    def test_a_bare_link_is_never_an_asks_title(self):
+        self.assertEqual(asks.title(CARD_URL, "claude"), "Question from claude")
+        self.assertEqual(asks.title("<" + CARD_URL + ">"), "Question")
+        self.assertEqual(asks.title("Ship it?", "claude"), "Ship it?")
+        # Any link alone, with the punctuation a URL may hold (review 1).
+        for u in ("https://example.org/help", "https://example.org/a;b", "https://example.org/a,b",
+                  "[help](https://example.org/a;b)"):
+            with self.subTest(url=u):
+                self.assertEqual(asks.title(u, "claude"), "Question from claude")
+        # A long link the question was cut inside (review 2).
+        long = asks.parse("Ask: [help](https://example.org/" + "a" * 210 + ")")
+        self.assertEqual(len(long), 1)
+        self.assertEqual(asks.title(long[0]["question"], "claude"), "Question from claude")
+        self.assertEqual(asks.title("Which one? https://example.org/" + "a" * 210, "claude")[:10], "Which one?")
+        with self.assertRaises(ValueError) as e:
+            asks.validated([{"question": CARD_URL, "yesno": True}])
+        self.assertIn("paste its link alone", str(e.exception))
+        self.assertEqual(len(asks.validated([{"question": "Ship it?", "yesno": True}])), 1)
 
     def test_the_answer_quotes_its_ask(self):
         a = asks.parse(THREE)[0]
