@@ -1,0 +1,88 @@
+/* What's new (#339): the update chip on the user button, its menu item and
+   the dialog, in the Send feedback dialog's frame (static/feedback.css). */
+
+/* The chip: a 12px dot on the avatar's top-right in the "new" token, ringed in
+   the bar's ground. Placed absolutely, so the button keeps its size and place. */
+#me-btn { position: relative; overflow: visible; }
+.upd-dot {
+  position: absolute; top: -2px; right: -2px; box-sizing: border-box; width: 12px; height: 12px;
+  border-radius: var(--r-full); background: var(--c-discovery-bold); border: 2px solid var(--surface);
+  pointer-events: none;
+}
+.upd-dot[hidden] { display: none; }
+
+/* The menu item: first of the lower group, above Send feedback. */
+#me-menu .me-upd { font-weight: 500; }
+#me-menu .me-upd[hidden] { display: none; }
+#me-menu .me-upd .me-upd-dot { flex: none; width: 8px; height: 8px; border-radius: var(--r-full); background: var(--c-discovery-bold); }
+#me-menu .me-upd .me-upd-tag {
+  margin-left: auto; padding: 0 6px; border-radius: var(--r-100); background: var(--c-discovery-bg);
+  color: var(--c-discovery-fg); font-size: var(--fs-100); font-weight: 600; line-height: 16px;
+  text-transform: uppercase; letter-spacing: .05em;
+}
+#me-menu .me-upd.quiet { font-weight: 400; }
+#me-menu .me-upd.quiet .me-upd-dot { display: none; }
+#me-menu .me-upd.quiet .me-upd-tag {
+  background: transparent; color: var(--fg-muted); text-transform: none; letter-spacing: 0; font-weight: 400; padding: 0;
+}
+
+/* The dialog. */
+#wn-dialog {
+  box-sizing: border-box; width: min(640px, calc(100% - 32px)); max-height: calc(var(--vv-h, 100dvh) - 32px);
+  margin: 16px auto; padding: var(--s-400); color: var(--fg);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-300); box-shadow: var(--e-200);
+  font-size: var(--fs-300); overflow: hidden;
+}
+#wn-dialog[open] { display: flex; flex-direction: column; }
+#wn-dialog::backdrop { background: var(--overlay-scrim, var(--bg)); }
+#wn-dialog [hidden] { display: none !important; }
+#wn-dialog .wn-head { display: flex; align-items: center; gap: var(--s-200); }
+#wn-dialog .wn-head svg { flex: none; width: 24px; height: 24px; color: var(--c-discovery-bold); }
+#wn-dialog h2 { margin: 0; font-size: var(--fs-500); line-height: 24px; font-weight: 600; }
+#wn-dialog .wn-sub { margin: var(--s-200) 0 0; color: var(--fg-subtle); }
+#wn-dialog .wn-box {
+  margin-top: var(--s-300); min-height: 0; flex: 0 1 auto; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--r-200); padding: var(--s-200) var(--s-300);
+}
+#wn-dialog .wn-label { color: var(--fg-muted); font-size: var(--fs-200); margin: var(--s-100) 0; }
+#wn-dialog ol { list-style: none; margin: 0; padding: 0; }
+#wn-dialog ol > li { display: flex; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--border); cursor: pointer; }
+#wn-dialog ol > li:first-child { border-top: 0; }
+#wn-dialog ol > li:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; border-radius: var(--r-100); }
+#wn-dialog ol > li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#wn-dialog ol > li.open .t { white-space: normal; overflow-wrap: anywhere; }
+#wn-dialog .wn-more { color: var(--fg-muted); font-size: var(--fs-200); padding: 6px 0 2px; border-top: 1px solid var(--border); }
+/* The notes come through the chat's mdToHtml: headings down to h6 ("###" is
+   an h5 there) and .ln-gap spacers between blocks, which the margins replace. */
+#wn-dialog .wn-md h1, #wn-dialog .wn-md h2, #wn-dialog .wn-md h3, #wn-dialog .wn-md h4,
+#wn-dialog .wn-md h5, #wn-dialog .wn-md h6 {
+  font-size: var(--fs-300); line-height: 20px; font-weight: 600; margin: var(--s-200) 0 var(--s-100);
+}
+#wn-dialog .wn-md .wn-ver:first-child, #wn-dialog .wn-md > :first-child { margin-top: var(--s-100); }
+#wn-dialog .wn-md ul, #wn-dialog .wn-md ol { margin: 0 0 var(--s-200); padding-left: 20px; }
+#wn-dialog .wn-md li { padding: 2px 0; }
+#wn-dialog .wn-md p { margin: 0 0 var(--s-200); }
+#wn-dialog .wn-md .ln-gap { display: none; }
+#wn-dialog .wn-md .ln { margin: 0 0 var(--s-200); }
+#wn-dialog .wn-md a { color: var(--link); }
+#wn-dialog .wn-wait {
+  display: flex; gap: var(--s-200); align-items: baseline; margin: var(--s-300) 0 0; padding: var(--s-200) var(--s-300);
+  background: var(--c-warning-bg); color: var(--c-warning-fg); border-radius: var(--r-200); font-size: var(--fs-200);
+}
+#wn-dialog .wn-wait::before {
+  content: ''; flex: none; width: 8px; height: 8px; border-radius: var(--r-full); background: var(--c-warning-bold); transform: translateY(-1px);
+}
+#wn-dialog .wn-actions { display: flex; flex-wrap: wrap; gap: var(--s-200); margin-top: var(--s-400); }
+#wn-dialog .wn-actions .skip { margin-left: auto; }
+#wn-dialog .po-btn { height: 32px; font-size: var(--fs-300); font-weight: 500; }
+#wn-dialog .po-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+#wn-dialog .po-btn.primary:hover { background: var(--accent-hover); }
+#wn-dialog .po-btn:disabled { background: var(--surface-sunken); color: var(--fg-muted); cursor: default; }
+@media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+  .upd-dot { top: 6px; right: 6px; }
+  #wn-dialog { margin-top: calc(var(--vv-top, 0px) + 16px); }
+  #wn-dialog .po-btn { min-height: var(--touch-min); height: auto; }
+  #wn-dialog ol > li { min-height: var(--touch-min); align-items: center; box-sizing: border-box; }
+  #wn-dialog .wn-actions .po-btn { flex: 1 1 auto; }
+  #wn-dialog .wn-actions .skip { margin-left: 0; flex-basis: 100%; }
+}

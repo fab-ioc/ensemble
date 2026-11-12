@@ -226,6 +226,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --fg-disabled: #8590A2;      /* inactive controls ONLY — see SKILL.md §3 */
     --border: #DCDFE4;
     --border-strong: #B3B9C4;
+    --proj-icon-edge: var(--border-strong);   /* #329: the hairline inside a project's own icon */
     --hover: rgba(9, 30, 66, .06);
     --pressed: rgba(9, 30, 66, .12);
 
@@ -2504,7 +2505,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
   body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
   /* The page follows the stand-in on its other sides too (Move To). */
-  body.ld-on main { margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
+  /* ED-334: and on its left, the one left panel's width (it was body.sw-on's
+     alone, the Tasks panel that went with #322), so a project's page with no PO
+     and no open task starts beside the panel, not under it. */
+  body.ld-on main { padding-left: calc(var(--list-w) + 20px); margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
   body.mid.po-dock.ld-on main { height: calc(100dvh - var(--top-h) - var(--list-t) - var(--list-b)); padding-bottom: 0; }
   body.ld-on thead { top: calc(var(--top-h) + var(--list-t)); }
   /* Two quiet controls, not form boxes: the project filter as a chip
@@ -3243,35 +3247,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-transform: uppercase;
   }
   .instance-badge::before { content: '●'; font-size: 8px; }
-  /* Update banner — shown at the top when a newer commit is available */
-  #update-banner {
-    display: flex; align-items: center; gap: 12px;
-    padding: 8px 16px;
-    background: var(--c-progress-bg);
-    border-bottom: 1px solid var(--border);
-    color: var(--fg); font-size: 13px;
-    position: sticky; top: 0; z-index: 100;
-  }
-  #update-banner[hidden] { display: none; }
-  #update-banner-text { flex: 1; }
-  #update-banner-text code {
-    background: var(--c-neutral-bg);
-    padding: 1px 6px; border-radius: 3px;
-    font-family: var(--font-mono); font-size: 12px;
-  }
-  #update-banner-go {
-    background: var(--accent); color: var(--accent-fg);
-    border: 0; padding: 5px 14px; border-radius: 5px;
-    cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
-  }
-  #update-banner-go:hover { background: var(--accent-hover); }
-  #update-banner-go:disabled { opacity: .65; cursor: progress; }
-  #update-banner-dismiss {
-    background: transparent; border: 0; color: var(--fg-muted);
-    font-size: 16px; line-height: 1; padding: 4px 6px;
-    cursor: pointer; border-radius: 3px;
-  }
-  #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A restart waiting for agents to reach a safe point (restart_drain.py):
      it needs the person only eventually, so the warning wash. */
   #drain-banner {
@@ -3805,7 +3780,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go, #wide-banner-dismiss,
+    .dl-cbtns button, #dock-banner-go, #wide-banner-dismiss,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -3813,8 +3788,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .dcm .ov-item, .wse-edit, .dcs-all { min-height: var(--touch-min); }
-    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more,
-    #update-banner-dismiss {
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -4017,6 +3991,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
     body.po-dock #workspace-compose:not([hidden]) { display:block; }
+    /* Clear of the window's foot and right edge, all four corners in view (#333). */
+    body.po-dock #workspace-compose { margin:0 var(--s-300) var(--s-200) 0; }
   }
   /* Just after a click restored a minimised panel: its second click, if it
      lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
@@ -4452,6 +4428,134 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
 }
 
+  /* #329 (P297 drawing): a project's own icon, in the square's box (.ldp-ico, .pm-sw: 12px),
+     cropped to a square, a hairline inside its edge so a white logo keeps its shape. */
+  .ldp-pic { position: relative; border-radius: 3px; overflow: hidden; }
+  .ldp-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ldp-pic::after { content: ''; position: absolute; inset: 0; border-radius: 3px; border: 1px solid var(--proj-icon-edge); }
+  .pm-head { display: flex; align-items: center; gap: 6px; }
+  .pm-head .pm-sw { flex: none; display: block; width: 12px; height: 12px; }
+  .dcm-rule { border-top: 1px solid var(--border); margin: 4px 0; }
+  #proj-switch-ico { flex: none; display: flex; }
+  #proj-switch-ico:empty { display: none; }
+  #proj-switch-ico .ldp-ico { margin-right: 6px; }
+  .ibx-where .ldp-ico { display: inline-block; vertical-align: -1px; margin-right: 4px; }
+  /* The settings dialog (projSettings). */
+  dialog.ps-dlg { width: 560px; max-width: calc(100vw - 16px); box-sizing: border-box; }
+  dialog.ps-dlg h3.ps-h { margin: 0; display: flex; align-items: center; gap: 8px; }
+  .ps-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-x { margin-left: auto; width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); font: inherit; font-size: 14px; cursor: pointer; }
+  .ps-x:hover { background: var(--hover); color: var(--fg); }
+  .ps-sub { color: var(--fg-muted); font-size: 12px; margin: 2px 0 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .ps-fld { margin: 16px 0 0; }
+  .ps-fld > label, .ps-lg { display: block; font-size: 12px; color: var(--fg-subtle); font-weight: 500; margin-bottom: 4px; }
+  .ps-inp { width: 100%; height: 34px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; outline: none; }
+  .ps-inp:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .ps-inp.bad { border-color: var(--c-danger-bold); }
+  .ps-inp.bad:focus { box-shadow: 0 0 0 1px var(--c-danger-bold); }
+  .ps-hint { font-size: 12px; color: var(--fg-muted); margin: 6px 0 0; }
+  .ps-err { font-size: 12px; color: var(--c-danger-fg); margin: 6px 0 0; }
+  .ps-choices { display: flex; flex-direction: column; gap: 8px; }
+  .ps-choice { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-200); font-size: 13px; cursor: pointer; }
+  .ps-choice:has(.ps-radio:checked) { background: var(--selected-bg); border-color: var(--accent); }
+  .ps-radio { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin: 0; flex: none; border-radius: 50%;
+    border: 1.5px solid var(--border-strong); background: transparent; cursor: pointer; }
+  .ps-radio:checked { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px); }
+  .ps-radio:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-big { width: 40px; height: 40px; flex: none; border-radius: 8px; overflow: hidden; position: relative; display: block; }
+  .ps-big svg { display: block; }
+  .ps-big img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ps-big-img::after { content: ''; position: absolute; inset: 0; border-radius: 8px; border: 1px solid var(--proj-icon-edge); }
+  .ps-big-none { border: 1px dashed var(--border-strong); box-sizing: border-box; }
+  .ps-t { flex: 1; min-width: 0; }
+  .ps-t b { font-weight: 500; display: block; }
+  .ps-t small { display: block; color: var(--fg-muted); font-size: 12px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-t small.ps-plain { font-family: inherit; }
+  .ps-btn { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; flex: none; border: 1px solid var(--border-strong); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .ps-btn:hover { background: var(--hover); }
+  .ps-save { height: 32px; padding: 0 16px; display: inline-flex; align-items: center; border: 0; border-radius: var(--r-200);
+    background: var(--accent); color: var(--accent-fg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .ps-save:hover { background: var(--accent-hover, var(--accent)); }
+  .ps-save.off, .ps-save:disabled { background: var(--c-neutral-bg); color: var(--fg-muted); cursor: default; }
+  .ps-btn:focus-visible, .ps-save:focus-visible, .ps-x:focus-visible, .ps-set-go:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-sample { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .ps-sample .ps-srow { width: 180px; cursor: default; }
+  .ps-sample .ps-srow:hover { background: var(--selected-bg); }
+  .ps-more { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .ps-more .ps-lg { margin-bottom: 6px; }
+  .ps-set { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 8px; min-height: 40px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .ps-set:last-child { border-bottom: 0; }
+  .ps-k { color: var(--fg-subtle); }
+  .ps-v { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-v code { font-family: var(--font-mono); font-size: 12px; }
+  .ps-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  /* Generate (#335): four icons drawn by the hub's CLI, under the Image choice. */
+  .ps-ibtns { display: contents; }
+  .ps-btn .ps-gi { width: 14px; height: 14px; margin-right: 6px; flex: none; }
+  .ps-btn.off { color: var(--fg-disabled); border-color: var(--border); }
+  .ps-btn.off:hover { background: var(--surface); }
+  .ps-gen { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface-sunken); padding: 10px 12px; }
+  .ps-gen-h { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .ps-gen-h b { font-weight: 500; }
+  .ps-gen-who { margin-left: auto; font-size: 12px; color: var(--fg-muted); font-family: var(--font-mono); white-space: nowrap; }
+  .ps-gen-sub { font-size: 12px; color: var(--fg-muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .ps-gen-sub b { font-weight: 500; color: var(--fg-subtle); }
+  .ps-tiles { display: flex; gap: 8px; margin-top: 10px; }
+  .ps-tile { width: 64px; height: 64px; flex: none; padding: 0; border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface);
+    display: grid; place-items: center; position: relative; cursor: pointer; }
+  .ps-tile img { width: 44px; height: 44px; display: block; }
+  button.ps-tile:hover { border-color: var(--border-strong); }
+  .ps-tile.wait { border-style: dashed; border-color: var(--border-strong); background: transparent; cursor: default; }
+  .ps-tile.on { background: var(--selected-bg); border: 2px solid var(--accent); }
+  .ps-tile.on::after { content: '✓'; position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg); font-size: 11px; line-height: 16px; text-align: center; font-weight: 600; }
+  .ps-tile:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-gen-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--fg-muted); }
+  .ps-gen-foot .ps-sp { flex: 1; }
+  .ps-gen-msg { font-size: 13px; color: var(--fg); margin-top: 8px; }
+  .ps-gen-msg:first-child { margin-top: 0; }
+  .ps-gen-msg small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: 2px; }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* Generate on a phone (phone.html): Upload… and Generate… on a row under the Image choice, the tiles spread. */
+    .ps-choice-img { flex-wrap: wrap; }
+    .ps-ibtns { display: flex; gap: 8px; width: 100%; padding-left: 26px; margin-bottom: 4px; box-sizing: border-box; }
+    .ps-btn .ps-gi { width: 16px; height: 16px; }
+    .ps-gen-h { font-size: 15px; }
+    .ps-gen-sub { font-size: 13px; }
+    .ps-tiles { justify-content: space-between; }
+    .ps-tile.on::after { width: 18px; height: 18px; font-size: 12px; line-height: 18px; }
+    .ps-gen-foot { font-size: 13px; }
+    .ps-gen-msg { font-size: 15px; }
+    .ps-gen-msg small { font-size: 13px; }
+  }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* The phone's menu offers its settings in one item (phone.html). */
+    #proj-menu .pm-set:not(.proj-settings-btn) { display: none; }
+    /* At the top (the keyboard), the screen's width less 8px gutters, 44px targets, 16px type in the field. */
+    dialog.ps-dlg { width: calc(100vw - 16px); max-width: none; max-height: calc(var(--vv-h, 100dvh) - 24px); margin: 12px auto auto; padding: 16px; }
+    dialog.ps-dlg h3.ps-h { font-size: 17px; }
+    .ps-x { width: 44px; height: 44px; margin: -10px -10px -10px auto; }
+    .ps-fld { margin-top: 14px; }
+    .ps-fld > label, .ps-lg { font-size: 13px; }
+    .ps-inp { height: 44px; font-size: 16px; }
+    .ps-hint { font-size: 13px; }
+    .ps-choice { min-height: 56px; padding: 6px 10px; font-size: 15px; }
+    .ps-radio { width: 16px; height: 16px; }
+    .ps-btn, .ps-save { height: auto; min-height: 44px; font-size: 15px; }
+    .ps-save { padding: 0 18px; }
+    .ps-more { margin-top: 14px; padding-top: 10px; }
+    .ps-more .ps-lg { margin-bottom: 2px; }
+    .ps-set { display: flex; gap: 8px; min-height: 44px; font-size: 15px; }
+    .ps-set-go { width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--fg); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+    .ps-set .ps-k { flex: none; width: 96px; font-size: 14px; }
+    .ps-set .ps-v { flex: 1; }
+    .ps-set .ps-v code { font-size: 13px; }
+    .ps-go { color: var(--fg-muted); font-size: 18px; }
+    .ps-foot { margin-top: 14px; }
+  }
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
@@ -4468,6 +4572,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
+<!-- What's new (#339): the update chip on the user button, its menu item and dialog. -->
+<link rel="stylesheet" href="/static/whatsnew.css">
+<script src="/static/whatsnew.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
      Imported when a PO screen is first drawn; listed here so the page knows it
      depends on them (Page update), and fetched early. -->
@@ -4512,11 +4619,6 @@ window.DOC_LISTENERS_PAUSED = false;
 <script src="/static/actions.js"></script>
 </head>
 <body>
-<div id="update-banner" hidden>
-  <span id="update-banner-text"></span>
-  <button id="update-banner-go">Update now</button>
-  <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
-</div>
 <div id="drain-banner" role="status" hidden>
   <span id="drain-text"></span>
   <button id="drain-details" type="button" aria-expanded="false" aria-controls="drain-agents">Agents ▸</button>
@@ -4562,7 +4664,7 @@ window.DOC_LISTENERS_PAUSED = false;
          project's settings), then the conversation, the tool and the file
          (barCrumbs). -->
     <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s settings" title="Switch project, or change this project's settings" aria-haspopup="true" aria-expanded="false" aria-controls="proj-menu">
-      <span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
+      <span id="proj-switch-ico" aria-hidden="true"></span><span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
     </button>
     <span id="bar-crumbs"></span>
   </nav>
@@ -4664,6 +4766,8 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
   <div class="me-rule"></div>
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
+  <!-- What's new (#339): shown while an update is available; quiet once it is skipped. -->
+  <button class="me-item me-upd" id="me-whatsnew" data-me="whatsnew" hidden><span class="me-upd-dot" aria-hidden="true"></span>What's new<span class="me-upd-tag">Update available</span></button>
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="feedback">Send feedback…</button>
   <button class="me-item" data-me="settings">Settings</button>
@@ -4964,6 +5068,12 @@ window.DOC_LISTENERS_PAUSED = false;
     <h4>This instance</h4>
     <dl class="cfg-grid"></dl>
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
+    <!-- #331: what the move check at hub start could not repair; shown only when there is something. -->
+    <div id="move-check" hidden>
+      <h5 class="sp-sub">Moved from another machine</h5>
+      <p class="cfg-hint" style="margin-top: 0;">The check at hub start repaired what was safe. These it left as they are, for you to look at.</p>
+      <dl class="cfg-grid" id="move-check-list" style="margin-top: 10px;"></dl>
+    </div>
   </div>
   </div>
   </div>
@@ -5017,6 +5127,12 @@ window.addEventListener('cd-noun', () => {
 // The one dialog most of the page's questions are asked in, kept by
 // reference: it moves to the window the person is using (pdModal).
 const MODAL_EL = document.getElementById('modal');
+// A chat under the dialog says its state itself while the dialog covers the
+// header that says it (session.html, placeState), and looks again only on its
+// next poll: once the dialog closes, it looks now.
+MODAL_EL.addEventListener('close', () => setTimeout(() => {
+  for (const f of document.querySelectorAll('iframe')) { try { f.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {} }
+}, 0));
 const fmtAgo = secs => {
   if (secs == null) return '-';
   if (secs < 0) secs = 0;
@@ -9154,35 +9270,16 @@ async function setPref(key, val) {
   } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
 }
 
-let UPDATE_DISMISSED = false;
 let UPDATE_IN_PROGRESS = false;
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
+// No banner (#339): an available update is a dot on the user button and a
+// What's new item in its menu (static/whatsnew.js).
 async function checkForUpdate() {
-  if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
+  if (UPDATE_IN_PROGRESS) return;
   try {
     const info = await api('/api/update-check');
-    renderUpdateBanner(info);
+    if (window.whatsNew) whatsNew.render(info);
   } catch {}
-}
-function renderUpdateBanner(info) {
-  const banner = document.getElementById('update-banner');
-  if (!banner) return;
-  if (!info || !info.available) {
-    banner.hidden = true;
-    return;
-  }
-  const text = document.getElementById('update-banner-text');
-  if (info.kind === 'release') {
-    // The app: a newer release on GitHub.
-    text.textContent = `Ensemble ${info.latestVersion} is available. You have ${info.currentVersion}.`;
-    banner.hidden = false;
-    return;
-  }
-  const plural = info.behind === 1 ? '' : 's';
-  text.innerHTML =
-    `Update available — ${info.behind} commit${plural} behind. Latest: ` +
-    `<code>${esc(info.latestMessage || info.latestSha || '')}</code>`;
-  banner.hidden = false;
 }
 // After a restart: how the app's last update ended, said once.
 async function noteLastUpdate() {
@@ -9328,9 +9425,7 @@ async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
   ensUpd.hold = true;   // the page refreshes on the new pid below, not for a changed stamp too
-  const banner = document.getElementById('update-banner');
   const overlay = document.getElementById('update-overlay');
-  if (banner) banner.hidden = true;
   if (overlay) overlay.hidden = false;
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
   const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
@@ -9373,7 +9468,6 @@ async function triggerUpdate() {
     UPDATE_IN_PROGRESS = false;
     ensUpd.hold = false;
     if (overlay) overlay.hidden = true;
-    if (banner) banner.hidden = false;
     toast(refused, 8000, 'err');
     return;
   }
@@ -14815,7 +14909,8 @@ function wcFrameFit(height, sized) {
   const f = document.getElementById('workspace-compose-frame');
   // A height set by hand (#274) may take about 70% of the window, To: line included.
   const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
-  WC.boxH = Math.min(Math.max(80, +height || 110), cap);
+  // Unsized, the frame is as tall as the box it holds (#333: no blank under the input).
+  WC.boxH = Math.min(Math.max(sized ? 80 : 40, +height || 110), cap);
   wcFrameApply(f);
 }
 // A menu opening upward from the box (+, Send's, Stop's, the / list) needs
@@ -14887,7 +14982,14 @@ function pdChatOpen(roomId, o) {
   // (A restore runs as the dock is made, before the page's body says po-dock.)
   if (!d || !roomId || !(o && o.restore ? true : pdPanelsOn())) return false;
   const id = pdChatId(roomId);
-  if (PD.rt.has(id)) { try { d.reveal(id); } catch (e) {} if (!o?.restore) wcChoose({kind:'task',room:roomId}); return true; }
+  // o.agent: the chat opens at that agent (a link to @codex@18), as the middle's does.
+  const at = o && o.agent ? '&agent=' + encodeURIComponent(o.agent) : '';
+  if (PD.rt.has(id)) {
+    if (at) { const f = pdChatFrameOf(roomId); if (f) f.src = '/session?id=' + encodeURIComponent(roomId) + '&embed=1' + at; }
+    try { d.reveal(id); } catch (e) {}
+    if (!o?.restore) wcChoose({kind:'task',room:roomId});
+    return true;
+  }
   const r = ALL_ROWS.find(x => x.roomId === roomId);
   if (!r) return false;
   // One chat per task on the page: the task in the middle moves out to its panel.
@@ -14906,7 +15008,7 @@ function pdChatOpen(roomId, o) {
   el.dataset.room = roomId;
   // data-chat-slow: not the person's conversation, so it polls less while
   // it is not being typed in (session.html).
-  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
+  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
   PD.rt.set(id, { kind: 'chat', room: roomId, el });
   // Beside the chat panel last shown (else the conversation) while the row has
   // room for one more (pdFits); else a tab of its stack.
@@ -15272,14 +15374,14 @@ function pdActionItems(r, ctx, o) {
 // button has no place, so one that opens something under its button is
 // given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
 // colours' picker, Open in editor's repo picker).
-function pdRunAction(it, ctx, el) {
+function pdRunAction(it, ctx, el, at) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = it.cls || '';
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  b._at = pdMenuButton(ctx, el);
+  b._at = at || pdMenuButton(ctx, el);
   if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
@@ -15809,7 +15911,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + `${hint ? `<span class="ibx-reason ibx-hint">${esc(hint)}</span>` : ''}</a>`;
     return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
       + (doneAll ? `<div class="ibx-hd">${link}${doneAll}</div>` : link)
-      + `<div class="ibx-meta"><span class="ibx-where">${esc(ibxWhere(r, all))}</span>`
+      + `<div class="ibx-meta"><span class="ibx-where">${all && r.project && r.projectId && typeof ldpSwatch === 'function' ? ldpSwatch(r.projectId) : ''}${esc(ibxWhere(r, all))}</span>`
       + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
       + (r.items && r.items.length ? more(r) : '')
@@ -16345,17 +16447,25 @@ function ldpColour(pid) {
   for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return LDP_COLOURS[h % LDP_COLOURS.length];
 }
-// #328 (P294 drawing): every row's 12px icon. A project its colour square; a task
-// a check in a square; a session a speech bubble. Named by its tooltip.
+// #328 (P294 drawing): every row's 12px icon. A project its colour square; #335
+// (CEO's pick, set B): a task a clipboard with a check, a session the terminal it
+// runs in, so neither reads as one more project square. Named by its tooltip.
+// #329: a project with an icon of its own shows it in the square's box instead.
 function ldpSwatch(pid, cls) {
+  let pj = null;
+  try { pj = projectById(pid); } catch (e) {}
+  if (pj && pj.icon && pj.icon.v) return `<span class="${cls || 'ldp-ico'} ldp-pic"><img src="${esc(projIconUrl(pid, pj.icon))}" alt="${esc(pj.name || '')}" draggable="false"></span>`;
   return `<svg class="${cls || 'ldp-ico'}" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pid)}"/></svg>`;
 }
 function ldpKindIcon(kind, cls) {
   const c = cls || 'ldp-ico';
-  if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title><rect width="12" height="12" rx="3" fill="var(--tool-list)"/>`
-    + '<path d="M3.2 6.2l1.9 1.9 3.7-4" stroke="var(--tool-ink)" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title>`
+    + '<rect x="1.6" y="2.2" width="8.8" height="9.2" rx="1.4" fill="var(--tool-list)" fill-opacity=".22" stroke="var(--tool-list)" stroke-width="1.2"/>'
+    + '<rect x="3.8" y=".6" width="4.4" height="2.6" rx=".8" fill="var(--tool-list)"/>'
+    + '<path d="M3.8 7l1.5 1.5 3-3.1" stroke="var(--tool-list)" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="session"><title>session</title>`
-    + '<path d="M2.5 1h7A1.5 1.5 0 0 1 11 2.5v5A1.5 1.5 0 0 1 9.5 9H6l-3 2.5V9h-.5A1.5 1.5 0 0 1 1 7.5v-5A1.5 1.5 0 0 1 2.5 1z" fill="var(--c-neutral-bold)"/></svg>';
+    + '<rect x=".9" y="1.6" width="10.2" height="8.8" rx="1.4" fill="var(--c-neutral-bold)" fill-opacity=".22" stroke="var(--c-neutral-bold)" stroke-width="1.2"/>'
+    + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
 function ldpHtml(m) {
   const d = IBX.data;
@@ -16367,8 +16477,11 @@ function ldpHtml(m) {
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
   const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
   for (const p of ps) {
-    h += `<button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
-      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`;
+    const reg = projectById(p.pid);
+    h += `<div class="ldp-item"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
+      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`
+      + (reg && reg.registered && p.pid !== UNASSIGNED_ID ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
+      + '</div>';
   }
   if (m.projs.length > LDP_N) {
     const rest = m.projs.length - LDP_N;
@@ -16409,7 +16522,7 @@ function ldpPaint() {
   LDP.sig = html;
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
-    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
+    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
       + (a.hasAttribute('data-ldp-menu') ? '[data-ldp-menu]' : (a.classList.contains('ldp-row') ? '.ldp-row' : ''))
     : '';
   el.innerHTML = html;
@@ -16432,20 +16545,17 @@ function ldpMenuClose() {
   m.el.remove();
   if (m.btn) m.btn.setAttribute('aria-expanded', 'false');
 }
-function ldpMenu(b, r, rect) {
+// A left-list row's menu (its ⋯ or a right click): `html` its items, `act(it)`
+// what a pick does (true: handled; else the item's own document handler acts).
+function ldpMenuOpen(b, rect, label, html, dotsSel, act) {
   ldpMenuClose();
   const el = document.createElement('div');
   el.className = 'dcm'; el.setAttribute('role', 'menu');
-  const title = rowTitle(r);
-  el.setAttribute('aria-label', 'Actions for ' + title);
-  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
-  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-  el.innerHTML = `<div class="dcm-head">${esc(title)}</div>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`;
+  el.setAttribute('aria-label', label);
+  el.innerHTML = html;
   document.body.appendChild(el);
   docsMenuPlace(el, rect);
-  const dots = b.matches('[data-ldp-menu]') ? b : (b.closest('.ldp-item') || b).querySelector('[data-ldp-menu]');
+  const dots = b.matches(dotsSel) ? b : (b.closest('.ldp-item') || b).querySelector(dotsSel);
   if (dots) dots.setAttribute('aria-expanded', 'true');
   const away = e => { if (!(e.target && e.target.nodeType === 1 && el.contains(e.target))) ldpMenuClose(); };
   const key = e => { if (e.key === 'Escape') { e.preventDefault(); const f = dots; ldpMenuClose(); if (f) f.focus(); } };
@@ -16466,15 +16576,82 @@ function ldpMenu(b, r, rect) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
     else if (e.key === 'Tab') { ldpMenuClose(); }
   };
-  // Make PO: the page's own .makepo-btn handler (on document) does the work.
   el.addEventListener('click', (e) => {
     const it = e.target.closest('.dcm-item');
     if (!it || it.disabled) return;
-    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return; }
+    if (act(it)) return;
     setTimeout(ldpMenuClose, 0);
   });
   const first = el.querySelector('.dcm-item');
   if (first) first.focus();
+}
+function ldpMenu(b, r, rect) {
+  const title = rowTitle(r);
+  // ED-334: the row's own actions, the same model as its row and task panel
+  // menus (Start/Resume, Rename, Move, Make PO, Delete…), after Open (the
+  // row's click). Hidden items (Hide terminal) are left out: no terminal is
+  // up for a row in the left panel.
+  const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
+  const acts = [];
+  const groups = (model.primary ? [[model.primary], ...model.groups] : model.groups)
+    .map(g => g.filter(it => !it.hidden && it.id !== 'open')).filter(g => g.length);
+  const itemHtml = (it) => {
+    const i = acts.push(it) - 1;
+    const tip = it.disabled ? it.reason : it.title;
+    return `<button type="button" role="${it.role || 'menuitem'}" class="ov-item dcm-item${it.danger ? ' danger' : ''}" data-ldp-act="${i}"`
+      + (tip ? ` title="${esc(tip)}"` : '') + (it.disabled ? ' disabled aria-disabled="true"' : '')
+      + (it.role === 'menuitemcheckbox' ? ` aria-checked="${!!it.checked}"` : '')
+      + (it.popup ? ' aria-haspopup="dialog"' : '') + `>${esc(it.label)}</button>`;
+  };
+  // A pick runs the page's own handler for it (on document, keyed on the
+  // item's class and data), through the Dock menu's stand-in button; a picker
+  // it opens (Terminal colours) opens under the ⋯.
+  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div><div class="dcm-list">`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + groups.map(g => '<div class="dcm-rule" role="separator"></div>' + g.map(itemHtml).join('')).join('')
+    + '</div>',
+  '[data-ldp-menu]', it => {
+    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return true; }
+    const a = acts[+it.dataset.ldpAct], dots = LDP_MENU && LDP_MENU.btn;
+    ldpMenuClose();
+    if (a && a.id === 'terminals') ldpTerms(b, r);
+    else if (a) pdRunAction(a, null, null, dots || b);
+    return true;
+  });
+}
+// The terminals item for this row's task, never the open one's (the
+// handler's own fallback is the task in the middle): its chat panel's
+// terminals when it has one, else the task is picked and opened with its
+// terminal showing.
+function ldpTerms(b, r) {
+  const room = r.roomId || '';
+  const pf = room ? pdChatFrameOf(room) : null;
+  if (pf) { toggleCapturedTerms(pf); return; }
+  // On the hub the item shows or hides: the task already open in the middle
+  // has its terminals toggled there (a second pick hides them).
+  const mid = room && onHubMachine() ? document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(room)}"]`) : null;
+  if (mid) { toggleCapturedTerms(mid); return; }
+  ldpScope('project');
+  ldSelSet('room:' + room);
+  showCapturedTerminal(room);
+  ibxRepaint();
+}
+// #329 (P297 drawing): a project row's menu: Open, then Rename and its settings.
+function ldpProjMenu(b, pid, rect) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  ldpMenuOpen(b, rect, 'Actions for ' + pj.name, `<div class="dcm-head">${esc(pj.name)}</div>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + '<div class="dcm-rule" role="separator"></div>'
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="rename">${esc(nounText('Rename {project}…'))}</button>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="settings">${esc(nounText('{Project} settings…'))}</button>`,
+  '[data-ldp-pmenu]', it => {
+    const a = it.dataset.act;
+    ldpMenuClose();
+    if (a === 'open') { ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint(); }
+    else projSettings(pid, { rename: a === 'rename' });
+    return true;
+  });
 }
 function ldpOpenLoose(b) {
   const r = ldpRow(b), room = b.getAttribute('data-ldp-room') || '';
@@ -16504,6 +16681,12 @@ function ldpOpenLoose(b) {
     if (more) {
       if (more === 'proj') LDP.more = !LDP.more; else LDP.moreLoose = !LDP.moreLoose;
       ldpPaint();
+      return;
+    }
+    const pm = b.getAttribute('data-ldp-pmenu');
+    if (pm) {
+      if (LDP_MENU && LDP_MENU.btn === b) { ldpMenuClose(); return; }
+      ldpProjMenu(b, pm, b.getBoundingClientRect());
       return;
     }
     if (b.hasAttribute('data-ldp-menu')) {
@@ -16537,6 +16720,14 @@ function ldpOpenLoose(b) {
     if (b.hasAttribute('data-ldp-room')) ldpOpenLoose(b);
   });
   box.addEventListener('contextmenu', (e) => {
+    const pr = e.target.closest('.ldp-item .ldp-row[data-ldp-proj]');
+    if (pr) {
+      const pid = pr.getAttribute('data-ldp-proj'), pj = projectById(pid);
+      if (!pj || !pj.registered || pid === UNASSIGNED_ID) return;
+      e.preventDefault();
+      ldpProjMenu(pr, pid, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
+      return;
+    }
     const b = e.target.closest('.ldp-item .ldp-row');
     if (!b) return;
     const r = ldpRow(b);
@@ -17296,6 +17487,8 @@ function openProjectPage(pid) {
 document.addEventListener('click', async (ev) => {
   const choose = ev.target.closest('.po-choose');
   if (choose) { projectSetupFlow({ projectId: choose.dataset.proj }); return; }
+  const psb = ev.target.closest('.proj-settings-btn, .proj-rename-btn');
+  if (psb) { projSettings(psb.dataset.proj, { rename: psb.classList.contains('proj-rename-btn') }); return; }
   const ttb = ev.target.closest('.task-tools-btn');
   if (ttb) { taskToolsChoose(ttb.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
@@ -17482,7 +17675,7 @@ async function keyChoose(pid, err) {
                                      body: JSON.stringify({ projectId: pid, key }) });
     toast(`${pj.name}'s tasks are ${key}-1, ${key}-2… where ${noun('many')} mix`, 4000, 'ok');
     await refreshProjects(); renderRows();
-  } catch (e) { keyChoose(pid, histErr(e)); }
+  } catch (e) { return keyChoose(pid, histErr(e)); }
 }
 // The plain sentence the hub sends with a refusal, out of api()'s error.
 function histErr(e) {
@@ -17508,6 +17701,424 @@ async function kindChoose(pid) {
     toast(kind === 'documents' ? `${pj.name} is a documents ${noun('one')}: its files are in its Workspace tab` : `${pj.name} is a code ${noun('one')} again`, 4000, 'ok');
     await refreshProjects(); renderRows();
   } catch (e) { toast(histErr(e), 8000, 'err'); }
+}
+
+// ---- #329 (P297 drawing): a project's settings ---------------------------------
+// One dialog: its name, its icon (the coloured square or a picture of its own),
+// then its other settings, each opening its own dialog and coming back here.
+// The name and the icon change only on Save (/api/projects/rename, /icon).
+const PS_MAX = 1024 * 1024;
+const PS_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'];
+function projIconUrl(pid, icon) {
+  return `/api/projects/icon?id=${encodeURIComponent(pid)}&v=${encodeURIComponent(String((icon && icon.v) || 0))}`;
+}
+function psSize(n) {
+  n = Number(n) || 0;
+  return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
+}
+// The hub's whitespace: what Python's str.split() and strip() treat as space.
+const PS_WS = '\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PS_WS_RUN = new RegExp(`[${PS_WS}]+`), PS_WS_ENDS = new RegExp(`^[${PS_WS}]+|[${PS_WS}]+$`, 'g');
+// A typed name as the hub keeps it: spaces run together, at most 120 characters.
+function psName(s) { return Array.from(String(s || '').split(PS_WS_RUN).filter(Boolean).join(' ')).slice(0, 120).join(''); }
+// The hub compares names with Python's casefold(). This folds only letters
+// below U+0590 (Latin, Greek, Cyrillic, Armenian: ß as ss), where JavaScript's
+// lower case and Python's casefold() agree, so a name it calls taken the hub
+// refuses too (Straße and STRASSE); any other case pair is left to the hub.
+const psFold = s => Array.from(String(s || '')).map(c => c.codePointAt(0) < 0x590 ? c.toLowerCase().replace('ß', 'ss') : c).join('');
+// The other project already called `name`, as the hub compares: its stored
+// name with only its ends trimmed against the typed one, case aside.
+function psClash(pid, name) {
+  const k = psFold(psName(name));
+  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && psFold(String(p.name || '').replace(PS_WS_ENDS, '')) === k) || null : null;
+}
+function psNameErr(pid, name) {
+  if (!psName(name)) return 'A name is needed.';
+  const o = psClash(pid, name);
+  return o ? nounText(`Another {project} is already called ${psName(name)}. Pick another name.`) : '';
+}
+// The picture the Image choice shows: a new file, else the one it has.
+function psPicSrc(pj, d) { return d.file ? d.file.dataUrl : (pj.icon ? projIconUrl(pj.id, pj.icon) : ''); }
+function psCanSave(pj, d) {
+  if (d.busy || psNameErr(pj.id, d.name)) return false;
+  if (d.choice === 'image' && !psPicSrc(pj, d)) return false;
+  return true;
+}
+function psSettingsRowsHtml(pj, phone) {
+  const po = poRowOf(pj);
+  const tools = pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit';
+  const rows = [];
+  if (pj.path) rows.push({ k: 'Kind', v: esc(nounText(isDocsProject(pj) ? 'Documents {project}' : 'Code {project}')), act: 'kind' });
+  if (pj.key) rows.push({ k: 'Key', v: `<code>${esc(pj.key)}</code>` + (phone ? '' : ` · its tasks are ${esc(pj.key)}-18 where ${esc(noun('many'))} mix`), act: 'key' });
+  rows.push({ k: phone ? 'Task tools' : "Task agents' tools", v: esc(tools), act: 'tools' });
+  if (po) {
+    const { m } = poAgent(po);
+    const n = pastCount(pj);
+    const past = n ? `${n} past conversation${n === 1 ? '' : 's'}` : '';
+    const v = phone ? (n ? `Past conversations (${n})` : m.agent || 'claude') : [m.agent || 'claude', shortModel(m.model), past].filter(Boolean).join(' · ');
+    rows.push({ k: 'PO', v: esc(v), act: n ? 'past' : '', btn: 'Past conversations…' });
+  } else rows.push({ k: 'PO', v: 'none', act: poChooseOffered(pj) ? 'po' : '', btn: 'Set up the PO…' });
+  return rows.map(r => phone
+    ? (r.act ? `<button type="button" class="ps-set ps-set-go" data-ps-act="${r.act}"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span><span class="ps-go" aria-hidden="true">›</span></button>`
+             : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span></div>`)
+    : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span>`
+      + (r.act ? `<button type="button" class="ps-btn" data-ps-act="${r.act}">${esc(r.btn || 'Change…')}</button>` : '<span></span>') + '</div>').join('');
+}
+function psHint(pj, phone) {
+  const keep = pj.key ? `Its folder, its id and its key ${pj.key} stay as they are.` : 'Its folder and its id stay as they are.';
+  return phone ? `Shown everywhere at once. ${keep}` : `Shown everywhere at once: the list, the bar, the Board, the Inbox and the chats. ${keep}`;
+}
+// ---- Generate (#335): four icons drawn by the CLI the hub runs ----
+const PS_SPARK = '<svg class="ps-gi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.4 3.6 3.6 1.4-3.6 1.4L8 11.5 6.6 7.9 3 6.5l3.6-1.4z" fill="currentColor"/>'
+  + '<path d="M12.5 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor"/></svg>';
+const PS_GEN_WAIT = 65000;   // the hub gives its CLI 60 s
+// What the hub's refusals say after "No icons this time: <agent> ".
+const PS_GEN_WHY = { timeout: 'did not answer within 60 s.', failed: 'stopped with an error.', no_icons: 'answered with no icon that could be used.', busy: 'is already drawing icons on the hub.' };
+// Generate is greyed only once the hub said it has neither CLI.
+const psGenOff = d => !!(d.genInfo && d.genInfo.agent === '');
+const psGenWho = (agent, model) => [agent, model].filter(Boolean).join(' · ');
+function psImageSub(d, src, fileName, fileSize) {
+  if (d.file && d.file.gen) return `<small class="ps-plain">drawn by ${esc([d.file.gen.agent, d.file.gen.model].filter(Boolean).join(' '))}, not saved yet</small>`;
+  return `<small${src ? '' : ' class="ps-plain"'}>${src ? esc(fileName || 'image') + (fileSize ? ' · ' + esc(psSize(fileSize)) : '') : 'none yet'}</small>`;
+}
+function psGenSecs(g) { return Math.max(0, Math.floor((Date.now() - g.t0) / 1000)); }
+function psGenHtml(pj, d) {
+  const g = d.gen;
+  if (!g) return '';
+  if (g.st === 'nocli') return `<div class="ps-gen" id="ps-gen-box"><div class="ps-gen-msg" role="status">Generating needs claude or codex on the hub, and neither is installed there.`
+    + '<small>Upload an image instead. Once either is installed, Generate works without a restart.</small></div></div>';
+  const info = d.genInfo || {};
+  const who = psGenWho(g.agent || info.agent, g.agent ? g.model : info.model);
+  const name = psName(d.name) || pj.name;
+  const about = info.about ? (Array.from(info.about).length > 60 ? Array.from(info.about).slice(0, 59).join('').trimEnd() + '…' : info.about) : '';
+  const head = `<div class="ps-gen-h"><b>Generate an icon</b>${who ? `<span class="ps-gen-who">${esc(who)}</span>` : ''}</div>`
+    + `<div class="ps-gen-sub">From the name <b>${esc(name)}</b>${about ? ` and its roadmap, “${esc(about)}”` : ''}</div>`;
+  if (g.st === 'busy') {
+    const n = psGenSecs(g);
+    return `<div class="ps-gen" id="ps-gen-box" aria-busy="true">${head}<div class="ps-tiles">${'<span class="ps-tile wait"></span>'.repeat(4)}</div>`
+      + `<div class="ps-gen-foot"><span role="status">Drawing 4 icons…</span> <span id="ps-gen-t">${n} s</span><span class="ps-sp"></span>`
+      + '<button type="button" class="ps-btn" id="ps-gen-cancel">Cancel</button></div></div>';
+  }
+  if (g.st === 'cands') {
+    const tiles = g.svgs.map((u, i) => `<button type="button" class="ps-tile${g.pick === i ? ' on' : ''}" id="ps-gt-${i}" role="radio" aria-checked="${g.pick === i}"`
+      + ` tabindex="${(g.pick < 0 ? i === 0 : g.pick === i) ? 0 : -1}" data-gt="${i}"><img src="${esc(u.url)}" alt="Icon ${i + 1}"></button>`).join('');
+    return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-tiles" role="radiogroup" aria-label="Generated icons">${tiles}</div>`
+      + `<div class="ps-gen-foot"><span role="status">${g.pick >= 0 ? `Icon ${g.pick + 1} picked: it becomes the image when you save.` : 'Pick one. Nothing changes until you save.'}</span>`
+      + '<span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-more">More ideas</button></div></div>';
+  }
+  // failed
+  const agent = g.agent || info.agent || 'the hub';
+  let msg, small;
+  if (g.code === 'busy') { msg = 'Icons for this project are already being drawn.'; small = 'Nothing was changed. Try again in a minute.'; }
+  else if (g.code === 'network') { msg = 'No icons this time: the hub did not answer.'; small = 'Nothing was changed. Try again in a minute, or upload an image.'; }
+  else {
+    msg = `No icons this time: ${agent} ${PS_GEN_WHY[g.code] || PS_GEN_WHY.failed}`;
+    small = g.code === 'timeout' ? 'Nothing was changed. It may be busy or signed out; try again in a minute, or upload an image.'
+      : g.code === 'busy' ? 'Nothing was changed. Try again in a minute, or upload an image.'
+      : 'Nothing was changed. Try again, or upload an image.';
+  }
+  return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-gen-msg" role="status">${esc(msg)}<small>${esc(small)}</small></div>`
+    + '<div class="ps-gen-foot"><span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-close">Close</button>'
+    + '<button type="button" class="ps-btn" id="ps-gen-again">Try again</button></div></div>';
+}
+// One POST: {svgs, agent, model} or {error, agent, model}; throws only when aborted.
+async function psGenPost(pid, name, signal) {
+  let r;
+  try {
+    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name }), signal });
+  } catch (e) {
+    if (signal && signal.aborted) throw e;
+    return { error: 'network' };
+  }
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (r.ok && j && j.ok && Array.isArray(j.svgs) && j.svgs.length) return j;
+  return { error: (j && j.error) || (r.ok ? 'no_icons' : 'failed'), agent: (j && j.agent) || '', model: (j && j.model) || '' };
+}
+// A generated SVG as the data URL the Image choice and Save take.
+function psSvgUrl(svg) {
+  const bytes = new TextEncoder().encode(svg);
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return { url: 'data:image/svg+xml;base64,' + btoa(bin), size: bytes.length };
+}
+function psDialogHtml(pj, d, phone) {
+  const nameErr = psNameErr(pj.id, d.name);
+  const hint = esc(psHint(pj, phone));
+  const src = psPicSrc(pj, d);
+  const fileName = d.file ? d.file.name : (pj.icon && pj.icon.name) || '';
+  const fileSize = d.file ? d.file.size : (pj.icon && pj.icon.size) || 0;
+  const sq = d.choice !== 'image';
+  const bigSq = `<span class="ps-big"><svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><rect width="40" height="40" rx="8" fill="${ldpColour(pj.id)}"/></svg></span>`;
+  const bigPic = src ? `<span class="ps-big ps-big-img"><img src="${esc(src)}" alt=""></span>` : '<span class="ps-big ps-big-none"></span>';
+  const small = sq ? `<svg class="ldp-ico" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pj.id)}"/></svg>`
+    : (src ? `<span class="ldp-ico ldp-pic"><img src="${esc(src)}" alt=""></span>` : '<span class="ldp-ico"></span>');
+  let n = 0;
+  try { n = IBX.data ? ibxRows(IBX.data, 'project', pj.id).length : 0; } catch (e) {}
+  const save = psCanSave(pj, d);
+  return `<h3 class="ps-h">${ldpSwatch(pj.id)}<span class="ps-title">${esc(nounText('{Project} settings'))}</span>`
+    + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
+    + (pj.path ? `<div class="ps-sub">${esc(pj.path)}</div>` : '')
+    + `<div class="ps-fld"><label for="ps-name">Name</label>`
+    + `<input type="text" id="ps-name" class="ps-inp${(nameErr && d.touched) || d.nameErr ? ' bad' : ''}" value="${esc(d.name)}" autocomplete="off" spellcheck="false"`
+    + ` aria-describedby="ps-name-note"${(nameErr && d.touched) || d.nameErr ? ' aria-invalid="true"' : ''}>`
+    + (nameErr && d.touched ? `<p class="ps-err" id="ps-name-note" role="alert">${esc(nameErr)}</p>` : `<p class="ps-hint" id="ps-name-note">${hint}</p>`)
+    + (d.nameErr ? `<p class="ps-err" id="ps-name-hub" role="alert">${esc(d.nameErr)}</p>` : '') + '</div>'
+    + `<div class="ps-fld"><div class="ps-lg" id="ps-icon-lg">Icon</div>`
+    + `<div class="ps-choices" role="radiogroup" aria-labelledby="ps-icon-lg">`
+    + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="square"${sq ? ' checked' : ''}>${bigSq}`
+    + `<span class="ps-t"><b>Coloured square</b>${phone ? '' : '<small class="ps-plain">its colour comes from its place in the list</small>'}</span></label>`
+    + `<label class="ps-choice ps-choice-img"><input type="radio" class="ps-radio" name="ps-icon" value="image"${sq ? '' : ' checked'}>${bigPic}`
+    + `<span class="ps-t"><b>Image</b>${psImageSub(d, src, fileName, fileSize)}</span>`
+    + `<span class="ps-ibtns"><button type="button" class="ps-btn" id="ps-up">${src && !phone ? 'Replace…' : phone ? 'Upload…' : 'Upload image…'}</button>`
+    + `<button type="button" class="ps-btn${psGenOff(d) ? ' off' : ''}" id="ps-gen"${psGenOff(d) ? ' aria-disabled="true"' : ''} aria-expanded="${!!d.gen}" aria-controls="ps-gen-box">${PS_SPARK}Generate…</button></span></label>`
+    + `<input type="file" id="ps-file" accept="${PS_TYPES.join(',')}" hidden></div>`
+    + psGenHtml(pj, d)
+    + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
+    + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
+        : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
+    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    + '</div>'
+    + `<div class="ps-more"><div class="ps-lg">More settings</div>${psSettingsRowsHtml(pj, phone)}</div>`
+    + `<div class="ps-foot"><button type="button" class="ps-btn" id="ps-cancel">Cancel</button>`
+    + `<button type="button" class="ps-save${save ? '' : ' off'}" id="ps-save"${save ? '' : ' disabled'}>${d.busy ? 'Saving…' : 'Save'}</button></div>`;
+}
+function psReadFile(f) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(String(rd.result || ''));
+    rd.onerror = () => reject(rd.error || new Error('could not read the file'));
+    rd.readAsDataURL(f);
+  });
+}
+// The settings once: resolves 'saved', null (closed), or { sub } (another
+// setting's dialog to open; the dialog is closed by then).
+function psOnce(pid, d, focus) {
+  const dlg = pdModal();
+  const phone = phoneNow();
+  return new Promise(resolve => {
+    let done = false;
+    let tick = 0;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      clearInterval(tick);
+      // Drawing stops with the dialog (or another setting's dialog over it).
+      if (d.gen && d.gen.st === 'busy') { d.gen.ctl.abort(); d.gen = d.gen.prev || null; }
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.classList.remove('ps-dlg');
+      if (dlg.open) dlg.close();
+      resolve(v);
+    };
+    const onCancel = (ev) => { ev.preventDefault(); finish(null); };
+    const paint = (keep) => {
+      const pj = projectById(pid);
+      if (!pj) { finish(null); return; }
+      const a = keep || (dlg.contains(document.activeElement) ? document.activeElement.id || '' : '');
+      const sel = dlg.querySelector('#ps-name');
+      const caret = sel && document.activeElement === sel ? [sel.selectionStart, sel.selectionEnd] : null;
+      dlg.innerHTML = psDialogHtml(pj, d, phone);
+      wire(pj);
+      const f = a && dlg.querySelector('#' + CSS.escape(a));
+      if (f) { f.focus(); if (caret && f.id === 'ps-name') f.setSelectionRange(caret[0], caret[1]); }
+    };
+    // The name's note and Save follow each key without redrawing the field.
+    const nameState = (pj) => {
+      const inp = dlg.querySelector('#ps-name');
+      const err = psNameErr(pid, d.name);
+      const shown = !!(err && d.touched);
+      // The hub's refusal holds until the name is typed again.
+      const hub = dlg.querySelector('#ps-name-hub');
+      if (hub && !d.nameErr) hub.remove();
+      inp.classList.toggle('bad', shown || !!d.nameErr);
+      if (shown) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
+      const note = dlg.querySelector('#ps-name-note');
+      const want = shown ? 'ps-err' : 'ps-hint';
+      note.className = want;
+      if (shown) note.setAttribute('role', 'alert'); else note.removeAttribute('role');
+      const text = shown ? err : psHint(pj, phone);
+      if (note.textContent !== text) note.textContent = text;
+      const ok = psCanSave(pj, d);
+      const b = dlg.querySelector('#ps-save');
+      b.disabled = !ok; b.classList.toggle('off', !ok);
+      const s = dlg.querySelector('.ps-srow .ldp-name');
+      if (s) s.textContent = psName(d.name) || pj.name;
+      const g = dlg.querySelector('.ps-gen-sub b');
+      if (g) g.textContent = psName(d.name) || pj.name;
+    };
+    // ---- Generate (#335) ----
+    const genInfoLoad = async () => {
+      try { d.genInfo = await api('/api/projects/icon-gen?id=' + encodeURIComponent(pid)); } catch (e) {}
+    };
+    const genStart = async (pj) => {
+      if (d.busy || (d.gen && d.gen.st === 'busy')) return;
+      // Greyed, it asks the hub again: a CLI installed since works at once.
+      if (psGenOff(d)) {
+        await genInfoLoad();
+        if (done) return;
+        if (psGenOff(d)) { d.gen = { st: 'nocli' }; paint('ps-gen'); return; }
+      }
+      const was = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      const g = { st: 'busy', t0: Date.now(), ctl: new AbortController(), prev: d.gen && d.gen.st === 'cands' ? d.gen : null, timedOut: false };
+      d.gen = g;
+      paint(was === 'ps-gen' ? 'ps-gen' : 'ps-gen-cancel');
+      const tm = setTimeout(() => { g.timedOut = true; g.ctl.abort(); }, PS_GEN_WAIT);
+      let res = null;
+      try { res = await psGenPost(pid, psName(d.name) || pj.name, g.ctl.signal); }
+      catch (e) { res = g.timedOut ? { error: 'timeout', agent: (d.genInfo && d.genInfo.agent) || '' } : null; }
+      finally { clearTimeout(tm); }
+      if (done || d.gen !== g || !res) return;   // cancelled, or the dialog closed
+      if (res.error === 'no_cli') { d.genInfo = Object.assign({}, d.genInfo, { agent: '', model: '' }); d.gen = { st: 'nocli' }; }
+      else if (res.error) d.gen = { st: 'failed', code: res.error, agent: res.agent || '', model: res.model || '' };
+      else {
+        d.gen = { st: 'cands', svgs: res.svgs.slice(0, 4).map(psSvgUrl), pick: -1, agent: res.agent || '', model: res.model || '' };
+        if (res.agent) d.genInfo = Object.assign({}, d.genInfo, { agent: res.agent, model: res.model || '' });
+      }
+      // Focus moves to the answer from where the drawing was asked (or Cancel,
+      // which is gone); elsewhere, as in the name, it stays.
+      const now = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      const asked = !now || now === 'ps-gen' || now === 'ps-gen-cancel';
+      paint(!asked ? '' : d.gen.st === 'cands' ? 'ps-gt-0' : d.gen.st === 'failed' ? 'ps-gen-again' : 'ps-gen');
+    };
+    const genPick = (i) => {
+      const g = d.gen;
+      if (!g || g.st !== 'cands' || !g.svgs[i]) return;
+      g.pick = i;
+      d.file = { dataUrl: g.svgs[i].url, name: 'generated-icon.svg', size: g.svgs[i].size, gen: { agent: g.agent, model: g.model } };
+      d.choice = 'image'; d.iconErr = '';
+      paint('ps-gt-' + i);
+    };
+    const save = async (pj) => {
+      if (!psCanSave(pj, d)) return;
+      d.busy = true; d.nameErr = ''; d.iconErr = '';
+      paint('ps-save');
+      const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      let step = 'name';
+      try {
+        const name = psName(d.name);
+        if (name !== pj.name) await post('/api/projects/rename', { projectId: pid, name });
+        step = 'icon';
+        if (d.choice === 'image' && d.file) await post('/api/projects/icon', { projectId: pid, dataUrl: d.file.dataUrl, name: d.file.name });
+        else if (d.choice !== 'image' && pj.icon) await post('/api/projects/icon', { projectId: pid, dataUrl: null });
+      } catch (e) {
+        d.busy = false;
+        if (step === 'name') d.nameErr = histErr(e); else d.iconErr = histErr(e);
+        // The Inbox's cards carry the project's name from the hub: ask for them again.
+        try { await refreshProjects(); renderRows(); ldpPaint(); syncProjSwitch(); ibxPoll(); } catch (x) {}
+        if (!done) paint(step === 'name' ? 'ps-name' : 'ps-up');
+        return;
+      }
+      d.busy = false;
+      try { await refreshProjects(); renderRows(); ldpPaint(); syncProjSwitch(); ibxPoll(); } catch (x) {}
+      finish('saved');
+    };
+    const wire = (pj) => {
+      const inp = dlg.querySelector('#ps-name');
+      inp.oninput = () => { d.name = inp.value; d.touched = true; d.nameErr = ''; nameState(pj); };
+      inp.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); d.touched = true; nameState(pj); save(pj); } };
+      dlg.querySelector('#ps-x').onclick = () => finish(null);
+      dlg.querySelector('#ps-cancel').onclick = () => finish(null);
+      dlg.querySelector('#ps-save').onclick = () => save(pj);
+      dlg.querySelectorAll('input[name="ps-icon"]').forEach(r => {
+        r.onchange = () => {
+          if (!r.checked) return;
+          d.choice = r.value; d.iconErr = '';
+          paint('');
+          const again = dlg.querySelector(`input[name="ps-icon"][value="${r.value}"]`);
+          if (again) again.focus();
+          // Image with no picture yet: pick one.
+          if (r.value === 'image' && !psPicSrc(pj, d)) dlg.querySelector('#ps-file').click();
+        };
+      });
+      const file = dlg.querySelector('#ps-file');
+      dlg.querySelector('#ps-up').onclick = (ev) => { ev.preventDefault(); file.click(); };
+      dlg.querySelector('#ps-gen').onclick = (ev) => { ev.preventDefault(); genStart(pj); };
+      const gb = (id, fn) => { const b = dlg.querySelector('#' + id); if (b) b.onclick = fn; };
+      gb('ps-gen-cancel', () => {
+        const g = d.gen;
+        if (!g || g.st !== 'busy') return;
+        d.gen = g.prev || null;
+        g.ctl.abort();
+        paint(d.gen ? 'ps-gen-more' : 'ps-gen');
+      });
+      gb('ps-gen-more', () => genStart(pj));
+      gb('ps-gen-again', () => genStart(pj));
+      gb('ps-gen-close', () => { d.gen = null; paint('ps-gen'); });
+      dlg.querySelectorAll('[data-gt]').forEach(t => {
+        const i = +t.getAttribute('data-gt');
+        t.onclick = () => genPick(i);
+        t.onkeydown = (ev) => {
+          const n = d.gen && d.gen.svgs ? d.gen.svgs.length : 0;
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+          if (!step || !n) return;
+          ev.preventDefault();
+          genPick((i + step + n) % n);
+        };
+      });
+      file.onchange = async () => {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        d.iconErr = '';
+        if (f.size > PS_MAX) d.iconErr = `That image is ${psSize(f.size)}; an icon can be up to 1 MB.`;
+        else if (f.type && !PS_TYPES.includes(f.type)) d.iconErr = 'Only a PNG, JPEG, SVG or WebP image can be an icon.';
+        else {
+          try {
+            d.file = { dataUrl: await psReadFile(f), name: f.name, size: f.size }; d.choice = 'image';
+            if (d.gen && d.gen.st === 'cands') d.gen.pick = -1;   // the upload, not a drawn one
+          }
+          catch (e) { d.iconErr = 'Could not read that file.'; }
+        }
+        if (!done) paint('ps-up');
+      };
+      dlg.querySelectorAll('[data-ps-act]').forEach(b => {
+        b.onclick = () => {
+          const act = b.getAttribute('data-ps-act');
+          const sub = act === 'kind' ? () => kindChoose(pid) : act === 'key' ? () => keyChoose(pid)
+            : act === 'tools' ? () => taskToolsChoose(pid) : act === 'past' ? () => pastList(pid)
+            : act === 'po' ? () => projectSetupFlow({ projectId: pid }) : null;
+          if (sub) finish({ sub, from: b.id || act });
+        };
+      });
+    };
+    dlg.classList.add('ps-dlg');
+    dlg.addEventListener('cancel', onCancel);
+    paint('');
+    // Drawing's seconds count up without redrawing the dialog.
+    tick = setInterval(() => {
+      const t = dlg.querySelector('#ps-gen-t');
+      const v = d.gen && d.gen.st === 'busy' ? `${psGenSecs(d.gen)} s` : '';
+      if (t && v && t.textContent !== v) t.textContent = v;
+    }, 250);
+    // Which CLI draws, once per settings: greys Generate when there is none.
+    if (d.genInfo === undefined) {
+      d.genInfo = null;
+      genInfoLoad().then(() => { if (!done && (psGenOff(d) || d.gen)) paint(''); });
+    }
+    if (!dlg.open) dlg.showModal();
+    const inp = dlg.querySelector('#ps-name');
+    if (focus === 'rename' && inp) { inp.focus(); inp.select(); }
+    else if (focus && dlg.querySelector(`[data-ps-act="${focus}"]`)) dlg.querySelector(`[data-ps-act="${focus}"]`).focus();
+    else if (inp) inp.focus();
+  });
+}
+// The dialog closes for another setting's dialog and comes back, with what
+// was typed and picked, once that one is closed; not after one that opened a
+// conversation (a past one, a new PO).
+async function projSettings(pid, opts) {
+  const pj = projectById(pid);
+  if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return;
+  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '', gen: null, genInfo: undefined };
+  let focus = opts && opts.rename ? 'rename' : '';
+  for (;;) {
+    const got = await psOnce(pid, d, focus);
+    if (!got || got === 'saved') return;
+    const sid = SELECTED_SID;
+    await got.sub();
+    const dlg = pdModal();
+    if (dlg.open) await new Promise(res => dlg.addEventListener('close', res, { once: true }));
+    if (SELECTED_SID !== sid) return;
+    focus = got.from;
+  }
 }
 
 // ---- the file history ----
@@ -18281,7 +18892,7 @@ function docsDocListen() {
     }));
   });
   document.addEventListener('click', (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
     });
   });
@@ -18289,7 +18900,7 @@ function docsDocListen() {
   // Overview, the page; scroll does not bubble, so it is caught on the way
   // down) or a resize closes it.
   const away = (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
     });
   };
@@ -18308,7 +18919,9 @@ function docsFilesWire(el, pid) {
   up.setAttribute('role', 'region'); up.setAttribute('aria-label', 'Files being added');
   side.insertBefore(up, tree);
   const menu = document.createElement('div');
-  menu.className = 'dcm'; menu.hidden = true; menu.setAttribute('role', 'menu');
+  // data-docs-menu: the document listeners below close this menu only, never
+  // another .dcm (a loose row's ⋯ in the left panel, ED-334).
+  menu.className = 'dcm'; menu.dataset.docsMenu = ''; menu.hidden = true; menu.setAttribute('role', 'menu');
   menu._el = el; menu._pid = pid;
   sec.appendChild(menu);
 
@@ -21395,9 +22008,17 @@ function projSwitchLabel() {
   const pj = projectById(SELECTED_PROJECT);
   return pj ? pj.name : noun('one', 'title');
 }
+// #329: the project's icon before its name in the bar (none for All).
+function projSwitchIco(pid) {
+  const el = document.getElementById('proj-switch-ico');
+  if (!el) return;
+  const h = pid && projectById(pid) ? ldpSwatch(pid) : '';
+  if (el.innerHTML !== h) el.innerHTML = h;
+}
 function syncProjSwitch() {
   const el = document.getElementById('proj-switch-name');
   if (el) el.textContent = projSwitchLabel();
+  projSwitchIco(SELECTED_PROJECT);
   barPaint();
 }
 // The bar is also the project's header: in a project, the way back and what
@@ -21681,6 +22302,7 @@ function barCrumbs() {
   // The switcher names the project you are in: an open task's too (#303).
   const nm = pc ? pc.text : projSwitchLabel();
   if (name.textContent !== nm) name.textContent = nm;
+  projSwitchIco(projHere());
   writeSlot(box, crumbsHtml(cs));
   projNoteOpened(projHere());
 }
@@ -21750,6 +22372,10 @@ document.getElementById('bar-crumbs').addEventListener('click', (e) => {
 function projMenuSettingsHtml(pj) {
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
   const items = [
+    `<button class="pm-item pm-set proj-settings-btn" data-proj="${esc(pj.id)}" title="${esc(nounText('Its name, its icon, its kind, its key, its task agents\' tools and its PO'))}">`
+      + `<span class="pm-name">${esc(nounText('{Project} settings…'))}</span></button>`,
+    `<button class="pm-item pm-set proj-rename-btn" data-proj="${esc(pj.id)}">`
+      + `<span class="pm-name">${esc(nounText('Rename {project}…'))}</span></button>`,
     `<button class="pm-item pm-set task-tools-btn" data-proj="${esc(pj.id)}" title="Which MCP servers and connectors its task owners, reviewers and handovers start with">`
       + `<span class="pm-name">Task agents' tools: ${esc(pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit')}…</span></button>`,
     pj.path ? `<button class="pm-item pm-set kind-btn" data-proj="${esc(pj.id)}" title="Code or documents: what its Overview and Workspace are">`
@@ -21761,7 +22387,8 @@ function projMenuSettingsHtml(pj) {
     poChooseOffered(pj) ? `<button class="pm-item pm-set po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">`
       + `<span class="pm-name">Set up the PO…</span></button>` : '',
   ].filter(Boolean);
-  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${esc(pj.name)}</div>` + items.join('') : '';
+  const ico = typeof ldpSwatch === 'function' ? ldpSwatch(pj.id, 'pm-sw') : '';
+  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${ico}${esc(pj.name)}</div>` + items.join('') : '';
 }
 // ---- The project switcher (#303, Layout A step 2): begin ---------------------
 // The bar's project name is the switcher: its menu lists the two or three
@@ -22072,7 +22699,7 @@ function wideBanner() {
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner'];
+  const ids = ['drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -22233,6 +22860,20 @@ function openSettings(tab, opener) {
   const focus = asked && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
   if (focus) focus.focus();
   loadAgentModels();            // what the agents offer may have changed
+  loadMoveCheck();
+}
+// The move check's open items (#331): one list in "This instance", only when there is one.
+async function loadMoveCheck() {
+  let r = null;
+  try { r = await api('/api/move-check'); } catch (e) { return; }
+  const box = document.getElementById('move-check');
+  const list = document.getElementById('move-check-list');
+  if (!box || !list) return;
+  const items = (r && Array.isArray(r.open)) ? r.open : [];
+  box.hidden = !items.length;
+  const kind = {code: 'code folder', taskFolder: 'task folder', worktree: 'worktree', transcript: 'conversation'};
+  list.innerHTML = items.map(it =>
+    `<dt>${esc(it.what || '')} · ${esc(kind[it.kind] || it.kind || '')}</dt><dd>${esc(it.detail || '')}</dd>`).join('');
 }
 // Kept for the tests and any caller that hangs Settings off a control.
 function openSettingsPanel(anchor, tab) { openSettings(tab, anchor); }
@@ -22390,6 +23031,7 @@ $('#me-menu').addEventListener('click', (ev) => {
   }
   closeMeMenu();
   if (it.dataset.me === 'feedback') { feedbackOpen(); return; }
+  if (it.dataset.me === 'whatsnew') { if (window.whatsNew) whatsNew.open(); return; }
   openSettingsPanel($('#me-btn'));
 });
 $('#feedback-open').addEventListener('click', () => feedbackOpen());
@@ -22524,7 +23166,8 @@ window.addEventListener('message', (ev) => {
     runTaskAction(String(d.roomId), String(d.act || ''));
   }
   // A task link clicked inside a session or file viewer framed in this page.
-  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
+  // From a PO conversation it opens as a panel of its own (P310).
+  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''), undefined, { panel: chatFrameIsPo(ev.source) });
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
@@ -22586,7 +23229,11 @@ function sendGotoMsg(rid) {
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,
 // or its role, @reviewer@18) the task opens at that agent's terminal.
 let DETAIL_AGENT = null;   // { room, agent }: the next chat drawn for that task opens at the agent
-function openTaskLink(ref, agent, projectId) {
+// o.panel: clicked in a PO conversation (P310). The task opens as a chat
+// panel of its own (#150), so the conversation keeps its place; a task with a
+// panel has it revealed, one in the middle stays there, and where there are no
+// panels (a phone, no Dock) the middle takes it as from anywhere else.
+function openTaskLink(ref, agent, projectId, o) {
   const rid = taskRowId(ref, projectId);
   if (!rid) {
     toast(`${ref} is not a task on this hub`, 4000, 'err');
@@ -22596,6 +23243,8 @@ function openTaskLink(ref, agent, projectId) {
   const w = String(agent || '').toLowerCase();
   const m = w && row ? (row.members || []).find(x => (x.identity || '').toLowerCase() === w
     || String(x.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+  const inMiddle = SELECTED_SID === rid && document.body.classList.contains('detail-open');
+  if (o && o.panel && row && row.roomId && !inMiddle && !phoneNow() && pdChatOpen(row.roomId, { agent: m ? m.identity : '' })) return;
   if (m) {
     DETAIL_AGENT = { room: row.roomId, agent: m.identity };
     // Already showing that task: its chat is drawn again, at the agent.
@@ -22603,6 +23252,19 @@ function openTaskLink(ref, agent, projectId) {
     if (f) { f.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1&agent=' + encodeURIComponent(m.identity); DETAIL_AGENT = null; }
   }
   openDetail(rid);
+}
+// A chat page's window: is it a PO conversation (the PO's chat in the middle
+// or its drawer, a thread of it, a PO room's chat panel)? Pop-out windows' frames count.
+function chatFrameIsPo(win) {
+  if (!win) return false;
+  for (const d of [document, ...PD_POP_DOCS.keys()]) {
+    let f = null;
+    try { f = [...d.querySelectorAll('iframe.po-session, iframe.po-thread, iframe.dp-session')].find(x => x.contentWindow === win); } catch (e) {}
+    if (!f) continue;
+    if (!f.classList.contains('dp-session')) return true;
+    return poRoomIds(registeredProjects()).has(f.dataset.room || '');
+  }
+  return false;
 }
 // A chip (a.task-chip) is TaskCard's: one click its card, a double click the task.
 document.addEventListener('click', (ev) => {
@@ -24370,9 +25032,8 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-split')?.addEventListener('click', (ev) => {
     runItermAction('/api/iterm/split-live', 'split', ev.currentTarget);
   });
-  // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
-  // before the first check so triggerUpdate can detect the new pid later.
-  document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  // The update check (What's new, #339): initial + periodic. RUNTIME_CFG.pid
+  // must be set before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('drain-force')?.addEventListener('click', () => drainAction('force'));
   document.getElementById('drain-cancel')?.addEventListener('click', () => drainAction('cancel'));
   document.getElementById('drain-dismiss')?.addEventListener('click', () => {
@@ -24392,10 +25053,6 @@ window.ensUpdPlace = () => ({
   document.getElementById('wide-banner-dismiss')?.addEventListener('click', e => {
     const b = e.currentTarget.parentElement;
     b.dataset.closed = '1'; b.hidden = true;
-  });
-  document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
-    UPDATE_DISMISSED = true;
-    document.getElementById('update-banner').hidden = true;
   });
   checkForUpdate();
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);

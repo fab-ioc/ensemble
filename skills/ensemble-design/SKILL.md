@@ -449,6 +449,24 @@ with words: `aria-label="New messages"` and a tooltip saying since when.
 - It is not attention: `Needs you` says something waits on the person; the dot only says something
   happened. It never adds to a count.
 
+### Update chip and What's new (#339)
+
+Updates do not use a banner, because a banner pushes the page down. They use three pieces (`static/whatsnew.js`, `static/whatsnew.css`):
+
+- **The chip** (`.upd-dot`) is a 12px dot on the user button's top-right corner, `--c-discovery-bold` with a
+  `2px solid var(--surface)` ring. It is placed absolutely, so the button keeps its size and place.
+  It is a dot, not a number, so it never competes with the Inbox count. It is not amber, because an update
+  does not need the person. `#me-btn`'s `aria-label` names the update.
+- **The menu item** (`#me-whatsnew`, `.me-upd`) sits first in the lower group of `#me-menu`, above Send
+  feedback. It has an 8px dot and an `Update available` tag in the discovery lozenge colours.
+  Once the version is skipped it becomes `.quiet`: no dot, regular weight, and a muted `skipped` text.
+  It stays reachable.
+- **The dialog** (`#wn-dialog`) uses the Send feedback dialog's frame. It has a title, a muted sub line
+  in dates or versions, never a hash, and the list in a sunken box that scrolls. The list is plain one-line
+  rows, and clicking a row opens its full text. An amber wait note shows when agents are busy.
+  The buttons are **Install now** (primary, focused), **Later**, and **Skip this version**, pushed right.
+  Esc means Later. Task numbers and commit hashes never show in it.
+
 Four signals must be legible **without hovering**: status, priority, assignees with their models, and
 any attention state. Models are shortened on a card (`gpt-5.6-luna` → `luna`); the full string lives in
 the issue view. Three or more agents show two, then `+1`.
