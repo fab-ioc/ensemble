@@ -1,7 +1,5 @@
 """A stopped worktree task can swap its owner and on-mention reviewer."""
 
-import contextlib
-import io
 import tempfile
 import types
 import unittest
@@ -86,7 +84,7 @@ class TaskOwnerSwap(unittest.TestCase):
         self.assertEqual(chatroom.participant(saved, "claude")["cwd"], str(self.worktree))
         self.assertTrue(chatroom.participant(saved, "claude")["sessionId"])
 
-    def test_missing_recorded_cwd_resumes_in_task_worktree(self):
+    def test_missing_recorded_cwd_refuses_resume_without_falling_back(self):
         missing = self.root / "removed"
         room = {"id": "room-test", "title": "task", "cwd": str(self.worktree),
                 "sharedCwd": True, "tokens": {}, "participants": []}
@@ -110,13 +108,12 @@ class TaskOwnerSwap(unittest.TestCase):
               mock.patch.object(dashboard.ptyrun, "create", side_effect=create),
               mock.patch.object(handler, "_task_agent_tools", return_value=[]),
               mock.patch.object(handler, "_mcp_wiring", return_value=([], [], {}))):
-            log = io.StringIO()
-            with contextlib.redirect_stdout(log):
-                info = handler._resume_room_agent_pty(room, part)
-        self.assertEqual(used, [str(self.worktree)])
-        self.assertEqual(info["cwd"], str(self.worktree))
-        self.assertEqual(len(log.getvalue().splitlines()), 1)
-        self.assertIn("cwd missing", log.getvalue())
+            with self.assertRaises(dashboard.MissingFolderError) as cm:
+                handler._resume_room_agent_pty(room, part)
+        self.assertEqual(used, [])
+        self.assertIn(str(missing), str(cm.exception))
+        self.assertEqual(part["cwd"], str(missing))
+        self.assertEqual(room["folderMissing"]["path"], str(missing))
         self.assertFalse(missing.exists())
 
     def test_codex_with_unbackfilled_session_resumes_after_stop_or_restart(self):

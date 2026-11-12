@@ -195,8 +195,9 @@ class SelfUpdate(TestCase):
 class HelperUnderSystemd(TestCase):
     """restart_helper._run with the preflight stubbed to pass."""
 
-    def run_helper(self, unit, results):
+    def run_helper(self, unit, results, guard=None, extra=None):
         calls = []
+        guard = guard or {"ok": True, "message": ""}
         timeouts = self.timeouts = []
 
         def run(argv, **kw):
@@ -216,7 +217,7 @@ class HelperUnderSystemd(TestCase):
                     "log": str(root / "restart.log"), "preflightLog": str(root / "pf.log"),
                     "args": ["--port", "8798"], "env": {"HOME": td, "INVOCATION_ID": "old"},
                     "keepAgents": True, "graceSeconds": 0, "systemd": unit,
-                    "leaseId": "ours", "leasePath": str(root / "lease.json")}
+                    "leaseId": "ours", "leasePath": str(root / "lease.json"), **(extra or {})}
             pf = mock.Mock()
             pf.poll.return_value = None
             port = mock.MagicMock()
@@ -232,6 +233,8 @@ class HelperUnderSystemd(TestCase):
                                    side_effect=lambda *a, **kw: io.BytesIO(b'{"ok":true}')), \
                  mock.patch.object(restart_helper.os, "kill", side_effect=kill) as killed, \
                  mock.patch.object(restart_helper.socket, "socket", return_value=port), \
+                 mock.patch.object(restart_helper.restart_guard, "protect",
+                                   return_value=guard) as self.protect, \
                  mock.patch.object(restart_helper.time, "sleep"):
                 rc = restart_helper._run(plan)
             log = (root / "restart.log").read_text(encoding="utf-8")
@@ -249,6 +252,30 @@ class HelperUnderSystemd(TestCase):
         self.assertNotIn(mock.call(123, restart_helper.signal.SIGTERM), killed.call_args_list)
         self.assertIn("systemctl --user stop ensemble.service: 0", log)
         self.assertIn("restart complete", log)
+
+    def test_the_guard_runs_on_the_unit_before_the_stop(self):
+        rc, calls, spawn, killed, log = self.run_helper(
+            {"unit": "ensemble.service", "transient": False}, [])
+        self.assertEqual(rc, 0, log)
+        kw = self.protect.call_args.kwargs
+        self.assertEqual(kw["units"], ["ensemble.service"])
+        self.assertEqual(kw["hub_pids"], [123])
+        self.assertFalse(kw["force"])
+
+    def test_a_refused_guard_leaves_the_hub_running(self):
+        rc, calls, spawn, killed, log = self.run_helper(
+            {"unit": "ensemble.service", "transient": False}, [],
+            guard={"ok": False, "message": "Refused: …"})
+        self.assertEqual(rc, 1, log)
+        self.assertFalse(any(c[:3] == ["systemctl", "--user", "stop"] for c in calls))
+        self.assertNotIn(mock.call(123, restart_helper.signal.SIGTERM), killed.call_args_list)
+        self.assertIn("guard: refused; hub left running", log)
+
+    def test_stop_foreign_forces_the_guard(self):
+        rc, calls, spawn, killed, log = self.run_helper(
+            {"unit": "ensemble.service", "transient": False}, [], extra={"stopForeign": True})
+        self.assertEqual(rc, 0, log)
+        self.assertTrue(self.protect.call_args.kwargs["force"])
 
     def test_a_stop_that_times_out_still_reaches_the_start(self):
         import subprocess
@@ -328,6 +355,7 @@ class HelperUnderSystemd(TestCase):
     def test_without_a_unit_no_systemctl(self):
         rc, calls, spawn, killed, log = self.run_helper(None, [])
         self.assertEqual(rc, 0, log)
+        self.protect.assert_not_called()      # its stop ends the hub's process only
         self.assertFalse(any(c[0] in ("systemctl", "systemd-run") for c in calls))
         self.assertEqual(spawn.call_count, 2)
 
@@ -374,21 +402,34 @@ class InstallScript(TestCase):
     and python3 stubbed (the stub has ptyprocess, so no pip runs), in a
     throwaway home."""
 
-    def install(self, env, args=()):
+    def install(self, env, args=(), guard_rc=0, state="", no_guard=False):
+        """``state``: what ``systemctl --user is-active`` prints ("" as when
+        the user manager does not answer). ``no_guard``: the script runs from
+        a copy of its own with no restart_guard.py beside it."""
+        import shutil
         import subprocess
         with tempfile.TemporaryDirectory(prefix="ens install ") as td:
             d = Path(td)
             stubs = d / "bin"
             stubs.mkdir()
+            script = ROOT / "install-systemd.sh"
+            if no_guard:
+                (d / "code").mkdir()
+                script = Path(shutil.copy(script, d / "code" / "install-systemd.sh"))
+                (d / "code" / "dashboard.py").write_text("", encoding="utf-8")
             for name in ("systemctl", "systemd-run", "loginctl", "python3"):
-                (stubs / name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{d}/calls"\n',
-                                          encoding="utf-8")
+                body = f'#!/bin/sh\necho "{name} $*" >> "{d}/calls"\n'
+                if name == "python3":       # the restart guard answers guard_rc
+                    body += f'case "$1" in *restart_guard.py) exit {guard_rc};; esac\n'
+                if name == "systemctl" and state:
+                    body += f'case "$*" in *is-active*) echo {state};; esac\n'
+                (stubs / name).write_text(body, encoding="utf-8")
                 (stubs / name).chmod(0o755)
             conf = d / "config"
             dropin = conf / "systemd" / "user" / "ensemble.service.d" / "tailnet.conf"
             dropin.parent.mkdir(parents=True)
             dropin.write_text("[Service]\nEnvironment=ENSEMBLE_BIND=tailscale\n", encoding="utf-8")
-            res = subprocess.run(["bash", str(ROOT / "install-systemd.sh"), *args],
+            res = subprocess.run(["bash", str(script), *args],
                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                  env={"HOME": str(d), "XDG_CONFIG_HOME": str(conf),
                                       "PATH": f"{stubs}:{os.environ['PATH']}", **env},
@@ -407,6 +448,52 @@ class InstallScript(TestCase):
         self.assertIn("--port 8799", unit)
         self.assertTrue(kept)
         self.assertIn("Drop-ins kept: tailnet.conf", res.stdout)
+        self.assertIn("systemctl --user restart ensemble.service", calls)
+
+    def test_the_guard_runs_before_the_restart(self):
+        res, unit, kept, calls = self.install({})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        lines = calls.splitlines()
+        guard = next(i for i, ln in enumerate(lines) if "restart_guard.py" in ln)
+        self.assertIn("--unit ensemble.service", lines[guard])
+        self.assertNotIn("--force", lines[guard])
+        self.assertLess(guard, lines.index("systemctl --user restart ensemble.service"))
+
+    def test_force_in_any_position_reaches_the_guard(self):
+        for args in (["--force"], ["install", "--force"], ["--force", "install"]):
+            res, unit, kept, calls = self.install({}, args)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("--force", next(ln for ln in calls.splitlines()
+                                          if "restart_guard.py" in ln))
+            self.assertIn("systemctl --user restart ensemble.service", calls)
+
+    def test_a_refused_guard_changes_nothing(self):
+        res, unit, kept, calls = self.install({}, guard_rc=3)
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("--force", res.stderr)
+        self.assertIsNone(unit)                 # not written
+        self.assertNotIn("systemctl --user restart", calls)
+        res, unit, kept, calls = self.install({}, ["uninstall"], guard_rc=3)
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertNotIn("disable", calls)
+
+    def test_a_unit_not_running_needs_no_guard(self):
+        res, unit, kept, calls = self.install({}, state="inactive")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("restart_guard.py", calls)
+        self.assertIn("systemctl --user restart ensemble.service", calls)
+
+    def test_a_guard_that_cannot_run_refuses_unless_forced(self):
+        # Review 1: it was skipped silently.
+        for state in ("active", ""):
+            res, unit, kept, calls = self.install({}, state=state, no_guard=True)
+            self.assertEqual(res.returncode, 3, res.stderr)
+            self.assertIn("cannot be checked", res.stderr)
+            self.assertIsNone(unit)
+            self.assertNotIn("systemctl --user restart", calls)
+        res, unit, kept, calls = self.install({}, ["--force"], state="active", no_guard=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("goes ahead unchecked", res.stderr)
         self.assertIn("systemctl --user restart ensemble.service", calls)
 
     def test_no_bind_no_line(self):

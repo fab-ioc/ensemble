@@ -73,6 +73,7 @@ get slower.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -942,6 +943,7 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "createdAt": room.get("createdAt", 0),
         "updatedAt": room.get("updatedAt", 0),
         "mode": room.get("mode", ""),
+        "folderMissing": room.get("folderMissing") or None,
         "owners": cr.owners(room),
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "model", "role",
@@ -1040,7 +1042,8 @@ def _room_summaries() -> list[dict]:
                 held = (mtime, bool(open_item and open_item.get("kind") in
                                     ("question", "blocked", "message")))
                 _COLD_HUMAN[rid] = held
-            if room.get("status") != "waiting_human" and not held[1]:
+            if room.get("status") != "waiting_human" and not held[1] \
+                    and not room.get("folderMissing"):
                 continue
         with _CACHE_LOCK:
             hit = _SUMMARY_CACHE.get(rid)
@@ -1628,6 +1631,22 @@ def _stall_seconds() -> int:
 _DUP_GRACE_S = 30.0
 
 
+def _folder_missing(room: dict) -> tuple | None:
+    """A start refused because a seat's folder is missing
+    (seat_folders.launch_folder): until its folder is there again or a start
+    succeeds."""
+    mark = room.get("folderMissing")
+    if not isinstance(mark, dict) or not mark.get("reason"):
+        return None
+    path = mark.get("path") or ""
+    if path and mark.get("kind") != "elsewhere" and os.path.isdir(path):
+        return None
+    part = next((p for p in room.get("participants", [])
+                 if p.get("identity") == mark.get("identity")), {})
+    return ("blocked", f"could not start: {mark['reason']}",
+            {"since": float(mark.get("since") or 0), "cause": "folder_missing", "path": path}, part)
+
+
 def _duplicate_ptys(room: dict, now: float) -> tuple | None:
     """A task with more live terminals than seats: two for one agent, or one
     its record names for nobody (a launch that failed before writing it, as
@@ -1760,6 +1779,12 @@ def _items() -> list[dict]:
             hit = _classify_agent(room, part, ev, stall, now)
             if hit:
                 found.append((*hit, part))
+        missing = _folder_missing(room)
+        if missing:
+            # Its start was refused: its folder is not there (ED-344). That,
+            # not "the agent is gone", is what the person has to fix.
+            found = [f for f in found if f[0] != "agent_gone"]
+            found.insert(0, missing)
         dup = _duplicate_ptys(room, now)
         if dup:
             # Worse than anything an agent says: the room's record and its

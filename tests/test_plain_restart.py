@@ -281,7 +281,7 @@ class Lock(unittest.TestCase):
                                return_value={"started": True, "status": 202, "message": "m"}) as trig:
             text, is_err = ensemble_tools.call("ensemble_restart_hub", {"when": "now"}, "room-po",
                                                "claude", None)
-        trig.assert_called_once_with("room-po", identity="claude")
+        trig.assert_called_once_with("room-po", identity="claude", stop_foreign=False)
         self.assertFalse(is_err, text)
         self.assertNotIn("status", text)
 

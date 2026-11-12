@@ -245,6 +245,14 @@ cmd_open() { if [[ "$(uname -s)" == "Darwin" ]]; then open "$(url)"; else xdg-op
 cmd_update() {
   parse_port_args "$@"
   echo "[update $(date '+%Y-%m-%d %H:%M:%S')] Updating $DIR (hub port $PORT, from $PORT_SOURCE)…"
+  # Restarting the unit ends every process in its cgroups: a project's
+  # long-running app is moved out first, and one that cannot be refuses the
+  # update before anything changes (ED-342; ENSEMBLE_STOP_FOREIGN=1 stops it).
+  if [[ -n "${ENSEMBLE_SYSTEMD_UNIT:-}" ]]; then
+    python3 "$DIR/restart_guard.py" --unit "$ENSEMBLE_SYSTEMD_UNIT" --what "the update" \
+      ${ENSEMBLE_STOP_FOREIGN:+--force} \
+      || { echo "update refused: see above (ENSEMBLE_STOP_FOREIGN=1 to stop them)" >&2; exit 3; }
+  fi
   git -C "$DIR" fetch --quiet || { echo "git fetch failed" >&2; exit 1; }
   local up
   up="$(git -C "$DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
