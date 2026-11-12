@@ -9612,7 +9612,10 @@ async function runUpdate() {
   UPD_CARD.t0 = performance.now();
   UPD_CARD.open = false;
   updCardShow(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
-  const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
+  // The hub as it is now, before the request: a page left open across a
+  // restart still holds the pid it loaded with, and would take the hub that
+  // already runs for the new one (#345).
+  let startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
   // What the hub said before this press: anything it records later is this
   // attempt's (an earlier attempt's outcome is not). Without it nothing
   // could be told apart from an earlier attempt's, so a hub that does not
@@ -9623,6 +9626,9 @@ async function runUpdate() {
     before = await updJson('/api/update-status');
   }
   if (!mine()) return;
+  const cfg0 = before && await updJson('/api/config');
+  if (!mine()) return;
+  if (cfg0 && cfg0.pid) startPid = cfg0.pid;
   const now = () => performance.now();
   let logPath = updLogPath(app);
   const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };

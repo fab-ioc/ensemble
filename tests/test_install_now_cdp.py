@@ -7,8 +7,9 @@ install and shows the Update card, or keeps the dialog open with a plain line:
 
 * loaded while an update is available (the chip, the menu, What's new): the
   POST is sent, the card shows, no second check;
-* left open across a hub restart (no check on the hub, a new page key): the
-  press checks again, gets today's key, sends the POST, the card shows;
+* left open across a hub restart (no check on the hub, a new page key, the
+  old hub's pid): the press checks again, gets today's key, sends the POST,
+  and the card shows and stays (the hub that runs is not taken for the new one);
 * a check older than two minutes that the fresh one contradicts:
   "Already up to date, nothing to install", no POST, the dialog stays;
 * the update went while the dialog was open (the page's poll): it stays, says so;
@@ -133,8 +134,11 @@ async function main() {
     mode({ ...OK, case: 'B0' });
     p = await page();
     mode({ cached: 'cold', age: null, check: 'avail', rotate: 1, case: 'B' });
+    await p.evalIn('RUNTIME_CFG.pid = 1; 0');   // the pid of the hub it loaded from
     await openDialog(p);
     out.B = await press(p, cardUp, 'install-now-after-restart');
+    await sleep(2500);   // the update's polls: the hub that runs is not the new one
+    out.B2 = await p.evalIn(SEEN);
     await p.close();
 
     // C: the page's check is old and the hub, asked again, has nothing newer.
@@ -311,6 +315,7 @@ class InstallNowInChrome(unittest.TestCase):
 
     def test_left_open_across_a_restart_checks_again_and_installs_with_todays_key(self):
         self.assertBusy(self.got["B"])
+        self.assertBusy(self.got["B2"])   # not "Reloading the page" on the hub that ran already
         self.assertEqual(self.posts("B"), 1)
         self.assertIn({"case": "B", "check": "fresh"}, self.log)
         refusals = [e["refused"] for e in self.of("B", "refusal") if e["refusal"] == "/api/update"]
