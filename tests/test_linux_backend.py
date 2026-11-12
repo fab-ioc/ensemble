@@ -340,8 +340,9 @@ class PlanAndInstall(TestCase):
 
 
 class InstallScript(TestCase):
-    """install-systemd.sh run for real, with systemctl, systemd-run and
-    loginctl stubbed, in a throwaway home."""
+    """install-systemd.sh run for real, with systemctl, systemd-run, loginctl
+    and python3 stubbed (the stub has ptyprocess, so no pip runs), in a
+    throwaway home."""
 
     def install(self, env, args=()):
         import subprocess
@@ -349,7 +350,7 @@ class InstallScript(TestCase):
             d = Path(td)
             stubs = d / "bin"
             stubs.mkdir()
-            for name in ("systemctl", "systemd-run", "loginctl"):
+            for name in ("systemctl", "systemd-run", "loginctl", "python3"):
                 (stubs / name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{d}/calls"\n',
                                           encoding="utf-8")
                 (stubs / name).chmod(0o755)
@@ -370,6 +371,8 @@ class InstallScript(TestCase):
         res, unit, kept, calls = self.install({"ENSEMBLE_BIND": "tailscale",
                                                "ENSEMBLE_PORT": "8799"})
         self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("python3 -c import ptyprocess", calls)
+        self.assertNotIn("pip", calls)          # nothing installed, no network
         self.assertIn('Environment="ENSEMBLE_BIND=tailscale"', unit)
         self.assertIn("--port 8799", unit)
         self.assertTrue(kept)
