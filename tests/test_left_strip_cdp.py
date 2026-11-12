@@ -112,7 +112,7 @@ class Cdp {
   constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); this.errors = []; }
   open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
     this.ws.onmessage = ev => { const m = JSON.parse(ev.data);
-      if (m.method === 'Runtime.exceptionThrown') this.errors.push(JSON.stringify(m.params.exceptionDetails).slice(0, 600));
+      if (m.method === 'Runtime.exceptionThrown') { const d = m.params.exceptionDetails || {}; this.errors.push(((d.exception && d.exception.description) || d.text || '').slice(0, 900) + ' :: ' + JSON.stringify(d).slice(0, 300)); }
       if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
@@ -297,22 +297,22 @@ async function main() {
     // ED-334 review 2: the terminals item of a live loose task acts on that task,
     // not on the one open in the middle: its chat panel's frame when it has one,
     // else the task itself (showCapturedTerminal with its room)
-    out.termsRun = await p.evalIn(`(async () => {
+    // (one task, no await: no repaint sees the faked live row or open task)
+    out.termsRun = await p.evalIn(`(() => {
       const row = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.loose)}), wasLive = row.isLive, wasSel = SELECTED_SID;
       const was = { s: showCapturedTerminal, t: toggleCapturedTerms, f: pdChatFrameOf };
       const calls = [];
       showCapturedTerminal = async (id) => { calls.push('show:' + id); };
       toggleCapturedTerms = (fr) => { calls.push('toggle:' + (fr && fr.dataset ? fr.dataset.room : '')); };
-      const pick = async (frame) => {
+      const pick = (frame) => {
         pdChatFrameOf = (id) => frame && id === row.roomId ? frame : null;
         // (a repaint may have given the row a new object: live again, the open task another)
         ALL_ROWS.find(x => x.roomId === row.roomId).isLive = true; SELECTED_SID = 'some-other-task';
         LDP.sig = ''; ldpPaint();
         ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}.click();
-        await new Promise(r => setTimeout(r, 200));
         const it = [...document.querySelectorAll('body > .dcm .dcm-item')].find(e => /^(Show terminals|Terminal)$/.test(e.textContent.trim()));
         if (!it) return 'no item';
-        it.click(); await new Promise(r => setTimeout(r, 200));
+        it.click();
         return 'ok';
       };
       try {
@@ -321,9 +321,9 @@ async function main() {
         const aside = [...document.querySelectorAll('#detail-panel iframe.dp-session')].filter(f => f.dataset.room === row.roomId);
         aside.forEach(f => { f.dataset.room = 'aside'; });
         let a;
-        try { a = await pick(null); } finally { aside.forEach(f => { f.dataset.room = row.roomId; }); }
+        try { a = pick(null); } finally { aside.forEach(f => { f.dataset.room = row.roomId; }); }
         const fake = document.createElement('iframe'); fake.dataset.room = row.roomId;
-        const b = await pick(fake);
+        const b = pick(fake);
         // on the hub, the task open in the middle (no panel of its own): its
         // terminals are toggled there, so a second pick hides them
         // (the test page is on the hub's loopback address: onHubMachine() is true)
@@ -331,7 +331,7 @@ async function main() {
         if (onHubMachine()) {
           const dp = document.getElementById('detail-panel'), mid = document.createElement('iframe');
           mid.className = 'dp-session'; mid.dataset.room = row.roomId; mid.hidden = true; dp.appendChild(mid);
-          try { c = await pick(null); } finally { mid.remove(); }
+          try { c = pick(null); } finally { mid.remove(); }
         }
         return { a, b, c, calls, closed: !document.querySelector('body > .dcm') };
       } finally { (ALL_ROWS.find(x => x.roomId === row.roomId) || row).isLive = wasLive; SELECTED_SID = wasSel; showCapturedTerminal = was.s; toggleCapturedTerms = was.t; pdChatFrameOf = was.f; }
@@ -624,7 +624,7 @@ async function main() {
         if (un && !(un.sessions || []).some(x => x.sessionId === 'sess-loose-334')) un.sessions = (un.sessions || []).concat([{ sessionId: 'sess-loose-334' }]);
         LDP.sig = ''; ldpPaint(); } return 0; })()`;
       // spies: the row opening (its own click path), counted, not done
-      await q.evalIn(`(() => { window.__opened = []; const lo = ldpOpenLoose; ldpOpenLoose = b => { window.__opened.push('ldp'); }; const od = openDetail; openDetail = sid => { window.__opened.push('detail:' + sid); }; return 0; })()`);
+      await q.evalIn(`(() => { window.__opened = []; window.__ldpOpenLoose = ldpOpenLoose; ldpOpenLoose = b => { window.__opened.push('ldp'); }; window.__openDetail = openDetail; openDetail = sid => { window.__opened.push('detail:' + sid); }; return 0; })()`);
       const ST = `(() => { const m = [...document.querySelectorAll('body > .dcm')].find(e => !e.hidden && e.getBoundingClientRect().width > 0);
         const b = document.activeElement;
         if (!m) return { open: false, items: [], expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]'), opened: window.__opened.slice(), focusDots: !!(b && b.matches && b.matches('[data-ldp-menu]')) };
@@ -673,6 +673,7 @@ async function main() {
         await q.key('Escape'); await sleep(200);
         out.dots334[kind] = o;
       }
+      await q.evalIn('(() => { ldpOpenLoose = window.__ldpOpenLoose; openDetail = window.__openDetail; return 0; })()');
       await q.close();
       // a phone (390x844): no left panel, so no ⋯ to open there
       const qp = await page(390, 844, true);
@@ -687,16 +688,22 @@ async function main() {
         return { po: document.body.classList.contains('po-dock'), detail: document.body.classList.contains('detail-open'), sel: SELECTED_PROJECT || '',
           viewL: Math.round(vr.left), viewR: Math.round(vr.right), viewW: Math.round(vr.width), panelR: ir && ir.width > 0 ? Math.round(ir.right) : null,
           W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, ld: !!(window.LD && LD.dock) }; })()`;
+      // (only once the page has loaded its projects, its rows and its Inbox: a
+      // renderRows before that paints an Inbox the page has not set up yet)
+      // (PROJECTS, ALL_ROWS and IBX are top-level let/const: not on window)
+      const READY = `typeof PROJECTS !== 'undefined' && !!PROJECTS && !!PROJECTS.projects && ALL_ROWS.length > 0 && typeof IBX !== 'undefined' && !!IBX.data && window.ensBooted === true && document.readyState === 'complete'`;
       const q = await page(1440, 900, false);
+      const ready = await q.until(READY, 15000).then(() => true, () => false);
       await q.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(P.Alpha)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
       await sleep(1200);
-      out.inset334 = { wide: await q.evalIn(MAINGEO) };
+      out.inset334 = { ready, wide: await q.evalIn(MAINGEO) };
       await q.shot('ed334-alpha-1440x900');
       await q.close();
       const qp = await page(390, 844, true);
+      const readyP = await qp.until(READY, 15000).then(() => true, () => false);
       await qp.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(P.Alpha)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
       await sleep(1200);
-      out.inset334.phone = await qp.evalIn(MAINGEO);
+      out.inset334.phone = await qp.evalIn(MAINGEO); out.inset334.readyP = readyP;
       await qp.shot('ed334-alpha-390x844');
       await qp.close();
     }
@@ -1338,6 +1345,8 @@ class LeftStripInChrome(unittest.TestCase):
 
     def test_a_project_page_without_a_po_starts_beside_the_left_panel(self):
         g = self.g("inset334")
+        self.assertTrue(g["ready"], "the 1440 page loaded before its Alpha page was painted")
+        self.assertTrue(g["readyP"], "the 390 page loaded before its Alpha page was painted")
         w = g["wide"]
         self.assertFalse(w["po"]); self.assertFalse(w["detail"])
         self.assertIsNotNone(w["panelR"], w)
