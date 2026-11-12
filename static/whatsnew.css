@@ -52,13 +52,18 @@
 #wn-dialog ol > li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #wn-dialog ol > li.open .t { white-space: normal; overflow-wrap: anywhere; }
 #wn-dialog .wn-more { color: var(--fg-muted); font-size: var(--fs-200); padding: 6px 0 2px; border-top: 1px solid var(--border); }
-#wn-dialog .wn-md h1, #wn-dialog .wn-md h2, #wn-dialog .wn-md h3, #wn-dialog .wn-md h4 {
+/* The notes come through the chat's mdToHtml: headings down to h6 ("###" is
+   an h5 there) and .ln-gap spacers between blocks, which the margins replace. */
+#wn-dialog .wn-md h1, #wn-dialog .wn-md h2, #wn-dialog .wn-md h3, #wn-dialog .wn-md h4,
+#wn-dialog .wn-md h5, #wn-dialog .wn-md h6 {
   font-size: var(--fs-300); line-height: 20px; font-weight: 600; margin: var(--s-200) 0 var(--s-100);
 }
 #wn-dialog .wn-md .wn-ver:first-child, #wn-dialog .wn-md > :first-child { margin-top: var(--s-100); }
 #wn-dialog .wn-md ul, #wn-dialog .wn-md ol { margin: 0 0 var(--s-200); padding-left: 20px; }
 #wn-dialog .wn-md li { padding: 2px 0; }
 #wn-dialog .wn-md p { margin: 0 0 var(--s-200); }
+#wn-dialog .wn-md .ln-gap { display: none; }
+#wn-dialog .wn-md .ln { margin: 0 0 var(--s-200); }
 #wn-dialog .wn-md a { color: var(--link); }
 #wn-dialog .wn-wait {
   display: flex; gap: var(--s-200); align-items: baseline; margin: var(--s-300) 0 0; padding: var(--s-200) var(--s-300);
