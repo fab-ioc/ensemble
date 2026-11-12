@@ -13346,7 +13346,7 @@ function rowExpandShow(row, spec, focus = false) {
   const available = opensLeft ? rect.right - edge : win.innerWidth - rect.left - edge;
   // A name cut at its lines (an Inbox card) keeps its card's width: it grows downwards.
   const cutX = name.scrollWidth - name.clientWidth;
-  const wanted = rect.width + (cutX > 1 ? cutX + (spec.anchorClose ? 0 : 8) : 0);
+  const wanted = rect.width + (cutX > 1 ? cutX + 8 : 0);
   const width = Math.min(Math.max(rect.width, wanted), available);
   const copy = row.cloneNode(true), copyName = copy.querySelector(spec.name);
   copy.classList.add('row-expanded', spec.copyClass);
@@ -13383,12 +13383,25 @@ function rowExpandShow(row, spec, focus = false) {
     const copyClose = copy.querySelector('.dk-tab-x, .wst-x');
     if (originalClose && copyClose) {
       copyClose.style.alignSelf = 'flex-start';
+      copyClose.style.marginLeft = 'auto';
       copyClose.style.marginTop = `${originalClose.getBoundingClientRect().top - rect.top}px`;
     }
   }
-  // A wrapped copy can cover following rows. Within the source list's
-  // original column, pointer travel and clicks belong to the row underneath.
+  // A raised tab can cover a neighbour's close button. Give that button its
+  // original hit box, even when it is hidden because the copy owns :hover.
+  // Other parts of the raised name remain clickable as that tab's name.
+  // A wrapped copy can also cover following rows; their original column wins.
   const covered = ev => {
+    if (spec.anchorClose && ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+      for (const other of row.parentElement.children) {
+        if (other === row || !other.matches(spec.row)) continue;
+        const close = other.querySelector('.dk-tab-x, .wst-x');
+        if (!close) continue;
+        const x = close.getBoundingClientRect();
+        if (ev.clientX >= x.left && ev.clientX <= x.right && ev.clientY >= x.top && ev.clientY <= x.bottom)
+          return close;
+      }
+    }
     if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY <= rect.bottom) return null;
     return doc.elementsFromPoint(ev.clientX, ev.clientY)
       .filter(el => !copy.contains(el))

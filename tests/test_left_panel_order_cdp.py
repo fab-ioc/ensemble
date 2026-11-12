@@ -339,7 +339,7 @@ async function main() {
       const c3 = 'chat:' + A.loose[2];
       const closePoint = id => `(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(id)}]');
         if (!t) return null; const x = t.closest('.dk-tab-wrap').querySelector('.dk-tab-x').getBoundingClientRect();
-        const n = t.getBoundingClientRect(); return { x: Math.round(x.left + x.width / 2), y: Math.round(x.top + x.height / 2),
+        const n = t.getBoundingClientRect(); return { x: Math.round(x.left + x.width / 2), y: Math.round(x.top + x.height / 2), h: Math.round(t.closest('.dk-tab-wrap').getBoundingClientRect().height),
           nx: Math.round(n.left + Math.min(n.width / 2, 40)), ny: Math.round(n.top + n.height / 2),
           siblings: [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(t => t.dataset.dkTab), cut: t.scrollWidth > t.clientWidth + 1 }; })()`;
       const closeFromHover = async (id, stem, fromNeighbour) => {
@@ -349,7 +349,8 @@ async function main() {
         if (fromNeighbour) { const n = await p.evalIn(TAB(c3)); await p.move(n.x, n.y); await sleep(80); }
         await p.move(before.nx, before.ny); await sleep(500);
         const raised = await p.evalIn(`(() => { const c = document.querySelector('.tab-expanded'); const x = c && c.querySelector('.dk-tab-x');
-          if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+          if (!x) return null; const r = x.getBoundingClientRect(), cr = c.getBoundingClientRect();
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), h: Math.round(cr.height) }; })()`);
         await p.shot(stem + '-hover');
         await p.move(before.x, before.y); await sleep(80);
         await p.clickAt(before.x, before.y); await sleep(500);
@@ -358,6 +359,28 @@ async function main() {
       };
       o.fixedClose = { fromName: await closeFromHover(c2, 'task-close-from-name', false),
         fromNeighbour: await closeFromHover(c1, 'task-close-from-neighbour', true) };
+      // Hover the tab to the target's right until its left-growing copy covers
+      // the target ×; walking straight to that × must still close the target.
+      await p.evalIn(`(() => { pdChatOpen(${JSON.stringify(A.loose[0])}); pdChatOpen(${JSON.stringify(A.loose[1])});
+        const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes(${JSON.stringify(c3)}) ? n : null) : (n.kids || []).map(find).find(Boolean);
+        const s = find(PD.dock.layout().root);
+        for (const id of [${JSON.stringify(c1)}, ${JSON.stringify(c2)}]) if (s && !s.panels.includes(id)) PD.dock.moveTo(id, { kind: 'stack', stack: s }, 'center');
+        return 0; })()`);
+      await sleep(600);
+      const pair = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(c3)}]');
+        return [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(t => t.dataset.dkTab).slice(0, 3); })()`);
+      const left = await p.evalIn(closePoint(pair[0]));
+      const right = await p.evalIn(closePoint(pair[1]));
+      await p.shot('neighbour-close-before');
+      await hover(p, right.nx, right.ny);
+      const copyOver = await p.evalIn(`(() => { const c = document.querySelector('.tab-expanded');
+        const t = document.elementFromPoint(${left.x}, ${left.y}); return { shown: !!c, over: !!(c && t && c.contains(t)) }; })()`);
+      await p.shot('neighbour-close-hover');
+      for (let i = 1; i <= 15; i++) await p.move(right.nx + (left.x - right.nx) * i / 15, left.y);
+      await p.clickAt(left.x, left.y); await sleep(500);
+      const remaining = await p.evalIn(`(() => [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab))()`);
+      o.neighbourClose = { target: pair[0], others: pair.slice(1), before: pair, left, right, copyOver,
+        after: remaining.filter(id => pair.includes(id)) };
 
       // ---- a file tab: its tip stays off while it is raised, even when it is drawn again
       await away(p);
@@ -644,7 +667,15 @@ class LeftPanelOrderInChrome(unittest.TestCase):
                 self.assertIsNotNone(o["raised"])
                 self.assertEqual(o["raised"]["x"], o["before"]["x"], "the × stays at its row coordinate")
                 self.assertEqual(o["raised"]["y"], o["before"]["y"])
+                self.assertEqual(o["raised"]["h"], o["before"]["h"], "the name that fits stays on one line")
                 self.assertEqual(o["after"], [id for id in o["before"]["siblings"] if id != o["target"]])
+
+    def test_a_neighbours_raised_name_does_not_cover_this_tabs_x(self):
+        o = self.w()["neighbourClose"]
+        self.assertEqual(len(o["before"]), 3)
+        self.assertTrue(o["left"]["cut"] and o["right"]["cut"])
+        self.assertTrue(o["copyOver"]["shown"] and o["copyOver"]["over"], "the right tab's name covers the target ×")
+        self.assertEqual(o["after"], o["others"], "one click closed the target and kept both neighbours")
 
     def test_a_cut_workspace_file_tab_closes_at_its_original_x(self):
         o = self.w()["fileClose"]
