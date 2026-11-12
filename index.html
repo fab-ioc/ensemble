@@ -3952,13 +3952,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-align: left; cursor: pointer; }
   .ldp-row:hover { background: var(--hover); }
   .ldp-row:focus-visible, .ldp-more:focus-visible, .ldp-dots:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-  .ldp-row[aria-current="true"] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
+  .ldp-row[aria-current="true"], .ldp-row[data-cur] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
   .ldp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ldp-row[data-ldp="all"] { padding-left: 24px; }
   .ldp-ico { flex: none; display: block; width: 12px; height: 12px; }
   .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
     font-size: 10px; text-align: center; font-weight: 400; }
-  .ldp-row[aria-current="true"] .ldp-n { background: var(--surface); }
+  .ldp-row[aria-current="true"] .ldp-n, .ldp-row[data-cur] .ldp-n { background: var(--surface); }
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
@@ -4117,7 +4117,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* #322 P287 drawing: under the project list the rows are cards (.row: 7px 8px, 1px border, radius 6, 5px apart,
      12px, bold title, small muted line), a 3px left bar: amber asks/waits, green checks. */
   .ibx.ibx-listed { gap: 0; padding: 8px; font-family: var(--ldp-font, inherit); }
-  .ibx-listed .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
+  .ibx-listed .ibx-title.ibx-title-listed, .ldp-expanded .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
   .ibx-cards { list-style: none; margin: 0; padding: 0; }
   .ibx-listed .ibx-row, .ibx-listed .ibx-row:last-child { padding: 7px 8px; margin: 5px 0; border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); font-size: 12px; line-height: 1.4; }
@@ -4176,7 +4176,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #po-dock { --dk-strip-badge-bg: var(--surface); --dk-strip-badge-fs: 10px; }
   /* The list dock's left strip (#322, the P287 drawing): 52px, the Inbox's icon in a 32x30 box with its
      name under it, a red count on the icon's corner; the font is the drawing's. */
-  #list-dock { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #list-dock, .ldp-expanded { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  /* #337: a cut name raised from the left panel (rowExpandShow) keeps the panel's font. */
+  .row-expanded.ldp-expanded { font-family: var(--ldp-font); }
+  .ldp-row.row-expanded:not([data-cur]) { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
   #list-dock .dk-strip-left { padding: 8px 0; gap: 8px; align-items: center; }
   #list-dock .dk-strip-btn.dk-strip-icon-btn { aspect-ratio: auto; width: auto; flex-direction: column; gap: 1px; padding: 0; border: 0; border-radius: 0;
     background: transparent; color: var(--fg-muted); font: 9px/1.4 var(--ldp-font); }
@@ -4845,6 +4848,11 @@ window.DOC_LISTENERS_PAUSED = false;
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
+    <!-- #337: the Tasks list's Full names switch (#170), which a computer's list
+         no longer shows since #322; this browser's, as that one was. -->
+    <h5 class="sp-sub">Lists</h5>
+    <div class="pref-row"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label></div>
+    <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
     <h5 class="sp-sub">Stalls and restarts</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call an agent stalled after</span>
@@ -15938,6 +15946,7 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
     .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
+  rowExpandBeforeChange(el);
   el.innerHTML = html;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
@@ -16294,7 +16303,7 @@ document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
-var LDP = { more: false, moreLoose: false, sig: '' };
+var LDP = { more: false, moreLoose: false, sig: '', shown: {}, hold: {}, holdT: 0 };
 var LDP_N = 9, LDP_LOOSE_N = 5;
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
@@ -16312,14 +16321,15 @@ function ldpModel() {
     rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
   } catch (e) {}
-  const opened = projOpened();
+  // #337 (P309): by Inbox count, then latest conversation (its PO's and its
+  // tasks' chats, swRecent's `at`), then name. Opening one never moves it.
   const seenP = new Set(), projs = [];
   for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
     if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
     seenP.add(e.pid);
-    projs.push({ pid: e.pid, name: e.project || e.pid, at: Math.max(e.at || 0, (Number(opened[e.pid]) || 0) / 1000) });
+    projs.push({ pid: e.pid, name: e.project || e.pid, at: e.at || 0, n: ldpCount(e.pid) });
   }
-  projs.sort((a, b) => (b.at - a.at) || a.name.localeCompare(b.name));
+  projs.sort((a, b) => (b.n - a.n) || (b.at - a.at) || a.name.localeCompare(b.name));
   const seenL = new Set(), loose = [];
   const add = (e, kind, at) => {
     if (!e || !e.key || seenL.has(e.key)) return;
@@ -16330,7 +16340,38 @@ function ldpModel() {
   for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, e.row && !e.row.headless ? 'session' : 'task', e.at);
   for (const e of rec.unassigned) add(e, 'session', swActivity(e.row));
   loose.sort((a, b) => b.at - a.at);
-  return { projs, loose };
+  return { projs: ldpHeld('projs', projs, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
+}
+// A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
+function ldpCount(pid) {
+  const d = IBX.data;
+  return d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+}
+// #337: nothing moves under the pointer. A change that comes while it is over
+// the list (or a row raised from it) waits until it has left and 2 s have
+// passed since the change: each list keeps the order it was shown in, a
+// newcomer last, a gone one out. Away from the list a change shows at once.
+const LDP_HOLD_MS = 2000;
+function ldpPointerIn() {
+  const box = document.getElementById('ld-projs');
+  return !!box && (box.matches(':hover') || !!(ROW_EXPAND && box.contains(ROW_EXPAND.row)));
+}
+function ldpHeld(k, list, id) {
+  const shown = LDP.shown[k], now = Date.now(), fresh = list.map(id);
+  const at = LDP.hold[k] || (ldpPointerIn() ? now : 0);
+  if (!shown || !at || fresh.join('\n') === shown.join('\n') || (!ldpPointerIn() && now - at >= LDP_HOLD_MS)) {
+    LDP.hold[k] = 0;
+    LDP.shown[k] = fresh;
+    return list;
+  }
+  LDP.hold[k] = at;
+  clearTimeout(LDP.holdT);
+  LDP.holdT = setTimeout(ldpPaint, 300);   // till it may go: then ldpHeld lets it
+  const by = new Map(list.map(e => [id(e), e]));
+  const out = shown.filter(x => by.has(x)).map(x => by.get(x));
+  for (const e of list) if (!shown.includes(id(e))) out.push(e);
+  LDP.shown[k] = out.map(id);
+  return out;
 }
 // A project's swatch (P289 drawing): a project has no colour of its own, so a
 // stable pick from the status tokens' bold shades. #328: by its place among the
@@ -16358,12 +16399,12 @@ function ldpKindIcon(kind, cls) {
     + '<path d="M2.5 1h7A1.5 1.5 0 0 1 11 2.5v5A1.5 1.5 0 0 1 9.5 9H6l-3 2.5V9h-.5A1.5 1.5 0 0 1 1 7.5v-5A1.5 1.5 0 0 1 2.5 1z" fill="var(--c-neutral-bold)"/></svg>';
 }
 function ldpHtml(m) {
-  const d = IBX.data;
-  const cnt = pid => d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+  const cnt = ldpCount;
   const pill = n => n ? `<span class="ldp-n" title="${n} waiting on you">${n}</span>` : '';
   const lp = ibxLdPid();
   const selAll = IBX.scope === 'all' || !lp;
-  const cur = on => on ? ' aria-current="true"' : '';
+  // data-cur: the row raised whole on hover (#337) drops aria-current but stays selected.
+  const cur = on => on ? ' aria-current="true" data-cur' : '';
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
   const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
   for (const p of ps) {
@@ -16407,6 +16448,7 @@ function ldpPaint() {
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
   if (html === LDP.sig) return;
   LDP.sig = html;
+  rowExpandBeforeChange(el);
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
     ? ['data-ldp', 'data-ldp-proj', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
@@ -16484,6 +16526,13 @@ function ldpOpenLoose(b) {
   else swOpenRoomTab(room);
   ibxRepaint();
 }
+// #337 (P309, P123): a cut name in the left panel shows whole on hover, as the
+// old list's did (#170): its project, task and session rows, and the Inbox's
+// title under them, which names the project or task picked.
+rowExpandWire(document.getElementById('ld-projs'),
+  { row: '.ldp-row', name: '.ldp-name', covered: '.ldp-row, .ldp-dots, .ldp-more', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+rowExpandWire(document.getElementById('ld-ibx-body'),
+  { row: '.ibx-head', name: '.ibx-title-listed', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;
@@ -20346,8 +20395,10 @@ Object.defineProperties(window, {
   SW_EXPAND_TIMER: { configurable: true, get: () => ROW_EXPAND_TIMER },
   SW_EXPAND_LAST: { configurable: true, get: () => ROW_EXPAND_LAST, set: v => { ROW_EXPAND_LAST = v; } },
 });
-$('#sw-hover-names').addEventListener('change', ev => {
+$('#pref-full-names').checked = ROW_EXPAND_NAMES;
+for (const id of ['#sw-hover-names', '#pref-full-names']) $(id).addEventListener('change', ev => {
   ROW_EXPAND_NAMES = ev.target.checked;
+  $('#sw-hover-names').checked = $('#pref-full-names').checked = ROW_EXPAND_NAMES;
   try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(ROW_EXPAND_NAMES)); } catch (e) {}
   if (!ROW_EXPAND_NAMES) rowExpandHide();
 });
