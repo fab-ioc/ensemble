@@ -26,8 +26,10 @@ _MERGE_WORD = re.compile(r"^\s*Merge\s+(?:hot-?fix|fix|follow-?up|(?:round|part|
                          r"(?:\s*\([^)]*\))?\s*:\s*", re.I)
 # A whole parenthesis of references: "(P294, P296)", "(#330, P306)", "(ED-12)".
 _REF = r"(?:[A-Z][A-Z0-9]{1,9}-\d+|#\d+|P\d+[a-z]?)"
-# A run of references: "#14, #15, and #16", "#12/#13", "P294 & P296".
-_REF_RUN = _REF + r"(?:\s*(?:,\s*(?:and|or|&)\s+|,|/|&|\band\b|\bor\b)\s*" + _REF + r")*"
+# One reference or a range of them: "P167-P169", "#12–#14", "P1-3".
+_REF_ONE = _REF + r"(?:\s*[-–]\s*" + _REF + r"|[-–]\d+\b)?"
+# A run of references: "#14, #15, and #16", "#12/#13", "P294 & P296", "P165, P167-P169".
+_REF_RUN = _REF_ONE + r"(?:\s*(?:,\s*(?:and|or|&)\s+|,|/|&|\band\b|\bor\b)\s*" + _REF_ONE + r")*"
 _REF_PARENS = re.compile(r"\s*\(\s*" + _REF_RUN + r"(?:\s+[a-z][\w-]*)?\s*\)")
 # "#326's wrapper" reads "the wrapper".
 _REF_POSSESSIVE = re.compile(r"(?:[A-Z][A-Z0-9]{1,9}-\d+|#\d+)['’]s\b")

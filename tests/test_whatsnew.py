@@ -116,6 +116,17 @@ class PlainTitle(unittest.TestCase):
         self.assertEqual(update_notes.plain_notes("- Merge hotfix: x\n- Added  drag and\n  drop"),
                          "- Merge hotfix: x\n- Added drag and\n  drop")
 
+    def test_ref_ranges_go(self):
+        cases = {
+            "Merge #203 (P165, P167-P169): Kept the chip": "Kept the chip",
+            "Fix #12–#14 now": "Fix now",
+            "Fix (P1-3) now": "Fix now",
+            "Fix ED-3-ED-5 now": "Fix now",
+            "Use the 2-3 split": "Use the 2-3 split",
+        }
+        for subject, want in cases.items():
+            self.assertEqual(update_notes.plain_title(subject), want, subject)
+
     def test_notes_keep_links_and_clean_their_labels(self):
         got = update_notes.plain_notes("- [Fix ED-12](https://x/y/12) now\n- [#12](https://x/12)\n- Plain #9 ![a](i.png)")
         self.assertEqual(got, "- [Fix](https://x/y/12) now\n- Plain ![a](i.png)")
@@ -270,12 +281,57 @@ class ReleaseNotes(unittest.TestCase):
         page = (ROOT / "static" / "whatsnew.js").read_text()
         self.assertIn("i.atLeast ? 'at least ' : ''", page)
 
+    def test_failing_notes_drop_the_notes_not_the_update(self):
+        rels = [self.rel("v1.1.0", "- x")]
+        with mock.patch.object(update_notes, "release_notes", side_effect=ValueError("odd")):
+            got = app_update.check("1.0.0", "windows-x64", fetch=lambda: rels)
+        self.assertTrue(got["available"])
+        self.assertEqual((got["latestVersion"], got["notes"], got["updates"]), ("1.1.0", [], 0))
+
     def test_a_long_release_list_says_how_many_more(self):
         rels = [self.rel(f"v1.{n}.0", f"- Change {n}") for n in range(1, 26)]
         got = app_update.check("1.0.0", "windows-x64", fetch=lambda: rels)
         self.assertEqual(len(got["notes"]), 20)
         self.assertEqual(got["notes"][0]["version"], "1.25.0")
         self.assertEqual((got["updates"], got["more"]), (25, 5))
+
+
+class GitCheck(Seeded):
+    def test_an_emoji_subject_reads_under_a_non_utf8_locale(self):
+        self.merge(5, "Caf\u00e9 party \U0001F389")
+        # The hub under an ASCII locale, as a Windows code page would be:
+        # git's UTF-8 output is still read, never a UnicodeDecodeError.
+        script = (
+            "import json, sys\n"
+            f"sys.path.insert(0, {str(ROOT)!r})\n"
+            "from pathlib import Path\n"
+            "from unittest import mock\n"
+            "import dashboard\n"
+            f"dashboard.STATIC_DIR = Path({str(self.co)!r})\n"
+            f"dashboard.SETTINGS_FILE = Path({str(self.settings)!r})\n"
+            "with mock.patch.object(dashboard.app_version, 'packaged', return_value=False), \\\n"
+            "        mock.patch.object(dashboard, 'source_update_keeps_host', return_value=False):\n"
+            "    print(json.dumps(dashboard.check_for_update(force=True)))\n")
+        env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0",
+               "PYTHONIOENCODING": "ascii:backslashreplace"}
+        out = subprocess.run([sys.executable, "-c", script], capture_output=True, env=env, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr.decode(errors="replace")[-2000:])
+        got = json.loads(out.stdout.decode().strip().splitlines()[-1])
+        self.assertTrue(got["available"], got)
+        self.assertEqual(got["items"][0]["text"], "Caf\u00e9 party \U0001F389")
+
+    def test_a_git_log_timeout_drops_the_notes_not_the_update(self):
+        self.merge(6, "the sixth feature")
+        real = dashboard._run
+        def run(cmd, *a, **kw):
+            if "log" in cmd:
+                raise subprocess.TimeoutExpired(cmd, 5)
+            return real(cmd, *a, **kw)
+        with mock.patch.object(dashboard, "_run", side_effect=run):
+            got = dashboard.check_for_update(force=True)
+        self.assertTrue(got["available"], got)
+        self.assertEqual(got["behind"], 2)
+        self.assertNotIn("items", got)
 
 
 class Endpoint(Seeded):

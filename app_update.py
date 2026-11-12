@@ -209,10 +209,19 @@ def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetc
     # What's new (#339): the notes of every newer release, from the same list.
     # Only those up to the one Install installs: a newer release with no build
     # for this platform is not what the dialog offers.
-    notes = update_notes.release_notes(releases, current, upto=rel["version"])
+    # A release list in an odd shape (a body that is not text) drops the
+    # notes, not the update: the dialog falls back to the release's name.
+    try:
+        notes = update_notes.release_notes(releases, current, upto=rel["version"])
+    except (TypeError, ValueError, KeyError, AttributeError):
+        notes = []
+    try:
+        message = update_notes.plain_title(str(rel.get("name") or ""))
+    except (TypeError, ValueError):
+        message = ""
     latest = next((n for n in notes if n["version"] == rel["version"]), None)
     return {"available": True, "kind": "release", "currentVersion": current,
-            "latestVersion": rel["version"], "latestMessage": update_notes.plain_title(rel["name"]),
+            "latestVersion": rel["version"], "latestMessage": message,
             "release": rel, "latestId": rel["version"],
             "notes": notes[:update_notes.MAX_ITEMS], "more": max(0, len(notes) - update_notes.MAX_ITEMS),
             "updates": len(notes), "atLeast": bool(getattr(releases, "capped", False)),

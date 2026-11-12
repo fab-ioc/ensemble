@@ -13577,9 +13577,11 @@ def check_for_update(force: bool = False) -> dict:
         else:
             try:
                 def git(*args) -> str:
+                    # UTF-8 whatever the locale (a Windows code page): an
+                    # emoji subject, or a byte that is not UTF-8, never fails.
                     return _run(
                         ["git", *args], cwd=str(install_dir),
-                        capture_output=True, text=True, timeout=5,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                     ).stdout.strip()
                 # Fetch the remote our branch actually tracks — not always
                 # "origin". Otherwise we'd fetch origin but compare against
@@ -13589,7 +13591,7 @@ def check_for_update(force: bool = False) -> dict:
                 fetch = _run(
                     ["git", "fetch", "--quiet", remote_name],
                     cwd=str(install_dir),
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
                 )
                 if fetch.returncode != 0:
                     result = {"available": False, "reason": "fetch_failed"}
@@ -13607,7 +13609,10 @@ def check_for_update(force: bool = False) -> dict:
                         if behind == 0:
                             result = {"available": False, "currentSha": current[:7]}
                         else:
-                            latest_msg = git("log", "-1", "--format=%s", upstream)
+                            try:
+                                latest_msg = git("log", "-1", "--format=%s", upstream)
+                            except subprocess.TimeoutExpired:
+                                latest_msg = ""
                             result = {
                                 "available": True,
                                 "currentSha": current[:7],
@@ -13615,17 +13620,22 @@ def check_for_update(force: bool = False) -> dict:
                                 "latestId": upstream,
                                 "behind": behind,
                                 "latestMessage": latest_msg[:120],
-                                # What's new (#339): the merge subjects in
-                                # plain words, from the commits just fetched.
-                                **update_notes.git_items(git, current, upstream),
                             }
+                            # What's new (#339): the merge subjects in plain
+                            # words, from the commits just fetched. A slow or
+                            # failing log drops the list, not the update: the
+                            # dialog falls back to the newest subject.
+                            try:
+                                result.update(update_notes.git_items(git, current, upstream))
+                            except (subprocess.SubprocessError, OSError, ValueError):
+                                pass
                             # Whether Install restarts the hub only (no agent
                             # waits) or drains first: the dialog says so.
                             try:
                                 result["keepsHost"] = source_update_keeps_host(fetch=False)
                             except (OSError, ValueError, ConnectionError, TimeoutError):
                                 result["keepsHost"] = False
-            except (subprocess.SubprocessError, OSError) as e:
+            except (subprocess.SubprocessError, OSError, ValueError) as e:
                 result = {"available": False, "reason": f"error: {e.__class__.__name__}"}
         _UPDATE_CHECK_CACHE = (now, result)
         return result
