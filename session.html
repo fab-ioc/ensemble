@@ -758,6 +758,9 @@
   .msg .from .fold-btn { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
     color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
   .msg .from .fold-btn:hover { background:var(--hover); color:var(--fg); }
+  /* The whole header of an opened balloon folds it again (#333); the Fold button stays for the keyboard. */
+  .msg > .from.fold-head { cursor:pointer; border-radius:var(--r-200); margin-inline:calc(-1 * var(--s-100)); padding-inline:var(--s-100); }
+  .msg > .from.fold-head:hover { background:var(--hover); }
   /* Copy link: a link to this balloon, to paste into another chat. It takes its
      place in the header at rest (nothing moves on hover) and shows on hover or
      keyboard focus; on a phone it always shows (below). */
@@ -1567,8 +1570,8 @@
     #ask-line .ask-detail { min-width:0; width:100%; }
     #ask-line .ask-detail summary { min-height:var(--touch-min); line-height:var(--touch-min); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
     #ask-line .ask-detail p { white-space:normal; overflow-wrap:anywhere; }
-    #to-latest { position:static; flex:0 0 auto; margin:0; padding:0; min-height:var(--touch-min); width:var(--touch-min); font-size:0; box-shadow:none; border-radius:var(--r-200); }
-    #to-latest::after { content:'\2193'; font-size:var(--fs-400); }
+    #compose #to-latest { position:static; flex:0 0 auto; margin:0; padding:0; min-height:var(--touch-min); width:var(--touch-min); font-size:0; box-shadow:none; border-radius:var(--r-200); }
+    #compose #to-latest::after { content:'\2193'; font-size:var(--fs-400); }
     #compose #hint { font-size:var(--fs-100); line-height:16px; }
     #compose { display:grid; grid-template-columns:minmax(0,1fr) auto; padding:var(--s-100); gap:var(--s-100); }
     #compose:focus-within { box-shadow:inset 0 0 0 2px var(--focus-ring); }
@@ -1619,6 +1622,8 @@
     #chatbar-note { display:none; }
 
   }
+  /* A phone's box keeps 8px at its foot (#333; Message editor: 8px at its foot). */
+  @media (pointer: coarse) and (max-width: 767px) { #compose { padding-bottom:var(--s-200); } }
   /* ---- Session actions: begin shared block ---------------------------------
      The action bar (static/actions.js): one primary action and a More menu,
      the same in the dashboard's task panel, its list rows and the popped-out
@@ -1872,7 +1877,12 @@ const PHONE_CHAT = window.matchMedia('(pointer: coarse) and (max-width: 767px)')
 function fitPhoneComposer() {
   const compose = document.getElementById('compose');
   const latest = document.getElementById('to-latest');
-  compose.querySelector('.ed-row').prepend(latest);
+  // In the dashboard's workspace the chat's own box is hidden (workspace-guest):
+  // "Latest ↓" then floats at the chat's foot, above the dashboard's box (#333).
+  if (document.body.classList.contains('workspace-guest')) {
+    const msgs = document.getElementById('msgs');
+    if (latest.previousElementSibling !== msgs) msgs.after(latest);
+  } else compose.querySelector('.ed-row').prepend(latest);
 }
 fitPhoneComposer();
 PHONE_CHAT.addEventListener('change', fitPhoneComposer);
@@ -4185,7 +4195,7 @@ function foldBalloonHtml(m, i, how, o) {
   // o.body: the text and its bars drawn otherwise (a message of numbered points).
   const body = (o.body && o.body(m)) || `<div class="text md">${o.md(m.text)}</div>${o.pts ? o.pts(m) : ''}`;
   // o.reacts: the person's quick reactions to it (reactRowHtml).
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}</div>`;
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from${fb ? ' fold-head" title="Fold this message again' : ''}">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}</div>`;
 }
 // ---- A task's older messages fold under its latest -------------------------
 // Between two of the person's own messages, what belongs to one task (its
@@ -5062,10 +5072,8 @@ function catchUpOpen() {
   if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE) {
     // Opened on a link to a reply: the landing wins (review 3).
     if (GOTO || GOTO_OPEN || (LANDED && Date.now() - LANDED.at < 2600)) { GOTO_OPEN = false; STICK = nearEnd(box); return; }
-    // Beside the chat (#234) a thread up to a screen and a half tall opens
-    // on its first message, as Slack's; a longer one at its latest reply.
-    const top = document.body.classList.contains('side') && box.scrollHeight <= box.clientHeight * 1.5;
-    box.scrollTop = top ? 0 : box.scrollHeight;
+    // A thread keeps no read point of its own: it opens at its latest reply (#333).
+    box.scrollTop = box.scrollHeight;
     STICK = nearEnd(box);
     return;
   }
@@ -5086,6 +5094,10 @@ function catchUpOpen() {
   // Nothing to catch up on: what arrives while the chat is open is not a catch-up.
   if (!line) { CU_POINT = null; return; }
   if (onLink || putBack) return;
+  // No read point kept yet (a first open, a fresh install): the line counts from
+  // the person's own last message and stays up the chat, but the chat opens at
+  // its end (#333). Only a kept read point with unread after it opens on the line.
+  if (!stored) { box.scrollTop = box.scrollHeight; STICK = true; showLatest(); return; }
   box.scrollTop = 0;   // a sticky line measures its own place only while not held at the top
   box.scrollTop = Math.max(0, line.offsetTop - 12);
   STICK = nearEnd(box);
@@ -5467,6 +5479,16 @@ function copyLinkHtml(m) {
 const msgLink = mid => location.origin + refHref(ROOM, mid);
 // The clipboard API needs a secure context, and the hub is plain http on the
 // tailnet: there, a selected field and execCommand, which http still allows.
+// Text the person picked inside el (a drag-select must not fold; a selection
+// left elsewhere, e.g. by copyText's fallback, does not count) (#333).
+function textPickedIn(el) {
+  try {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !String(sel).trim()) return false;
+    for (let i = 0; i < sel.rangeCount; i++) if (sel.getRangeAt(i).intersectsNode(el)) return true;
+  } catch (e) {}
+  return false;
+}
 async function copyText(s) {
   try {
     if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
@@ -9890,8 +9912,10 @@ function workspaceComposerGuest(on) {
   if (on) {
     workspaceComposerYield(false);
     document.body.classList.add('workspace-guest');
+    fitPhoneComposer();
   } else {
     document.body.classList.remove('workspace-guest');
+    fitPhoneComposer();
     if (WORKSPACE_YIELDED) {
       WORKSPACE_YIELDED = false;
       sharedComposerResume();
@@ -10798,7 +10822,11 @@ $('#msgs').addEventListener('click', e => {
   const row = e.target.closest && e.target.closest('.msg-fold');
   if (row) { foldToggle(row, true); return; }
   const fb = e.target.closest && e.target.closest('.fold-btn');
-  if (fb) foldToggle(fb.closest('.msg'), false);
+  if (fb) { foldToggle(fb.closest('.msg'), false); return; }
+  // An opened balloon's header folds it; what is in it keeps its own click (#333).
+  const fh = e.target.closest && e.target.closest('.msg > .from.fold-head');
+  if (fh && !e.target.closest('a, button, input, select, textarea, summary, label, [role="button"], .ref-chip, .chips, .chip')
+      && !textPickedIn(fh.closest('.msg'))) { foldToggle(fh.closest('.msg'), false); return; }
   const sb = e.target.closest && e.target.closest('.send-retry, .send-discard, .send-hide');
   if (sb) { sendAction(sb); return; }
   // A message a failed resume could not deliver: send it again (the hub

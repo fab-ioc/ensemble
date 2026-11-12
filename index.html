@@ -4018,6 +4018,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
     body.po-dock #workspace-compose:not([hidden]) { display:block; }
+    /* Clear of the window's foot and right edge, all four corners in view (#333). */
+    body.po-dock #workspace-compose { margin:0 var(--s-300) var(--s-200) 0; }
   }
   /* Just after a click restored a minimised panel: its second click, if it
      lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
@@ -5054,6 +5056,12 @@ window.DOC_LISTENERS_PAUSED = false;
     <h4>This instance</h4>
     <dl class="cfg-grid"></dl>
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
+    <!-- #331: what the move check at hub start could not repair; shown only when there is something. -->
+    <div id="move-check" hidden>
+      <h5 class="sp-sub">Moved from another machine</h5>
+      <p class="cfg-hint" style="margin-top: 0;">The check at hub start repaired what was safe. These it left as they are, for you to look at.</p>
+      <dl class="cfg-grid" id="move-check-list" style="margin-top: 10px;"></dl>
+    </div>
   </div>
   </div>
   </div>
@@ -14911,7 +14919,8 @@ function wcFrameFit(height, sized) {
   const f = document.getElementById('workspace-compose-frame');
   // A height set by hand (#274) may take about 70% of the window, To: line included.
   const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
-  WC.boxH = Math.min(Math.max(80, +height || 110), cap);
+  // Unsized, the frame is as tall as the box it holds (#333: no blank under the input).
+  WC.boxH = Math.min(Math.max(sized ? 80 : 40, +height || 110), cap);
   wcFrameApply(f);
 }
 // A menu opening upward from the box (+, Send's, Stop's, the / list) needs
@@ -14983,7 +14992,14 @@ function pdChatOpen(roomId, o) {
   // (A restore runs as the dock is made, before the page's body says po-dock.)
   if (!d || !roomId || !(o && o.restore ? true : pdPanelsOn())) return false;
   const id = pdChatId(roomId);
-  if (PD.rt.has(id)) { try { d.reveal(id); } catch (e) {} if (!o?.restore) wcChoose({kind:'task',room:roomId}); return true; }
+  // o.agent: the chat opens at that agent (a link to @codex@18), as the middle's does.
+  const at = o && o.agent ? '&agent=' + encodeURIComponent(o.agent) : '';
+  if (PD.rt.has(id)) {
+    if (at) { const f = pdChatFrameOf(roomId); if (f) f.src = '/session?id=' + encodeURIComponent(roomId) + '&embed=1' + at; }
+    try { d.reveal(id); } catch (e) {}
+    if (!o?.restore) wcChoose({kind:'task',room:roomId});
+    return true;
+  }
   const r = ALL_ROWS.find(x => x.roomId === roomId);
   if (!r) return false;
   // One chat per task on the page: the task in the middle moves out to its panel.
@@ -15002,7 +15018,7 @@ function pdChatOpen(roomId, o) {
   el.dataset.room = roomId;
   // data-chat-slow: not the person's conversation, so it polls less while
   // it is not being typed in (session.html).
-  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
+  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
   PD.rt.set(id, { kind: 'chat', room: roomId, el });
   // Beside the chat panel last shown (else the conversation) while the row has
   // room for one more (pdFits); else a tab of its stack.
@@ -16441,8 +16457,9 @@ function ldpColour(pid) {
   for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return LDP_COLOURS[h % LDP_COLOURS.length];
 }
-// #328 (P294 drawing): every row's 12px icon. A project its colour square; a task
-// a check in a square; a session a speech bubble. Named by its tooltip.
+// #328 (P294 drawing): every row's 12px icon. A project its colour square; #335
+// (CEO's pick, set B): a task a clipboard with a check, a session the terminal it
+// runs in, so neither reads as one more project square. Named by its tooltip.
 // #329: a project with an icon of its own shows it in the square's box instead.
 function ldpSwatch(pid, cls) {
   let pj = null;
@@ -16452,10 +16469,13 @@ function ldpSwatch(pid, cls) {
 }
 function ldpKindIcon(kind, cls) {
   const c = cls || 'ldp-ico';
-  if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title><rect width="12" height="12" rx="3" fill="var(--tool-list)"/>`
-    + '<path d="M3.2 6.2l1.9 1.9 3.7-4" stroke="var(--tool-ink)" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title>`
+    + '<rect x="1.6" y="2.2" width="8.8" height="9.2" rx="1.4" fill="var(--tool-list)" fill-opacity=".22" stroke="var(--tool-list)" stroke-width="1.2"/>'
+    + '<rect x="3.8" y=".6" width="4.4" height="2.6" rx=".8" fill="var(--tool-list)"/>'
+    + '<path d="M3.8 7l1.5 1.5 3-3.1" stroke="var(--tool-list)" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="session"><title>session</title>`
-    + '<path d="M2.5 1h7A1.5 1.5 0 0 1 11 2.5v5A1.5 1.5 0 0 1 9.5 9H6l-3 2.5V9h-.5A1.5 1.5 0 0 1 1 7.5v-5A1.5 1.5 0 0 1 2.5 1z" fill="var(--c-neutral-bold)"/></svg>';
+    + '<rect x=".9" y="1.6" width="10.2" height="8.8" rx="1.4" fill="var(--c-neutral-bold)" fill-opacity=".22" stroke="var(--c-neutral-bold)" stroke-width="1.2"/>'
+    + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
 function ldpHtml(m) {
   const d = IBX.data;
@@ -22488,7 +22508,7 @@ function wideBanner() {
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner'];
+  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -22649,6 +22669,20 @@ function openSettings(tab, opener) {
   const focus = asked && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
   if (focus) focus.focus();
   loadAgentModels();            // what the agents offer may have changed
+  loadMoveCheck();
+}
+// The move check's open items (#331): one list in "This instance", only when there is one.
+async function loadMoveCheck() {
+  let r = null;
+  try { r = await api('/api/move-check'); } catch (e) { return; }
+  const box = document.getElementById('move-check');
+  const list = document.getElementById('move-check-list');
+  if (!box || !list) return;
+  const items = (r && Array.isArray(r.open)) ? r.open : [];
+  box.hidden = !items.length;
+  const kind = {code: 'code folder', taskFolder: 'task folder', worktree: 'worktree', transcript: 'conversation'};
+  list.innerHTML = items.map(it =>
+    `<dt>${esc(it.what || '')} · ${esc(kind[it.kind] || it.kind || '')}</dt><dd>${esc(it.detail || '')}</dd>`).join('');
 }
 // Kept for the tests and any caller that hangs Settings off a control.
 function openSettingsPanel(anchor, tab) { openSettings(tab, anchor); }
@@ -22940,7 +22974,8 @@ window.addEventListener('message', (ev) => {
     runTaskAction(String(d.roomId), String(d.act || ''));
   }
   // A task link clicked inside a session or file viewer framed in this page.
-  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
+  // From a PO conversation it opens as a panel of its own (P310).
+  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''), undefined, { panel: chatFrameIsPo(ev.source) });
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
@@ -23002,7 +23037,11 @@ function sendGotoMsg(rid) {
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,
 // or its role, @reviewer@18) the task opens at that agent's terminal.
 let DETAIL_AGENT = null;   // { room, agent }: the next chat drawn for that task opens at the agent
-function openTaskLink(ref, agent, projectId) {
+// o.panel: clicked in a PO conversation (P310). The task opens as a chat
+// panel of its own (#150), so the conversation keeps its place; a task with a
+// panel has it revealed, one in the middle stays there, and where there are no
+// panels (a phone, no Dock) the middle takes it as from anywhere else.
+function openTaskLink(ref, agent, projectId, o) {
   const rid = taskRowId(ref, projectId);
   if (!rid) {
     toast(`${ref} is not a task on this hub`, 4000, 'err');
@@ -23012,6 +23051,8 @@ function openTaskLink(ref, agent, projectId) {
   const w = String(agent || '').toLowerCase();
   const m = w && row ? (row.members || []).find(x => (x.identity || '').toLowerCase() === w
     || String(x.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+  const inMiddle = SELECTED_SID === rid && document.body.classList.contains('detail-open');
+  if (o && o.panel && row && row.roomId && !inMiddle && !phoneNow() && pdChatOpen(row.roomId, { agent: m ? m.identity : '' })) return;
   if (m) {
     DETAIL_AGENT = { room: row.roomId, agent: m.identity };
     // Already showing that task: its chat is drawn again, at the agent.
@@ -23019,6 +23060,19 @@ function openTaskLink(ref, agent, projectId) {
     if (f) { f.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1&agent=' + encodeURIComponent(m.identity); DETAIL_AGENT = null; }
   }
   openDetail(rid);
+}
+// A chat page's window: is it a PO conversation (the PO's chat in the middle
+// or its drawer, a thread of it, a PO room's chat panel)? Pop-out windows' frames count.
+function chatFrameIsPo(win) {
+  if (!win) return false;
+  for (const d of [document, ...PD_POP_DOCS.keys()]) {
+    let f = null;
+    try { f = [...d.querySelectorAll('iframe.po-session, iframe.po-thread, iframe.dp-session')].find(x => x.contentWindow === win); } catch (e) {}
+    if (!f) continue;
+    if (!f.classList.contains('dp-session')) return true;
+    return poRoomIds(registeredProjects()).has(f.dataset.room || '');
+  }
+  return false;
 }
 // A chip (a.task-chip) is TaskCard's: one click its card, a double click the task.
 document.addEventListener('click', (ev) => {
