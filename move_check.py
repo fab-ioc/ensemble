@@ -48,6 +48,8 @@ import threading
 import time
 from pathlib import Path
 
+import seat_folders
+
 _d = None  # the dashboard module, set by bind()
 _LOCK = threading.Lock()
 KINDS = ("code", "taskFolder", "worktree", "transcript")
@@ -527,7 +529,13 @@ def _check_task_folders(run: _Run, room: dict) -> dict:
     if not run.repair:
         run.left("taskFolder", label, f"{detail} (repairable)", roomId=room["id"])
         return room
-    if room.get("folderMissing"):
+    olds = [room.get(k) for k in ("cwd", "taskDir") if k in fields]
+    if "workspace" in fields:
+        olds.append((room.get("workspace") or {}).get("taskDir"))
+    old_parts = {p.get("identity"): p.get("cwd") for p in room.get("participants") or []}
+    seats = [p.get("identity") for p in parts if old_parts.get(p.get("identity")) != p.get("cwd")]
+    olds += [old_parts.get(i) for i in seats]
+    if seat_folders.mark_moved(room.get("folderMissing"), seats, olds):
         fields["folderMissing"] = None  # the refusal was about the old folders (#352)
     _d.chatroom.patch_room(room["id"], **fields)
     run.fixed("taskFolder", label, f"{detail} moved to this machine's folders", roomId=room["id"])

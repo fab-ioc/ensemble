@@ -169,6 +169,19 @@ def _mark(room: dict, ident: str, path: str, reason: str, kind: str = "missing")
         print(f"[folder] {rid}: mark not written: {str(e)[:200]}", flush=True)
 
 
+def mark_moved(mark, identities=(), paths=()) -> bool:
+    """Whether a move of the seats ``identities`` and the folders ``paths``
+    (their old values) is about the refusal ``mark`` records: its seat or its
+    folder moved. A mark naming no seat goes with any of its paths (#352)."""
+    if not isinstance(mark, dict):
+        return False
+    ident = mark.get("identity") or ""
+    if ident and ident in identities:
+        return True
+    path = os.path.normpath(mark.get("path") or "") if mark.get("path") else ""
+    return bool(path) and path in {os.path.normpath(p) for p in paths if p}
+
+
 def clear_mark(room: dict) -> None:
     if not room.get("folderMissing"):
         return
@@ -475,7 +488,7 @@ def repair_at_start() -> list[dict]:
             room = cr._load(rid)
             if room is None:
                 continue
-            changed = False
+            changed, moved = False, []
             for p in damaged_seats(room):
                 row = {"room": rid, "no": room.get("no"), "identity": p.get("identity", ""),
                        "was": p.get("cwd", ""), "now": room["cwd"]}
@@ -490,11 +503,15 @@ def repair_at_start() -> list[dict]:
                 if not ok:
                     out.append({**row, "skipped": why})
                     continue
+                moved.append(p.get("cwd", ""))
                 p["cwd"] = room["cwd"]
                 changed = True
                 out.append(row)
             if changed:
-                room.pop("folderMissing", None)     # it named the old folder (#352)
+                if mark_moved(room.get("folderMissing"), [r["identity"] for r in out
+                                                          if r.get("room") == rid and not r.get("skipped")],
+                              moved):
+                    room.pop("folderMissing", None)     # it named the old folder (#352)
                 cr._write(room)
     return out
 

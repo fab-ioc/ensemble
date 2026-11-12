@@ -8689,6 +8689,18 @@ DONE_MANY_MAX = 200
 _ROOM_ID = re.compile(r"room-[A-Za-z0-9_-]{1,64}")
 
 
+def keep_dealt_since(rid: str) -> None:
+    """Done in the Inbox: the room keeps when each trouble it set aside began
+    (attention.first_seen_of), so a hub restart does not make the same trouble
+    look new and bring its card back (#352)."""
+    marks = attention.first_seen_of(rid)
+    if marks:
+        try:
+            chatroom.patch_room(rid, dealtSince=marks)
+        except Exception as e:      # noqa: BLE001 — the Done itself stands
+            print(f"[attention] {rid}: dealtSince not kept: {str(e)[:200]}", flush=True)
+
+
 def attention_done_many(room_ids) -> tuple[int, dict]:
     """Done with this for every room in ``room_ids`` (Clear all, #279):
     ``(status, body)``. Each room's marks before (``prev``) go back in the
@@ -8712,6 +8724,7 @@ def attention_done_many(room_ids) -> tuple[int, dict]:
         if before is None or chatroom.record_dealt(rid) is None:
             missing.append(rid)
             continue
+        keep_dealt_since(rid)
         prev[rid] = before
         done.append(rid)
     if done:
@@ -22888,6 +22901,7 @@ class Handler(BaseHTTPRequestHandler):
             if dealt is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
+            keep_dealt_since(rid)
             asks.forget()
             attention.snapshot(0)
             inbox.forget()      # a waiting card it set aside leaves the Inbox now (#352)

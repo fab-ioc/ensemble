@@ -509,6 +509,16 @@ class Repair(_Base):
         stored = json.loads((chatroom.ROOMS_DIR / f"{rid}.json").read_text())
         self.assertNotIn("folderMissing", stored)
 
+    def test_352_a_hub_start_repair_of_another_seat_keeps_the_refusal(self):
+        rid, task = self.damaged()
+        mark = {"reason": "codex's folder is missing", "identity": "codex",
+                "path": str(task / "repo-linux")}
+        chatroom.patch_room(rid, folderMissing=mark)
+        rows = seat_folders.repair_at_start()
+        self.assertEqual([r["identity"] for r in rows], ["claude"])
+        stored = json.loads((chatroom.ROOMS_DIR / f"{rid}.json").read_text())
+        self.assertEqual(stored["folderMissing"], mark)
+
     def test_at_hub_start_a_live_seat_is_left(self):
         rid, _ = self.damaged()
         chatroom.patch_participant(rid, "claude", {"ptyId": "live-1"})
@@ -566,6 +576,44 @@ class Attention(unittest.TestCase):
         self.assertEqual(attention._first_seen("r", "blocked", 200.0, "permission"), 100.0)
         later = attention._first_seen("r", "blocked", 200.0, "duplicate_pty")
         self.assertGreater(later, dealt_at)
+
+    def test_352_a_trouble_done_before_a_restart_stays_set_aside(self):
+        attention._FIRST_SEEN.clear()
+        self.addCleanup(attention._FIRST_SEEN.clear)
+        run = attention._FIRST_RUN[0]
+        self.addCleanup(attention._FIRST_RUN.__setitem__, 0, run)
+        attention._first_seen("r", "blocked", 100.0, "duplicate_pty")
+        attention._first_seen("other", "blocked", 120.0, "permission")
+        kept = attention.first_seen_of("r")          # Done at 150 keeps this on the room
+        self.assertEqual(kept, {"blocked|duplicate_pty": 100.0})
+        attention._FIRST_SEEN.clear()                # the hub restarts
+        attention._FIRST_RUN[0] = True
+        self.assertEqual(attention._first_seen("r", "blocked", 500.0, "duplicate_pty", kept), 100.0)
+        self.assertEqual(attention._first_seen("r", "blocked", 500.0, "permission", kept), 500.0)
+        attention._FIRST_SEEN.clear()                # gone, then back while the hub runs: new
+        attention._FIRST_RUN[0] = False
+        self.assertEqual(attention._first_seen("r", "blocked", 600.0, "duplicate_pty", kept), 600.0)
+
+    def test_352_an_over_trouble_leaves_dealt_since(self):
+        calls = []
+        with mock.patch.object(attention._d.chatroom, "patch_room",
+                               side_effect=lambda rid, **f: calls.append((rid, f))):
+            attention._prune_dealt_since(
+                {"a": {"blocked|duplicate_pty": 1.0, "stalled|silent": 2.0},
+                 "b": {"blocked|": 3.0}},
+                {("a", "blocked", "duplicate_pty"), ("b", "blocked", "")})
+            self.assertEqual(calls, [("a", {"dealtSince": {"blocked|duplicate_pty": 1.0}})])
+            calls.clear()
+            attention._prune_dealt_since({"a": {"stalled|silent": 2.0}}, set())
+            self.assertEqual(calls, [("a", {"dealtSince": None})])
+
+    def test_352_a_move_clears_only_the_refusal_it_is_about(self):
+        mark = {"identity": "codex", "path": "/t/repo-linux", "reason": "x"}
+        self.assertTrue(seat_folders.mark_moved(mark, ["codex"]))
+        self.assertTrue(seat_folders.mark_moved(mark, [], ["/t/repo-linux/"]))
+        self.assertFalse(seat_folders.mark_moved(mark, ["claude"], ["/t/repo", "/t"]))
+        self.assertFalse(seat_folders.mark_moved(None, ["codex"]))
+        self.assertTrue(seat_folders.mark_moved({"path": "/t", "reason": "x"}, [], ["/t"]))
 
 if __name__ == "__main__":
     unittest.main()
