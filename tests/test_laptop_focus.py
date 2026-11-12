@@ -20,7 +20,7 @@ class LaptopFocus(focus.PhoneFocus):
           g.desktop=await ev(`(() => {
           const f=document.querySelector('${sel}'),d=f.contentDocument,w=f.contentWindow;
           const b=e=>e.getBoundingClientRect(),m=d.getElementById('msgs'),cd=${CF}.contentDocument,input=cd.getElementById('input'),send=cd.getElementById('send');
-          const overlap=()=>[...d.querySelectorAll('#ask-line,#chatbar,#to-latest,.catchup')].some(e=>{
+          const overlap=()=>[...d.querySelectorAll('#ask-line,#chatbar,.catchup')].some(e=>{
             if(!b(e).height || e.closest('#msgs')) return false;
             return [...d.querySelectorAll('#msgs .msg')].some(msg=>{const r=b(msg),q=b(e),v=b(m);return Math.max(r.top,v.top,q.top)<Math.min(r.bottom,v.bottom,q.bottom) && Math.max(r.left,q.left)<Math.min(r.right,q.right);});
           });
