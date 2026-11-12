@@ -5824,6 +5824,7 @@ const toast = (msg, ms=2500, kind='') => {
     toast._t = setTimeout(() => { s.hidden = true; }, ms);
   }
 };
+window.toast = toast;   // static/whatsnew.js says through it too
 
 function offerTerminalSendRetry(pid, text) {
   toast('May not have been delivered - check the chat, then Retry.', 0, 'err');
@@ -9589,8 +9590,16 @@ const UPD_LIMITS = {
   idlePolls: 5,    // the request got no answer and the hub, up, shows no update this many polls
   fetchS: 8,       // one status request, at most
 };
-async function triggerUpdate() {
-  if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
+// Install now (#345): starts the update and returns '' (the Update card
+// shows until the page reloads), or says why it did not start. An update
+// already under way is this press's: its card is showing.
+function triggerUpdate() {
+  if (ensUpd.reloading) return 'The page is reloading, try again in a moment.';
+  if (UPDATE_IN_PROGRESS) { if (!updCardUp()) updCardShow(UPD_CARD.step || 'Fetching the update from GitHub'); return ''; }
+  runUpdate();
+  return '';
+}
+async function runUpdate() {
   UPDATE_IN_PROGRESS = true;
   ensUpd.hold = true;   // the page reloads on the new hub below, not for a changed stamp too
   const overlay = document.getElementById('update-overlay');
@@ -9634,20 +9643,35 @@ async function triggerUpdate() {
   // say why instead of waiting for a restart that never comes. A source
   // update fetches from GitHub inside this request.
   let status = 0, body = {};
-  try {
-    const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                           body: JSON.stringify({ when: 'safe', reason: 'an update' }),
-                                           signal: updSignal(200000) });   // a source fetch and reset: 3 min at most
-    status = r.status;
-    body = await r.json().catch(() => ({}));
-  } catch {
-    // No answer: the hub may have stopped mid-request; the polls below see.
+  const ask = async () => {
+    status = 0; body = {};
+    try {
+      const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ when: 'safe', reason: 'an update' }),
+                                             signal: updSignal(200000) });   // a source fetch and reset: 3 min at most
+      status = r.status;
+      body = await r.json().catch(() => ({}));
+    } catch {
+      // No answer: the hub may have stopped mid-request; the polls below see.
+    }
+  };
+  await ask();
+  // A page left open across a hub restart holds the key from before it:
+  // today's key (static/pagekey.js), then the same request once more.
+  if (status === 403 && mine() && window.pageKeyRefresh) {
+    await window.pageKeyRefresh();
+    if (!mine()) return;
+    await ask();
   }
+  if (!mine()) return;
   if (body.log) logPath = body.log;
   if (body.version) target = body.version;
   if (status === 403) {
+    // Still no: say so where Install now was pressed, in plain words (the
+    // hub's own message is written for agents).
     stop();
-    toast(body.message || 'the hub refused the update', 8000, 'err');
+    const why = 'The hub refused the update from this page. Reload the page, then Install now again.';
+    if (window.whatsNew) whatsNew.refused(why); else toast(why, 8000, 'err');
     return;
   }
   if (status && (status < 200 || status >= 300)) {

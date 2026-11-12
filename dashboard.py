@@ -13844,6 +13844,13 @@ def cached_update_check() -> dict:
     return cache[1] if cache else {"available": False, "reason": "not_checked"}
 
 
+def update_check_age() -> int | None:
+    """Seconds since the cached check was made, or None before the first:
+    Install now checks again when it is old (#345)."""
+    cache = _UPDATE_CHECK_CACHE
+    return max(0, int(time.time() - cache[0])) if cache else None
+
+
 def update_check_view(info: dict, wait: bool = False) -> dict:
     """The cached check as the page reads it: whether the newest is the one
     skipped (Settings, so every device agrees) and, with ``wait``, how many
@@ -19110,9 +19117,19 @@ class Handler(BaseHTTPRequestHandler):
             # however old (never a fetch), and who Install would wait for,
             # read now. Without it (the page's periodic poll): the check,
             # fetching again when the 30-minute cache has run out.
-            want_wait = parse_qs(u.query).get("wait", [""])[0] == "1"
-            info = cached_update_check() if want_wait else check_for_update()
-            self._send_json(200, update_check_view(info, wait=want_wait))
+            # &fresh=1 (Install now on a check that is old, or none since the
+            # hub restarted, #345): check again now, then answer.
+            q = parse_qs(u.query)
+            want_wait = q.get("wait", [""])[0] == "1"
+            if q.get("fresh", [""])[0] == "1":
+                info = check_for_update(force=True)
+            else:
+                info = cached_update_check() if want_wait else check_for_update()
+            view = update_check_view(info, wait=want_wait)
+            age = update_check_age()
+            if age is not None:
+                view["checkedAgo"] = age
+            self._send_json(200, view)
             return
         if p == "/api/version":
             try:
