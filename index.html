@@ -4100,7 +4100,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-row { --ibx-ground: var(--surface); position: relative; }
   .ibx-row.ibx-mark { --ibx-ground: var(--c-danger-bg); }
   .ibx-acts { display: none; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
-  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts { display: flex; }
+  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts, .ibx-row.row-expand-host .ibx-acts { display: flex; }
   @media (hover: hover) {
     .ibx-row:not(.ibx-confirming) > .ibx-acts { position: absolute; right: 0; bottom: var(--s-100); z-index: 1; margin: 0; flex-wrap: nowrap;
       padding-left: var(--s-400); background: linear-gradient(to right, transparent, var(--ibx-ground) var(--s-300)); }
@@ -12888,8 +12888,33 @@ function rowExpandHide() {
   ROW_EXPAND_MENU_OBSERVER = null;
   if (ROW_EXPAND_WIN) ROW_EXPAND_WIN.removeEventListener('resize', rowExpandHide);
   ROW_EXPAND_WIN = null;
-  if (ROW_EXPAND) ROW_EXPAND.copy.remove();
+  if (ROW_EXPAND) {
+    ROW_EXPAND.copy.remove();
+    if (ROW_EXPAND.host) rowExpandHostHold(ROW_EXPAND.host);
+  }
   ROW_EXPAND = null;
+}
+// The card under a copy that just went (spec.host): the browser marks it :hover
+// only at the pointer's next move, so a press at once would miss its Close/Done.
+// It keeps them shown until the pointer is off the card.
+let ROW_EXPAND_HOST = null;
+function rowExpandHostLet() {
+  if (!ROW_EXPAND_HOST) return;
+  ROW_EXPAND_HOST.el.classList.remove('row-expand-host');
+  ROW_EXPAND_HOST.doc.removeEventListener('pointermove', ROW_EXPAND_HOST.off, true);
+  ROW_EXPAND_HOST = null;
+}
+function rowExpandHostHold(el) {
+  if (ROW_EXPAND_HOST && ROW_EXPAND_HOST.el === el) return;
+  rowExpandHostLet();
+  const doc = el.ownerDocument;
+  const off = ev => {
+    const r = el.getBoundingClientRect();
+    if (!el.isConnected || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) rowExpandHostLet();
+  };
+  el.classList.add('row-expand-host');
+  doc.addEventListener('pointermove', off, true);
+  ROW_EXPAND_HOST = { el, doc, off };
 }
 function rowExpandBeforeChange(root) {
   if (ROW_EXPAND && root && root.contains(ROW_EXPAND.row)) rowExpandHide();
@@ -12944,7 +12969,9 @@ function rowExpandShow(row, spec, focus = false) {
   const rect = row.getBoundingClientRect(), edge = 8;
   const opensLeft = spec.opensLeft ? spec.opensLeft(row, rect, win) : rect.left > win.innerWidth / 2;
   const available = opensLeft ? rect.right - edge : win.innerWidth - rect.left - edge;
-  const wanted = rect.width + name.scrollWidth - name.clientWidth + 8;
+  // A name cut at its lines (an Inbox card) keeps its card's width: it grows downwards.
+  const cutX = name.scrollWidth - name.clientWidth;
+  const wanted = rect.width + (cutX > 1 ? cutX + 8 : 0);
   const width = Math.min(Math.max(rect.width, wanted), available);
   const copy = row.cloneNode(true), copyName = copy.querySelector(spec.name);
   copy.classList.add('row-expanded', spec.copyClass);
@@ -13043,7 +13070,13 @@ function rowExpandShow(row, spec, focus = false) {
     else if (!focus || !row.contains(doc.activeElement)) rowExpandHide();
   });
   doc.body.appendChild(copy);
-  ROW_EXPAND = { row, copy, spec };
+  // spec.host (an Inbox card): the pointer is on the copy, not the card, so the card
+  // would lose its :hover and hide its Close/Done under the copy; it keeps them
+  // shown while the copy is up and until the pointer is off the card (rowExpandHostHold).
+  const host = spec.host ? row.closest(spec.host) : null;
+  if (host) rowExpandHostHold(host);
+  else rowExpandHostLet();
+  ROW_EXPAND = { row, copy, spec, host };
   if (win.MutationObserver) {
     // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
     ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => {
@@ -16683,7 +16716,7 @@ rowExpandWire(document.getElementById('ld-projs'),
 rowExpandWire(document.getElementById('ld-ibx-body'),
   { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
     covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
-    copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+    host: '.ibx-row', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;

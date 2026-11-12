@@ -9379,7 +9379,10 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "attention", "no", "firstWords", "after", "onReady")
+            "attention", "no", "firstWords", "after", "onReady",
+            # #337: the left panel ties projects by their latest conversation,
+            # for tasks past the task list's 300 rows too
+            "convAt", "newsAt")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)

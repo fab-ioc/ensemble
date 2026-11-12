@@ -136,7 +136,10 @@ async function main() {
   };
   // hover (from outside), the copy at 150 ms and at 450 ms
   const hover = async (p, x, y) => {
-    await p.move(5, 5); await sleep(300);
+    await p.move(5, 5);
+    // an earlier copy raised by focus (a clicked row) stays until the focus goes: clear it first
+    await p.evalIn('(document.activeElement && document.activeElement !== document.body && document.activeElement.blur(), rowExpandHide(), 0)');
+    await sleep(300);
     await p.move(x - 20, y); await p.move(x, y); await sleep(150);
     const at150 = await p.evalIn(EXP); await sleep(300);
     return { at150, at450: await p.evalIn(EXP) };
@@ -211,6 +214,11 @@ async function main() {
       await p.evalIn(`(() => { const pj = projectById(${JSON.stringify(P[A.delta])});
         ALL_ROWS = ALL_ROWS.filter(r => r.sessionId !== 'sess-delta-337'); pj.sessions = pj.sessions.filter(r => r.sessionId !== 'sess-delta-337'); return 0; })()`);
       o.conv.back = await order();
+      await p.until('!_refreshInFlight', 10000);
+      o.conv.past300 = await p.evalIn(`(() => { _refreshInFlight = true; window._rows337 = ALL_ROWS; ALL_ROWS = ALL_ROWS.filter(r => !r.headless); return 0; })()`);
+      o.conv.past300 = await order();
+      await p.evalIn('(ALL_ROWS = window._rows337, _refreshInFlight = false, LDP.sig = "", ldpPaint(), 0)');
+      await sleep(300);
 
       // ---- full names on hover: a project, a task, a session, the Inbox's title
       let rows = await p.evalIn(ROWS);
@@ -243,13 +251,26 @@ async function main() {
       // ---- an Inbox card whose text is cut at its lines shows whole, downwards
       await p.evalIn(`(() => { ldpScope('project'); ldSelSet(${JSON.stringify(P['Gamma one'])}); IBX.busy = true; window._ibx337b = IBX.data;
         const r = IBX.data.rows.find(x => x.projectId === ${JSON.stringify(P['Gamma one'])});
-        IBX.data = { ...IBX.data, rows: [{ ...r, id: 'q337', kind: 'answer', items: undefined, reason: '', line: ${JSON.stringify(A.longAsk)} }].concat(IBX.data.rows) };
+        IBX.data = { ...IBX.data, rows: [{ ...r, id: 'q337', kind: 'answer', n: 1, items: undefined, reason: '', line: ${JSON.stringify(A.longAsk)} }].concat(IBX.data.rows) };
         ibxRepaint(); return 0; })()`);
       await sleep(600);
       const card = await p.evalIn(`(() => { const a = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] a.ibx-link'); if (!a) return null; const n = a.querySelector('.ibx-line'), r = a.getBoundingClientRect();
         return { sh: n.scrollHeight, ch: n.clientHeight, w: Math.round(r.width), cx: Math.round(r.left + 30), cy: Math.round(r.top + 8) }; })()`);
       o.card = card ? { row: card, ...(await hover(p, card.cx, card.cy)) } : null;
       await p.shot('hover-inbox-card');
+      // the card's Close sits under the copy: shown, and the first click there closes the card (no focus before)
+      if (card) {
+        o.cardClose = await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] [data-ibx-close]'); if (!b) return null; const r = b.getBoundingClientRect();
+          const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2), top = document.elementFromPoint(x, y);
+          window._clk337 = []; for (const t of ['pointermove', 'pointerdown', 'click']) document.addEventListener(t, e => window._clk337.push(t + ':' + (e.target.className || e.target.tagName) + ':' + e.isTrusted + ':' + !!document.querySelector('.row-expanded')), true);
+          window._acts337 = []; window._act337 = ibxRowAct; ibxRowAct = (...a) => { window._acts337.push(a.slice(0, 2)); };
+          return { w: Math.round(r.width), h: Math.round(r.height), x, y, underCopy: !!(top && top.closest('.row-expanded')), raised: !!document.querySelector('.row-expanded'), focus: document.activeElement === document.body }; })()`);
+        if (o.cardClose) {
+          await p.clickAt(o.cardClose.x, o.cardClose.y); await sleep(300);
+          o.cardClose.dbg = await p.evalIn('window._clk337.slice(-12)');
+          o.cardClose.acts = await p.evalIn('(() => { const a = window._acts337; ibxRowAct = window._act337; return a; })()');
+        }
+      }
       await away(p);
       await p.evalIn(`(() => { IBX.data = window._ibx337b; IBX.busy = false; ibxRepaint(); return 0; })()`);
 
@@ -307,6 +328,31 @@ async function main() {
       await p.evalIn('pdTabTips(), 0'); await sleep(300);
       o.fileTab.redrawn = await p.evalIn(`(() => { const t = ${FT}; return { title: t.getAttribute('title'), kept: t.dataset.rxTitle || '', raised: !!document.querySelector('.row-expanded') }; })()`);
       await away(p);
+
+      // ---- workspace tabs (files in the Workspace's own row, not as panels): click and x through the copy
+      await p.evalIn(`(() => { window._pdOn337 = pdPanelsOn; pdPanelsOn = () => false;
+        const v = [...WS_VIEWS.values()].find(x => x.el && x.el.isConnected); window._v337 = v;
+        wsOpenTab(v, ${JSON.stringify(A.longFile)}); wsOpenTab(v, ${JSON.stringify(A.shortFile)}); wsPaintTabs(v); return 0; })()`);
+      await sleep(800);
+      const WT = `[...document.querySelectorAll('.wst-tab')].find(t => t.textContent.includes('fit its tab'))`;
+      const wtab = async () => p.evalIn(`(() => { const t = ${WT}; if (!t) return null; const r = t.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), sw: t.querySelector('.wst-nm').scrollWidth, cw: t.querySelector('.wst-nm').clientWidth, on: t.classList.contains('on'), n: document.querySelectorAll('.wst-tab').length, top: (document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)) || {}).className, ok: rowExpandAllowed(t, { ...TAB_ROW_EXPAND, root: document.body }) }; })()`);
+      let wt = await wtab();
+      o.wsTab = { tab: wt };
+      if (wt && wt.x) {
+        Object.assign(o.wsTab, await hover(p, wt.x, wt.y));
+        await p.shot('hover-workspace-tab');
+        if (o.wsTab.at450) { await p.clickAt(wt.x - 20, wt.y); await sleep(600); }
+        o.wsTab.clicked = await wtab();
+        wt = o.wsTab.clicked;
+        if (wt) {
+          await hover(p, wt.x, wt.y);
+          const x = await p.evalIn(`(() => { const x = document.querySelector('.row-expanded .wst-x'); if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+          if (x) { await p.clickAt(x.x, x.y); await sleep(600); }
+          o.wsTab.x = !!x;
+          o.wsTab.afterX = await wtab();
+        }
+      }
+      await p.evalIn('(pdPanelsOn = window._pdOn337, wsPaintTabs(window._v337), 0)');
 
       // ---- the setting off
       await away(p);
@@ -407,6 +453,8 @@ class LeftPanelOrderInChrome(unittest.TestCase):
                 cls.delta_po = po["id"]
                 (home / LONG_FILE).write_text("# Notes\n", encoding="utf-8")
                 cls.long_file = str(home / LONG_FILE)
+                (home / "a.md").write_text("# A\n", encoding="utf-8")
+                cls.short_file = str(home / "a.md")
         # Delta's PO changed after every conversation, with nothing said: no conversation
         room = chatroom.get_room(cls.delta_po, public=False)
         chatroom.update_room(room)
@@ -420,7 +468,7 @@ class LeftPanelOrderInChrome(unittest.TestCase):
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "ids": cls.ids, "delta": DELTA, "loose": cls.loose, "deltaPo": cls.delta_po,
-                "longFile": cls.long_file, "longAsk": LONG_ASK, "widths": WIDTHS, "shots": shots}
+                "longFile": cls.long_file, "shortFile": cls.short_file, "longAsk": LONG_ASK, "widths": WIDTHS, "shots": shots}
         script = base / "left_panel_order_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=480)
@@ -480,6 +528,7 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertEqual(c["metaOnly"], WANT, "a state change moves nothing")
         self.assertEqual(c["session"], WANT[:3] + [DELTA, "Zero newest"], "a session in Delta newer than Zero's chat")
         self.assertEqual(c["back"], WANT)
+        self.assertEqual(c["past300"], WANT, "tasks past the task list's 300 rows: the projects' own rows carry convAt")
 
     def test_a_cut_inbox_card_shows_whole_downwards(self):
         o = self.w()["card"]
@@ -489,8 +538,16 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertIsNotNone(o["at450"])
         self.assertIn(LONG_ASK, o["at450"]["text"])
         self.assertGreater(o["at450"]["h"], o["row"]["ch"], "taller than the cut text")
-        self.assertLessEqual(o["at450"]["w"], o["row"]["w"] + 9, "in the card's column")
+        self.assertLessEqual(o["at450"]["w"], o["row"]["w"] + 1, "in the card's column")
         self.assertTrue(o["at450"]["solid"])
+
+    def test_a_raised_card_s_close_takes_the_first_click(self):
+        c = self.w()["cardClose"]
+        self.assertIsNotNone(c, "the card has Close")
+        self.assertTrue(c["raised"] and c["underCopy"], "Close sits under the raised copy")
+        self.assertTrue(c["focus"], "nothing focused before")
+        self.assertGreater(c["w"] * c["h"], 0, "Close stays shown while the copy is up")
+        self.assertEqual(c["acts"], [["q337", "Closed"]], "the first click closed the card")
 
     def test_a_cut_file_tab_keeps_its_tip_off_when_drawn_again(self):
         o = self.w()["fileTab"]
@@ -500,6 +557,16 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertIsNone(r["title"], "no native tip while raised")
         self.assertIn("drag the tab to move its panel", r["kept"], "its tip kept aside")
         self.assertTrue(self.w()["off"]["fileTitle"], "the setting off: its tip is back")
+
+    def test_a_cut_workspace_tab_clicks_and_closes_through_its_copy(self):
+        o = self.w()["wsTab"]
+        self.assertIsNotNone(o["tab"], "the Workspace's own tab row shows the file")
+        self.assertFalse(o["tab"]["on"], "behind the other file")
+        self.assertGreater(o["tab"]["sw"], o["tab"]["cw"] + 1, "cut")
+        self.assertWhole(o, o["tab"]["sw"])
+        self.assertTrue(o["clicked"]["on"], "a click on the copy brings it to the front")
+        self.assertTrue(o["x"], "the copy has its x")
+        self.assertIsNone(o["afterX"], "x on the copy closed it")
 
     def test_a_drag_from_a_raised_tab_moves_it(self):
         # pressed on the copy, dragged past the other tab: Dock takes the panel there
