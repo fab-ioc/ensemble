@@ -13340,7 +13340,9 @@ function rowExpandShow(row, spec, focus = false) {
   if (!rowExpandAllowed(row, spec)) return;
   const doc = row.ownerDocument, win = doc.defaultView, name = row.querySelector(spec.name);
   const rect = row.getBoundingClientRect(), edge = 8;
-  const opensLeft = spec.opensLeft ? spec.opensLeft(row, rect, win) : rect.left > win.innerWidth / 2;
+  // A tab's close control is at the end of its row. Grow the copy to the
+  // left, keeping that end fixed so hovering the title cannot move the ×.
+  const opensLeft = spec.anchorClose || (spec.opensLeft ? spec.opensLeft(row, rect, win) : rect.left > win.innerWidth / 2);
   const available = opensLeft ? rect.right - edge : win.innerWidth - rect.left - edge;
   // A name cut at its lines (an Inbox card) keeps its card's width: it grows downwards.
   const cutX = name.scrollWidth - name.clientWidth;
@@ -13374,9 +13376,32 @@ function rowExpandShow(row, spec, focus = false) {
   copy.style.width = `${width}px`;
   copy.style.maxHeight = `${Math.max(32, win.innerHeight - rect.top - edge)}px`;
   copy.style.overflowY = 'auto';
-  // A wrapped copy can cover following rows. Within the source list's
-  // original column, pointer travel and clicks belong to the row underneath.
+  if (spec.anchorClose) {
+    // A wrapped full name can make the raised copy taller than the strip.
+    // Keep its × at the source button's vertical position as well.
+    const originalClose = row.querySelector('.dk-tab-x, .wst-x');
+    const copyClose = copy.querySelector('.dk-tab-x, .wst-x');
+    if (originalClose && copyClose) {
+      copyClose.style.alignSelf = 'flex-start';
+      copyClose.style.marginLeft = 'auto';
+      copyClose.style.marginTop = `${originalClose.getBoundingClientRect().top - rect.top}px`;
+    }
+  }
+  // A raised tab can cover a neighbour's close button. Give that button its
+  // original hit box, even when it is hidden because the copy owns :hover.
+  // Other parts of the raised name remain clickable as that tab's name.
+  // A wrapped copy can also cover following rows; their original column wins.
   const covered = ev => {
+    if (spec.anchorClose && ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+      for (const other of row.parentElement.children) {
+        if (other === row || !other.matches(spec.row)) continue;
+        const close = other.querySelector('.dk-tab-x, .wst-x');
+        if (!close) continue;
+        const x = close.getBoundingClientRect();
+        if (ev.clientX >= x.left && ev.clientX <= x.right && ev.clientY >= x.top && ev.clientY <= x.bottom)
+          return close;
+      }
+    }
     if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY <= rect.bottom) return null;
     return doc.elementsFromPoint(ev.clientX, ev.clientY)
       .filter(el => !copy.contains(el))
@@ -13512,15 +13537,11 @@ const CH_ROW_EXPAND = { row: '.chf:not(.none)', name: '.nm', copyClass: 'ch-expa
 // #337 (P309): a panel tab (Dock's, in any dock of the window) or a
 // workspace file tab whose title is cut shows whole on hover or focus, raised
 // over its neighbours. Its clicks, ×, right click and drag go to the tab under
-// it (spec.forward); it grows leftwards when the window's edge is near.
+// it (spec.forward); its right edge stays fixed so the × does not move.
 const TAB_ROW_EXPAND = {
   row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
   name: '.dk-tab:not(.dk-tab-iconic), .wst-nm', untitle: '.dk-tab, .wst-tab',
-  copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true,
-  opensLeft: (row, rect, win) => {
-    const name = row.querySelector('.dk-tab, .wst-nm');
-    return rect.right + (name ? name.scrollWidth - name.clientWidth : 0) + 16 > win.innerWidth;
-  },
+  copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true, anchorClose: true,
 };
 function tabExpandWire(doc) {
   if (!doc || !doc.body || doc.body._rowExpandWired) return;

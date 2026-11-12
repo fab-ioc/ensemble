@@ -586,6 +586,12 @@ pane behind a tab (a live session or a transcript under Activity; files, or "thi
 yet", under Workspace) and which tab is selected by default. Never the set, the order or a label. A
 tab that renames itself when a task starts is a quieter version of tabs that reorder.
 
+A cut Dock panel tab or Workspace file tab shows its full name in a raised copy on hover or
+keyboard focus. The copy grows to the left with its right edge fixed, so its × stays exactly at
+the tab row's close position; one click there closes that tab. A neighbouring tab's × keeps its
+own hit area even where the copy crosses it. The name, middle click, right click and drag still
+act on the original tab.
+
 **Each open file is a panel of the dock** (#150, the CEO's P105). Where the page has the dock (a
 PO screen, an open task's: `pdPanelsOn()`), a file opened from a Workspace's tree is a closable
 panel of its own (`file:<path>`, `wsPanelShow`), as IntelliJ's editor tabs are: its tab is the
