@@ -2599,6 +2599,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .row-expanded.row-expand-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .sw-row.on { background: var(--selected-bg); }
   .row-expanded.on { background: var(--selected-bg); }
+  /* #337: a raised tab (a Dock panel tab, a workspace file tab) keeps its
+     strip's height and its own look; only the cap on its width goes. */
+  .tab-expanded.row-expanded { max-width: none; height: auto; padding-block: 0; }
+  .dk-tab-wrap.tab-expanded.on, .wst-tab.tab-expanded.on { background: var(--surface); }
+  .tab-expanded .dk-tab { max-width: none; height: auto; align-self: stretch; }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
   .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg,
@@ -12862,7 +12867,7 @@ let CH_FILE = '';
 const ROW_EXPAND_HOVER_KEY = 'cd-switcher-full-names';
 let ROW_EXPAND_NAMES = true;
 try { ROW_EXPAND_NAMES = localStorage.getItem(ROW_EXPAND_HOVER_KEY) !== 'false'; } catch (e) {}
-let ROW_EXPAND = null, ROW_EXPAND_TIMER = 0, ROW_EXPAND_LAST = 0;
+let ROW_EXPAND = null, ROW_EXPAND_TIMER = 0, ROW_EXPAND_LAST = 0, ROW_EXPAND_PENDING = null;
 let ROW_EXPAND_MENU_OBSERVER = null, ROW_EXPAND_WIN = null;
 function rowExpandOpenMenu(doc) {
   return [...doc.querySelectorAll('.dk-menu, .ov-menu:not([hidden]), .dcm:not([hidden]), #create-menu:not([hidden]), .me-menu:not([hidden]), .wf-menu:not([hidden]), .pr-menu:not([hidden])')]
@@ -12886,6 +12891,32 @@ function rowExpandRefresh(root) {
   const { row, spec } = ROW_EXPAND;
   rowExpandShow(row, spec, row.ownerDocument.activeElement === row);
 }
+// #337: a row whose name expands drops its native tooltip (spec.untitle names
+// the elements that carry one), so the two never show together; a row that no
+// longer expands (the setting off, or the name fits) gets it back.
+function rowExpandUntitle(row, spec, drop) {
+  if (!spec.untitle || !row) return;
+  for (const el of [row, ...row.querySelectorAll(spec.untitle)]) {
+    if (!el.matches(spec.untitle)) continue;
+    if (drop && el.hasAttribute('title')) { el.dataset.rxTitle = el.getAttribute('title'); el.removeAttribute('title'); }
+    else if (!drop && el.dataset.rxTitle != null && !el.hasAttribute('title')) el.setAttribute('title', el.dataset.rxTitle);
+    if (!drop) delete el.dataset.rxTitle;
+  }
+}
+function rowExpandRetitleAll(doc) {
+  doc.querySelectorAll('[data-rx-title]').forEach(el => {
+    if (!el.hasAttribute('title')) el.setAttribute('title', el.dataset.rxTitle);
+    delete el.dataset.rxTitle;
+  });
+}
+// The original element at the copy's element's place (the copy is a clone).
+function rowExpandOriginal(copy, row, el) {
+  const path = [];
+  for (let n = el; n && n !== copy; n = n.parentElement) path.unshift([...n.parentElement.children].indexOf(n));
+  let o = row;
+  for (const i of path) { o = o && o.children[i]; }
+  return o || row;
+}
 function rowExpandAllowed(row, spec) {
   if (!ROW_EXPAND_NAMES || !row || !spec || !row.isConnected || !spec.root.contains(row)) return false;
   const win = row.ownerDocument.defaultView, name = row.querySelector(spec.name);
@@ -12907,7 +12938,21 @@ function rowExpandShow(row, spec, focus = false) {
   if (copyName) copyName.classList.add('row-expand-name');
   if (focus) copy.classList.add('row-expand-focus', spec.focusClass);
   copy.removeAttribute('id');
+  copy.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  if (copyName) copyName.removeAttribute('title');
   copy.removeAttribute('title');
+  if (spec.forward) {
+    // A tab: its text styles come from where it lives (the copy is in the
+    // body), its height stays the strip's, and nothing in it takes the focus.
+    const cs = win.getComputedStyle(row);
+    for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'textTransform', 'lineHeight', 'color'])
+      copy.style[k] = cs[k];
+    copy.style.minHeight = `${rect.height}px`;
+    copy.querySelectorAll('button, [tabindex]').forEach(el => { el.tabIndex = -1; });
+    // Dock's own native drag (between windows) listens on the dock: the copy
+    // moves its panel by Dock's pointer drag instead.
+    copy.querySelectorAll('[data-dk-tab][draggable]').forEach(el => el.removeAttribute('draggable'));
+  }
   copy.removeAttribute('aria-current');
   copy.tabIndex = -1;
   copy.setAttribute('aria-hidden', 'true');
@@ -12932,30 +12977,65 @@ function rowExpandShow(row, spec, focus = false) {
     if (next.matches(spec.row)) rowExpandSchedule(next, spec, true);
     else rowExpandHide();
   });
+  // spec.forward (a tab): a click, middle click, right click or press goes to
+  // the original element at the same place (the tab, its ×), so the tab's own
+  // handlers act; a press that moves (Dock's tab drag) lets the copy go.
+  const at = ev => (spec.forward && ev.target.nodeType === 1 ? rowExpandOriginal(copy, row, ev.target) : row);
+  const mouse = (ev, extra) => ({ view: win, bubbles: true, cancelable: true, clientX: ev.clientX, clientY: ev.clientY,
+    ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, altKey: ev.altKey, ...extra });
   copy.addEventListener('click', ev => {
     ev.preventDefault();
     const next = covered(ev);
+    const target = next || at(ev);
     rowExpandHide();
-    const target = next || row;
-    target.dispatchEvent(new MouseEvent('click', { view: target.ownerDocument.defaultView, bubbles: true,
-      ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey }));
+    target.dispatchEvent(new MouseEvent('click', mouse(ev)));
   });
   copy.addEventListener('auxclick', ev => {
     if (ev.button !== 1) return;
     ev.preventDefault();
+    const target = at(ev);
     rowExpandHide();
-    row.dispatchEvent(new MouseEvent('auxclick', { view: row.ownerDocument.defaultView, bubbles: true, button: 1 }));
+    target.dispatchEvent(new MouseEvent('auxclick', mouse(ev, { button: 1 })));
   });
+  if (spec.forward) {
+    copy.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      const target = at(ev);
+      rowExpandHide();
+      target.dispatchEvent(new MouseEvent('contextmenu', mouse(ev, { button: 2, buttons: 2 })));
+    });
+    copy.addEventListener('pointerdown', ev => {
+      if (ev.button !== 0) return;
+      // A file tab's own drag handle is a native drag (FileDrag, marked on the
+      // clone too): the copy stays until that drag ends.
+      if (!ev.target.closest('[draggable="true"]')) ev.preventDefault();
+      at(ev).dispatchEvent(new PointerEvent('pointerdown', mouse(ev, { button: 0, buttons: 1,
+        pointerId: ev.pointerId, pointerType: ev.pointerType, isPrimary: ev.isPrimary })));
+      const x0 = ev.clientX, y0 = ev.clientY;
+      const move = e => {
+        if (Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) <= 4) return;
+        if (ROW_EXPAND && ROW_EXPAND.copy === copy) rowExpandHide();
+        end();
+      };
+      const end = () => { doc.removeEventListener('pointermove', move, true); doc.removeEventListener('pointerup', end, true); };
+      doc.addEventListener('pointermove', move, true);
+      doc.addEventListener('pointerup', end, true);
+    });
+    copy.addEventListener('dragend', () => { if (ROW_EXPAND && ROW_EXPAND.copy === copy) rowExpandHide(); });
+  }
   copy.addEventListener('pointerleave', ev => {
     if (!ROW_EXPAND || ROW_EXPAND.copy !== copy) return;
     const next = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest(spec.row);
     if (next && spec.root.contains(next) && next !== row) rowExpandSchedule(next, spec, true);
-    else if (!focus || doc.activeElement !== row) rowExpandHide();
+    else if (!focus || !row.contains(doc.activeElement)) rowExpandHide();
   });
   doc.body.appendChild(copy);
   ROW_EXPAND = { row, copy, spec };
   if (win.MutationObserver) {
-    ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => { if (rowExpandOpenMenu(doc)) rowExpandHide(); });
+    // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
+    ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => {
+      if (rowExpandOpenMenu(doc) || (ROW_EXPAND && !ROW_EXPAND.row.isConnected)) rowExpandHide();
+    });
     ROW_EXPAND_MENU_OBSERVER.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
   }
   ROW_EXPAND_WIN = win;
@@ -12966,9 +13046,11 @@ function rowExpandSchedule(row, spec, immediate = false) {
   if (ROW_EXPAND && ROW_EXPAND.row === row) return;
   clearTimeout(ROW_EXPAND_TIMER);
   ROW_EXPAND_TIMER = 0;
-  if (!rowExpandAllowed(row, spec)) { rowExpandHide(); return; }
+  const ok = rowExpandAllowed(row, spec);
+  rowExpandUntitle(row, spec, ok);
+  if (!ok) { rowExpandHide(); return; }
   if (immediate || Date.now() - ROW_EXPAND_LAST < 200) rowExpandShow(row, spec);
-  else ROW_EXPAND_TIMER = setTimeout(() => rowExpandShow(row, spec), 320);
+  else { ROW_EXPAND_PENDING = row; ROW_EXPAND_TIMER = setTimeout(() => rowExpandShow(row, spec), 320); }
 }
 function rowExpandWire(root, spec) {
   if (!root || root._rowExpandWired) return;
@@ -12995,15 +13077,41 @@ function rowExpandWire(root, spec) {
   });
   root.addEventListener('focusin', ev => {
     const row = ev.target.closest(spec.row);
-    if (row && spec.root.contains(row) && row.matches(':focus-visible')) rowExpandShow(row, spec, true);
+    if (row && spec.root.contains(row) && (row.matches(':focus-visible') || (spec.forward && ev.target.matches(':focus-visible')))) {
+      rowExpandUntitle(row, spec, rowExpandAllowed(row, spec));
+      rowExpandShow(row, spec, true);
+    }
   });
   root.addEventListener('focusout', ev => {
-    if (ROW_EXPAND && ROW_EXPAND.row === ev.target) rowExpandHide();
+    const r = ROW_EXPAND && ROW_EXPAND.row;
+    if (r && (r === ev.target || (r.contains(ev.target) && !r.contains(ev.relatedTarget)))) rowExpandHide();
   });
   root.addEventListener('scroll', rowExpandHide, { passive: true });
   root._rowExpandSpec = spec;
 }
 const CH_ROW_EXPAND = { row: '.chf:not(.none)', name: '.nm', copyClass: 'ch-expanded', focusClass: 'ch-expand-focus' };
+// #337 (P309): a panel tab (Dock's, in any dock of the window) or a
+// workspace file tab whose title is cut shows whole on hover or focus, raised
+// over its neighbours. Its clicks, ×, right click and drag go to the tab under
+// it (spec.forward); it grows leftwards when the window's edge is near.
+const TAB_ROW_EXPAND = {
+  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
+  name: '.dk-tab:not(.dk-tab-iconic), .wst-nm', untitle: '.dk-tab, .wst-tab',
+  copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true,
+  opensLeft: (row, rect, win) => {
+    const name = row.querySelector('.dk-tab, .wst-nm');
+    return rect.right + (name ? name.scrollWidth - name.clientWidth : 0) + 16 > win.innerWidth;
+  },
+};
+function tabExpandWire(doc) {
+  if (!doc || !doc.body || doc.body._rowExpandWired) return;
+  rowExpandWire(doc.body, TAB_ROW_EXPAND);
+  // A tab row scrolled sideways moves the tab from under its copy.
+  doc.addEventListener('scroll', ev => {
+    if (ROW_EXPAND && ev.target && ev.target.contains && ev.target.contains(ROW_EXPAND.row)) rowExpandHide();
+  }, { capture: true, passive: true });
+}
+tabExpandWire(document);
 
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
 // Review comments belong to one repository of one project. Each keeps its own
@@ -14619,6 +14727,7 @@ function pdPanelName(k) {
 }
 function pdTabTips() {
   for (const d of pdHostDocs()) {
+    tabExpandWire(d);
     FileDrag.attach(d);
     if (!PD.rt.size) continue;
     d.querySelectorAll('.dk-tab[data-dk-tab^="file:"]').forEach(tab => {
@@ -20386,7 +20495,12 @@ const SW_ROW_EXPAND = {
 rowExpandWire($('#sw-list'), SW_ROW_EXPAND);
 // Compatibility names used by #170's focused regression test and any open
 // dashboard console; their implementation is the shared row helper above.
-function swExpandHide() { rowExpandHide(); }
+// #337: only the task list's own raised row (its redraw must not hide a
+// left panel row's or a tab's).
+function swExpandHide() {
+  const box = $('#sw-list'), r = ROW_EXPAND ? ROW_EXPAND.row : ROW_EXPAND_TIMER ? ROW_EXPAND_PENDING : null;
+  if (!r || box.contains(r)) rowExpandHide();
+}
 function swExpandAllowed(row) { return rowExpandAllowed(row, $('#sw-list')._rowExpandSpec); }
 function swExpandShow(row, focus = false) { rowExpandShow(row, $('#sw-list')._rowExpandSpec, focus); }
 function swExpandSchedule(row, immediate = false) { rowExpandSchedule(row, $('#sw-list')._rowExpandSpec, immediate); }
@@ -20400,7 +20514,7 @@ for (const id of ['#sw-hover-names', '#pref-full-names']) $(id).addEventListener
   ROW_EXPAND_NAMES = ev.target.checked;
   $('#sw-hover-names').checked = $('#pref-full-names').checked = ROW_EXPAND_NAMES;
   try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(ROW_EXPAND_NAMES)); } catch (e) {}
-  if (!ROW_EXPAND_NAMES) rowExpandHide();
+  if (!ROW_EXPAND_NAMES) { rowExpandHide(); pdHostDocs().forEach(rowExpandRetitleAll); }
 });
 function swRender() {
   const el = SW_EL;
