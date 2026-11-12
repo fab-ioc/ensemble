@@ -294,6 +294,35 @@ async function main() {
       try { const it = [...document.querySelectorAll('body > .dcm .dcm-item')].find(e => e.textContent.trim().startsWith('Agents and models'));
         if (!it) return { found: false }; it.click(); await new Promise(r => setTimeout(r, 300));
         return { found: true, room: got, closed: !document.querySelector('body > .dcm') }; } finally { showAgentsModal = was; } })()`);
+    // ED-334 review 2: the terminals item of a live loose task acts on that task,
+    // not on the one open in the middle: its chat panel's frame when it has one,
+    // else the task itself (showCapturedTerminal with its room)
+    out.termsRun = await p.evalIn(`(async () => {
+      const row = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.loose)}), wasLive = row.isLive, wasSel = SELECTED_SID;
+      const was = { s: showCapturedTerminal, t: toggleCapturedTerms, f: pdChatFrameOf };
+      const calls = [];
+      showCapturedTerminal = async (id) => { calls.push('show:' + id); };
+      toggleCapturedTerms = (fr) => { calls.push('toggle:' + (fr && fr.dataset ? fr.dataset.room : '')); };
+      const pick = async (frame) => {
+        pdChatFrameOf = (id) => frame && id === row.roomId ? frame : null;
+        // (a repaint may have given the row a new object: live again, the open task another)
+        ALL_ROWS.find(x => x.roomId === row.roomId).isLive = true; SELECTED_SID = 'some-other-task';
+        LDP.sig = ''; ldpPaint();
+        ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}.click();
+        await new Promise(r => setTimeout(r, 200));
+        const it = [...document.querySelectorAll('body > .dcm .dcm-item')].find(e => /^(Show terminals|Terminal)$/.test(e.textContent.trim()));
+        if (!it) return 'no item';
+        it.click(); await new Promise(r => setTimeout(r, 200));
+        return 'ok';
+      };
+      try {
+        row.isLive = true; SELECTED_SID = 'some-other-task';
+        const a = await pick(null);
+        const fake = document.createElement('iframe'); fake.dataset.room = row.roomId;
+        const b = await pick(fake);
+        return { a, b, calls, closed: !document.querySelector('body > .dcm') };
+      } finally { (ALL_ROWS.find(x => x.roomId === row.roomId) || row).isLive = wasLive; SELECTED_SID = wasSel; showCapturedTerminal = was.s; toggleCapturedTerms = was.t; pdChatFrameOf = was.f; }
+    })()`);
     const [cx, cy] = await p.evalIn(`(() => { const r = ${LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)}.getBoundingClientRect(); return [r.left + 30, r.top + r.height / 2]; })()`);
     await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'right', clickCount: 1 }, p.sessionId);
     await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'right', clickCount: 1 }, p.sessionId);
@@ -970,6 +999,9 @@ class LeftStripInChrome(unittest.TestCase):
                 mp = [i for i in m["items"] if i["makepo"]]
                 self.assertEqual(len(mp), 1)
                 self.assertTrue(mp[0]["t"].startswith("Make PO of a new"))
+        t = self.g("termsRun")
+        self.assertEqual(t, {"a": "ok", "b": "ok", "calls": ["show:" + self.loose, "toggle:" + self.loose], "closed": True},
+                         "the terminals item acts on the row's own task (its panel's frame, else the task), never the open one")
         run = self.g("actRun")
         self.assertEqual(run, {"found": True, "room": self.loose, "closed": True}, "an action runs for the row and the menu closes")
         self.assertTrue(self.g("dotsMenu")["expanded"])

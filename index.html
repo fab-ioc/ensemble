@@ -16493,10 +16493,24 @@ function ldpMenu(b, r, rect) {
     if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return; }
     const a = acts[+it.dataset.ldpAct];
     ldpMenuClose();
+    if (a && a.id === 'terminals') { ldpTerms(b, r); return; }
     if (a) pdRunAction(a, null, null, dots || b);
   });
   const first = el.querySelector('.dcm-item');
   if (first) first.focus();
+}
+// The terminals item for this row's task, never the open one's (the
+// handler's own fallback is the task in the middle): its chat panel's
+// terminals when it has one, else the task is picked and opened with its
+// terminal showing.
+function ldpTerms(b, r) {
+  const room = r.roomId || '';
+  const pf = room ? pdChatFrameOf(room) : null;
+  if (pf) { toggleCapturedTerms(pf); return; }
+  ldpScope('project');
+  ldSelSet('room:' + room);
+  showCapturedTerminal(room);
+  ibxRepaint();
 }
 function ldpOpenLoose(b) {
   const r = ldpRow(b), room = b.getAttribute('data-ldp-room') || '';
