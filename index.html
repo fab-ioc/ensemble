@@ -9210,11 +9210,14 @@ async function setPref(key, val) {
 let UPDATE_DISMISSED = false;
 let UPDATE_IN_PROGRESS = false;
 let UPDATE_TARGET = '';   // the app: the release Update now installs
+let UPD_ATTEMPT = 0;           // a new press ends the loop of the one before (one still looking after "did not come back")
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
 async function checkForUpdate() {
   if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
+  const at = UPD_ATTEMPT;   // an Update now press since this check began owns the banner (#330)
   try {
     const info = await api('/api/update-check');
+    if (UPDATE_IN_PROGRESS || at !== UPD_ATTEMPT) return;
     renderUpdateBanner(info);
   } catch {}
 }
@@ -9468,7 +9471,6 @@ const UPD_LIMITS = {
   idlePolls: 5,    // the request got no answer and the hub, up, shows no update this many polls
   fetchS: 8,       // one status request, at most
 };
-let UPD_ATTEMPT = 0;           // a new press ends the loop of the one before (one still looking after "did not come back")
 async function triggerUpdate() {
   if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;

@@ -189,6 +189,36 @@ async function main() {
       await open();
       R.got = await ev(`(async () => { UPD_LIMITS.fetchS = 1; AbortSignal.timeout = undefined;
         const t = performance.now(); const v = await updJson('/api/__hang'); return { v, ms: performance.now() - t }; })()`); }
+    // 7b. An update check in flight when Update now is pressed: its answer
+    //     touches no banner, during the update or after it failed.
+    { const R = out.check = {};
+      await open();
+      R.got = await ev(`(async () => {
+        const f = window.fetch, banner = document.getElementById('update-banner'); let answer = null;
+        window.fetch = (u, o) => String(u).startsWith('/api/update-check')
+          ? new Promise(r => { answer = r; }) : f(u, o);
+        const reply = body => answer(new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } }));
+        const settle = () => new Promise(r => setTimeout(r, 50));
+        const info = { available: true, kind: 'source', behind: 1, latestSha: 'abc1234', latestMessage: 'x' };
+        // A: the answer comes while the update runs (the press as triggerUpdate makes it).
+        let p = checkForUpdate(); await settle();
+        UPD_ATTEMPT++; UPDATE_IN_PROGRESS = true; banner.hidden = true;
+        reply(info); await p; await settle();
+        const during = banner.hidden;
+        // B: the update failed (Update now is back) before the answer, which says nothing is available.
+        UPDATE_IN_PROGRESS = false; banner.hidden = false;
+        p = checkForUpdate(); await settle();
+        UPD_ATTEMPT++; UPDATE_IN_PROGRESS = true; banner.hidden = true;
+        UPDATE_IN_PROGRESS = false; banner.hidden = false;      // fail(): Update now again
+        reply({ available: false }); await p; await settle();
+        const after = !banner.hidden;
+        // C: no press meanwhile: the answer is used as before.
+        p = checkForUpdate(); await settle();
+        reply({ available: false }); await p; await settle();
+        const plain = banner.hidden;
+        window.fetch = f;
+        return { during, after, plain };
+      })()`); }
     // 8. The app: the helper gives up after the preflight (the copy).
     { const R = out.app = {};
       await open();
@@ -433,6 +463,12 @@ class UpdateCard(unittest.TestCase):
                          "The new code did not start: PREFLIGHT FAILED - the new code did not serve on port 9000")
         self.assertNotEqual(g["newPid"], g["pid"], "a new hub answers")
         self.assertEqual(g["markAfter"], 1, "the first attempt's loop did not reload the page")
+
+    def test_an_update_check_in_flight_leaves_the_banner_to_the_update(self):
+        g = self.got["check"]["got"]
+        self.assertTrue(g["during"], "no Update now banner while the update runs")
+        self.assertTrue(g["after"], "Update now again stays after the failure")
+        self.assertTrue(g["plain"], "with no press meanwhile the answer still renders")
 
     def test_an_app_helper_that_fails_after_the_preflight_says_why(self):
         g = self.got["app"]
