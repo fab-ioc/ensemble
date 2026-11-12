@@ -2723,6 +2723,8 @@ usage.hub_codex_model = _hub_codex_model
 
 def save_settings(settings: dict) -> dict:
     """Persist only known keys with validated values; ignore extras."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return load_settings()
     with _SETTINGS_LOCK:
         return _save_settings_locked(settings)
 
@@ -6684,6 +6686,8 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
 
 
 def save_projects(projects: list[dict]) -> None:
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PROJECTS_FILE.with_suffix(".json.tmp")
     durable.write_tmp(tmp, json.dumps(projects, indent=2))
@@ -8106,6 +8110,8 @@ _PROJECT_META_LOCK = threading.RLock()
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
     """Set (or, with None, remove) one key of a project's own ``project.json``
     in its home. Only that one key is touched."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return False, "read_only_preflight"
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project"
@@ -9578,7 +9584,8 @@ def build_projects() -> dict:
                            "aliases": aliases.get(p["id"], []),
                            "home": project_home(p, create=False),
                            # Where its tasks put reports and design notes.
-                           "documentsDir": project_documents_dir(p),
+                           "documentsDir": project_documents_dir(
+                               p, persist=not os.environ.get("ENSEMBLE_PTY_PREFLIGHT")),
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
@@ -10725,7 +10732,7 @@ def project_home(project: dict, create: bool = True) -> str:
         return os.path.normpath(ppath)
     if not home:
         home = _free_home(project)
-    if create:
+    if create and not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         with contextlib.suppress(OSError):
             _make_home(project, home)
     return os.path.normpath(home)
@@ -18339,6 +18346,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         p = u.path
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and p not in (
+                "/", "/startup", "/api/health", "/api/platform", "/api/version",
+                "/api/sessions", "/api/projects"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
             with _CHAT_REPAIRS_LOCK:
@@ -19332,6 +19344,9 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_PUT(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         try:
@@ -19415,6 +19430,9 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_DELETE(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         try:
@@ -21930,6 +21948,10 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_POST(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and urlparse(self.path).path not in (
+                "/api/restart/typing-check", "/api/restart/host-stop"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         if urlparse(self.path).path == "/api/agent/hook":
@@ -23834,6 +23856,10 @@ def _listen_or_exit(host: str, port: int) -> HubServer:
 
 def main():
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        # The project list calls git status. A probe must not refresh a real
+        # repository's index or hold its index.lock beside the running hub.
+        os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     args = sys.argv[1:]
     if "--set-project-noun" in args:
         i = args.index("--set-project-noun")
@@ -23901,10 +23927,11 @@ def main():
             ACCESS_TOKEN = tok_file.read_text(encoding="utf-8").strip()
         if not ACCESS_TOKEN:
             ACCESS_TOKEN = secrets.token_urlsafe(24)
-            try:
-                tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
-            except OSError:
-                pass
+            if not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+                try:
+                    tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
+                except OSError:
+                    pass
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
@@ -23988,6 +24015,21 @@ def main():
     # startup.booted(); see Handler._startup_hold.
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
+
+    # The spare-port hub probes real state while the old hub still owns it.
+    # Only attach its isolated PTY host and serve read probes; all migrations,
+    # repairs, caches, schedulers, restores and backup setup belong to the
+    # real start after the old hub has stopped.
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        startup.step("Connecting to the agents' terminals")
+        attach_pty_host()
+        startup.booted()
+        startup.ready()
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            return
 
     startup.step("Opening the saved state")
     # Moving from claude-dashboard: copy its state in once, and say so in the
