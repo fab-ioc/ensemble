@@ -1,0 +1,12 @@
+78
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Accessingworkspace:
+/srv/hub/work
+is-an-repo/srv/hub/work/WTD/repo
+Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?(Likeyourowncode,awell-knownopensource
+project,orworkfromyourteam).Ifnot,takeamomenttoreviewwhat'sinthisfolderfirst.
+ClaudeCode'llbeabletoread,edit,andexecutefileshere.
+Securityguide
+❯No,exit
+Yes,Itrustthisfolder
+Entertoconfirm·Esctocancel

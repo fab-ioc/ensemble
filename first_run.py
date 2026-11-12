@@ -1,0 +1,269 @@
+"""A seat stopped on its CLI's own first-run screen (ED-340).
+
+Codex and Claude Code each open a new folder with a screen that waits for a
+key: Codex's "Trust this folder?" and Claude's "Is this a project you created
+or one you trust?". The hub pre-trusts the folders it launches in
+(``agents/*.ensure_trusted``), so these should not appear; when one does
+anyway (a Codex that keys trust differently, a config the hub could not
+write), nobody is at the terminal and the seat waits for ever while the board
+says it is working. On 2026-11-12 ten reviews waited eleven hours like that.
+
+This module reads such a screen off a terminal's tail and, for a folder the
+hub runs agents in, answers it the way a person would. Anything it does not
+answer (another first-run screen, a folder that is not the hub's) is left on
+screen and ``attention`` reports the seat ``stalled`` with the screen's name.
+
+The tail is ``PtySession.tail()``: escape sequences are stripped, so cursor
+moves vanish and the words of a screen run together ("Trustthisfolder?").
+Matching therefore drops every space and ignores case.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import threading
+import time
+
+_d = None
+
+
+def bind(dashboard_module) -> None:
+    global _d
+    _d = dashboard_module
+
+
+DOWN = "\x1b[B"
+ENTER = "\r"
+_CURSOR = "›❯>"
+
+# Each screen: the CLI, a short name, the words that identify it (squashed:
+# no spaces, lower case, all must be present), its options in screen order,
+# the option the hub picks (None: the hub never answers it), and the words a
+# CLI prints once it is past the screen, so an answered screen that is still
+# in the tail does not count.
+SCREENS = (
+    {"cli": "codex", "kind": "trust", "name": "Codex's \"Trust this folder?\" screen",
+     "words": ("trustthisfolder?", "trustandcontinue"),
+     "options": ("1.trustandcontinue", "2.back"), "pick": "1.trustandcontinue",
+     "past": ("askcodextodoanything", "forshortcuts")},
+    # Codex before 0.160 asked it in other words.
+    {"cli": "codex", "kind": "trust", "name": "Codex's \"Do you trust the contents of this directory?\" screen",
+     "words": ("doyoutrustthecontentsofthisdirectory",),
+     "options": ("1.yes,", "2.no,"), "pick": "1.yes,",
+     "past": ("askcodextodoanything", "forshortcuts")},
+    {"cli": "claude", "kind": "trust",
+     "name": "Claude Code's \"Is this a project you created or one you trust?\" screen",
+     "words": ("isthisaprojectyoucreatedoroneyoutrust?", "yes,itrustthisfolder"),
+     "options": ("no,exit", "yes,itrustthisfolder"), "pick": "yes,itrustthisfolder",
+     "past": ("bypasspermissionson", "forshortcuts", "shift+tabtocycle")},
+    # Older Claude Code: "Do you trust the files in this folder?" 1. Yes, proceed / 2. No, exit.
+    {"cli": "claude", "kind": "trust", "name": "Claude Code's \"Do you trust the files in this folder?\" screen",
+     "words": ("doyoutrustthefilesinthisfolder?",),
+     "options": ("1.yes,proceed", "2.no,exit"), "pick": "1.yes,proceed",
+     "past": ("bypasspermissionson", "forshortcuts", "shift+tabtocycle")},
+    # First-run screens the hub must not answer for the person.
+    {"cli": "claude", "kind": "bypass", "name": "Claude Code's Bypass Permissions warning",
+     "words": ("bypasspermissionsmode", "yes,iaccept"), "options": (), "pick": None,
+     "past": ("bypasspermissionson", "forshortcuts")},
+    {"cli": "claude", "kind": "theme", "name": "Claude Code's first-run setup (text style)",
+     "words": ("choosethetextstyle",), "options": (), "pick": None,
+     "past": ("bypasspermissionson", "forshortcuts")},
+    {"cli": "codex", "kind": "signin", "name": "Codex's sign-in screen",
+     "words": ("signinwithchatgpt",), "options": (), "pick": None,
+     "past": ("askcodextodoanything",)},
+    {"cli": "codex", "kind": "update", "name": "Codex's \"Update available\" screen",
+     "words": ("updateavailable", "skipuntilnextversion"), "options": (), "pick": None,
+     "past": ("askcodextodoanything",)},
+)
+
+_SPACE = re.compile(r"\s+")
+
+
+def squash(text: str) -> str:
+    return _SPACE.sub("", text or "").lower()
+
+
+def _find_in(flat: str) -> dict | None:
+    best = None
+    for scr in SCREENS:
+        # The screen starts at its last-drawn question (words[0]); the rest of
+        # its words must be drawn after it, and nothing the CLI prints once
+        # past the screen may be.
+        start = flat.rfind(scr["words"][0])
+        if start < 0:
+            continue
+        if any(flat.find(w, start) < 0 for w in scr["words"][1:]):
+            continue
+        if any(flat.rfind(p) > start for p in scr["past"]):
+            continue                            # it moved on since
+        if best is None or start > best[0]:
+            best = (start, scr)
+    if best is None:
+        return None
+    start, scr = best
+    return {"cli": scr["cli"], "kind": scr["kind"], "name": scr["name"],
+            "answerable": scr["pick"] is not None, "at": start, "screen": scr}
+
+
+def find(tail: str) -> dict | None:
+    """The first-run screen a terminal is stopped on, or None: ``{cli, kind,
+    name, answerable}`` (plus internals). Only a screen nothing has been
+    printed past counts."""
+    hit = _find_in(squash(tail))
+    if hit is None:
+        return None
+    return {k: hit[k] for k in ("cli", "kind", "name", "answerable")}
+
+
+def _cursor_at(flat: str, scr: dict, start: int) -> str:
+    """The option the selection cursor is on (the last one drawn with it)."""
+    seg = flat[start:]
+    best, where = "", -1
+    for opt in scr["options"]:
+        for g in _CURSOR:
+            i = seg.rfind(g + opt)
+            if i > where:
+                best, where = opt, i
+    return best
+
+
+# ---------------------------------------------------------------------------
+# The folders the hub runs agents in
+# ---------------------------------------------------------------------------
+
+def _within(path: str, root: str) -> bool:
+    if not path or not root:
+        return False
+    try:
+        p = os.path.normcase(os.path.realpath(path))
+        r = os.path.normcase(os.path.realpath(root))
+    except (OSError, ValueError):
+        return False
+    return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+
+
+def hub_folder(cwd: str) -> bool:
+    """``cwd`` is a folder the hub made or was given to run agents in: under
+    the projects root (task folders, worktrees, a project's home), under the
+    scratch-session root, or a registered project's code folder (where a
+    code project's PO works)."""
+    if not cwd or _d is None:
+        return False
+    roots = [str(getattr(_d, "PROJECTS_ROOT", "") or ""), str(getattr(_d, "CS_ROOT", "") or "")]
+    try:
+        for p in _d.load_projects():
+            roots += [p.get("path") or "", p.get("home") or ""]
+    except Exception:
+        pass
+    return any(_within(cwd, r) for r in roots if r)
+
+
+# ---------------------------------------------------------------------------
+# Answering
+# ---------------------------------------------------------------------------
+
+def answer(sess, cwd: str, log=print) -> bool:
+    """If ``sess`` shows an answerable trust screen and ``cwd`` is a hub
+    folder, pick the trust option: move the cursor onto it (checking the
+    screen after each key, never more than the options) and press Enter only
+    once the cursor is on it — an Enter on Claude's default "No, exit" would
+    end the seat. True when the Enter went in."""
+    if not hub_folder(cwd):
+        return False
+    for _ in range(4):
+        try:
+            flat = squash(sess.tail(lines=80, max_bytes=32768))
+        except Exception:
+            return False
+        hit = _find_in(flat)
+        if hit is None or not hit["answerable"]:
+            return False
+        scr = hit["screen"]
+        on = _cursor_at(flat, scr, hit["at"])
+        if on == scr["pick"]:
+            if sess.write(ENTER) is False:
+                return False
+            log(f"[first-run] answered {scr['name']} in {cwd}")
+            return True
+        if not on:
+            return False                # no cursor drawn: not a screen to type into
+        if sess.write(DOWN) is False:
+            return False
+        time.sleep(0.5)
+    return False
+
+
+# How long a fresh seat is watched for a first-run screen, and how often.
+WATCH_S = 90
+_POLL_S = 1.0
+
+
+def watch(sess, cwd: str, log=print) -> threading.Thread | None:
+    """Watch a just-launched seat for its first minute and a half, answering
+    a trust screen at once instead of at the next stall tick. Ends when the
+    CLI is past its start (its ready words are on screen), it was answered, or
+    the seat died."""
+    if sess is None or not hub_folder(cwd):
+        return None
+
+    def run():
+        end = time.time() + WATCH_S
+        while time.time() < end:
+            time.sleep(_POLL_S)
+            try:
+                if not sess.alive():
+                    return
+                flat = squash(sess.tail(lines=80, max_bytes=32768))
+            except Exception:
+                return
+            hit = _find_in(flat)
+            if hit is None:
+                continue
+            if not hit["answerable"]:
+                return                  # attention reports it
+            time.sleep(0.5)             # let the screen finish drawing
+            if answer(sess, cwd, log):
+                return
+
+    t = threading.Thread(target=run, name="first-run-watch", daemon=True)
+    t.start()
+    return t
+
+
+def look(rid: str, now: float) -> str:
+    """The stall tick's backstop: every running seat of a task stopped on a
+    trust screen in a hub folder gets it answered (a seat started by a path
+    without ``watch``, or one the watch missed). Twice per seat at most."""
+    cr = _d.chatroom
+    room = cr.get_room(rid, public=False)
+    if not room or not room.get("launched", True):
+        return ""
+    done = []
+    for part in cr.agent_participants(room):
+        sess = _d.rotation._pty(part)
+        if sess is None:
+            continue
+        try:
+            hit = find(sess.tail(lines=80, max_bytes=32768))
+        except Exception:
+            continue
+        if not hit or not hit["answerable"]:
+            continue
+        key = (rid, part.get("ptyId") or "")
+        if _TRIED.get(key, 0) >= 2:
+            continue
+        _TRIED[key] = _TRIED.get(key, 0) + 1
+        cwd = part.get("cwd") or getattr(sess, "cwd", "") or (sess.info() or {}).get("cwd", "")
+        if answer(sess, cwd, _log):
+            done.append(f"{part.get('identity', '')}: answered {hit['name']}")
+    if len(_TRIED) > 500:
+        _TRIED.clear()
+    return "; ".join(done)
+
+
+_TRIED: dict[tuple[str, str], int] = {}
+
+
+def _log(msg: str) -> None:
+    print(msg, flush=True)

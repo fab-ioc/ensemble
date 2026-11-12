@@ -28,6 +28,11 @@ from pathlib import Path
 import filefacts
 import filetable
 
+try:
+    import tomllib
+except ImportError:             # Python 3.10: trust is checked by its header
+    tomllib = None
+
 from .base import AgentSession, AgentType
 
 _FALLBACK_LOCK = threading.Lock()
@@ -72,14 +77,35 @@ def _codex_home() -> Path:
     return Path(env) if env else (Path.home() / ".codex")
 
 
-def _git_root(path: str) -> str:
-    """The nearest folder at or above ``path`` holding a ``.git`` (a directory,
-    or a worktree's file), or ""."""
-    p = Path(os.path.normpath(path))
-    for d in (p, *p.parents):
-        if (d / ".git").exists():
-            return str(d)
-    return ""
+_TRUST_LOCK = threading.Lock()
+
+
+def _trust_keys(cwd: str) -> list[str]:
+    """The keys Codex may look ``cwd`` up by: its real path (Codex resolves
+    links in its working folder) and the path as given, when that differs.
+    Windows compares paths without case, and an older hub wrote them
+    lowercased there, so its lowercased form is added on Windows only."""
+    keys = []
+    for k in (os.path.realpath(cwd), os.path.normpath(os.path.abspath(cwd))):
+        if k not in keys:
+            keys.append(k)
+    if os.name == "nt":
+        keys += [k.lower() for k in keys if k.lower() not in keys]
+    return keys
+
+
+def _toml_key(s: str) -> str:
+    """``s`` as a TOML basic-string key: quotes, backslashes (Windows paths)
+    and control characters escaped."""
+    out = []
+    for ch in s:
+        if ch in ('"', "\\"):
+            out.append("\\" + ch)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
 
 
 def _iso_to_epoch(ts: str) -> float:
@@ -507,39 +533,57 @@ class CodexAgent(AgentType):
         return argv
 
     def ensure_trusted(self, cwd: str) -> bool:
-        """Pre-authorize `cwd` in ~/.codex/config.toml so an unattended launch
-        skips Codex's interactive "Do you trust this directory?" gate (which
-        otherwise blocks the session before it ever starts). Codex persists
-        trust as `[projects.'<path>']` with `trust_level = "trusted"`, keying on
-        the lowercased path — we match that. Idempotent; returns True if the
-        entry is present (already there or freshly written).
-
-        Inside a git repository Codex asks about the repository's root, not the
-        folder — a task folder in the projects' backup repo stopped at "Trusting
-        will apply to the repository root" — so that root is trusted too."""
+        """Pre-authorize ``cwd`` in ``$CODEX_HOME/config.toml`` so an unattended
+        launch skips Codex's interactive "Trust this folder?" screen, which
+        otherwise holds the session before it reads its first message (ED-340:
+        ten reviews waited eleven hours on it). Codex records trust as
+        ``[projects."<path>"] trust_level = "trusted"`` and looks the folder up
+        by its exact path: Codex 0.167 on Linux asks again for a lowercased
+        key, and is satisfied by the folder's own entry in a worktree or in a
+        subfolder of a repository (where its screen offers to trust the
+        repository root instead). So the folder itself is trusted, by its
+        real path, never the repository it is in. Idempotent; True when the
+        entry is there afterwards. A folder the person marked otherwise
+        (``trust_level = "untrusted"``) is left as it is, and so is a config
+        that does not parse: appending to it could not make it valid."""
         if not cwd:
             return False
-        ok = self._trust(cwd)
-        root = _git_root(cwd)
-        if root and os.path.normcase(root) != os.path.normcase(os.path.normpath(cwd)):
-            ok = self._trust(root) and ok
-        return ok
+        with _TRUST_LOCK:
+            return all(self._trust(k) for k in _trust_keys(cwd))
 
-    def _trust(self, cwd: str) -> bool:
-        key = os.path.normpath(cwd).lower()
+    def _trust(self, key: str) -> bool:
         cfg = _codex_home() / "config.toml"
         try:
-            existing = ""
-            if cfg.exists():
-                existing = cfg.read_text(encoding="utf-8")
-                # Cheap idempotency check: the exact table header already there.
-                for variant in (key, cwd, os.path.normpath(cwd)):
-                    if f"[projects.'{variant}']" in existing:
-                        return True
+            text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+        except OSError:
+            return False
+        block = f"[projects.{_toml_key(key)}]\ntrust_level = \"trusted\"\n"
+        sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+        if tomllib is None:
+            if f"[projects.{_toml_key(key)}]" in text or f"[projects.'{key}']" in text:
+                return True
+        else:
+            try:
+                data = tomllib.loads(text)
+            except tomllib.TOMLDecodeError:
+                return False
+            projects = data.get("projects")
+            entry = projects.get(key) if isinstance(projects, dict) else None
+            if isinstance(entry, dict) and "trust_level" in entry:
+                return entry.get("trust_level") == "trusted"
+            try:
+                tomllib.loads(text + sep + block)
+            except tomllib.TOMLDecodeError:
+                # The folder's table exists without a trust level, or
+                # `projects` is written another way: a second header would
+                # break the file.
+                return False
+        try:
             cfg.parent.mkdir(parents=True, exist_ok=True)
-            block = f"\n[projects.'{key}']\ntrust_level = \"trusted\"\n"
+            # Appended, not rewritten: Codex itself rewrites this file, and a
+            # config kept as a link (dotfiles) stays a link.
             with cfg.open("a", encoding="utf-8") as fh:
-                fh.write(block)
+                fh.write(sep + block)
             return True
         except OSError:
             return False
