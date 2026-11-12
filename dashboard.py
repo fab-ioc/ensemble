@@ -66,6 +66,7 @@ from backends.shared import (
 )
 # Images pasted into a chat box, kept for the agent.
 import attachments
+import project_icon
 # Which Ensemble this is (its version; built app or a checkout), and Update now
 # for the built app (from GitHub Releases).
 import app_version
@@ -168,6 +169,7 @@ agent_launch.install_spawn_guard()
 import running_rooms
 import hub_typing
 import restore_problems
+import move_check
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -212,6 +214,7 @@ lost_sessions.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
 restore_problems.bind(sys.modules[__name__])
+move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
@@ -6628,6 +6631,8 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {}),
+                      # Its own icon in place of the coloured square (#329).
+                      **({"icon": _icon_meta(meta["icon"])} if _icon_meta(meta.get("icon")) else {}),
                       **({"taskAgentTools": (TASK_AGENT_TOOLS_OWN
                                              if meta.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
                                              else TASK_AGENT_TOOLS_ENSEMBLE)}
@@ -8144,6 +8149,136 @@ def set_project_key(project_id: str, key: str) -> tuple[bool, str]:
     return _set_project_meta(project_id, "key", k)
 
 
+RENAME_REFUSALS = {
+    "empty_name": "A name cannot be empty.",
+    "name_taken": "Another project is already called that. Pick another name.",
+}
+
+
+def _set_project_field(project_id: str, key: str, value) -> tuple[bool, str]:
+    """One key of a project's record: its project.json, and its projects.json
+    entry when it has one (an external project or a legacy one, whose name
+    and icon load from there)."""
+    ok, msg = _set_project_meta(project_id, key, value)
+    if not ok:
+        return ok, msg
+    with _PROJECT_META_LOCK:
+        try:
+            d = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            d = None
+        if isinstance(d, list) and any(isinstance(e, dict) and e.get("id") == project_id for e in d):
+            for e in d:
+                if isinstance(e, dict) and e.get("id") == project_id:
+                    if value is None:
+                        e.pop(key, None)
+                    else:
+                        e[key] = value
+            try:
+                save_projects(d)
+            except OSError as e:
+                return False, f"cannot write {PROJECTS_FILE}: {e}"
+    return True, "ok"
+
+
+def rename_project(project_id: str, name: str) -> tuple[bool, str]:
+    """A project's display name, as typed on its settings (#329). Its folder,
+    id and key stay as they are; another project's name (in any case) and an
+    empty one are refused. Its PO chat's stored title follows, and its PO is
+    told once, on its next wake, so its handover stays right."""
+    new = " ".join((name or "").split())[:120]
+    if not new:
+        return False, "empty_name"
+    projects = load_projects()
+    proj = next((p for p in projects if p["id"] == project_id), None)
+    if proj is None:
+        return False, "no_such_project"
+    if any(p["id"] != project_id and (p.get("name") or "").strip().casefold() == new.casefold()
+           for p in projects):
+        return False, "name_taken"
+    old = proj.get("name") or ""
+    if old == new:
+        return True, "ok"
+    # Every key stays the one it was: a key still derived from a name (this
+    # project's, or another's that gave way to it) is written down first.
+    for pid, k in project_keys(projects).items():
+        other = next((p for p in projects if p["id"] == pid), {})
+        if k and not str(other.get("key") or "").strip():
+            _set_project_meta(pid, "key", k)
+    ok, msg = _set_project_field(project_id, "name", new)
+    if not ok:
+        return ok, msg
+    inbox.forget()      # its cards carry the project's name: the next read has the new one
+    po_rid = (proj.get("poRoomId") or "").strip()
+    po_room = chatroom.get_room(po_rid) if po_rid else None
+    if po_room is not None:
+        if (po_room.get("title") or "") == f"{old} PO"[:120]:
+            chatroom.patch_room(po_rid, title=f"{new} PO"[:120])
+        line = f"This {project_noun()} is now called \u201c{new}\u201d (was \u201c{old}\u201d)."
+        res = chatroom.post_report(po_rid, rotation.SENDER, chatroom.po_identity(po_room), line,
+                                   {"reportKind": "renamed", "reporter": rotation.SENDER}, wake=False)
+        if res:
+            quiet_reports.hold(po_rid, res["message"]["id"], line)
+    return True, "ok"
+
+
+def _icon_meta(v) -> dict | None:
+    """The ``icon`` of a project record, when it names a file the hub keeps."""
+    if not isinstance(v, dict) or not project_icon.FILE_RE.match(str(v.get("file") or "")):
+        return None
+    return {"file": v["file"], "name": str(v.get("name") or v["file"])[:200],
+            "size": v.get("size") if isinstance(v.get("size"), int) else 0,
+            "v": v.get("v") if isinstance(v.get("v"), int) else 0}
+
+
+def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, str, dict | None]:
+    """Keep an uploaded image as the project's icon, or (``data_url`` None)
+    remove it so the coloured square shows again."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project", None
+    home = Path(project_home(proj, create=True))
+    if data_url is None:
+        ok, msg = _set_project_field(project_id, "icon", None)
+        if ok:
+            for f in home.glob("project-icon.*"):
+                if project_icon.FILE_RE.match(f.name):
+                    with contextlib.suppress(OSError):
+                        f.unlink()
+        return ok, msg, None
+    try:
+        raw, ext = project_icon.accept(data_url)
+    except project_icon.Refused as e:
+        return False, e.code, None
+    fname = f"project-icon.{ext}"
+    try:
+        tmp = home / (fname + ".tmp")
+        tmp.write_bytes(raw)
+        _replace_retrying(tmp, home / fname)
+    except OSError as e:
+        return False, f"cannot write the icon: {e}", None
+    base = os.path.basename(str(name or "").replace("\\", "/")).strip() or fname
+    icon = {"file": fname, "name": base[:200], "size": len(raw), "v": int(time.time() * 1000)}
+    ok, msg = _set_project_field(project_id, "icon", icon)
+    if not ok:
+        return ok, msg, None
+    for f in home.glob("project-icon.*"):
+        if f.name != fname and project_icon.FILE_RE.match(f.name):
+            with contextlib.suppress(OSError):
+                f.unlink()
+    return True, "ok", icon
+
+
+def project_icon_file(project_id: str) -> Path | None:
+    """The icon file of a project, when it has one."""
+    proj = find_project(project_id)
+    icon = _icon_meta((proj or {}).get("icon"))
+    if not icon:
+        return None
+    f = Path(project_home(proj, create=False)) / icon["file"]
+    return f if f.is_file() else None
+
+
 def _task_project(room: dict, links: dict, projects: list[dict]) -> str:
     """The project a task belongs to: its recorded link, else its own record,
     else the project whose folder holds it."""
@@ -9381,6 +9516,8 @@ def build_projects() -> dict:
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
+                           # Its own icon (#329): the page shows it in place of the square.
+                           **({"icon": _icon_meta(p.get("icon"))} if _icon_meta(p.get("icon")) else {}),
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "working": 0, "poLive": False,
                            "waiting": 0, "updatedAt": 0}
@@ -15234,6 +15371,8 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
         "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
         "keepAgents": keep_agents,
         "launchd": _launchd_service(),
+        # Linux: the systemd user unit running this hub (read at its start).
+        "systemd": BACKEND.systemd_service(),
         "graceSeconds": grace,
         "resumeRooms": resume,
         "wakeRoom": room_id if wake else "",
@@ -18608,6 +18747,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/room/attachment":
             self._attachment_get(u)
             return
+        if p == "/api/projects/icon":
+            self._project_icon_get(u)
+            return
         if p == "/api/room/msg":
             # The message a balloon link points at, for the chip that shows it.
             q = parse_qs(u.query)
@@ -18803,6 +18945,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, app_setup.autostart_status(app_version.app_executable())
                             if app_version.packaged() else {"enabled": False, "supported": False,
                                                             "reason": "source"})
+            return
+        if p == "/api/move-check":
+            # The last move check (#331): what it found, repaired and could not.
+            self._send_json(200, move_check.last())
             return
         if p == "/api/backup/status":
             bs = load_settings()
@@ -21177,6 +21323,33 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_json(200, {"ok": True, "room": rid, **res, "url": attachment_url(rid, res["name"])})
 
+    def _project_icon_get(self, u) -> None:
+        """GET /api/projects/icon?id=<project>&v=<version>: a project's icon
+        (#329), for the page only: its key cookie, from its own origin (an
+        <img> sends no Origin, so Sec-Fetch-Site says it), never a bearer."""
+        key = self._cookie(self._ui_cookie())
+        if (self._bearer_token() or not key or not hmac.compare_digest(key, _UI_KEY)
+                or self.headers.get("Sec-Fetch-Site") not in (None, "same-origin")):
+            self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
+            return
+        pid = (parse_qs(u.query).get("id", [""])[0] or "").strip()
+        f = project_icon_file(pid)
+        try:
+            data = f.read_bytes() if f else None
+        except OSError:
+            data = None
+        if data is None:
+            self._send_json(404, {"error": "no_icon", "message": "This project has no icon."})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", project_icon.TYPES[f.suffix[1:]])
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _attachment_get(self, u) -> None:
         """GET /api/room/attachment?room=<id>&name=<name>[&download=1|&info=1]: one
         stored file, from that room's attachments folder only. An image or a
@@ -21585,6 +21758,10 @@ class Handler(BaseHTTPRequestHandler):
             self._attachment_upload(u)
             return
         ln = int(self.headers.get("Content-Length", "0"))
+        if p == "/api/projects/icon" and ln > project_icon.MAX_BODY:
+            self._send_json(413, {"error": "too_big", "message": project_icon.REFUSALS["too_big"]})
+            self._files_drain(ln)
+            return
         body = self.rfile.read(ln) if ln else b""
         try:
             data = json.loads(body) if body else {}
@@ -21593,6 +21770,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/mcp":
             self._handle_mcp(data)
+            return
+        if p == "/api/move-check":
+            # Run the move check again; {"repair": false} only looks.
+            repair = not (isinstance(data, dict) and data.get("repair") is False)
+            r = move_check.run_check(repair=repair, notify=repair)
+            self._send_json(200, r)
             return
         if p == "/api/page-log":
             # A page's own trouble (the panels' library not loading, #132), in
@@ -22164,6 +22347,33 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(404 if msg == "no_such_project" else 400,
                                 {"error": msg, "message": KEY_REFUSALS.get(msg, msg)})
+            return
+        if p in ("/api/projects/rename", "/api/projects/icon"):
+            # The project's settings (#329): {projectId, name}, or
+            # {projectId, dataUrl, name} (dataUrl null removes the icon).
+            # Only the page renames a project or changes its icon.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "bad_json"})
+                return
+            if p == "/api/projects/rename":
+                ok, msg = rename_project(str(data.get("projectId") or ""), str(data.get("name") or ""))
+                extra = {"name": (find_project(str(data.get("projectId") or "")) or {}).get("name")} if ok else {}
+                refusals = RENAME_REFUSALS
+            else:
+                du = data.get("dataUrl")
+                ok, msg, icon = set_project_icon(str(data.get("projectId") or ""),
+                                                 None if du is None else str(du), str(data.get("name") or ""))
+                extra = {"icon": icon} if ok else {}
+                refusals = project_icon.REFUSALS
+            if ok:
+                self._send_json(200, {"ok": True, **extra})
+            else:
+                self._send_json(404 if msg == "no_such_project" else (413 if msg == "too_big" else 400),
+                                {"error": msg, "message": refusals.get(msg, msg)})
             return
         if p == "/api/projects/kind":
             # {projectId, kind: "code" | "documents"}.
@@ -23395,6 +23605,12 @@ def main():
     BACKEND.warm_editors()
     servers = []
     remote_bound = False
+    if sys.platform.startswith("linux"):
+        # How a restart stops and starts this hub: read once, now.
+        unit = BACKEND.systemd_service()
+        print("[startup] restart: " + (f"through the systemd user unit {unit['unit']}" if unit
+                                      else "not under a systemd unit; the helper starts the hub"),
+              flush=True)
     if wildcard:
         servers.append(_listen_or_exit(remote_host, port))
         _announce_remote(remote_host)
@@ -23580,6 +23796,15 @@ def main():
     # The restart monitor tells working agents, watches them and restarts
     # when all are ready.
     restart_drain.start_monitor(restart_drain.drain_tick)
+
+    # The move check (#331): code folders, task folders, worktrees and
+    # conversations the state copied from another machine still points at
+    # there. Repaired where safe before any room comes back below.
+    if not os.environ.get("ENSEMBLE_NO_MOVE_CHECK"):
+        try:
+            move_check.run_check(repair=True)
+        except Exception as e:      # noqa: BLE001 — never stops the hub
+            print(f"[move] check skipped: {e!r}", flush=True)
 
     # A cold start (the machine booted, the PTY host died) brings back the
     # rooms that were running, as a restart would (P190).

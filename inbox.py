@@ -66,6 +66,7 @@ DEBUG_DAYS = 14                 # debug: asks left out are listed back to this m
 _LOCK = threading.Lock()
 _BUILD_LOCK = threading.Lock()  # one build at a time: concurrent misses wait for it (PO fix 3)
 _CACHE: dict[bool, tuple[float, dict]] = {}     # debug → (when, the unfiltered build)
+_GEN = [0]                      # bumped by forget(): a build begun before it is not kept
 COLD_THREADS_S = 30.0           # a PO chat not opened since start: its signature checked again after this
 _COLD_THREADS: dict[str, tuple[float, dict]] = {}   # room id → (when checked, index) of that look
 _COLD_BUILDING: set[str] = set()
@@ -75,6 +76,7 @@ def forget() -> None:
     """A question was closed or reopened: the next request builds again."""
     with _LOCK:
         _CACHE.clear()
+        _GEN[0] += 1
 
 
 def _task_states():
@@ -632,9 +634,12 @@ def snapshot(project_id: str = "", debug: bool = False) -> dict:
                     hit = _CACHE.get(debug)
                 now = time.time()
                 if not (hit and now - hit[0] < CACHE_S):
+                    with _LOCK:
+                        gen = _GEN[0]
                     hit = (now, _build_all(debug, now))
                     with _LOCK:
-                        _CACHE[debug] = hit
+                        if _GEN[0] == gen:  # a forget() during the build: it may be stale
+                            _CACHE[debug] = hit
         return _filter(hit[1], project_id or "", debug)
     except Exception as e:      # noqa: BLE001
         print(f"[inbox] not built: {e!r}", flush=True)

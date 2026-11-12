@@ -377,7 +377,8 @@ class SharedComposer(unittest.TestCase):
             with self.subTest(key=key):
                 box = g[key]
                 self.assertTrue(box['shown'] and box['editor'], box)
-                self.assertAlmostEqual(box['width'], box['host'], delta=3)
+                # 12px clear of the tool rail, all four corners in view (#333).
+                self.assertAlmostEqual(box['width'] + 12, box['host'], delta=3)
                 self.assertNotIn('http', box['target'])
                 self.assertNotIn('room-', box['target'])
         self.assertEqual(g['workspaceAlone']['target'], 'Motors PO')
@@ -431,4 +432,4 @@ class SharedComposer(unittest.TestCase):
         for key in ('threeDesktop','threeMedium'):
             box = g[key]
             self.assertTrue(box['shown'] and box['editor'], box)
-            self.assertAlmostEqual(box['width'], box['host'], delta=3)
+            self.assertAlmostEqual(box['width'] + 12, box['host'], delta=3)   # the 12px right gap (#333)
