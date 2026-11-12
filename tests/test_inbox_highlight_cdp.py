@@ -187,6 +187,22 @@ async function main() {
       // (f) session.html by itself, as a new tab from the Inbox opens it
       const s = await page(w, h, mobile, `/session?room=${A.po}&msg=${A.answer}&part=inbox`);
       o.solo = await series(s, tag + '-solo', A.answer, 3500, async () => {});
+      await c.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] }, await s.sid());
+      o.reduced = await s.evalIn(`(() => {
+        const box = document.getElementById('msgs'), ref = document.createElement('div');
+        ref.style.backgroundColor = 'var(--selected-bg)'; document.body.appendChild(ref);
+        const expected = getComputedStyle(ref).backgroundColor; ref.remove();
+        const kinds = { agent: 'msg claude', user: 'msg user', hub: 'msg user hub' }, got = {};
+        for (const [kind, cls] of Object.entries(kinds)) {
+          const el = document.createElement('div'); el.className = cls + ' ibx-landed';
+          el.innerHTML = '<div class="from"><span class="lz lz-inbox">From the Inbox</span></div><div class="text md">Message</div>';
+          box.appendChild(el);
+          const css = getComputedStyle(el);
+          got[kind] = { background: css.backgroundColor, shadow: css.boxShadow, animation: css.animationName };
+          el.remove();
+        }
+        return { media: matchMedia('(prefers-reduced-motion: reduce)').matches, expected, got };
+      })()`);
       await s.close();
     }
   } finally {
@@ -391,6 +407,18 @@ class InboxHighlightInChrome(unittest.TestCase):
                 self.present(o["solo"]["early"], gap, "session.html")
                 self.present(o["solo"]["mid2s"], None, "session.html 2 s")
                 self.gone(o["solo"]["after"], "session.html after")
+
+    def test_reduced_motion_keeps_the_wash_on_agent_user_and_hub_messages(self):
+        for o, gap, tag in self.each():
+            with self.subTest(tag):
+                r = o["reduced"]
+                self.assertTrue(r["media"])
+                for kind in ("agent", "user", "hub"):
+                    with self.subTest(tag=tag, kind=kind):
+                        m = r["got"][kind]
+                        self.assertEqual(m["background"], r["expected"], m)
+                        self.assertNotEqual(m["shadow"], "none", m)
+                        self.assertEqual(m["animation"], "none", m)
 
     def test_a_changed_setting_sets_the_length(self):
         s = self.got["desk"]["setting"]
