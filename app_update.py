@@ -45,6 +45,7 @@ import zipfile
 from pathlib import Path
 
 import app_version
+import update_notes
 
 SUMS_NAME = "SHA256SUMS.txt"
 RELEASES_URL = "https://api.github.com/repos/{repo}/releases?per_page=20"
@@ -167,14 +168,20 @@ def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetc
         return {"available": False, "reason": "no_release_for_platform", "kind": "release",
                 "currentVersion": current}
     try:
-        rel = pick_release(fetch(), current, key)
+        releases = fetch()
+        rel = pick_release(releases, current, key)
     except (OSError, ValueError, urllib.error.URLError) as e:
         return {"available": False, "reason": f"error: {e.__class__.__name__}", "kind": "release",
                 "currentVersion": current}
     if not rel:
         return {"available": False, "kind": "release", "currentVersion": current}
+    # What's new (#339): the notes of every newer release, from the same list.
+    notes = update_notes.release_notes(releases, current)
+    latest = next((n for n in notes if n["version"] == rel["version"]), None)
     return {"available": True, "kind": "release", "currentVersion": current,
-            "latestVersion": rel["version"], "latestMessage": rel["name"], "release": rel}
+            "latestVersion": rel["version"], "latestMessage": rel["name"], "release": rel,
+            "latestId": rel["version"], "notes": notes, "updates": len(notes),
+            "latestDate": latest["at"] if latest else 0}
 
 
 def download(url: str, dest: Path, timeout: float = 60) -> Path:
