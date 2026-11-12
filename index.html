@@ -6066,7 +6066,7 @@ const detailWMax = () =>
   handle.addEventListener('pointercancel', stop);
 })();
 
-function openDetail(sid) {
+function openDetail(sid, o) {
   phPanesClose(true);   // a phone: the pane it was opened from steps aside (#307)
   if (phoneNow()) PH_BACK.sel = { sid };   // and marks this row when it comes back
   // A task open as a chat panel of its own (#150): that panel comes on
@@ -6077,10 +6077,12 @@ function openDetail(sid) {
     if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.reveal(cid); } catch (e) {} return; }
     // A task of another project: the one open in the conversation's window
     // keeps that window (#346); the middle comes back here for this one.
+    // A tool returning its own window to this panel already chose its owner:
+    // do not hand that window to the task being replaced in the middle.
     const r1 = SELECTED_SID && sid !== SELECTED_SID ? rowBySid(SELECTED_SID) : null;
     const pjOf = r => r && (projectOfRoom(r.roomId || r.sessionId) || wsProjectForRow(r));
     const p0 = pjOf(r0), p1 = pjOf(r1);
-    if (r1 && (p0 && p0.id) !== (p1 && p1.id)) pdTaskKeepOut();
+    if (r1 && (p0 && p0.id) !== (p1 && p1.id) && !o?.keepTaskWindow) pdTaskKeepOut();
   }
   const reopened = !document.body.classList.contains('detail-open') || sid !== SELECTED_SID;
   if (sid !== SELECTED_SID) {
@@ -14213,8 +14215,8 @@ function openTurnChanges(rid, n, here) {
   if (v) tchTurn(v, n); else TCH_TURN_WANT.set(sid, +n);
   ISSUE_TAB_SID = sid;
   ISSUE_TAB = 'changes';
-  if (row.roomId) pdChatUnpanel(row.roomId);
-  if (SELECTED_SID !== sid) openDetail(sid);
+  const keptWindow = row.roomId && pdChatUnpanel(row.roomId);
+  if (SELECTED_SID !== sid) openDetail(sid, { keepTaskWindow: keptWindow });
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   if (pdTask()) pdReveal('changes');
 }
@@ -15223,9 +15225,10 @@ function pdChatUnpanel(roomId) {
     const name = 'ensemble-panel-po-chat';
     try { w.name = name; } catch (e) {}
     PD_HELD_WIN = { name, win: w };
-    try { d.popOut('po-chat'); } catch (e) {}
+    let out = false;
+    try { out = d.popOut('po-chat'); } catch (e) {}
     finally { PD_HELD_WIN = null; }
-    return;
+    return out;
   }
   try { d.removePanel(cid); } catch (e) {}
 }
@@ -24313,8 +24316,8 @@ function openWorkspaceTab(sid) {
   // A task open as a chat panel (#150): its tools are the middle's, so it
   // comes back to the middle (its panel closes: one chat per task) and its
   // Files tool comes out there, not another task's.
-  if (row && row.roomId) pdChatUnpanel(row.roomId);
-  if (SELECTED_SID !== sid) openDetail(sid);
+  const keptWindow = row && row.roomId && pdChatUnpanel(row.roomId);
+  if (SELECTED_SID !== sid) openDetail(sid, { keepTaskWindow: keptWindow });
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   // On the tool strip: its Files tool comes out.
   if (pdTask()) { pdReveal('workspace'); return; }

@@ -330,6 +330,25 @@ async function main() {
     out.poWindow = { task: brief(await readWin(ts2.find(x => x.targetId === taskWin.targetId))),
       po: brief(await readWin(ts2.find(x => x.targetId === poWin.targetId))) };
     await p.evalIn(`closeDetail(); PD.dock.popIn('po-chat'); 0`);
+    // Review 3: B is docked in the middle while A keeps its own window.
+    // Opening A's tool must not hand A's window to B.
+    out.otherMiddleTool = {};
+    for (const tool of ['changes', 'workspace']) {
+      await toProject(A.projA);
+      await ROUTES.middle.open();
+      await SWITCH.left(A.projB); await sleep(900);
+      await p.evalIn(`openDetail(${J(A.taskB)}); 0`);
+      await p.until(`SELECTED_SID === ${J(A.taskB)} && pdTask() && !PD.dock.isOut('po-chat')`, 15000);
+      if (tool === 'changes')
+        await p.evalIn(`PD.dock.popWindow('chat:' + ${J(A.taskA)}).document.querySelector('iframe.dp-session').contentWindow.cpShowDiff(1); 0`);
+      else await p.evalIn(`openWorkspaceTab(${J(A.sidA)}); 0`);
+      await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === ${J(tool)}`, 15000);
+      await sleep(700);
+      out.otherMiddleTool[tool] = { win: brief(await ROUTES.middle.read()),
+        state: await p.evalIn(`({ sel: SELECTED_SID, tab: ISSUE_TAB, poOut: PD.dock.isOpenOut('po-chat') })`) };
+      await p.evalIn(`if (PD.dock.isOut('po-chat')) PD.dock.popIn('po-chat'); for (const room of [${J(A.taskA)}, ${J(A.taskB)}]) { const id = pdChatId(room); if (PD.rt.has(id)) PD.dock.removePanel(id); } if (SELECTED_SID) closeDetail(); 0`);
+      MID.target = null;
+    }
   } finally {
     out.errors = c.errors;
     try { await c.send('Browser.close'); } catch (e) {}
@@ -509,6 +528,14 @@ class TaskWindowSurvivesProjectSwitch(unittest.TestCase):
         r = self.got["poWindow"]
         self.assertTrue(r["task"]["open"] and r["task"]["hasLast"], r)
         self.assertTrue(r["po"]["open"] and self.poA in r["po"]["url"], r)
+
+    def test_a_tool_keeps_the_window_when_another_project_task_is_in_the_middle(self):
+        for tool, r in self.got["otherMiddleTool"].items():
+            with self.subTest(tool):
+                self.assertEqual(r["state"], {"sel": self.taskA, "tab": tool, "poOut": True}, r)
+                self.assertTrue(r["win"]["open"] and r["win"]["hasTitle"] and r["win"]["hasLast"], r)
+                self.assertFalse(r["win"]["hasOther"], r)
+                self.assertEqual(r["win"]["name"], "ensemble-panel-po-chat", r)
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])
