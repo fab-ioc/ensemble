@@ -2603,6 +2603,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      strip's height and its own look; only the cap on its width goes. */
   .tab-expanded.row-expanded { max-width: none; height: auto; padding-block: 0; }
   .dk-tab-wrap.tab-expanded.on, .wst-tab.tab-expanded.on { background: var(--surface); }
+  /* Dock's and the workspace's own tab hover is transparent: solid here too. */
+  .tab-expanded.row-expanded:not(.on), .tab-expanded.row-expanded:not(.on):hover {
+    background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
   .tab-expanded .dk-tab { max-width: none; height: auto; align-self: stretch; }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
