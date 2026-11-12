@@ -38,6 +38,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import feedback
 import file_refs
@@ -236,14 +237,85 @@ restart_drain.bind(sys.modules[__name__])
 attention.install()
 
 # --- Remote-access gate ------------------------------------------------------
-# When the server is bound to anything other than loopback (e.g. exposed on a
-# Tailscale interface so other machines can reach it), every non-loopback
-# request must present this access token. Loopback requests (the local browser
-# and the agents' own /mcp calls on 127.0.0.1) are always allowed, so nothing
-# local changes. Empty token => open (the historical local-only behaviour).
+# Every request that is not local (another machine, or a proxy on this one
+# such as `tailscale serve`, see _is_local) must present this access token.
+# Local requests (the local browser and the agents' own /mcp calls on
+# 127.0.0.1) are always allowed, so nothing local changes. The token is loaded
+# or minted at every start (_load_access_token), whatever the hub listens on:
+# a proxy can expose a loopback-only hub (ED-341). Should it still be empty, a
+# request that is not local is refused, never let through.
 ACCESS_TOKEN = ""
 TOKEN_COOKIE = "ensemble_token"
 _LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost", ""}
+
+
+def _load_access_token() -> str:
+    """The access token: ENSEMBLE_TOKEN when set, else the one kept in
+    DASHBOARD_DIR/access-token.txt, else a new one written there, so links and
+    cookies survive a restart. A file that cannot be written still leaves the
+    new token in use until the hub stops."""
+    tok = os.environ.get("ENSEMBLE_TOKEN", "").strip()
+    if tok:
+        return tok
+    tok_file = DASHBOARD_DIR / "access-token.txt"
+    try:
+        tok = tok_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        tok = ""
+    # A preflight start of a new version (ENSEMBLE_PTY_PREFLIGHT) runs on the
+    # real state and changes none of it: a token it mints is its own.
+    preflight = bool(os.environ.get("ENSEMBLE_PTY_PREFLIGHT"))
+    if tok:
+        if not preflight:
+            _owner_only(tok_file)
+        return tok
+    tok = secrets.token_urlsafe(24)
+    if not preflight:
+        _keep_token(tok_file, tok)
+    return tok
+
+
+def _same_secret(given, secret) -> bool:
+    """A presented credential against the hub's secret, as bytes: compare_digest
+    on str raises TypeError for any non-ASCII character, so a ?token=%C3%A9 or
+    a non-ASCII cookie or bearer threw in the handler instead of being refused."""
+    return hmac.compare_digest(str(given or "").encode("utf-8", "surrogatepass"),
+                               str(secret or "").encode("utf-8", "surrogatepass"))
+
+
+def _owner_only(path: Path) -> None:
+    """A kept token file that others may read (one written by an older hub
+    with the default mode) is made the owner's only. A link is left alone:
+    chmod would change the file it points to."""
+    try:
+        st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode) and st.st_mode & 0o077:
+            os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _keep_token(path: Path, tok: str) -> None:
+    """Write a new token to ``path`` as a fresh owner-only file: written to a
+    temporary file beside it (mkstemp makes it 0600) and renamed over it, so
+    an existing file keeps no mode of its own and a link there is replaced,
+    not followed."""
+    tmp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".access-token-", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(tok)
+        os.replace(tmp, path)
+        tmp = None
+    except OSError:
+        pass
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def _addr_is_loopback(host: str) -> bool:
@@ -17961,7 +18033,7 @@ class Handler(BaseHTTPRequestHandler):
         stays signed in for as long as it is used."""
         if not ACCESS_TOKEN or self._is_local() or not self._is_page_navigation():
             return []
-        if not hmac.compare_digest(self._cookie(TOKEN_COOKIE), ACCESS_TOKEN):
+        if not _same_secret(self._cookie(TOKEN_COOKIE), ACCESS_TOKEN):
             return []
         return [("Set-Cookie", f"{TOKEN_COOKIE}={ACCESS_TOKEN}; HttpOnly; SameSite=Lax; "
                                "Path=/; Max-Age=31536000")]
@@ -18006,7 +18078,7 @@ class Handler(BaseHTTPRequestHandler):
         key = self._cookie(self._ui_cookie())
         if not key:
             return RESTART_REFUSED
-        if not hmac.compare_digest(key, _UI_KEY):
+        if not _same_secret(key, _UI_KEY):
             # The page was opened before the hub last restarted.
             return RESTART_REFUSED + " Reload the dashboard page and try again."
         if not self._same_origin_request():
@@ -18059,7 +18131,7 @@ class Handler(BaseHTTPRequestHandler):
         key = self._cookie(self._ui_cookie())
         if not key or not self._same_origin_request():
             return "Only the dashboard page can do this."
-        if not hmac.compare_digest(key, _UI_KEY):
+        if not _same_secret(key, _UI_KEY):
             return "Reload the dashboard page and try again."
         why = self._agent_peer()
         if why:
@@ -18182,8 +18254,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _gate(self) -> bool:
-        """Return True if the request may proceed. When an ACCESS_TOKEN is set,
-        non-loopback requests must present it; a matching ?token= on a GET is
+        """Return True if the request may proceed. A request that is not local
+        must present ACCESS_TOKEN (and is refused while it is empty); a matching ?token= on a GET is
         swapped for an HttpOnly cookie via redirect so the URL stays clean."""
         u = urlparse(self.path)
         # Unlike the page credential, this bearer survives being handed to a
@@ -18192,9 +18264,11 @@ class Handler(BaseHTTPRequestHandler):
         # boundary before it returns anything.
         if self.command in ("GET", "HEAD") and u.path == "/api/file/download":
             drag = (parse_qs(u.query).get("drag", [""])[0] or "").strip()
-            if drag and hmac.compare_digest(drag, _FILE_DRAG_TOKEN):
+            # Only beside an access token: with none, nothing that is not
+            # local passes this gate, a drag bearer neither.
+            if ACCESS_TOKEN and drag and _same_secret(drag, _FILE_DRAG_TOKEN):
                 return True
-        if not ACCESS_TOKEN or self._is_local():
+        if self._is_local():
             return True
         # The path exactly as sent, up to a query: urlparse drops a last
         # ";params", a "#..." and an absolute-form "http://host" in front,
@@ -18205,7 +18279,9 @@ class Handler(BaseHTTPRequestHandler):
                 raw in UNGATED_PATHS or raw.startswith(UNGATED_PREFIXES)):
             return True
         tok = self._presented_token(u)
-        if tok and hmac.compare_digest(tok, ACCESS_TOKEN):
+        # No token (none could be loaded or minted) lets no one in: the
+        # request is not local, and an empty secret matches an empty cookie.
+        if ACCESS_TOKEN and tok and _same_secret(tok, ACCESS_TOKEN):
             q = parse_qs(u.query)
             if q.get("token") and self.command == "GET":
                 # Re-encoded: a file link's path= holds \, spaces, & and #,
@@ -19388,6 +19464,10 @@ class Handler(BaseHTTPRequestHandler):
             invalidate_session_listing()
 
     def _do_PUT(self):
+        # The same gate as GET, POST and DELETE: a PUT through tailscale serve
+        # or from the tailnet saved settings without the token (ED-341).
+        if not self._gate():
+            return
         u = urlparse(self.path)
         p = u.path
         ln = int(self.headers.get("Content-Length", "0"))
@@ -21652,7 +21732,7 @@ class Handler(BaseHTTPRequestHandler):
         origin (a same-origin GET or an <img> sends no Origin, so Sec-Fetch-Site
         says it), never a bearer."""
         key = self._cookie(self._ui_cookie())
-        return not (self._bearer_token() or not key or not hmac.compare_digest(key, _UI_KEY)
+        return not (self._bearer_token() or not key or not _same_secret(key, _UI_KEY)
                     or self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"))
 
     def _project_icon_get(self, u) -> None:
@@ -23946,25 +24026,12 @@ def main():
         remote_host = _detect_tailscale_ip()  # may be None now; retried in a thread
     elif not _addr_is_loopback(host):
         remote_host = host
-    want_remote = tailnet or remote_host is not None
     wildcard = remote_host in ("0.0.0.0", "::")
 
-    # Access token: required for every non-loopback request. Explicit
-    # ENSEMBLE_TOKEN wins; otherwise, when the server will expose a remote
-    # listener (now or once Tailscale is up), load-or-mint a stable token
-    # persisted under the state dir so URLs/cookies survive a restart.
-    ACCESS_TOKEN = os.environ.get("ENSEMBLE_TOKEN", "").strip()
-    if want_remote:
-        tok_file = DASHBOARD_DIR / "access-token.txt"
-        if not ACCESS_TOKEN and tok_file.exists():
-            ACCESS_TOKEN = tok_file.read_text(encoding="utf-8").strip()
-        if not ACCESS_TOKEN:
-            ACCESS_TOKEN = secrets.token_urlsafe(24)
-            if not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
-                try:
-                    tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
-                except OSError:
-                    pass
+    # Access token: required for every request that is not local, at every
+    # start, also without a remote listener: `tailscale serve` exposes a
+    # loopback-only hub too (ED-341).
+    ACCESS_TOKEN = _load_access_token()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)

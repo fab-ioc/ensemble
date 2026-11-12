@@ -176,7 +176,7 @@ py dashboard.py --bind tailscale        # or --bind <an IP of this machine>; ENS
 ```
 
 - With a non-loopback bind, the hub keeps serving `127.0.0.1` and adds a second listener that needs a **token**.
-- The token comes from `ENSEMBLE_TOKEN`, or is created once and kept in `~/.ensemble/access-token.txt`.
+- The token comes from `ENSEMBLE_TOKEN`, or is created once and kept in `~/.ensemble/access-token.txt`. It exists with any bind, loopback too: every request that is not from this machine needs it, also one through a proxy here (see `tailscale serve` below).
 - At startup the hub logs the address to open, `http://<ip>:8765/?token=…`. The first visit sets a cookie; after that the plain address works.
 - A client can also send the token as an `X-Ensemble-Token` header or `Authorization: Bearer`.
 - For the scheduled task or LaunchAgent, set `ENSEMBLE_BIND` as a user environment variable (Windows) or add it to the plist's `EnvironmentVariables` (macOS), then restart the hub.
@@ -200,6 +200,7 @@ Installed as an app, Ensemble runs in a window of its own with its own icon in t
 3. On the hub's machine, in a terminal run as Administrator on Windows (Tailscale requires it there):
    - `tailscale serve status` first, to pick the https port `<port>`: 443 if nothing uses it yet, otherwise a free one such as 8443 (a port already in use would be replaced);
    - then `tailscale serve --https=<port> --bg 8765`. The setting survives restarts. `tailscale serve status` shows it.
+   - Use only the https (or http) mode, which adds `X-Forwarded-For`; never `--tcp` or `--tls-terminated-tcp` to the hub's port: those pass raw connections from loopback with no header, and the hub would take them as this machine's own, with no token.
    - To remove only this address: `tailscale serve --https=<port> off`. Avoid `tailscale serve reset`: it removes every Serve address on the machine, not just this one.
 4. On the other device, open `https://<machine>.<tailnet domain>/?token=<token>` once (with `:<port>` after the domain when the port is not 443) (or open it without the token and paste it into the page that asks for it), then install from Settings or the address bar.
 

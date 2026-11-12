@@ -606,7 +606,12 @@ class Endpoint(unittest.TestCase):
     def test_another_machine_is_refused(self):
         with mock.patch.object(dashboard.Handler, "_client_ip", lambda h: "100.64.0.7"):
             self.assertEqual(self.send(self.payload()), (403, {"error": "loopback_only"}))
-            self.assertEqual(self.send(None, method="GET", path="/api/agent/hooks")[0], 403)
+            # The read is refused at the token gate already (ED-341: no hub
+            # lets another machine in without the token), else by the route.
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            self.addCleanup(conn.close)
+            conn.request("GET", "/api/agent/hooks")
+            self.assertIn(conn.getresponse().status, (401, 403))
         self.assertIsNone(agent_hooks.state_for("pty-1"))
 
     def test_what_is_held_can_be_read_on_this_machine(self):

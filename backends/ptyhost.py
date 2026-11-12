@@ -153,7 +153,8 @@ class _Handler(socketserver.StreamRequestHandler):
                 return
             try:
                 req = json.loads(line)
-                if not hmac.compare_digest(str(req.get("token") or ""), self.server.token):
+                if not hmac.compare_digest(str(req.get("token") or "").encode("utf-8", "surrogatepass"),
+                                           str(self.server.token or "").encode("utf-8", "surrogatepass")):
                     raise PermissionError("PTY host token required")
                 op, args = req.get("op"), req.get("args") or {}
                 value = self.server.dispatch(op, args)
