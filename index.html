@@ -14887,7 +14887,14 @@ function pdChatOpen(roomId, o) {
   // (A restore runs as the dock is made, before the page's body says po-dock.)
   if (!d || !roomId || !(o && o.restore ? true : pdPanelsOn())) return false;
   const id = pdChatId(roomId);
-  if (PD.rt.has(id)) { try { d.reveal(id); } catch (e) {} if (!o?.restore) wcChoose({kind:'task',room:roomId}); return true; }
+  // o.agent: the chat opens at that agent (a link to @codex@18), as the middle's does.
+  const at = o && o.agent ? '&agent=' + encodeURIComponent(o.agent) : '';
+  if (PD.rt.has(id)) {
+    if (at) { const f = pdChatFrameOf(roomId); if (f) f.src = '/session?id=' + encodeURIComponent(roomId) + '&embed=1' + at; }
+    try { d.reveal(id); } catch (e) {}
+    if (!o?.restore) wcChoose({kind:'task',room:roomId});
+    return true;
+  }
   const r = ALL_ROWS.find(x => x.roomId === roomId);
   if (!r) return false;
   // One chat per task on the page: the task in the middle moves out to its panel.
@@ -14906,7 +14913,7 @@ function pdChatOpen(roomId, o) {
   el.dataset.room = roomId;
   // data-chat-slow: not the person's conversation, so it polls less while
   // it is not being typed in (session.html).
-  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
+  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
   PD.rt.set(id, { kind: 'chat', room: roomId, el });
   // Beside the chat panel last shown (else the conversation) while the row has
   // room for one more (pdFits); else a tab of its stack.
@@ -22524,7 +22531,8 @@ window.addEventListener('message', (ev) => {
     runTaskAction(String(d.roomId), String(d.act || ''));
   }
   // A task link clicked inside a session or file viewer framed in this page.
-  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
+  // From a PO conversation it opens as a panel of its own (P310).
+  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''), undefined, { panel: chatFrameIsPo(ev.source) });
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
@@ -22586,7 +22594,11 @@ function sendGotoMsg(rid) {
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,
 // or its role, @reviewer@18) the task opens at that agent's terminal.
 let DETAIL_AGENT = null;   // { room, agent }: the next chat drawn for that task opens at the agent
-function openTaskLink(ref, agent, projectId) {
+// o.panel: clicked in a PO conversation (P310). The task opens as a chat
+// panel of its own (#150), so the conversation keeps its place; a task with a
+// panel has it revealed, one in the middle stays there, and where there are no
+// panels (a phone, no Dock) the middle takes it as from anywhere else.
+function openTaskLink(ref, agent, projectId, o) {
   const rid = taskRowId(ref, projectId);
   if (!rid) {
     toast(`${ref} is not a task on this hub`, 4000, 'err');
@@ -22596,6 +22608,8 @@ function openTaskLink(ref, agent, projectId) {
   const w = String(agent || '').toLowerCase();
   const m = w && row ? (row.members || []).find(x => (x.identity || '').toLowerCase() === w
     || String(x.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+  const inMiddle = SELECTED_SID === rid && document.body.classList.contains('detail-open');
+  if (o && o.panel && row && row.roomId && !inMiddle && !phoneNow() && pdChatOpen(row.roomId, { agent: m ? m.identity : '' })) return;
   if (m) {
     DETAIL_AGENT = { room: row.roomId, agent: m.identity };
     // Already showing that task: its chat is drawn again, at the agent.
@@ -22603,6 +22617,19 @@ function openTaskLink(ref, agent, projectId) {
     if (f) { f.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1&agent=' + encodeURIComponent(m.identity); DETAIL_AGENT = null; }
   }
   openDetail(rid);
+}
+// A chat page's window: is it a PO conversation (the PO's chat in the middle
+// or its drawer, a thread of it, a PO room's chat panel)? Pop-out windows' frames count.
+function chatFrameIsPo(win) {
+  if (!win) return false;
+  for (const d of [document, ...PD_POP_DOCS.keys()]) {
+    let f = null;
+    try { f = [...d.querySelectorAll('iframe.po-session, iframe.po-thread, iframe.dp-session')].find(x => x.contentWindow === win); } catch (e) {}
+    if (!f) continue;
+    if (!f.classList.contains('dp-session')) return true;
+    return poRoomIds(registeredProjects()).has(f.dataset.room || '');
+  }
+  return false;
 }
 // A chip (a.task-chip) is TaskCard's: one click its card, a double click the task.
 document.addEventListener('click', (ev) => {
