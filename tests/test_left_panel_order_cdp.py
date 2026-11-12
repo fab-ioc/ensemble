@@ -267,7 +267,18 @@ async function main() {
         if (o.cardClose) {
           await p.clickAt(o.cardClose.x, o.cardClose.y); await sleep(300);
           o.cardClose.acts = await p.evalIn('(() => { const a = window._acts337; ibxRowAct = window._act337; return a; })()');
+          // a repaint lets the card's hold go
+          o.cardClose.repaint = await p.evalIn(`(() => { const before = !!ROW_EXPAND_HOST; ibxRepaint();
+            return { before, after: !!ROW_EXPAND_HOST, cls: document.querySelectorAll('.row-expand-host').length }; })()`);
         }
+        // the keyboard, the pointer away: focus raises the card, blur leaves its buttons to :focus-within
+        await away(p);
+        const LINK = `document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] a.ibx-link')`;
+        await p.evalIn(`(${LINK}.focus({ focusVisible: true }), 0)`); await sleep(300);
+        o.cardKey = { focused: await p.evalIn(`({ copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length })`) };
+        await p.evalIn(`(${LINK}.blur(), 0)`); await sleep(300);
+        o.cardKey.blurred = await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] [data-ibx-close]'); const r = b ? b.getBoundingClientRect() : null;
+          return { copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length, held: !!ROW_EXPAND_HOST, focus: document.activeElement === document.body, closeShown: !!(r && r.width && r.height) }; })()`);
       }
       await away(p);
       await p.evalIn(`(() => { IBX.data = window._ibx337b; IBX.busy = false; ibxRepaint(); return 0; })()`);
@@ -550,6 +561,13 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertTrue(c["focus"], "nothing focused before")
         self.assertGreater(c["w"] * c["h"], 0, "Close stays shown while the copy is up")
         self.assertEqual(c["acts"], [["q337", "Closed"]], "the first click closed the card")
+        self.assertEqual((c["repaint"]["after"], c["repaint"]["cls"]), (False, 0), "a repaint lets the card's hold go")
+
+    def test_a_card_raised_by_focus_leaves_nothing_shown_after_blur(self):
+        k = self.w()["cardKey"]
+        self.assertEqual(k["focused"], {"copy": True, "host": 1}, "keyboard focus raises the cut card")
+        self.assertEqual(k["blurred"], {"copy": False, "host": 0, "held": False, "focus": True, "closeShown": False},
+                         "after blur, with the pointer away: no copy, no hold, Close hidden again")
 
     def test_a_cut_file_tab_keeps_its_tip_off_when_drawn_again(self):
         o = self.w()["fileTab"]

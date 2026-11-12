@@ -12994,7 +12994,9 @@ function rowExpandHide() {
   ROW_EXPAND_WIN = null;
   if (ROW_EXPAND) {
     ROW_EXPAND.copy.remove();
-    if (ROW_EXPAND.host) rowExpandHostHold(ROW_EXPAND.host);
+    // Raised by focus, the card shows its buttons by :focus-within: nothing to hold.
+    if (ROW_EXPAND.host && !ROW_EXPAND.focus) rowExpandHostHold(ROW_EXPAND.host);
+    else rowExpandHostLet();
   }
   ROW_EXPAND = null;
 }
@@ -13022,6 +13024,7 @@ function rowExpandHostHold(el) {
 }
 function rowExpandBeforeChange(root) {
   if (ROW_EXPAND && root && root.contains(ROW_EXPAND.row)) rowExpandHide();
+  if (ROW_EXPAND_HOST && root && root.contains(ROW_EXPAND_HOST.el)) rowExpandHostLet();
 }
 function rowExpandRefresh(root) {
   if (!ROW_EXPAND || (root && !root.contains(ROW_EXPAND.row))) return;
@@ -13180,7 +13183,7 @@ function rowExpandShow(row, spec, focus = false) {
   const host = spec.host ? row.closest(spec.host) : null;
   if (host) rowExpandHostHold(host);
   else rowExpandHostLet();
-  ROW_EXPAND = { row, copy, spec, host };
+  ROW_EXPAND = { row, copy, spec, host, focus };
   if (win.MutationObserver) {
     // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
     ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => {
