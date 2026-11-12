@@ -184,13 +184,25 @@ def refuse(room: dict, ident: str, path: str, text: str, kind: str = "missing"):
 # The check before every launch
 # ---------------------------------------------------------------------------
 
-def launch_folder(room: dict, ident: str, cwd: str, scratch: str = "") -> str:
+def launch_folder(room: dict, ident: str, cwd: str, scratch: str = "",
+                  moved: bool = False) -> str:
     """The folder to start seat ``ident`` in: ``cwd`` itself, made again when
     it is the task's missing worktree, or made when it is ``scratch`` (the
     hub's own per-agent folder of a task whose folder is there). Raises
-    MissingFolderError otherwise; the task is then marked."""
+    MissingFolderError otherwise; the task is then marked.
+
+    ``moved``: ``cwd`` was asked for on purpose (a session moved to another
+    folder, a review's checkout), not read from the seat's record: it is not
+    taken for an older hub's fallback and put back in the task's folder."""
     room_cwd = (room.get("cwd") or "").strip()
-    if outside_task(room, cwd):
+    if _is_worktree_room(room) and not room_cwd:
+        # A worktree task with no folder recorded: the hub's own folder
+        # (~/cs) is not its folder, and its worktree cannot be made again.
+        refuse(room, ident, cwd or "(none)",
+               f"The task records no folder for its worktree, so {ident} has no folder to "
+               f"start in: move the task to a folder that exists, then start it again. "
+               f"The hub does not start an agent in another folder.")
+    if not moved and outside_task(room, cwd):
         # An older hub's fallback recorded as the seat's folder: it starts in
         # its task's folder again (the caller records that), never there.
         print(f"[folder] {room.get('id', '')}/{ident}: {cwd} is outside the task's folder; "
@@ -313,7 +325,21 @@ def outside_task(room: dict, cwd: str) -> bool:
     room_cwd = (room.get("cwd") or "").strip()
     if not _is_worktree_room(room) or not room_cwd or not cwd:
         return False
-    return not _inside(cwd, _task_folder(room)) and not _inside(cwd, room_cwd)
+    return (not _inside(cwd, _task_folder(room)) and not _inside(cwd, room_cwd)
+            and not _is_po_room(room))
+
+
+def _is_po_room(room: dict) -> bool:
+    """A task made a project's PO: its seat works where a PO works
+    (``nextCwd``, the project's folder), which is outside the task's folder."""
+    if any(p.get("madePoAt") for p in room.get("participants") or []):
+        return True
+    if _d is None:
+        return False
+    try:
+        return room.get("id", "") in _d.rotation._po_room_ids()
+    except Exception:           # noqa: BLE001
+        return False
 
 
 def damaged_seats(room: dict) -> list[dict]:

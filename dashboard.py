@@ -5963,8 +5963,10 @@ def review_repo(room: dict) -> str:
     """The git checkout a review looks at: the owner's or the task's working dir
     when it is one, else the first checkout found inside them."""
     own = set(chatroom.owners(room))
+    # An owner seat an older hub left outside a worktree task's folder (~/cs)
+    # is not where its work is (ED-344).
     cands = [p.get("cwd", "") for p in chatroom.agent_participants(room)
-             if p["identity"] in own]
+             if p["identity"] in own and not seat_folders.outside_task(room, p.get("cwd", ""))]
     cands += [room.get("cwd", ""), room.get("taskDir", "")]
     for c in cands:
         if not c or not os.path.isdir(c):
@@ -20029,8 +20031,11 @@ class Handler(BaseHTTPRequestHandler):
         # session of a seat moved to a second checkout stays there), else the
         # task's default. Made again when it is the task's missing worktree;
         # a folder that cannot be is a refused start, never another folder.
-        cwd = seat_folders.launch_folder(
-            room_full, ident, cwd or (part.get("cwd") or "").strip() or default, scratch)
+        recorded = (part.get("cwd") or "").strip()
+        moved = bool(cwd) and not (recorded and os.path.normcase(os.path.normpath(cwd))
+                                   == os.path.normcase(os.path.normpath(recorded)))
+        cwd = seat_folders.launch_folder(room_full, ident, cwd or recorded or default,
+                                         scratch, moved=moved)
         rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         if prompt is not None:
             briefing = prompt

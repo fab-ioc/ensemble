@@ -299,6 +299,63 @@ class ResumeNeverMoves(_Base):
         self.assertEqual(seen, [str(task / "repo-linux")])
 
 
+    def test_an_explicit_move_out_of_the_task_folder_is_kept(self):
+        task = self.dir / "task"
+        (task / "repo").mkdir(parents=True)
+        (task / "repo" / "f.txt").write_text("x")
+        work = self.dir / "po-work"
+        work.mkdir()
+        rid = self.room(task / "repo", task)
+        room = self.full(rid)
+        seen: list = []
+        h = self.handler(seen)
+        with mock.patch.object(dashboard, "hub_launch_model", lambda *a: ("", "")):
+            with self.assertRaises(_Stop):      # rotation's nextCwd, a review's checkout
+                h._launch_room_agent_pty(room, self.seat(room), "brief", cwd=str(work))
+            self.seat(room)["cwd"] = str(dashboard.CS_ROOT)
+            with self.assertRaises(_Stop):      # its own record passed back: put right
+                h._launch_room_agent_pty(room, self.seat(room), "brief",
+                                         cwd=str(dashboard.CS_ROOT))
+        self.assertEqual(seen, [str(work), str(task / "repo")])
+
+    def test_a_worktree_task_with_no_folder_is_refused_not_started_in_cs(self):
+        task = self.dir / "task"
+        task.mkdir()
+        rid = self.room(task / "repo", task)
+        room = self.full(rid)
+        room["cwd"] = ""
+        self.seat(room)["cwd"] = ""
+        chatroom.update_room(room)
+        seen: list = []
+        h = self.handler(seen)
+        with mock.patch.object(dashboard, "hub_launch_model", lambda *a: ("", "")):
+            with self.assertRaises(dashboard.MissingFolderError) as cm:
+                h._launch_room_agent_pty(room, self.seat(room), "brief")
+            with self.assertRaises(dashboard.MissingFolderError):
+                h._resume_room_agent_pty(room, self.seat(room))
+        self.assertIn("records no folder", str(cm.exception))
+        self.assertEqual(seen, [])
+        self.assertEqual(self.seat(self.raw(rid))["cwd"], "")
+
+    def test_a_task_made_a_po_is_not_taken_for_damage(self):
+        task = self.dir / "task"
+        (task / "repo").mkdir(parents=True)
+        rid = self.room(task / "repo", task)
+        room = self.full(rid)
+        self.seat(room)["cwd"] = str(self.dir / "po-work")
+        self.seat(room)["madePoAt"] = time.time()
+        self.assertEqual(seat_folders.damaged_seats(room), [])
+
+    def test_a_review_runs_in_its_checkout_not_an_owner_left_on_cs(self):
+        task = self.dir / "task"
+        task.mkdir()
+        repo = self.project_repo()
+        rid = self.room(repo, task, seats=("claude", "codex"))
+        room = self.full(rid)
+        self.seat(room, "claude")["cwd"] = str(dashboard.CS_ROOT)
+        self.assertEqual(os.path.realpath(dashboard.review_repo(room)), os.path.realpath(repo))
+
+
 class Repair(_Base):
     def damaged(self):
         task = self.dir / "task"
