@@ -16507,6 +16507,10 @@ function ldpTerms(b, r) {
   const room = r.roomId || '';
   const pf = room ? pdChatFrameOf(room) : null;
   if (pf) { toggleCapturedTerms(pf); return; }
+  // On the hub the item shows or hides: the task already open in the middle
+  // has its terminals toggled there (a second pick hides them).
+  const mid = room && onHubMachine() ? document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(room)}"]`) : null;
+  if (mid) { toggleCapturedTerms(mid); return; }
   ldpScope('project');
   ldSelSet('room:' + room);
   showCapturedTerminal(room);

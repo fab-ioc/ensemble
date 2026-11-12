@@ -320,7 +320,16 @@ async function main() {
         const a = await pick(null);
         const fake = document.createElement('iframe'); fake.dataset.room = row.roomId;
         const b = await pick(fake);
-        return { a, b, calls, closed: !document.querySelector('body > .dcm') };
+        // on the hub, the task open in the middle (no panel of its own): its
+        // terminals are toggled there, so a second pick hides them
+        // (the test page is on the hub's loopback address: onHubMachine() is true)
+        let c = 'not the hub';
+        if (onHubMachine()) {
+          const dp = document.getElementById('detail-panel'), mid = document.createElement('iframe');
+          mid.className = 'dp-session'; mid.dataset.room = row.roomId; mid.hidden = true; dp.appendChild(mid);
+          try { c = await pick(null); } finally { mid.remove(); }
+        }
+        return { a, b, c, calls, closed: !document.querySelector('body > .dcm') };
       } finally { (ALL_ROWS.find(x => x.roomId === row.roomId) || row).isLive = wasLive; SELECTED_SID = wasSel; showCapturedTerminal = was.s; toggleCapturedTerms = was.t; pdChatFrameOf = was.f; }
     })()`);
     const [cx, cy] = await p.evalIn(`(() => { const r = ${LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)}.getBoundingClientRect(); return [r.left + 30, r.top + r.height / 2]; })()`);
@@ -1000,7 +1009,7 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertEqual(len(mp), 1)
                 self.assertTrue(mp[0]["t"].startswith("Make PO of a new"))
         t = self.g("termsRun")
-        self.assertEqual(t, {"a": "ok", "b": "ok", "calls": ["show:" + self.loose, "toggle:" + self.loose], "closed": True},
+        self.assertEqual(t, {"a": "ok", "b": "ok", "c": "ok", "calls": ["show:" + self.loose, "toggle:" + self.loose, "toggle:" + self.loose], "closed": True},
                          "the terminals item acts on the row's own task (its panel's frame, else the task), never the open one")
         run = self.g("actRun")
         self.assertEqual(run, {"found": True, "room": self.loose, "closed": True}, "an action runs for the row and the menu closes")
