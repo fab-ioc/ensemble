@@ -365,12 +365,19 @@ def draining() -> bool:
     return bool(st and st.get("state") == "draining")
 
 
-def restart_now(room_id: str = "") -> dict:
+def _sf(flag) -> dict:
+    """trigger_restart's stop_foreign, given only when set."""
+    return {"stop_foreign": True} if flag else {}
+
+
+def restart_now(room_id: str = "", stop_foreign: bool = False) -> dict:
     """``when: "now"`` after the drain went to restart (its helper hung, or
     there is none to watch): a plain restart. When it starts, the drain
     follows its lease, so the hub that comes back closes it and types each
     agent its line."""
-    res = _d.trigger_restart(room_id, drain=True)
+    st = current()
+    res = _d.trigger_restart(room_id, drain=True,
+                             **_sf(stop_foreign or (st and st.get("stopForeign"))))
     if res.get("started") and res.get("leaseId"):
         with LOCK:
             st = current()
@@ -585,15 +592,20 @@ def _whole_screen(sess) -> str:
 
 
 def request_restart(reason: str, by: dict, action: str = "restart",
-                    external: bool = False) -> dict:
+                    external: bool = False, stop_foreign: bool = False) -> dict:
     """A ``safe`` request (the PO's tool, the page): a drain starts, or its
     reason joins the one under way. ``by`` is {roomId, identity, label} for a
-    PO, {label} for the page. Returns {status, ...} for the caller."""
+    PO, {label} for the page. Returns {status, ...} for the caller.
+
+    ``stop_foreign``: the restart goes ahead even when a project's
+    long-running process could not be moved out of the hub's cgroups
+    (ED-342); without it such a restart is refused before any drain."""
     # A matching detached PTY owner survives the web process. There is no
     # safe point to wait for and no agent needs a resume line.
     if action == "restart" and not holding() and _d.pty_host_compatible():
         _log(f"hub-only mode by {by.get('label') or 'someone'}: {reason or '(no reason)'}")
-        return _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""))
+        return _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
+                                  **_sf(stop_foreign))
     if action == "update" and not holding() and not external:
         if _d.app_version.packaged():
             _log("packaged update staging; helper will select hub-only or classic mode")
@@ -605,8 +617,20 @@ def request_restart(reason: str, by: dict, action: str = "restart",
                 return {"status": 500, "started": False, "error": err}
             _log("source update: PTY host unchanged; hub-only mode")
             res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
-                                     purpose="update")
+                                     purpose="update", **_sf(stop_foreign))
+            if res.get("refused"):
+                return res
             return {"status": 202 if res.get("started") else 500, **res}
+    # Refused before any agent is drained: a process the restart would stop
+    # (ED-342). The restart itself checks again just before the stop.
+    guarded = None
+    if not external and not (action == "update" and _d.app_version.packaged()):
+        guarded = _d.guard_foreign("the update's restart" if action == "update"
+                                   else "the restart", force=stop_foreign)
+        refused = _d.guard_refusal(guarded)
+        if refused:
+            _log(f"refused by the restart guard, no drain: {refused['error']}")
+            return refused
     now = time.time()
     with LOCK:
         st = current()
@@ -616,6 +640,8 @@ def request_restart(reason: str, by: dict, action: str = "restart",
         st, merged = request(st, reason, by, action, now, deadline_s(_d.load_settings()))
         if external:
             st["external"] = True
+        if stop_foreign:
+            st["stopForeign"] = True
         if by.get("roomId"):
             # The PO that asks is at its safe point: it asked and moves on.
             room = _d.chatroom.get_room(by["roomId"], public=False) or {"id": by["roomId"]}
@@ -635,7 +661,8 @@ def request_restart(reason: str, by: dict, action: str = "restart",
                         "point; the hub restarts once all are there, in about "
                         f"{mins} min at the latest. Do not poll /api/ptys or resume rooms: every "
                         "agent is brought back by the restart and told where it stopped. Carry "
-                        "on; you are told when the hub is back.")}
+                        "on; you are told when the hub is back."
+                        + (" " + guarded["message"] if guarded and guarded["message"] else ""))}
 
 
 def agent_ready(room_id: str, identity: str, next_step: str) -> dict | None:
@@ -658,11 +685,13 @@ def agent_ready(room_id: str, identity: str, next_step: str) -> dict | None:
     return a
 
 
-def force_drain(by: str) -> dict:
+def force_drain(by: str, stop_foreign: bool = False) -> dict:
     with LOCK:
         st = current()
         ok = force(st, by)
         if ok:
+            if stop_foreign:
+                st["stopForeign"] = True
             save(st)
     if ok:
         _log(f"forced by {by}")
@@ -781,7 +810,8 @@ def _launch() -> None:
                 if err:
                     end_drain("failed", f"the update could not be fetched: {err}")
                     return
-            res = _d.trigger_restart(wake, drain=True, **({"purpose": "update"} if update else {}))
+            res = _d.trigger_restart(wake, drain=True, **_sf(st.get("stopForeign")),
+                                     **({"purpose": "update"} if update else {}))
     except Exception as e:      # noqa: BLE001 — said, and everything let go
         end_drain("failed", f"{e.__class__.__name__}: {e}")
         return
@@ -789,7 +819,9 @@ def _launch() -> None:
         st = current()
         if st is None or st.get("state") != "restarting":
             return
-        if res.get("status") == 409:
+        if res.get("refused"):
+            pass                # ended below, saying which process stops it
+        elif res.get("status") == 409:
             st["retryAt"] = time.time() + RETRY_S
             st["error"] = res.get("error", "")
             save(st)
@@ -847,6 +879,8 @@ def _preflight_why() -> str:
             break                               # an earlier restart's lines
         if "preflight failed" in ln.lower():
             return "the preflight failed: " + ln.split("] ", 1)[-1][:300]
+        if "guard: refused: " in ln:
+            return "the restart was refused: " + ln.split("guard: refused: ", 1)[-1][:600]
         if "HELPER GONE - " in ln:
             return ln.split("HELPER GONE - ", 1)[-1][:400]
     return "the preflight failed: the code on disk did not serve on the spare port (see restart.log)"

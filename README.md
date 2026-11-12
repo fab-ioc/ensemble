@@ -150,6 +150,8 @@ cd ~/ensemble
 
 The unit runs the hub from this clone at login, on port 8765 (`ENSEMBLE_PORT=N ./install-systemd.sh` picks another; `ENSEMBLE_BIND=…` sets the address the hub listens on, as in [Remote use and security](#remote-use-and-security)), and starts it again if it stops. Running it again rewrites only `ensemble.service`: drop-ins in `~/.config/systemd/user/ensemble.service.d/` are kept, and their settings win over the unit's. The state stays in `~/.ensemble`, the log is `~/.ensemble/logs/ensemble.log` (and `journalctl --user -u ensemble`). The dashboard's restart and **Update now** stop and start the hub through the unit; Update now first brings this clone to its upstream (`git fetch` and a reset), so keep the clone for running Ensemble, not for development. `./install-systemd.sh status` and `./install-systemd.sh uninstall` do what they say. To keep the hub running while you are logged out: `loginctl enable-linger $USER`. Keep the unit name `ensemble.service`. At startup the hub logs which way it restarts (`[startup] restart: through the systemd user unit ensemble.service`).
 
+Stopping or restarting a systemd unit ends every process in its cgroup, whatever its session: an app an agent started from its terminal with `setsid` or `nohup` stays in the cgroup of `ensemble.service` or of its PTY host's `ensemble-detached-*` scope. So before the hub's restart, Update now, `ensemble update` and `install-systemd.sh` stop the unit, the restart guard (`restart_guard.py`) moves every such long-running process into a scope of its own (`kept-<name>-<pid>.scope`, stopped with `systemctl --user stop`), logs it to `~/.ensemble/logs/restart.log` and names it in the restart's answer. A process it cannot move refuses the restart, naming it; `stopForeign: true` (the PO's `ensemble_restart_hub`, `POST /api/restart`) or `--force` (`install-systemd.sh`; `ENSEMBLE_STOP_FOREIGN=1` for `ensemble update`) goes ahead and stops it. A service meant to outlive the hub is best started as a unit of its own: `systemd-run --user --unit=<project>-<name> -- <command>`. macOS and Windows stop the hub's own process, not a cgroup, so the guard does nothing there.
+
 Without the unit, `./ensemble start` (and `stop`, `restart`, `status`, `logs`) runs the hub in the background as on macOS, with its log in `~/.ensemble/logs/ensemble.log`.
 
 ### Moving from claude-dashboard
@@ -296,6 +298,7 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `ensemble.ps1`, `install-task.ps1`, `restart-hub.ps1` | Windows: start and stop, autostart task, restart helper |
 | `ensemble`, `install-launchd.sh`, `com.ensemble.dashboard.plist.template` | macOS: start and stop, LaunchAgent |
 | `install-systemd.sh` | Linux: the systemd user unit (`ensemble` starts and stops there too) |
+| `restart_guard.py` | Linux: moves a project's long-running processes out of the hub's cgroups before its unit stops |
 | `requirements.txt` | `pywinpty` / `ptyprocess` |
 | `ensemble_app.py`, `app_launch.py`, `app_version.py`, `app_update.py`, `app_setup.py` | The built app: its entry, start, version, Update now from GitHub Releases, agent check and start at sign-in |
 | `packaging/`, `.github/workflows/release.yml` | The PyInstaller build, the Windows installer (Inno Setup) and the release workflow |

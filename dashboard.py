@@ -134,6 +134,7 @@ import input_provenance
 import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
+import restart_guard
 import sends
 # Slash commands from the chat: what to suggest, what a command is (#253).
 import slash
@@ -15444,8 +15445,45 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
         return
 
 
+def _guard_room_name(rid: str) -> str:
+    """Who a guarded process belongs to, for the PO: its task (ED-18 and
+    title) or its project's PO."""
+    info = task_ref_info(rid)
+    if info and info.get("ref"):
+        return " ".join(x for x in (info["ref"], info.get("title") or "") if x)
+    project = next((p for p in load_projects() if (p.get("poRoomId") or "") == rid), None)
+    return f"the {project.get('name') or 'project'} PO" if project else ""
+
+
+def guard_foreign(what: str = "the restart", force: bool = False) -> dict | None:
+    """ED-342: before a restart stops this hub's systemd unit, a project's
+    long-running process in its cgroups (or a PTY host's scope) is moved
+    into a scope of its own (restart_guard.py). The result's ``ok`` False:
+    one could not be moved and the restart is refused (``force``: it goes
+    ahead). None when no unit runs this hub: its stop ends its own process
+    only, and no scope of its own exists."""
+    unit = BACKEND.systemd_service()
+    if not unit:
+        return None
+    return restart_guard.protect(units=[unit["unit"]], hub_pids=[os.getpid()],
+                                 state_dirs=[_restart_lease_path().parent], force=force,
+                                 log_path=DASHBOARD_DIR / "logs" / "restart.log",
+                                 room_name=_guard_room_name, what=what)
+
+
+def guard_refusal(res: dict | None) -> dict | None:
+    """The 409 a refused guard answers with."""
+    if res is None or res["ok"]:
+        return None
+    return {"started": False, "status": 409, "refused": True,
+            "error": res["message"] + " To restart anyway and stop them, ask again with "
+                                      "stopForeign: true.",
+            "foreign": [{"pid": f["pid"], "process": f["text"], "error": f["error"]}
+                        for f in res["failed"]]}
+
+
 def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
-                    purpose: str = "restart") -> dict:
+                    purpose: str = "restart", stop_foreign: bool = False) -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
     ``drain``: the restart a drain led to (restart_drain.py): its PO's note
     says why, and who paused. ``identity``: the agent in ``room_id`` that
@@ -15453,6 +15491,9 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
 
     ``purpose``: "update" for a source update's restart (its outcome also
     goes to update.log).
+
+    ``stop_foreign``: go ahead even when a project's long-running process
+    could not be moved out of the hub's cgroups and stops with it (ED-342).
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -15469,6 +15510,13 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
             _drop_restart_lease(lease)
             view = {k: v for k, v in plan.items() if k != "env"}
             return {"started": True, "status": 202, "dryRun": True, "plan": view}
+        guarded = guard_foreign("the update's restart" if purpose == "update" else "the restart",
+                                force=stop_foreign)
+        refused = guard_refusal(guarded)
+        if refused:
+            _drop_restart_lease(lease)
+            return refused
+        plan["stopForeign"] = bool(stop_foreign)
         # Who is running, now: what the hub that comes back restores from if
         # the helper's own snapshot, taken just before the stop, never lands.
         _restart_log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
@@ -15509,7 +15557,8 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                         "one line): do not resume rooms by hand. "
                         + ("You will be resumed and told when it is back. "
                            if plan["wakeRoom"] else "")
-                        + f"Progress: {plan['log']}") )}
+                        + f"Progress: {plan['log']}")
+                        + (" " + guarded["message"] if guarded and guarded["message"] else ""))}
 
 
 # ---------- HTTP server ----------
@@ -22043,7 +22092,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
             result = restart_drain.request_restart(
                 str(data.get("reason") or ""), self._drain_requester(),
-                "update" if p == "/api/update" else "restart")
+                "update" if p == "/api/update" else "restart",
+                stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p in ("/api/update", "/api/restart") and restart_drain.holding():
@@ -22052,13 +22102,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             if restart_drain.draining():
-                result = restart_drain.force_drain(self._drain_requester()["label"])
+                result = restart_drain.force_drain(self._drain_requester()["label"],
+                                                   stop_foreign=data.get("stopForeign") is True)
                 self._send_json(202 if result["ok"] else 409, {"started": result["ok"], **result})
                 return
             # The drain went to restart and nothing stopped the hub yet: a
             # plain restart now, which the drain follows.
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
-            result = restart_drain.restart_now(resolved[0] if resolved else "")
+            result = restart_drain.restart_now(resolved[0] if resolved else "",
+                                               stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p == "/api/restart/drain":
@@ -22071,7 +22123,7 @@ class Handler(BaseHTTPRequestHandler):
             action = str(data.get("action") or "")
             who = self._drain_requester()["label"]
             if action == "force":
-                result = restart_drain.force_drain(who)
+                result = restart_drain.force_drain(who, stop_foreign=data.get("stopForeign") is True)
             elif action == "cancel":
                 result = restart_drain.cancel_drain(who)
             else:
@@ -22087,7 +22139,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             result = restart_drain.request_restart(str(data.get("reason") or "an update"),
-                                                   self._drain_requester(), "update")
+                                                   self._drain_requester(), "update",
+                                                   stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p == "/api/app/autostart":
@@ -22116,7 +22169,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
-            result = trigger_restart(resolved[0] if resolved else "")
+            result = trigger_restart(resolved[0] if resolved else "",
+                                     stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p in ("/api/restart/snapshot", "/api/restart/restore", "/api/restart/host-stop",
