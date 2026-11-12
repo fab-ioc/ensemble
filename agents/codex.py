@@ -132,24 +132,39 @@ def _trust_states(text: str, keys: list[str]) -> dict[str, str] | None:
 
 
 _TRUST_LINE = re.compile(r"""^\s*trust_level\s*=\s*["']([^"']*)["']""")
+_TRUST_ANY = re.compile(r"""\btrust_level\s*=\s*["']([^"']*)["']""")
 
 
 def _scan_trust(text: str, key: str) -> str:
-    """``_trust_states`` for one key without a TOML parser (Python 3.10):
-    the key's table is found by its header, and its lines up to the next
-    table are read for a trust level."""
-    heads = {f"[projects.{_toml_key(key)}]", f"[projects.'{key}']"}
+    """``_trust_states`` for one key without a TOML parser (Python 3.10).
+    The key's own table (``[projects."<key>"]``) is read up to the next
+    table for a trust level. Any other line naming the key (dotted keys
+    ``projects."<key>".trust_level = ...``, an inline table, a sub-table,
+    the path as some other value) counts by the trust level written on it,
+    and as "notrust" (never appended to) without one: a header of ours
+    could then duplicate a table the parser would see. The most cautious
+    reading wins: untrusted, then unknown, then trusted."""
+    names = (_toml_key(key), f"'{key}'")
+    heads = {f"[projects.{n}]" for n in names}
+    found = []
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        if line.strip() not in heads:
-            continue
-        for body in lines[i + 1:]:
-            if body.lstrip().startswith("["):
-                break
-            m = _TRUST_LINE.match(body)
-            if m:
-                return "trusted" if m.group(1) == "trusted" else "untrusted"
-        return "notrust"
+        if line.strip() in heads:
+            state = "notrust"
+            for body in lines[i + 1:]:
+                if body.lstrip().startswith("["):
+                    break
+                m = _TRUST_LINE.match(body)
+                if m:
+                    state = "trusted" if m.group(1) == "trusted" else "untrusted"
+                    break
+            found.append(state)
+        elif any(n in line for n in names):
+            m = _TRUST_ANY.search(line)
+            found.append(("trusted" if m.group(1) == "trusted" else "untrusted") if m else "notrust")
+    for state in ("untrusted", "notrust", "trusted"):
+        if state in found:
+            return state
     return "missing"
 
 

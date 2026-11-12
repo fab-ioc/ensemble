@@ -42,13 +42,16 @@ _CURSOR = "›❯>"
 # the option the hub picks (None: the hub never answers it), the words a
 # CLI prints once it is past the screen, so an answered screen that is still
 # in the tail does not count, and the screen's own closing words ("end").
-# Options, words and end words are the screen's anchors: the screen counts
-# only while it is the last thing drawn (``_is_latest``). "gap" widens the
-# text allowed between two anchors for a screen with prose among its options.
+# The screen counts only while it is the last thing drawn (``_is_latest``):
+# its options, words and "bridge" words chain to the end of the tail, closed
+# by its "end" words or a common footer. "gap" widens the text allowed
+# before an option for a screen with prose among them, "tailgap" the text
+# allowed before its footer.
 SCREENS = (
     {"cli": "codex", "kind": "trust", "name": "Codex's \"Trust this folder?\" screen",
      "words": ("trustthisfolder?", "trustandcontinue"),
      "options": ("1.trustandcontinue", "2.back"), "pick": "1.trustandcontinue",
+     "bridge": ("2.backtoagentcommandcenter",),
      "past": ("askcodextodoanything", "forshortcuts"), "end": ("entercontinue·escback",)},
     # Codex before 0.160 asked it in other words.
     {"cli": "codex", "kind": "trust", "name": "Codex's \"Do you trust the contents of this directory?\" screen",
@@ -72,11 +75,16 @@ SCREENS = (
      "past": ("bypasspermissionson", "forshortcuts")},
     {"cli": "claude", "kind": "theme", "name": "Claude Code's first-run setup (text style)",
      "words": ("choosethetextstyle",), "options": ("darkmode", "lightmode"), "pick": None,
-     "gap": 600,             # a code preview is drawn among its options
+     "bridge": ("(colorblind-friendly)", "(ansicolorsonly)", "syntaxtheme:"),
+     "end": ("(ctrl+ttodisable)",),
+     # A code preview follows its options, then the syntax theme and its name.
+     "gap": 600, "tailgap": 60,
      "past": ("bypasspermissionson", "forshortcuts")},
     {"cli": "codex", "kind": "signin", "name": "Codex's sign-in screen",
-     "words": ("signinwithchatgpt",), "options": ("provideyourownapikey",), "pick": None,
-     "gap": 120,             # each option has a line of description
+     "words": ("signinwithchatgpt",),
+     "options": ("2.signinwithdevicecode", "3.signinanotherway", "provideyourownapikey"),
+     "pick": None,
+     "gap": 120, "tailgap": 60,          # each option has a line of description
      "past": ("askcodextodoanything",)},
     {"cli": "codex", "kind": "update", "name": "Codex's \"Update available\" screen",
      "words": ("updateavailable", "skipuntilnextversion"), "options": (), "pick": None,
@@ -86,9 +94,17 @@ SCREENS = (
 # Footers the CLIs draw under a screen; allowed after its last anchor.
 FOOTERS = ("entertoconfirm·esctocancel", "entercontinue·escback", "entertoconfirm·esctoexit",
            "presstocontinue", "pressentertocontinue")
-# Text allowed between two anchors, and after the last one.
-_GAP = 24
+# Text allowed before an option (by default), before a footer (by default),
+# and after the last anchor. Codex's older screen has "continue" between its
+# options; the others draw them back to back.
+_GAP = 10
+_TAILGAP = 0
 _TRAIL = 8
+# In a gap, nothing that starts another question or option list: a question
+# mark, a selection cursor, a numbered item. Only the lead of the next
+# option ("❯ 1.", "✔") may end it.
+_LEAD = re.compile(r"[›❯>]?✔?(?:\d+\.)?$")
+_FOREIGN = re.compile(r"[?›❯>]|\d\.")
 
 _SPACE = re.compile(r"\s+")
 
@@ -122,28 +138,42 @@ def _find_in(flat: str) -> dict | None:
 
 
 def _is_latest(flat: str, scr: dict, start: int) -> bool:
-    """The screen is the last thing drawn: from its first anchor after its
-    question, anchors (its options, words and end words, and the footers)
-    follow one another with at most a short gap and no question between
-    them, up to the end of the tail. The tail is a history, so a trust
-    screen followed by another modal ("Grant access to this tool?") is
-    still in it; this keeps the hub from answering, or reporting, the stale
-    one."""
-    anchors = tuple(scr["options"]) + tuple(scr["words"][1:]) + tuple(scr.get("end", ())) + FOOTERS
-    gap = scr.get("gap", _GAP)
+    """The screen is the last thing drawn. The tail is a history: a trust
+    screen followed by another modal ("Grant access to this tool?", or a
+    short "Allow this action" over the same footer) is still in it, and
+    must be neither answered nor reported.
+
+    From the screen's first anchor after its question, its anchors must
+    follow one another to the end of the tail: an option (or word, or
+    bridge word) after at most ``gap`` chars, a closing anchor (its end
+    words, a common footer) after at most ``tailgap`` (none by default), a
+    gap never holding a question mark, a cursor or a numbered item, and at
+    most ``_TRAIL`` chars and no question mark after the last anchor. A
+    later modal's own text breaks the chain before its footer."""
+    body = tuple(scr["options"]) + tuple(scr["words"][1:]) + tuple(scr.get("bridge", ()))
+    closing = tuple(scr.get("end", ())) + FOOTERS
+    limit = {a: scr.get("gap", _GAP) for a in body}
+    limit.update({a: scr.get("tailgap", _TAILGAP) for a in closing if a not in limit})
     q = start + len(scr["words"][0])
-    firsts = [i for i in (flat.find(a, q) for a in anchors) if i >= 0]
-    p = q if not firsts else None
-    if firsts:
-        i = min(firsts)
-        p = i + max(len(a) for a in anchors if flat.startswith(a, i))
-    while p < len(flat):
+
+    def next_anchor(p):
         nxt = None
-        for a in anchors:
+        for a in limit:
             i = flat.find(a, p)
             if i >= 0 and (nxt is None or i < nxt[0] or (i == nxt[0] and len(a) > len(nxt[1]))):
                 nxt = (i, a)
-        if nxt is None or nxt[0] - p > gap or "?" in flat[p:nxt[0]]:
+        return nxt
+
+    first = next_anchor(q)
+    p = q if first is None else first[0] + len(first[1])
+    while p < len(flat):
+        nxt = next_anchor(p)
+        if nxt is None:
+            break
+        gap = flat[p:nxt[0]]
+        if len(gap) > limit[nxt[1]]:
+            break
+        if _FOREIGN.search(_LEAD.sub("", gap, count=1)):
             break
         p = nxt[0] + len(nxt[1])
     rest = flat[p:]

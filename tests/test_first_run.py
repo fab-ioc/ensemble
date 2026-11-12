@@ -173,6 +173,28 @@ class CodexTrustTest(unittest.TestCase):
             self.assertFalse(first_run.answer(sess, str(self.folder), log=lambda m: None))
         self.assertEqual(sess.writes, [])
 
+    def test_without_tomllib_other_forms_of_the_key_are_respected(self):
+        # Review 2: dotted keys and inline tables are valid TOML for the same
+        # entry; a header of ours after them would be a duplicate table.
+        self.home.mkdir()
+        k = agents.codex._toml_key(os.path.realpath(self.folder))
+        cases = {
+            f'projects.{k}.trust_level = "untrusted"\n': "untrusted",
+            f'[projects]\n{k} = {{ trust_level = "untrusted" }}\n': "untrusted",
+            f'[projects]\n{k}.note = "mine"\n': "notrust",
+            f'projects.{k}.trust_level = "trusted"\n': "trusted",
+        }
+        with mock.patch.object(agents.codex, "tomllib", None):
+            for text, state in cases.items():
+                self.cfg.write_text(text, encoding="utf-8")
+                self.assertEqual(self.agent.ensure_trusted(str(self.folder)), state == "trusted", text)
+                self.assertEqual(self.cfg.read_text(encoding="utf-8"), text, text)
+                self.assertEqual(agents.codex.explicitly_untrusted(str(self.folder)),
+                                 state == "untrusted", text)
+        if tomllib is not None:
+            for text in cases:
+                tomllib.loads(text)             # the cases are valid TOML, left valid
+
     def test_the_repository_root_is_not_trusted(self):
         if tomllib is None:
             self.skipTest("Python 3.11+")
@@ -258,6 +280,23 @@ class DetectorTest(unittest.TestCase):
         # A redraw of the screen's own options after a key still counts.
         self.assertIsNotNone(first_run.find(fixture("claude_down")))
 
+    def test_a_later_modal_over_the_same_footer_is_not_the_screen(self):
+        # Review 2: no question mark, the footer a trust screen also uses.
+        for name, later in (
+                ("claude_down", "\nAllow this action\nEnter to confirm · Esc to cancel\n"),
+                ("claude_trust", "\nAllow this action  Yes  No, exit\nEnter to confirm · Esc to cancel\n"),
+                ("claude_trust", "\nAllow this action\n❯ 1. Yes\n2. No, exit\n"),
+                ("codex_trust", "\nAllow this action\nEnter continue · Esc back\n"),
+                ("codex_trust", "\nRun this command\n› 1. Yes\n2. No\n")):
+            self.assertIsNone(first_run.find(fixture(name) + later), (name, later))
+
+    def test_first_run_screens_captured_from_the_clis(self):
+        # Codex 0.167.1 and Claude Code 2.1.322 with an empty home.
+        hit = first_run.find(fixture("codex_signin"))
+        self.assertEqual((hit["cli"], hit["kind"], hit["answerable"]), ("codex", "signin", False))
+        hit = first_run.find(fixture("claude_theme"))
+        self.assertEqual((hit["cli"], hit["kind"], hit["answerable"]), ("claude", "theme", False))
+
     def test_old_codex_wording(self):
         hit = first_run.find("> You are in /x\nDo you trust the contents of this directory?\n"
                              "› 1. Yes, continue\n2. No, quit")
@@ -331,6 +370,13 @@ class AnswerTest(unittest.TestCase):
         sess = FakeSess("codex_trust", {}, extra="\nGrant access to this tool? 1. Yes 2. No\n")
         with self.hub():
             self.assertFalse(first_run.answer(sess, "/srv/hub/work/WT", log=lambda m: None))
+        self.assertEqual(sess.writes, [])
+
+    def test_a_later_modal_over_the_same_footer_gets_no_key(self):
+        sess = FakeSess("claude_down", {},
+                        extra="\nAllow this action\nEnter to confirm · Esc to cancel\n")
+        with self.hub():
+            self.assertFalse(first_run.answer(sess, "/srv/hub/work/WTD/repo", log=lambda m: None))
         self.assertEqual(sess.writes, [])
 
     def test_a_folder_marked_untrusted_in_codex_gets_no_key(self):
