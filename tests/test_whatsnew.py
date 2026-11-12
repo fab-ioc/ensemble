@@ -435,9 +435,9 @@ class Endpoint(Seeded):
             self.call("/api/update-check")
             self.assertEqual(len(fetches), 2, fetches)
 
-    def test_install_now_checks_again_with_fresh_and_reads_the_age(self):
-        # #345: the cached answer says how old it is; &fresh=1 checks now,
-        # however new the cache, so Install now acts on the hub as it is.
+    def test_install_now_checks_again_with_fresh(self):
+        # #345: &fresh=1 checks now, however new the cache, so Install now
+        # acts on the hub as it is.
         real = dashboard._run
         fetches = []
         def run(cmd, *a, **kw):
@@ -449,19 +449,14 @@ class Endpoint(Seeded):
                 mock.patch.object(dashboard.restart_drain, "holding", return_value=False):
             cold = self.call("/api/update-check?wait=1")[1]
             self.assertEqual(cold["reason"], "not_checked")
-            self.assertNotIn("checkedAgo", cold, "no check yet: no age")
             self.assertTrue(self.call("/api/update-check")[1]["available"])
-            stamp, cached = dashboard._UPDATE_CHECK_CACHE
-            dashboard._UPDATE_CHECK_CACHE = (stamp - 600, cached)
-            old = self.call("/api/update-check?wait=1")[1]
-            self.assertTrue(old["available"])
-            self.assertGreaterEqual(old["checkedAgo"], 600)
+            self.assertTrue(self.call("/api/update-check?wait=1")[1]["available"])
             # Installed meanwhile (another page, a local pull): fresh says so.
             git(self.co, "pull", "-q")
             fresh = self.call("/api/update-check?wait=1&fresh=1")[1]
             self.assertFalse(fresh["available"])
             self.assertNotIn("reason", fresh, "up to date, not a failure")
-            self.assertLess(fresh["checkedAgo"], 5)
+            self.assertFalse(self.call("/api/update-check?wait=1")[1]["available"], "the cache holds it")
             self.assertEqual(len(fetches), 2, fetches)
 
     def test_a_built_app_may_wait(self):

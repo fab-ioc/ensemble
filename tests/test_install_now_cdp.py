@@ -1,16 +1,16 @@
 """Install now in What's new (#345, GitHub issue 43: "The popup closes and
 nothing happens"), in headless Chrome over CDP at 1440x900 against a hub in a
 thread serving the pages. The hub's update check, its cached answer, the
-check's age, the page key and POST /api/update's restart are faked through a
+the page key and POST /api/update's restart are faked through a
 mode file the browser script writes per case. Install now either sends the
 install and shows the Update card, or keeps the dialog open with a plain line:
 
 * loaded while an update is available (the chip, the menu, What's new): the
-  POST is sent, the card shows, no second check;
+  hub checks again, the POST is sent, the card shows;
 * left open across a hub restart (no check on the hub, a new page key, the
   old hub's pid): the press checks again, gets today's key, sends the POST,
   and the card shows and stays (the hub that runs is not taken for the new one);
-* a check older than two minutes that the fresh one contradicts:
+* a check the hub's new one contradicts (the update installed meanwhile):
   "Already up to date, nothing to install", no POST, the dialog stays;
 * the update went while the dialog was open (the page's poll): it stays, says so;
 * the hub away: "The hub could not be reached, try again";
@@ -118,7 +118,7 @@ async function main() {
     await p.shot(name);
     return p.evalIn(SEEN);
   };
-  const OK = { cached: 'avail', age: 5, check: 'avail' };
+  const OK = { cached: 'avail', check: 'avail' };
   const cardUp = `!document.getElementById('upd-card').hidden`;
   const said = `!document.getElementById('wn-msg').hidden && !/^Checking/.test(document.getElementById('wn-msg').textContent)`;
   try {
@@ -133,7 +133,7 @@ async function main() {
     // yet and drew a new page key.
     mode({ ...OK, case: 'B0' });
     p = await page();
-    mode({ cached: 'cold', age: null, check: 'avail', rotate: 1, case: 'B' });
+    mode({ cached: 'cold', check: 'avail', rotate: 1, case: 'B' });
     await p.evalIn('RUNTIME_CFG.pid = 1; 0');   // the pid of the hub it loaded from
     await openDialog(p);
     out.B = await press(p, cardUp, 'install-now-after-restart');
@@ -141,10 +141,10 @@ async function main() {
     out.B2 = await p.evalIn(SEEN);
     await p.close();
 
-    // C: the page's check is old and the hub, asked again, has nothing newer.
+    // C: the hub's check said available; asked again, it has nothing newer.
     mode({ ...OK, case: 'C0' });
     p = await page();
-    mode({ cached: 'avail', age: 900, check: 'none', case: 'C' });
+    mode({ cached: 'avail', check: 'none', case: 'C' });
     await openDialog(p);
     out.C = await press(p, said, 'install-now-nothing-to-install');
     await p.close();
@@ -153,7 +153,7 @@ async function main() {
     mode({ ...OK, case: 'D0' });
     p = await page();
     await openDialog(p);
-    mode({ cached: 'none', age: 5, check: 'none', case: 'D' });
+    mode({ cached: 'none', check: 'none', case: 'D' });
     await p.evalIn('checkForUpdate()');
     await p.until(said, 8000).catch(() => null);
     await sleep(300);
@@ -172,7 +172,7 @@ async function main() {
     // F: GitHub away: the hub could not check.
     mode({ ...OK, case: 'F0' });
     p = await page();
-    mode({ cached: 'avail', age: 900, check: 'fetch_failed', case: 'F' });
+    mode({ cached: 'avail', check: 'fetch_failed', case: 'F' });
     await openDialog(p);
     out.F = await press(p, said, 'install-now-github-away');
     await p.close();
@@ -258,7 +258,6 @@ class InstallNowInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
             mock.patch.object(dashboard, "check_for_update", check),
             mock.patch.object(dashboard, "cached_update_check", lambda: answer(mode().get("cached", "avail"))),
-            mock.patch.object(dashboard, "update_check_age", lambda: mode().get("age", 5)),
             mock.patch.object(dashboard, "_UI_KEY", dashboard._UI_KEY),
             mock.patch.object(dashboard.Handler, "_restart_refusal", refusal),
             mock.patch.object(dashboard.app_version, "packaged", lambda: False),
@@ -311,7 +310,7 @@ class InstallNowInChrome(unittest.TestCase):
     def test_loaded_while_available_installs(self):
         self.assertBusy(self.got["A"])
         self.assertEqual(self.posts("A"), 1)
-        self.assertNotIn({"case": "A", "check": "fresh"}, self.log, "a check under two minutes old is not made again")
+        self.assertIn({"case": "A", "check": "fresh"}, self.log, "the hub checks again first")
 
     def test_left_open_across_a_restart_checks_again_and_installs_with_todays_key(self):
         self.assertBusy(self.got["B"])

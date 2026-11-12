@@ -195,21 +195,21 @@
   dialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
   el('wn-later').onclick = () => dialog.close();
   // Install now (#345) always installs or says why not; it never just closes.
-  // The hub's check is read first: one older than FRESH_S, or none since the
-  // hub restarted, is made again, and the press acts on that answer.
-  const FRESH_S = 120;
+  // The hub checks again first (a check even a minute old can be wrong: the
+  // update installed from another device, a hub restarted since), and the
+  // press acts on that answer.
   const timeout = ms => {
     if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
     const c = new AbortController();
     setTimeout(() => c.abort(), ms);
     return c.signal;
   };
-  async function check(fresh) {
-    const url = '/api/update-check?wait=1' + (fresh ? '&fresh=1' : '');
+  async function check() {
+    const url = '/api/update-check?wait=1&fresh=1';
     for (let i = 0; i < 12; i++) {
       let got = null;
       try {
-        const r = await fetch(url, {cache: 'no-store', signal: timeout(fresh ? 30000 : 10000)});
+        const r = await fetch(url, {cache: 'no-store', signal: timeout(30000)});
         got = r.ok ? await r.json() : null;
       } catch {}
       if (!got) return null;
@@ -219,15 +219,13 @@
     }
     return null;
   }
-  const stale = got => !got || got.reason === 'not_checked' || !(typeof got.checkedAgo === 'number' && got.checkedAgo < FRESH_S);
   el('wn-install').onclick = async () => {
     if (pressing) return;
     pressing = true;
     const btns = ['wn-install', 'wn-skip'].map(el);
     btns.forEach(b => { b.disabled = true; });
     say('Checking for the newest version…');
-    let got = await check(false);
-    if (got && stale(got)) got = await check(true);
+    const got = await check();
     if (got) render(got);   // the chip and the item, from this answer (the dialog is still ours)
     pressing = false;
     btns.forEach(b => { b.disabled = false; });
